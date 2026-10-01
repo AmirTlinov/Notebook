@@ -871,6 +871,52 @@ import XCTest
     }
   }
 
+  func testNewerEndpointAtTheSameOSTimeCompletesItsTurn() async throws {
+    #if targetEnvironment(simulator)
+    throw XCTSkip("This receipt-ordering scenario starts with actual OS presentation receipts")
+    #endif
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+    let native = IPadSheetCurlController(), source = UIViewController(), target = UIViewController()
+    PageTurnFrameFixture.install(on: native)
+    source.view.backgroundColor = .blue; target.view.backgroundColor = .red
+    window.rootViewController = native; window.makeKeyAndVisible()
+    defer { native.cancelMotion(); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+    native.show(source, direction: .forward, animated: false); native.prepare(target)
+    window.layoutIfNeeded(); native.willTurn = { $0 === target }
+    let curl = try XCTUnwrap(native.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
+    let owner = curl.onPageFrameReady
+    defer { curl.onPageFrameReady = owner }
+    var firstTime: TimeInterval?, firstSequence: Int?, endpointSequence: Int?, completions: [Bool] = []
+    native.didTurn = { from, completed in XCTAssertTrue(from === source); completions.append(completed) }
+    curl.onPageFrameReady = { image, progress, sequence, readiness in
+      guard let actualTime = readiness.presentedTime else { owner?(image, progress, sequence, readiness); return }
+      if firstTime == nil { firstTime = actualTime; firstSequence = sequence }
+      let replayTime = firstTime!
+      // Deterministic owner-level replay of coalesced OS receipts. These
+      // timestamps are not a measurement of this physical run's latency.
+      if progress == 1 {
+        endpointSequence = sequence
+        owner?(image, progress, sequence, .osPresentation(replayTime - 1))
+        XCTAssertTrue(completions.isEmpty, "A newer sequence still cannot rewind the OS display time")
+      }
+      owner?(image, progress, sequence, .osPresentation(replayTime))
+    }
+    XCTAssertTrue(native.beginInteractiveTurn(direction: .forward, target: target))
+    native.updateInteractiveTurn(translation: -native.view.bounds.width * 0.35)
+    let bendDeadline = ContinuousClock.now + .seconds(2)
+    while firstTime == nil, ContinuousClock.now < bendDeadline { try await Task.sleep(for: .milliseconds(2)) }
+    XCTAssertNotNil(firstTime)
+    native.endInteractiveTurn(completed: true, duration: 0)
+    let endpointDeadline = ContinuousClock.now + .seconds(2)
+    while completions.isEmpty, ContinuousClock.now < endpointDeadline { try await Task.sleep(for: .milliseconds(2)) }
+    XCTAssertGreaterThan(try XCTUnwrap(endpointSequence), try XCTUnwrap(firstSequence))
+    XCTAssertEqual(completions, [true], "The newer endpoint at the same OS boundary must finish exactly once")
+    XCTAssertTrue(native.page === target)
+    XCTAssertFalse(native.containsInActiveTurn(source))
+    XCTAssertFalse(native.containsInActiveTurn(target))
+  }
+
   func testCurlConfiguresTheActualDrawableLayerBeforeItsFirstDisplayUpdate() throws {
     let curl = SheetCurlMetalView(frame: .init(x: 0, y: 0, width: 300, height: 300))
     let backing = try XCTUnwrap(curl.layer as? CAMetalLayer)

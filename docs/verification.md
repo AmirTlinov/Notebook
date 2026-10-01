@@ -3,6 +3,35 @@
 Срез: **1 октября 2026**. Функциональная проверка, доставка и полная приёмка
 учитываются отдельно; результат относится к исходникам своего receipt.
 
+## Адресная публикация и завершение переходов — 233
+
+**0.3.163 (233)** установлена поверх231 на Mac и физическом iPad
+1 октября06:52 МСК. Signed pair source `12f31745…`.
+Helper/presentation ready; workspace, trusted device, страница и камера сохранены,
+сессия новая. Физический native board показывает прежние обложки. Одна Notebook
+Lab233; QA/native-test apps отсутствуют. Контейнеры и ключи сохранены.
+[Доставка](audit-evidence/2026-10-01/cold-install-233/delivery.json).
+
+Существующий Entry публикует только свой принятый источник и terminal retirement.
+Удалены повторные parent readiness/static wakes при запуске программ, линейный
+поиск basis для каждой программы, вторичная публикация workspace при чтении
+без вытеснения и двойная установка curl output. Исправлен реальный hang:
+новый endpoint с тем же OS timestamp теперь принимается по возрастающему sequence.
+[Причины и решения](cold-first-publication-2026-10-01.md).
+
+**15 physical-iPad +2 Mac PASS**, fail/skip0, source `548a3750…`:
+cold24, source replacement/retirement,100000 spatial objects, runtime cancellation,
+first curl, общий OS timestamp и stored-leaf reverse/eviction/cancel/first ink.
+**2 Core PASS** на том же source: exact ID/collision/removal и100000 program basis reads.
+Затем изменился только `MCP/panel/session.ts`; native inputs неизменны, inventory
+comparison сохранён. Final Mac2 PASS относится к release source `12f31745…`.
+[Точные scopes и source delta](audit-evidence/2026-10-01/cold-install-233/checks.json).
+
+Strict first response остаётся красным:24,294–43,266мс при16,667мс на предшествующем
+`ba505e70…`; порог сохранён. Первый cold discard, ready-time WebKit IPC,
+hardware contact-to-display и полная приёмка GUI-190 ещё открыты.
+Screenshot/readback не включались в app latency.
+
 ## Первый холодный кадр и доставка WebKit — адресный срез
 
 1 октября05:54 МСК: **4 physical-iPad PASS**, fail/skip0, source `0ba84467…`.
@@ -25,9 +54,8 @@ Empty initial CA mount и сохранение transactional mode после п�
 установлено. First cold/strict/hardware latency и full acceptance остаются открыты.
 [Причины и пределы выводов](cold-first-publication-2026-10-01.md).
 
-Ремонт проверен в изолированном native test host, который удалён после прогона.
-Текущая production pair обновлена параллельной работой до231; этот срез её
-не заменял. Release delivery данного patch отдельно не выполнена.
+Этот прогон использовал изолированный native host и не обновлял production231.
+Patch вошёл в общую233; её проверка и доставка записаны выше.
 
 ## Локальная работа и установленный output — 230
 

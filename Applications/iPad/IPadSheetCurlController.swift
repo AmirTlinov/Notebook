@@ -242,7 +242,6 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
         let width = leaf.texture.width, height = leaf.texture.height
         try curl.preparePages(leaf: leaf, base: base, operationID: id)
         current.frame = leaf; current.firstFrameSequence = curl.submittedFrameCount; self.motion = current
-        curl.prepareDrawable(size: .init(width: width, height: height))
         onFramesAcquired?(.init(operationID: id, began: began, ended: CACurrentMediaTime(), pixels: width * height * 2))
         guard self.motion?.id == id else { return }
         render(current.progress); curl.animatesContinuously = current.animation != nil
@@ -303,8 +302,10 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
       let firstSequence = motion.firstFrameSequence, sequence >= firstSequence else { return }
     if let previous = motion.presentation {
       guard sequence > previous.sequence else { return }
+      // Distinct drawables can share one OS display timestamp. Sequence owns
+      // their order; the timestamp only rejects a receipt from an older frame.
       if let time = readiness.presentedTime,
-        let oldTime = previous.readiness.presentedTime, time <= oldTime { return }
+        let oldTime = previous.readiness.presentedTime, time < oldTime { return }
     }
     let shown = motion.direction == .forward ? progress : 1-progress
     motion.presentation = (shown, sequence, readiness)

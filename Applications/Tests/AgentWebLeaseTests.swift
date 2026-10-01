@@ -796,23 +796,49 @@ final class AgentWebLeaseTests: XCTestCase {
   @MainActor
   func testOverlayReadinessRequiresCurrentSourceAndIgnoresPreviousSourceTeardown() {
     let previous = element(source: "previous"), current = element(source: "current")
+    let second = AgentElement(id: "second", kind: .web, frame: previous.frame, source: "second", html: "second")
+    let third = AgentElement(id: "third", kind: .web, frame: previous.frame, source: "third", html: "third")
     let readiness = AgentOverlayReadiness(), pageID = UUID(), actor = UUID()
-    var ready = false
-    func prepare(_ elements: [AgentElement]) {
+    var publications: [(ready: Bool, erasure: PageElementErasurePresentation)] = []
+    func prepare(_ elements: [AgentElement], counter: UInt64 = 0, erasures: InkElementErasureMap = [:]) {
       _ = readiness.prepare(sourceIdentity: ObjectIdentifier(readiness), elements: elements, pageSize: .init(width: 32, height: 32),
-        erasure: .init(pageID: pageID, stamp: .init(counter: 0, actor: actor), erasures: [:]),
-        publish: { ready = $0; _ = $1 })
+        erasure: .init(pageID: pageID, stamp: .init(counter: counter, actor: actor), erasures: erasures),
+        publish: { publications.append(($0, $1)) })
       readiness.publish()
     }
-    prepare([previous]); readiness.record(previous, ready: true); readiness.publish()
-    XCTAssertTrue(ready)
-    prepare([current]); XCTAssertFalse(ready, "Reusing an element ID does not confirm its new source")
+    prepare([previous, second, third]); prepare([previous, second, third])
+    XCTAssertEqual(publications.map(\.ready), [false], "The pending presentation publishes once")
+    readiness.record(previous, ready: true); readiness.publish()
+    readiness.record(second, ready: true); readiness.publish()
+    XCTAssertEqual(publications.count, 1, "Intermediate installed facts do not rerun the parent's unchanged readiness")
+    readiness.record(third, ready: true); readiness.publish()
+    XCTAssertEqual(publications.map(\.ready), [false, true], "The last required source completes the presentation")
+    prepare([current, second, third])
+    XCTAssertEqual(publications.last?.ready, false, "Reusing an element ID does not confirm its new source")
     XCTAssertFalse(readiness.record(previous, ready: true), "An old callback cannot replace the current source")
-    readiness.record(current, ready: true)
+    readiness.record(current, ready: true); readiness.publish()
+    XCTAssertEqual(publications.last?.ready, true)
     readiness.record(previous, ready: false); readiness.publish()
-    XCTAssertTrue(ready, "An old view's teardown cannot invalidate the current raster")
-    readiness.record(current, ready: false); readiness.publish(); XCTAssertFalse(ready)
-    prepare([]); XCTAssertTrue(ready)
+    XCTAssertEqual(publications.count, 4, "An old view's teardown neither revokes nor republishes the current raster")
+    readiness.record(current, ready: false); readiness.publish()
+    XCTAssertEqual(publications.map(\.ready), [false, true, false, true, false])
+
+    let next = element(source: "next")
+    prepare([next, second, third])
+    XCTAssertEqual(publications.count, 6, "A new pending source gets its own receipt even when readiness remains false")
+    readiness.record(next, ready: true); readiness.publish()
+    let cut = InkElementErasure(target: .init(elementID: next.id, frame: next.frame), samples: [
+      .init(point: .init(x: 16, y: 16), timeOffset: 0, width: 4, opacity: 1, force: 1, azimuth: 0, altitude: 1)
+    ])
+    let erasures: InkElementErasureMap = [next.id: [cut]]
+    prepare([next, second, third], counter: 1, erasures: erasures)
+    XCTAssertEqual(publications.count, 8, "A new erasure presentation gets its own acknowledgement even while ready")
+    XCTAssertEqual(publications.last?.ready, true)
+    XCTAssertEqual(publications.last?.erasure.stamp, VersionStamp(counter: 1, actor: actor))
+    XCTAssertEqual(publications.last?.erasure.erasures, erasures)
+    prepare([next, second, third], counter: 1, erasures: erasures)
+    XCTAssertEqual(publications.count, 8, "The same erasure receipt is not repeatedly acknowledged")
+    prepare([]); XCTAssertEqual(publications.last?.ready, true)
   }
 
   private func element(source: String, width: Double = 32, height: Double = 32) -> AgentElement {

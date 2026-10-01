@@ -1,0 +1,35 @@
+{
+  "status": "installed-pair-and-physical-presentation-verified",
+  "build": "233",
+  "version": "0.3.163",
+  "previousBuild": "231",
+  "sourceSHA256": "12f31745e3a7ea52b2c2bafad6946d798a9258d5ca1b4197fd9ee9a1c876400d",
+  "buildReceiptSHA256": "e15b23ad80339d81dd246c775f90b1d528f70fc3f2cfbc67fbf69fc6e1b58457",
+  "inPlaceUpdate": true,
+  "dataAccess": "none",
+  "dataContainerPathChanged": true,
+  "finishedAt": "2026-10-01T03:52:11.521353+00:00",
+  "fullAcceptance": false,
+  "workspaceUnchanged": true,
+  "trustedDeviceUnchanged": true,
+  "presenceUnchanged": true,
+  "oldSession": "BEC32A99-FC04-4B11-BDDB-980086936903",
+  "newSession": "10DF38A6-12ED-4FB7-B9C3-F5EB340B36FC",
+  "presentation": "ready",
+  "physicalImage": {
+    "expectedSHA256": "abf0fb5696f651b109bf7f89cb7eee463615ee57fd10fec76b0a8a61926ddc0a",
+    "status": "ready",
+    "inspection": "Physical native board at the preserved camera; Notebook covers rendered. Image observation is separate from latency timing."
+  },
+  "buildReceipt": "/private/tmp/notebook-cold-install-233-pair/build.json",
+  "installationReceipt": "/private/tmp/notebook-cold-install-233-delivery/installation.json",
+  "nativeChecks": "checks.json",
+  "installedNotebookApps": [
+    {
+      "name": "Notebook Lab",
+      "bundleIdentifier": "com.amirtlinov.notebook.preview",
+      "version": "0.3.163",
+      "bundleVersion": "233"
+    }
+  ]
+}

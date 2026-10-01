@@ -1,0 +1,122 @@
+{
+  "format": 1,
+  "releaseBuild": "233",
+  "releaseVersion": "0.3.163",
+  "releaseSourceSHA256": "12f31745e3a7ea52b2c2bafad6946d798a9258d5ca1b4197fd9ee9a1c876400d",
+  "nativeChecks": {
+    "path": "/private/tmp/notebook-cold-install-233-final-verify",
+    "sourceSHA256": "548a375076d467dba7fd3974e2dbf198f79c4c3ccfc18ddfea81adca6990edc4",
+    "status": "passed",
+    "receiptSHA256": "4ca6bac6223f76bdaae32bb8804d2567f0f2dfedb285964133faaca2ca8d497c",
+    "checks": {
+      "ipad": {
+        "passedTests": 15,
+        "failedTests": 0,
+        "skippedTests": 0,
+        "totalTestCount": 15
+      },
+      "mac": {
+        "passedTests": 2,
+        "failedTests": 0,
+        "skippedTests": 0,
+        "totalTestCount": 2
+      }
+    },
+    "selectors": {
+      "commands": [],
+      "core": [],
+      "ipad": [
+        "NotebookTests/AgentWebLeaseTests/testOverlayReadinessRequiresCurrentSourceAndIgnoresPreviousSourceTeardown",
+        "NotebookTests/NotebookFirstPresentationSchedulingTests/testColdProgramConstructorsAgainstUIOpportunities",
+        "NotebookTests/NotebookFirstPresentationSchedulingTests/testFirstCurlAgainstUIAndOSBoundaries",
+        "NotebookTests/NotebookPageAddressTests/testAWithdrawnNeighbourReadCannotEvictTheCurrentPageWindow",
+        "NotebookTests/NotebookPageAddressTests/testPreparedPageCatalogRebindReusesTheHundredThousandObjectIndex",
+        "NotebookTests/NotebookPageLifecycleUXTests/testNativePageTurnsShowTheStoredLeafAfterEvictionReverseAndCancellation",
+        "NotebookTests/NotebookPageMotionUXTests/testCommittedCurlHierarchyPublishesTheNextPoseWithoutAnOSAdmissionGate",
+        "NotebookTests/NotebookPageMotionUXTests/testInstalledPaperParksOnlyItsCompletedOutputAndRevokesOnResizeOrCancellation",
+        "NotebookTests/NotebookPageMotionUXTests/testNewerEndpointAtTheSameOSTimeCompletesItsTurn",
+        "NotebookTests/PagePresentationTests/testEquivalentDecodedPagePublishesItsExactSourceToTheExistingReader",
+        "NotebookTests/PagePresentationTests/testEquivalentDecodedPageRebindsItsInstalledGraphicsReceipt",
+        "NotebookTests/PageTurnMaterialOwnerTests/testAvailabilityOnlyWakePreservesSuspendedCaptureButReplacementRejectsIt",
+        "NotebookTests/PageTurnMaterialOwnerTests/testRuntimeNeverWarmsOrReusesAPreviousTurnAndRetirementRejectsPendingPixels",
+        "NotebookTests/PreparedAgentElementViewTests/testRetainedPagePreparationStartsBeforeMountAndSurvivesConsumerReplacement",
+        "NotebookTests/PreparedAgentElementViewTests/testUnchangedProgramCheckpointDoesNotInvalidateThePageReadWindow"
+      ],
+      "mac": [
+        "NotebookMacTests/NotebookWorkspaceWritersTests"
+      ]
+    }
+  },
+  "finalMCPDelta": {
+    "changedInputs": [
+      "MCP/panel/session.ts"
+    ],
+    "nativeInputsUnchanged": true,
+    "macVerification": {
+      "path": "/private/tmp/notebook-cold-install-233-release-verify",
+      "sourceSHA256": "12f31745e3a7ea52b2c2bafad6946d798a9258d5ca1b4197fd9ee9a1c876400d",
+      "status": "passed",
+      "receiptSHA256": "d04f44a0b9a58213a5847f69aeef3a3c6f3b3fdde8affd8f48947cfb91f9e989",
+      "checks": {
+        "mac": {
+          "passedTests": 2,
+          "failedTests": 0,
+          "skippedTests": 0,
+          "totalTestCount": 2
+        }
+      },
+      "selectors": {
+        "commands": [],
+        "core": [],
+        "ipad": [],
+        "mac": [
+          "NotebookMacTests/NotebookWorkspaceWritersTests"
+        ]
+      }
+    }
+  },
+  "core": {
+    "tests": 2,
+    "result": "passed",
+    "sourceSHA256": "548a375076d467dba7fd3974e2dbf198f79c4c3ccfc18ddfea81adca6990edc4",
+    "log": "/private/tmp/notebook-cold-install-233-core-final.log",
+    "logSHA256": "296263ed73eb8b787b6c1f3a0747153979930a672cd451439f0853c1b6bf8f43",
+    "scope": "exact live program ID, normalization collisions/deletion, 100000 addressed basis reads",
+    "latencyClaim": false
+  },
+  "initialFailure": {
+    "sourceSHA256": "ba505e708ad97bba0e22d3eb68473d5326839297dcb6dd33adc2163d37f5a7d0",
+    "passedTests": 13,
+    "failedTests": 2,
+    "xcresult": "/private/tmp/notebook-cold-install-233-verify/ipad.xcresult",
+    "terminalTie": {
+      "operationID": "4E53D7BC-C818-401D-AA68-D228184EA821",
+      "presentedTime": 136985.94149891668,
+      "olderSequence": 1,
+      "olderProgress": 0.987947974606715,
+      "endpointSequence": 2,
+      "endpointProgress": 1,
+      "result": "endpoint rejected by strict timestamp guard; no didTurn",
+      "regressionFixedAndVerified": true
+    },
+    "strictFirstOS": {
+      "goalMilliseconds": 16.666666666666668,
+      "observedMilliseconds": [
+        24.29375,
+        30.199625,
+        33.221625,
+        33.679042,
+        43.266042,
+        40.4675
+      ],
+      "result": "failed",
+      "assertionUnchanged": true
+    }
+  },
+  "remaining": [
+    "first cold drawable discard lifecycle",
+    "WebKit policy IPC ready-time versus Main delivery",
+    "strict first-OS 16.667ms",
+    "hardware contact-to-display and full acceptance"
+  ]
+}

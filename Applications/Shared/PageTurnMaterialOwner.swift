@@ -297,8 +297,8 @@ final class PageTurnMaterialOwner {
   func prepareStaticSlots(readiness: PageTurnReadiness,
     onReady: @escaping @MainActor () -> Void,
     onFailure: @escaping @MainActor (PageTurnPreparationFailure) -> Void) {
-    notifySlotsReady = onReady
     guard let layers, let key else { return }
+    notifySlotsReady = key.staticSources.isEmpty ? nil : onReady
     slotReadiness = readiness
     if slotActivity !== readiness.activity {
       if let slotObserver { slotActivity?.removePreparationObserver(slotObserver) }
@@ -307,8 +307,13 @@ final class PageTurnMaterialOwner {
         guard case .elementFrames(let page, let changed) = change, let self,
           let readiness = self.slotReadiness, readiness.pageIndex == page else { return }
         if changed { self.invalidateFrame(reason: "slot_material") }
-        self.slotPreparationHasWake = true
-        if self.slotPreparation == nil { self.notifySlotsReady?() }
+        // Live frames already carry their provider version and availability.
+        // They never need the parent's static-slot preparation loop on a page
+        // whose slots are all live; their material/readiness edge remains below.
+        if self.key?.staticSources.isEmpty == false {
+          self.slotPreparationHasWake = true
+          if self.slotPreparation == nil { self.notifySlotsReady?() }
+        }
         self.refreshPassiveFrame()
         let capturable = self.isCapturable(readiness: readiness) && readiness.inkFrameIsReady?() == true
         if capturable != readiness.state.capturable {
@@ -317,7 +322,7 @@ final class PageTurnMaterialOwner {
         else { readiness.materialAvailabilityDidChange() }
       }
     }
-    guard slotPreparation == nil else { return }
+    guard !key.staticSources.isEmpty, slotPreparation == nil else { return }
     var missing: [(AgentElement, NotebookElementPresentation, [InkElementErasure], CGRect, SlotKey)] = []
     for layer in layers {
       guard case .element(let element, let presentation, let cuts, let frame) = layer,

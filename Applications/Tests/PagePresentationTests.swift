@@ -15,7 +15,7 @@ final class PagePresentationTests: XCTestCase {
     let decoded = try JSONDecoder().decode(PageDocument.self, from: JSONEncoder().encode(page))
     XCTAssertEqual(page, decoded, "A durable value comparison alone cannot notify this replacement")
     let item = UUID(), controller = UUID(), address = NotebookPagePreparationWindow.Address(itemID: item, index: 0, root: "accepted")
-    let window = NotebookPagePreparationWindow()
+    let window = model.notebookPagePreparation
     defer { _ = window.stop() }
     window.addresses[address] = page.id
     window.acceptedPages([page.id: page], model: model)
@@ -33,14 +33,27 @@ final class PagePresentationTests: XCTestCase {
       isVisible: true, onRenderReady: readiness, sourceVersion: entry.sourceVersion)
     @MainActor final class Changes { var count = 0 }
     let changes = Changes()
+    let sourceChanges = Changes()
     func observe() {
       withObservationTracking { _ = entry.document } onChange: {
         MainActor.assumeIsolated { changes.count += 1 }
       }
     }
+    func observeSource() {
+      withObservationTracking { _ = model.pagePresentationSource(page.id) } onChange: {
+        MainActor.assumeIsolated { sourceChanges.count += 1 }
+      }
+    }
     observe()
+    observeSource()
+    XCTAssertEqual(model.pagePresentationSource(page.id)?.elementSourceIdentity, page.elementSourceIdentity)
+    let neighbour = PageDocument(size: page.size, actor: UUID())
+    window.acceptedPages([page.id: page, neighbour.id: neighbour], model: model)
+    XCTAssertEqual(changes.count, 0)
+    XCTAssertEqual(sourceChanges.count, 0, "Accepting another page cannot invalidate this mounted source")
     window.acceptedPages([page.id: decoded], model: model)
     XCTAssertEqual(changes.count, 1, "The mounted reader must observe exact accepted root replacement")
+    XCTAssertEqual(sourceChanges.count, 1, "Presentation consumers observe their exact decoded replacement")
     XCTAssertTrue(readiness.acceptNotebookPage(page.id, from: window))
     XCTAssertTrue(readiness.notebookPageSource === entry)
     XCTAssertTrue(entry.preparations === preparations, "Rebinding does not remount the host or replace its runtime owner")
@@ -53,8 +66,14 @@ final class PagePresentationTests: XCTestCase {
     XCTAssertEqual(previous.page.elementSourceIdentity, page.elementSourceIdentity,
       "An old installation callback retains its original immutable source")
     observe()
+    observeSource()
     window.acceptedPages([page.id: decoded], model: model)
     XCTAssertEqual(changes.count, 1, "Unchanged accepted roots do not invalidate the page")
+    XCTAssertEqual(sourceChanges.count, 1)
+    window.acceptedPages([neighbour.id: neighbour], model: model)
+    XCTAssertTrue(entry.isRetired)
+    XCTAssertEqual(sourceChanges.count, 2, "Removing the entry invalidates its existing consumer")
+    XCTAssertNil(model.pagePresentationSource(page.id), "A retired source cannot survive through its old mount")
   }
 
   @MainActor

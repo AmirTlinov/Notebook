@@ -84,7 +84,7 @@ struct AgentOverlayView: View {
     let presentationID = readiness.prepare(sourceIdentity: sourceIdentity,
       elements: visible, materials: expected, erasedIDs: erasedIDs,
       pageSize: pageSize, erasure: .init(pageID: pageID,
-        stamp: (model.pages[pageID] ?? page).drawingStamp, erasures: erasures),
+        stamp: (model.pagePresentationSource(pageID) ?? page).drawingStamp, erasures: erasures),
       publish: { ready, receipt in
         onReady(ready)
         if ready { onErasure(receipt) }
@@ -228,6 +228,7 @@ struct AgentOverlayView: View {
   }
   private var presentation: Presentation?
   private var publisher: ((Bool, PageElementErasurePresentation) -> Void)?
+  private var published: (presentationID: UUID, ready: Bool)?
   private var sources: [String: AgentElement] = [:]
   private var materials: [String: NotebookInkMaterialReadiness] = [:]
   #if DEBUG
@@ -271,6 +272,12 @@ struct AgentOverlayView: View {
         || sources[element.id] == element)
         && (materials[element.id] ?? .init()).isReady(for: presentation.materials[element.id] ?? [])
     }
+    // Facts arrive separately for every installed source/material. Only a new
+    // immutable presentation or a readiness transition changes the parent's
+    // receipt; intermediate facts stay in this ledger. The presentation ID
+    // includes erasure requirements, so a new cut still receives its own ack.
+    guard published?.presentationID != presentation.id || published?.ready != ready else { return }
+    published = (presentation.id, ready)
     publisher(ready, presentation.erasure)
   }
 

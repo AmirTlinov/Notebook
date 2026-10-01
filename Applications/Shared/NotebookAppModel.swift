@@ -139,7 +139,13 @@ final class NotebookAppModel {
 
   func notebookPage(at index: Int, in itemID: UUID) -> PageDocument? {
     guard let root = notebookPageRoot(itemID), let id = pageAddresses[.init(itemID: itemID, index: index, root: root)] else { return nil }
-    return pages[id]
+    return pagePresentationSource(id)
+  }
+
+  /// The read window owns mounted source publication. Unmounted callers and
+  /// the initial loading shell still read the accepted model dictionary.
+  func pagePresentationSource(_ pageID: UUID) -> PageDocument? {
+    notebookPagePreparation.acceptedPage(pageID) ?? pages[pageID]
   }
 
   /// An unloaded existing sheet never certifies a blank page. The requested
@@ -193,7 +199,7 @@ final class NotebookAppModel {
         peerPublication.scopes[.init(kind: .page, id: page.id)] = prepared.inputScope
         pencilUndoHistory.restore(prepared.undo, for: .page(page.id))
         pencilUndoHistory.restoreRedo(prepared.redo, for: .page(page.id))
-        retainPreparedPages(near: address, selectedPageID: presence.notebookPageID)
+        retainPreparedPages(near: address, selectedPageID: presence.notebookPageID, directoryChanged: false)
         return
       } catch NotebookStorageError.transactionConflict {
         guard !Task.isCancelled, notebookPagePreparation.permits(address) else { return }
@@ -264,7 +270,7 @@ final class NotebookAppModel {
     return false
   }
 
-  private func retainPreparedPages(near address: PageAddress, selectedPageID: UUID?) {
+  private func retainPreparedPages(near address: PageAddress, selectedPageID: UUID?, directoryChanged: Bool = true) {
     let window = notebookPagePreparation.retainedIndices(in: address.itemID, root: address.root)
     let ordered = pages.keys.sorted { lhs, rhs in
       @MainActor func score(_ id: UUID) -> Int {
@@ -278,9 +284,13 @@ final class NotebookAppModel {
       return score(lhs) == score(rhs) ? lhs.uuidString < rhs.uuidString : score(lhs) < score(rhs)
     }
     let retained = Set(ordered.prefix(4))
-    pages = pages.filter { retained.contains($0.key) }
-    pageAddresses = pageAddresses.filter { retained.contains($0.value) && notebookPageRoot($0.key.itemID) == $0.key.root }
-    if var workspace {
+    let evicted = retained.count != pages.count
+    if evicted { pages = pages.filter { retained.contains($0.key) } }
+    let addresses = pageAddresses.filter { retained.contains($0.value) && notebookPageRoot($0.key.itemID) == $0.key.root }
+    if addresses != pageAddresses { pageAddresses = addresses }
+    // A page read only admits membership; it adds no directory nodes. Prune
+    // after actual eviction or a directory edit, then publish that result once.
+    if directoryChanged || evicted, var workspace {
       do { try workspace.retainPageProjection(retained); self.workspace = workspace }
       catch { publicationFailure = error.localizedDescription }
     }
@@ -771,7 +781,7 @@ final class NotebookAppModel {
     guard let value = nativeElementSource(reference) else { return nil }
     if let page = value.page, page.kind == .nativeText {
       return .init(reference:reference,address:.init(surface:.page(value.target.id),boardID:nil,
-        worldOrigin:nil,bounds:pages[value.target.id].map { .init(x:0,y:0,width:$0.size.width,height:$0.size.height) }),
+        worldOrigin:nil,bounds:pagePresentationSource(value.target.id).map { .init(x:0,y:0,width:$0.size.width,height:$0.size.height) }),
         frame:elementCommandDrafts[reference]?.frame ?? page.frame,source:elementCommandDrafts[reference]?.textSource ?? page.source,
         style:elementCommandDrafts[reference]?.textStyle ?? page.textStyle ?? .standard,page:page,basis:elementCommandDrafts[reference]?.basis ?? page.basis)
     }
@@ -4389,8 +4399,8 @@ final class NotebookAppModel {
   func nativeElementSource(_ reference: EditableElementReference) -> NotebookNativeElementSource? {
     switch reference {
     case .page(let owner,let id):
-      guard pages[owner] != nil else { return nil }
-      return .init(target:.init(kind:.page,id:owner),id:id,page:pages[owner]?.element(id:id))
+      guard let page = pagePresentationSource(owner) else { return nil }
+      return .init(target:.init(kind:.page,id:owner),id:id,page:page.element(id:id))
     case .spatial(let owner,let id):
       let element = boardHierarchy?.board(owner)?.element(id:id)
       guard boardHierarchy?.board(owner) != nil else { return nil }
@@ -4424,7 +4434,7 @@ final class NotebookAppModel {
   func programModelCut(focus: InteractiveElementReference) -> (source: AgentElement, basis: NotebookProgramStateBasis)? {
     switch focus {
     case .page(let pageID, let elementID):
-      guard !isPageBeingDeleted(pageID), let page = pages[pageID],
+      guard !isPageBeingDeleted(pageID), let page = pagePresentationSource(pageID),
         let source = page.element(id: elementID), source.kind == .web,
         let basis = page.programStateBasis(elementID) else { return nil }
       return (source, basis)

@@ -28,7 +28,7 @@ public struct NotebookProgramStateBasis: Equatable, Sendable {
 
 extension PageDocument {
   public func programStateBasis(_ id: String) -> NotebookProgramStateBasis? {
-    guard elements.contains(where: { $0.id == id && $0.kind == .web }) else { return nil }
+    guard elementProjection.exactElement(id)?.kind == .web else { return nil }
     return .init(elementID: id, metadata: collaboration, fallback: agentStamp)
   }
 

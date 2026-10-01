@@ -52,6 +52,7 @@ final class NotebookPagePreparationWindow {
     let preparations: PageAgentPreparationOwner
     let rasters: PageRasterPreparation
     private(set) var sourceVersion: SourceVersion
+    private(set) var isRetired = false
     @ObservationIgnored private var acceptedDocument: PageDocument
     var document: PageDocument { _ = sourceVersion; return acceptedDocument }
     @ObservationIgnored fileprivate var address: Address
@@ -63,15 +64,21 @@ final class NotebookPagePreparationWindow {
       preparations = .init(resources: resources)
     }
     fileprivate func accept(_ page: PageDocument, model: NotebookAppModel) {
+      guard !isRetired else { return }
       acceptedDocument = page
-      sourceVersion = .init(page)
+      let next = SourceVersion(page)
+      if sourceVersion != next { sourceVersion = next }
       preparations.reconcile(page: page, model: model)
     }
     func borrow() -> Mount {
       let id = UUID(); mounts.insert(id)
       return .init(entry: self, id: id)
     }
-    fileprivate func retire() { preparations.retire(afterUpdate: true) }
+    fileprivate func retire() {
+      guard !isRetired else { return }
+      isRetired = true
+      preparations.retire(afterUpdate: true)
+    }
   }
   @MainActor final class Mount {
     let entry: Entry
@@ -185,6 +192,14 @@ final class NotebookPagePreparationWindow {
       }
     }
     retireReaders(previous, previousItems: previousItems)
+  }
+
+  /// Mounted content reads the existing addressed slot. Retirement invalidates
+  /// that same dependency before the slot leaves the finite read window.
+  func acceptedPage(_ pageID: UUID) -> PageDocument? {
+    guard let entry = entries.first(where: { $0.key.pageID == pageID })?.value,
+      !entry.isRetired else { return nil }
+    return entry.document
   }
 
   func presentation(itemID: UUID, boardID: UUID) -> ReaderPresentation? {

@@ -8,6 +8,72 @@ struct NotebookPageElementCommandTests {
   private let elementID = "program/a~😀"
   private enum Fault: Error { case disk }
 
+  @Test func programBasisRequiresTheExactLiveWebOwnerAfterIndexedLookup() throws {
+    let actor = UUID(), id = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"
+    let program = AgentElement(id: id, kind: .web, frame: .init(x: 0, y: 0, width: 100, height: 100),
+      source: "Program", html: "<button>Run</button>")
+    let text = AgentElement(id: "text", kind: .nativeText, frame: .init(x: 100, y: 0, width: 100, height: 100),
+      source: "Text", html: "")
+    let page = PageDocument(size: .init(width: 834, height: 1194), actor: actor, elements: [program, text])
+    let original = try #require(page.programStateBasis(id))
+    #expect(page.element(id: id.lowercased()) == program, "The projection normalizes UUID lookup")
+    #expect(page.programStateBasis(id.lowercased()) == nil, "A runtime owner must retain its exact source ID")
+    #expect(page.programStateBasis(text.id) == nil)
+    #expect(page.programStateBasis("missing") == nil)
+
+    var removed = page
+    let changed = removed.replaceElements([text], actor: actor)
+    #expect(changed)
+    #expect(removed.programStateBasis(id) == nil, "A retired runtime cannot borrow the warmed original projection")
+    #expect(page.programStateBasis(id) == original, "The retained immutable page still owns its original source")
+
+    let lowerID = id.lowercased()
+    let second = AgentElement(id: lowerID, kind: .web, frame: program.frame, source: "Second", html: "<p>Second</p>")
+    let dual = PageDocument(size: page.size, actor: actor, elements: [program, second])
+    let secondBasis = try #require(dual.programStateBasis(lowerID))
+    #expect(dual.programStateBasis(id) != nil, "Both exact valid sources survive their normalized collision")
+    #expect(dual.element(id: lowerID) == program, "Normalized lookup retains its existing first-source contract")
+    var updated = dual
+    let stateChanged = updated.replaceProgramState(.number(1), elementID: lowerID, actor: actor)
+    #expect(stateChanged)
+    #expect(updated.elementProjection.exactElement(lowerID)?.state == .number(1))
+    #expect(updated.elementProjection.exactElement(id)?.state == program.state)
+    #expect(updated.programStateBasis(lowerID)?.hasNewerState(than: secondBasis) == true)
+  }
+
+  @Test func oneHundredThousandWebOwnersReadTheirOwnProgramBasis() throws {
+    // A sparse archive uses the aggregate frontier for implicit field versions;
+    // eager per-field metadata is independently bounded at 100000 fields.
+    struct Archive: Encodable {
+      let format = PageDocument.formatVersion
+      let id = UUID()
+      let size = PageSize(width: 834, height: 1194)
+      let drawingData = Data()
+      let drawingStamp: VersionStamp
+      let agentStamp: VersionStamp
+      let elements: [AgentElement]
+    }
+    let stamp = VersionStamp(counter: 17, actor: UUID())
+    let elements = (0..<100_000).map { index in
+      AgentElement(id: "program-\(index)", kind: .web, frame: .init(x: 0, y: 0, width: 100, height: 100),
+        source: "Program \(index)", html: "<button>Run</button>")
+    }
+    let archive = Archive(drawingStamp: stamp, agentStamp: stamp, elements: elements)
+    let page = try JSONDecoder().decode(PageDocument.self, from: JSONEncoder().encode(archive))
+    var accepted = 0
+    for owner in elements {
+      if page.programStateBasis(owner.id) != nil { accepted += 1 }
+    }
+    #expect(accepted == elements.count)
+    for index in [0, 50_000, 99_999] {
+      let id = elements[index].id, basis = try #require(page.programStateBasis(id))
+      let keys = ["id", "content", "css", "javaScript", "state"].map { fieldKey(["elements", id, $0]) }
+      #expect(Set(basis.fields.keys) == Set(keys))
+      #expect(basis.fields.values.allSatisfy { $0 == ContentFieldVersion(stamp: stamp, human: true) })
+    }
+    #expect(page.programStateBasis("program-100000") == nil)
+  }
+
   private func fixture(largeNeighbour: Bool = false,
     _ body: (NotebookStore, UUID, PageDocument) throws -> Void) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("page-element-" + UUID().uuidString)

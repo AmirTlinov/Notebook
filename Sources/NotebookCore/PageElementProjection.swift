@@ -26,10 +26,22 @@ struct PageElementProjection: Sendable {
   let presentation:NotebookGraphicPresentation
   private let source:[AgentElement]
   private let positions:[String:Int]
+  private let exactCollisionPositions:[String:Int]
   private let nonGraphics:[Int]
   init(_ page:PageDocument) {
     source=page.elements
-    positions=Dictionary(page.elements.enumerated().map { (collaborationIdentity($0.element.id),$0.offset) },uniquingKeysWith:{ a,_ in a })
+    var indexedPositions:[String:Int]=[:],collisions:[String:Int]=[:]
+    indexedPositions.reserveCapacity(page.elements.count)
+    for (offset,element) in page.elements.enumerated() {
+      let identity=collaborationIdentity(element.id)
+      if let first=indexedPositions[identity] {
+        // Exact runtime IDs can differ while sharing one collaboration ID.
+        // Only those collisions need additional positions.
+        collisions[page.elements[first].id]=first
+        collisions[element.id]=offset
+      } else { indexedPositions[identity]=offset }
+    }
+    positions=indexedPositions;exactCollisionPositions=collisions
     nonGraphics=page.elements.indices.filter { page.elements[$0].kind != .group && page.elements[$0].graphic == nil }
     presentation = .init(page.elements.compactMap { element in
       guard let graphic=element.graphic else { return nil }
@@ -42,12 +54,17 @@ struct PageElementProjection: Sendable {
   private init(source:[AgentElement], reusing prepared:Self) {
     self.source=source
     graph=prepared.graph;presentation=prepared.presentation
-    positions=prepared.positions;nonGraphics=prepared.nonGraphics
+    positions=prepared.positions;exactCollisionPositions=prepared.exactCollisionPositions
+    nonGraphics=prepared.nonGraphics
   }
   fileprivate func replacingProgramState(with source:[AgentElement]) -> Self {
     .init(source:source,reusing:self)
   }
   func element(_ id:String) -> AgentElement? { positions[collaborationIdentity(id)].map { source[$0] } }
+  func exactElement(_ id:String) -> AgentElement? {
+    guard let position=exactCollisionPositions[id] ?? positions[collaborationIdentity(id)],source[position].id == id else { return nil }
+    return source[position]
+  }
   func elements(graphicIDs:Set<String>) -> [AgentElement] {
     let visible=graphicIDs.compactMap { positions[collaborationIdentity($0)] }.filter { source[$0].graphic != nil }
     return (nonGraphics+visible).sorted().map { source[$0] }

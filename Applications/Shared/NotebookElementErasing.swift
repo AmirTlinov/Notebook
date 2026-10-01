@@ -371,7 +371,7 @@ extension NotebookAppModel {
   }
 
   func pagePresentationErasures(_ page: PageDocument) -> InkElementErasureMap {
-    elementErasureCache.pagePresentation(pages[page.id] ?? page, working: workingElementErasures)
+    elementErasureCache.pagePresentation(pagePresentationSource(page.id) ?? page, working: workingElementErasures)
   }
 
   func pageEraserSource(pageID: UUID) -> NotebookPageEraserSource? {
@@ -436,7 +436,7 @@ extension NotebookAppModel {
 
   func elementErasures(on surface: SurfaceID, fallback: SpatialInkJournal? = nil) -> InkElementErasureMap {
     var result: InkElementErasureMap
-    if surface.kind == .page, let id = surface.ownerID, let page = pages[id] {
+    if surface.kind == .page, let id = surface.ownerID, let page = pagePresentationSource(id) {
       result = elementErasureCache.page(page)
     } else if loadedInkSurfaces.contains(surface) || fallback == nil {
       result = elementErasureCache.masks(on: surface, journal: spatialInk)

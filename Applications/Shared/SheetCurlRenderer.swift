@@ -677,10 +677,7 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
     guard SheetCurlGPU.shared.pagePipeline != nil else { throw SceneRenderError.snapshotPending("page_pipeline") }
     cancelCoverContextSubscription()
     coverContextRequested = false
-    retirePageExecution()
-    if pageDrawableRequest == nil {
-      try configurePageOutput(size: .init(width: leaf.texture.width, height: leaf.texture.height))
-    }
+    try preparePageOutput(size: .init(width: leaf.texture.width, height: leaf.texture.height))
     sourceCover = nil; coverImage = nil; sourceCoverFrame = nil
     pagePresentationGeneration &+= 1
     pageFrames = (leaf, base)
@@ -762,6 +759,22 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
     pool.layer.presentsWithTransaction = true
     pageCARevision &+= 1
     CATransaction.commit()
+  }
+
+  private func preparePageOutput(size: CGSize) throws {
+    configuringPageDrawable = true
+    defer { configuringPageDrawable = false }
+    retirePageExecution()
+    if pageDrawableRequest != nil {
+      // The accepted pair owns this desired size while the old physical
+      // acquisition drains. Its completion resumes this same installation.
+      pendingPageDrawableSize = size
+      preparePageClock()
+      return
+    }
+    pendingPageDrawableSize = nil
+    try configurePageOutput(size: size)
+    preparePageClock()
   }
 
   private func revokeParkedPageOutput(_ pool: SheetCurlPageOutput) {
@@ -867,18 +880,8 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
   func prepareDrawable(size: CGSize) {
     #if os(iOS)
     if onDisplayUpdate != nil {
-      configuringPageDrawable = true
-      defer { configuringPageDrawable = false }
-      retirePageExecution()
-      if pageDrawableRequest != nil {
-        // Every page-layer mutation waits for the old physical acquisition.
-        pendingPageDrawableSize = size
-        return
-      }
-      pendingPageDrawableSize = nil
-      do { try configurePageOutput(size: size) }
+      do { try preparePageOutput(size: size) }
       catch { failPageExecution(error); return }
-      preparePageClock()
       return
     }
     #endif
@@ -1118,8 +1121,10 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
       NotebookMetalFrameReadiness.observe(drawable, commandBuffer: commandBuffer) { [weak self, frames] readiness in
         guard let self, self.pageOperationID == operationID,
           self.pagePresentationGeneration == presentationGeneration, self.pageFrames?.leaf === frames.leaf else { return }
+        // A display boundary may contain several newer drawable receipts.
+        // Equal OS time cannot discard the accepted successor's shown pose.
         if readiness.isReady, sequence > self.pagePresentedSequence,
-          readiness.presentedTime == nil || self.pagePresentedTime == nil || readiness.presentedTime! > self.pagePresentedTime! {
+          readiness.presentedTime == nil || self.pagePresentedTime == nil || readiness.presentedTime! >= self.pagePresentedTime! {
           self.presentedPagePose = pose
           self.pagePresentedSequence = sequence
           self.pagePresentedTime = readiness.presentedTime
