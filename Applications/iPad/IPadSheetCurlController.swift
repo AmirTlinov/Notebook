@@ -36,6 +36,9 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
   /// Optional timing at the owner that borrows the exact immutable frame pair.
   var onFramesAcquired: ((FrameAcquisitionTiming) -> Void)?
   private(set) var page: UIViewController?
+  /// The installed page supplies its own opaque, clipped paper backdrop.
+  /// Arbitrary native pages retain the ordinary revoked-visibility path.
+  var idleOutputHost: (UIViewController) -> PageTurnOutputParkingHost? = { _ in nil }
   let pan = UIPanGestureRecognizer()
   private let curl = SheetCurlMetalView(frame: .zero)
   private var panDirection: Direction?
@@ -449,12 +452,16 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
     }
     page = completed ? motion.target : motion.source
     view.bringSubviewToFront(page!.view)
-    curl.isHidden = true; curl.releaseSource(presented: presented)
+    view.sendSubviewToBack(curl)
+    let host = presented ? page.flatMap(idleOutputHost) : nil
+    curl.releaseSource(presented: presented,
+      idleOutputHost: host?.window === view.window ? host : nil)
   }
 
   func cancelMotion(outcome: PageTurnOutcome = .cancelled, notify: Bool = true) {
     continuedContact = nil
     if motion != nil { finish(completed: false, outcome: outcome, notify: notify) }
+    else if outcome == .cancelled { curl.releaseSource() }
   }
   isolated deinit { frameAcquisition?.cancel(); curl.releaseSource() }
 

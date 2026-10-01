@@ -893,6 +893,14 @@ import XCTest
       }
       let start = ContinuousClock.now
       try await turn(owner, forward: forward, completes: true)
+      if index < 5 {
+        let installed = try XCTUnwrap(owner.sheetController.page)
+        let backdrop = try XCTUnwrap(owner.sheetController.idleOutputHost(installed),
+          "The actual installed notebook paper supplies its clipped background")
+        let curl = try XCTUnwrap(owner.sheetController.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
+        XCTAssertTrue(curl.pageOutputLayer?.superlayer === backdrop.layer,
+          "A shown endpoint remains in the actual paper owner, including reverse and eviction")
+      }
       try await shown("leaf-\(step)-\(index)", window: scene.window,
         probes: leafProbes(index, scene.pageToWindow), since: start, budget: NotebookUXObservation.opening,
         acknowledged: { model.activePage.map { model.pagePresentations.isPresented($0) } == true })

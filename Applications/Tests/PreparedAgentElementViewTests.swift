@@ -348,7 +348,7 @@ final class PreparedAgentElementViewTests: XCTestCase {
     accept(input: true, focused: true)
     // This grants exactly one constructor. Input priority must update the
     // existing waiter ahead of earlier unrelated work, without reacquisition.
-    first.finishConstruction()
+    first.finishConstruction(elapsed: .zero)
     await owner.waitForPreparation()
     let session = try XCTUnwrap(owner.session), token = try XCTUnwrap(session.coordinator.loadToken)
     XCTAssertEqual(requests, [acceptedRequest])

@@ -203,7 +203,7 @@ struct PageSurface: View {
       .frame(width: page.size.width, height: page.size.height)
       .background(PagePresentationView(page: page, isCurrent: isCurrent,
         isVisible: isVisible, readiness:readiness,
-        activity: onRenderReady.activity, onVisibleRegion: { region in
+        activity: onRenderReady.activity, turnReadiness:onRenderReady, onVisibleRegion: { region in
           onRenderReady.agentPreparations?.updateViewport(page: page, model: model, display: graphicDisplay,
             visibleRegion: region, context: onRenderReady.rasterContext)
           visibleRegion = region

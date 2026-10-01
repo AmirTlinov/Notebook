@@ -347,29 +347,63 @@ final class InkCanvasLifecycleTests: XCTestCase {
     let window=UIWindow(windowScene:scene),controller=UIViewController()
     window.rootViewController=controller;controller.view.backgroundColor = .white
     let canvas=InkCanvasView(frame:.zero)
-    controller.view.addSubview(canvas);window.makeKeyAndVisible()
     defer {
+      canvas.onFirstFrameEvent=nil;canvas.onContactFrameResolved=nil
       canvas.removeFromSuperview();window.isHidden=true;window.rootViewController=nil
       previous?.makeKey()
     }
     canvas.projectPage(region:.init(x:0,y:0,width:160,height:160),
       sourceSize:.init(width:160,height:160),pixelDensity:2)
-    canvas.displayActiveStroke(handoffPencil())
-    let deadline=ContinuousClock.now + .seconds(2)
-    while canvas.pendingFirstPresentationID == nil,ContinuousClock.now < deadline {
+    let actor=UUID(),page=PageDocument(size:.init(width:160,height:160),actor:actor)
+    try page.prepareInkForPresentation()
+    canvas.apply(try page.inkDrawing())
+    let preparationDeadline=ContinuousClock.now + .seconds(2)
+    while !canvas.pageGeometryIsReady,ContinuousClock.now < preparationDeadline {
       try await Task.sleep(for:.milliseconds(1))
     }
-    let first=try XCTUnwrap(canvas.pendingFirstPresentationID,
-      "The cold drawable must own an observable transaction until its own resolution")
-    let submitted=canvas.drawableRequestCount
-    // Lift changes accepted content while the first real drawable is pending.
-    // It cannot relinquish that drawable's reveal or admit a competing one in
-    // this actor turn. No fake frame/receipt or forced CA transaction is used.
-    canvas.commitActiveStroke()
-    canvas.draw()
-    XCTAssertEqual(canvas.pendingFirstPresentationID,first)
-    XCTAssertEqual(canvas.drawableRequestCount,submitted)
+    XCTAssertTrue(canvas.pageGeometryIsReady)
+    let stroke=handoffPencil(),action=stroke.measured.frozen().restoredAction()
+    let change=try page.prepareLiveInkChange(.append(action),stamp:.init(counter:1,actor:actor))
+    var first:UUID?,firstCount:Int?,published=Set<UUID>(),resolved:[UUID:NotebookMetalFrameReadiness]=[:]
+    var trace:[String]=[],firstResolutionCount:Int?
+    canvas.onContactFrameResolved={ receipt in
+      trace.append("contact \(receipt.frameID) \(receipt.completion); timing=\(String(describing:receipt.timing))")
+    }
+    canvas.onFirstFrameEvent={ event in
+      trace.append("owner \(event); clock=\(CACurrentMediaTime()); drawables=\(canvas.drawableRequestCount); opacity=\(canvas.layer.opacity)")
+      switch event {
+      case .willPublish(let submission):
+        guard first == nil else {return}
+        first=submission;firstCount=canvas.drawableRequestCount
+        XCTAssertEqual(canvas.pendingFirstPresentationID,submission)
+        let submitted=canvas.drawableRequestCount
+        // Actual GPU scheduling precedes this actor turn. Lift and accepted
+        // binding change the content revision here, before its real publication.
+        canvas.commitActiveStroke(action);canvas.settle(change);canvas.draw()
+        XCTAssertEqual(canvas.pendingFirstPresentationID,submission)
+        XCTAssertEqual(canvas.drawableRequestCount,submitted)
+        XCTAssertFalse(canvas.isStableFramePresented,"The old reveal cannot acknowledge the accepted revision")
+      case .published(let submission):published.insert(submission)
+      case .rejected:break
+      case .resolved(let submission,let readiness):
+        resolved[submission]=readiness
+        if submission == first {firstResolutionCount=canvas.drawableRequestCount}
+      }
+    }
+    canvas.displayActiveStroke(stroke)
+    controller.view.addSubview(canvas);window.makeKeyAndVisible()
     try await waitForStableFrame(canvas)
+    let firstSubmission=try XCTUnwrap(first)
+    let evidence=trace.joined(separator:"\n"),attachment=XCTAttachment(string:evidence)
+    attachment.name="first-lift-publication-and-OS-outcome";attachment.lifetime = .keepAlways;add(attachment)
+    XCTAssertTrue(published.contains(firstSubmission),
+      "Binding the same measured material must publish the original reveal without another clock: \(evidence)")
+    XCTAssertNotNil(resolved[firstSubmission],"The original reveal must finish through its own real OS outcome: \(evidence)")
+    XCTAssertEqual(firstResolutionCount,firstCount,
+      "No successor drawable may replace the reveal before its OS presentation/discard: \(evidence)")
+    XCTAssertEqual(canvas.drawableRequestCount,try XCTUnwrap(firstCount)+1,
+      "One current accepted revision follows the original OS outcome: \(evidence)")
+    canvas.onFirstFrameEvent=nil;canvas.onContactFrameResolved=nil
     XCTAssertNil(canvas.pendingFirstPresentationID)
     XCTAssertEqual(canvas.layer.opacity,1)
     XCTAssertTrue(canvas.frameReadiness?.isReady == true)
@@ -416,6 +450,65 @@ final class InkCanvasLifecycleTests: XCTestCase {
       try NotebookUXObservation.Pixels(window:window).matches([
         (canvas.convert(.init(x:80,y:145),to:window),.black)])
     }
+    canvas.removeFromSuperview()
+    for invalidation in ["undo","crop","source","eraser","reset"] {
+      try await firstRevealRejectsChangedPixels(invalidation,window:window,controller:controller)
+    }
+  }
+
+  @MainActor
+  private func firstRevealRejectsChangedPixels(_ invalidation:String,window:UIWindow,controller:UIViewController) async throws {
+    let canvas=InkCanvasView(frame:.zero),actor=UUID()
+    defer {
+      canvas.onFirstFrameEvent=nil;canvas.onContactFrameResolved=nil
+      canvas.removeFromSuperview()
+    }
+    canvas.projectPage(region:.init(x:0,y:0,width:160,height:160),sourceSize:.init(width:210,height:160),pixelDensity:2)
+    let page=PageDocument(size:.init(width:210,height:160),actor:actor)
+    try page.prepareInkForPresentation()
+    let base=try page.inkDrawing(),stroke=handoffPencil(),action=stroke.measured.frozen().restoredAction()
+    let change=try page.prepareLiveInkChange(.append(action),stamp:.init(counter:1,actor:actor))
+    XCTAssertTrue(page.publishLiveInkChange(change))
+    let undo=try page.prepareLiveInkChange(.setActive([action.id],false),stamp:.init(counter:2,actor:actor))
+    canvas.apply(base)
+    let deadline=ContinuousClock.now + .seconds(2)
+    while !canvas.pageGeometryIsReady,ContinuousClock.now < deadline {try await Task.sleep(for:.milliseconds(1))}
+    XCTAssertTrue(canvas.pageGeometryIsReady)
+    var first:UUID?,shown=Set<UUID>(),published=Set<UUID>(),rejected=Set<UUID>()
+    canvas.onContactFrameResolved={ receipt in if receipt.completion.isReady {shown.insert(receipt.frameID)} }
+    canvas.onFirstFrameEvent={ event in
+      switch event {
+      case .published(let submission):published.insert(submission);return
+      case .rejected(let submission):rejected.insert(submission);return
+      case .resolved:return
+      case .willPublish(let submission):guard first == nil else {return};first=submission
+      }
+      canvas.commitActiveStroke(action);canvas.settle(change)
+      switch invalidation {
+      case "undo":canvas.settle(undo)
+      case "crop":canvas.projectPage(region:.init(x:50,y:0,width:160,height:160),
+        sourceSize:.init(width:210,height:160),pixelDensity:2)
+      case "source":canvas.apply(base)
+      case "eraser":
+        let eraser=ActiveEraserStroke()
+        eraser.replaceMeasuredTail(from:0,with:[20.0,140].map {x in
+          .init(point:.init(x:x,y:145),timeOffset:0,width:20,opacity:1,force:1,azimuth:0,altitude:1)
+        })
+        canvas.displayActiveEraser(eraser);canvas.commitActiveEraser()
+      case "reset":canvas.resetPagePresentation();canvas.apply(base)
+      default:preconditionFailure("Unknown first-reveal invalidation")
+      }
+    }
+    canvas.displayActiveStroke(stroke);controller.view.addSubview(canvas)
+    try await waitForStableFrame(canvas)
+    let original=try XCTUnwrap(first)
+    XCTAssertTrue(rejected.contains(original),"\(invalidation) must retire the original reveal at publication")
+    XCTAssertFalse(published.contains(original),"\(invalidation) must reject obsolete material before exposing its layer")
+    XCTAssertFalse(shown.contains(original),
+      "\(invalidation) changed pixels: the lifted first contact cannot reveal its obsolete drawable")
+    let probe=CGPoint(x:invalidation == "crop" ? 120:80,y:145)
+    XCTAssertTrue(try NotebookUXObservation.Pixels(window:window).matches([
+      (canvas.convert(probe,to:window),.paper)]),"\(invalidation): the current source must show the replacement pixels")
   }
 
   @MainActor

@@ -1,0 +1,994 @@
+{
+  "scope": "Selected source timestamps from bounded diagnostic observation; timing is not latency acceptance",
+  "originUptime": 126298.6739109167,
+  "processID": 7211,
+  "events": [
+    {
+      "deliveryRunLoopPass": 0,
+      "deliveryUICycle": 0,
+      "stage": "curl_command_enter",
+      "uptime": 126298.67393737503
+    },
+    {
+      "deliveryRunLoopPass": 0,
+      "deliveryUICycle": 0,
+      "stage": "curl_command_return",
+      "uptime": 126298.67407462503
+    },
+    {
+      "deliveryRunLoopPass": 3,
+      "deliveryUICycle": 1,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "0",
+      "stage": "curl_prepared",
+      "uptime": 126298.67467933336
+    },
+    {
+      "deadline": 126298.68931383334,
+      "deliveryRunLoopPass": 11,
+      "deliveryUICycle": 2,
+      "immediatePresentationExpected": false,
+      "modelTime": 126298.68098058335,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "performingLowLatencyPhases": false,
+      "source": "1",
+      "stage": "curl_afterEvents",
+      "targetPresentation": 126298.69764708335,
+      "uptime": 126298.68032258336
+    },
+    {
+      "deadline": 126298.68931383334,
+      "deliveryRunLoopPass": 11,
+      "deliveryUICycle": 2,
+      "immediatePresentationExpected": false,
+      "modelTime": 126298.68098058335,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "performingLowLatencyPhases": false,
+      "source": "1",
+      "stage": "curl_exposed",
+      "targetPresentation": 126298.69764708335,
+      "uptime": 126298.68142595836
+    },
+    {
+      "deadline": 126298.68931383334,
+      "deliveryRunLoopPass": 11,
+      "deliveryUICycle": 2,
+      "immediatePresentationExpected": false,
+      "modelTime": 126298.68098058335,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "performingLowLatencyPhases": false,
+      "source": "1",
+      "stage": "curl_beforePresent",
+      "targetPresentation": 126298.69764708335,
+      "uptime": 126298.68143312502
+    },
+    {
+      "deadline": 126298.68931383334,
+      "deliveryRunLoopPass": 11,
+      "deliveryUICycle": 2,
+      "immediatePresentationExpected": false,
+      "modelTime": 126298.68098058335,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "performingLowLatencyPhases": false,
+      "source": "1",
+      "stage": "curl_afterPresent",
+      "targetPresentation": 126298.69764708335,
+      "uptime": 126298.68418058337
+    },
+    {
+      "deadline": 126298.68931383334,
+      "deliveryRunLoopPass": 11,
+      "deliveryUICycle": 2,
+      "immediatePresentationExpected": false,
+      "modelTime": 126298.68098058335,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "performingLowLatencyPhases": false,
+      "source": "1",
+      "stage": "curl_beforeCommit",
+      "targetPresentation": 126298.69764708335,
+      "uptime": 126298.6842056667
+    },
+    {
+      "deadline": 126298.68931383334,
+      "deliveryRunLoopPass": 11,
+      "deliveryUICycle": 2,
+      "immediatePresentationExpected": false,
+      "modelTime": 126298.68098058335,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "performingLowLatencyPhases": false,
+      "source": "1",
+      "stage": "curl_afterCommit",
+      "targetPresentation": 126298.69764708335,
+      "uptime": 126298.68442137503
+    },
+    {
+      "deadline": 126298.68931383334,
+      "deliveryRunLoopPass": 11,
+      "deliveryUICycle": 2,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "0",
+      "stage": "curl_clock_request",
+      "targetPresentation": 126298.69764708335,
+      "uptime": 126298.67468562502
+    },
+    {
+      "deadline": 126298.68931383334,
+      "deliveryRunLoopPass": 11,
+      "deliveryUICycle": 2,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "0",
+      "stage": "curl_update_received",
+      "targetPresentation": 126298.69764708335,
+      "uptime": 126298.6800776667
+    },
+    {
+      "deadline": 126298.68931383334,
+      "deliveryRunLoopPass": 11,
+      "deliveryUICycle": 2,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "0",
+      "stage": "curl_encode",
+      "targetPresentation": 126298.69764708335,
+      "uptime": 126298.68007812503
+    },
+    {
+      "deadline": 126298.68931383334,
+      "deliveryRunLoopPass": 11,
+      "deliveryUICycle": 2,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "0",
+      "stage": "curl_submit",
+      "targetPresentation": 126298.69764708335,
+      "uptime": 126298.6802979167
+    },
+    {
+      "deadline": 126298.68931383334,
+      "deliveryRunLoopPass": 11,
+      "deliveryUICycle": 2,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "0",
+      "stage": "curl_scheduled",
+      "targetPresentation": 126298.69764708335,
+      "uptime": 126298.68128920835
+    },
+    {
+      "deadline": 126298.68931383334,
+      "deliveryRunLoopPass": 11,
+      "deliveryUICycle": 2,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "0",
+      "stage": "curl_gpu_start",
+      "targetPresentation": 126298.69764708335,
+      "uptime": 126298.681491875
+    },
+    {
+      "deadline": 126298.68931383334,
+      "deliveryRunLoopPass": 11,
+      "deliveryUICycle": 2,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "0",
+      "stage": "curl_gpu_end",
+      "targetPresentation": 126298.69764708335,
+      "uptime": 126298.682073125
+    },
+    {
+      "deadline": 126298.68931383334,
+      "deliveryRunLoopPass": 11,
+      "deliveryUICycle": 2,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "0",
+      "stage": "curl_drawable_requested",
+      "targetPresentation": 126298.69764708335,
+      "uptime": 126298.67468962503
+    },
+    {
+      "deadline": 126298.68931383334,
+      "deliveryRunLoopPass": 11,
+      "deliveryUICycle": 2,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "0",
+      "stage": "curl_drawable_worker_began",
+      "targetPresentation": 126298.69764708335,
+      "uptime": 126298.67469775003
+    },
+    {
+      "deadline": 126298.68931383334,
+      "deliveryRunLoopPass": 11,
+      "deliveryUICycle": 2,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "0",
+      "stage": "curl_next_drawable_began",
+      "targetPresentation": 126298.69764708335,
+      "uptime": 126298.67469779169
+    },
+    {
+      "deadline": 126298.68931383334,
+      "deliveryRunLoopPass": 11,
+      "deliveryUICycle": 2,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "0",
+      "stage": "curl_next_drawable_returned",
+      "targetPresentation": 126298.69764708335,
+      "uptime": 126298.67539262502
+    },
+    {
+      "deadline": 126298.68931383334,
+      "deliveryRunLoopPass": 11,
+      "deliveryUICycle": 2,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "0",
+      "stage": "curl_drawable_drained",
+      "targetPresentation": 126298.69764708335,
+      "uptime": 126298.67539333337
+    },
+    {
+      "deadline": 126298.68931383334,
+      "deliveryRunLoopPass": 11,
+      "deliveryUICycle": 2,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "0",
+      "stage": "curl_drawable_main_delivery_before_take",
+      "targetPresentation": 126298.69764708335,
+      "uptime": 126298.67541066669
+    },
+    {
+      "deadline": 126298.68931383334,
+      "deliveryRunLoopPass": 11,
+      "deliveryUICycle": 2,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "0",
+      "stage": "curl_drawable_taken",
+      "targetPresentation": 126298.69764708335,
+      "uptime": 126298.68004479169
+    },
+    {
+      "deliveryRunLoopPass": 11,
+      "deliveryUICycle": 2,
+      "source": "0",
+      "stage": "curl_dropped_callback",
+      "uptime": 126298.6845790417
+    },
+    {
+      "deadline": 126298.6976505,
+      "deliveryRunLoopPass": 13,
+      "deliveryUICycle": 2,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "1",
+      "stage": "curl_clock_request",
+      "targetPresentation": 126298.70598375001,
+      "uptime": 126298.67468562502
+    },
+    {
+      "deadline": 126298.6976505,
+      "deliveryRunLoopPass": 13,
+      "deliveryUICycle": 2,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "1",
+      "stage": "curl_update_received",
+      "targetPresentation": 126298.70598375001,
+      "uptime": 126298.68445204169
+    },
+    {
+      "deadline": 126298.6976505,
+      "deliveryRunLoopPass": 13,
+      "deliveryUICycle": 2,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "1",
+      "stage": "curl_encode",
+      "targetPresentation": 126298.70598375001,
+      "uptime": 126298.68445245836
+    },
+    {
+      "deadline": 126298.6976505,
+      "deliveryRunLoopPass": 13,
+      "deliveryUICycle": 2,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "1",
+      "stage": "curl_submit",
+      "targetPresentation": 126298.70598375001,
+      "uptime": 126298.68450183336
+    },
+    {
+      "deadline": 126298.6976505,
+      "deliveryRunLoopPass": 13,
+      "deliveryUICycle": 2,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "1",
+      "stage": "curl_scheduled",
+      "targetPresentation": 126298.70598375001,
+      "uptime": 126298.68469420836
+    },
+    {
+      "deadline": 126298.6976505,
+      "deliveryRunLoopPass": 13,
+      "deliveryUICycle": 2,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "1",
+      "stage": "curl_gpu_start",
+      "targetPresentation": 126298.70598375001,
+      "uptime": 126298.68478187501
+    },
+    {
+      "deadline": 126298.6976505,
+      "deliveryRunLoopPass": 13,
+      "deliveryUICycle": 2,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "1",
+      "stage": "curl_gpu_end",
+      "targetPresentation": 126298.70598375001,
+      "uptime": 126298.68520766667
+    },
+    {
+      "deadline": 126298.6976505,
+      "deliveryRunLoopPass": 13,
+      "deliveryUICycle": 2,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "1",
+      "stage": "curl_drawable_requested",
+      "targetPresentation": 126298.70598375001,
+      "uptime": 126298.68007312503
+    },
+    {
+      "deadline": 126298.6976505,
+      "deliveryRunLoopPass": 13,
+      "deliveryUICycle": 2,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "1",
+      "stage": "curl_drawable_worker_began",
+      "targetPresentation": 126298.70598375001,
+      "uptime": 126298.68010225003
+    },
+    {
+      "deadline": 126298.6976505,
+      "deliveryRunLoopPass": 13,
+      "deliveryUICycle": 2,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "1",
+      "stage": "curl_next_drawable_began",
+      "targetPresentation": 126298.70598375001,
+      "uptime": 126298.68010229169
+    },
+    {
+      "deadline": 126298.6976505,
+      "deliveryRunLoopPass": 13,
+      "deliveryUICycle": 2,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "1",
+      "stage": "curl_next_drawable_returned",
+      "targetPresentation": 126298.70598375001,
+      "uptime": 126298.6841491667
+    },
+    {
+      "deadline": 126298.6976505,
+      "deliveryRunLoopPass": 13,
+      "deliveryUICycle": 2,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "1",
+      "stage": "curl_drawable_drained",
+      "targetPresentation": 126298.70598375001,
+      "uptime": 126298.68415070836
+    },
+    {
+      "deadline": 126298.6976505,
+      "deliveryRunLoopPass": 13,
+      "deliveryUICycle": 2,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "1",
+      "stage": "curl_drawable_taken",
+      "targetPresentation": 126298.70598375001,
+      "uptime": 126298.68443970836
+    },
+    {
+      "deadline": 126298.6976505,
+      "deliveryRunLoopPass": 16,
+      "deliveryUICycle": 3,
+      "immediatePresentationExpected": false,
+      "modelTime": 126298.68931725001,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "performingLowLatencyPhases": false,
+      "source": "2",
+      "stage": "curl_beforePresent",
+      "targetPresentation": 126298.70598375001,
+      "uptime": 126298.68838058336
+    },
+    {
+      "deadline": 126298.6976505,
+      "deliveryRunLoopPass": 16,
+      "deliveryUICycle": 3,
+      "immediatePresentationExpected": false,
+      "modelTime": 126298.68931725001,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "performingLowLatencyPhases": false,
+      "source": "2",
+      "stage": "curl_afterPresent",
+      "targetPresentation": 126298.70598375001,
+      "uptime": 126298.6884029167
+    },
+    {
+      "deadline": 126298.6976505,
+      "deliveryRunLoopPass": 16,
+      "deliveryUICycle": 3,
+      "immediatePresentationExpected": false,
+      "modelTime": 126298.68931725001,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "performingLowLatencyPhases": false,
+      "source": "2",
+      "stage": "curl_afterEvents",
+      "targetPresentation": 126298.70598375001,
+      "uptime": 126298.68841287502
+    },
+    {
+      "deadline": 126298.6976505,
+      "deliveryRunLoopPass": 16,
+      "deliveryUICycle": 3,
+      "immediatePresentationExpected": false,
+      "modelTime": 126298.68931725001,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "performingLowLatencyPhases": false,
+      "source": "2",
+      "stage": "curl_beforeCommit",
+      "targetPresentation": 126298.70598375001,
+      "uptime": 126298.6884179167
+    },
+    {
+      "deadline": 126298.6976505,
+      "deliveryRunLoopPass": 16,
+      "deliveryUICycle": 3,
+      "immediatePresentationExpected": false,
+      "modelTime": 126298.68931725001,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "performingLowLatencyPhases": false,
+      "source": "2",
+      "stage": "curl_afterCommit",
+      "targetPresentation": 126298.70598375001,
+      "uptime": 126298.6884484167
+    },
+    {
+      "deadline": 126298.70598716667,
+      "deliveryRunLoopPass": 21,
+      "deliveryUICycle": 3,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "2",
+      "stage": "curl_clock_request",
+      "targetPresentation": 126298.71432041668,
+      "uptime": 126298.67468562502
+    },
+    {
+      "deadline": 126298.70598716667,
+      "deliveryRunLoopPass": 21,
+      "deliveryUICycle": 3,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "2",
+      "stage": "curl_update_received",
+      "targetPresentation": 126298.71432041668,
+      "uptime": 126298.69146258336
+    },
+    {
+      "deadline": 126298.70598716667,
+      "deliveryRunLoopPass": 21,
+      "deliveryUICycle": 3,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "2",
+      "stage": "curl_encode",
+      "targetPresentation": 126298.71432041668,
+      "uptime": 126298.6914630417
+    },
+    {
+      "deadline": 126298.70598716667,
+      "deliveryRunLoopPass": 21,
+      "deliveryUICycle": 3,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "2",
+      "stage": "curl_submit",
+      "targetPresentation": 126298.71432041668,
+      "uptime": 126298.69150858336
+    },
+    {
+      "deadline": 126298.70598716667,
+      "deliveryRunLoopPass": 21,
+      "deliveryUICycle": 3,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "2",
+      "stage": "curl_scheduled",
+      "targetPresentation": 126298.71432041668,
+      "uptime": 126298.69166500003
+    },
+    {
+      "deadline": 126298.70598716667,
+      "deliveryRunLoopPass": 21,
+      "deliveryUICycle": 3,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "2",
+      "stage": "curl_gpu_start",
+      "targetPresentation": 126298.71432041668,
+      "uptime": 126298.691716
+    },
+    {
+      "deadline": 126298.70598716667,
+      "deliveryRunLoopPass": 21,
+      "deliveryUICycle": 3,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "2",
+      "stage": "curl_gpu_end",
+      "targetPresentation": 126298.71432041668,
+      "uptime": 126298.69211666667
+    },
+    {
+      "deadline": 126298.70598716667,
+      "deliveryRunLoopPass": 21,
+      "deliveryUICycle": 3,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "2",
+      "stage": "curl_drawable_requested",
+      "targetPresentation": 126298.71432041668,
+      "uptime": 126298.6844469167
+    },
+    {
+      "deadline": 126298.70598716667,
+      "deliveryRunLoopPass": 21,
+      "deliveryUICycle": 3,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "2",
+      "stage": "curl_drawable_worker_began",
+      "targetPresentation": 126298.71432041668,
+      "uptime": 126298.68445533336
+    },
+    {
+      "deadline": 126298.70598716667,
+      "deliveryRunLoopPass": 21,
+      "deliveryUICycle": 3,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "2",
+      "stage": "curl_next_drawable_began",
+      "targetPresentation": 126298.71432041668,
+      "uptime": 126298.68445537503
+    },
+    {
+      "deadline": 126298.70598716667,
+      "deliveryRunLoopPass": 21,
+      "deliveryUICycle": 3,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "2",
+      "stage": "curl_next_drawable_returned",
+      "targetPresentation": 126298.71432041668,
+      "uptime": 126298.6848621667
+    },
+    {
+      "deadline": 126298.70598716667,
+      "deliveryRunLoopPass": 21,
+      "deliveryUICycle": 3,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "2",
+      "stage": "curl_drawable_drained",
+      "targetPresentation": 126298.71432041668,
+      "uptime": 126298.68486287503
+    },
+    {
+      "deadline": 126298.70598716667,
+      "deliveryRunLoopPass": 21,
+      "deliveryUICycle": 3,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "2",
+      "stage": "curl_drawable_main_delivery_before_take",
+      "targetPresentation": 126298.71432041668,
+      "uptime": 126298.68487212503
+    },
+    {
+      "deadline": 126298.70598716667,
+      "deliveryRunLoopPass": 21,
+      "deliveryUICycle": 3,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "2",
+      "stage": "curl_drawable_taken",
+      "targetPresentation": 126298.71432041668,
+      "uptime": 126298.69144145836
+    },
+    {
+      "deadline": 126298.70598716667,
+      "deliveryRunLoopPass": 25,
+      "deliveryUICycle": 4,
+      "immediatePresentationExpected": false,
+      "modelTime": 126298.69765391668,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "performingLowLatencyPhases": false,
+      "source": "3",
+      "stage": "curl_beforePresent",
+      "targetPresentation": 126298.71432041668,
+      "uptime": 126298.69674204169
+    },
+    {
+      "deadline": 126298.70598716667,
+      "deliveryRunLoopPass": 25,
+      "deliveryUICycle": 4,
+      "immediatePresentationExpected": false,
+      "modelTime": 126298.69765391668,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "performingLowLatencyPhases": false,
+      "source": "3",
+      "stage": "curl_afterPresent",
+      "targetPresentation": 126298.71432041668,
+      "uptime": 126298.69676800002
+    },
+    {
+      "deadline": 126298.70598716667,
+      "deliveryRunLoopPass": 25,
+      "deliveryUICycle": 4,
+      "immediatePresentationExpected": false,
+      "modelTime": 126298.69765391668,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "performingLowLatencyPhases": false,
+      "source": "3",
+      "stage": "curl_afterEvents",
+      "targetPresentation": 126298.71432041668,
+      "uptime": 126298.69677783336
+    },
+    {
+      "deadline": 126298.70598716667,
+      "deliveryRunLoopPass": 25,
+      "deliveryUICycle": 4,
+      "immediatePresentationExpected": false,
+      "modelTime": 126298.69765391668,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "performingLowLatencyPhases": false,
+      "source": "3",
+      "stage": "curl_beforeCommit",
+      "targetPresentation": 126298.71432041668,
+      "uptime": 126298.69678283336
+    },
+    {
+      "deadline": 126298.70598716667,
+      "deliveryRunLoopPass": 25,
+      "deliveryUICycle": 4,
+      "immediatePresentationExpected": false,
+      "modelTime": 126298.69765391668,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "performingLowLatencyPhases": false,
+      "source": "3",
+      "stage": "curl_afterCommit",
+      "targetPresentation": 126298.71432041668,
+      "uptime": 126298.69678566669
+    },
+    {
+      "deliveryRunLoopPass": 27,
+      "deliveryUICycle": 4,
+      "source": "1",
+      "stage": "curl_os_callback",
+      "uptime": 126298.69800208336
+    },
+    {
+      "deliveryRunLoopPass": 27,
+      "deliveryUICycle": 4,
+      "source": "1",
+      "stage": "curl_os_presented",
+      "uptime": 126298.6976505417
+    },
+    {
+      "deliveryRunLoopPass": 35,
+      "deliveryUICycle": 5,
+      "source": "2",
+      "stage": "curl_os_callback",
+      "uptime": 126298.70629258336
+    },
+    {
+      "deliveryRunLoopPass": 35,
+      "deliveryUICycle": 5,
+      "source": "2",
+      "stage": "curl_os_presented",
+      "uptime": 126298.70598741669
+    },
+    {
+      "deadline": 126298.72266075,
+      "deliveryRunLoopPass": 40,
+      "deliveryUICycle": 5,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "3",
+      "stage": "curl_clock_request",
+      "targetPresentation": 126298.73099400001,
+      "uptime": 126298.67468562502
+    },
+    {
+      "deadline": 126298.72266075,
+      "deliveryRunLoopPass": 40,
+      "deliveryUICycle": 5,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "3",
+      "stage": "curl_update_received",
+      "targetPresentation": 126298.73099400001,
+      "uptime": 126298.70815900003
+    },
+    {
+      "deadline": 126298.72266075,
+      "deliveryRunLoopPass": 40,
+      "deliveryUICycle": 5,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "3",
+      "stage": "curl_encode",
+      "targetPresentation": 126298.73099400001,
+      "uptime": 126298.70815975002
+    },
+    {
+      "deadline": 126298.72266075,
+      "deliveryRunLoopPass": 40,
+      "deliveryUICycle": 5,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "3",
+      "stage": "curl_submit",
+      "targetPresentation": 126298.73099400001,
+      "uptime": 126298.70819987502
+    },
+    {
+      "deadline": 126298.72266075,
+      "deliveryRunLoopPass": 40,
+      "deliveryUICycle": 5,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "3",
+      "stage": "curl_scheduled",
+      "targetPresentation": 126298.73099400001,
+      "uptime": 126298.70835754169
+    },
+    {
+      "deadline": 126298.72266075,
+      "deliveryRunLoopPass": 40,
+      "deliveryUICycle": 5,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "3",
+      "stage": "curl_gpu_start",
+      "targetPresentation": 126298.73099400001,
+      "uptime": 126298.70841237501
+    },
+    {
+      "deadline": 126298.72266075,
+      "deliveryRunLoopPass": 40,
+      "deliveryUICycle": 5,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "3",
+      "stage": "curl_gpu_end",
+      "targetPresentation": 126298.73099400001,
+      "uptime": 126298.7087845
+    },
+    {
+      "deadline": 126298.72266075,
+      "deliveryRunLoopPass": 40,
+      "deliveryUICycle": 5,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "3",
+      "stage": "curl_drawable_requested",
+      "targetPresentation": 126298.73099400001,
+      "uptime": 126298.69145608335
+    },
+    {
+      "deadline": 126298.72266075,
+      "deliveryRunLoopPass": 40,
+      "deliveryUICycle": 5,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "3",
+      "stage": "curl_drawable_worker_began",
+      "targetPresentation": 126298.73099400001,
+      "uptime": 126298.69148787502
+    },
+    {
+      "deadline": 126298.72266075,
+      "deliveryRunLoopPass": 40,
+      "deliveryUICycle": 5,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "3",
+      "stage": "curl_next_drawable_began",
+      "targetPresentation": 126298.73099400001,
+      "uptime": 126298.6914879167
+    },
+    {
+      "deadline": 126298.72266075,
+      "deliveryRunLoopPass": 40,
+      "deliveryUICycle": 5,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "3",
+      "stage": "curl_next_drawable_returned",
+      "targetPresentation": 126298.73099400001,
+      "uptime": 126298.70638033336
+    },
+    {
+      "deadline": 126298.72266075,
+      "deliveryRunLoopPass": 40,
+      "deliveryUICycle": 5,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "3",
+      "stage": "curl_drawable_drained",
+      "targetPresentation": 126298.73099400001,
+      "uptime": 126298.70638129169
+    },
+    {
+      "deadline": 126298.72266075,
+      "deliveryRunLoopPass": 40,
+      "deliveryUICycle": 5,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "3",
+      "stage": "curl_drawable_main_delivery_before_take",
+      "targetPresentation": 126298.73099400001,
+      "uptime": 126298.70639104169
+    },
+    {
+      "deadline": 126298.72266075,
+      "deliveryRunLoopPass": 40,
+      "deliveryUICycle": 5,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "3",
+      "stage": "curl_drawable_taken",
+      "targetPresentation": 126298.73099400001,
+      "uptime": 126298.70813941669
+    },
+    {
+      "deadline": 126298.73099745835,
+      "deliveryRunLoopPass": 49,
+      "deliveryUICycle": 6,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "4",
+      "stage": "curl_clock_request",
+      "targetPresentation": 126298.73933070834,
+      "uptime": 126298.67468562502
+    },
+    {
+      "deadline": 126298.73099745835,
+      "deliveryRunLoopPass": 49,
+      "deliveryUICycle": 6,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "4",
+      "stage": "curl_update_received",
+      "targetPresentation": 126298.73933070834,
+      "uptime": 126298.71655570836
+    },
+    {
+      "deadline": 126298.73099745835,
+      "deliveryRunLoopPass": 49,
+      "deliveryUICycle": 6,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "4",
+      "stage": "curl_encode",
+      "targetPresentation": 126298.73933070834,
+      "uptime": 126298.7165564167
+    },
+    {
+      "deadline": 126298.73099745835,
+      "deliveryRunLoopPass": 49,
+      "deliveryUICycle": 6,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "4",
+      "stage": "curl_submit",
+      "targetPresentation": 126298.73933070834,
+      "uptime": 126298.7165984167
+    },
+    {
+      "deadline": 126298.73099745835,
+      "deliveryRunLoopPass": 49,
+      "deliveryUICycle": 6,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "4",
+      "stage": "curl_scheduled",
+      "targetPresentation": 126298.73933070834,
+      "uptime": 126298.71676283336
+    },
+    {
+      "deadline": 126298.73099745835,
+      "deliveryRunLoopPass": 49,
+      "deliveryUICycle": 6,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "4",
+      "stage": "curl_gpu_start",
+      "targetPresentation": 126298.73933070834,
+      "uptime": 126298.716820625
+    },
+    {
+      "deadline": 126298.73099745835,
+      "deliveryRunLoopPass": 49,
+      "deliveryUICycle": 6,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "4",
+      "stage": "curl_gpu_end",
+      "targetPresentation": 126298.73933070834,
+      "uptime": 126298.71717854167
+    },
+    {
+      "deadline": 126298.73099745835,
+      "deliveryRunLoopPass": 49,
+      "deliveryUICycle": 6,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "4",
+      "stage": "curl_drawable_requested",
+      "targetPresentation": 126298.73933070834,
+      "uptime": 126298.70815408336
+    },
+    {
+      "deadline": 126298.73099745835,
+      "deliveryRunLoopPass": 49,
+      "deliveryUICycle": 6,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "4",
+      "stage": "curl_drawable_worker_began",
+      "targetPresentation": 126298.73933070834,
+      "uptime": 126298.7081882917
+    },
+    {
+      "deadline": 126298.73099745835,
+      "deliveryRunLoopPass": 49,
+      "deliveryUICycle": 6,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "4",
+      "stage": "curl_next_drawable_began",
+      "targetPresentation": 126298.73933070834,
+      "uptime": 126298.70818833336
+    },
+    {
+      "deadline": 126298.73099745835,
+      "deliveryRunLoopPass": 49,
+      "deliveryUICycle": 6,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "4",
+      "stage": "curl_next_drawable_returned",
+      "targetPresentation": 126298.73933070834,
+      "uptime": 126298.71460520836
+    },
+    {
+      "deadline": 126298.73099745835,
+      "deliveryRunLoopPass": 49,
+      "deliveryUICycle": 6,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "4",
+      "stage": "curl_drawable_drained",
+      "targetPresentation": 126298.73933070834,
+      "uptime": 126298.71460700003
+    },
+    {
+      "deadline": 126298.73099745835,
+      "deliveryRunLoopPass": 49,
+      "deliveryUICycle": 6,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "4",
+      "stage": "curl_drawable_main_delivery_before_take",
+      "targetPresentation": 126298.73933070834,
+      "uptime": 126298.71461637503
+    },
+    {
+      "deadline": 126298.73099745835,
+      "deliveryRunLoopPass": 49,
+      "deliveryUICycle": 6,
+      "owner": "C96EBE39-AD07-4BE8-8107-9DA111BE5114",
+      "source": "4",
+      "stage": "curl_drawable_taken",
+      "targetPresentation": 126298.73933070834,
+      "uptime": 126298.7165362917
+    },
+    {
+      "deliveryRunLoopPass": 55,
+      "deliveryUICycle": 7,
+      "source": "3",
+      "stage": "curl_os_callback",
+      "uptime": 126298.7233617917
+    },
+    {
+      "deliveryRunLoopPass": 55,
+      "deliveryUICycle": 7,
+      "source": "3",
+      "stage": "curl_os_presented",
+      "uptime": 126298.7226607917
+    },
+    {
+      "deliveryRunLoopPass": 65,
+      "deliveryUICycle": 8,
+      "source": "4",
+      "stage": "curl_os_callback",
+      "uptime": 126298.7316852917
+    },
+    {
+      "deliveryRunLoopPass": 65,
+      "deliveryUICycle": 8,
+      "source": "4",
+      "stage": "curl_os_presented",
+      "uptime": 126298.73099745836
+    },
+    {
+      "deliveryRunLoopPass": 398,
+      "deliveryUICycle": 41,
+      "stage": "curl_owner_landed",
+      "uptime": 126299.00745220836
+    }
+  ]
+}

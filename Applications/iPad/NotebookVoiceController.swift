@@ -112,11 +112,12 @@ import NotebookCore
       let acquired = try await SceneRenderResources.shared.acquireWebSurface(priority: .input, constructsView: true)
       guard captureID == id, !ending, let host else { acquired.release(); return }
       lease = acquired
+      let constructionBegan = ContinuousClock.now
       let configuration = WKWebViewConfiguration(); configuration.websiteDataStore = .nonPersistent()
       configuration.allowsInlineMediaPlayback = true; configuration.mediaTypesRequiringUserActionForPlayback = []
       configuration.userContentController.add(self, name: "notebookVoice")
       let web = WKWebView(frame: host.bounds, configuration: configuration)
-      acquired.finishConstruction()
+      acquired.finishConstruction(elapsed: constructionBegan.duration(to: .now))
       web.isOpaque = false; web.backgroundColor = .clear; web.scrollView.backgroundColor = .clear
       web.autoresizingMask = [.flexibleWidth,.flexibleHeight]; web.navigationDelegate = self; web.uiDelegate = self
       self.web = web; host.addSubview(web)

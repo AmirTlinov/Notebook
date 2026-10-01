@@ -144,15 +144,18 @@ program does not consume the passive quota that reserves input for it. Persisten
 programs leave preparation capacity. Physical source identity prevents duplicate
 execution until the final submitted borrower releases.
 
-At most two admitted requests occupy native construction and its next UI
-commit opportunity. The accepted
+UIKit grants one unconstructed request. Its measured synchronous construction
+cost decides whether another may start: the two-request ceiling and half of the
+display interval bound the batch. Spent costs retire at the next actual UI
+completion, independently of navigation. The accepted
 `PreparationOwner` constructs and starts its `AgentWebNativeSession` immediately
 after admission, before SwiftUI's next mounting update. The representable borrows
 that exact coordinator and WebKit; a changed source uses its existing token-checked
 load path. Every WebKit factory, including document, chat, terminal, voice and
 presentation SVG, uses this allowance. On UIKit, constructor completion marks
-the allowance for release after a CA commit opportunity and `afterUpdateComplete`;
-the next pair cannot consume the same unfinished UI cycle. The permanent native
+the allowance for release after a CA commit opportunity and `afterUpdateComplete`.
+An inexpensive constructor may admit a second async consumer; an expensive one
+cannot pregrant that work before its cost is known. The permanent native
 root supplies its exact window scene before model load. Each mounted root retains
 that scene lifetime; deactivation/disconnection returns only finished reservations
 and stops its link. Queued/unconstructed requests retain their place until actual
@@ -302,6 +305,15 @@ allowing pan/pinch cancellation; fields/custom handlers keep their input.
 Document-wide handlers own their full region. DOM/listener/size events update the
 map without polling. Until a valid matching map exists, WebKit conservatively keeps
 input. Coordinates and synthetic clicks are never replayed.
+
+The accepted DOM owns one input-candidate index. Text painting measures those
+candidates; it does not classify every passive node again. Listener changes update
+their target, added nodes update their subtree, and CSS that can change ownership
+retains a complete classification where nonlocal selectors require it. Actual CSSOM
+mutations invalidate that dependency; local text does not serialize stylesheets.
+Publication stays on the existing microtask edge so an author's animation-frame
+move updates the hit map before paint. Retirement disconnects observers, releases
+the node index and restores its CSS subscriptions under the exact load token.
 
 ## Detachment and verification
 

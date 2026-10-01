@@ -7,6 +7,72 @@ import XCTest
 /// Observe real native curl images, independently of the run-loop latency
 /// check: screenshot work must not be credited as display frames or FPS.
 @MainActor final class NotebookPageMotionUXTests: XCTestCase {
+  func testCommittedCurlHierarchyPublishesTheNextPoseWithoutAnOSAdmissionGate() async throws {
+    #if targetEnvironment(simulator)
+    throw XCTSkip("This scenario requires actual OS presentation receipts")
+    #endif
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+    let native = IPadSheetCurlController(), source = UIViewController(), target = UIViewController()
+    PageTurnFrameFixture.install(on: native)
+    window.frame = .init(x: 0, y: 0, width: 834, height: 1194)
+    source.view.backgroundColor = .red; target.view.backgroundColor = .green
+    window.rootViewController = native; window.makeKeyAndVisible()
+    defer { native.cancelMotion(); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+    native.show(source, direction: .forward, animated: false); native.prepare(target)
+    window.layoutIfNeeded()
+    native.willTurn = { $0 === target }
+    let curl = try XCTUnwrap(native.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
+    let resolve = curl.onPageFrameReady
+    var reveal: SheetCurlMetalView.PageUpdateTiming?, next: SheetCurlMetalView.PageUpdateTiming?
+    var committed: SheetCurlMetalView.PageUpdateTiming?, firstOSDelivered: TimeInterval?
+    var movedPresented = false, dropped = 0
+    curl.onPageUpdateMeasured = { timing in
+      if timing.phase == .beforePresent {
+        if reveal == nil { reveal = timing }
+        else if next == nil { next = timing }
+      }
+      guard timing.phase == .afterCommit, reveal != nil, committed == nil else { return }
+      committed = timing
+      if firstOSDelivered == nil {
+        XCTAssertNil(curl.presentedPagePose, "Committing the hierarchy must not manufacture a shown pose")
+      }
+      // This is a new held-contact position accepted immediately after the
+      // reveal's CA cut, without waiting for a presented-handler callback.
+      native.updateInteractiveTurn(translation: -native.view.bounds.width * 0.55)
+    }
+    curl.onPageFrameReady = { image, progress, sequence, readiness in
+      if readiness.isReady {
+        if firstOSDelivered == nil { firstOSDelivered = CACurrentMediaTime() }
+        if abs(progress - 0.55) < 0.001 { movedPresented = true }
+      } else { dropped += 1 }
+      resolve?(image, progress, sequence, readiness)
+    }
+    defer { curl.onPageFrameReady = resolve; curl.onPageUpdateMeasured = nil }
+    XCTAssertTrue(native.beginInteractiveTurn(direction: .forward, target: target))
+    native.updateInteractiveTurn(translation: -native.view.bounds.width * 0.35)
+    let deadline = ContinuousClock.now + .seconds(2)
+    while !movedPresented, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(2)) }
+    XCTAssertTrue(movedPresented)
+    let initial = try XCTUnwrap(reveal), successor = try XCTUnwrap(next), cut = try XCTUnwrap(committed)
+    XCTAssertTrue(initial.presentsWithTransaction, "Reveal and its bent drawable must share the initial CA transaction")
+    XCTAssertLessThan(cut.recorded, successor.recorded)
+    XCTAssertFalse(successor.presentsWithTransaction, "The committed hierarchy, rather than OS receipt delivery, admits shader motion")
+    XCTAssertTrue(native.containsInActiveTurn(source)); XCTAssertTrue(native.containsInActiveTurn(target))
+    let osDelivery = try XCTUnwrap(firstOSDelivered)
+    let report: [String: Any] = [
+      "firstPublication": initial.recorded, "firstHierarchyCommit": cut.recorded,
+      "nextPublication": successor.recorded, "firstOSDelivered": osDelivery,
+      "nextPublishedBeforeFirstOSDelivery": successor.recorded < osDelivery,
+      "nextPresentsWithTransaction": successor.presentsWithTransaction,
+      "droppedDrawables": dropped,
+      "scope": "Two held native positions; source CA cut and actual OS receipts; no readback during observation"
+    ]
+    let attachment = XCTAttachment(data: try JSONSerialization.data(withJSONObject: report, options: [.sortedKeys]),
+      uniformTypeIdentifier: "public.json")
+    attachment.name = "Curl committed hierarchy before OS delivery"; attachment.lifetime = .keepAlways; add(attachment)
+  }
+
   func testHeldCurlPublishesCommittedMotionAfterInputBeforeCA() async throws {
     #if targetEnvironment(simulator)
     throw XCTSkip("This scenario requires actual OS presentation receipts")
@@ -48,8 +114,13 @@ import XCTest
     let movedDeadline = ContinuousClock.now + .seconds(2)
     while movedSequence == nil, ContinuousClock.now < movedDeadline { try await Task.sleep(for: .milliseconds(2)) }
     let moved = try XCTUnwrap(movedSequence)
-    let reveal = try XCTUnwrap(updates.first { $0.phase == .beforePresent && $0.nextSequence == initial + 1 })
-    XCTAssertTrue(reveal.presentsWithTransaction, "The first pixels must share the owner's exposure transaction")
+    // A discarded reveal may be followed by an asynchronously shown successor.
+    // The initial hierarchy publication owns exposure; initialSequence denotes
+    // the first actually shown .35 pose, which need not be that drawable.
+    let reveal = try XCTUnwrap(updates.first { $0.phase == .beforePresent })
+    XCTAssertTrue(reveal.presentsWithTransaction, "The initial drawable must share the owner's hierarchy exposure transaction")
+    XCTAssertLessThanOrEqual(reveal.nextSequence, initial + 1,
+      "The shown held pose must belong to the exposed source or its accepted successor")
     let publication = try XCTUnwrap(updates.first { $0.phase == .beforePresent && $0.nextSequence == moved + 1 })
     XCTAssertFalse(publication.presentsWithTransaction, "A held pose on the committed sheet needs only Metal publication")
     let afterInput = try XCTUnwrap(updates.first { $0.phase == .afterEvents && $0.modelTime == publication.modelTime })
@@ -60,6 +131,9 @@ import XCTest
     }
     let report: [String: Any] = [
       "sequence": moved, "progress": 0.55, "phases": phases,
+      "reveal": ["sequence": reveal.nextSequence - 1, "recorded": reveal.recorded,
+        "presentsWithTransaction": reveal.presentsWithTransaction],
+      "firstShownSequence": initial, "firstShownWasReveal": reveal.nextSequence == initial + 1,
       "publicationLeadBeforeCAMS": (beforeCA.recorded - publication.recorded) * 1000,
       "osReceipt": ["modelTime": try XCTUnwrap(publication.modelTime),
         "recorded": try XCTUnwrap(movedReceiptRecorded), "presentedTime": try XCTUnwrap(movedPresentedTime)]
@@ -562,6 +636,98 @@ import XCTest
       note.name = "Complete pair presentation \(turn)"; note.lifetime = .keepAlways; add(note)
       XCTAssertTrue(underlay === (turn.isMultiple(of: 2) ? blue.view : red.view))
     }
+  }
+
+  func testInstalledPaperParksOnlyItsCompletedOutputAndRevokesOnResizeOrCancellation() async throws {
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+    let native = IPadSheetCurlController(), blue = UIViewController(), red = UIViewController()
+    PageTurnFrameFixture.install(on: native)
+    window.frame = .init(x: 0, y: 0, width: 834, height: 1194)
+    window.rootViewController = native; window.makeKeyAndVisible()
+    defer { native.cancelMotion(); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+    native.show(blue, direction: .forward, animated: false); native.prepare(red)
+    window.layoutIfNeeded()
+    let size = native.view.bounds.size
+    func backdrop(_ page: UIViewController, color: UIColor) -> PageTurnOutputParkingHost {
+      let host = PageTurnOutputParkingHost(frame: page.view.bounds)
+      host.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+      page.view.addSubview(host)
+      let paper = UIView(frame: page.view.bounds)
+      paper.backgroundColor = color; paper.isOpaque = true
+      paper.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+      page.view.addSubview(paper)
+      return host
+    }
+    let blueHost = backdrop(blue, color: .blue), redHost = backdrop(red, color: .red)
+    native.idleOutputHost = { $0 === blue ? blueHost : redHost }
+    let blueFrame = try await PageTurnFrameFixture.solid(.blue, size: size)
+    let redFrame = try await PageTurnFrameFixture.solid(.red, size: size)
+    native.acquireSheetFrame = { $0 === blue ? blueFrame : redFrame }
+    let curl = try XCTUnwrap(native.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
+    let resolve = curl.onPageFrameReady
+    defer { curl.onPageFrameReady = resolve; curl.onPageUpdateMeasured = nil }
+    var retainedOutput: CAMetalLayer?, reports: [[String: Any]] = []
+    for turn in 0..<6 {
+      let target = turn.isMultiple(of: 2) ? red : blue
+      let host = turn.isMultiple(of: 2) ? redHost : blueHost
+      let endpoint = turn.isMultiple(of: 2) ? 1.0 : 0.0
+      var firstTime: TimeInterval?, firstProgress: Double?, endpointTime: TimeInterval?
+      var discarded: [Int] = [], output: CAMetalLayer?, completed: Bool?
+      curl.onPageUpdateMeasured = { timing in
+        guard timing.phase == .beforePresent, output == nil else { return }
+        output = curl.pageOutputLayer
+        XCTAssertTrue(output?.superlayer === curl.layer,
+          "The exact scheduled frame returns the output from paper to curl before publication")
+        if let retainedOutput { XCTAssertTrue(output === retainedOutput) }
+      }
+      curl.onPageFrameReady = { image, progress, sequence, readiness in
+        if let time = readiness.presentedTime {
+          if firstTime == nil || time < firstTime! { firstTime = time; firstProgress = progress }
+          if progress == endpoint { endpointTime = time }
+        } else { discarded.append(sequence) }
+        resolve?(image, progress, sequence, readiness)
+      }
+      let start = CACurrentMediaTime()
+      native.show(target, direction: turn.isMultiple(of: 2) ? .forward : .reverse, animated: true) { completed = $0 }
+      let deadline = ContinuousClock.now + .seconds(2)
+      while completed == nil, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(2)) }
+      XCTAssertEqual(completed, true); XCTAssertTrue(native.page === target)
+      let shown = try XCTUnwrap(firstTime), progress = try XCTUnwrap(firstProgress), terminal = try XCTUnwrap(endpointTime)
+      XCTAssertGreaterThanOrEqual(shown, start); XCTAssertGreaterThan(progress, 0); XCTAssertLessThan(progress, 1)
+      XCTAssertGreaterThanOrEqual(terminal, shown)
+      let current = try XCTUnwrap(output)
+      XCTAssertTrue(current.superlayer === host.layer, "Only a shown endpoint can park inside the installed paper")
+      XCTAssertEqual(current.frame, host.bounds)
+      XCTAssertFalse(current.isHidden); XCTAssertFalse(curl.isHidden)
+      XCTAssertTrue(native.view.subviews.last === target.view)
+      retainedOutput = current
+      reports.append(["turn": turn, "firstOSMS": (shown-start)*1000,
+        "firstProgress": progress, "discardedSequences": discarded, "endpointOSMS": (terminal-start)*1000])
+    }
+    let retired = try XCTUnwrap(retainedOutput)
+    blueHost.bounds.size.width -= 1
+    XCTAssertNil(retired.superlayer, "Changed paper geometry revokes the old output immediately")
+    XCTAssertNil(curl.pageOutputLayer)
+    XCTAssertTrue(curl.isHidden)
+    blueHost.bounds.size = size
+    var completed: Bool?
+    native.show(red, direction: .forward, animated: true) { completed = $0 }
+    let deadline = ContinuousClock.now + .seconds(2)
+    while completed == nil, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(2)) }
+    XCTAssertEqual(completed, true)
+    let replacement = try XCTUnwrap(curl.pageOutputLayer)
+    XCTAssertFalse(replacement === retired)
+    XCTAssertTrue(replacement.superlayer === redHost.layer)
+    native.cancelMotion()
+    XCTAssertNil(curl.pageOutputLayer)
+    XCTAssertTrue(replacement.isHidden)
+    // Returning to the cancelled host cannot resurrect its obsolete callback.
+    redHost.bounds.size.width -= 1
+    XCTAssertNil(curl.pageOutputLayer)
+    let attachment = XCTAttachment(data: try JSONSerialization.data(withJSONObject: ["turns": reports], options: [.sortedKeys]),
+      uniformTypeIdentifier: "public.json")
+    attachment.name = "Completed output parking and shown bend"; attachment.lifetime = .keepAlways; add(attachment)
   }
 
   func testSlowSourcePreparationCannotConsumeTheVisibleCurl() async throws {

@@ -1,0 +1,456 @@
+{
+  "scope": "Selected source timestamps from bounded diagnostic observation; timing is not latency acceptance",
+  "originUptime": 126297.60206975002,
+  "processID": 7211,
+  "events": [
+    {
+      "deliveryRunLoopPass": 29,
+      "deliveryUICycle": 5,
+      "owner": "50BE237F-0C11-43E1-9A52-6B2AC35BCF2D",
+      "source": "2144B442-44F5-4907-BBD1-9E9649B678EF-0-0",
+      "stage": "prepared_admission_requested",
+      "uptime": 126297.67876800003
+    },
+    {
+      "deliveryRunLoopPass": 29,
+      "deliveryUICycle": 5,
+      "owner": "50BE237F-0C11-43E1-9A52-6B2AC35BCF2D",
+      "source": "2144B442-44F5-4907-BBD1-9E9649B678EF-0-0",
+      "stage": "prepared_admission_acquired",
+      "uptime": 126297.67886425003
+    },
+    {
+      "deliveryRunLoopPass": 29,
+      "deliveryUICycle": 5,
+      "owner": "50BE237F-0C11-43E1-9A52-6B2AC35BCF2D",
+      "stage": "native_init_started",
+      "uptime": 126297.67888983303
+    },
+    {
+      "deliveryRunLoopPass": 29,
+      "deliveryUICycle": 5,
+      "owner": "50BE237F-0C11-43E1-9A52-6B2AC35BCF2D",
+      "stage": "native_init_finished",
+      "uptime": 126297.68388241703
+    },
+    {
+      "deliveryRunLoopPass": 29,
+      "deliveryUICycle": 5,
+      "owner": "50BE237F-0C11-43E1-9A52-6B2AC35BCF2D",
+      "source": "2144B442-44F5-4907-BBD1-9E9649B678EF-0-0",
+      "stage": "source_accepted",
+      "uptime": 126297.68405720804
+    },
+    {
+      "deliveryRunLoopPass": 29,
+      "deliveryUICycle": 5,
+      "owner": "50BE237F-0C11-43E1-9A52-6B2AC35BCF2D",
+      "source": "2144B442-44F5-4907-BBD1-9E9649B678EF-0-0",
+      "stage": "navigation_requested",
+      "uptime": 126297.68411062504
+    },
+    {
+      "deliveryRunLoopPass": 29,
+      "deliveryUICycle": 5,
+      "owner": "50BE237F-0C11-43E1-9A52-6B2AC35BCF2D",
+      "source": "2144B442-44F5-4907-BBD1-9E9649B678EF-0-0",
+      "stage": "navigation_returned",
+      "uptime": 126297.68421050004
+    },
+    {
+      "deliveryRunLoopPass": 31,
+      "deliveryUICycle": 6,
+      "owner": "85B3FFD5-ACA7-4A76-9CA5-1F51BFBC9473",
+      "stage": "native_init_started",
+      "uptime": 126297.70903670804
+    },
+    {
+      "deliveryRunLoopPass": 31,
+      "deliveryUICycle": 6,
+      "owner": "85B3FFD5-ACA7-4A76-9CA5-1F51BFBC9473",
+      "stage": "native_init_finished",
+      "uptime": 126297.71327816704
+    },
+    {
+      "deliveryRunLoopPass": 42,
+      "deliveryUICycle": 7,
+      "owner": "8A3C2467-8122-40E1-BDB3-9E65AAC06939",
+      "stage": "native_init_started",
+      "uptime": 126297.74702312503
+    },
+    {
+      "deliveryRunLoopPass": 42,
+      "deliveryUICycle": 7,
+      "owner": "8A3C2467-8122-40E1-BDB3-9E65AAC06939",
+      "stage": "native_init_finished",
+      "uptime": 126297.75336008304
+    },
+    {
+      "deliveryRunLoopPass": 48,
+      "deliveryUICycle": 8,
+      "owner": "3AD962C6-C5D3-4521-A163-88A72CFCC806",
+      "stage": "native_init_started",
+      "uptime": 126297.77384195803
+    },
+    {
+      "deliveryRunLoopPass": 48,
+      "deliveryUICycle": 8,
+      "owner": "3AD962C6-C5D3-4521-A163-88A72CFCC806",
+      "stage": "native_init_finished",
+      "uptime": 126297.77770945804
+    },
+    {
+      "deliveryRunLoopPass": 50,
+      "deliveryUICycle": 8,
+      "owner": "840175DD-D4AA-447F-9396-E8591C1DE9AD",
+      "stage": "native_init_started",
+      "uptime": 126297.78001162503
+    },
+    {
+      "deliveryRunLoopPass": 50,
+      "deliveryUICycle": 8,
+      "owner": "840175DD-D4AA-447F-9396-E8591C1DE9AD",
+      "stage": "native_init_finished",
+      "uptime": 126297.78704537504
+    },
+    {
+      "deliveryRunLoopPass": 53,
+      "deliveryUICycle": 9,
+      "owner": "50BE237F-0C11-43E1-9A52-6B2AC35BCF2D",
+      "source": "2144B442-44F5-4907-BBD1-9E9649B678EF-0-0",
+      "stage": "navigation_policy",
+      "uptime": 126297.80211520803
+    },
+    {
+      "deliveryRunLoopPass": 54,
+      "deliveryUICycle": 9,
+      "owner": "23D01FA5-0D2B-4B54-ABA7-D5CEDE144748",
+      "stage": "native_init_started",
+      "uptime": 126297.80225833303
+    },
+    {
+      "deliveryRunLoopPass": 54,
+      "deliveryUICycle": 9,
+      "owner": "23D01FA5-0D2B-4B54-ABA7-D5CEDE144748",
+      "stage": "native_init_finished",
+      "uptime": 126297.80719900003
+    },
+    {
+      "deliveryRunLoopPass": 58,
+      "deliveryUICycle": 10,
+      "owner": "1B47A441-5217-48FB-8CE5-E6ED91F8C88D",
+      "stage": "native_init_started",
+      "uptime": 126297.83059954204
+    },
+    {
+      "deliveryRunLoopPass": 58,
+      "deliveryUICycle": 10,
+      "owner": "1B47A441-5217-48FB-8CE5-E6ED91F8C88D",
+      "stage": "native_init_finished",
+      "uptime": 126297.83660991704
+    },
+    {
+      "deliveryRunLoopPass": 59,
+      "deliveryUICycle": 10,
+      "owner": "50BE237F-0C11-43E1-9A52-6B2AC35BCF2D",
+      "source": "2144B442-44F5-4907-BBD1-9E9649B678EF-0-0",
+      "stage": "navigation_started",
+      "uptime": 126297.84455375004
+    },
+    {
+      "deliveryRunLoopPass": 59,
+      "deliveryUICycle": 10,
+      "owner": "50BE237F-0C11-43E1-9A52-6B2AC35BCF2D",
+      "source": "2144B442-44F5-4907-BBD1-9E9649B678EF-0-0",
+      "stage": "navigation_committed",
+      "uptime": 126297.84480520803
+    },
+    {
+      "deliveryRunLoopPass": 60,
+      "deliveryUICycle": 11,
+      "owner": "897C7827-DA97-45E5-B894-5511CBEFB6E0",
+      "stage": "native_init_started",
+      "uptime": 126297.85812433303
+    },
+    {
+      "deliveryRunLoopPass": 60,
+      "deliveryUICycle": 11,
+      "owner": "897C7827-DA97-45E5-B894-5511CBEFB6E0",
+      "stage": "native_init_finished",
+      "uptime": 126297.86251191703
+    },
+    {
+      "deliveryRunLoopPass": 61,
+      "deliveryUICycle": 11,
+      "owner": "50BE237F-0C11-43E1-9A52-6B2AC35BCF2D",
+      "source": "2144B442-44F5-4907-BBD1-9E9649B678EF-0-0",
+      "stage": "runtime_ready",
+      "uptime": 126297.86475633303
+    },
+    {
+      "deliveryRunLoopPass": 61,
+      "deliveryUICycle": 11,
+      "source": "2144B442-44F5-4907-BBD1-9E9649B678EF-0-0",
+      "stage": "first_native_installed",
+      "uptime": 126297.86599420803
+    },
+    {
+      "deliveryRunLoopPass": 68,
+      "deliveryUICycle": 12,
+      "owner": "F91571AB-CFF7-482F-9CF0-0D68947C6DD2",
+      "stage": "native_init_started",
+      "uptime": 126297.88228120803
+    },
+    {
+      "deliveryRunLoopPass": 68,
+      "deliveryUICycle": 12,
+      "owner": "F91571AB-CFF7-482F-9CF0-0D68947C6DD2",
+      "stage": "native_init_finished",
+      "uptime": 126297.88984591703
+    },
+    {
+      "deliveryRunLoopPass": 72,
+      "deliveryUICycle": 14,
+      "owner": "1182D332-8799-4034-87BB-7409F86B7F30",
+      "stage": "native_init_started",
+      "uptime": 126297.93291925003
+    },
+    {
+      "deliveryRunLoopPass": 72,
+      "deliveryUICycle": 14,
+      "owner": "1182D332-8799-4034-87BB-7409F86B7F30",
+      "stage": "native_init_finished",
+      "uptime": 126297.93686500004
+    },
+    {
+      "deliveryRunLoopPass": 74,
+      "deliveryUICycle": 14,
+      "owner": "5AE6A166-DB6D-4186-B3BC-707CF1D21BEF",
+      "stage": "native_init_started",
+      "uptime": 126297.95778383303
+    },
+    {
+      "deliveryRunLoopPass": 74,
+      "deliveryUICycle": 14,
+      "owner": "5AE6A166-DB6D-4186-B3BC-707CF1D21BEF",
+      "stage": "native_init_finished",
+      "uptime": 126297.96235120803
+    },
+    {
+      "deliveryRunLoopPass": 78,
+      "deliveryUICycle": 16,
+      "owner": "73A79308-7C17-443E-BE16-B4C68E69D170",
+      "stage": "native_init_started",
+      "uptime": 126298.00091958304
+    },
+    {
+      "deliveryRunLoopPass": 78,
+      "deliveryUICycle": 16,
+      "owner": "73A79308-7C17-443E-BE16-B4C68E69D170",
+      "stage": "native_init_finished",
+      "uptime": 126298.00622912504
+    },
+    {
+      "deliveryRunLoopPass": 88,
+      "deliveryUICycle": 17,
+      "owner": "D8E2F788-A28B-4580-8926-2EA7389B792D",
+      "stage": "native_init_started",
+      "uptime": 126298.03903975003
+    },
+    {
+      "deliveryRunLoopPass": 88,
+      "deliveryUICycle": 17,
+      "owner": "D8E2F788-A28B-4580-8926-2EA7389B792D",
+      "stage": "native_init_finished",
+      "uptime": 126298.04602829204
+    },
+    {
+      "deliveryRunLoopPass": 93,
+      "deliveryUICycle": 18,
+      "owner": "95D328EF-AD6D-4269-B27F-75AA73AD47E1",
+      "stage": "native_init_started",
+      "uptime": 126298.06584554203
+    },
+    {
+      "deliveryRunLoopPass": 93,
+      "deliveryUICycle": 18,
+      "owner": "95D328EF-AD6D-4269-B27F-75AA73AD47E1",
+      "stage": "native_init_finished",
+      "uptime": 126298.07443866703
+    },
+    {
+      "deliveryRunLoopPass": 99,
+      "deliveryUICycle": 19,
+      "owner": "8D7763D9-4E76-46F9-AFDC-CE4BA67FFEB7",
+      "stage": "native_init_started",
+      "uptime": 126298.09934783303
+    },
+    {
+      "deliveryRunLoopPass": 99,
+      "deliveryUICycle": 19,
+      "owner": "8D7763D9-4E76-46F9-AFDC-CE4BA67FFEB7",
+      "stage": "native_init_finished",
+      "uptime": 126298.10620462503
+    },
+    {
+      "deliveryRunLoopPass": 105,
+      "deliveryUICycle": 20,
+      "owner": "EAE69792-47AE-4735-9059-C7502991E484",
+      "stage": "native_init_started",
+      "uptime": 126298.12263683304
+    },
+    {
+      "deliveryRunLoopPass": 105,
+      "deliveryUICycle": 20,
+      "owner": "EAE69792-47AE-4735-9059-C7502991E484",
+      "stage": "native_init_finished",
+      "uptime": 126298.12895462503
+    },
+    {
+      "deliveryRunLoopPass": 111,
+      "deliveryUICycle": 21,
+      "owner": "9D045E46-1A55-4FC6-BDC4-C673842B9444",
+      "stage": "native_init_started",
+      "uptime": 126298.13548675003
+    },
+    {
+      "deliveryRunLoopPass": 111,
+      "deliveryUICycle": 21,
+      "owner": "9D045E46-1A55-4FC6-BDC4-C673842B9444",
+      "stage": "native_init_finished",
+      "uptime": 126298.14470470803
+    },
+    {
+      "deliveryRunLoopPass": 117,
+      "deliveryUICycle": 22,
+      "owner": "268AE2D7-65ED-4C66-B9B8-373EB35BFBCB",
+      "stage": "native_init_started",
+      "uptime": 126298.15636070803
+    },
+    {
+      "deliveryRunLoopPass": 117,
+      "deliveryUICycle": 22,
+      "owner": "268AE2D7-65ED-4C66-B9B8-373EB35BFBCB",
+      "stage": "native_init_finished",
+      "uptime": 126298.16293570804
+    },
+    {
+      "deliveryRunLoopPass": 125,
+      "deliveryUICycle": 23,
+      "owner": "9DC0D6CB-6FBB-4BF5-82DF-BC2846C14E03",
+      "stage": "native_init_started",
+      "uptime": 126298.18102541703
+    },
+    {
+      "deliveryRunLoopPass": 125,
+      "deliveryUICycle": 23,
+      "owner": "9DC0D6CB-6FBB-4BF5-82DF-BC2846C14E03",
+      "stage": "native_init_finished",
+      "uptime": 126298.18845866703
+    },
+    {
+      "deliveryRunLoopPass": 131,
+      "deliveryUICycle": 24,
+      "owner": "97463DFD-EC93-4EB0-AEBE-FD83F06AB91F",
+      "stage": "native_init_started",
+      "uptime": 126298.20620554204
+    },
+    {
+      "deliveryRunLoopPass": 131,
+      "deliveryUICycle": 24,
+      "owner": "97463DFD-EC93-4EB0-AEBE-FD83F06AB91F",
+      "stage": "native_init_finished",
+      "uptime": 126298.21548954204
+    },
+    {
+      "deliveryRunLoopPass": 137,
+      "deliveryUICycle": 25,
+      "owner": "F27FD8A0-9779-44C4-945B-9A452990F75C",
+      "stage": "native_init_started",
+      "uptime": 126298.23555920803
+    },
+    {
+      "deliveryRunLoopPass": 137,
+      "deliveryUICycle": 25,
+      "owner": "F27FD8A0-9779-44C4-945B-9A452990F75C",
+      "stage": "native_init_finished",
+      "uptime": 126298.24338745803
+    },
+    {
+      "deliveryRunLoopPass": 143,
+      "deliveryUICycle": 26,
+      "owner": "6B5A6855-8D0E-49E8-B108-3D81B0F924F4",
+      "stage": "native_init_started",
+      "uptime": 126298.26110475004
+    },
+    {
+      "deliveryRunLoopPass": 143,
+      "deliveryUICycle": 26,
+      "owner": "6B5A6855-8D0E-49E8-B108-3D81B0F924F4",
+      "stage": "native_init_finished",
+      "uptime": 126298.26902491703
+    },
+    {
+      "deliveryRunLoopPass": 151,
+      "deliveryUICycle": 27,
+      "owner": "6C32D1E7-9B5A-4097-9000-AAE76C0783FB",
+      "stage": "native_init_started",
+      "uptime": 126298.28743587503
+    },
+    {
+      "deliveryRunLoopPass": 151,
+      "deliveryUICycle": 27,
+      "owner": "6C32D1E7-9B5A-4097-9000-AAE76C0783FB",
+      "stage": "native_init_finished",
+      "uptime": 126298.29452933303
+    },
+    {
+      "deliveryRunLoopPass": 155,
+      "deliveryUICycle": 28,
+      "owner": "F7328753-9D6B-4780-85CB-AF513BC2D7CD",
+      "stage": "native_init_started",
+      "uptime": 126298.31225320803
+    },
+    {
+      "deliveryRunLoopPass": 155,
+      "deliveryUICycle": 28,
+      "owner": "F7328753-9D6B-4780-85CB-AF513BC2D7CD",
+      "stage": "native_init_finished",
+      "uptime": 126298.31975358304
+    },
+    {
+      "deliveryRunLoopPass": 159,
+      "deliveryUICycle": 29,
+      "owner": "6506A830-638C-4AC7-98F1-20533F7A34F7",
+      "stage": "native_init_started",
+      "uptime": 126298.33888320804
+    },
+    {
+      "deliveryRunLoopPass": 159,
+      "deliveryUICycle": 29,
+      "owner": "6506A830-638C-4AC7-98F1-20533F7A34F7",
+      "stage": "native_init_finished",
+      "uptime": 126298.34500041703
+    },
+    {
+      "deliveryRunLoopPass": 169,
+      "deliveryUICycle": 30,
+      "owner": "9B89BDB2-14D5-46B6-9BF7-61A27B77C10E",
+      "stage": "native_init_started",
+      "uptime": 126298.36993412503
+    },
+    {
+      "deliveryRunLoopPass": 169,
+      "deliveryUICycle": 30,
+      "owner": "9B89BDB2-14D5-46B6-9BF7-61A27B77C10E",
+      "stage": "native_init_finished",
+      "uptime": 126298.37696354203
+    },
+    {
+      "deliveryRunLoopPass": 208,
+      "deliveryUICycle": 36,
+      "stage": "measurement_completed",
+      "uptime": 126298.43189662503
+    }
+  ]
+}

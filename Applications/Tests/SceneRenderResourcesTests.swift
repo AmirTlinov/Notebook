@@ -16,8 +16,10 @@ final class SceneRenderResourcesTests: XCTestCase {
     XCTAssertFalse(admission.canConstruct, "A managed source waits for its actual root")
     let root = UUID(), finished = UUID(), unconstructed = UUID()
     admission.setSceneRoot(root, scene: scene)
-    admission.reserve(finished); admission.reserve(unconstructed)
-    admission.finish(finished)
+    admission.reserve(finished)
+    XCTAssertFalse(admission.canConstruct, "The first cost must be known before a second constructor grant")
+    admission.finish(finished, elapsed: .zero)
+    admission.reserve(unconstructed)
     notifications.post(name: UIScene.willDeactivateNotification, object: NSObject())
     XCTAssertEqual(admission.count, 2, "An unrelated lifetime cannot release this scene's work")
     notifications.post(name: UIScene.willDeactivateNotification, object: scene)
@@ -27,20 +29,36 @@ final class SceneRenderResourcesTests: XCTestCase {
     XCTAssertFalse(admission.canConstruct)
     notifications.post(name: UIScene.didActivateNotification, object: scene)
     XCTAssertTrue(admission.canConstruct)
-    XCTAssertEqual(edges, [0, 0], "Attach and activation publish actual allowance")
+    XCTAssertEqual(edges, [0, 0, 0], "Attach, inexpensive completion and activation publish actual allowance")
     let replacement = UUID()
-    admission.reserve(replacement); admission.finish(replacement)
+    admission.reserve(replacement); admission.finish(replacement, elapsed: .zero)
     notifications.post(name: UIScene.didDisconnectNotification, object: scene)
     XCTAssertEqual(admission.count, 0)
     XCTAssertFalse(admission.canConstruct)
     admission.setSceneRoot(root, scene: nil)
     admission.setSceneRoot(root, scene: scene)
     let current = UUID()
-    admission.reserve(current); admission.finish(current)
+    admission.reserve(current); admission.finish(current, elapsed: .zero)
     try await waitUntil { admission.count == 0 }
     XCTAssertTrue(admission.canConstruct, "The new mounted lifetime receives a real UI completion")
     admission.setSceneRoot(root, scene: nil)
     XCTAssertFalse(admission.canConstruct)
+  }
+
+  @MainActor
+  func testExpensiveConstructorLeavesTheNextGrantForActualUICompletion() async throws {
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+      .first(where: { $0.activationState == .foregroundActive }))
+    let admission = SceneWebConstructionAdmission(interactive: true) { _ in }
+    let root = UUID(), first = UUID()
+    admission.setSceneRoot(root, scene: scene)
+    admission.reserve(first)
+    XCTAssertFalse(admission.canConstruct, "Queued work cannot preconsume an unknown constructor's UI budget")
+    admission.finish(first, elapsed: .milliseconds(27))
+    XCTAssertFalse(admission.canConstruct, "A second synchronous constructor cannot extend the spent UI opportunity")
+    try await waitUntil { admission.canConstruct }
+    XCTAssertEqual(admission.count, 0, "Actual UI completion releases this cost, independently of WebKit navigation")
+    admission.setSceneRoot(root, scene: nil)
   }
 
   @MainActor
@@ -67,7 +85,7 @@ final class SceneRenderResourcesTests: XCTestCase {
     defer { third.release() }
     XCTAssertEqual(resources.activeWebSurfaceCount, 3, "Finishing native construction does not retire its running program")
     XCTAssertEqual(resources.activeWebConstructionCount, 2)
-    first.finishConstruction()
+    first.finishConstruction(elapsed: .zero)
     XCTAssertEqual(resources.activeWebConstructionCount, 2, "An old completion cannot release another owner's construction")
     let waiting = Task { try await resources.acquireWebSurface(priority: .liveProgram, constructsView: true) }
     defer { waiting.cancel() }
@@ -412,7 +430,7 @@ final class SceneRenderResourcesTests: XCTestCase {
     let resources = SceneRenderResources(), documentID = UUID()
     let old = try await resources.acquireDocumentProgramSurface(priority: .liveProgram,
       documentID: documentID, blockID: "same-local-id")
-    old.finishConstruction()
+    old.finishConstruction(elapsed: .zero)
     let submitted = try old.borrow()
     old.release()
     var replacementStarted = false
@@ -427,7 +445,7 @@ final class SceneRenderResourcesTests: XCTestCase {
     XCTAssertEqual(resources.pendingWebRequestCount, 1)
     let otherDocument = try await resources.acquireDocumentProgramSurface(priority: .input,
       documentID: UUID(), blockID: "same-local-id")
-    otherDocument.finishConstruction()
+    otherDocument.finishConstruction(elapsed: .zero)
     let board = try await resources.acquireWebSurface(priority: .input,
       source: .board(boardID: documentID, elementID: "same-local-id"))
     defer { otherDocument.release(); board.release() }
@@ -1001,14 +1019,14 @@ final class SceneRenderResourcesTests: XCTestCase {
       let source = InteractiveElementReference.page(pageID: UUID(), elementID: "accepted-\(index)")
       let lease = try await resources.acquireWebSurface(priority: .liveProgram,
         source: source, constructsView: true)
-      lease.finishConstruction()
+      lease.finishConstruction(elapsed: .zero)
       return lease
     } }
     defer { requests.forEach { $0.cancel() } }
     try await waitUntil { resources.pendingWebRequestCount == 25 }
     XCTAssertEqual(resources.activeWebSurfaceCount, 2)
     XCTAssertEqual(resources.reservedBytes, 0, "Waiting owns neither a new browser nor bitmap backing")
-    first.finishConstruction(); second.finishConstruction()
+    first.finishConstruction(elapsed: .zero); second.finishConstruction(elapsed: .zero)
     var admitted: [WebSurfaceLease] = []
     defer { admitted.forEach { $0.release() } }
     for request in requests { admitted.append(try await request.value) }

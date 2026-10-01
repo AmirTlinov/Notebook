@@ -358,6 +358,11 @@ final class PageTurnReadiness {
   }
 
   #if os(iOS)
+  weak var idleOutputHost: PageTurnOutputParkingHost? {
+    didSet {
+      if oldValue !== idleOutputHost { oldValue?.revokeCurrentOutput() }
+    }
+  }
   var inkFrame: (@MainActor () -> InkCanvasView.AcceptedFrameLease?)?
   var inkFrameIsEmpty: (@MainActor () -> Bool)?
   var inkFrameIsReady: (@MainActor () -> Bool)?
@@ -388,6 +393,7 @@ final class PageTurnReadiness {
     agentPreparationMount?.close(); agentPreparationMount = nil
     if case .notebook = agentPreparationSource { agentPreparationSource = .notebook(nil) }
     #if os(iOS)
+    idleOutputHost = nil
     frameProvider = nil; inkFrame = nil; inkFrameIsEmpty = nil; inkFrameIsReady = nil
     #endif
   }

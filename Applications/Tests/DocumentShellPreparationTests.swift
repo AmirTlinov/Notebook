@@ -70,7 +70,7 @@ final class DocumentShellPreparationTests: XCTestCase {
     XCTAssertEqual(resources.activeWebSurfaceCount, 2)
     XCTAssertEqual(resources.pendingWebRequestCount, 0, "An optional shell never queues ahead of accepted content")
 
-    first.finishConstruction()
+    first.finishConstruction(elapsed: .zero)
     await waitUntil { resources.activeWebConstructionCount == 1 }
     XCTAssertEqual(resources.activeWebSurfaceCount, 2, "Constructor completion preserves both running leases")
     preparation.prepareIfIdle()

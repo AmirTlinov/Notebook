@@ -1,0 +1,7 @@
+owner willPublish(F48DF675-EB38-4A2B-8DDF-7675088DA2F0); clock=126296.07450179169; drawables=1; opacity=0.0
+owner published(F48DF675-EB38-4A2B-8DDF-7675088DA2F0); clock=126296.07491375002; drawables=1; opacity=1.0
+contact F48DF675-EB38-4A2B-8DDF-7675088DA2F0 osPresentation(0.0); timing=Optional(Notebook.InkContactFrameTiming(renderBegan: 126296.07275641669, targetDeadline: Optional(126296.07992583336), targetPresentation: Optional(126296.09659916669), commitBegan: Optional(126296.0735006667), commitReturned: Optional(126296.07352008336), scheduled: Optional(126296.07420887503), transactionPresented: Optional(126296.07482287503), lastBlankRevision: Optional(2), submittedRevision: Optional(3), opacityBeforePublication: Optional(0.0), lowLatencyDeferred: nil, lowLatencyDispatched: nil, lowLatencyUIDeadline: nil, lowLatencyUITarget: nil, gpuStarted: Optional(126296.07441991668), gpuEnded: Optional(126296.07480575), gpuCompletion: Optional(126296.07495345836)))
+owner resolved(F48DF675-EB38-4A2B-8DDF-7675088DA2F0, Notebook.NotebookMetalFrameReadiness.osPresentation(0.0)); clock=126296.08057675003; drawables=1; opacity=1.0
+owner willPublish(4671BC61-C254-4183-BC01-41CAC0EB877E); clock=126296.08959929169; drawables=2; opacity=1.0
+owner published(4671BC61-C254-4183-BC01-41CAC0EB877E); clock=126296.08967270836; drawables=2; opacity=1.0
+owner resolved(4671BC61-C254-4183-BC01-41CAC0EB877E, Notebook.NotebookMetalFrameReadiness.osPresentation(126296.1132727917)); clock=126296.11380587502; drawables=2; opacity=1.0

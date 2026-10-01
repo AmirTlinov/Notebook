@@ -596,14 +596,31 @@ Physical owners account for resident material, the borrowed pair and drawable
 backings. Resident page/document owners may reuse an unchanged completed frame;
 their bounded lifetime and reclamation rules own that memory. The curl retains
 its immutable pair through its last GPU submission and releases it at completion
-or cancellation. One `UIUpdateLink` owns page motion and publication. Released
+or cancellation. `SheetCurlMetalView` owns one exact-size, three-drawable page
+output pool. `PageTurnOutputHost` owns only its physical mount: the installed
+opaque canonical paper, inside its existing clip. `PagePresentationNativeView`
+lends the background beneath `GridPaperView`; `DocumentWebHost` requires its
+matching native print, not a transparent WebKit viewport or snapshot fallback.
+Only an OS-presented endpoint may park there. After GPU and drawable-acquisition
+drain, its existing bytes become passive and reclaimable. Preparing the next
+pair promotes that same pool without hiding or revealing it. Its first scheduled
+publication reparents the output and refronts curl in one exact CA hierarchy cut.
+Source/paper identity, mount, bounds or readiness retirement revoke the host;
+snapshot, failure and scene cancellation use the same revocation and drain.
+An active pair loses visibility and requires a fresh reveal; an idle revoked pool
+is released after its existing GPU/request fences. No primer, background frames
+or additional content cache keep it alive.
+
+One `UIUpdateLink` owns page motion and publication. Released
 motion encodes after update scheduling; input dispatch may replace that pose.
 After dispatch, ordinary motion publishes a scheduled drawable without waiting
 for the later CA phase. First reveal, geometry and owner z-order changes remain
-transactional until their exact hierarchy revision commits. An OS receipt of
-the first visible frame admits asynchronous motion; a GPU completion alone does
-not. A scheduling fence is bounded by 1 ms and the update deadline; no GPU
-completion wait runs on Main. Stopping motion parks the same link and output.
+transactional until their exact hierarchy revision commits. That committed cut
+admits asynchronous motion independently of OS receipt delivery. OS receipts own
+the shown pose and endpoint; GPU completion alone establishes neither.
+A scheduling fence is bounded by 1 ms and the update deadline; no GPU
+completion wait runs on Main. Stopping motion disables the same link; terminal
+output parking requires the installed paper and presented endpoint above.
 The immediate-presentation request is policy, not proof of latency; acceptance
 uses OS drawable timestamps. Operation UUID, generation and pose revision reject
 replaced work. Timing records submission, scheduling, UIKit publication and actual
@@ -627,6 +644,11 @@ transparency; demotion/reclamation releases their native backing. An early Penci
 supersedes an unpresented empty cut and supplies the latest material to that same
 clock; it does not wait for an extra blank frame. Nonempty reveal and selection
 cuts keep their own transaction through the OS receipt.
+A pending first reveal carries its exact measured-contact and source witness.
+Only a matching lift and single accepted append can advance it across the
+content revision; it never acknowledges the later accepted revision. Its
+successful completion parks a clean demand, while changed content/contact/crop,
+queued ordered cuts and an actual OS discard request the next frame.
 The first held dot records dropped submissions separately and awaits the same
 contact's first actual OS presentation from the original input time. Diagnostics
 and later moves do not obtain that receipt. GPU completion and OS presentation

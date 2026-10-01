@@ -1,0 +1,62 @@
+{
+  "format": 1,
+  "baseCommit": "f6793c9d312ca666ab01c3850c9493adba7384b7",
+  "sourceSHA256": "b6c223298cb8493b0187abd080bcc4892c10a6579194cc7e6e31f5fc238049d9",
+  "version": "0.3.160",
+  "build": "230",
+  "scope": "Focused correctness + source scheduling observation; physical iPad; optimized DEBUG fixtures; no full acceptance",
+  "selectedChecks": {
+    "commands": [],
+    "core": [],
+    "ipad": [
+      "NotebookTests/AgentSceneFingerRoutingTests/testDensePassiveDOMKeepsItsInputIndexAcrossAuthorFramePaintingAndReleasesItOnClose",
+      "NotebookTests/AgentSceneFingerRoutingTests/testReadyMapRoutesControlsAndAuthoredHandlersAtTheActualContact",
+      "NotebookTests/AgentSceneFingerRoutingTests/testReadyMapTracksMovedControlsAndListenerRemovalWithoutRuntimeRestart",
+      "NotebookTests/InkCanvasLifecycleTests/testPageLiftKeepsThePendingFirstRevealUntilItsOwnResolution",
+      "NotebookTests/NotebookColdInputUXTests/testFirstPencilAfterColdOpenWritesAndErasesTheDisplayedPage",
+      "NotebookTests/NotebookFirstPresentationSchedulingTests/testColdProgramConstructorsAgainstUIOpportunities",
+      "NotebookTests/NotebookFirstPresentationSchedulingTests/testFirstCurlAgainstUIAndOSBoundaries",
+      "NotebookTests/NotebookPageCurlInteractionTests/testCancellationAtPagePublicationDiscardsScheduledPixelsAndStopsUpdates",
+      "NotebookTests/NotebookPageCurlInteractionTests/testRegrabPreservesTheVisiblePoseAndReusesThePair",
+      "NotebookTests/NotebookPageLifecycleUXTests/testNativePageTurnsShowTheStoredLeafAfterEvictionReverseAndCancellation",
+      "NotebookTests/NotebookPageLifecycleUXTests/testPeerRemovedLeafCannotCommitAnOldCurlIntoItsReplacementSlot",
+      "NotebookTests/NotebookPageMotionUXTests/testCommittedCurlHierarchyPublishesTheNextPoseWithoutAnOSAdmissionGate",
+      "NotebookTests/NotebookPageMotionUXTests/testFirstSmallBendCannotExposeTheOtherLeafBeforeItsCurlPixels",
+      "NotebookTests/NotebookPageMotionUXTests/testHeldCurlPublishesCommittedMotionAfterInputBeforeCA",
+      "NotebookTests/PageTurnSelectionTests/testMountedSceneCancellationFinishesTheTurnAndRejectsLateBorrowAndColdReadiness",
+      "NotebookTests/SceneRenderResourcesTests/testConstructorLifetimeEndsWithItsBoundSceneAndResumesOnActivation",
+      "NotebookTests/SceneRenderResourcesTests/testExpensiveConstructorLeavesTheNextGrantForActualUICompletion",
+      "NotebookTests/SceneRenderResourcesTests/testRuntimeConstructionAdmissionEndsBeforeNavigationAndPreservesRunningOwners",
+      "NotebookUITests/NotebookNavigationLoadUITests/testTwentyFourPageProgramsAcceptFirstTapAfterZoomAndKeepStateAcrossTurns",
+      "NotebookUITests/NotebookPrintSourceUITests/testDocumentZoomOutReturnsToBoardAndReopensTheSamePaper"
+    ],
+    "mac": [
+      "NotebookMacTests/AgentInkRenderingTests/testAgentPenReachesNativeCompositeAndUndoWithoutMovingCamera",
+      "NotebookMacTests/MacInkInputTests/testNativeMouseContactPersistsItsExactSourceAndEraserUndoKeepsThePen"
+    ]
+  },
+  "counts": {
+    "ipad": {
+      "result": "Passed",
+      "passedTests": 20,
+      "failedTests": 0,
+      "skippedTests": 0,
+      "totalTestCount": 20
+    },
+    "mac": {
+      "result": "Passed",
+      "passedTests": 2,
+      "failedTests": 0,
+      "skippedTests": 0,
+      "totalTestCount": 2
+    }
+  },
+  "fullAcceptance": false,
+  "localEvidence": "/private/tmp/notebook-230-final-0028",
+  "curlObservationMS": {
+    "firstGPU": 8.16220830893144,
+    "firstOS": 23.739625001326203,
+    "landing": 333.54129166400526,
+    "discardedDrawables": 1
+  }
+}

@@ -711,12 +711,48 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     let id:UUID
     let firstPage:Bool
     let emptyPage:Bool
+    let contentRevision:UInt64
+    let paintRevision:UInt64
+    let projection:CommittedViewport
+    let contact:ContactFrame?
     var tiles:Set<Int>
+    var firstInk:FirstInkReveal? = nil
+  }
+  /// A measured contact can become its accepted topmost action without changing
+  /// these pixels. This witness belongs only to that pending first reveal;
+  /// ordinary source, history, mask and projection changes never advance it.
+  private struct FirstInkReveal {
+    let contact:ContactFrame
+    let measurements:UUID
+    let count:Int
+    let color:SpatialInkColor
+    let cursor:PageInkDrawing.ActionCursor
+    let projection:CommittedViewport
+    let baseline:ObjectIdentifier?
+    var paintRevision:UInt64
+    var contentRevision:UInt64
+    var lifted=false
+  }
+  private func firstInkIsCurrent(_ ink:FirstInkReveal)->Bool {
+    ink.paintRevision == acceptedPaintRevision && ink.contentRevision == stableContentRevision
+      && ink.projection == committedViewportKey && ink.baseline == baselineTexture.map(ObjectIdentifier.init)
+  }
+  private func firstInk(_ ink:FirstInkReveal,matches action:PageInkAction)->Bool {
+    action.isActive && action.tool == .pen && action.id == ink.contact.sourceID
+      && action.samples.revision == ink.measurements && action.samples.count == ink.count
+      && action.color == ink.color && (action.elementTargets?.isEmpty ?? true)
   }
   private var pendingTransaction:TransactionPresentation?
   var pendingFirstPresentationID:UUID? {
     pendingTransaction?.firstPage == true ? pendingTransaction?.id : nil
   }
+  enum FirstFrameEvent {
+    case willPublish(UUID), published(UUID), rejected(UUID)
+    case resolved(UUID,NotebookMetalFrameReadiness)
+  }
+  /// Observation of this reveal's owner edges. It supplies no drawable, clock
+  /// or completion; resolution comes only from the real presentation owner.
+  var onFirstFrameEvent:((FirstFrameEvent)->Void)?
   /// A real contact supersedes an unpresented transparent page, rather than
   /// waiting for an extra blank frame. Nonempty reveal/selection cuts retain
   /// their existing transaction through their own presentation receipt.
@@ -731,7 +767,13 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     if ready,!pending.tiles.isEmpty {pendingTransaction=pending;return}
     pendingTransaction=nil
     if !ready,pending.firstPage {hasRevealedFirstFrame=false}
-    if window != nil {requestFrame()}
+    // Finishing a successful reveal is not another pixel demand. Resume only
+    // for a changed material/contact, a queued cut or an actual OS discard;
+    // otherwise this completion would submit the same resting page again.
+    let changed=pending.contentRevision != stableContentRevision
+      || pending.paintRevision != acceptedPaintRevision
+      || pending.projection != committedViewportKey || pending.contact != activeContactFrame
+    if window != nil, !ready || changed || pendingOrderedCut != nil {requestFrame()}
     #if os(iOS)
     updatePageUIParticipation()
     #endif
@@ -1494,6 +1536,17 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
   func settle(_ change:PreparedPageInkChange,suppressedInkIDs proposed:Set<UUID>=[]) {
     let suppressedInkIDs=effectivePageSuppression(proposed)
     let baseIsInstalled = pageDrawing != nil && pageGeometryIsReady
+    // Acceptance can bind the exact lifted contact already encoded in the
+    // first drawable. Prove a single topmost append to its original source;
+    // an inverse or a replacement source cannot borrow this reveal.
+    var acceptedFirstInk:FirstInkReveal?
+    if let ink=pendingTransaction?.firstInk,ink.lifted,firstInkIsCurrent(ink),baseIsInstalled,
+      pageDrawing?.actionCursor == ink.cursor,pageSuppressedIDs == suppressedInkIDs,
+      case .append(let action)=change.mutation,firstInk(ink,matches:action),
+      let appended=change.drawing.appendedActions(after:ink.cursor),appended.count == 1,
+      appended.first?.id == action.id {
+      acceptedFirstInk=ink
+    }
     let retained=committedViewport
     var changedIDs=pageSuppressedIDs.symmetricDifference(suppressedInkIDs)
     var indices=Set<Int>(),needsRestoredGeometry=false
@@ -1535,6 +1588,10 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       // page preparer restores its original painter position and reuses the
       // other batches; appending it here would put an old eraser above new ink.
       schedulePageMeshIfNeeded()
+    }
+    if var ink=acceptedFirstInk,!needsRestoredGeometry {
+      ink.paintRevision=acceptedPaintRevision;ink.contentRevision=stableContentRevision
+      pendingTransaction?.firstInk=ink
     }
     requestFrame()
   }
@@ -1616,10 +1673,21 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       color = .init(1, 1, 1, 1);operation = .erase
       changed=stroke.changedStart(after:builtActiveIdentity == identity ? builtActiveRevision : nil)
     } else { return }
+    var liftedFirstInk:FirstInkReveal?
+    if let ink=pendingTransaction?.firstInk,!ink.lifted,firstInkIsCurrent(ink),
+      let stroke=activeInkStroke,stroke.predicted.isEmpty,
+      stroke.measured.sourceID == ink.contact.sourceID,stroke.measured.revision == ink.measurements,
+      let action,firstInk(ink,matches:action) {
+      liftedFirstInk=ink
+    }
     if builtActiveIdentity != identity { activeMesh = IncrementalInkMesh(eraser:operation == .erase) }
     activeMesh.update(measured:measured,changedFrom:builtActiveIdentity == identity ? changed : 0,color:color,projection:projection)
     appendCommitted(activeMesh, operation: operation, action: action,sourceID:measured.sourceID)
     discardActiveAction()
+    if var ink=liftedFirstInk {
+      ink.lifted=true;ink.paintRevision=acceptedPaintRevision
+      pendingTransaction?.firstInk=ink
+    }
     requestFrame()
   }
 
@@ -1988,7 +2056,16 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       if !visibleTiles.isEmpty {
         pendingTransaction = .init(id:submission,firstPage:firstPagePresentation,
           emptyPage:activeInkStroke == nil && activeEraserStroke == nil
-            && preparedEmptyContentRevision == stableContentRevision,tiles:visibleTiles)
+            && preparedEmptyContentRevision == stableContentRevision,
+          contentRevision:stableContentRevision,paintRevision:acceptedPaintRevision,
+          projection:committedViewportKey,contact:activeContactFrame,tiles:visibleTiles)
+        if firstPagePresentation,orderedCut == nil,orderedGeometry == nil,liveOrderedErasures.isEmpty,
+          let stroke=activeInkStroke,stroke.predicted.isEmpty,let drawing=pageDrawing {
+          pendingTransaction?.firstInk = .init(contact:.init(sourceID:stroke.measured.sourceID,revision:stroke.revision),
+            measurements:stroke.measured.revision,count:stroke.measured.count,color:stroke.measured.header.color,
+            cursor:drawing.actionCursor,projection:committedViewportKey,baseline:baselineTexture.map(ObjectIdentifier.init),
+            paintRevision:acceptedPaintRevision,contentRevision:stableContentRevision)
+        }
       }
     }
     // Demotion can retire a transparent reveal without changing its source.
@@ -2004,7 +2081,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       $0.submittedRevision=stableContentRevision
     }
     if let observation = onContactFrameResolved, let contact = activeContactFrame, active != nil {
-      let frameID = UUID(), tileCount = passes.count, isFirstFrame = !hasRevealedFirstFrame
+      let frameID = submission, tileCount = passes.count, isFirstFrame = !hasRevealedFirstFrame
       for (tile, pass) in passes.enumerated() {
         NotebookMetalFrameReadiness.observe(pass.1,commandBuffer:commandBuffer) { [weak self] readiness in
           // The first cold drawable belongs to this measured contact too.
@@ -2051,6 +2128,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       }
     } else if visibleSubmission, presentedRevision != nil || onVisibleFrame != nil || pendingTransaction?.id == submission || submittedContactKey != nil {
       NotebookMetalFrameReadiness.observe(passes[0].1,commandBuffer:commandBuffer) { [weak self] readiness in
+        if firstPagePresentation {self?.onFirstFrameEvent?(.resolved(submission,readiness))}
         if emptyPublication, self?.pendingTransaction?.id != submission
           || self?.presentsCurrentEmptyPage != true {
           // Visibility may change after scheduling without changing content.
@@ -2179,14 +2257,23 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     for (tile,revision) in acceptedTiles {tile.acceptedRevision=revision}
     if transactionPresentation {
       let sourceGeneration=spatialSourceGeneration
+      let publicationWindow=window.map(ObjectIdentifier.init)
       submittedPresentationCount += 1
       commandBuffer.addScheduledHandler { [weak self,orderedCut] _ in
         contactObservation?.update { $0.scheduled = CACurrentMediaTime() }
         Task { @MainActor [weak self,orderedCut] in
           defer {flight.finished();self?.submittedPresentationCount -= 1;self?.resumeFrameSlotWaiters();self?.resumeSpatialDrainIfReady()}
-          guard let self,!spatialHandoffIsStopping,window != nil,spatialSourceGeneration == sourceGeneration,
+          if firstPagePresentation {self?.onFirstFrameEvent?(.willPublish(submission))}
+          let sameFirstInk=firstPagePresentation && orderedCut == nil
+            && self?.pendingTransaction?.id == submission
+            && self?.pendingTransaction?.firstInk.map {self?.firstInkIsCurrent($0) == true} == true
+          guard let self,!spatialHandoffIsStopping,!pageBackingIsReclaimed,
+            window.map(ObjectIdentifier.init) == publicationWindow,
+            publicationWindow != nil,spatialSourceGeneration == sourceGeneration,
             !emptyPublication || (pendingTransaction?.id == submission && presentsCurrentEmptyPage),
-            orderedCut?.cancelled != true,orderedCut?.validate() != false,stableContentRevision == submittedRevision else {
+            orderedCut?.cancelled != true,orderedCut?.validate() != false,
+            stableContentRevision == submittedRevision || sameFirstInk else {
+            if firstPagePresentation {self?.onFirstFrameEvent?(.rejected(submission))}
             if self?.submittedPageContact?.submission == submission { self?.submittedPageContact = nil }
             if let self,pendingTransaction?.id == submission {
               pendingTransaction = nil
@@ -2216,6 +2303,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
           orderedCut?.resolve()
           if orderedCut != nil {onOrderedFrameInstalled?(submission,submittedRevision)}
           CATransaction.commit();hasRevealedFirstFrame=true
+          if firstPagePresentation {onFirstFrameEvent?(.published(submission))}
         }
       }
     } else if let contactObservation {

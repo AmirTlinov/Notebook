@@ -9,7 +9,7 @@
 | Панорамирование → щипок | `NotebookInputGate` хранит маршрут контакта и единственный navigation claim; recognizer сообщает намерение | Передача синхронно отменяет прежнего владельца. Позднее освобождение старого claim не затрагивает новый. Программа сохраняет собственную пару; пара через границы программы передаётся камере вместе с отменой начатого WebKit-нажатия. |
 | Камера / открытие / возврат | `WorkspaceCameraOwner` владеет подготовкой, жестом, переходом, подпиской готовности и ожиданиями; `SceneCameraSettlement` хранит текущую позу и цель | Clock публикует фактические позы. Completed/cancelled/superseded/failed освобождают callback; новый контакт начинает с установленной позы. Замена движения не публикует промежуточный idle; проснувшийся подписчик проверяет текущего владельца. Ошибка подготовки завершает операцию; retry создаёт новую. |
 | Перелистывание | `IPadPageTurnController.Operation` удерживает исходный и целевой host/UUID, материал и completion | Кадры двух страниц запрашиваются параллельно в одной отменяемой операции. Curl сообщает физический endpoint. Только controller выбирает landing. Удалённая цель не превращается в страницу, занявшую её индекс; отмена сохраняет существующий источник. |
-| Первый штрих | `InkCanvasView` сохраняет идентичность незавершённого первого reveal независимо от content revision | GPU completion и OS presentation — разные события. Lift/следующий материал не отбирает transactional reveal; retirement или отказ завершают его явно. |
+| Первый штрих | `InkCanvasView` хранит submitted demand и witness конкретного первого reveal | Точный lift/accepted append сохраняет подготовленные пиксели; undo/crop/source change отвергают их. GPU scheduling, публикация и OS outcome различаются. Clean completion паркует рендер; изменённый материал или discard возобновляет demand. |
 | Смешанное выделение | `NotebookSelectionPresentation` хранит единый desired/presented cut: материал, изменения объектов, рамка | Геометрия authored hosts проверяется непосредственно перед общей native transaction. Отмена восстанавливает исходный cut; ink owner удерживает транзакционный режим до OS receipt всех видимых плиток. Снятие выделения по его установленным границам не ждёт готовности всей страницы. Ошибка отзывает подготовку целиком, включая ожидающего writer. |
 | Холодный документ | `DocumentRenderSession.Opening` владеет запросом, чтением, admission, источником, подготовкой и отменой | Existing session передаёт source в native owner после регистрации page demand. `DocumentPagePreparation` имеет одного производителя на source/page и отдельных отменяемых читателей. |
 | Установленная бумага | `DocumentPagePresentationOwner` владеет установленными страницами; `DocumentProgramOwner` — отдельным исполнением/фокусом/checkpoint | Capturable material не требует окна. Live/input требует канонической геометрии установленного host. Бумага не ждёт интерактивности соседней программы. |
@@ -139,26 +139,36 @@ Curl связывает GPU/OS callbacks с UUID операции, поколе�
 после планирования update, контакт — после dispatch. Обычный motion публикует
 scheduled drawable после dispatch. Первый reveal, геометрия и смена порядка
 листов ждут CA commit своей ревизии; scheduling fence ограничен 1 мс и deadline,
-GPU completion на main не ожидается. Первый transactional reveal сохраняется
-до OS outcome; затем непрозрачные кадры публикуются асинхронно тем же clock.
+GPU completion на main не ожидается. Точный CA commit раскрытия разрешает
+последующее async движение тем же clock независимо от доставки OS outcome.
 Новый контакт берёт OS-показанную позу и отзывает ещё не опубликованную будущую.
 Endpoint требует receipt своей операции. Неподвижный контакт останавливает clock.
 
-Страничный output — отдельный `CAMetalLayer` внутри существующего view.
-Его размер, pool и публикация принадлежат рендереру; MTK backing обслуживает
-обложку. Terminal outcome сразу скрывает точный output. После показанного endpoint
-тот же размер сохраняет pool у native renderer; после GPU fence и acquisition
-drain его bytes переходят в passive и доступны обычному reclaimer. Новый turn
-повышает их в input. Отмена без endpoint, смена размера и detach удаляют точный
-старый pool после обоих fence; поздний callback не меняет следующий output.
+Страничный output — отдельный `CAMetalLayer`; размер, ограниченный pool и
+публикация принадлежат `SheetCurlMetalView`. `PageTurnOutputHost` владеет местом
+монтажа в установленной непрозрачной canonical paper под её существующим clip.
+`PagePresentationNativeView` предоставляет фон под `GridPaperView`;
+`DocumentWebHost` проверяет соответствующий native print. Прозрачный WebKit,
+snapshot или error/loading поверхность такого допуска не дают.
+
+Только OS-показанный endpoint паркуется у этой бумаги. После GPU fence и
+acquisition drain тот же pool становится passive и доступен reclaimer. Следующая
+подготовка повышает его в input без hide/reveal; первая scheduled publication
+возвращает слой в curl и поднимает curl одним точным CA cut. Изменение identity
+источника/бумаги, mount, bounds и retirement readiness отзывает место; snapshot,
+failure и scene cancellation завершают тот же путь. Активная пара теряет
+видимость и требует нового reveal; idle pool освобождается после GPU/request
+drain. Отмена без endpoint и смена размера освобождают точный старый pool после
+обоих fence. Поздний callback не меняет следующий output. Primer, фоновые кадры
+и дополнительный кеш отсутствуют; MTK backing сохраняет отдельный путь обложки.
 
 Page shader заполняет каждый пиксель. Три drawable разделяют показываемый,
 ожидающий и подготавливаемый кадр; все учитываются в reservation. GPU in-flight
 ограничен двумя. Один фоновый `nextDrawable` удерживает допуск до возврата:
 отмена не позволяет менять pool или начать следующий запрос раньше drain.
-До первого положительного OS receipt последовательные кадры сохраняют
-transactional режим. Scheduled successor не ждёт callback предшественника;
-CA-владелец переводит дальнейшее движение в async. Cover сохраняет отдельный путь.
+Reveal и изменение hierarchy сохраняют transactional режим до своего CA commit.
+Scheduled successor не ждёт OS callback предшественника; показанная поза и landing
+по-прежнему требуют actual OS receipt. Cover сохраняет отдельный путь.
 
 Страничный ink clock отправляет один cut для contact/prediction revision,
 source, paint, камеры, crop и окна. Неподвижный контакт сохраняет пассивный

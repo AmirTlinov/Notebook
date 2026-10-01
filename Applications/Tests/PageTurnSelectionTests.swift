@@ -7,6 +7,109 @@ import UIKit
 
 final class PageTurnSelectionTests: XCTestCase {
   @MainActor
+  func testMountedSceneCancellationFinishesTheTurnAndRejectsLateBorrowAndColdReadiness() async throws {
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+      .first(where: { $0.activationState == .foregroundActive }))
+    let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+    let notifications = NotificationCenter(), controller = IPadPageTurnController(sceneNotifications: notifications)
+    let navigation = NotebookPageNavigation(), gate = NotebookInputGate(), owner = UUID()
+    let pageIDs = [0: UUID(), 1: UUID(), 2: UUID()]
+    var receipts: [Int: PageTurnReadiness] = [:], frames: [Int: PageTurnFrame] = [:]
+    for index in 0..<3 {
+      frames[index] = try await PageTurnFrameFixture.solid(index == 0 ? .red : .green,
+        size: .init(width: 300, height: 400))
+    }
+    var selected = 0, commits: [Int] = [], outcomes: [Bool] = [], thirdIsReady = false
+    var pauseTarget = true, targetEntered = false, targetReturned = false
+    var releaseTarget: CheckedContinuation<Void, Never>?
+    func configure() {
+      controller.update(ownerID: owner, sequenceRevision: "scene-turn", pageCount: 3,
+        selectedIndex: selected, navigationIsEnabled: true, pageIsInteractive: true, canBeginNavigation: { true },
+        page: { index, _, ready in
+          receipts[index] = ready
+          ready.setFrameProvider { _ in
+            if index == 1, pauseTarget {
+              pauseTarget = false; targetEntered = true
+              await withCheckedContinuation { releaseTarget = $0 }
+              targetReturned = true
+              try Task.checkCancellation()
+            }
+            return try XCTUnwrap(frames[index])
+          }
+          ready(index != 2 || thirdIsReady)
+          return AnyView(Color.white)
+        }, onCommit: { index, _ in selected = index; commits.append(index); configure() },
+        onTransitioningChange: { _ in }, notebookNavigation: navigation, inputGate: gate, pageIdentities: pageIDs)
+    }
+    configure(); window.frame = .init(x: 0, y: 0, width: 300, height: 400)
+    window.rootViewController = controller; window.makeKeyAndVisible(); window.layoutIfNeeded()
+    defer {
+      releaseTarget?.resume(); releaseTarget = nil
+      controller.uninstall(); window.isHidden = true; window.rootViewController = nil; previous?.makeKey()
+    }
+    let native = controller.sheetController, initialHost = controller.cachedPageIdentities[0]
+    let begin = native.beginOperation
+    native.beginOperation = { source, target, gesture, completion in
+      begin(source, target, gesture) { result in outcomes.append(result); completion?(result) }
+    }
+    let curl = try XCTUnwrap(native.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
+    XCTAssertTrue(navigation.send(.step(1), ownerID: owner, source: "scene-turn"))
+    let borrowDeadline = ContinuousClock.now + .seconds(2)
+    while !targetEntered, ContinuousClock.now < borrowDeadline { await Task.yield() }
+    XCTAssertTrue(targetEntered)
+    let source = try XCTUnwrap(receipts[0]), target = try XCTUnwrap(receipts[1])
+    XCTAssertTrue(source.isInActiveTurn()); XCTAssertTrue(target.isInActiveTurn())
+    notifications.post(name: UIScene.willDeactivateNotification, object: NSObject())
+    XCTAssertTrue(target.isInActiveTurn(), "Another scene lifetime cannot cancel this pair")
+    notifications.post(name: UIScene.willDeactivateNotification, object: scene)
+    XCTAssertEqual(outcomes, [false], "The accepted operation completes once before a late target borrow returns")
+    XCTAssertFalse(source.isInActiveTurn()); XCTAssertFalse(target.isInActiveTurn())
+    XCTAssertFalse(controller.pageTurnActivity.isTransitioning)
+    XCTAssertNil(controller.pageTurnActivity.preparationDemand)
+    XCTAssertTrue(gate.permitsPageNavigation, "Cancellation releases this owner's navigation claim")
+    XCTAssertEqual(controller.cachedPageIdentities[0], initialHost)
+    XCTAssertEqual(selected, 0); XCTAssertTrue(commits.isEmpty)
+    XCTAssertFalse(navigation.send(.step(1), ownerID: owner, source: "scene-turn"))
+    releaseTarget?.resume(); releaseTarget = nil
+    let drainDeadline = ContinuousClock.now + .seconds(2)
+    while !targetReturned, ContinuousClock.now < drainDeadline { await Task.yield() }
+    XCTAssertTrue(targetReturned)
+    XCTAssertEqual(curl.submittedFrameCount, 0, "Cancelled capture cannot publish a late first frame")
+    XCTAssertEqual(outcomes, [false]); XCTAssertEqual(controller.displayedIndex, 0)
+    notifications.post(name: UIScene.didActivateNotification, object: scene)
+    XCTAssertTrue(navigation.send(.step(1), ownerID: owner, source: "scene-turn"))
+    let landingDeadline = ContinuousClock.now + .seconds(2)
+    while selected != 1, ContinuousClock.now < landingDeadline { try await Task.sleep(for: .milliseconds(2)) }
+    XCTAssertEqual(selected, 1); XCTAssertEqual(outcomes, [false, true]); XCTAssertEqual(commits, [1])
+    XCTAssertTrue(navigation.send(.step(1), ownerID: owner, source: "scene-turn"))
+    XCTAssertEqual(controller.pageTurnActivity.preparationDemand?.pageIndex, 2)
+    notifications.post(name: UIScene.didDisconnectNotification, object: scene)
+    XCTAssertNil(controller.pageTurnActivity.preparationDemand)
+    thirdIsReady = true; receipts[2]?(true)
+    XCTAssertEqual(controller.displayedIndex, 1, "Late cold readiness cannot restart an ended scene interaction")
+    XCTAssertFalse(navigation.send(.step(1), ownerID: owner, source: "scene-turn"))
+    notifications.post(name: UIScene.didActivateNotification, object: scene)
+    XCTAssertTrue(navigation.send(.step(1), ownerID: owner, source: "scene-turn"))
+    let nextDeadline = ContinuousClock.now + .seconds(2)
+    while selected != 2, ContinuousClock.now < nextDeadline { try await Task.sleep(for: .milliseconds(2)) }
+    XCTAssertEqual(selected, 2); XCTAssertEqual(commits, [1, 2])
+    let landedHost = controller.cachedPageIdentities[2]
+    notifications.post(name: UIScene.willDeactivateNotification, object: scene)
+    XCTAssertEqual(controller.displayedIndex, 2); XCTAssertEqual(controller.cachedPageIdentities[2], landedHost)
+    XCTAssertEqual(commits, [1, 2], "Ending the UI lifetime preserves an already committed UUID landing")
+    window.rootViewController = nil
+    XCTAssertNil(controller.view.window)
+    notifications.post(name: UIScene.didActivateNotification, object: scene)
+    window.rootViewController = controller; window.makeKeyAndVisible(); window.layoutIfNeeded()
+    XCTAssertTrue(controller.view.window === window)
+    XCTAssertTrue(navigation.send(.step(-1), ownerID: owner, source: "scene-turn"),
+      "Remount seeds actual scene activity after activation was ignored while absent")
+    let remountDeadline = ContinuousClock.now + .seconds(2)
+    while selected != 1, ContinuousClock.now < remountDeadline { try await Task.sleep(for: .milliseconds(2)) }
+    XCTAssertEqual(selected, 1); XCTAssertEqual(commits, [1, 2, 1])
+  }
+
+  @MainActor
   func testHostedReadinessQueriesTheActualMotionAndRejectsRetiredHosts() async throws {
     let controller = IPadPageTurnController(), navigation = NotebookPageNavigation(), owner = UUID()
     var receipts: [Int: PageTurnReadiness] = [:]

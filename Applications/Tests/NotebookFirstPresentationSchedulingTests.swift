@@ -248,11 +248,22 @@ import XCTest
         immediate: timing.immediatePresentationExpected, lowLatency: timing.performingLowLatencyPhases)
     }
     curl.onFrameMeasured = { timing in
-      let phases: [(String, TimeInterval?)] = [
+      var phases: [(String, TimeInterval?)] = [
         ("curl_clock_request", timing.clockRequested), ("curl_update_received", timing.displayUpdateReceived),
         ("curl_encode", timing.encodingBegan), ("curl_submit", timing.submitted),
         ("curl_scheduled", timing.scheduled), ("curl_gpu_start", timing.gpuBegan), ("curl_gpu_end", timing.gpuEnded)
       ]
+      if let acquisition = timing.drawableAcquisition {
+        phases += [
+          ("curl_drawable_requested", acquisition.requested),
+          ("curl_drawable_worker_began", acquisition.workerBegan),
+          ("curl_next_drawable_began", acquisition.nextDrawableBegan),
+          ("curl_next_drawable_returned", acquisition.nextDrawableReturned),
+          ("curl_drawable_drained", acquisition.drained),
+          ("curl_drawable_main_delivery_before_take", acquisition.mainActorDeliveryBeforeTake),
+          ("curl_drawable_taken", acquisition.taken)
+        ]
+      }
       for (stage, time) in phases {
         if let time { trace.record(stage, at: time, owner: timing.operationID?.uuidString, source: String(timing.sequence),
           deadline: timing.renderingDeadline, target: timing.targetPresentation) }

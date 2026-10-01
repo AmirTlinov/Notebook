@@ -10,6 +10,7 @@ import Foundation
   private let onAvailable: @MainActor (Int) -> Void
   private var held: Set<UUID> = []
   private var finished: Set<UUID> = []
+  private var constructionCosts: [UUID: Duration] = [:]
   private var deferredCompletion: Task<Void, Never>?
   #if os(iOS)
     @MainActor private final class SceneOpportunity {
@@ -38,6 +39,16 @@ import Foundation
   var availableCount: Int {
     #if os(iOS)
       if requiresScene && !scenes.values.contains(where: { $0.active }) { return 0 }
+      if interactive && requiresScene {
+        // Do not pregrant a second synchronous constructor before the first
+        // reports its actual cost. Leave half the display interval to input,
+        // layout and publication; exhausted work waits for our existing UI cut.
+        guard held.subtracting(finished).isEmpty else { return 0 }
+        let rate = scenes.values.filter { $0.active }.compactMap { $0.scene?.screen.maximumFramesPerSecond }.max() ?? 120
+        let budget = Duration.seconds(0.5 / Double(max(1, rate)))
+        guard constructionCosts.values.reduce(.zero, { $0 + $1 }) < budget else { return 0 }
+        return min(1, max(0, 2 - held.count))
+      }
     #endif
     return max(0, 2 - held.count)
   }
@@ -126,12 +137,15 @@ import Foundation
     held.insert(id)
   }
 
-  func finish(_ id: UUID) {
-    guard held.contains(id), finished.insert(id).inserted else { return }
+  func finish(_ id: UUID, elapsed: Duration) {
+    guard held.contains(id), !finished.contains(id) else { return }
+    let previous = availableCount
+    finished.insert(id); constructionCosts[id] = max(.zero, elapsed)
     #if os(iOS)
       if requiresScene {
         finishEndedUILifetime()
         for opportunity in scenes.values where opportunity.active { opportunity.link?.isEnabled = !finished.isEmpty }
+        publishAvailability(after: previous)
         return
       }
     #endif
@@ -154,6 +168,7 @@ import Foundation
     guard !completed.isEmpty else { return }
     let previous = availableCount
     held.subtract(completed); finished.subtract(completed)
+    for id in completed { constructionCosts[id] = nil }
     #if os(iOS)
       for opportunity in scenes.values {
         opportunity.committed.subtract(completed)

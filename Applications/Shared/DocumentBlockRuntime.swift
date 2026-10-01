@@ -169,6 +169,7 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
         stateTransfer = NotebookProgramStateTransfer(resources: resources)
         initialStateEncoding = encoding
         observe("program_admitted")
+        let constructionBegan = ContinuousClock.now
         let content = WKUserContentController(); content.add(self, name: "documentProgram")
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent(); configuration.userContentController = content
@@ -182,7 +183,7 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
         observe("program_mounted")
         // Only native construction holds the shared short allowance. Source,
         // package and initial state were accepted before entering this section.
-        acquired.finishConstruction()
+        acquired.finishConstruction(elapsed: constructionBegan.duration(to: .now))
         let url = try programAssets.register(store: store, package: package) { try html(package: package, resourceOrigin: $0) }
         packageURL = url; initialNavigationPending = true
         web.load(URLRequest(url: url))

@@ -1,0 +1,32 @@
+{
+  "build": "230",
+  "buildReceiptSHA256": "197fa6934411fd83313d028cd47fcb0cf71f55df2797425a85de24b603a6d5b0",
+  "dataAccess": "none",
+  "dataContainerPathChanged": true,
+  "finishedAt": "2026-10-01T01:37:23.292962+00:00",
+  "fullAcceptance": false,
+  "helperPresentation": "ready",
+  "inPlaceUpdate": true,
+  "installedNotebookApps": [
+    {
+      "bundleIdentifier": "com.amirtlinov.notebook.preview",
+      "bundleVersion": "230"
+    }
+  ],
+  "newSession": "5198E252-2490-4327-940E-7EF226855A47",
+  "oldSession": "CFA3C282-1E3D-48C6-8700-EABA2F971F0F",
+  "physicalImage": {
+    "inspection": "Original handwritten grid paper remains displayed, page 1/5, full native workspace. Private pixels retained locally.",
+    "path": "/private/tmp/notebook-delivery-230-0136/ipad-visible.png",
+    "sha256": "3b43924cb36b911c2a727bf31c56ef68a365ee33bd9cace9ecb6e40a28cbcca3"
+  },
+  "presenceUnchanged": true,
+  "previousBuild": "229",
+  "scopedChecks": 26,
+  "sourceSHA256": "2e85dc9f628b683d21d4b23a848c8e0e92109309cd5233c1e3a851388f64e891",
+  "status": "installed-pair-and-physical-presentation-verified",
+  "trustedDeviceUnchanged": true,
+  "verificationDirectory": "/private/tmp/notebook-230-installed-output-0126",
+  "version": "0.3.160",
+  "workspaceUnchanged": true
+}

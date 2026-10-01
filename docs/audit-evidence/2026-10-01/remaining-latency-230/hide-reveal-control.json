@@ -1,0 +1,907 @@
+{
+  "evidence": {
+    "scope": "Physical-iPad causal control. Same pooled output; baseline hide/reveal versus output left visible under opaque fixture. Diagnostic fixture replaced by product regression after diagnosis.",
+    "sourceSHA256": "81cb8400c73743af86538d2506150164a77619112fbcef4296156cca594482de",
+    "verificationDirectory": "/private/tmp/notebook-230-deliverable-0058"
+  },
+  "turns": [
+    {
+      "discardedSequences": [
+        0
+      ],
+      "endpointOSMS": 329.7651250031777,
+      "firstOSMS": 21.306041671778075,
+      "firstProgress": 0.1014752223088163,
+      "firstSequence": 1,
+      "mode": "baseline-reveal",
+      "phases": [
+        {
+          "atMS": 0.816208339529112,
+          "nextSequence": 0,
+          "outputHidden": false,
+          "parentHidden": true,
+          "phase": "prepared",
+          "transactional": true
+        },
+        {
+          "atMS": 3.826291664154269,
+          "nextSequence": 1,
+          "outputHidden": false,
+          "parentHidden": true,
+          "phase": "afterEvents",
+          "transactional": true
+        },
+        {
+          "atMS": 4.31037500675302,
+          "nextSequence": 1,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "exposed",
+          "transactional": true
+        },
+        {
+          "atMS": 4.316291669965722,
+          "nextSequence": 1,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "beforePresent",
+          "transactional": true
+        },
+        {
+          "atMS": 9.836833327426575,
+          "nextSequence": 1,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "afterPresent",
+          "transactional": true
+        },
+        {
+          "atMS": 9.85124999715481,
+          "nextSequence": 1,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "beforeCommit",
+          "transactional": true
+        },
+        {
+          "atMS": 10.050083335954696,
+          "nextSequence": 1,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "afterCommit",
+          "transactional": true
+        },
+        {
+          "atMS": 12.02266666223295,
+          "nextSequence": 2,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "beforePresent",
+          "transactional": false
+        },
+        {
+          "atMS": 12.030833328026347,
+          "nextSequence": 2,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "afterPresent",
+          "transactional": false
+        },
+        {
+          "atMS": 12.04212500306312,
+          "nextSequence": 2,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "afterEvents",
+          "transactional": false
+        },
+        {
+          "atMS": 12.046375006320886,
+          "nextSequence": 2,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "beforeCommit",
+          "transactional": false
+        },
+        {
+          "atMS": 12.062333335052244,
+          "nextSequence": 2,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "afterCommit",
+          "transactional": false
+        },
+        {
+          "atMS": 20.361333328764886,
+          "nextSequence": 3,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "beforePresent",
+          "transactional": false
+        },
+        {
+          "atMS": 20.371250007883646,
+          "nextSequence": 3,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "afterPresent",
+          "transactional": false
+        },
+        {
+          "atMS": 20.37450000352692,
+          "nextSequence": 3,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "afterEvents",
+          "transactional": false
+        },
+        {
+          "atMS": 20.383875002153218,
+          "nextSequence": 3,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "beforeCommit",
+          "transactional": false
+        },
+        {
+          "atMS": 20.385374999023043,
+          "nextSequence": 3,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "afterCommit",
+          "transactional": false
+        }
+      ],
+      "preservedAtMS": null,
+      "turn": 0
+    },
+    {
+      "discardedSequences": [
+        38,
+        39,
+        40
+      ],
+      "endpointOSMS": 330.7851666613715,
+      "firstOSMS": 38.99958333931863,
+      "firstProgress": 0.8024606726782846,
+      "firstSequence": 41,
+      "mode": "baseline-reveal",
+      "phases": [
+        {
+          "atMS": 0.3133749996777624,
+          "nextSequence": 38,
+          "outputHidden": false,
+          "parentHidden": true,
+          "phase": "prepared",
+          "transactional": true
+        },
+        {
+          "atMS": 4.992708330973983,
+          "nextSequence": 39,
+          "outputHidden": false,
+          "parentHidden": true,
+          "phase": "afterEvents",
+          "transactional": true
+        },
+        {
+          "atMS": 5.325708334567025,
+          "nextSequence": 39,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "exposed",
+          "transactional": true
+        },
+        {
+          "atMS": 5.32908333116211,
+          "nextSequence": 39,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "beforePresent",
+          "transactional": true
+        },
+        {
+          "atMS": 5.356916663004085,
+          "nextSequence": 39,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "afterPresent",
+          "transactional": true
+        },
+        {
+          "atMS": 6.780750001780689,
+          "nextSequence": 39,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "beforeCommit",
+          "transactional": true
+        },
+        {
+          "atMS": 6.792750005843118,
+          "nextSequence": 39,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "afterCommit",
+          "transactional": true
+        },
+        {
+          "atMS": 13.059833334409632,
+          "nextSequence": 40,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "beforePresent",
+          "transactional": false
+        },
+        {
+          "atMS": 13.118291666614823,
+          "nextSequence": 40,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "afterPresent",
+          "transactional": false
+        },
+        {
+          "atMS": 13.135833331034519,
+          "nextSequence": 40,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "afterEvents",
+          "transactional": false
+        },
+        {
+          "atMS": 13.140750001184642,
+          "nextSequence": 40,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "beforeCommit",
+          "transactional": false
+        },
+        {
+          "atMS": 13.218208332546055,
+          "nextSequence": 40,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "afterCommit",
+          "transactional": false
+        },
+        {
+          "atMS": 21.39412499673199,
+          "nextSequence": 41,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "beforePresent",
+          "transactional": false
+        },
+        {
+          "atMS": 21.501583338249475,
+          "nextSequence": 41,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "afterPresent",
+          "transactional": false
+        },
+        {
+          "atMS": 21.511250000912696,
+          "nextSequence": 41,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "afterEvents",
+          "transactional": false
+        },
+        {
+          "atMS": 21.516541673918255,
+          "nextSequence": 41,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "beforeCommit",
+          "transactional": false
+        },
+        {
+          "atMS": 21.52083333930932,
+          "nextSequence": 41,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "afterCommit",
+          "transactional": false
+        }
+      ],
+      "preservedAtMS": null,
+      "turn": 1
+    },
+    {
+      "discardedSequences": [
+        77,
+        78,
+        79
+      ],
+      "endpointOSMS": 332.12779166933615,
+      "firstOSMS": 40.3423749958165,
+      "firstProgress": 0.19754002717196423,
+      "firstSequence": 80,
+      "mode": "baseline-reveal",
+      "phases": [
+        {
+          "atMS": 0.2789999998640269,
+          "nextSequence": 77,
+          "outputHidden": false,
+          "parentHidden": true,
+          "phase": "prepared",
+          "transactional": true
+        },
+        {
+          "atMS": 6.157041672850028,
+          "nextSequence": 78,
+          "outputHidden": false,
+          "parentHidden": true,
+          "phase": "afterEvents",
+          "transactional": true
+        },
+        {
+          "atMS": 6.338291670545004,
+          "nextSequence": 78,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "exposed",
+          "transactional": true
+        },
+        {
+          "atMS": 6.341041662381031,
+          "nextSequence": 78,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "beforePresent",
+          "transactional": true
+        },
+        {
+          "atMS": 6.390083333826624,
+          "nextSequence": 78,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "afterPresent",
+          "transactional": true
+        },
+        {
+          "atMS": 8.144249994074926,
+          "nextSequence": 78,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "beforeCommit",
+          "transactional": true
+        },
+        {
+          "atMS": 8.158374999766238,
+          "nextSequence": 78,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "afterCommit",
+          "transactional": true
+        },
+        {
+          "atMS": 14.419958330108784,
+          "nextSequence": 79,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "beforePresent",
+          "transactional": false
+        },
+        {
+          "atMS": 14.497791664325632,
+          "nextSequence": 79,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "afterPresent",
+          "transactional": false
+        },
+        {
+          "atMS": 14.528250001603737,
+          "nextSequence": 79,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "afterEvents",
+          "transactional": false
+        },
+        {
+          "atMS": 14.533791661961004,
+          "nextSequence": 79,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "beforeCommit",
+          "transactional": false
+        },
+        {
+          "atMS": 14.628666671342216,
+          "nextSequence": 79,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "afterCommit",
+          "transactional": false
+        },
+        {
+          "atMS": 22.76454165985342,
+          "nextSequence": 80,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "beforePresent",
+          "transactional": false
+        },
+        {
+          "atMS": 22.882208329974674,
+          "nextSequence": 80,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "afterPresent",
+          "transactional": false
+        },
+        {
+          "atMS": 22.897041664691642,
+          "nextSequence": 80,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "afterEvents",
+          "transactional": false
+        },
+        {
+          "atMS": 22.90220833674539,
+          "nextSequence": 80,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "beforeCommit",
+          "transactional": false
+        },
+        {
+          "atMS": 22.907124992343597,
+          "nextSequence": 80,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "afterCommit",
+          "transactional": false
+        }
+      ],
+      "preservedAtMS": 334.3391249945853,
+      "turn": 2
+    },
+    {
+      "discardedSequences": [],
+      "endpointOSMS": 330.0245416612597,
+      "firstOSMS": 21.565791670582257,
+      "firstProgress": 0.9485948350812552,
+      "firstSequence": 116,
+      "mode": "established-under-paper",
+      "phases": [
+        {
+          "atMS": 0.38804166251793504,
+          "nextSequence": 116,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "prepared",
+          "transactional": true
+        },
+        {
+          "atMS": 4.153625006438233,
+          "nextSequence": 117,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "afterEvents",
+          "transactional": true
+        },
+        {
+          "atMS": 4.461999997147359,
+          "nextSequence": 117,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "exposed",
+          "transactional": true
+        },
+        {
+          "atMS": 4.465749996597879,
+          "nextSequence": 117,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "beforePresent",
+          "transactional": true
+        },
+        {
+          "atMS": 4.509624995989725,
+          "nextSequence": 117,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "afterPresent",
+          "transactional": true
+        },
+        {
+          "atMS": 6.0407083365134895,
+          "nextSequence": 117,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "beforeCommit",
+          "transactional": true
+        },
+        {
+          "atMS": 6.053375007468276,
+          "nextSequence": 117,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "afterCommit",
+          "transactional": true
+        },
+        {
+          "atMS": 12.37162499455735,
+          "nextSequence": 118,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "beforePresent",
+          "transactional": false
+        },
+        {
+          "atMS": 12.447416665963829,
+          "nextSequence": 118,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "afterPresent",
+          "transactional": false
+        },
+        {
+          "atMS": 12.463541672332212,
+          "nextSequence": 118,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "afterEvents",
+          "transactional": false
+        },
+        {
+          "atMS": 12.46995833935216,
+          "nextSequence": 118,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "beforeCommit",
+          "transactional": false
+        },
+        {
+          "atMS": 12.567958328872919,
+          "nextSequence": 118,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "afterCommit",
+          "transactional": false
+        },
+        {
+          "atMS": 20.616416673874483,
+          "nextSequence": 118,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "afterEvents",
+          "transactional": false
+        },
+        {
+          "atMS": 20.62754167127423,
+          "nextSequence": 118,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "beforeCommit",
+          "transactional": false
+        },
+        {
+          "atMS": 20.63149999594316,
+          "nextSequence": 118,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "afterCommit",
+          "transactional": false
+        },
+        {
+          "atMS": 28.97924999706447,
+          "nextSequence": 119,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "beforePresent",
+          "transactional": false
+        },
+        {
+          "atMS": 29.051208330201916,
+          "nextSequence": 119,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "afterPresent",
+          "transactional": false
+        }
+      ],
+      "preservedAtMS": 330.94308333238587,
+      "turn": 3
+    },
+    {
+      "discardedSequences": [],
+      "endpointOSMS": 332.05066666414496,
+      "firstOSMS": 23.59208332200069,
+      "firstProgress": 0.05140516491874476,
+      "firstSequence": 154,
+      "mode": "established-under-paper",
+      "phases": [
+        {
+          "atMS": 0.40550000267103314,
+          "nextSequence": 154,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "prepared",
+          "transactional": true
+        },
+        {
+          "atMS": 6.105624997871928,
+          "nextSequence": 155,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "afterEvents",
+          "transactional": true
+        },
+        {
+          "atMS": 6.197458322276361,
+          "nextSequence": 155,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "exposed",
+          "transactional": true
+        },
+        {
+          "atMS": 6.200041665579192,
+          "nextSequence": 155,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "beforePresent",
+          "transactional": true
+        },
+        {
+          "atMS": 6.272416663705371,
+          "nextSequence": 155,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "afterPresent",
+          "transactional": true
+        },
+        {
+          "atMS": 8.082333326456137,
+          "nextSequence": 155,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "beforeCommit",
+          "transactional": true
+        },
+        {
+          "atMS": 8.100041668512858,
+          "nextSequence": 155,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "afterCommit",
+          "transactional": true
+        },
+        {
+          "atMS": 14.342666661832482,
+          "nextSequence": 156,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "beforePresent",
+          "transactional": false
+        },
+        {
+          "atMS": 14.39541665604338,
+          "nextSequence": 156,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "afterPresent",
+          "transactional": false
+        },
+        {
+          "atMS": 14.411791664315388,
+          "nextSequence": 156,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "afterEvents",
+          "transactional": false
+        },
+        {
+          "atMS": 14.421541665797122,
+          "nextSequence": 156,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "beforeCommit",
+          "transactional": false
+        },
+        {
+          "atMS": 14.510249995510094,
+          "nextSequence": 156,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "afterCommit",
+          "transactional": false
+        },
+        {
+          "atMS": 22.766624999349006,
+          "nextSequence": 156,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "afterEvents",
+          "transactional": false
+        },
+        {
+          "atMS": 22.783624997828156,
+          "nextSequence": 156,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "beforeCommit",
+          "transactional": false
+        },
+        {
+          "atMS": 22.79079165600706,
+          "nextSequence": 156,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "afterCommit",
+          "transactional": false
+        },
+        {
+          "atMS": 31.017208326375112,
+          "nextSequence": 157,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "beforePresent",
+          "transactional": false
+        },
+        {
+          "atMS": 31.09695832245052,
+          "nextSequence": 157,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "afterPresent",
+          "transactional": false
+        }
+      ],
+      "preservedAtMS": 332.9683749907417,
+      "turn": 4
+    },
+    {
+      "discardedSequences": [],
+      "endpointOSMS": 332.0438749942696,
+      "firstOSMS": 23.58516666572541,
+      "firstProgress": 0.9485948350812552,
+      "firstSequence": 192,
+      "mode": "established-under-paper",
+      "phases": [
+        {
+          "atMS": 0.3431249933782965,
+          "nextSequence": 192,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "prepared",
+          "transactional": true
+        },
+        {
+          "atMS": 5.9741250006482005,
+          "nextSequence": 193,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "afterEvents",
+          "transactional": true
+        },
+        {
+          "atMS": 6.0392500017769635,
+          "nextSequence": 193,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "exposed",
+          "transactional": true
+        },
+        {
+          "atMS": 6.041458327672444,
+          "nextSequence": 193,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "beforePresent",
+          "transactional": true
+        },
+        {
+          "atMS": 6.1013749946141616,
+          "nextSequence": 193,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "afterPresent",
+          "transactional": true
+        },
+        {
+          "atMS": 8.815541659714654,
+          "nextSequence": 193,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "beforeCommit",
+          "transactional": true
+        },
+        {
+          "atMS": 8.831375002046116,
+          "nextSequence": 193,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "afterCommit",
+          "transactional": true
+        },
+        {
+          "atMS": 14.387708331923932,
+          "nextSequence": 194,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "beforePresent",
+          "transactional": false
+        },
+        {
+          "atMS": 14.454083328018896,
+          "nextSequence": 194,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "afterPresent",
+          "transactional": false
+        },
+        {
+          "atMS": 14.476041658781469,
+          "nextSequence": 194,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "afterEvents",
+          "transactional": false
+        },
+        {
+          "atMS": 14.48254166461993,
+          "nextSequence": 194,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "beforeCommit",
+          "transactional": false
+        },
+        {
+          "atMS": 14.591916667995974,
+          "nextSequence": 194,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "afterCommit",
+          "transactional": false
+        },
+        {
+          "atMS": 22.65508333221078,
+          "nextSequence": 194,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "afterEvents",
+          "transactional": false
+        },
+        {
+          "atMS": 22.67016666883137,
+          "nextSequence": 194,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "beforeCommit",
+          "transactional": false
+        },
+        {
+          "atMS": 22.675125001114793,
+          "nextSequence": 194,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "afterCommit",
+          "transactional": false
+        },
+        {
+          "atMS": 31.011541665066034,
+          "nextSequence": 195,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "beforePresent",
+          "transactional": false
+        },
+        {
+          "atMS": 31.096499995328486,
+          "nextSequence": 195,
+          "outputHidden": false,
+          "parentHidden": false,
+          "phase": "afterPresent",
+          "transactional": false
+        }
+      ],
+      "preservedAtMS": 332.98491666209884,
+      "turn": 5
+    }
+  ]
+}

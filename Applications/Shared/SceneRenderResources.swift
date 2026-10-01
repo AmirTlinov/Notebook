@@ -221,7 +221,7 @@ final class WebSurfaceLease {
   }
   /// The native constructor has returned. Browser navigation, authored
   /// readiness and the running surface have separate lifetimes.
-  func finishConstruction() { resources?.finishConstruction(id) }
+  func finishConstruction(elapsed: Duration) { resources?.finishConstruction(id, elapsed: elapsed) }
   isolated deinit { release() }
 }
 
@@ -1186,8 +1186,8 @@ final class SceneRenderResources {
     admitWaiters()
     publishWebAvailability(after: availability)
   }
-  fileprivate func finishConstruction(_ id: UUID) {
-    webConstruction.finish(id)
+  fileprivate func finishConstruction(_ id: UUID, elapsed: Duration) {
+    webConstruction.finish(id, elapsed: elapsed)
   }
   fileprivate func abandonConstruction(_ id: UUID) {
     let availability = webAvailability
@@ -1233,9 +1233,9 @@ final class SceneRenderResources {
   private func canAdmit(_ priority: WebPriority, source: WebExecutionSource? = nil, constructsView: Bool = false) -> Bool {
     // A dense scene may retain 32 independent programs, but constructing all
     // their WKWebViews in one SwiftUI transaction blocks the first output.
-    // At most two admitted views await native construction. Their completion
-    // follows a native commit opportunity and event dispatch; remote navigation
-    // and author readiness never retain this construction allowance.
+    // UIKit grants one unconstructed owner, then considers its actual cost
+    // before another grant. Spent work retires at the native UI completion;
+    // remote navigation and author readiness never hold this short allowance.
     hasWebCapacity(priority) && (!constructsView || webConstruction.canConstruct)
       && (source.map { !activeWebSources.values.contains($0) } ?? true)
   }

@@ -2474,6 +2474,7 @@ private enum DocumentWebViewFactory {
   @MainActor
   static func make(coordinator: DocumentWebCoordinator, lease: WebSurfaceLease) -> WKWebView {
     precondition(!lease.isReleased)
+    let constructionBegan = ContinuousClock.now
     let content = WKUserContentController()
     content.add(coordinator, name: "notebook")
     let configuration = WKWebViewConfiguration()
@@ -2528,7 +2529,7 @@ private enum DocumentWebViewFactory {
         baseURL: nil
       )
     }
-    lease.finishConstruction()
+    lease.finishConstruction(elapsed: constructionBegan.duration(to: .now))
     return webView
   }
 }
@@ -2575,9 +2576,55 @@ private enum DocumentWebViewFactory {
   }
 
   @MainActor
-  final class DocumentWebHost: UIView {
+  final class DocumentWebHost: PageTurnOutputParkingHost {
+    private weak var outputReadiness: PageTurnReadiness?
+    private struct OutputPresentation: Equatable {
+      let documentID: UUID
+      let paperToken: String
+      let token: String
+    }
+    private var outputPresentation: OutputPresentation?
+    func bindOutputReadiness(_ input: DocumentPagePresentation) {
+      guard input.snapshotPixelWidth == nil else { releaseOutputReadiness(); return }
+      let presentation = OutputPresentation(documentID: input.document.id,
+        paperToken: input.paperToken, token: input.token)
+      if outputReadiness !== input.onRenderReady || outputPresentation != presentation {
+        revokeCurrentOutput()
+        if outputReadiness?.idleOutputHost === self { outputReadiness?.idleOutputHost = nil }
+      }
+      outputReadiness = input.onRenderReady; outputPresentation = presentation
+      if !input.onRenderReady.isRetired { input.onRenderReady.idleOutputHost = self }
+    }
+    private func releaseOutputReadiness() {
+      revokeCurrentOutput()
+      if outputReadiness?.idleOutputHost === self { outputReadiness?.idleOutputHost = nil }
+      outputReadiness = nil; outputPresentation = nil
+    }
+    /// Only the installed opaque native print covers an idle output. WebKit's
+    /// transparent interaction viewport alone cannot lend this background.
+    override var canParkOutput: Bool {
+      guard let outputReadiness, !outputReadiness.isRetired,
+        outputReadiness.idleOutputHost === self, let outputPresentation,
+        !hasSnapshot, failureView == nil, loadingView == nil,
+        hasCanonicalPaperProjection else { return false }
+      let paper: DocumentPaperView?
+      if let viewport { paper = viewport.subviews.compactMap { $0 as? DocumentPaperView }.first }
+      else { paper = retainedPaper }
+      guard let paper, let raster = paper.raster,
+        raster.page.artifact.document.id == outputPresentation.documentID,
+        DocumentSnapshotCache.paperToken(sourceRevision: raster.page.artifact.document.contentStamp.revision,
+          pageIndex: raster.page.pageIndex) == outputPresentation.paperToken,
+        raster.page.pageIndex == outputReadiness.pageIndex else { return false }
+      var ancestor: UIView? = paper
+      while let view = ancestor, view !== self {
+        guard !view.isHidden, view.alpha == 1 else { return false }
+        ancestor = view.superview
+      }
+      return ancestor === self && super.canParkOutput
+    }
     private weak var retainedPaper: DocumentPaperView?
     func installPaper(_ paper: DocumentPaperView) {
+      revokeCurrentOutput()
       if let previous = paper.superview as? DocumentWebHost, previous !== self {
         previous.removePaper(ownedBy: paper)
       }
@@ -2594,6 +2641,7 @@ private enum DocumentWebViewFactory {
     }
     func removePaper(ownedBy paper: DocumentPaperView) {
       guard retainedPaper === paper else { return }
+      revokeCurrentOutput()
       if paper.superview === self { paper.removeFromSuperview() }
       retainedPaper = nil
       publishProjectionChange()
@@ -2635,6 +2683,7 @@ private enum DocumentWebViewFactory {
     func releasePresentationCallbacks(for owner: UUID) {
       guard presentationCallbackOwner == owner else { return }
       presentationCallbackOwner = nil
+      releaseOutputReadiness()
       // Accepted native contacts keep their terminal route. Size/window
       // observations end with this presentation; delivery ends at touch-up.
       onSizeChange = { }; onWindowChange = { }
@@ -2642,6 +2691,7 @@ private enum DocumentWebViewFactory {
     private var lastLaidOutSize = CGSize.zero
     private var lastCanonicalProjection = false
     func showFailure(_ message: String, retry: @escaping () -> Void) {
+      revokeCurrentOutput()
       removeLoading()
       removeFailure()
       let label = UILabel(); label.text = message; label.numberOfLines = 0; label.textAlignment = .center
@@ -2660,6 +2710,7 @@ private enum DocumentWebViewFactory {
     }
     func showLoading() {
       guard loadingView == nil, failureView == nil, fallback == nil else { return }
+      revokeCurrentOutput()
       let spinner = UIActivityIndicatorView(style: .medium); spinner.startAnimating()
       let label = UILabel(); label.text = "Подготовка страницы…"; label.font = .preferredFont(forTextStyle: .caption1)
       label.numberOfLines = 0; label.textAlignment = .center
@@ -2700,6 +2751,7 @@ private enum DocumentWebViewFactory {
     }
     private func publishProjectionChange() {
       let installed = hasCanonicalPaperProjection
+      if !installed { revokeCurrentOutput() }
       guard installed != lastCanonicalProjection else { return }
       lastCanonicalProjection = installed
       Task { @MainActor [weak self] in self?.onSizeChange() }
@@ -2731,6 +2783,7 @@ private enum DocumentWebViewFactory {
     }
     func installSnapshot(_ raster: RasterLease) {
       guard fallbackLease?.entryID != raster.entryID, let retained = raster.retainedCopy() else { return }
+      revokeCurrentOutput()
       removeLoading()
       removeFallback(); fallbackLease = retained; fallbackSource = raster.source
       let image = UIImageView(image: retained.image)
@@ -2743,6 +2796,7 @@ private enum DocumentWebViewFactory {
       if let source, fallbackSource == source, let fallbackLease, fallbackLease.pixelScale >= minimumScale { return true }
       removeFallback()
       guard let source, let lease = resources.retainRaster(for: source, minimumScale: minimumScale) else { return false }
+      revokeCurrentOutput()
       fallbackSource = source; fallbackLease = lease
       let imageView = UIImageView(image: lease.image)
       imageView.frame = bounds; imageView.contentMode = .scaleToFill
@@ -2775,6 +2829,7 @@ private enum DocumentWebViewFactory {
         // Transfer the physical subtree, not WebKit through an unattached new
         // wrapper. Its canonical bounds and window remain continuous; retiring
         // the departed host can no longer detach the incoming owner's surface.
+        previous.revokeCurrentOutput()
         previous.viewport = nil
         incoming = projection
         incoming.setContentSize(size)
@@ -2787,6 +2842,7 @@ private enum DocumentWebViewFactory {
       setNeedsLayout()
     }
     func configure(size: CGSize, interactive: Bool) {
+      if paperSize != size { revokeCurrentOutput() }
       paperSize = size
       viewport?.setContentSize(size)
       projectRetainedPaper()
@@ -2810,6 +2866,7 @@ private enum DocumentWebViewFactory {
       return hit
     }
     func removeSurface() {
+      revokeCurrentOutput()
       viewport?.retire(); viewport?.removeFromSuperview(); viewport = nil
       if let paper = retainedPaper, paper.superview === self { paper.removeFromSuperview() }
       retainedPaper = nil
@@ -2891,13 +2948,15 @@ private enum DocumentWebViewFactory {
     func makeCoordinator() -> DocumentPhysicalPageCoordinator { DocumentPhysicalPageCoordinator() }
     func makeUIView(context: Context) -> DocumentWebHost { DocumentWebHost() }
     func updateUIView(_ view: DocumentWebHost, context: Context) {
-      context.coordinator.update(.init(document: document, state: state, pageIndex: selectedPageIndex,
+      let presentation = DocumentPagePresentation(document: document, state: state, pageIndex: selectedPageIndex,
         isCurrent: snapshotPixelWidth == nil && isCurrent, isVisible: isVisible, isInteractive: isInteractive,
         pageTurnActive: isPageTurnActive, onRenderReady: onRenderReady, onPageLayout: onPageLayout,
          onStateChange: onStateChange,
           onLinkActivation: onLinkActivation,
         snapshotPixelWidth: snapshotPixelWidth, onPreparationFailure: onPreparationFailure,
-        onStateCheckpoint: onStateCheckpoint, onStateDrained: onStateDrained, measurements: measurements, programStore: programStore), in: view, resources: resources)
+        onStateCheckpoint: onStateCheckpoint, onStateDrained: onStateDrained, measurements: measurements, programStore: programStore)
+      context.coordinator.update(presentation, in: view, resources: resources)
+      view.bindOutputReadiness(presentation)
     }
     static func dismantleUIView(_ view: DocumentWebHost, coordinator: DocumentPhysicalPageCoordinator) { coordinator.invalidate() }
   }

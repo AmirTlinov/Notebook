@@ -1,0 +1,46 @@
+{
+  "sourceSHA256": "b6c223298cb8493b0187abd080bcc4892c10a6579194cc7e6e31f5fc238049d9",
+  "localEvidence": "/private/tmp/notebook-230-boundary-0040",
+  "result": "Failed",
+  "testedCaseCount": 6,
+  "budgetMS": 16.666666666666668,
+  "cases": [
+    {
+      "case": "Complete pair presentation 5_0_C8A91F8F-1276-4925-91ED-298E5AFFEF85.txt",
+      "firstVisibleMS": 51.42674999660812,
+      "discardedBeforeFirstShown": 3,
+      "firstShownSequence": 189
+    },
+    {
+      "case": "Complete pair presentation 4_0_067EB635-90E7-437E-B464-E898461B06FD.txt",
+      "firstVisibleMS": 35.89841666689608,
+      "discardedBeforeFirstShown": 3,
+      "firstShownSequence": 150
+    },
+    {
+      "case": "Complete pair presentation 3_0_AC859EDB-A589-41F5-A930-258CA5B54307.txt",
+      "firstVisibleMS": 42.1105416608043,
+      "discardedBeforeFirstShown": 3,
+      "firstShownSequence": 111
+    },
+    {
+      "case": "Complete pair presentation 2_0_F78C10C9-D2E6-4410-B59A-8BAAB2D13EB5.txt",
+      "firstVisibleMS": 41.71966666763183,
+      "discardedBeforeFirstShown": 3,
+      "firstShownSequence": 72
+    },
+    {
+      "case": "Complete pair presentation 1_0_8543D813-9658-4E13-A579-4E0EABEEB414.txt",
+      "firstVisibleMS": 27.553041669307277,
+      "discardedBeforeFirstShown": 2,
+      "firstShownSequence": 31
+    },
+    {
+      "case": "Complete pair presentation 0_0_8F606E7C-5E04-48FF-A2A2-365583ED664B.txt",
+      "firstVisibleMS": 36.104291677474976,
+      "discardedBeforeFirstShown": 3,
+      "firstShownSequence": 2
+    }
+  ],
+  "fullAcceptance": false
+}

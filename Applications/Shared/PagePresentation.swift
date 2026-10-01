@@ -72,12 +72,13 @@ struct PagePresentationView: UIViewRepresentable {
   let isVisible: Bool
   let readiness:PageSurfaceReadiness
   let activity: PageTurnActivity?
+  var turnReadiness: PageTurnReadiness? = nil
   var onVisibleRegion: (CGRect) -> Void = { _ in }
 
   func makeUIView(context: Context) -> PagePresentationNativeView { PagePresentationNativeView() }
   func updateUIView(_ view: PagePresentationNativeView, context: Context) {
     view.update(model: model, page: page, isCurrent: isCurrent, isVisible: isVisible,
-      readiness:readiness, activity:activity)
+      readiness:readiness, activity:activity, turnReadiness:turnReadiness)
     view.onVisibleRegion = onVisibleRegion
     view.viewport.observe(projection)
     view.scheduleVisibleRegion()
@@ -86,7 +87,7 @@ struct PagePresentationView: UIViewRepresentable {
 }
 
 @MainActor
-final class PagePresentationNativeView: UIView, NotebookScenePresentationOwner {
+final class PagePresentationNativeView: PageTurnOutputParkingHost, NotebookScenePresentationOwner {
   private weak var model: NotebookAppModel?
   private var pageID:UUID?
   private var pageSize:PageSize?
@@ -94,6 +95,7 @@ final class PagePresentationNativeView: UIView, NotebookScenePresentationOwner {
   private var isVisible = false
   private var readiness:PageSurfaceReadiness?
   private var activity: PageTurnActivity?
+  private weak var turnReadiness: PageTurnReadiness?
   private var retired = false
   lazy var viewport = PageViewportProjection(host:self)
   var onVisibleRegion: (CGRect) -> Void {
@@ -110,8 +112,16 @@ final class PagePresentationNativeView: UIView, NotebookScenePresentationOwner {
   required init?(coder: NSCoder) { fatalError("Use init()") }
 
   func update(model: NotebookAppModel, page: PageDocument, isCurrent: Bool,
-    isVisible: Bool, readiness:PageSurfaceReadiness, activity: PageTurnActivity?) {
+    isVisible: Bool, readiness:PageSurfaceReadiness, activity: PageTurnActivity?,
+    turnReadiness: PageTurnReadiness? = nil) {
     guard !retired else { return }
+    if pageID != page.id || pageSize != page.size || self.turnReadiness !== turnReadiness {
+      revokeCurrentOutput()
+    }
+    if self.turnReadiness !== turnReadiness {
+      if self.turnReadiness?.idleOutputHost === self { self.turnReadiness?.idleOutputHost = nil }
+      self.turnReadiness = turnReadiness
+    }
     if pageID != page.id {
       Logger(subsystem: "com.amirtlinov.notebook", category: "PaperGeometry")
         .notice("Mounted paper size: \(page.size.width) x \(page.size.height)")
@@ -125,7 +135,22 @@ final class PagePresentationNativeView: UIView, NotebookScenePresentationOwner {
     }
     pageID=page.id;pageSize=page.size;self.isCurrent=isCurrent;self.isVisible=isVisible
     self.readiness=readiness;self.activity=activity
+    if turnReadiness?.isRetired == false { turnReadiness?.idleOutputHost = self }
     viewport.isVisible = isVisible
+  }
+
+  /// PageSurface places this background inside its existing canonical paper
+  /// clip, behind the full opaque GridPaperView. Native landing selects the
+  /// page before SwiftUI updates isCurrent, so mount identity is checked here.
+  override var canParkOutput: Bool {
+    guard !retired, let pageSize, let turnReadiness, !turnReadiness.isRetired,
+      turnReadiness.idleOutputHost === self,
+      bounds.size == CGSize(width: pageSize.width, height: pageSize.height) else { return false }
+    return super.canParkOutput
+  }
+
+  func isOutputHost(for pageID: UUID, in window: UIWindow) -> Bool {
+    self.pageID == pageID && self.window === window && canParkOutput
   }
 
   override func layoutSubviews() { super.layoutSubviews(); scheduleVisibleRegion() }
@@ -157,6 +182,9 @@ final class PagePresentationNativeView: UIView, NotebookScenePresentationOwner {
 
   func uninstall() {
     guard !retired else { return }
+    revokeCurrentOutput()
+    if turnReadiness?.idleOutputHost === self { turnReadiness?.idleOutputHost = nil }
+    turnReadiness = nil
     retired = true; pageID=nil;pageSize=nil;readiness=nil;activity=nil
     viewport.stop()
     model?.pagePresentations.remove(self)
@@ -172,6 +200,7 @@ struct PagePresentationView: NSViewRepresentable {
   let isVisible: Bool
   let readiness:PageSurfaceReadiness
   let activity: PageTurnActivity?
+  var turnReadiness: PageTurnReadiness? = nil
   var onVisibleRegion: (CGRect) -> Void = { _ in }
   func makeNSView(context:Context) -> PagePresentationNativeView { .init(frame:.zero) }
   func updateNSView(_ view:PagePresentationNativeView,context:Context) {

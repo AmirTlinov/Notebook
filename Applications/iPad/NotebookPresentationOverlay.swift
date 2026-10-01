@@ -47,11 +47,12 @@ struct NotebookPresentationSVGView: UIViewRepresentable {
 
   func makeCoordinator() -> Coordinator { Coordinator(lease: lease) }
   func makeUIView(context: Context) -> WKWebView {
+    let constructionBegan = ContinuousClock.now
     let configuration = WKWebViewConfiguration()
     configuration.websiteDataStore = .nonPersistent()
     configuration.defaultWebpagePreferences.allowsContentJavaScript = false
     let web = WKWebView(frame: .zero, configuration: configuration)
-    lease.finishConstruction()
+    lease.finishConstruction(elapsed: constructionBegan.duration(to: .now))
     web.navigationDelegate = context.coordinator
     web.isOpaque = false; web.backgroundColor = .clear
     web.scrollView.backgroundColor = .clear; web.scrollView.isScrollEnabled = false

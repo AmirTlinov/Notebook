@@ -1,7 +1,34 @@
 # Текущее состояние проверки Notebook
 
-Срез: **30 сентября 2026**. Функциональная проверка, доставка и полная приёмка
+Срез: **1 октября 2026**. Функциональная проверка, доставка и полная приёмка
 учитываются отдельно; результат относится к исходникам своего receipt.
+
+## Локальная работа и установленный output — 230
+
+**0.3.160 (230)** установлена поверх 229 на Mac и физическом iPad
+1 октября 04:37 МСК. Source `2e85dc9f…`; source-matched signed pair.
+Installed helper/presentation ready; trusted device/workspace, страница и камера
+сохранены, сессия новая. На физическом экране прежняя рукописная страница1/5.
+Одна Notebook Lab; QA/test apps отсутствуют. In-place install сохранил bundle и
+app-group identity, контейнеры/ключи не очищались.
+[Доставка](audit-evidence/2026-10-01/remaining-latency-230/delivery.json).
+
+Финальный focused route: **24 physical-iPad + 2 Mac PASS**, skip/failure=0.
+Проверены incremental input index100000 узлов, чистые CSSOM setters/native routing,
+first-ink lift без идентичной третьей GPU подачи, constructor cost/scene lifetime,
+curl CA/OS границы, regrab/cancel, UUID удаления, reverse/eviction, mixed selection,
+native document paper до WebKit и перенос host. Real UI: 24 first taps/state после
+turns/pinch/Home; выход из документа сведением пальцев и повторное открытие.
+[Scope/source clocks](audit-evidence/2026-10-01/remaining-latency-230/final-results.json).
+
+Подтверждён вклад повторного hide/reveal: контроль39–40мс/3discard; completed
+output под installed paper даёт пять повторов20,414–23,656мс/**0discard**.
+Actual notebook receiver, pool identity, resize и отмена проверены.
+Первый cold output27,883мс/3discard остаётся отдельной задержкой. Strict16,667мс,
+аппаратный contact-to-display и cold WebKit launch/event delivery пока открыты.
+Это actual OS timestamps программного native перехода; screenshot/readback
+не входят в измеренную задержку. Full acceptance GUI-190 отдельно.
+[Причины и ремонт](performance-repair-2026-10-01.md).
 
 ## Независимая бумага и публикация движения — 229
 

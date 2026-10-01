@@ -114,6 +114,53 @@ final class PageTurnAdmissionRecognizer: UIGestureRecognizer {
 /// WebKit have presented them, and stay mounted through the entire turn.
 @MainActor
 final class IPadPageTurnController: UIViewController {
+  private let sceneNotifications: NotificationCenter
+  private var sceneObservers: [NSObjectProtocol] = []
+  private weak var mountedWindow: UIWindow?
+  private var observedSceneIsActive = false
+
+  init(sceneNotifications: NotificationCenter = .default) {
+    self.sceneNotifications = sceneNotifications
+    super.init(nibName: nil, bundle: nil)
+  }
+  required init?(coder: NSCoder) { fatalError("Use init(sceneNotifications:)") }
+
+  private var permitsSceneNavigation: Bool {
+    // Headless native composition retains its direct-install route. A mounted
+    // interaction belongs to its own scene, including willDeactivate's edge
+    // before UIKit updates activationState or removes any native view.
+    guard let window = viewIfLoaded?.window, let scene = window.windowScene else { return true }
+    return window === mountedWindow ? observedSceneIsActive
+      : scene.activationState == .foregroundActive
+  }
+
+  private func observeMountedSceneLifetime() {
+    for (name, active) in [(UIScene.didActivateNotification, true),
+      (UIScene.willDeactivateNotification, false), (UIScene.didDisconnectNotification, false)] {
+      sceneObservers.append(sceneNotifications.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
+        guard let scene = note.object as? UIWindowScene else { return }
+        MainActor.assumeIsolated {
+          guard let self, !self.isRetired, self.viewIfLoaded?.window?.windowScene === scene else { return }
+          self.observedSceneIsActive = active
+          if !active { self.cancelNavigationInteraction(outcome: .cancelled) }
+          self.configureSystemGestures()
+        }
+      })
+    }
+  }
+  private func mountedWindowDidChange(_ window: UIWindow?) {
+    guard !isRetired, mountedWindow !== window else { return }
+    let replacesWindow = mountedWindow != nil
+    mountedWindow = window
+    let scene = window?.windowScene
+    observedSceneIsActive = scene?.activationState == .foregroundActive
+    // Detachment ends the mounted lifetime. Activation received while absent
+    // belongs to no interaction here; remount seeds the new lifetime directly.
+    // A willDeactivate edge in the unchanged window is never reseeded merely
+    // because UIKit has not updated activationState yet.
+    if replacesWindow || !observedSceneIsActive { cancelNavigationInteraction(outcome: .cancelled) }
+    configureSystemGestures()
+  }
   private let observationID = UUID()
   let sheetController = IPadSheetCurlController()
   private let navigationAdmission = PageTurnAdmissionRecognizer()
@@ -295,6 +342,7 @@ final class IPadPageTurnController: UIViewController {
   private var lastDocumentLanding: String?
 
   isolated deinit {
+    for observer in sceneObservers { sceneNotifications.removeObserver(observer) }
     documentAdoption?.cancel()
     if let operation {
       sheetController.resolveMotion(operation.id, completed: false, presented: false)
@@ -311,6 +359,8 @@ final class IPadPageTurnController: UIViewController {
   func uninstall() {
     guard !isRetired else { return }
     isRetired = true; transitionRevision &+= 1
+    for observer in sceneObservers { sceneNotifications.removeObserver(observer) }
+    sceneObservers.removeAll(); mountedWindow = nil
     discardDeferredDocument()
     inputGate?.endNavigation(source: navigationClaimID)
     requestedIndex = nil; coldGestureTarget = nil; anticipatedIndex = nil
@@ -355,8 +405,15 @@ final class IPadPageTurnController: UIViewController {
     publishDocumentStatus()
   }
 
+  override func loadView() {
+    let root = IPadPageTurnView(frame: .zero)
+    root.windowChanged = { [weak self] window in self?.mountedWindowDidChange(window) }
+    view = root
+  }
+
   override func viewDidLoad() {
     super.viewDidLoad()
+    observeMountedSceneLifetime()
     view.backgroundColor = .clear
     view.isOpaque = false
     view.clipsToBounds = true
@@ -412,6 +469,20 @@ final class IPadPageTurnController: UIViewController {
       guard let self, let sheet = sheet as? IPadIndexedPageController else { return false }
       return controllers[sheet.pageIndex] === sheet && pageIsCapturable(at: sheet.pageIndex)
     }
+    sheetController.idleOutputHost = { [weak self] sheet in
+      guard let self, !isRetired,
+        let sheet = sheet as? IPadIndexedPageController,
+        controllers[sheet.pageIndex] === sheet,
+        let readiness = sheet.readiness, !readiness.isRetired,
+        let host = readiness.idleOutputHost,
+        let window = sheet.viewIfLoaded?.window,
+        host.window === window, host.canParkOutput else { return nil }
+      if notebookNavigation != nil {
+        guard let pageID = sheet.pageID, let paper = host as? PagePresentationNativeView,
+          paper.isOutputHost(for: pageID, in: window) else { return nil }
+      } else if documentNavigation == nil { return nil }
+      return host
+    }
     sheetController.onStageLiveSheet = { [weak self] sheet in
       guard let self, let sheet = sheet as? IPadIndexedPageController,
         controllers[sheet.pageIndex] === sheet else { return }
@@ -437,7 +508,7 @@ final class IPadPageTurnController: UIViewController {
     }
     navigationAdmission.canBeginNavigation = { [weak self] in
       guard let self else { return false }
-      return navigationIsEnabled && !isAdoptingDocumentSource && canBeginNavigation()
+      return permitsSceneNavigation && navigationIsEnabled && !isAdoptingDocumentSource && canBeginNavigation()
     }
     navigationAdmission.prepareDirection = { [weak self] direction in
       guard let self else { return true }
@@ -663,16 +734,17 @@ final class IPadPageTurnController: UIViewController {
   }
 
   private func claimNavigation(contacts: Set<ObjectIdentifier>) -> Bool {
-    inputGate?.claimNavigation(source: navigationClaimID, kind: .pageTurn, contacts: contacts) { [weak self] in
+    guard permitsSceneNavigation else { return false }
+    return inputGate?.claimNavigation(source: navigationClaimID, kind: .pageTurn, contacts: contacts) { [weak self] in
       self?.cancelNavigationInteraction()
     } ?? true
   }
 
-  private func cancelNavigationInteraction() {
+  private func cancelNavigationInteraction(outcome: PageTurnOutcome = .superseded) {
     transitionRevision &+= 1
     requestedIndex = nil; requestIsStep = false; coldGestureTarget = nil; anticipatedIndex = nil
     coldGestureIsTurning = false
-    sheetController.cancelMotion(outcome: .superseded, notify: false)
+    sheetController.cancelMotion(outcome: outcome, notify: false)
     inputGate?.endNavigation(source: navigationClaimID)
     pageTurnActivity.didInstall(nil); prepareExternalTarget(nil)
     setTransitioning(false); retainNeededControllers(); refreshControllerState(); publishDocumentStatus()
@@ -753,7 +825,7 @@ final class IPadPageTurnController: UIViewController {
 
   @discardableResult
   private func canBeginTurn(to target: UIViewController) -> Bool {
-    guard canBeginNavigation(), let target = target as? IPadIndexedPageController,
+    guard permitsSceneNavigation, canBeginNavigation(), let target = target as? IPadIndexedPageController,
       controllers[target.pageIndex] === target, pageIsCapturable(at: target.pageIndex),
       pageIsCapturable(at: displayedIndex) else { return false }
     return true
@@ -1094,7 +1166,7 @@ final class IPadPageTurnController: UIViewController {
   }
 
   private func beginPreparedColdTurn() {
-    guard let target = coldGestureTarget, target != displayedIndex,
+    guard permitsSceneNavigation, let target = coldGestureTarget, target != displayedIndex,
       pageIsCapturable(at: target), pageIsCapturable(at: displayedIndex),
       let controller = controllers[target],
       !isTransitioning, !isUpdatingContents, !isAdoptingDocumentSource, navigationIsEnabled, canBeginNavigation() else { return }
@@ -1104,7 +1176,7 @@ final class IPadPageTurnController: UIViewController {
   }
 
   private func requestExternalSelection(_ index: Int, asStep: Bool = false) {
-    guard (0..<pageCount).contains(index) else { return }
+    guard permitsSceneNavigation, (0..<pageCount).contains(index) else { return }
     let target = clamped(index)
     self.requestedIndex = target; requestIsStep = asStep
     prepareExternalTarget(target)
@@ -1130,7 +1202,7 @@ final class IPadPageTurnController: UIViewController {
     // The physical input owner fences the actual handoff, not merely the tap.
     let source = sequenceRevision, hostID = targetController.hostID
     let install: NotebookInputCompletion = { [weak self, weak targetController] in
-      guard let self, let targetController, sequenceRevision == source, requestedIndex == target,
+      guard let self, permitsSceneNavigation, let targetController, sequenceRevision == source, requestedIndex == target,
         controllers[target]?.hostID == hostID, pageIsReadyForNavigation(to: target),
         !isTransitioning, !isUpdatingContents else { return }
       beginExternalSelection(target, targetController: targetController)
@@ -1173,7 +1245,7 @@ final class IPadPageTurnController: UIViewController {
     // Explicit commands arrive after their caller's input fence. The gesture
     // predicate rejects native buttons and zoomed paper; it cannot govern the
     // very arrow that requested navigation or drop taps during a previous curl.
-    guard navigationIsEnabled, !isAdoptingDocumentSource else { return false }
+    guard permitsSceneNavigation, navigationIsEnabled, !isAdoptingDocumentSource else { return false }
     switch command {
     case .cancel:
       requestedIndex = nil; requestIsStep = false; coldGestureTarget = nil
@@ -1241,7 +1313,7 @@ final class IPadPageTurnController: UIViewController {
   }
 
   private func runPendingExternalSelection() {
-    guard !isTransitioning, !isUpdatingContents, !isAdoptingDocumentSource, coldGestureTarget == nil else { return }
+    guard permitsSceneNavigation, !isTransitioning, !isUpdatingContents, !isAdoptingDocumentSource, coldGestureTarget == nil else { return }
     let target: Int
     if documentNavigation != nil {
       guard let requested = requestedIndex ?? resolvedDocumentTarget else { return }
@@ -1345,8 +1417,9 @@ final class IPadPageTurnController: UIViewController {
   }
 
   private func configureSystemGestures() {
-    let enabled = navigationIsEnabled && pageCount > 1
+    let enabled = permitsSceneNavigation && navigationIsEnabled && pageCount > 1
     if sheetController.pan.isEnabled != enabled { sheetController.pan.isEnabled = enabled }
+    if navigationAdmission.isEnabled != permitsSceneNavigation { navigationAdmission.isEnabled = permitsSceneNavigation }
     sheetController.pan.require(toFail: navigationAdmission)
   }
 
@@ -1453,6 +1526,16 @@ final class IPadPageTurnController: UIViewController {
 
   var visiblePageIdentity: ObjectIdentifier? {
     sheetController.page.map(ObjectIdentifier.init)
+  }
+}
+
+/// The native root reports mounting; its controller owns scene admission and
+/// cancellation. A retained controller can enter a new lifetime in the same scene.
+@MainActor
+private final class IPadPageTurnView: UIView {
+  var windowChanged: ((UIWindow?) -> Void)?
+  override func didMoveToWindow() {
+    super.didMoveToWindow(); windowChanged?(window)
   }
 }
 

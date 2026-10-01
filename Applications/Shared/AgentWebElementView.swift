@@ -1504,6 +1504,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   /// Dismantling ends this owner session. Neither a queued script message nor an
   /// already running WebKit completion may publish into its next owner.
   func invalidate() {
+    let retiringToken = loadToken
     stateTransfer?.revoke()
     frozenCheckpoint = nil
     programLoadTask?.cancel(); programLoadTask = nil
@@ -1534,13 +1535,24 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     onFailure = { _ in }
     onSessionSuperseded = {}
     onState = { _, _ in false }
-    attachedWebView?.evaluateJavaScript("void notebookProgram.dispose().catch(()=>{})", completionHandler: nil)
+    if let web = attachedWebView, let retiringToken { retireRuntimeDocument(token: retiringToken, in: web) }
     attachedWebView?.stopLoading()
     attachedWebView?.navigationDelegate = nil
     attachedWebView?.configuration.userContentController.removeScriptMessageHandler(forName: "notebook")
     attachedWebView = nil; stateTransfer = nil; initialStateEncoding = nil
     if let admissionObserver { NotificationCenter.default.removeObserver(admissionObserver) }
     admissionObserver = nil
+  }
+
+  /// A queued retirement belongs to the old document, even if WebKit executes
+  /// it only after a replacement navigation has already entered this surface.
+  private func retireRuntimeDocument(token: String, in web: WKWebView) {
+    web.callAsyncJavaScript("""
+      if(typeof notebookLoadToken==='undefined'||notebookLoadToken!==token)return false;
+      window.notebookFingerInput?.stop();
+      void window.notebookProgram?.dispose().catch(()=>{});
+      return true;
+      """, arguments: ["token": token], in: nil, in: .page, completionHandler: nil)
   }
 
   private func retryAfterAdmission() {
@@ -1700,7 +1712,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     fingerRegions = nil
     activeNavigation = nil
     if !reusesStaticShell, loadedElement != nil {
-      webView.evaluateJavaScript("void window.notebookProgram?.dispose().catch(()=>{})", completionHandler: nil)
+      if let token = loadToken { retireRuntimeDocument(token: token, in: webView) }
       webView.stopLoading()
     }
     let token = "\(lease.id.uuidString)/\(UUID().uuidString)"
@@ -2177,6 +2189,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   ) -> WKWebView {
     precondition(!coordinator.isInvalidated && !coordinator.lease.isReleased, "WebKit requires an active, parent-owned lease.")
     precondition(coordinator.attachedWebView == nil, "A lease session mounts exactly one WebKit surface.")
+    let constructionBegan = ContinuousClock.now
     NotebookNavigationObservation.webPreparation("native_init_started", ownerID: coordinator.lease.id)
     let controller = WKUserContentController()
     controller.add(coordinator, name: "notebook")
@@ -2209,11 +2222,9 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
       webView.allowsMagnification = false
     #endif
     NotebookNavigationObservation.webPreparation("native_init_finished", ownerID: coordinator.lease.id)
-    // The admission owner waits for a native commit opportunity before the
-    // next bounded pair. The
-    // allocator resumes async consumers; it never constructs views recursively
-    // or waits for this independent browser's remote navigation to commit.
-    coordinator.lease.finishConstruction()
+    // Report only this synchronous construction, excluding queue/navigation
+    // waits. Admission resumes consumers through their async continuations.
+    coordinator.lease.finishConstruction(elapsed: constructionBegan.duration(to: .now))
     return webView
   }
 

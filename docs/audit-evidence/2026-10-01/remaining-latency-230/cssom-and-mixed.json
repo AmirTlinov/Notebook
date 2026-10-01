@@ -1,0 +1,22 @@
+{
+  "sourceSHA256": "c2c8ad0dda56c1e3df79ae3c750bbc44a8a2f24b4b351c2dfacf3d4ec28cfd0f",
+  "scope": {
+    "commands": [],
+    "core": [],
+    "ipad": [
+      "NotebookTests/AgentSceneFingerRoutingTests/testReadyMapTracksMovedControlsAndListenerRemovalWithoutRuntimeRestart",
+      "NotebookTests/NotebookInteractionUXTests/testLassoRequiresOneCorrectCompositionDuringOutlineCutMoveLiftAndDeselect"
+    ],
+    "mac": []
+  },
+  "counts": {
+    "result": "Passed",
+    "passedTests": 2,
+    "failedTests": 0,
+    "skippedTests": 0,
+    "totalTestCount": 2
+  },
+  "localEvidence": "/private/tmp/notebook-230-css-mixed-0051",
+  "note": "Final direct CSSOM accessor repair; mixed cut completion boundary; prior 22 checks retain their own source receipt",
+  "fullAcceptance": false
+}

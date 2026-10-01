@@ -120,10 +120,11 @@ struct NotebookTerminalView: UIViewRepresentable {
           let lease = try await SceneRenderResources.shared.acquireWebSurface(priority: .input, constructsView: true)
           guard let self, let view, !closed, !Task.isCancelled else { lease.release(); return }
           self.lease = lease
+          let constructionBegan = ContinuousClock.now
           let configuration = WKWebViewConfiguration(); configuration.websiteDataStore = .nonPersistent()
           configuration.userContentController.add(self, name: "notebookTerminal")
           let web = WKWebView(frame: view.bounds, configuration: configuration)
-          lease.finishConstruction()
+          lease.finishConstruction(elapsed: constructionBegan.duration(to: .now))
           web.autoresizingMask = [.flexibleWidth, .flexibleHeight]; web.navigationDelegate = self
           web.scrollView.isScrollEnabled = false; web.isOpaque = true
           self.web = web; view.addSubview(web)

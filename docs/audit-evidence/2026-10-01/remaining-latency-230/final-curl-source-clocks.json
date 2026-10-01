@@ -1,0 +1,6094 @@
+{
+  "droppedEvents": 0,
+  "events": [
+    {
+      "deliveryRunLoopPass": 0,
+      "deliveryUICycle": 0,
+      "stage": "curl_command_enter",
+      "uptime": 129848.42031495836
+    },
+    {
+      "deliveryRunLoopPass": 0,
+      "deliveryUICycle": 0,
+      "stage": "curl_command_return",
+      "uptime": 129848.42044045836
+    },
+    {
+      "deliveryRunLoopPass": 3,
+      "deliveryUICycle": 1,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "0",
+      "stage": "curl_prepared",
+      "uptime": 129848.42099395837
+    },
+    {
+      "deadline": 129848.4364515,
+      "deliveryRunLoopPass": 9,
+      "deliveryUICycle": 1,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "0",
+      "stage": "curl_clock_request",
+      "targetPresentation": 129848.44478475001,
+      "uptime": 129848.42099991669
+    },
+    {
+      "deadline": 129848.4364515,
+      "deliveryRunLoopPass": 9,
+      "deliveryUICycle": 1,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "0",
+      "stage": "curl_update_received",
+      "targetPresentation": 129848.44478475001,
+      "uptime": 129848.42190933337
+    },
+    {
+      "deadline": 129848.4364515,
+      "deliveryRunLoopPass": 9,
+      "deliveryUICycle": 1,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "0",
+      "stage": "curl_encode",
+      "targetPresentation": 129848.44478475001,
+      "uptime": 129848.42190954169
+    },
+    {
+      "deadline": 129848.4364515,
+      "deliveryRunLoopPass": 9,
+      "deliveryUICycle": 1,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "0",
+      "stage": "curl_submit",
+      "targetPresentation": 129848.44478475001,
+      "uptime": 129848.42209737503
+    },
+    {
+      "deadline": 129848.4364515,
+      "deliveryRunLoopPass": 9,
+      "deliveryUICycle": 1,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "0",
+      "stage": "curl_scheduled",
+      "targetPresentation": 129848.44478475001,
+      "uptime": 129848.42254337503
+    },
+    {
+      "deadline": 129848.4364515,
+      "deliveryRunLoopPass": 9,
+      "deliveryUICycle": 1,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "0",
+      "stage": "curl_gpu_start",
+      "targetPresentation": 129848.44478475001,
+      "uptime": 129848.42259425
+    },
+    {
+      "deadline": 129848.4364515,
+      "deliveryRunLoopPass": 9,
+      "deliveryUICycle": 1,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "0",
+      "stage": "curl_gpu_end",
+      "targetPresentation": 129848.44478475001,
+      "uptime": 129848.423043375
+    },
+    {
+      "deadline": 129848.4364515,
+      "deliveryRunLoopPass": 9,
+      "deliveryUICycle": 1,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "0",
+      "stage": "curl_drawable_requested",
+      "targetPresentation": 129848.44478475001,
+      "uptime": 129848.42100287502
+    },
+    {
+      "deadline": 129848.4364515,
+      "deliveryRunLoopPass": 9,
+      "deliveryUICycle": 1,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "0",
+      "stage": "curl_drawable_worker_began",
+      "targetPresentation": 129848.44478475001,
+      "uptime": 129848.4210085417
+    },
+    {
+      "deadline": 129848.4364515,
+      "deliveryRunLoopPass": 9,
+      "deliveryUICycle": 1,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "0",
+      "stage": "curl_next_drawable_began",
+      "targetPresentation": 129848.44478475001,
+      "uptime": 129848.42100858336
+    },
+    {
+      "deadline": 129848.4364515,
+      "deliveryRunLoopPass": 9,
+      "deliveryUICycle": 1,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "0",
+      "stage": "curl_next_drawable_returned",
+      "targetPresentation": 129848.44478475001,
+      "uptime": 129848.42150987503
+    },
+    {
+      "deadline": 129848.4364515,
+      "deliveryRunLoopPass": 9,
+      "deliveryUICycle": 1,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "0",
+      "stage": "curl_drawable_drained",
+      "targetPresentation": 129848.44478475001,
+      "uptime": 129848.42151083336
+    },
+    {
+      "deadline": 129848.4364515,
+      "deliveryRunLoopPass": 9,
+      "deliveryUICycle": 1,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "0",
+      "stage": "curl_drawable_main_delivery_before_take",
+      "targetPresentation": 129848.44478475001,
+      "uptime": 129848.42151800003
+    },
+    {
+      "deadline": 129848.4364515,
+      "deliveryRunLoopPass": 9,
+      "deliveryUICycle": 1,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "0",
+      "stage": "curl_drawable_taken",
+      "targetPresentation": 129848.44478475001,
+      "uptime": 129848.4218905417
+    },
+    {
+      "deadline": 129848.4364515,
+      "deliveryRunLoopPass": 14,
+      "deliveryUICycle": 2,
+      "immediatePresentationExpected": false,
+      "modelTime": 129848.42811825001,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "performingLowLatencyPhases": false,
+      "source": "1",
+      "stage": "curl_afterEvents",
+      "targetPresentation": 129848.44478475001,
+      "uptime": 129848.42716912503
+    },
+    {
+      "deadline": 129848.4364515,
+      "deliveryRunLoopPass": 14,
+      "deliveryUICycle": 2,
+      "immediatePresentationExpected": false,
+      "modelTime": 129848.42811825001,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "performingLowLatencyPhases": false,
+      "source": "1",
+      "stage": "curl_exposed",
+      "targetPresentation": 129848.44478475001,
+      "uptime": 129848.4272192917
+    },
+    {
+      "deadline": 129848.4364515,
+      "deliveryRunLoopPass": 14,
+      "deliveryUICycle": 2,
+      "immediatePresentationExpected": false,
+      "modelTime": 129848.42811825001,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "performingLowLatencyPhases": false,
+      "source": "1",
+      "stage": "curl_beforePresent",
+      "targetPresentation": 129848.44478475001,
+      "uptime": 129848.42722008337
+    },
+    {
+      "deadline": 129848.4364515,
+      "deliveryRunLoopPass": 14,
+      "deliveryUICycle": 2,
+      "immediatePresentationExpected": false,
+      "modelTime": 129848.42811825001,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "performingLowLatencyPhases": false,
+      "source": "1",
+      "stage": "curl_afterPresent",
+      "targetPresentation": 129848.44478475001,
+      "uptime": 129848.43082308336
+    },
+    {
+      "deadline": 129848.4364515,
+      "deliveryRunLoopPass": 14,
+      "deliveryUICycle": 2,
+      "immediatePresentationExpected": false,
+      "modelTime": 129848.42811825001,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "performingLowLatencyPhases": false,
+      "source": "1",
+      "stage": "curl_beforeCommit",
+      "targetPresentation": 129848.44478475001,
+      "uptime": 129848.43083683336
+    },
+    {
+      "deadline": 129848.4364515,
+      "deliveryRunLoopPass": 14,
+      "deliveryUICycle": 2,
+      "immediatePresentationExpected": false,
+      "modelTime": 129848.42811825001,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "performingLowLatencyPhases": false,
+      "source": "1",
+      "stage": "curl_afterCommit",
+      "targetPresentation": 129848.44478475001,
+      "uptime": 129848.43101995836
+    },
+    {
+      "deliveryRunLoopPass": 14,
+      "deliveryUICycle": 2,
+      "source": "0",
+      "stage": "curl_dropped_callback",
+      "uptime": 129848.4310971667
+    },
+    {
+      "deadline": 129848.44478816667,
+      "deliveryRunLoopPass": 16,
+      "deliveryUICycle": 2,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "1",
+      "stage": "curl_clock_request",
+      "targetPresentation": 129848.45312141668,
+      "uptime": 129848.42099991669
+    },
+    {
+      "deadline": 129848.44478816667,
+      "deliveryRunLoopPass": 16,
+      "deliveryUICycle": 2,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "1",
+      "stage": "curl_update_received",
+      "targetPresentation": 129848.45312141668,
+      "uptime": 129848.43104325004
+    },
+    {
+      "deadline": 129848.44478816667,
+      "deliveryRunLoopPass": 16,
+      "deliveryUICycle": 2,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "1",
+      "stage": "curl_encode",
+      "targetPresentation": 129848.45312141668,
+      "uptime": 129848.43104345836
+    },
+    {
+      "deadline": 129848.44478816667,
+      "deliveryRunLoopPass": 16,
+      "deliveryUICycle": 2,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "1",
+      "stage": "curl_submit",
+      "targetPresentation": 129848.45312141668,
+      "uptime": 129848.43107675003
+    },
+    {
+      "deadline": 129848.44478816667,
+      "deliveryRunLoopPass": 16,
+      "deliveryUICycle": 2,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "1",
+      "stage": "curl_scheduled",
+      "targetPresentation": 129848.45312141668,
+      "uptime": 129848.43119500003
+    },
+    {
+      "deadline": 129848.44478816667,
+      "deliveryRunLoopPass": 16,
+      "deliveryUICycle": 2,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "1",
+      "stage": "curl_gpu_start",
+      "targetPresentation": 129848.45312141668,
+      "uptime": 129848.43125625001
+    },
+    {
+      "deadline": 129848.44478816667,
+      "deliveryRunLoopPass": 16,
+      "deliveryUICycle": 2,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "1",
+      "stage": "curl_gpu_end",
+      "targetPresentation": 129848.45312141668,
+      "uptime": 129848.43167800001
+    },
+    {
+      "deadline": 129848.44478816667,
+      "deliveryRunLoopPass": 16,
+      "deliveryUICycle": 2,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "1",
+      "stage": "curl_drawable_requested",
+      "targetPresentation": 129848.45312141668,
+      "uptime": 129848.42190554169
+    },
+    {
+      "deadline": 129848.44478816667,
+      "deliveryRunLoopPass": 16,
+      "deliveryUICycle": 2,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "1",
+      "stage": "curl_drawable_worker_began",
+      "targetPresentation": 129848.45312141668,
+      "uptime": 129848.42191116669
+    },
+    {
+      "deadline": 129848.44478816667,
+      "deliveryRunLoopPass": 16,
+      "deliveryUICycle": 2,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "1",
+      "stage": "curl_next_drawable_began",
+      "targetPresentation": 129848.45312141668,
+      "uptime": 129848.42191116669
+    },
+    {
+      "deadline": 129848.44478816667,
+      "deliveryRunLoopPass": 16,
+      "deliveryUICycle": 2,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "1",
+      "stage": "curl_next_drawable_returned",
+      "targetPresentation": 129848.45312141668,
+      "uptime": 129848.43080050003
+    },
+    {
+      "deadline": 129848.44478816667,
+      "deliveryRunLoopPass": 16,
+      "deliveryUICycle": 2,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "1",
+      "stage": "curl_drawable_drained",
+      "targetPresentation": 129848.45312141668,
+      "uptime": 129848.43080137503
+    },
+    {
+      "deadline": 129848.44478816667,
+      "deliveryRunLoopPass": 16,
+      "deliveryUICycle": 2,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "1",
+      "stage": "curl_drawable_taken",
+      "targetPresentation": 129848.45312141668,
+      "uptime": 129848.43103187502
+    },
+    {
+      "deadline": 129848.44478816667,
+      "deliveryRunLoopPass": 20,
+      "deliveryUICycle": 3,
+      "immediatePresentationExpected": false,
+      "modelTime": 129848.43645491668,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "performingLowLatencyPhases": false,
+      "source": "2",
+      "stage": "curl_beforePresent",
+      "targetPresentation": 129848.45312141668,
+      "uptime": 129848.4354995417
+    },
+    {
+      "deadline": 129848.44478816667,
+      "deliveryRunLoopPass": 20,
+      "deliveryUICycle": 3,
+      "immediatePresentationExpected": false,
+      "modelTime": 129848.43645491668,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "performingLowLatencyPhases": false,
+      "source": "2",
+      "stage": "curl_afterPresent",
+      "targetPresentation": 129848.45312141668,
+      "uptime": 129848.43550837503
+    },
+    {
+      "deadline": 129848.44478816667,
+      "deliveryRunLoopPass": 20,
+      "deliveryUICycle": 3,
+      "immediatePresentationExpected": false,
+      "modelTime": 129848.43645491668,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "performingLowLatencyPhases": false,
+      "source": "2",
+      "stage": "curl_afterEvents",
+      "targetPresentation": 129848.45312141668,
+      "uptime": 129848.43551200003
+    },
+    {
+      "deadline": 129848.44478816667,
+      "deliveryRunLoopPass": 20,
+      "deliveryUICycle": 3,
+      "immediatePresentationExpected": false,
+      "modelTime": 129848.43645491668,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "performingLowLatencyPhases": false,
+      "source": "2",
+      "stage": "curl_beforeCommit",
+      "targetPresentation": 129848.45312141668,
+      "uptime": 129848.43551575002
+    },
+    {
+      "deadline": 129848.44478816667,
+      "deliveryRunLoopPass": 20,
+      "deliveryUICycle": 3,
+      "immediatePresentationExpected": false,
+      "modelTime": 129848.43645491668,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "performingLowLatencyPhases": false,
+      "source": "2",
+      "stage": "curl_afterCommit",
+      "targetPresentation": 129848.45312141668,
+      "uptime": 129848.4355284167
+    },
+    {
+      "deadline": 129848.45312491668,
+      "deliveryRunLoopPass": 24,
+      "deliveryUICycle": 3,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "2",
+      "stage": "curl_clock_request",
+      "targetPresentation": 129848.46145816667,
+      "uptime": 129848.42099991669
+    },
+    {
+      "deadline": 129848.45312491668,
+      "deliveryRunLoopPass": 24,
+      "deliveryUICycle": 3,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "2",
+      "stage": "curl_update_received",
+      "targetPresentation": 129848.46145816667,
+      "uptime": 129848.43858458336
+    },
+    {
+      "deadline": 129848.45312491668,
+      "deliveryRunLoopPass": 24,
+      "deliveryUICycle": 3,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "2",
+      "stage": "curl_encode",
+      "targetPresentation": 129848.46145816667,
+      "uptime": 129848.43858487502
+    },
+    {
+      "deadline": 129848.45312491668,
+      "deliveryRunLoopPass": 24,
+      "deliveryUICycle": 3,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "2",
+      "stage": "curl_submit",
+      "targetPresentation": 129848.46145816667,
+      "uptime": 129848.43861241669
+    },
+    {
+      "deadline": 129848.45312491668,
+      "deliveryRunLoopPass": 24,
+      "deliveryUICycle": 3,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "2",
+      "stage": "curl_scheduled",
+      "targetPresentation": 129848.46145816667,
+      "uptime": 129848.43873450003
+    },
+    {
+      "deadline": 129848.45312491668,
+      "deliveryRunLoopPass": 24,
+      "deliveryUICycle": 3,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "2",
+      "stage": "curl_gpu_start",
+      "targetPresentation": 129848.46145816667,
+      "uptime": 129848.438782875
+    },
+    {
+      "deadline": 129848.45312491668,
+      "deliveryRunLoopPass": 24,
+      "deliveryUICycle": 3,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "2",
+      "stage": "curl_gpu_end",
+      "targetPresentation": 129848.46145816667,
+      "uptime": 129848.43918337501
+    },
+    {
+      "deadline": 129848.45312491668,
+      "deliveryRunLoopPass": 24,
+      "deliveryUICycle": 3,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "2",
+      "stage": "curl_drawable_requested",
+      "targetPresentation": 129848.46145816667,
+      "uptime": 129848.4310391667
+    },
+    {
+      "deadline": 129848.45312491668,
+      "deliveryRunLoopPass": 24,
+      "deliveryUICycle": 3,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "2",
+      "stage": "curl_drawable_worker_began",
+      "targetPresentation": 129848.46145816667,
+      "uptime": 129848.43104587503
+    },
+    {
+      "deadline": 129848.45312491668,
+      "deliveryRunLoopPass": 24,
+      "deliveryUICycle": 3,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "2",
+      "stage": "curl_next_drawable_began",
+      "targetPresentation": 129848.46145816667,
+      "uptime": 129848.43104591669
+    },
+    {
+      "deadline": 129848.45312491668,
+      "deliveryRunLoopPass": 24,
+      "deliveryUICycle": 3,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "2",
+      "stage": "curl_next_drawable_returned",
+      "targetPresentation": 129848.46145816667,
+      "uptime": 129848.43142883336
+    },
+    {
+      "deadline": 129848.45312491668,
+      "deliveryRunLoopPass": 24,
+      "deliveryUICycle": 3,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "2",
+      "stage": "curl_drawable_drained",
+      "targetPresentation": 129848.46145816667,
+      "uptime": 129848.43142958336
+    },
+    {
+      "deadline": 129848.45312491668,
+      "deliveryRunLoopPass": 24,
+      "deliveryUICycle": 3,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "2",
+      "stage": "curl_drawable_main_delivery_before_take",
+      "targetPresentation": 129848.46145816667,
+      "uptime": 129848.43143900002
+    },
+    {
+      "deadline": 129848.45312491668,
+      "deliveryRunLoopPass": 24,
+      "deliveryUICycle": 3,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "2",
+      "stage": "curl_drawable_taken",
+      "targetPresentation": 129848.46145816667,
+      "uptime": 129848.43857158336
+    },
+    {
+      "deadline": 129848.45312491668,
+      "deliveryRunLoopPass": 28,
+      "deliveryUICycle": 4,
+      "immediatePresentationExpected": false,
+      "modelTime": 129848.44479166667,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "performingLowLatencyPhases": false,
+      "source": "3",
+      "stage": "curl_beforePresent",
+      "targetPresentation": 129848.46145816667,
+      "uptime": 129848.44383408336
+    },
+    {
+      "deadline": 129848.45312491668,
+      "deliveryRunLoopPass": 28,
+      "deliveryUICycle": 4,
+      "immediatePresentationExpected": false,
+      "modelTime": 129848.44479166667,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "performingLowLatencyPhases": false,
+      "source": "3",
+      "stage": "curl_afterPresent",
+      "targetPresentation": 129848.46145816667,
+      "uptime": 129848.4438450417
+    },
+    {
+      "deadline": 129848.45312491668,
+      "deliveryRunLoopPass": 28,
+      "deliveryUICycle": 4,
+      "immediatePresentationExpected": false,
+      "modelTime": 129848.44479166667,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "performingLowLatencyPhases": false,
+      "source": "3",
+      "stage": "curl_afterEvents",
+      "targetPresentation": 129848.46145816667,
+      "uptime": 129848.44385725002
+    },
+    {
+      "deadline": 129848.45312491668,
+      "deliveryRunLoopPass": 28,
+      "deliveryUICycle": 4,
+      "immediatePresentationExpected": false,
+      "modelTime": 129848.44479166667,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "performingLowLatencyPhases": false,
+      "source": "3",
+      "stage": "curl_beforeCommit",
+      "targetPresentation": 129848.46145816667,
+      "uptime": 129848.44386433336
+    },
+    {
+      "deadline": 129848.45312491668,
+      "deliveryRunLoopPass": 28,
+      "deliveryUICycle": 4,
+      "immediatePresentationExpected": false,
+      "modelTime": 129848.44479166667,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "performingLowLatencyPhases": false,
+      "source": "3",
+      "stage": "curl_afterCommit",
+      "targetPresentation": 129848.46145816667,
+      "uptime": 129848.44386612503
+    },
+    {
+      "deliveryRunLoopPass": 29,
+      "deliveryUICycle": 4,
+      "source": "1",
+      "stage": "curl_os_callback",
+      "uptime": 129848.44505270837
+    },
+    {
+      "deliveryRunLoopPass": 29,
+      "deliveryUICycle": 4,
+      "source": "1",
+      "stage": "curl_os_presented",
+      "uptime": 129848.4447884167
+    },
+    {
+      "deliveryRunLoopPass": 40,
+      "deliveryUICycle": 5,
+      "source": "2",
+      "stage": "curl_os_callback",
+      "uptime": 129848.45339770836
+    },
+    {
+      "deliveryRunLoopPass": 40,
+      "deliveryUICycle": 5,
+      "source": "2",
+      "stage": "curl_os_presented",
+      "uptime": 129848.45312508337
+    },
+    {
+      "deadline": 129848.46979841667,
+      "deliveryRunLoopPass": 43,
+      "deliveryUICycle": 5,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "3",
+      "stage": "curl_clock_request",
+      "targetPresentation": 129848.47813166668,
+      "uptime": 129848.42099991669
+    },
+    {
+      "deadline": 129848.46979841667,
+      "deliveryRunLoopPass": 43,
+      "deliveryUICycle": 5,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "3",
+      "stage": "curl_update_received",
+      "targetPresentation": 129848.47813166668,
+      "uptime": 129848.45526700003
+    },
+    {
+      "deadline": 129848.46979841667,
+      "deliveryRunLoopPass": 43,
+      "deliveryUICycle": 5,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "3",
+      "stage": "curl_encode",
+      "targetPresentation": 129848.47813166668,
+      "uptime": 129848.45526737503
+    },
+    {
+      "deadline": 129848.46979841667,
+      "deliveryRunLoopPass": 43,
+      "deliveryUICycle": 5,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "3",
+      "stage": "curl_submit",
+      "targetPresentation": 129848.47813166668,
+      "uptime": 129848.45529462503
+    },
+    {
+      "deadline": 129848.46979841667,
+      "deliveryRunLoopPass": 43,
+      "deliveryUICycle": 5,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "3",
+      "stage": "curl_scheduled",
+      "targetPresentation": 129848.47813166668,
+      "uptime": 129848.45542016669
+    },
+    {
+      "deadline": 129848.46979841667,
+      "deliveryRunLoopPass": 43,
+      "deliveryUICycle": 5,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "3",
+      "stage": "curl_gpu_start",
+      "targetPresentation": 129848.47813166668,
+      "uptime": 129848.45546537501
+    },
+    {
+      "deadline": 129848.46979841667,
+      "deliveryRunLoopPass": 43,
+      "deliveryUICycle": 5,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "3",
+      "stage": "curl_gpu_end",
+      "targetPresentation": 129848.47813166668,
+      "uptime": 129848.45584629168
+    },
+    {
+      "deadline": 129848.46979841667,
+      "deliveryRunLoopPass": 43,
+      "deliveryUICycle": 5,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "3",
+      "stage": "curl_drawable_requested",
+      "targetPresentation": 129848.47813166668,
+      "uptime": 129848.4385800417
+    },
+    {
+      "deadline": 129848.46979841667,
+      "deliveryRunLoopPass": 43,
+      "deliveryUICycle": 5,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "3",
+      "stage": "curl_drawable_worker_began",
+      "targetPresentation": 129848.47813166668,
+      "uptime": 129848.4386106667
+    },
+    {
+      "deadline": 129848.46979841667,
+      "deliveryRunLoopPass": 43,
+      "deliveryUICycle": 5,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "3",
+      "stage": "curl_next_drawable_began",
+      "targetPresentation": 129848.47813166668,
+      "uptime": 129848.4386106667
+    },
+    {
+      "deadline": 129848.46979841667,
+      "deliveryRunLoopPass": 43,
+      "deliveryUICycle": 5,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "3",
+      "stage": "curl_next_drawable_returned",
+      "targetPresentation": 129848.47813166668,
+      "uptime": 129848.4533000417
+    },
+    {
+      "deadline": 129848.46979841667,
+      "deliveryRunLoopPass": 43,
+      "deliveryUICycle": 5,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "3",
+      "stage": "curl_drawable_drained",
+      "targetPresentation": 129848.47813166668,
+      "uptime": 129848.45330087503
+    },
+    {
+      "deadline": 129848.46979841667,
+      "deliveryRunLoopPass": 43,
+      "deliveryUICycle": 5,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "3",
+      "stage": "curl_drawable_main_delivery_before_take",
+      "targetPresentation": 129848.47813166668,
+      "uptime": 129848.45331062503
+    },
+    {
+      "deadline": 129848.46979841667,
+      "deliveryRunLoopPass": 43,
+      "deliveryUICycle": 5,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "3",
+      "stage": "curl_drawable_taken",
+      "targetPresentation": 129848.47813166668,
+      "uptime": 129848.45525375003
+    },
+    {
+      "deadline": 129848.47813512501,
+      "deliveryRunLoopPass": 52,
+      "deliveryUICycle": 6,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "4",
+      "stage": "curl_clock_request",
+      "targetPresentation": 129848.486468375,
+      "uptime": 129848.42099991669
+    },
+    {
+      "deadline": 129848.47813512501,
+      "deliveryRunLoopPass": 52,
+      "deliveryUICycle": 6,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "4",
+      "stage": "curl_update_received",
+      "targetPresentation": 129848.486468375,
+      "uptime": 129848.46363087503
+    },
+    {
+      "deadline": 129848.47813512501,
+      "deliveryRunLoopPass": 52,
+      "deliveryUICycle": 6,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "4",
+      "stage": "curl_encode",
+      "targetPresentation": 129848.486468375,
+      "uptime": 129848.46363100004
+    },
+    {
+      "deadline": 129848.47813512501,
+      "deliveryRunLoopPass": 52,
+      "deliveryUICycle": 6,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "4",
+      "stage": "curl_submit",
+      "targetPresentation": 129848.486468375,
+      "uptime": 129848.46364929169
+    },
+    {
+      "deadline": 129848.47813512501,
+      "deliveryRunLoopPass": 52,
+      "deliveryUICycle": 6,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "4",
+      "stage": "curl_scheduled",
+      "targetPresentation": 129848.486468375,
+      "uptime": 129848.46375183336
+    },
+    {
+      "deadline": 129848.47813512501,
+      "deliveryRunLoopPass": 52,
+      "deliveryUICycle": 6,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "4",
+      "stage": "curl_gpu_start",
+      "targetPresentation": 129848.486468375,
+      "uptime": 129848.46379741667
+    },
+    {
+      "deadline": 129848.47813512501,
+      "deliveryRunLoopPass": 52,
+      "deliveryUICycle": 6,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "4",
+      "stage": "curl_gpu_end",
+      "targetPresentation": 129848.486468375,
+      "uptime": 129848.46417629167
+    },
+    {
+      "deadline": 129848.47813512501,
+      "deliveryRunLoopPass": 52,
+      "deliveryUICycle": 6,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "4",
+      "stage": "curl_drawable_requested",
+      "targetPresentation": 129848.486468375,
+      "uptime": 129848.45526425003
+    },
+    {
+      "deadline": 129848.47813512501,
+      "deliveryRunLoopPass": 52,
+      "deliveryUICycle": 6,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "4",
+      "stage": "curl_drawable_worker_began",
+      "targetPresentation": 129848.486468375,
+      "uptime": 129848.45526758335
+    },
+    {
+      "deadline": 129848.47813512501,
+      "deliveryRunLoopPass": 52,
+      "deliveryUICycle": 6,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "4",
+      "stage": "curl_next_drawable_began",
+      "targetPresentation": 129848.486468375,
+      "uptime": 129848.45526762503
+    },
+    {
+      "deadline": 129848.47813512501,
+      "deliveryRunLoopPass": 52,
+      "deliveryUICycle": 6,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "4",
+      "stage": "curl_next_drawable_returned",
+      "targetPresentation": 129848.486468375,
+      "uptime": 129848.46172545836
+    },
+    {
+      "deadline": 129848.47813512501,
+      "deliveryRunLoopPass": 52,
+      "deliveryUICycle": 6,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "4",
+      "stage": "curl_drawable_drained",
+      "targetPresentation": 129848.486468375,
+      "uptime": 129848.46172625003
+    },
+    {
+      "deadline": 129848.47813512501,
+      "deliveryRunLoopPass": 52,
+      "deliveryUICycle": 6,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "4",
+      "stage": "curl_drawable_main_delivery_before_take",
+      "targetPresentation": 129848.486468375,
+      "uptime": 129848.4617406667
+    },
+    {
+      "deadline": 129848.47813512501,
+      "deliveryRunLoopPass": 52,
+      "deliveryUICycle": 6,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "4",
+      "stage": "curl_drawable_taken",
+      "targetPresentation": 129848.486468375,
+      "uptime": 129848.46362075003
+    },
+    {
+      "deliveryRunLoopPass": 60,
+      "deliveryUICycle": 7,
+      "source": "3",
+      "stage": "curl_os_callback",
+      "uptime": 129848.47008312502
+    },
+    {
+      "deliveryRunLoopPass": 60,
+      "deliveryUICycle": 7,
+      "source": "3",
+      "stage": "curl_os_presented",
+      "uptime": 129848.46979862502
+    },
+    {
+      "deadline": 129848.48647195834,
+      "deliveryRunLoopPass": 64,
+      "deliveryUICycle": 7,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "5",
+      "stage": "curl_clock_request",
+      "targetPresentation": 129848.49480520833,
+      "uptime": 129848.42099991669
+    },
+    {
+      "deadline": 129848.48647195834,
+      "deliveryRunLoopPass": 64,
+      "deliveryUICycle": 7,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "5",
+      "stage": "curl_update_received",
+      "targetPresentation": 129848.49480520833,
+      "uptime": 129848.4720002917
+    },
+    {
+      "deadline": 129848.48647195834,
+      "deliveryRunLoopPass": 64,
+      "deliveryUICycle": 7,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "5",
+      "stage": "curl_encode",
+      "targetPresentation": 129848.49480520833,
+      "uptime": 129848.47200050003
+    },
+    {
+      "deadline": 129848.48647195834,
+      "deliveryRunLoopPass": 64,
+      "deliveryUICycle": 7,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "5",
+      "stage": "curl_submit",
+      "targetPresentation": 129848.49480520833,
+      "uptime": 129848.4720259167
+    },
+    {
+      "deadline": 129848.48647195834,
+      "deliveryRunLoopPass": 64,
+      "deliveryUICycle": 7,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "5",
+      "stage": "curl_scheduled",
+      "targetPresentation": 129848.49480520833,
+      "uptime": 129848.47213195836
+    },
+    {
+      "deadline": 129848.48647195834,
+      "deliveryRunLoopPass": 64,
+      "deliveryUICycle": 7,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "5",
+      "stage": "curl_gpu_start",
+      "targetPresentation": 129848.49480520833,
+      "uptime": 129848.47217925
+    },
+    {
+      "deadline": 129848.48647195834,
+      "deliveryRunLoopPass": 64,
+      "deliveryUICycle": 7,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "5",
+      "stage": "curl_gpu_end",
+      "targetPresentation": 129848.49480520833,
+      "uptime": 129848.47253125001
+    },
+    {
+      "deadline": 129848.48647195834,
+      "deliveryRunLoopPass": 64,
+      "deliveryUICycle": 7,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "5",
+      "stage": "curl_drawable_requested",
+      "targetPresentation": 129848.49480520833,
+      "uptime": 129848.46362675003
+    },
+    {
+      "deadline": 129848.48647195834,
+      "deliveryRunLoopPass": 64,
+      "deliveryUICycle": 7,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "5",
+      "stage": "curl_drawable_worker_began",
+      "targetPresentation": 129848.49480520833,
+      "uptime": 129848.4636334167
+    },
+    {
+      "deadline": 129848.48647195834,
+      "deliveryRunLoopPass": 64,
+      "deliveryUICycle": 7,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "5",
+      "stage": "curl_next_drawable_began",
+      "targetPresentation": 129848.49480520833,
+      "uptime": 129848.46363345836
+    },
+    {
+      "deadline": 129848.48647195834,
+      "deliveryRunLoopPass": 64,
+      "deliveryUICycle": 7,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "5",
+      "stage": "curl_next_drawable_returned",
+      "targetPresentation": 129848.49480520833,
+      "uptime": 129848.4700394167
+    },
+    {
+      "deadline": 129848.48647195834,
+      "deliveryRunLoopPass": 64,
+      "deliveryUICycle": 7,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "5",
+      "stage": "curl_drawable_drained",
+      "targetPresentation": 129848.49480520833,
+      "uptime": 129848.47004033336
+    },
+    {
+      "deadline": 129848.48647195834,
+      "deliveryRunLoopPass": 64,
+      "deliveryUICycle": 7,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "5",
+      "stage": "curl_drawable_main_delivery_before_take",
+      "targetPresentation": 129848.49480520833,
+      "uptime": 129848.4700482917
+    },
+    {
+      "deadline": 129848.48647195834,
+      "deliveryRunLoopPass": 64,
+      "deliveryUICycle": 7,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "5",
+      "stage": "curl_drawable_taken",
+      "targetPresentation": 129848.49480520833,
+      "uptime": 129848.4719880417
+    },
+    {
+      "deliveryRunLoopPass": 70,
+      "deliveryUICycle": 8,
+      "source": "4",
+      "stage": "curl_os_callback",
+      "uptime": 129848.47879670837
+    },
+    {
+      "deliveryRunLoopPass": 70,
+      "deliveryUICycle": 8,
+      "source": "4",
+      "stage": "curl_os_presented",
+      "uptime": 129848.47813533337
+    },
+    {
+      "deadline": 129848.49480866667,
+      "deliveryRunLoopPass": 74,
+      "deliveryUICycle": 8,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "6",
+      "stage": "curl_clock_request",
+      "targetPresentation": 129848.50314191668,
+      "uptime": 129848.42099991669
+    },
+    {
+      "deadline": 129848.49480866667,
+      "deliveryRunLoopPass": 74,
+      "deliveryUICycle": 8,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "6",
+      "stage": "curl_update_received",
+      "targetPresentation": 129848.50314191668,
+      "uptime": 129848.4802971667
+    },
+    {
+      "deadline": 129848.49480866667,
+      "deliveryRunLoopPass": 74,
+      "deliveryUICycle": 8,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "6",
+      "stage": "curl_encode",
+      "targetPresentation": 129848.50314191668,
+      "uptime": 129848.4802972917
+    },
+    {
+      "deadline": 129848.49480866667,
+      "deliveryRunLoopPass": 74,
+      "deliveryUICycle": 8,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "6",
+      "stage": "curl_submit",
+      "targetPresentation": 129848.50314191668,
+      "uptime": 129848.48032087502
+    },
+    {
+      "deadline": 129848.49480866667,
+      "deliveryRunLoopPass": 74,
+      "deliveryUICycle": 8,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "6",
+      "stage": "curl_scheduled",
+      "targetPresentation": 129848.50314191668,
+      "uptime": 129848.48038362504
+    },
+    {
+      "deadline": 129848.49480866667,
+      "deliveryRunLoopPass": 74,
+      "deliveryUICycle": 8,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "6",
+      "stage": "curl_gpu_start",
+      "targetPresentation": 129848.50314191668,
+      "uptime": 129848.4808205
+    },
+    {
+      "deadline": 129848.49480866667,
+      "deliveryRunLoopPass": 74,
+      "deliveryUICycle": 8,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "6",
+      "stage": "curl_gpu_end",
+      "targetPresentation": 129848.50314191668,
+      "uptime": 129848.4812035
+    },
+    {
+      "deadline": 129848.49480866667,
+      "deliveryRunLoopPass": 74,
+      "deliveryUICycle": 8,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "6",
+      "stage": "curl_drawable_requested",
+      "targetPresentation": 129848.50314191668,
+      "uptime": 129848.4719962917
+    },
+    {
+      "deadline": 129848.49480866667,
+      "deliveryRunLoopPass": 74,
+      "deliveryUICycle": 8,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "6",
+      "stage": "curl_drawable_worker_began",
+      "targetPresentation": 129848.50314191668,
+      "uptime": 129848.47202600003
+    },
+    {
+      "deadline": 129848.49480866667,
+      "deliveryRunLoopPass": 74,
+      "deliveryUICycle": 8,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "6",
+      "stage": "curl_next_drawable_began",
+      "targetPresentation": 129848.50314191668,
+      "uptime": 129848.4720260417
+    },
+    {
+      "deadline": 129848.49480866667,
+      "deliveryRunLoopPass": 74,
+      "deliveryUICycle": 8,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "6",
+      "stage": "curl_next_drawable_returned",
+      "targetPresentation": 129848.50314191668,
+      "uptime": 129848.47806525003
+    },
+    {
+      "deadline": 129848.49480866667,
+      "deliveryRunLoopPass": 74,
+      "deliveryUICycle": 8,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "6",
+      "stage": "curl_drawable_drained",
+      "targetPresentation": 129848.50314191668,
+      "uptime": 129848.47806583336
+    },
+    {
+      "deadline": 129848.49480866667,
+      "deliveryRunLoopPass": 74,
+      "deliveryUICycle": 8,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "6",
+      "stage": "curl_drawable_main_delivery_before_take",
+      "targetPresentation": 129848.50314191668,
+      "uptime": 129848.4780726667
+    },
+    {
+      "deadline": 129848.49480866667,
+      "deliveryRunLoopPass": 74,
+      "deliveryUICycle": 8,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "6",
+      "stage": "curl_drawable_taken",
+      "targetPresentation": 129848.50314191668,
+      "uptime": 129848.4802817917
+    },
+    {
+      "deliveryRunLoopPass": 80,
+      "deliveryUICycle": 9,
+      "source": "5",
+      "stage": "curl_os_callback",
+      "uptime": 129848.48686345837
+    },
+    {
+      "deliveryRunLoopPass": 80,
+      "deliveryUICycle": 9,
+      "source": "5",
+      "stage": "curl_os_presented",
+      "uptime": 129848.48647208336
+    },
+    {
+      "deadline": 129848.50314541667,
+      "deliveryRunLoopPass": 84,
+      "deliveryUICycle": 9,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "7",
+      "stage": "curl_clock_request",
+      "targetPresentation": 129848.51147866668,
+      "uptime": 129848.42099991669
+    },
+    {
+      "deadline": 129848.50314541667,
+      "deliveryRunLoopPass": 84,
+      "deliveryUICycle": 9,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "7",
+      "stage": "curl_update_received",
+      "targetPresentation": 129848.51147866668,
+      "uptime": 129848.4887005417
+    },
+    {
+      "deadline": 129848.50314541667,
+      "deliveryRunLoopPass": 84,
+      "deliveryUICycle": 9,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "7",
+      "stage": "curl_encode",
+      "targetPresentation": 129848.51147866668,
+      "uptime": 129848.4887005417
+    },
+    {
+      "deadline": 129848.50314541667,
+      "deliveryRunLoopPass": 84,
+      "deliveryUICycle": 9,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "7",
+      "stage": "curl_submit",
+      "targetPresentation": 129848.51147866668,
+      "uptime": 129848.48872050003
+    },
+    {
+      "deadline": 129848.50314541667,
+      "deliveryRunLoopPass": 84,
+      "deliveryUICycle": 9,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "7",
+      "stage": "curl_scheduled",
+      "targetPresentation": 129848.51147866668,
+      "uptime": 129848.4888626667
+    },
+    {
+      "deadline": 129848.50314541667,
+      "deliveryRunLoopPass": 84,
+      "deliveryUICycle": 9,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "7",
+      "stage": "curl_gpu_start",
+      "targetPresentation": 129848.51147866668,
+      "uptime": 129848.48883375
+    },
+    {
+      "deadline": 129848.50314541667,
+      "deliveryRunLoopPass": 84,
+      "deliveryUICycle": 9,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "7",
+      "stage": "curl_gpu_end",
+      "targetPresentation": 129848.51147866668,
+      "uptime": 129848.48918875001
+    },
+    {
+      "deadline": 129848.50314541667,
+      "deliveryRunLoopPass": 84,
+      "deliveryUICycle": 9,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "7",
+      "stage": "curl_drawable_requested",
+      "targetPresentation": 129848.51147866668,
+      "uptime": 129848.4802935417
+    },
+    {
+      "deadline": 129848.50314541667,
+      "deliveryRunLoopPass": 84,
+      "deliveryUICycle": 9,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "7",
+      "stage": "curl_drawable_worker_began",
+      "targetPresentation": 129848.51147866668,
+      "uptime": 129848.48030070837
+    },
+    {
+      "deadline": 129848.50314541667,
+      "deliveryRunLoopPass": 84,
+      "deliveryUICycle": 9,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "7",
+      "stage": "curl_next_drawable_began",
+      "targetPresentation": 129848.51147866668,
+      "uptime": 129848.48030075003
+    },
+    {
+      "deadline": 129848.50314541667,
+      "deliveryRunLoopPass": 84,
+      "deliveryUICycle": 9,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "7",
+      "stage": "curl_next_drawable_returned",
+      "targetPresentation": 129848.51147866668,
+      "uptime": 129848.48620987503
+    },
+    {
+      "deadline": 129848.50314541667,
+      "deliveryRunLoopPass": 84,
+      "deliveryUICycle": 9,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "7",
+      "stage": "curl_drawable_drained",
+      "targetPresentation": 129848.51147866668,
+      "uptime": 129848.4862102917
+    },
+    {
+      "deadline": 129848.50314541667,
+      "deliveryRunLoopPass": 84,
+      "deliveryUICycle": 9,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "7",
+      "stage": "curl_drawable_main_delivery_before_take",
+      "targetPresentation": 129848.51147866668,
+      "uptime": 129848.48621808336
+    },
+    {
+      "deadline": 129848.50314541667,
+      "deliveryRunLoopPass": 84,
+      "deliveryUICycle": 9,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "7",
+      "stage": "curl_drawable_taken",
+      "targetPresentation": 129848.51147866668,
+      "uptime": 129848.48869125002
+    },
+    {
+      "deliveryRunLoopPass": 90,
+      "deliveryUICycle": 10,
+      "source": "6",
+      "stage": "curl_os_callback",
+      "uptime": 129848.49552383336
+    },
+    {
+      "deliveryRunLoopPass": 90,
+      "deliveryUICycle": 10,
+      "source": "6",
+      "stage": "curl_os_presented",
+      "uptime": 129848.49480870836
+    },
+    {
+      "deadline": 129848.51148204168,
+      "deliveryRunLoopPass": 95,
+      "deliveryUICycle": 10,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "8",
+      "stage": "curl_clock_request",
+      "targetPresentation": 129848.51981529167,
+      "uptime": 129848.42099991669
+    },
+    {
+      "deadline": 129848.51148204168,
+      "deliveryRunLoopPass": 95,
+      "deliveryUICycle": 10,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "8",
+      "stage": "curl_update_received",
+      "targetPresentation": 129848.51981529167,
+      "uptime": 129848.49696470836
+    },
+    {
+      "deadline": 129848.51148204168,
+      "deliveryRunLoopPass": 95,
+      "deliveryUICycle": 10,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "8",
+      "stage": "curl_encode",
+      "targetPresentation": 129848.51981529167,
+      "uptime": 129848.49696470836
+    },
+    {
+      "deadline": 129848.51148204168,
+      "deliveryRunLoopPass": 95,
+      "deliveryUICycle": 10,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "8",
+      "stage": "curl_submit",
+      "targetPresentation": 129848.51981529167,
+      "uptime": 129848.49698558336
+    },
+    {
+      "deadline": 129848.51148204168,
+      "deliveryRunLoopPass": 95,
+      "deliveryUICycle": 10,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "8",
+      "stage": "curl_scheduled",
+      "targetPresentation": 129848.51981529167,
+      "uptime": 129848.49703970837
+    },
+    {
+      "deadline": 129848.51148204168,
+      "deliveryRunLoopPass": 95,
+      "deliveryUICycle": 10,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "8",
+      "stage": "curl_gpu_start",
+      "targetPresentation": 129848.51981529167,
+      "uptime": 129848.497082125
+    },
+    {
+      "deadline": 129848.51148204168,
+      "deliveryRunLoopPass": 95,
+      "deliveryUICycle": 10,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "8",
+      "stage": "curl_gpu_end",
+      "targetPresentation": 129848.51981529167,
+      "uptime": 129848.49743816667
+    },
+    {
+      "deadline": 129848.51148204168,
+      "deliveryRunLoopPass": 95,
+      "deliveryUICycle": 10,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "8",
+      "stage": "curl_drawable_requested",
+      "targetPresentation": 129848.51981529167,
+      "uptime": 129848.48869650003
+    },
+    {
+      "deadline": 129848.51148204168,
+      "deliveryRunLoopPass": 95,
+      "deliveryUICycle": 10,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "8",
+      "stage": "curl_drawable_worker_began",
+      "targetPresentation": 129848.51981529167,
+      "uptime": 129848.48875345837
+    },
+    {
+      "deadline": 129848.51148204168,
+      "deliveryRunLoopPass": 95,
+      "deliveryUICycle": 10,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "8",
+      "stage": "curl_next_drawable_began",
+      "targetPresentation": 129848.51981529167,
+      "uptime": 129848.48875350003
+    },
+    {
+      "deadline": 129848.51148204168,
+      "deliveryRunLoopPass": 95,
+      "deliveryUICycle": 10,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "8",
+      "stage": "curl_next_drawable_returned",
+      "targetPresentation": 129848.51981529167,
+      "uptime": 129848.4946362917
+    },
+    {
+      "deadline": 129848.51148204168,
+      "deliveryRunLoopPass": 95,
+      "deliveryUICycle": 10,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "8",
+      "stage": "curl_drawable_drained",
+      "targetPresentation": 129848.51981529167,
+      "uptime": 129848.49463662502
+    },
+    {
+      "deadline": 129848.51148204168,
+      "deliveryRunLoopPass": 95,
+      "deliveryUICycle": 10,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "8",
+      "stage": "curl_drawable_main_delivery_before_take",
+      "targetPresentation": 129848.51981529167,
+      "uptime": 129848.4946425417
+    },
+    {
+      "deadline": 129848.51148204168,
+      "deliveryRunLoopPass": 95,
+      "deliveryUICycle": 10,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "8",
+      "stage": "curl_drawable_taken",
+      "targetPresentation": 129848.51981529167,
+      "uptime": 129848.49695587503
+    },
+    {
+      "deliveryRunLoopPass": 102,
+      "deliveryUICycle": 11,
+      "source": "7",
+      "stage": "curl_os_callback",
+      "uptime": 129848.50356120836
+    },
+    {
+      "deliveryRunLoopPass": 102,
+      "deliveryUICycle": 11,
+      "source": "7",
+      "stage": "curl_os_presented",
+      "uptime": 129848.50314550003
+    },
+    {
+      "deadline": 129848.51981883335,
+      "deliveryRunLoopPass": 106,
+      "deliveryUICycle": 11,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "9",
+      "stage": "curl_clock_request",
+      "targetPresentation": 129848.52815208334,
+      "uptime": 129848.42099991669
+    },
+    {
+      "deadline": 129848.51981883335,
+      "deliveryRunLoopPass": 106,
+      "deliveryUICycle": 11,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "9",
+      "stage": "curl_update_received",
+      "targetPresentation": 129848.52815208334,
+      "uptime": 129848.50547337503
+    },
+    {
+      "deadline": 129848.51981883335,
+      "deliveryRunLoopPass": 106,
+      "deliveryUICycle": 11,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "9",
+      "stage": "curl_encode",
+      "targetPresentation": 129848.52815208334,
+      "uptime": 129848.50547345837
+    },
+    {
+      "deadline": 129848.51981883335,
+      "deliveryRunLoopPass": 106,
+      "deliveryUICycle": 11,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "9",
+      "stage": "curl_submit",
+      "targetPresentation": 129848.52815208334,
+      "uptime": 129848.50549270835
+    },
+    {
+      "deadline": 129848.51981883335,
+      "deliveryRunLoopPass": 106,
+      "deliveryUICycle": 11,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "9",
+      "stage": "curl_scheduled",
+      "targetPresentation": 129848.52815208334,
+      "uptime": 129848.50554345836
+    },
+    {
+      "deadline": 129848.51981883335,
+      "deliveryRunLoopPass": 106,
+      "deliveryUICycle": 11,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "9",
+      "stage": "curl_gpu_start",
+      "targetPresentation": 129848.52815208334,
+      "uptime": 129848.50562362501
+    },
+    {
+      "deadline": 129848.51981883335,
+      "deliveryRunLoopPass": 106,
+      "deliveryUICycle": 11,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "9",
+      "stage": "curl_gpu_end",
+      "targetPresentation": 129848.52815208334,
+      "uptime": 129848.50607341668
+    },
+    {
+      "deadline": 129848.51981883335,
+      "deliveryRunLoopPass": 106,
+      "deliveryUICycle": 11,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "9",
+      "stage": "curl_drawable_requested",
+      "targetPresentation": 129848.52815208334,
+      "uptime": 129848.49696045836
+    },
+    {
+      "deadline": 129848.51981883335,
+      "deliveryRunLoopPass": 106,
+      "deliveryUICycle": 11,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "9",
+      "stage": "curl_drawable_worker_began",
+      "targetPresentation": 129848.52815208334,
+      "uptime": 129848.49701266669
+    },
+    {
+      "deadline": 129848.51981883335,
+      "deliveryRunLoopPass": 106,
+      "deliveryUICycle": 11,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "9",
+      "stage": "curl_next_drawable_began",
+      "targetPresentation": 129848.52815208334,
+      "uptime": 129848.49701270837
+    },
+    {
+      "deadline": 129848.51981883335,
+      "deliveryRunLoopPass": 106,
+      "deliveryUICycle": 11,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "9",
+      "stage": "curl_next_drawable_returned",
+      "targetPresentation": 129848.52815208334,
+      "uptime": 129848.50275750003
+    },
+    {
+      "deadline": 129848.51981883335,
+      "deliveryRunLoopPass": 106,
+      "deliveryUICycle": 11,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "9",
+      "stage": "curl_drawable_drained",
+      "targetPresentation": 129848.52815208334,
+      "uptime": 129848.50275787503
+    },
+    {
+      "deadline": 129848.51981883335,
+      "deliveryRunLoopPass": 106,
+      "deliveryUICycle": 11,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "9",
+      "stage": "curl_drawable_main_delivery_before_take",
+      "targetPresentation": 129848.52815208334,
+      "uptime": 129848.50276308336
+    },
+    {
+      "deadline": 129848.51981883335,
+      "deliveryRunLoopPass": 106,
+      "deliveryUICycle": 11,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "9",
+      "stage": "curl_drawable_taken",
+      "targetPresentation": 129848.52815208334,
+      "uptime": 129848.50546537503
+    },
+    {
+      "deliveryRunLoopPass": 112,
+      "deliveryUICycle": 12,
+      "source": "8",
+      "stage": "curl_os_callback",
+      "uptime": 129848.51226933337
+    },
+    {
+      "deliveryRunLoopPass": 112,
+      "deliveryUICycle": 12,
+      "source": "8",
+      "stage": "curl_os_presented",
+      "uptime": 129848.5114822917
+    },
+    {
+      "deadline": 129848.52815562501,
+      "deliveryRunLoopPass": 115,
+      "deliveryUICycle": 12,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "10",
+      "stage": "curl_clock_request",
+      "targetPresentation": 129848.536488875,
+      "uptime": 129848.42099991669
+    },
+    {
+      "deadline": 129848.52815562501,
+      "deliveryRunLoopPass": 115,
+      "deliveryUICycle": 12,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "10",
+      "stage": "curl_update_received",
+      "targetPresentation": 129848.536488875,
+      "uptime": 129848.51364058336
+    },
+    {
+      "deadline": 129848.52815562501,
+      "deliveryRunLoopPass": 115,
+      "deliveryUICycle": 12,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "10",
+      "stage": "curl_encode",
+      "targetPresentation": 129848.536488875,
+      "uptime": 129848.51364058336
+    },
+    {
+      "deadline": 129848.52815562501,
+      "deliveryRunLoopPass": 115,
+      "deliveryUICycle": 12,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "10",
+      "stage": "curl_submit",
+      "targetPresentation": 129848.536488875,
+      "uptime": 129848.51365854169
+    },
+    {
+      "deadline": 129848.52815562501,
+      "deliveryRunLoopPass": 115,
+      "deliveryUICycle": 12,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "10",
+      "stage": "curl_scheduled",
+      "targetPresentation": 129848.536488875,
+      "uptime": 129848.51377433336
+    },
+    {
+      "deadline": 129848.52815562501,
+      "deliveryRunLoopPass": 115,
+      "deliveryUICycle": 12,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "10",
+      "stage": "curl_gpu_start",
+      "targetPresentation": 129848.536488875,
+      "uptime": 129848.513751125
+    },
+    {
+      "deadline": 129848.52815562501,
+      "deliveryRunLoopPass": 115,
+      "deliveryUICycle": 12,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "10",
+      "stage": "curl_gpu_end",
+      "targetPresentation": 129848.536488875,
+      "uptime": 129848.51408191667
+    },
+    {
+      "deadline": 129848.52815562501,
+      "deliveryRunLoopPass": 115,
+      "deliveryUICycle": 12,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "10",
+      "stage": "curl_drawable_requested",
+      "targetPresentation": 129848.536488875,
+      "uptime": 129848.50546962503
+    },
+    {
+      "deadline": 129848.52815562501,
+      "deliveryRunLoopPass": 115,
+      "deliveryUICycle": 12,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "10",
+      "stage": "curl_drawable_worker_began",
+      "targetPresentation": 129848.536488875,
+      "uptime": 129848.5055311667
+    },
+    {
+      "deadline": 129848.52815562501,
+      "deliveryRunLoopPass": 115,
+      "deliveryUICycle": 12,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "10",
+      "stage": "curl_next_drawable_began",
+      "targetPresentation": 129848.536488875,
+      "uptime": 129848.50553120836
+    },
+    {
+      "deadline": 129848.52815562501,
+      "deliveryRunLoopPass": 115,
+      "deliveryUICycle": 12,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "10",
+      "stage": "curl_next_drawable_returned",
+      "targetPresentation": 129848.536488875,
+      "uptime": 129848.51129991669
+    },
+    {
+      "deadline": 129848.52815562501,
+      "deliveryRunLoopPass": 115,
+      "deliveryUICycle": 12,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "10",
+      "stage": "curl_drawable_drained",
+      "targetPresentation": 129848.536488875,
+      "uptime": 129848.51130025003
+    },
+    {
+      "deadline": 129848.52815562501,
+      "deliveryRunLoopPass": 115,
+      "deliveryUICycle": 12,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "10",
+      "stage": "curl_drawable_main_delivery_before_take",
+      "targetPresentation": 129848.536488875,
+      "uptime": 129848.51130737503
+    },
+    {
+      "deadline": 129848.52815562501,
+      "deliveryRunLoopPass": 115,
+      "deliveryUICycle": 12,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "10",
+      "stage": "curl_drawable_taken",
+      "targetPresentation": 129848.536488875,
+      "uptime": 129848.51363233336
+    },
+    {
+      "deliveryRunLoopPass": 121,
+      "deliveryUICycle": 13,
+      "source": "9",
+      "stage": "curl_os_callback",
+      "uptime": 129848.52059725003
+    },
+    {
+      "deliveryRunLoopPass": 121,
+      "deliveryUICycle": 13,
+      "source": "9",
+      "stage": "curl_os_presented",
+      "uptime": 129848.51981900002
+    },
+    {
+      "deadline": 129848.53649233334,
+      "deliveryRunLoopPass": 125,
+      "deliveryUICycle": 13,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "11",
+      "stage": "curl_clock_request",
+      "targetPresentation": 129848.54482558335,
+      "uptime": 129848.42099991669
+    },
+    {
+      "deadline": 129848.53649233334,
+      "deliveryRunLoopPass": 125,
+      "deliveryUICycle": 13,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "11",
+      "stage": "curl_update_received",
+      "targetPresentation": 129848.54482558335,
+      "uptime": 129848.52198370836
+    },
+    {
+      "deadline": 129848.53649233334,
+      "deliveryRunLoopPass": 125,
+      "deliveryUICycle": 13,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "11",
+      "stage": "curl_encode",
+      "targetPresentation": 129848.54482558335,
+      "uptime": 129848.52198383336
+    },
+    {
+      "deadline": 129848.53649233334,
+      "deliveryRunLoopPass": 125,
+      "deliveryUICycle": 13,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "11",
+      "stage": "curl_submit",
+      "targetPresentation": 129848.54482558335,
+      "uptime": 129848.52200262503
+    },
+    {
+      "deadline": 129848.53649233334,
+      "deliveryRunLoopPass": 125,
+      "deliveryUICycle": 13,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "11",
+      "stage": "curl_scheduled",
+      "targetPresentation": 129848.54482558335,
+      "uptime": 129848.52213295836
+    },
+    {
+      "deadline": 129848.53649233334,
+      "deliveryRunLoopPass": 125,
+      "deliveryUICycle": 13,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "11",
+      "stage": "curl_gpu_start",
+      "targetPresentation": 129848.54482558335,
+      "uptime": 129848.52211466667
+    },
+    {
+      "deadline": 129848.53649233334,
+      "deliveryRunLoopPass": 125,
+      "deliveryUICycle": 13,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "11",
+      "stage": "curl_gpu_end",
+      "targetPresentation": 129848.54482558335,
+      "uptime": 129848.52239000001
+    },
+    {
+      "deadline": 129848.53649233334,
+      "deliveryRunLoopPass": 125,
+      "deliveryUICycle": 13,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "11",
+      "stage": "curl_drawable_requested",
+      "targetPresentation": 129848.54482558335,
+      "uptime": 129848.5136365417
+    },
+    {
+      "deadline": 129848.53649233334,
+      "deliveryRunLoopPass": 125,
+      "deliveryUICycle": 13,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "11",
+      "stage": "curl_drawable_worker_began",
+      "targetPresentation": 129848.54482558335,
+      "uptime": 129848.5136961667
+    },
+    {
+      "deadline": 129848.53649233334,
+      "deliveryRunLoopPass": 125,
+      "deliveryUICycle": 13,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "11",
+      "stage": "curl_next_drawable_began",
+      "targetPresentation": 129848.54482558335,
+      "uptime": 129848.5136961667
+    },
+    {
+      "deadline": 129848.53649233334,
+      "deliveryRunLoopPass": 125,
+      "deliveryUICycle": 13,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "11",
+      "stage": "curl_next_drawable_returned",
+      "targetPresentation": 129848.54482558335,
+      "uptime": 129848.51963275003
+    },
+    {
+      "deadline": 129848.53649233334,
+      "deliveryRunLoopPass": 125,
+      "deliveryUICycle": 13,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "11",
+      "stage": "curl_drawable_drained",
+      "targetPresentation": 129848.54482558335,
+      "uptime": 129848.51963300003
+    },
+    {
+      "deadline": 129848.53649233334,
+      "deliveryRunLoopPass": 125,
+      "deliveryUICycle": 13,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "11",
+      "stage": "curl_drawable_main_delivery_before_take",
+      "targetPresentation": 129848.54482558335,
+      "uptime": 129848.5196424167
+    },
+    {
+      "deadline": 129848.53649233334,
+      "deliveryRunLoopPass": 125,
+      "deliveryUICycle": 13,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "11",
+      "stage": "curl_drawable_taken",
+      "targetPresentation": 129848.54482558335,
+      "uptime": 129848.52197533337
+    },
+    {
+      "deliveryRunLoopPass": 133,
+      "deliveryUICycle": 14,
+      "source": "10",
+      "stage": "curl_os_callback",
+      "uptime": 129848.52857833337
+    },
+    {
+      "deliveryRunLoopPass": 133,
+      "deliveryUICycle": 14,
+      "source": "10",
+      "stage": "curl_os_presented",
+      "uptime": 129848.52815575003
+    },
+    {
+      "deadline": 129848.54482925001,
+      "deliveryRunLoopPass": 136,
+      "deliveryUICycle": 14,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "12",
+      "stage": "curl_clock_request",
+      "targetPresentation": 129848.55316250001,
+      "uptime": 129848.42099991669
+    },
+    {
+      "deadline": 129848.54482925001,
+      "deliveryRunLoopPass": 136,
+      "deliveryUICycle": 14,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "12",
+      "stage": "curl_update_received",
+      "targetPresentation": 129848.55316250001,
+      "uptime": 129848.53050050003
+    },
+    {
+      "deadline": 129848.54482925001,
+      "deliveryRunLoopPass": 136,
+      "deliveryUICycle": 14,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "12",
+      "stage": "curl_encode",
+      "targetPresentation": 129848.55316250001,
+      "uptime": 129848.53050050003
+    },
+    {
+      "deadline": 129848.54482925001,
+      "deliveryRunLoopPass": 136,
+      "deliveryUICycle": 14,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "12",
+      "stage": "curl_submit",
+      "targetPresentation": 129848.55316250001,
+      "uptime": 129848.53051883336
+    },
+    {
+      "deadline": 129848.54482925001,
+      "deliveryRunLoopPass": 136,
+      "deliveryUICycle": 14,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "12",
+      "stage": "curl_scheduled",
+      "targetPresentation": 129848.55316250001,
+      "uptime": 129848.53057387503
+    },
+    {
+      "deadline": 129848.54482925001,
+      "deliveryRunLoopPass": 136,
+      "deliveryUICycle": 14,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "12",
+      "stage": "curl_gpu_start",
+      "targetPresentation": 129848.55316250001,
+      "uptime": 129848.5306445
+    },
+    {
+      "deadline": 129848.54482925001,
+      "deliveryRunLoopPass": 136,
+      "deliveryUICycle": 14,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "12",
+      "stage": "curl_gpu_end",
+      "targetPresentation": 129848.55316250001,
+      "uptime": 129848.53092775
+    },
+    {
+      "deadline": 129848.54482925001,
+      "deliveryRunLoopPass": 136,
+      "deliveryUICycle": 14,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "12",
+      "stage": "curl_drawable_requested",
+      "targetPresentation": 129848.55316250001,
+      "uptime": 129848.52197962503
+    },
+    {
+      "deadline": 129848.54482925001,
+      "deliveryRunLoopPass": 136,
+      "deliveryUICycle": 14,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "12",
+      "stage": "curl_drawable_worker_began",
+      "targetPresentation": 129848.55316250001,
+      "uptime": 129848.52199675003
+    },
+    {
+      "deadline": 129848.54482925001,
+      "deliveryRunLoopPass": 136,
+      "deliveryUICycle": 14,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "12",
+      "stage": "curl_next_drawable_began",
+      "targetPresentation": 129848.55316250001,
+      "uptime": 129848.52199675003
+    },
+    {
+      "deadline": 129848.54482925001,
+      "deliveryRunLoopPass": 136,
+      "deliveryUICycle": 14,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "12",
+      "stage": "curl_next_drawable_returned",
+      "targetPresentation": 129848.55316250001,
+      "uptime": 129848.52778025003
+    },
+    {
+      "deadline": 129848.54482925001,
+      "deliveryRunLoopPass": 136,
+      "deliveryUICycle": 14,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "12",
+      "stage": "curl_drawable_drained",
+      "targetPresentation": 129848.55316250001,
+      "uptime": 129848.5277805417
+    },
+    {
+      "deadline": 129848.54482925001,
+      "deliveryRunLoopPass": 136,
+      "deliveryUICycle": 14,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "12",
+      "stage": "curl_drawable_main_delivery_before_take",
+      "targetPresentation": 129848.55316250001,
+      "uptime": 129848.52778587503
+    },
+    {
+      "deadline": 129848.54482925001,
+      "deliveryRunLoopPass": 136,
+      "deliveryUICycle": 14,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "12",
+      "stage": "curl_drawable_taken",
+      "targetPresentation": 129848.55316250001,
+      "uptime": 129848.5304907917
+    },
+    {
+      "deliveryRunLoopPass": 143,
+      "deliveryUICycle": 15,
+      "source": "11",
+      "stage": "curl_os_callback",
+      "uptime": 129848.5368869167
+    },
+    {
+      "deliveryRunLoopPass": 143,
+      "deliveryUICycle": 15,
+      "source": "11",
+      "stage": "curl_os_presented",
+      "uptime": 129848.53649250003
+    },
+    {
+      "deadline": 129848.55316600001,
+      "deliveryRunLoopPass": 147,
+      "deliveryUICycle": 15,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "13",
+      "stage": "curl_clock_request",
+      "targetPresentation": 129848.56149925,
+      "uptime": 129848.42099991669
+    },
+    {
+      "deadline": 129848.55316600001,
+      "deliveryRunLoopPass": 147,
+      "deliveryUICycle": 15,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "13",
+      "stage": "curl_update_received",
+      "targetPresentation": 129848.56149925,
+      "uptime": 129848.53864595837
+    },
+    {
+      "deadline": 129848.55316600001,
+      "deliveryRunLoopPass": 147,
+      "deliveryUICycle": 15,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "13",
+      "stage": "curl_encode",
+      "targetPresentation": 129848.56149925,
+      "uptime": 129848.53864604169
+    },
+    {
+      "deadline": 129848.55316600001,
+      "deliveryRunLoopPass": 147,
+      "deliveryUICycle": 15,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "13",
+      "stage": "curl_submit",
+      "targetPresentation": 129848.56149925,
+      "uptime": 129848.53866425002
+    },
+    {
+      "deadline": 129848.55316600001,
+      "deliveryRunLoopPass": 147,
+      "deliveryUICycle": 15,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "13",
+      "stage": "curl_scheduled",
+      "targetPresentation": 129848.56149925,
+      "uptime": 129848.5387180417
+    },
+    {
+      "deadline": 129848.55316600001,
+      "deliveryRunLoopPass": 147,
+      "deliveryUICycle": 15,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "13",
+      "stage": "curl_gpu_start",
+      "targetPresentation": 129848.56149925,
+      "uptime": 129848.53877725001
+    },
+    {
+      "deadline": 129848.55316600001,
+      "deliveryRunLoopPass": 147,
+      "deliveryUICycle": 15,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "13",
+      "stage": "curl_gpu_end",
+      "targetPresentation": 129848.56149925,
+      "uptime": 129848.53908116667
+    },
+    {
+      "deadline": 129848.55316600001,
+      "deliveryRunLoopPass": 147,
+      "deliveryUICycle": 15,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "13",
+      "stage": "curl_drawable_requested",
+      "targetPresentation": 129848.56149925,
+      "uptime": 129848.5304946667
+    },
+    {
+      "deadline": 129848.55316600001,
+      "deliveryRunLoopPass": 147,
+      "deliveryUICycle": 15,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "13",
+      "stage": "curl_drawable_worker_began",
+      "targetPresentation": 129848.56149925,
+      "uptime": 129848.53055625003
+    },
+    {
+      "deadline": 129848.55316600001,
+      "deliveryRunLoopPass": 147,
+      "deliveryUICycle": 15,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "13",
+      "stage": "curl_next_drawable_began",
+      "targetPresentation": 129848.56149925,
+      "uptime": 129848.53055629169
+    },
+    {
+      "deadline": 129848.55316600001,
+      "deliveryRunLoopPass": 147,
+      "deliveryUICycle": 15,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "13",
+      "stage": "curl_next_drawable_returned",
+      "targetPresentation": 129848.56149925,
+      "uptime": 129848.53630437503
+    },
+    {
+      "deadline": 129848.55316600001,
+      "deliveryRunLoopPass": 147,
+      "deliveryUICycle": 15,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "13",
+      "stage": "curl_drawable_drained",
+      "targetPresentation": 129848.56149925,
+      "uptime": 129848.53630462503
+    },
+    {
+      "deadline": 129848.55316600001,
+      "deliveryRunLoopPass": 147,
+      "deliveryUICycle": 15,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "13",
+      "stage": "curl_drawable_main_delivery_before_take",
+      "targetPresentation": 129848.56149925,
+      "uptime": 129848.53630995836
+    },
+    {
+      "deadline": 129848.55316600001,
+      "deliveryRunLoopPass": 147,
+      "deliveryUICycle": 15,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "13",
+      "stage": "curl_drawable_taken",
+      "targetPresentation": 129848.56149925,
+      "uptime": 129848.53863829169
+    },
+    {
+      "deliveryRunLoopPass": 155,
+      "deliveryUICycle": 16,
+      "source": "12",
+      "stage": "curl_os_callback",
+      "uptime": 129848.54517779169
+    },
+    {
+      "deliveryRunLoopPass": 155,
+      "deliveryUICycle": 16,
+      "source": "12",
+      "stage": "curl_os_presented",
+      "uptime": 129848.54482920836
+    },
+    {
+      "deadline": 129848.56150254168,
+      "deliveryRunLoopPass": 158,
+      "deliveryUICycle": 16,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "14",
+      "stage": "curl_clock_request",
+      "targetPresentation": 129848.56983579167,
+      "uptime": 129848.42099991669
+    },
+    {
+      "deadline": 129848.56150254168,
+      "deliveryRunLoopPass": 158,
+      "deliveryUICycle": 16,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "14",
+      "stage": "curl_update_received",
+      "targetPresentation": 129848.56983579167,
+      "uptime": 129848.54695645836
+    },
+    {
+      "deadline": 129848.56150254168,
+      "deliveryRunLoopPass": 158,
+      "deliveryUICycle": 16,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "14",
+      "stage": "curl_encode",
+      "targetPresentation": 129848.56983579167,
+      "uptime": 129848.54695658336
+    },
+    {
+      "deadline": 129848.56150254168,
+      "deliveryRunLoopPass": 158,
+      "deliveryUICycle": 16,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "14",
+      "stage": "curl_submit",
+      "targetPresentation": 129848.56983579167,
+      "uptime": 129848.5469749167
+    },
+    {
+      "deadline": 129848.56150254168,
+      "deliveryRunLoopPass": 158,
+      "deliveryUICycle": 16,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "14",
+      "stage": "curl_scheduled",
+      "targetPresentation": 129848.56983579167,
+      "uptime": 129848.54703195835
+    },
+    {
+      "deadline": 129848.56150254168,
+      "deliveryRunLoopPass": 158,
+      "deliveryUICycle": 16,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "14",
+      "stage": "curl_gpu_start",
+      "targetPresentation": 129848.56983579167,
+      "uptime": 129848.54710579167
+    },
+    {
+      "deadline": 129848.56150254168,
+      "deliveryRunLoopPass": 158,
+      "deliveryUICycle": 16,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "14",
+      "stage": "curl_gpu_end",
+      "targetPresentation": 129848.56983579167,
+      "uptime": 129848.54748950001
+    },
+    {
+      "deadline": 129848.56150254168,
+      "deliveryRunLoopPass": 158,
+      "deliveryUICycle": 16,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "14",
+      "stage": "curl_drawable_requested",
+      "targetPresentation": 129848.56983579167,
+      "uptime": 129848.53864229169
+    },
+    {
+      "deadline": 129848.56150254168,
+      "deliveryRunLoopPass": 158,
+      "deliveryUICycle": 16,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "14",
+      "stage": "curl_drawable_worker_began",
+      "targetPresentation": 129848.56983579167,
+      "uptime": 129848.53869712503
+    },
+    {
+      "deadline": 129848.56150254168,
+      "deliveryRunLoopPass": 158,
+      "deliveryUICycle": 16,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "14",
+      "stage": "curl_next_drawable_began",
+      "targetPresentation": 129848.56983579167,
+      "uptime": 129848.53869716669
+    },
+    {
+      "deadline": 129848.56150254168,
+      "deliveryRunLoopPass": 158,
+      "deliveryUICycle": 16,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "14",
+      "stage": "curl_next_drawable_returned",
+      "targetPresentation": 129848.56983579167,
+      "uptime": 129848.54448112503
+    },
+    {
+      "deadline": 129848.56150254168,
+      "deliveryRunLoopPass": 158,
+      "deliveryUICycle": 16,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "14",
+      "stage": "curl_drawable_drained",
+      "targetPresentation": 129848.56983579167,
+      "uptime": 129848.54448145836
+    },
+    {
+      "deadline": 129848.56150254168,
+      "deliveryRunLoopPass": 158,
+      "deliveryUICycle": 16,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "14",
+      "stage": "curl_drawable_main_delivery_before_take",
+      "targetPresentation": 129848.56983579167,
+      "uptime": 129848.54448670836
+    },
+    {
+      "deadline": 129848.56150254168,
+      "deliveryRunLoopPass": 158,
+      "deliveryUICycle": 16,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "14",
+      "stage": "curl_drawable_taken",
+      "targetPresentation": 129848.56983579167,
+      "uptime": 129848.54694912503
+    },
+    {
+      "deliveryRunLoopPass": 164,
+      "deliveryUICycle": 17,
+      "source": "13",
+      "stage": "curl_os_callback",
+      "uptime": 129848.5538451667
+    },
+    {
+      "deliveryRunLoopPass": 164,
+      "deliveryUICycle": 17,
+      "source": "13",
+      "stage": "curl_os_presented",
+      "uptime": 129848.55316591669
+    },
+    {
+      "deadline": 129848.56983925,
+      "deliveryRunLoopPass": 168,
+      "deliveryUICycle": 17,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "15",
+      "stage": "curl_clock_request",
+      "targetPresentation": 129848.57817250001,
+      "uptime": 129848.42099991669
+    },
+    {
+      "deadline": 129848.56983925,
+      "deliveryRunLoopPass": 168,
+      "deliveryUICycle": 17,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "15",
+      "stage": "curl_update_received",
+      "targetPresentation": 129848.57817250001,
+      "uptime": 129848.55531237503
+    },
+    {
+      "deadline": 129848.56983925,
+      "deliveryRunLoopPass": 168,
+      "deliveryUICycle": 17,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "15",
+      "stage": "curl_encode",
+      "targetPresentation": 129848.57817250001,
+      "uptime": 129848.55531250003
+    },
+    {
+      "deadline": 129848.56983925,
+      "deliveryRunLoopPass": 168,
+      "deliveryUICycle": 17,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "15",
+      "stage": "curl_submit",
+      "targetPresentation": 129848.57817250001,
+      "uptime": 129848.55533058336
+    },
+    {
+      "deadline": 129848.56983925,
+      "deliveryRunLoopPass": 168,
+      "deliveryUICycle": 17,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "15",
+      "stage": "curl_scheduled",
+      "targetPresentation": 129848.57817250001,
+      "uptime": 129848.55539570836
+    },
+    {
+      "deadline": 129848.56983925,
+      "deliveryRunLoopPass": 168,
+      "deliveryUICycle": 17,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "15",
+      "stage": "curl_gpu_start",
+      "targetPresentation": 129848.57817250001,
+      "uptime": 129848.55542016667
+    },
+    {
+      "deadline": 129848.56983925,
+      "deliveryRunLoopPass": 168,
+      "deliveryUICycle": 17,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "15",
+      "stage": "curl_gpu_end",
+      "targetPresentation": 129848.57817250001,
+      "uptime": 129848.555737
+    },
+    {
+      "deadline": 129848.56983925,
+      "deliveryRunLoopPass": 168,
+      "deliveryUICycle": 17,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "15",
+      "stage": "curl_drawable_requested",
+      "targetPresentation": 129848.57817250001,
+      "uptime": 129848.54695304169
+    },
+    {
+      "deadline": 129848.56983925,
+      "deliveryRunLoopPass": 168,
+      "deliveryUICycle": 17,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "15",
+      "stage": "curl_drawable_worker_began",
+      "targetPresentation": 129848.57817250001,
+      "uptime": 129848.54701112503
+    },
+    {
+      "deadline": 129848.56983925,
+      "deliveryRunLoopPass": 168,
+      "deliveryUICycle": 17,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "15",
+      "stage": "curl_next_drawable_began",
+      "targetPresentation": 129848.57817250001,
+      "uptime": 129848.54701112503
+    },
+    {
+      "deadline": 129848.56983925,
+      "deliveryRunLoopPass": 168,
+      "deliveryUICycle": 17,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "15",
+      "stage": "curl_next_drawable_returned",
+      "targetPresentation": 129848.57817250001,
+      "uptime": 129848.55296858336
+    },
+    {
+      "deadline": 129848.56983925,
+      "deliveryRunLoopPass": 168,
+      "deliveryUICycle": 17,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "15",
+      "stage": "curl_drawable_drained",
+      "targetPresentation": 129848.57817250001,
+      "uptime": 129848.55296895836
+    },
+    {
+      "deadline": 129848.56983925,
+      "deliveryRunLoopPass": 168,
+      "deliveryUICycle": 17,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "15",
+      "stage": "curl_drawable_main_delivery_before_take",
+      "targetPresentation": 129848.57817250001,
+      "uptime": 129848.5529746667
+    },
+    {
+      "deadline": 129848.56983925,
+      "deliveryRunLoopPass": 168,
+      "deliveryUICycle": 17,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "15",
+      "stage": "curl_drawable_taken",
+      "targetPresentation": 129848.57817250001,
+      "uptime": 129848.55530383336
+    },
+    {
+      "deliveryRunLoopPass": 174,
+      "deliveryUICycle": 18,
+      "source": "14",
+      "stage": "curl_os_callback",
+      "uptime": 129848.56227466669
+    },
+    {
+      "deliveryRunLoopPass": 174,
+      "deliveryUICycle": 18,
+      "source": "14",
+      "stage": "curl_os_presented",
+      "uptime": 129848.56150270835
+    },
+    {
+      "deadline": 129848.57817620834,
+      "deliveryRunLoopPass": 177,
+      "deliveryUICycle": 18,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "16",
+      "stage": "curl_clock_request",
+      "targetPresentation": 129848.58650945834,
+      "uptime": 129848.42099991669
+    },
+    {
+      "deadline": 129848.57817620834,
+      "deliveryRunLoopPass": 177,
+      "deliveryUICycle": 18,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "16",
+      "stage": "curl_update_received",
+      "targetPresentation": 129848.58650945834,
+      "uptime": 129848.5636375417
+    },
+    {
+      "deadline": 129848.57817620834,
+      "deliveryRunLoopPass": 177,
+      "deliveryUICycle": 18,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "16",
+      "stage": "curl_encode",
+      "targetPresentation": 129848.58650945834,
+      "uptime": 129848.56363762503
+    },
+    {
+      "deadline": 129848.57817620834,
+      "deliveryRunLoopPass": 177,
+      "deliveryUICycle": 18,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "16",
+      "stage": "curl_submit",
+      "targetPresentation": 129848.58650945834,
+      "uptime": 129848.56365620837
+    },
+    {
+      "deadline": 129848.57817620834,
+      "deliveryRunLoopPass": 177,
+      "deliveryUICycle": 18,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "16",
+      "stage": "curl_scheduled",
+      "targetPresentation": 129848.58650945834,
+      "uptime": 129848.56376500003
+    },
+    {
+      "deadline": 129848.57817620834,
+      "deliveryRunLoopPass": 177,
+      "deliveryUICycle": 18,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "16",
+      "stage": "curl_gpu_start",
+      "targetPresentation": 129848.58650945834,
+      "uptime": 129848.56378625
+    },
+    {
+      "deadline": 129848.57817620834,
+      "deliveryRunLoopPass": 177,
+      "deliveryUICycle": 18,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "16",
+      "stage": "curl_gpu_end",
+      "targetPresentation": 129848.58650945834,
+      "uptime": 129848.56404162501
+    },
+    {
+      "deadline": 129848.57817620834,
+      "deliveryRunLoopPass": 177,
+      "deliveryUICycle": 18,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "16",
+      "stage": "curl_drawable_requested",
+      "targetPresentation": 129848.58650945834,
+      "uptime": 129848.55530850003
+    },
+    {
+      "deadline": 129848.57817620834,
+      "deliveryRunLoopPass": 177,
+      "deliveryUICycle": 18,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "16",
+      "stage": "curl_drawable_worker_began",
+      "targetPresentation": 129848.58650945834,
+      "uptime": 129848.5553646667
+    },
+    {
+      "deadline": 129848.57817620834,
+      "deliveryRunLoopPass": 177,
+      "deliveryUICycle": 18,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "16",
+      "stage": "curl_next_drawable_began",
+      "targetPresentation": 129848.58650945834,
+      "uptime": 129848.55536470836
+    },
+    {
+      "deadline": 129848.57817620834,
+      "deliveryRunLoopPass": 177,
+      "deliveryUICycle": 18,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "16",
+      "stage": "curl_next_drawable_returned",
+      "targetPresentation": 129848.58650945834,
+      "uptime": 129848.5613127917
+    },
+    {
+      "deadline": 129848.57817620834,
+      "deliveryRunLoopPass": 177,
+      "deliveryUICycle": 18,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "16",
+      "stage": "curl_drawable_drained",
+      "targetPresentation": 129848.58650945834,
+      "uptime": 129848.56131312503
+    },
+    {
+      "deadline": 129848.57817620834,
+      "deliveryRunLoopPass": 177,
+      "deliveryUICycle": 18,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "16",
+      "stage": "curl_drawable_main_delivery_before_take",
+      "targetPresentation": 129848.58650945834,
+      "uptime": 129848.56131912503
+    },
+    {
+      "deadline": 129848.57817620834,
+      "deliveryRunLoopPass": 177,
+      "deliveryUICycle": 18,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "16",
+      "stage": "curl_drawable_taken",
+      "targetPresentation": 129848.58650945834,
+      "uptime": 129848.5636299167
+    },
+    {
+      "deliveryRunLoopPass": 183,
+      "deliveryUICycle": 19,
+      "source": "15",
+      "stage": "curl_os_callback",
+      "uptime": 129848.57060033336
+    },
+    {
+      "deliveryRunLoopPass": 183,
+      "deliveryUICycle": 19,
+      "source": "15",
+      "stage": "curl_os_presented",
+      "uptime": 129848.56983937504
+    },
+    {
+      "deadline": 129848.58651270834,
+      "deliveryRunLoopPass": 187,
+      "deliveryUICycle": 19,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "17",
+      "stage": "curl_clock_request",
+      "targetPresentation": 129848.59484595835,
+      "uptime": 129848.42099991669
+    },
+    {
+      "deadline": 129848.58651270834,
+      "deliveryRunLoopPass": 187,
+      "deliveryUICycle": 19,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "17",
+      "stage": "curl_update_received",
+      "targetPresentation": 129848.59484595835,
+      "uptime": 129848.57197800002
+    },
+    {
+      "deadline": 129848.58651270834,
+      "deliveryRunLoopPass": 187,
+      "deliveryUICycle": 19,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "17",
+      "stage": "curl_encode",
+      "targetPresentation": 129848.59484595835,
+      "uptime": 129848.57197808336
+    },
+    {
+      "deadline": 129848.58651270834,
+      "deliveryRunLoopPass": 187,
+      "deliveryUICycle": 19,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "17",
+      "stage": "curl_submit",
+      "targetPresentation": 129848.59484595835,
+      "uptime": 129848.57199537502
+    },
+    {
+      "deadline": 129848.58651270834,
+      "deliveryRunLoopPass": 187,
+      "deliveryUICycle": 19,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "17",
+      "stage": "curl_scheduled",
+      "targetPresentation": 129848.59484595835,
+      "uptime": 129848.57211887503
+    },
+    {
+      "deadline": 129848.58651270834,
+      "deliveryRunLoopPass": 187,
+      "deliveryUICycle": 19,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "17",
+      "stage": "curl_gpu_start",
+      "targetPresentation": 129848.59484595835,
+      "uptime": 129848.57208537501
+    },
+    {
+      "deadline": 129848.58651270834,
+      "deliveryRunLoopPass": 187,
+      "deliveryUICycle": 19,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "17",
+      "stage": "curl_gpu_end",
+      "targetPresentation": 129848.59484595835,
+      "uptime": 129848.572291
+    },
+    {
+      "deadline": 129848.58651270834,
+      "deliveryRunLoopPass": 187,
+      "deliveryUICycle": 19,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "17",
+      "stage": "curl_drawable_requested",
+      "targetPresentation": 129848.59484595835,
+      "uptime": 129848.5636344167
+    },
+    {
+      "deadline": 129848.58651270834,
+      "deliveryRunLoopPass": 187,
+      "deliveryUICycle": 19,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "17",
+      "stage": "curl_drawable_worker_began",
+      "targetPresentation": 129848.59484595835,
+      "uptime": 129848.56365175002
+    },
+    {
+      "deadline": 129848.58651270834,
+      "deliveryRunLoopPass": 187,
+      "deliveryUICycle": 19,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "17",
+      "stage": "curl_next_drawable_began",
+      "targetPresentation": 129848.59484595835,
+      "uptime": 129848.56365175002
+    },
+    {
+      "deadline": 129848.58651270834,
+      "deliveryRunLoopPass": 187,
+      "deliveryUICycle": 19,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "17",
+      "stage": "curl_next_drawable_returned",
+      "targetPresentation": 129848.59484595835,
+      "uptime": 129848.5696421667
+    },
+    {
+      "deadline": 129848.58651270834,
+      "deliveryRunLoopPass": 187,
+      "deliveryUICycle": 19,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "17",
+      "stage": "curl_drawable_drained",
+      "targetPresentation": 129848.59484595835,
+      "uptime": 129848.56964250004
+    },
+    {
+      "deadline": 129848.58651270834,
+      "deliveryRunLoopPass": 187,
+      "deliveryUICycle": 19,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "17",
+      "stage": "curl_drawable_main_delivery_before_take",
+      "targetPresentation": 129848.59484595835,
+      "uptime": 129848.5696479167
+    },
+    {
+      "deadline": 129848.58651270834,
+      "deliveryRunLoopPass": 187,
+      "deliveryUICycle": 19,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "17",
+      "stage": "curl_drawable_taken",
+      "targetPresentation": 129848.59484595835,
+      "uptime": 129848.57197070836
+    },
+    {
+      "deliveryRunLoopPass": 193,
+      "deliveryUICycle": 20,
+      "source": "16",
+      "stage": "curl_os_callback",
+      "uptime": 129848.57884658336
+    },
+    {
+      "deliveryRunLoopPass": 193,
+      "deliveryUICycle": 20,
+      "source": "16",
+      "stage": "curl_os_presented",
+      "uptime": 129848.57817620836
+    },
+    {
+      "deadline": 129848.59484970834,
+      "deliveryRunLoopPass": 196,
+      "deliveryUICycle": 20,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "18",
+      "stage": "curl_clock_request",
+      "targetPresentation": 129848.60318295834,
+      "uptime": 129848.42099991669
+    },
+    {
+      "deadline": 129848.59484970834,
+      "deliveryRunLoopPass": 196,
+      "deliveryUICycle": 20,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "18",
+      "stage": "curl_update_received",
+      "targetPresentation": 129848.60318295834,
+      "uptime": 129848.5803307917
+    },
+    {
+      "deadline": 129848.59484970834,
+      "deliveryRunLoopPass": 196,
+      "deliveryUICycle": 20,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "18",
+      "stage": "curl_encode",
+      "targetPresentation": 129848.60318295834,
+      "uptime": 129848.58033087503
+    },
+    {
+      "deadline": 129848.59484970834,
+      "deliveryRunLoopPass": 196,
+      "deliveryUICycle": 20,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "18",
+      "stage": "curl_submit",
+      "targetPresentation": 129848.60318295834,
+      "uptime": 129848.58035000003
+    },
+    {
+      "deadline": 129848.59484970834,
+      "deliveryRunLoopPass": 196,
+      "deliveryUICycle": 20,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "18",
+      "stage": "curl_scheduled",
+      "targetPresentation": 129848.60318295834,
+      "uptime": 129848.58045241669
+    },
+    {
+      "deadline": 129848.59484970834,
+      "deliveryRunLoopPass": 196,
+      "deliveryUICycle": 20,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "18",
+      "stage": "curl_gpu_start",
+      "targetPresentation": 129848.60318295834,
+      "uptime": 129848.58048812501
+    },
+    {
+      "deadline": 129848.59484970834,
+      "deliveryRunLoopPass": 196,
+      "deliveryUICycle": 20,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "18",
+      "stage": "curl_gpu_end",
+      "targetPresentation": 129848.60318295834,
+      "uptime": 129848.580686625
+    },
+    {
+      "deadline": 129848.59484970834,
+      "deliveryRunLoopPass": 196,
+      "deliveryUICycle": 20,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "18",
+      "stage": "curl_drawable_requested",
+      "targetPresentation": 129848.60318295834,
+      "uptime": 129848.57197475003
+    },
+    {
+      "deadline": 129848.59484970834,
+      "deliveryRunLoopPass": 196,
+      "deliveryUICycle": 20,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "18",
+      "stage": "curl_drawable_worker_began",
+      "targetPresentation": 129848.60318295834,
+      "uptime": 129848.57203300003
+    },
+    {
+      "deadline": 129848.59484970834,
+      "deliveryRunLoopPass": 196,
+      "deliveryUICycle": 20,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "18",
+      "stage": "curl_next_drawable_began",
+      "targetPresentation": 129848.60318295834,
+      "uptime": 129848.57203300003
+    },
+    {
+      "deadline": 129848.59484970834,
+      "deliveryRunLoopPass": 196,
+      "deliveryUICycle": 20,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "18",
+      "stage": "curl_next_drawable_returned",
+      "targetPresentation": 129848.60318295834,
+      "uptime": 129848.57799025002
+    },
+    {
+      "deadline": 129848.59484970834,
+      "deliveryRunLoopPass": 196,
+      "deliveryUICycle": 20,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "18",
+      "stage": "curl_drawable_drained",
+      "targetPresentation": 129848.60318295834,
+      "uptime": 129848.57799058336
+    },
+    {
+      "deadline": 129848.59484970834,
+      "deliveryRunLoopPass": 196,
+      "deliveryUICycle": 20,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "18",
+      "stage": "curl_drawable_main_delivery_before_take",
+      "targetPresentation": 129848.60318295834,
+      "uptime": 129848.57799612502
+    },
+    {
+      "deadline": 129848.59484970834,
+      "deliveryRunLoopPass": 196,
+      "deliveryUICycle": 20,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "18",
+      "stage": "curl_drawable_taken",
+      "targetPresentation": 129848.60318295834,
+      "uptime": 129848.58032320836
+    },
+    {
+      "deliveryRunLoopPass": 204,
+      "deliveryUICycle": 21,
+      "source": "17",
+      "stage": "curl_os_callback",
+      "uptime": 129848.58720108336
+    },
+    {
+      "deliveryRunLoopPass": 204,
+      "deliveryUICycle": 21,
+      "source": "17",
+      "stage": "curl_os_presented",
+      "uptime": 129848.58651287503
+    },
+    {
+      "deadline": 129848.60318637501,
+      "deliveryRunLoopPass": 208,
+      "deliveryUICycle": 21,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "19",
+      "stage": "curl_clock_request",
+      "targetPresentation": 129848.611519625,
+      "uptime": 129848.42099991669
+    },
+    {
+      "deadline": 129848.60318637501,
+      "deliveryRunLoopPass": 208,
+      "deliveryUICycle": 21,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "19",
+      "stage": "curl_update_received",
+      "targetPresentation": 129848.611519625,
+      "uptime": 129848.58865312503
+    },
+    {
+      "deadline": 129848.60318637501,
+      "deliveryRunLoopPass": 208,
+      "deliveryUICycle": 21,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "19",
+      "stage": "curl_encode",
+      "targetPresentation": 129848.611519625,
+      "uptime": 129848.58865320837
+    },
+    {
+      "deadline": 129848.60318637501,
+      "deliveryRunLoopPass": 208,
+      "deliveryUICycle": 21,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "19",
+      "stage": "curl_submit",
+      "targetPresentation": 129848.611519625,
+      "uptime": 129848.58867150002
+    },
+    {
+      "deadline": 129848.60318637501,
+      "deliveryRunLoopPass": 208,
+      "deliveryUICycle": 21,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "19",
+      "stage": "curl_scheduled",
+      "targetPresentation": 129848.611519625,
+      "uptime": 129848.58878208336
+    },
+    {
+      "deadline": 129848.60318637501,
+      "deliveryRunLoopPass": 208,
+      "deliveryUICycle": 21,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "19",
+      "stage": "curl_gpu_start",
+      "targetPresentation": 129848.611519625,
+      "uptime": 129848.58881591668
+    },
+    {
+      "deadline": 129848.60318637501,
+      "deliveryRunLoopPass": 208,
+      "deliveryUICycle": 21,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "19",
+      "stage": "curl_gpu_end",
+      "targetPresentation": 129848.611519625,
+      "uptime": 129848.58900341668
+    },
+    {
+      "deadline": 129848.60318637501,
+      "deliveryRunLoopPass": 208,
+      "deliveryUICycle": 21,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "19",
+      "stage": "curl_drawable_requested",
+      "targetPresentation": 129848.611519625,
+      "uptime": 129848.5803272917
+    },
+    {
+      "deadline": 129848.60318637501,
+      "deliveryRunLoopPass": 208,
+      "deliveryUICycle": 21,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "19",
+      "stage": "curl_drawable_worker_began",
+      "targetPresentation": 129848.611519625,
+      "uptime": 129848.58037983337
+    },
+    {
+      "deadline": 129848.60318637501,
+      "deliveryRunLoopPass": 208,
+      "deliveryUICycle": 21,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "19",
+      "stage": "curl_next_drawable_began",
+      "targetPresentation": 129848.611519625,
+      "uptime": 129848.58037987503
+    },
+    {
+      "deadline": 129848.60318637501,
+      "deliveryRunLoopPass": 208,
+      "deliveryUICycle": 21,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "19",
+      "stage": "curl_next_drawable_returned",
+      "targetPresentation": 129848.611519625,
+      "uptime": 129848.58630562502
+    },
+    {
+      "deadline": 129848.60318637501,
+      "deliveryRunLoopPass": 208,
+      "deliveryUICycle": 21,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "19",
+      "stage": "curl_drawable_drained",
+      "targetPresentation": 129848.611519625,
+      "uptime": 129848.5863059167
+    },
+    {
+      "deadline": 129848.60318637501,
+      "deliveryRunLoopPass": 208,
+      "deliveryUICycle": 21,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "19",
+      "stage": "curl_drawable_main_delivery_before_take",
+      "targetPresentation": 129848.611519625,
+      "uptime": 129848.58631112502
+    },
+    {
+      "deadline": 129848.60318637501,
+      "deliveryRunLoopPass": 208,
+      "deliveryUICycle": 21,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "19",
+      "stage": "curl_drawable_taken",
+      "targetPresentation": 129848.611519625,
+      "uptime": 129848.5886444167
+    },
+    {
+      "deliveryRunLoopPass": 214,
+      "deliveryUICycle": 22,
+      "source": "18",
+      "stage": "curl_os_callback",
+      "uptime": 129848.5952687917
+    },
+    {
+      "deliveryRunLoopPass": 214,
+      "deliveryUICycle": 22,
+      "source": "18",
+      "stage": "curl_os_presented",
+      "uptime": 129848.59484962503
+    },
+    {
+      "deadline": 129848.61152312502,
+      "deliveryRunLoopPass": 218,
+      "deliveryUICycle": 22,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "20",
+      "stage": "curl_clock_request",
+      "targetPresentation": 129848.61985637501,
+      "uptime": 129848.42099991669
+    },
+    {
+      "deadline": 129848.61152312502,
+      "deliveryRunLoopPass": 218,
+      "deliveryUICycle": 22,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "20",
+      "stage": "curl_update_received",
+      "targetPresentation": 129848.61985637501,
+      "uptime": 129848.59699820836
+    },
+    {
+      "deadline": 129848.61152312502,
+      "deliveryRunLoopPass": 218,
+      "deliveryUICycle": 22,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "20",
+      "stage": "curl_encode",
+      "targetPresentation": 129848.61985637501,
+      "uptime": 129848.59699833336
+    },
+    {
+      "deadline": 129848.61152312502,
+      "deliveryRunLoopPass": 218,
+      "deliveryUICycle": 22,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "20",
+      "stage": "curl_submit",
+      "targetPresentation": 129848.61985637501,
+      "uptime": 129848.59701562503
+    },
+    {
+      "deadline": 129848.61152312502,
+      "deliveryRunLoopPass": 218,
+      "deliveryUICycle": 22,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "20",
+      "stage": "curl_scheduled",
+      "targetPresentation": 129848.61985637501,
+      "uptime": 129848.5970861667
+    },
+    {
+      "deadline": 129848.61152312502,
+      "deliveryRunLoopPass": 218,
+      "deliveryUICycle": 22,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "20",
+      "stage": "curl_gpu_start",
+      "targetPresentation": 129848.61985637501,
+      "uptime": 129848.59714479168
+    },
+    {
+      "deadline": 129848.61152312502,
+      "deliveryRunLoopPass": 218,
+      "deliveryUICycle": 22,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "20",
+      "stage": "curl_gpu_end",
+      "targetPresentation": 129848.61985637501,
+      "uptime": 129848.59738254167
+    },
+    {
+      "deadline": 129848.61152312502,
+      "deliveryRunLoopPass": 218,
+      "deliveryUICycle": 22,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "20",
+      "stage": "curl_drawable_requested",
+      "targetPresentation": 129848.61985637501,
+      "uptime": 129848.58864908337
+    },
+    {
+      "deadline": 129848.61152312502,
+      "deliveryRunLoopPass": 218,
+      "deliveryUICycle": 22,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "20",
+      "stage": "curl_drawable_worker_began",
+      "targetPresentation": 129848.61985637501,
+      "uptime": 129848.5887079167
+    },
+    {
+      "deadline": 129848.61152312502,
+      "deliveryRunLoopPass": 218,
+      "deliveryUICycle": 22,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "20",
+      "stage": "curl_next_drawable_began",
+      "targetPresentation": 129848.61985637501,
+      "uptime": 129848.5887079167
+    },
+    {
+      "deadline": 129848.61152312502,
+      "deliveryRunLoopPass": 218,
+      "deliveryUICycle": 22,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "20",
+      "stage": "curl_next_drawable_returned",
+      "targetPresentation": 129848.61985637501,
+      "uptime": 129848.59465025003
+    },
+    {
+      "deadline": 129848.61152312502,
+      "deliveryRunLoopPass": 218,
+      "deliveryUICycle": 22,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "20",
+      "stage": "curl_drawable_drained",
+      "targetPresentation": 129848.61985637501,
+      "uptime": 129848.59465058336
+    },
+    {
+      "deadline": 129848.61152312502,
+      "deliveryRunLoopPass": 218,
+      "deliveryUICycle": 22,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "20",
+      "stage": "curl_drawable_main_delivery_before_take",
+      "targetPresentation": 129848.61985637501,
+      "uptime": 129848.59465587503
+    },
+    {
+      "deadline": 129848.61152312502,
+      "deliveryRunLoopPass": 218,
+      "deliveryUICycle": 22,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "20",
+      "stage": "curl_drawable_taken",
+      "targetPresentation": 129848.61985637501,
+      "uptime": 129848.59699037502
+    },
+    {
+      "deliveryRunLoopPass": 224,
+      "deliveryUICycle": 23,
+      "source": "19",
+      "stage": "curl_os_callback",
+      "uptime": 129848.60357937503
+    },
+    {
+      "deliveryRunLoopPass": 224,
+      "deliveryUICycle": 23,
+      "source": "19",
+      "stage": "curl_os_presented",
+      "uptime": 129848.60318637502
+    },
+    {
+      "deadline": 129848.619859875,
+      "deliveryRunLoopPass": 227,
+      "deliveryUICycle": 23,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "21",
+      "stage": "curl_clock_request",
+      "targetPresentation": 129848.62819312501,
+      "uptime": 129848.42099991669
+    },
+    {
+      "deadline": 129848.619859875,
+      "deliveryRunLoopPass": 227,
+      "deliveryUICycle": 23,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "21",
+      "stage": "curl_update_received",
+      "targetPresentation": 129848.62819312501,
+      "uptime": 129848.60534162502
+    },
+    {
+      "deadline": 129848.619859875,
+      "deliveryRunLoopPass": 227,
+      "deliveryUICycle": 23,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "21",
+      "stage": "curl_encode",
+      "targetPresentation": 129848.62819312501,
+      "uptime": 129848.60534170836
+    },
+    {
+      "deadline": 129848.619859875,
+      "deliveryRunLoopPass": 227,
+      "deliveryUICycle": 23,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "21",
+      "stage": "curl_submit",
+      "targetPresentation": 129848.62819312501,
+      "uptime": 129848.60536000003
+    },
+    {
+      "deadline": 129848.619859875,
+      "deliveryRunLoopPass": 227,
+      "deliveryUICycle": 23,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "21",
+      "stage": "curl_scheduled",
+      "targetPresentation": 129848.62819312501,
+      "uptime": 129848.60541108336
+    },
+    {
+      "deadline": 129848.619859875,
+      "deliveryRunLoopPass": 227,
+      "deliveryUICycle": 23,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "21",
+      "stage": "curl_gpu_start",
+      "targetPresentation": 129848.62819312501,
+      "uptime": 129848.605492625
+    },
+    {
+      "deadline": 129848.619859875,
+      "deliveryRunLoopPass": 227,
+      "deliveryUICycle": 23,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "21",
+      "stage": "curl_gpu_end",
+      "targetPresentation": 129848.62819312501,
+      "uptime": 129848.60577250001
+    },
+    {
+      "deadline": 129848.619859875,
+      "deliveryRunLoopPass": 227,
+      "deliveryUICycle": 23,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "21",
+      "stage": "curl_drawable_requested",
+      "targetPresentation": 129848.62819312501,
+      "uptime": 129848.59699445836
+    },
+    {
+      "deadline": 129848.619859875,
+      "deliveryRunLoopPass": 227,
+      "deliveryUICycle": 23,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "21",
+      "stage": "curl_drawable_worker_began",
+      "targetPresentation": 129848.62819312501,
+      "uptime": 129848.59700783336
+    },
+    {
+      "deadline": 129848.619859875,
+      "deliveryRunLoopPass": 227,
+      "deliveryUICycle": 23,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "21",
+      "stage": "curl_next_drawable_began",
+      "targetPresentation": 129848.62819312501,
+      "uptime": 129848.59700787503
+    },
+    {
+      "deadline": 129848.619859875,
+      "deliveryRunLoopPass": 227,
+      "deliveryUICycle": 23,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "21",
+      "stage": "curl_next_drawable_returned",
+      "targetPresentation": 129848.62819312501,
+      "uptime": 129848.60278425003
+    },
+    {
+      "deadline": 129848.619859875,
+      "deliveryRunLoopPass": 227,
+      "deliveryUICycle": 23,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "21",
+      "stage": "curl_drawable_drained",
+      "targetPresentation": 129848.62819312501,
+      "uptime": 129848.60278458336
+    },
+    {
+      "deadline": 129848.619859875,
+      "deliveryRunLoopPass": 227,
+      "deliveryUICycle": 23,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "21",
+      "stage": "curl_drawable_main_delivery_before_take",
+      "targetPresentation": 129848.62819312501,
+      "uptime": 129848.60279008336
+    },
+    {
+      "deadline": 129848.619859875,
+      "deliveryRunLoopPass": 227,
+      "deliveryUICycle": 23,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "21",
+      "stage": "curl_drawable_taken",
+      "targetPresentation": 129848.62819312501,
+      "uptime": 129848.60533383336
+    },
+    {
+      "deliveryRunLoopPass": 233,
+      "deliveryUICycle": 24,
+      "source": "20",
+      "stage": "curl_os_callback",
+      "uptime": 129848.61232262503
+    },
+    {
+      "deliveryRunLoopPass": 233,
+      "deliveryUICycle": 24,
+      "source": "20",
+      "stage": "curl_os_presented",
+      "uptime": 129848.61152316669
+    },
+    {
+      "deadline": 129848.62819666667,
+      "deliveryRunLoopPass": 237,
+      "deliveryUICycle": 24,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "22",
+      "stage": "curl_clock_request",
+      "targetPresentation": 129848.63652991668,
+      "uptime": 129848.42099991669
+    },
+    {
+      "deadline": 129848.62819666667,
+      "deliveryRunLoopPass": 237,
+      "deliveryUICycle": 24,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "22",
+      "stage": "curl_update_received",
+      "targetPresentation": 129848.63652991668,
+      "uptime": 129848.61367516669
+    },
+    {
+      "deadline": 129848.62819666667,
+      "deliveryRunLoopPass": 237,
+      "deliveryUICycle": 24,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "22",
+      "stage": "curl_encode",
+      "targetPresentation": 129848.63652991668,
+      "uptime": 129848.6136752917
+    },
+    {
+      "deadline": 129848.62819666667,
+      "deliveryRunLoopPass": 237,
+      "deliveryUICycle": 24,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "22",
+      "stage": "curl_submit",
+      "targetPresentation": 129848.63652991668,
+      "uptime": 129848.6136930417
+    },
+    {
+      "deadline": 129848.62819666667,
+      "deliveryRunLoopPass": 237,
+      "deliveryUICycle": 24,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "22",
+      "stage": "curl_scheduled",
+      "targetPresentation": 129848.63652991668,
+      "uptime": 129848.61373975003
+    },
+    {
+      "deadline": 129848.62819666667,
+      "deliveryRunLoopPass": 237,
+      "deliveryUICycle": 24,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "22",
+      "stage": "curl_gpu_start",
+      "targetPresentation": 129848.63652991668,
+      "uptime": 129848.61396266667
+    },
+    {
+      "deadline": 129848.62819666667,
+      "deliveryRunLoopPass": 237,
+      "deliveryUICycle": 24,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "22",
+      "stage": "curl_gpu_end",
+      "targetPresentation": 129848.63652991668,
+      "uptime": 129848.614180125
+    },
+    {
+      "deadline": 129848.62819666667,
+      "deliveryRunLoopPass": 237,
+      "deliveryUICycle": 24,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "22",
+      "stage": "curl_drawable_requested",
+      "targetPresentation": 129848.63652991668,
+      "uptime": 129848.6053380417
+    },
+    {
+      "deadline": 129848.62819666667,
+      "deliveryRunLoopPass": 237,
+      "deliveryUICycle": 24,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "22",
+      "stage": "curl_drawable_worker_began",
+      "targetPresentation": 129848.63652991668,
+      "uptime": 129848.60539462503
+    },
+    {
+      "deadline": 129848.62819666667,
+      "deliveryRunLoopPass": 237,
+      "deliveryUICycle": 24,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "22",
+      "stage": "curl_next_drawable_began",
+      "targetPresentation": 129848.63652991668,
+      "uptime": 129848.60539462503
+    },
+    {
+      "deadline": 129848.62819666667,
+      "deliveryRunLoopPass": 237,
+      "deliveryUICycle": 24,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "22",
+      "stage": "curl_next_drawable_returned",
+      "targetPresentation": 129848.63652991668,
+      "uptime": 129848.61132920836
+    },
+    {
+      "deadline": 129848.62819666667,
+      "deliveryRunLoopPass": 237,
+      "deliveryUICycle": 24,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "22",
+      "stage": "curl_drawable_drained",
+      "targetPresentation": 129848.63652991668,
+      "uptime": 129848.61132945836
+    },
+    {
+      "deadline": 129848.62819666667,
+      "deliveryRunLoopPass": 237,
+      "deliveryUICycle": 24,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "22",
+      "stage": "curl_drawable_main_delivery_before_take",
+      "targetPresentation": 129848.63652991668,
+      "uptime": 129848.61133508336
+    },
+    {
+      "deadline": 129848.62819666667,
+      "deliveryRunLoopPass": 237,
+      "deliveryUICycle": 24,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "22",
+      "stage": "curl_drawable_taken",
+      "targetPresentation": 129848.63652991668,
+      "uptime": 129848.6136681667
+    },
+    {
+      "deliveryRunLoopPass": 245,
+      "deliveryUICycle": 25,
+      "source": "21",
+      "stage": "curl_os_callback",
+      "uptime": 129848.62059037502
+    },
+    {
+      "deliveryRunLoopPass": 245,
+      "deliveryUICycle": 25,
+      "source": "21",
+      "stage": "curl_os_presented",
+      "uptime": 129848.61985983336
+    },
+    {
+      "deadline": 129848.63653316667,
+      "deliveryRunLoopPass": 248,
+      "deliveryUICycle": 25,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "23",
+      "stage": "curl_clock_request",
+      "targetPresentation": 129848.64486641667,
+      "uptime": 129848.42099991669
+    },
+    {
+      "deadline": 129848.63653316667,
+      "deliveryRunLoopPass": 248,
+      "deliveryUICycle": 25,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "23",
+      "stage": "curl_update_received",
+      "targetPresentation": 129848.64486641667,
+      "uptime": 129848.62201737503
+    },
+    {
+      "deadline": 129848.63653316667,
+      "deliveryRunLoopPass": 248,
+      "deliveryUICycle": 25,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "23",
+      "stage": "curl_encode",
+      "targetPresentation": 129848.64486641667,
+      "uptime": 129848.62201750003
+    },
+    {
+      "deadline": 129848.63653316667,
+      "deliveryRunLoopPass": 248,
+      "deliveryUICycle": 25,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "23",
+      "stage": "curl_submit",
+      "targetPresentation": 129848.64486641667,
+      "uptime": 129848.62203604169
+    },
+    {
+      "deadline": 129848.63653316667,
+      "deliveryRunLoopPass": 248,
+      "deliveryUICycle": 25,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "23",
+      "stage": "curl_scheduled",
+      "targetPresentation": 129848.64486641667,
+      "uptime": 129848.6222316667
+    },
+    {
+      "deadline": 129848.63653316667,
+      "deliveryRunLoopPass": 248,
+      "deliveryUICycle": 25,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "23",
+      "stage": "curl_gpu_start",
+      "targetPresentation": 129848.64486641667,
+      "uptime": 129848.62227404167
+    },
+    {
+      "deadline": 129848.63653316667,
+      "deliveryRunLoopPass": 248,
+      "deliveryUICycle": 25,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "23",
+      "stage": "curl_gpu_end",
+      "targetPresentation": 129848.64486641667,
+      "uptime": 129848.6224955
+    },
+    {
+      "deadline": 129848.63653316667,
+      "deliveryRunLoopPass": 248,
+      "deliveryUICycle": 25,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "23",
+      "stage": "curl_drawable_requested",
+      "targetPresentation": 129848.64486641667,
+      "uptime": 129848.61367266669
+    },
+    {
+      "deadline": 129848.63653316667,
+      "deliveryRunLoopPass": 248,
+      "deliveryUICycle": 25,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "23",
+      "stage": "curl_drawable_worker_began",
+      "targetPresentation": 129848.64486641667,
+      "uptime": 129848.61372654169
+    },
+    {
+      "deadline": 129848.63653316667,
+      "deliveryRunLoopPass": 248,
+      "deliveryUICycle": 25,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "23",
+      "stage": "curl_next_drawable_began",
+      "targetPresentation": 129848.64486641667,
+      "uptime": 129848.61372658337
+    },
+    {
+      "deadline": 129848.63653316667,
+      "deliveryRunLoopPass": 248,
+      "deliveryUICycle": 25,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "23",
+      "stage": "curl_next_drawable_returned",
+      "targetPresentation": 129848.64486641667,
+      "uptime": 129848.6196629167
+    },
+    {
+      "deadline": 129848.63653316667,
+      "deliveryRunLoopPass": 248,
+      "deliveryUICycle": 25,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "23",
+      "stage": "curl_drawable_drained",
+      "targetPresentation": 129848.64486641667,
+      "uptime": 129848.6196632917
+    },
+    {
+      "deadline": 129848.63653316667,
+      "deliveryRunLoopPass": 248,
+      "deliveryUICycle": 25,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "23",
+      "stage": "curl_drawable_main_delivery_before_take",
+      "targetPresentation": 129848.64486641667,
+      "uptime": 129848.61966975003
+    },
+    {
+      "deadline": 129848.63653316667,
+      "deliveryRunLoopPass": 248,
+      "deliveryUICycle": 25,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "23",
+      "stage": "curl_drawable_taken",
+      "targetPresentation": 129848.64486641667,
+      "uptime": 129848.6220096667
+    },
+    {
+      "deliveryRunLoopPass": 254,
+      "deliveryUICycle": 26,
+      "source": "22",
+      "stage": "curl_os_callback",
+      "uptime": 129848.6286525417
+    },
+    {
+      "deliveryRunLoopPass": 254,
+      "deliveryUICycle": 26,
+      "source": "22",
+      "stage": "curl_os_presented",
+      "uptime": 129848.6282002917
+    },
+    {
+      "deadline": 129848.64487379168,
+      "deliveryRunLoopPass": 257,
+      "deliveryUICycle": 26,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "24",
+      "stage": "curl_clock_request",
+      "targetPresentation": 129848.65320704167,
+      "uptime": 129848.42099991669
+    },
+    {
+      "deadline": 129848.64487379168,
+      "deliveryRunLoopPass": 257,
+      "deliveryUICycle": 26,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "24",
+      "stage": "curl_update_received",
+      "targetPresentation": 129848.65320704167,
+      "uptime": 129848.63036241669
+    },
+    {
+      "deadline": 129848.64487379168,
+      "deliveryRunLoopPass": 257,
+      "deliveryUICycle": 26,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "24",
+      "stage": "curl_encode",
+      "targetPresentation": 129848.65320704167,
+      "uptime": 129848.63036254169
+    },
+    {
+      "deadline": 129848.64487379168,
+      "deliveryRunLoopPass": 257,
+      "deliveryUICycle": 26,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "24",
+      "stage": "curl_submit",
+      "targetPresentation": 129848.65320704167,
+      "uptime": 129848.6303806667
+    },
+    {
+      "deadline": 129848.64487379168,
+      "deliveryRunLoopPass": 257,
+      "deliveryUICycle": 26,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "24",
+      "stage": "curl_scheduled",
+      "targetPresentation": 129848.65320704167,
+      "uptime": 129848.63043425002
+    },
+    {
+      "deadline": 129848.64487379168,
+      "deliveryRunLoopPass": 257,
+      "deliveryUICycle": 26,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "24",
+      "stage": "curl_gpu_start",
+      "targetPresentation": 129848.65320704167,
+      "uptime": 129848.630522
+    },
+    {
+      "deadline": 129848.64487379168,
+      "deliveryRunLoopPass": 257,
+      "deliveryUICycle": 26,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "24",
+      "stage": "curl_gpu_end",
+      "targetPresentation": 129848.65320704167,
+      "uptime": 129848.63076137501
+    },
+    {
+      "deadline": 129848.64487379168,
+      "deliveryRunLoopPass": 257,
+      "deliveryUICycle": 26,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "24",
+      "stage": "curl_drawable_requested",
+      "targetPresentation": 129848.65320704167,
+      "uptime": 129848.62201383336
+    },
+    {
+      "deadline": 129848.64487379168,
+      "deliveryRunLoopPass": 257,
+      "deliveryUICycle": 26,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "24",
+      "stage": "curl_drawable_worker_began",
+      "targetPresentation": 129848.65320704167,
+      "uptime": 129848.6220707917
+    },
+    {
+      "deadline": 129848.64487379168,
+      "deliveryRunLoopPass": 257,
+      "deliveryUICycle": 26,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "24",
+      "stage": "curl_next_drawable_began",
+      "targetPresentation": 129848.65320704167,
+      "uptime": 129848.6220707917
+    },
+    {
+      "deadline": 129848.64487379168,
+      "deliveryRunLoopPass": 257,
+      "deliveryUICycle": 26,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "24",
+      "stage": "curl_next_drawable_returned",
+      "targetPresentation": 129848.65320704167,
+      "uptime": 129848.62781320837
+    },
+    {
+      "deadline": 129848.64487379168,
+      "deliveryRunLoopPass": 257,
+      "deliveryUICycle": 26,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "24",
+      "stage": "curl_drawable_drained",
+      "targetPresentation": 129848.65320704167,
+      "uptime": 129848.6278135417
+    },
+    {
+      "deadline": 129848.64487379168,
+      "deliveryRunLoopPass": 257,
+      "deliveryUICycle": 26,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "24",
+      "stage": "curl_drawable_main_delivery_before_take",
+      "targetPresentation": 129848.65320704167,
+      "uptime": 129848.6278191667
+    },
+    {
+      "deadline": 129848.64487379168,
+      "deliveryRunLoopPass": 257,
+      "deliveryUICycle": 26,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "24",
+      "stage": "curl_drawable_taken",
+      "targetPresentation": 129848.65320704167,
+      "uptime": 129848.63035437503
+    },
+    {
+      "deliveryRunLoopPass": 265,
+      "deliveryUICycle": 27,
+      "source": "23",
+      "stage": "curl_os_callback",
+      "uptime": 129848.63734345837
+    },
+    {
+      "deliveryRunLoopPass": 265,
+      "deliveryUICycle": 27,
+      "source": "23",
+      "stage": "curl_os_presented",
+      "uptime": 129848.63653329169
+    },
+    {
+      "deadline": 129848.65320662501,
+      "deliveryRunLoopPass": 268,
+      "deliveryUICycle": 27,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "25",
+      "stage": "curl_clock_request",
+      "targetPresentation": 129848.66153987501,
+      "uptime": 129848.42099991669
+    },
+    {
+      "deadline": 129848.65320662501,
+      "deliveryRunLoopPass": 268,
+      "deliveryUICycle": 27,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "25",
+      "stage": "curl_update_received",
+      "targetPresentation": 129848.66153987501,
+      "uptime": 129848.63865250003
+    },
+    {
+      "deadline": 129848.65320662501,
+      "deliveryRunLoopPass": 268,
+      "deliveryUICycle": 27,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "25",
+      "stage": "curl_encode",
+      "targetPresentation": 129848.66153987501,
+      "uptime": 129848.63865258337
+    },
+    {
+      "deadline": 129848.65320662501,
+      "deliveryRunLoopPass": 268,
+      "deliveryUICycle": 27,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "25",
+      "stage": "curl_submit",
+      "targetPresentation": 129848.66153987501,
+      "uptime": 129848.63866975003
+    },
+    {
+      "deadline": 129848.65320662501,
+      "deliveryRunLoopPass": 268,
+      "deliveryUICycle": 27,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "25",
+      "stage": "curl_scheduled",
+      "targetPresentation": 129848.66153987501,
+      "uptime": 129848.63871200003
+    },
+    {
+      "deadline": 129848.65320662501,
+      "deliveryRunLoopPass": 268,
+      "deliveryUICycle": 27,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "25",
+      "stage": "curl_gpu_start",
+      "targetPresentation": 129848.66153987501,
+      "uptime": 129848.63894079167
+    },
+    {
+      "deadline": 129848.65320662501,
+      "deliveryRunLoopPass": 268,
+      "deliveryUICycle": 27,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "25",
+      "stage": "curl_gpu_end",
+      "targetPresentation": 129848.66153987501,
+      "uptime": 129848.63915329168
+    },
+    {
+      "deadline": 129848.65320662501,
+      "deliveryRunLoopPass": 268,
+      "deliveryUICycle": 27,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "25",
+      "stage": "curl_drawable_requested",
+      "targetPresentation": 129848.66153987501,
+      "uptime": 129848.63035858337
+    },
+    {
+      "deadline": 129848.65320662501,
+      "deliveryRunLoopPass": 268,
+      "deliveryUICycle": 27,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "25",
+      "stage": "curl_drawable_worker_began",
+      "targetPresentation": 129848.66153987501,
+      "uptime": 129848.63041700002
+    },
+    {
+      "deadline": 129848.65320662501,
+      "deliveryRunLoopPass": 268,
+      "deliveryUICycle": 27,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "25",
+      "stage": "curl_next_drawable_began",
+      "targetPresentation": 129848.66153987501,
+      "uptime": 129848.6304170417
+    },
+    {
+      "deadline": 129848.65320662501,
+      "deliveryRunLoopPass": 268,
+      "deliveryUICycle": 27,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "25",
+      "stage": "curl_next_drawable_returned",
+      "targetPresentation": 129848.66153987501,
+      "uptime": 129848.63633708336
+    },
+    {
+      "deadline": 129848.65320662501,
+      "deliveryRunLoopPass": 268,
+      "deliveryUICycle": 27,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "25",
+      "stage": "curl_drawable_drained",
+      "targetPresentation": 129848.66153987501,
+      "uptime": 129848.63633733336
+    },
+    {
+      "deadline": 129848.65320662501,
+      "deliveryRunLoopPass": 268,
+      "deliveryUICycle": 27,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "25",
+      "stage": "curl_drawable_main_delivery_before_take",
+      "targetPresentation": 129848.66153987501,
+      "uptime": 129848.6363426667
+    },
+    {
+      "deadline": 129848.65320662501,
+      "deliveryRunLoopPass": 268,
+      "deliveryUICycle": 27,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "25",
+      "stage": "curl_drawable_taken",
+      "targetPresentation": 129848.66153987501,
+      "uptime": 129848.63864500003
+    },
+    {
+      "deliveryRunLoopPass": 274,
+      "deliveryUICycle": 28,
+      "source": "24",
+      "stage": "curl_os_callback",
+      "uptime": 129848.64532837503
+    },
+    {
+      "deliveryRunLoopPass": 274,
+      "deliveryUICycle": 28,
+      "source": "24",
+      "stage": "curl_os_presented",
+      "uptime": 129848.64487008336
+    },
+    {
+      "deadline": 129848.66154358334,
+      "deliveryRunLoopPass": 280,
+      "deliveryUICycle": 28,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "26",
+      "stage": "curl_clock_request",
+      "targetPresentation": 129848.66987683334,
+      "uptime": 129848.42099991669
+    },
+    {
+      "deadline": 129848.66154358334,
+      "deliveryRunLoopPass": 280,
+      "deliveryUICycle": 28,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "26",
+      "stage": "curl_update_received",
+      "targetPresentation": 129848.66987683334,
+      "uptime": 129848.64702050002
+    },
+    {
+      "deadline": 129848.66154358334,
+      "deliveryRunLoopPass": 280,
+      "deliveryUICycle": 28,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "26",
+      "stage": "curl_encode",
+      "targetPresentation": 129848.66987683334,
+      "uptime": 129848.64702050002
+    },
+    {
+      "deadline": 129848.66154358334,
+      "deliveryRunLoopPass": 280,
+      "deliveryUICycle": 28,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "26",
+      "stage": "curl_submit",
+      "targetPresentation": 129848.66987683334,
+      "uptime": 129848.64703908336
+    },
+    {
+      "deadline": 129848.66154358334,
+      "deliveryRunLoopPass": 280,
+      "deliveryUICycle": 28,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "26",
+      "stage": "curl_scheduled",
+      "targetPresentation": 129848.66987683334,
+      "uptime": 129848.6471727917
+    },
+    {
+      "deadline": 129848.66154358334,
+      "deliveryRunLoopPass": 280,
+      "deliveryUICycle": 28,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "26",
+      "stage": "curl_gpu_start",
+      "targetPresentation": 129848.66987683334,
+      "uptime": 129848.64718000001
+    },
+    {
+      "deadline": 129848.66154358334,
+      "deliveryRunLoopPass": 280,
+      "deliveryUICycle": 28,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "26",
+      "stage": "curl_gpu_end",
+      "targetPresentation": 129848.66987683334,
+      "uptime": 129848.64748391668
+    },
+    {
+      "deadline": 129848.66154358334,
+      "deliveryRunLoopPass": 280,
+      "deliveryUICycle": 28,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "26",
+      "stage": "curl_drawable_requested",
+      "targetPresentation": 129848.66987683334,
+      "uptime": 129848.63864916669
+    },
+    {
+      "deadline": 129848.66154358334,
+      "deliveryRunLoopPass": 280,
+      "deliveryUICycle": 28,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "26",
+      "stage": "curl_drawable_worker_began",
+      "targetPresentation": 129848.66987683334,
+      "uptime": 129848.6387031667
+    },
+    {
+      "deadline": 129848.66154358334,
+      "deliveryRunLoopPass": 280,
+      "deliveryUICycle": 28,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "26",
+      "stage": "curl_next_drawable_began",
+      "targetPresentation": 129848.66987683334,
+      "uptime": 129848.63870320836
+    },
+    {
+      "deadline": 129848.66154358334,
+      "deliveryRunLoopPass": 280,
+      "deliveryUICycle": 28,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "26",
+      "stage": "curl_next_drawable_returned",
+      "targetPresentation": 129848.66987683334,
+      "uptime": 129848.6445495417
+    },
+    {
+      "deadline": 129848.66154358334,
+      "deliveryRunLoopPass": 280,
+      "deliveryUICycle": 28,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "26",
+      "stage": "curl_drawable_drained",
+      "targetPresentation": 129848.66987683334,
+      "uptime": 129848.64454983336
+    },
+    {
+      "deadline": 129848.66154358334,
+      "deliveryRunLoopPass": 280,
+      "deliveryUICycle": 28,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "26",
+      "stage": "curl_drawable_main_delivery_before_take",
+      "targetPresentation": 129848.66987683334,
+      "uptime": 129848.64455558336
+    },
+    {
+      "deadline": 129848.66154358334,
+      "deliveryRunLoopPass": 280,
+      "deliveryUICycle": 28,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "26",
+      "stage": "curl_drawable_taken",
+      "targetPresentation": 129848.66987683334,
+      "uptime": 129848.6470082917
+    },
+    {
+      "deliveryRunLoopPass": 286,
+      "deliveryUICycle": 29,
+      "source": "25",
+      "stage": "curl_os_callback",
+      "uptime": 129848.65407862503
+    },
+    {
+      "deliveryRunLoopPass": 286,
+      "deliveryUICycle": 29,
+      "source": "25",
+      "stage": "curl_os_presented",
+      "uptime": 129848.65320683336
+    },
+    {
+      "deadline": 129848.66988033334,
+      "deliveryRunLoopPass": 289,
+      "deliveryUICycle": 29,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "27",
+      "stage": "curl_clock_request",
+      "targetPresentation": 129848.67821358333,
+      "uptime": 129848.42099991669
+    },
+    {
+      "deadline": 129848.66988033334,
+      "deliveryRunLoopPass": 289,
+      "deliveryUICycle": 29,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "27",
+      "stage": "curl_update_received",
+      "targetPresentation": 129848.67821358333,
+      "uptime": 129848.65535325003
+    },
+    {
+      "deadline": 129848.66988033334,
+      "deliveryRunLoopPass": 289,
+      "deliveryUICycle": 29,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "27",
+      "stage": "curl_encode",
+      "targetPresentation": 129848.67821358333,
+      "uptime": 129848.65535333336
+    },
+    {
+      "deadline": 129848.66988033334,
+      "deliveryRunLoopPass": 289,
+      "deliveryUICycle": 29,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "27",
+      "stage": "curl_submit",
+      "targetPresentation": 129848.67821358333,
+      "uptime": 129848.65537175004
+    },
+    {
+      "deadline": 129848.66988033334,
+      "deliveryRunLoopPass": 289,
+      "deliveryUICycle": 29,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "27",
+      "stage": "curl_scheduled",
+      "targetPresentation": 129848.67821358333,
+      "uptime": 129848.65544350003
+    },
+    {
+      "deadline": 129848.66988033334,
+      "deliveryRunLoopPass": 289,
+      "deliveryUICycle": 29,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "27",
+      "stage": "curl_gpu_start",
+      "targetPresentation": 129848.67821358333,
+      "uptime": 129848.65572325
+    },
+    {
+      "deadline": 129848.66988033334,
+      "deliveryRunLoopPass": 289,
+      "deliveryUICycle": 29,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "27",
+      "stage": "curl_gpu_end",
+      "targetPresentation": 129848.67821358333,
+      "uptime": 129848.65593975001
+    },
+    {
+      "deadline": 129848.66988033334,
+      "deliveryRunLoopPass": 289,
+      "deliveryUICycle": 29,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "27",
+      "stage": "curl_drawable_requested",
+      "targetPresentation": 129848.67821358333,
+      "uptime": 129848.64701258336
+    },
+    {
+      "deadline": 129848.66988033334,
+      "deliveryRunLoopPass": 289,
+      "deliveryUICycle": 29,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "27",
+      "stage": "curl_drawable_worker_began",
+      "targetPresentation": 129848.67821358333,
+      "uptime": 129848.64708483336
+    },
+    {
+      "deadline": 129848.66988033334,
+      "deliveryRunLoopPass": 289,
+      "deliveryUICycle": 29,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "27",
+      "stage": "curl_next_drawable_began",
+      "targetPresentation": 129848.67821358333,
+      "uptime": 129848.64708487503
+    },
+    {
+      "deadline": 129848.66988033334,
+      "deliveryRunLoopPass": 289,
+      "deliveryUICycle": 29,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "27",
+      "stage": "curl_next_drawable_returned",
+      "targetPresentation": 129848.67821358333,
+      "uptime": 129848.6530459167
+    },
+    {
+      "deadline": 129848.66988033334,
+      "deliveryRunLoopPass": 289,
+      "deliveryUICycle": 29,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "27",
+      "stage": "curl_drawable_drained",
+      "targetPresentation": 129848.67821358333,
+      "uptime": 129848.65304620836
+    },
+    {
+      "deadline": 129848.66988033334,
+      "deliveryRunLoopPass": 289,
+      "deliveryUICycle": 29,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "27",
+      "stage": "curl_drawable_main_delivery_before_take",
+      "targetPresentation": 129848.67821358333,
+      "uptime": 129848.6530520417
+    },
+    {
+      "deadline": 129848.66988033334,
+      "deliveryRunLoopPass": 289,
+      "deliveryUICycle": 29,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "27",
+      "stage": "curl_drawable_taken",
+      "targetPresentation": 129848.67821358333,
+      "uptime": 129848.65534712502
+    },
+    {
+      "deliveryRunLoopPass": 295,
+      "deliveryUICycle": 30,
+      "source": "26",
+      "stage": "curl_os_callback",
+      "uptime": 129848.66193370837
+    },
+    {
+      "deliveryRunLoopPass": 295,
+      "deliveryUICycle": 30,
+      "source": "26",
+      "stage": "curl_os_presented",
+      "uptime": 129848.6615470417
+    },
+    {
+      "deadline": 129848.67822054167,
+      "deliveryRunLoopPass": 298,
+      "deliveryUICycle": 30,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "28",
+      "stage": "curl_clock_request",
+      "targetPresentation": 129848.68655379167,
+      "uptime": 129848.42099991669
+    },
+    {
+      "deadline": 129848.67822054167,
+      "deliveryRunLoopPass": 298,
+      "deliveryUICycle": 30,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "28",
+      "stage": "curl_update_received",
+      "targetPresentation": 129848.68655379167,
+      "uptime": 129848.66369529169
+    },
+    {
+      "deadline": 129848.67822054167,
+      "deliveryRunLoopPass": 298,
+      "deliveryUICycle": 30,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "28",
+      "stage": "curl_encode",
+      "targetPresentation": 129848.68655379167,
+      "uptime": 129848.66369575003
+    },
+    {
+      "deadline": 129848.67822054167,
+      "deliveryRunLoopPass": 298,
+      "deliveryUICycle": 30,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "28",
+      "stage": "curl_submit",
+      "targetPresentation": 129848.68655379167,
+      "uptime": 129848.66385112503
+    },
+    {
+      "deadline": 129848.67822054167,
+      "deliveryRunLoopPass": 298,
+      "deliveryUICycle": 30,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "28",
+      "stage": "curl_scheduled",
+      "targetPresentation": 129848.68655379167,
+      "uptime": 129848.66413937503
+    },
+    {
+      "deadline": 129848.67822054167,
+      "deliveryRunLoopPass": 298,
+      "deliveryUICycle": 30,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "28",
+      "stage": "curl_gpu_start",
+      "targetPresentation": 129848.68655379167,
+      "uptime": 129848.66420791668
+    },
+    {
+      "deadline": 129848.67822054167,
+      "deliveryRunLoopPass": 298,
+      "deliveryUICycle": 30,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "28",
+      "stage": "curl_gpu_end",
+      "targetPresentation": 129848.68655379167,
+      "uptime": 129848.66448475001
+    },
+    {
+      "deadline": 129848.67822054167,
+      "deliveryRunLoopPass": 298,
+      "deliveryUICycle": 30,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "28",
+      "stage": "curl_drawable_requested",
+      "targetPresentation": 129848.68655379167,
+      "uptime": 129848.65535120836
+    },
+    {
+      "deadline": 129848.67822054167,
+      "deliveryRunLoopPass": 298,
+      "deliveryUICycle": 30,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "28",
+      "stage": "curl_drawable_worker_began",
+      "targetPresentation": 129848.68655379167,
+      "uptime": 129848.6553562917
+    },
+    {
+      "deadline": 129848.67822054167,
+      "deliveryRunLoopPass": 298,
+      "deliveryUICycle": 30,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "28",
+      "stage": "curl_next_drawable_began",
+      "targetPresentation": 129848.68655379167,
+      "uptime": 129848.65535633336
+    },
+    {
+      "deadline": 129848.67822054167,
+      "deliveryRunLoopPass": 298,
+      "deliveryUICycle": 30,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "28",
+      "stage": "curl_next_drawable_returned",
+      "targetPresentation": 129848.68655379167,
+      "uptime": 129848.66121725003
+    },
+    {
+      "deadline": 129848.67822054167,
+      "deliveryRunLoopPass": 298,
+      "deliveryUICycle": 30,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "28",
+      "stage": "curl_drawable_drained",
+      "targetPresentation": 129848.68655379167,
+      "uptime": 129848.66121833336
+    },
+    {
+      "deadline": 129848.67822054167,
+      "deliveryRunLoopPass": 298,
+      "deliveryUICycle": 30,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "28",
+      "stage": "curl_drawable_main_delivery_before_take",
+      "targetPresentation": 129848.68655379167,
+      "uptime": 129848.66124608336
+    },
+    {
+      "deadline": 129848.67822054167,
+      "deliveryRunLoopPass": 298,
+      "deliveryUICycle": 30,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "28",
+      "stage": "curl_drawable_taken",
+      "targetPresentation": 129848.68655379167,
+      "uptime": 129848.6636587917
+    },
+    {
+      "deliveryRunLoopPass": 304,
+      "deliveryUICycle": 31,
+      "source": "27",
+      "stage": "curl_os_callback",
+      "uptime": 129848.67030100003
+    },
+    {
+      "deliveryRunLoopPass": 304,
+      "deliveryUICycle": 31,
+      "source": "27",
+      "stage": "curl_os_presented",
+      "uptime": 129848.6698825417
+    },
+    {
+      "deadline": 129848.68655604168,
+      "deliveryRunLoopPass": 308,
+      "deliveryUICycle": 31,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "29",
+      "stage": "curl_clock_request",
+      "targetPresentation": 129848.69488929167,
+      "uptime": 129848.42099991669
+    },
+    {
+      "deadline": 129848.68655604168,
+      "deliveryRunLoopPass": 308,
+      "deliveryUICycle": 31,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "29",
+      "stage": "curl_update_received",
+      "targetPresentation": 129848.69488929167,
+      "uptime": 129848.67206295836
+    },
+    {
+      "deadline": 129848.68655604168,
+      "deliveryRunLoopPass": 308,
+      "deliveryUICycle": 31,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "29",
+      "stage": "curl_encode",
+      "targetPresentation": 129848.69488929167,
+      "uptime": 129848.67206308336
+    },
+    {
+      "deadline": 129848.68655604168,
+      "deliveryRunLoopPass": 308,
+      "deliveryUICycle": 31,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "29",
+      "stage": "curl_submit",
+      "targetPresentation": 129848.69488929167,
+      "uptime": 129848.67214420837
+    },
+    {
+      "deadline": 129848.68655604168,
+      "deliveryRunLoopPass": 308,
+      "deliveryUICycle": 31,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "29",
+      "stage": "curl_scheduled",
+      "targetPresentation": 129848.69488929167,
+      "uptime": 129848.67241087503
+    },
+    {
+      "deadline": 129848.68655604168,
+      "deliveryRunLoopPass": 308,
+      "deliveryUICycle": 31,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "29",
+      "stage": "curl_gpu_start",
+      "targetPresentation": 129848.69488929167,
+      "uptime": 129848.67248462501
+    },
+    {
+      "deadline": 129848.68655604168,
+      "deliveryRunLoopPass": 308,
+      "deliveryUICycle": 31,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "29",
+      "stage": "curl_gpu_end",
+      "targetPresentation": 129848.69488929167,
+      "uptime": 129848.672739125
+    },
+    {
+      "deadline": 129848.68655604168,
+      "deliveryRunLoopPass": 308,
+      "deliveryUICycle": 31,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "29",
+      "stage": "curl_drawable_requested",
+      "targetPresentation": 129848.69488929167,
+      "uptime": 129848.6636815417
+    },
+    {
+      "deadline": 129848.68655604168,
+      "deliveryRunLoopPass": 308,
+      "deliveryUICycle": 31,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "29",
+      "stage": "curl_drawable_worker_began",
+      "targetPresentation": 129848.69488929167,
+      "uptime": 129848.66373995836
+    },
+    {
+      "deadline": 129848.68655604168,
+      "deliveryRunLoopPass": 308,
+      "deliveryUICycle": 31,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "29",
+      "stage": "curl_next_drawable_began",
+      "targetPresentation": 129848.69488929167,
+      "uptime": 129848.66374000003
+    },
+    {
+      "deadline": 129848.68655604168,
+      "deliveryRunLoopPass": 308,
+      "deliveryUICycle": 31,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "29",
+      "stage": "curl_next_drawable_returned",
+      "targetPresentation": 129848.69488929167,
+      "uptime": 129848.66952375002
+    },
+    {
+      "deadline": 129848.68655604168,
+      "deliveryRunLoopPass": 308,
+      "deliveryUICycle": 31,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "29",
+      "stage": "curl_drawable_drained",
+      "targetPresentation": 129848.69488929167,
+      "uptime": 129848.6695247917
+    },
+    {
+      "deadline": 129848.68655604168,
+      "deliveryRunLoopPass": 308,
+      "deliveryUICycle": 31,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "29",
+      "stage": "curl_drawable_main_delivery_before_take",
+      "targetPresentation": 129848.69488929167,
+      "uptime": 129848.6695555417
+    },
+    {
+      "deadline": 129848.68655604168,
+      "deliveryRunLoopPass": 308,
+      "deliveryUICycle": 31,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "29",
+      "stage": "curl_drawable_taken",
+      "targetPresentation": 129848.69488929167,
+      "uptime": 129848.67204370836
+    },
+    {
+      "deliveryRunLoopPass": 314,
+      "deliveryUICycle": 32,
+      "source": "28",
+      "stage": "curl_os_callback",
+      "uptime": 129848.67862812502
+    },
+    {
+      "deliveryRunLoopPass": 314,
+      "deliveryUICycle": 32,
+      "source": "28",
+      "stage": "curl_os_presented",
+      "uptime": 129848.67821695836
+    },
+    {
+      "deadline": 129848.69489029168,
+      "deliveryRunLoopPass": 318,
+      "deliveryUICycle": 32,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "30",
+      "stage": "curl_clock_request",
+      "targetPresentation": 129848.70322354167,
+      "uptime": 129848.42099991669
+    },
+    {
+      "deadline": 129848.69489029168,
+      "deliveryRunLoopPass": 318,
+      "deliveryUICycle": 32,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "30",
+      "stage": "curl_update_received",
+      "targetPresentation": 129848.70322354167,
+      "uptime": 129848.6804664167
+    },
+    {
+      "deadline": 129848.69489029168,
+      "deliveryRunLoopPass": 318,
+      "deliveryUICycle": 32,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "30",
+      "stage": "curl_encode",
+      "targetPresentation": 129848.70322354167,
+      "uptime": 129848.6804666667
+    },
+    {
+      "deadline": 129848.69489029168,
+      "deliveryRunLoopPass": 318,
+      "deliveryUICycle": 32,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "30",
+      "stage": "curl_submit",
+      "targetPresentation": 129848.70322354167,
+      "uptime": 129848.68055462503
+    },
+    {
+      "deadline": 129848.69489029168,
+      "deliveryRunLoopPass": 318,
+      "deliveryUICycle": 32,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "30",
+      "stage": "curl_scheduled",
+      "targetPresentation": 129848.70322354167,
+      "uptime": 129848.68072337503
+    },
+    {
+      "deadline": 129848.69489029168,
+      "deliveryRunLoopPass": 318,
+      "deliveryUICycle": 32,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "30",
+      "stage": "curl_gpu_start",
+      "targetPresentation": 129848.70322354167,
+      "uptime": 129848.68078812501
+    },
+    {
+      "deadline": 129848.69489029168,
+      "deliveryRunLoopPass": 318,
+      "deliveryUICycle": 32,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "30",
+      "stage": "curl_gpu_end",
+      "targetPresentation": 129848.70322354167,
+      "uptime": 129848.68105700001
+    },
+    {
+      "deadline": 129848.69489029168,
+      "deliveryRunLoopPass": 318,
+      "deliveryUICycle": 32,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "30",
+      "stage": "curl_drawable_requested",
+      "targetPresentation": 129848.70322354167,
+      "uptime": 129848.67205737504
+    },
+    {
+      "deadline": 129848.69489029168,
+      "deliveryRunLoopPass": 318,
+      "deliveryUICycle": 32,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "30",
+      "stage": "curl_drawable_worker_began",
+      "targetPresentation": 129848.70322354167,
+      "uptime": 129848.67207650004
+    },
+    {
+      "deadline": 129848.69489029168,
+      "deliveryRunLoopPass": 318,
+      "deliveryUICycle": 32,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "30",
+      "stage": "curl_next_drawable_began",
+      "targetPresentation": 129848.70322354167,
+      "uptime": 129848.6720765417
+    },
+    {
+      "deadline": 129848.69489029168,
+      "deliveryRunLoopPass": 318,
+      "deliveryUICycle": 32,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "30",
+      "stage": "curl_next_drawable_returned",
+      "targetPresentation": 129848.70322354167,
+      "uptime": 129848.67786604169
+    },
+    {
+      "deadline": 129848.69489029168,
+      "deliveryRunLoopPass": 318,
+      "deliveryUICycle": 32,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "30",
+      "stage": "curl_drawable_drained",
+      "targetPresentation": 129848.70322354167,
+      "uptime": 129848.67786708336
+    },
+    {
+      "deadline": 129848.69489029168,
+      "deliveryRunLoopPass": 318,
+      "deliveryUICycle": 32,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "30",
+      "stage": "curl_drawable_main_delivery_before_take",
+      "targetPresentation": 129848.70322354167,
+      "uptime": 129848.67788387503
+    },
+    {
+      "deadline": 129848.69489029168,
+      "deliveryRunLoopPass": 318,
+      "deliveryUICycle": 32,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "30",
+      "stage": "curl_drawable_taken",
+      "targetPresentation": 129848.70322354167,
+      "uptime": 129848.68044337502
+    },
+    {
+      "deliveryRunLoopPass": 324,
+      "deliveryUICycle": 33,
+      "source": "29",
+      "stage": "curl_os_callback",
+      "uptime": 129848.6869905417
+    },
+    {
+      "deliveryRunLoopPass": 324,
+      "deliveryUICycle": 33,
+      "source": "29",
+      "stage": "curl_os_presented",
+      "uptime": 129848.68655662503
+    },
+    {
+      "deadline": 129848.70323012501,
+      "deliveryRunLoopPass": 328,
+      "deliveryUICycle": 33,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "31",
+      "stage": "curl_clock_request",
+      "targetPresentation": 129848.711563375,
+      "uptime": 129848.42099991669
+    },
+    {
+      "deadline": 129848.70323012501,
+      "deliveryRunLoopPass": 328,
+      "deliveryUICycle": 33,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "31",
+      "stage": "curl_update_received",
+      "targetPresentation": 129848.711563375,
+      "uptime": 129848.6887450417
+    },
+    {
+      "deadline": 129848.70323012501,
+      "deliveryRunLoopPass": 328,
+      "deliveryUICycle": 33,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "31",
+      "stage": "curl_encode",
+      "targetPresentation": 129848.711563375,
+      "uptime": 129848.68874533336
+    },
+    {
+      "deadline": 129848.70323012501,
+      "deliveryRunLoopPass": 328,
+      "deliveryUICycle": 33,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "31",
+      "stage": "curl_submit",
+      "targetPresentation": 129848.711563375,
+      "uptime": 129848.68885337503
+    },
+    {
+      "deadline": 129848.70323012501,
+      "deliveryRunLoopPass": 328,
+      "deliveryUICycle": 33,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "31",
+      "stage": "curl_scheduled",
+      "targetPresentation": 129848.711563375,
+      "uptime": 129848.6891104167
+    },
+    {
+      "deadline": 129848.70323012501,
+      "deliveryRunLoopPass": 328,
+      "deliveryUICycle": 33,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "31",
+      "stage": "curl_gpu_start",
+      "targetPresentation": 129848.711563375,
+      "uptime": 129848.68917025001
+    },
+    {
+      "deadline": 129848.70323012501,
+      "deliveryRunLoopPass": 328,
+      "deliveryUICycle": 33,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "31",
+      "stage": "curl_gpu_end",
+      "targetPresentation": 129848.711563375,
+      "uptime": 129848.68943562501
+    },
+    {
+      "deadline": 129848.70323012501,
+      "deliveryRunLoopPass": 328,
+      "deliveryUICycle": 33,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "31",
+      "stage": "curl_drawable_requested",
+      "targetPresentation": 129848.711563375,
+      "uptime": 129848.6804570417
+    },
+    {
+      "deadline": 129848.70323012501,
+      "deliveryRunLoopPass": 328,
+      "deliveryUICycle": 33,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "31",
+      "stage": "curl_drawable_worker_began",
+      "targetPresentation": 129848.711563375,
+      "uptime": 129848.68054875002
+    },
+    {
+      "deadline": 129848.70323012501,
+      "deliveryRunLoopPass": 328,
+      "deliveryUICycle": 33,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "31",
+      "stage": "curl_next_drawable_began",
+      "targetPresentation": 129848.711563375,
+      "uptime": 129848.68054883336
+    },
+    {
+      "deadline": 129848.70323012501,
+      "deliveryRunLoopPass": 328,
+      "deliveryUICycle": 33,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "31",
+      "stage": "curl_next_drawable_returned",
+      "targetPresentation": 129848.711563375,
+      "uptime": 129848.6862227917
+    },
+    {
+      "deadline": 129848.70323012501,
+      "deliveryRunLoopPass": 328,
+      "deliveryUICycle": 33,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "31",
+      "stage": "curl_drawable_drained",
+      "targetPresentation": 129848.711563375,
+      "uptime": 129848.68622375003
+    },
+    {
+      "deadline": 129848.70323012501,
+      "deliveryRunLoopPass": 328,
+      "deliveryUICycle": 33,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "31",
+      "stage": "curl_drawable_main_delivery_before_take",
+      "targetPresentation": 129848.711563375,
+      "uptime": 129848.6862546667
+    },
+    {
+      "deadline": 129848.70323012501,
+      "deliveryRunLoopPass": 328,
+      "deliveryUICycle": 33,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "31",
+      "stage": "curl_drawable_taken",
+      "targetPresentation": 129848.711563375,
+      "uptime": 129848.68871316669
+    },
+    {
+      "deliveryRunLoopPass": 334,
+      "deliveryUICycle": 34,
+      "source": "30",
+      "stage": "curl_os_callback",
+      "uptime": 129848.69534437502
+    },
+    {
+      "deliveryRunLoopPass": 334,
+      "deliveryUICycle": 34,
+      "source": "30",
+      "stage": "curl_os_presented",
+      "uptime": 129848.69489450003
+    },
+    {
+      "deadline": 129848.71156800001,
+      "deliveryRunLoopPass": 339,
+      "deliveryUICycle": 34,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "32",
+      "stage": "curl_clock_request",
+      "targetPresentation": 129848.71990125,
+      "uptime": 129848.42099991669
+    },
+    {
+      "deadline": 129848.71156800001,
+      "deliveryRunLoopPass": 339,
+      "deliveryUICycle": 34,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "32",
+      "stage": "curl_update_received",
+      "targetPresentation": 129848.71990125,
+      "uptime": 129848.69704604169
+    },
+    {
+      "deadline": 129848.71156800001,
+      "deliveryRunLoopPass": 339,
+      "deliveryUICycle": 34,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "32",
+      "stage": "curl_encode",
+      "targetPresentation": 129848.71990125,
+      "uptime": 129848.6970462917
+    },
+    {
+      "deadline": 129848.71156800001,
+      "deliveryRunLoopPass": 339,
+      "deliveryUICycle": 34,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "32",
+      "stage": "curl_submit",
+      "targetPresentation": 129848.71990125,
+      "uptime": 129848.69713595835
+    },
+    {
+      "deadline": 129848.71156800001,
+      "deliveryRunLoopPass": 339,
+      "deliveryUICycle": 34,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "32",
+      "stage": "curl_scheduled",
+      "targetPresentation": 129848.71990125,
+      "uptime": 129848.6974095417
+    },
+    {
+      "deadline": 129848.71156800001,
+      "deliveryRunLoopPass": 339,
+      "deliveryUICycle": 34,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "32",
+      "stage": "curl_gpu_start",
+      "targetPresentation": 129848.71990125,
+      "uptime": 129848.69746329167
+    },
+    {
+      "deadline": 129848.71156800001,
+      "deliveryRunLoopPass": 339,
+      "deliveryUICycle": 34,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "32",
+      "stage": "curl_gpu_end",
+      "targetPresentation": 129848.71990125,
+      "uptime": 129848.69771375
+    },
+    {
+      "deadline": 129848.71156800001,
+      "deliveryRunLoopPass": 339,
+      "deliveryUICycle": 34,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "32",
+      "stage": "curl_drawable_requested",
+      "targetPresentation": 129848.71990125,
+      "uptime": 129848.68873333336
+    },
+    {
+      "deadline": 129848.71156800001,
+      "deliveryRunLoopPass": 339,
+      "deliveryUICycle": 34,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "32",
+      "stage": "curl_drawable_worker_began",
+      "targetPresentation": 129848.71990125,
+      "uptime": 129848.68882475003
+    },
+    {
+      "deadline": 129848.71156800001,
+      "deliveryRunLoopPass": 339,
+      "deliveryUICycle": 34,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "32",
+      "stage": "curl_next_drawable_began",
+      "targetPresentation": 129848.71990125,
+      "uptime": 129848.68882487503
+    },
+    {
+      "deadline": 129848.71156800001,
+      "deliveryRunLoopPass": 339,
+      "deliveryUICycle": 34,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "32",
+      "stage": "curl_next_drawable_returned",
+      "targetPresentation": 129848.71990125,
+      "uptime": 129848.69459858336
+    },
+    {
+      "deadline": 129848.71156800001,
+      "deliveryRunLoopPass": 339,
+      "deliveryUICycle": 34,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "32",
+      "stage": "curl_drawable_drained",
+      "targetPresentation": 129848.71990125,
+      "uptime": 129848.69459970837
+    },
+    {
+      "deadline": 129848.71156800001,
+      "deliveryRunLoopPass": 339,
+      "deliveryUICycle": 34,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "32",
+      "stage": "curl_drawable_main_delivery_before_take",
+      "targetPresentation": 129848.71990125,
+      "uptime": 129848.69463700002
+    },
+    {
+      "deadline": 129848.71156800001,
+      "deliveryRunLoopPass": 339,
+      "deliveryUICycle": 34,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "32",
+      "stage": "curl_drawable_taken",
+      "targetPresentation": 129848.71990125,
+      "uptime": 129848.69701970836
+    },
+    {
+      "deliveryRunLoopPass": 346,
+      "deliveryUICycle": 35,
+      "source": "31",
+      "stage": "curl_os_callback",
+      "uptime": 129848.7036969167
+    },
+    {
+      "deliveryRunLoopPass": 346,
+      "deliveryUICycle": 35,
+      "source": "31",
+      "stage": "curl_os_presented",
+      "uptime": 129848.70322720836
+    },
+    {
+      "deadline": 129848.71990054168,
+      "deliveryRunLoopPass": 349,
+      "deliveryUICycle": 35,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "33",
+      "stage": "curl_clock_request",
+      "targetPresentation": 129848.72823379167,
+      "uptime": 129848.42099991669
+    },
+    {
+      "deadline": 129848.71990054168,
+      "deliveryRunLoopPass": 349,
+      "deliveryUICycle": 35,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "33",
+      "stage": "curl_update_received",
+      "targetPresentation": 129848.72823379167,
+      "uptime": 129848.70545687503
+    },
+    {
+      "deadline": 129848.71990054168,
+      "deliveryRunLoopPass": 349,
+      "deliveryUICycle": 35,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "33",
+      "stage": "curl_encode",
+      "targetPresentation": 129848.72823379167,
+      "uptime": 129848.70545720836
+    },
+    {
+      "deadline": 129848.71990054168,
+      "deliveryRunLoopPass": 349,
+      "deliveryUICycle": 35,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "33",
+      "stage": "curl_submit",
+      "targetPresentation": 129848.72823379167,
+      "uptime": 129848.70556600003
+    },
+    {
+      "deadline": 129848.71990054168,
+      "deliveryRunLoopPass": 349,
+      "deliveryUICycle": 35,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "33",
+      "stage": "curl_scheduled",
+      "targetPresentation": 129848.72823379167,
+      "uptime": 129848.70584075003
+    },
+    {
+      "deadline": 129848.71990054168,
+      "deliveryRunLoopPass": 349,
+      "deliveryUICycle": 35,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "33",
+      "stage": "curl_gpu_start",
+      "targetPresentation": 129848.72823379167,
+      "uptime": 129848.70588841668
+    },
+    {
+      "deadline": 129848.71990054168,
+      "deliveryRunLoopPass": 349,
+      "deliveryUICycle": 35,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "33",
+      "stage": "curl_gpu_end",
+      "targetPresentation": 129848.72823379167,
+      "uptime": 129848.706154625
+    },
+    {
+      "deadline": 129848.71990054168,
+      "deliveryRunLoopPass": 349,
+      "deliveryUICycle": 35,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "33",
+      "stage": "curl_drawable_requested",
+      "targetPresentation": 129848.72823379167,
+      "uptime": 129848.69703437503
+    },
+    {
+      "deadline": 129848.71990054168,
+      "deliveryRunLoopPass": 349,
+      "deliveryUICycle": 35,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "33",
+      "stage": "curl_drawable_worker_began",
+      "targetPresentation": 129848.72823379167,
+      "uptime": 129848.6970885417
+    },
+    {
+      "deadline": 129848.71990054168,
+      "deliveryRunLoopPass": 349,
+      "deliveryUICycle": 35,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "33",
+      "stage": "curl_next_drawable_began",
+      "targetPresentation": 129848.72823379167,
+      "uptime": 129848.69708858336
+    },
+    {
+      "deadline": 129848.71990054168,
+      "deliveryRunLoopPass": 349,
+      "deliveryUICycle": 35,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "33",
+      "stage": "curl_next_drawable_returned",
+      "targetPresentation": 129848.72823379167,
+      "uptime": 129848.70292625003
+    },
+    {
+      "deadline": 129848.71990054168,
+      "deliveryRunLoopPass": 349,
+      "deliveryUICycle": 35,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "33",
+      "stage": "curl_drawable_drained",
+      "targetPresentation": 129848.72823379167,
+      "uptime": 129848.7029274167
+    },
+    {
+      "deadline": 129848.71990054168,
+      "deliveryRunLoopPass": 349,
+      "deliveryUICycle": 35,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "33",
+      "stage": "curl_drawable_main_delivery_before_take",
+      "targetPresentation": 129848.72823379167,
+      "uptime": 129848.70296395836
+    },
+    {
+      "deadline": 129848.71990054168,
+      "deliveryRunLoopPass": 349,
+      "deliveryUICycle": 35,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "33",
+      "stage": "curl_drawable_taken",
+      "targetPresentation": 129848.72823379167,
+      "uptime": 129848.70542170836
+    },
+    {
+      "deliveryRunLoopPass": 355,
+      "deliveryUICycle": 36,
+      "source": "32",
+      "stage": "curl_os_callback",
+      "uptime": 129848.71205700003
+    },
+    {
+      "deliveryRunLoopPass": 355,
+      "deliveryUICycle": 36,
+      "source": "32",
+      "stage": "curl_os_presented",
+      "uptime": 129848.71156395836
+    },
+    {
+      "deadline": 129848.72823729168,
+      "deliveryRunLoopPass": 360,
+      "deliveryUICycle": 36,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "34",
+      "stage": "curl_clock_request",
+      "targetPresentation": 129848.73657054167,
+      "uptime": 129848.42099991669
+    },
+    {
+      "deadline": 129848.72823729168,
+      "deliveryRunLoopPass": 360,
+      "deliveryUICycle": 36,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "34",
+      "stage": "curl_update_received",
+      "targetPresentation": 129848.73657054167,
+      "uptime": 129848.71381554169
+    },
+    {
+      "deadline": 129848.72823729168,
+      "deliveryRunLoopPass": 360,
+      "deliveryUICycle": 36,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "34",
+      "stage": "curl_encode",
+      "targetPresentation": 129848.73657054167,
+      "uptime": 129848.71381587503
+    },
+    {
+      "deadline": 129848.72823729168,
+      "deliveryRunLoopPass": 360,
+      "deliveryUICycle": 36,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "34",
+      "stage": "curl_submit",
+      "targetPresentation": 129848.73657054167,
+      "uptime": 129848.71390891669
+    },
+    {
+      "deadline": 129848.72823729168,
+      "deliveryRunLoopPass": 360,
+      "deliveryUICycle": 36,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "34",
+      "stage": "curl_scheduled",
+      "targetPresentation": 129848.73657054167,
+      "uptime": 129848.7141911667
+    },
+    {
+      "deadline": 129848.72823729168,
+      "deliveryRunLoopPass": 360,
+      "deliveryUICycle": 36,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "34",
+      "stage": "curl_gpu_start",
+      "targetPresentation": 129848.73657054167,
+      "uptime": 129848.71423075
+    },
+    {
+      "deadline": 129848.72823729168,
+      "deliveryRunLoopPass": 360,
+      "deliveryUICycle": 36,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "34",
+      "stage": "curl_gpu_end",
+      "targetPresentation": 129848.73657054167,
+      "uptime": 129848.71446475001
+    },
+    {
+      "deadline": 129848.72823729168,
+      "deliveryRunLoopPass": 360,
+      "deliveryUICycle": 36,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "34",
+      "stage": "curl_drawable_requested",
+      "targetPresentation": 129848.73657054167,
+      "uptime": 129848.70544129169
+    },
+    {
+      "deadline": 129848.72823729168,
+      "deliveryRunLoopPass": 360,
+      "deliveryUICycle": 36,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "34",
+      "stage": "curl_drawable_worker_began",
+      "targetPresentation": 129848.73657054167,
+      "uptime": 129848.70554162502
+    },
+    {
+      "deadline": 129848.72823729168,
+      "deliveryRunLoopPass": 360,
+      "deliveryUICycle": 36,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "34",
+      "stage": "curl_next_drawable_began",
+      "targetPresentation": 129848.73657054167,
+      "uptime": 129848.70554170836
+    },
+    {
+      "deadline": 129848.72823729168,
+      "deliveryRunLoopPass": 360,
+      "deliveryUICycle": 36,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "34",
+      "stage": "curl_next_drawable_returned",
+      "targetPresentation": 129848.73657054167,
+      "uptime": 129848.71131445836
+    },
+    {
+      "deadline": 129848.72823729168,
+      "deliveryRunLoopPass": 360,
+      "deliveryUICycle": 36,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "34",
+      "stage": "curl_drawable_drained",
+      "targetPresentation": 129848.73657054167,
+      "uptime": 129848.71131595837
+    },
+    {
+      "deadline": 129848.72823729168,
+      "deliveryRunLoopPass": 360,
+      "deliveryUICycle": 36,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "34",
+      "stage": "curl_drawable_main_delivery_before_take",
+      "targetPresentation": 129848.73657054167,
+      "uptime": 129848.71136858336
+    },
+    {
+      "deadline": 129848.72823729168,
+      "deliveryRunLoopPass": 360,
+      "deliveryUICycle": 36,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "34",
+      "stage": "curl_drawable_taken",
+      "targetPresentation": 129848.73657054167,
+      "uptime": 129848.71378258336
+    },
+    {
+      "deliveryRunLoopPass": 366,
+      "deliveryUICycle": 37,
+      "source": "33",
+      "stage": "curl_os_callback",
+      "uptime": 129848.72050100003
+    },
+    {
+      "deliveryRunLoopPass": 366,
+      "deliveryUICycle": 37,
+      "source": "33",
+      "stage": "curl_os_presented",
+      "uptime": 129848.71990070837
+    },
+    {
+      "deadline": 129848.73657420833,
+      "deliveryRunLoopPass": 370,
+      "deliveryUICycle": 37,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "35",
+      "stage": "curl_clock_request",
+      "targetPresentation": 129848.74490745834,
+      "uptime": 129848.42099991669
+    },
+    {
+      "deadline": 129848.73657420833,
+      "deliveryRunLoopPass": 370,
+      "deliveryUICycle": 37,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "35",
+      "stage": "curl_update_received",
+      "targetPresentation": 129848.74490745834,
+      "uptime": 129848.72214120836
+    },
+    {
+      "deadline": 129848.73657420833,
+      "deliveryRunLoopPass": 370,
+      "deliveryUICycle": 37,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "35",
+      "stage": "curl_encode",
+      "targetPresentation": 129848.74490745834,
+      "uptime": 129848.72214175003
+    },
+    {
+      "deadline": 129848.73657420833,
+      "deliveryRunLoopPass": 370,
+      "deliveryUICycle": 37,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "35",
+      "stage": "curl_submit",
+      "targetPresentation": 129848.74490745834,
+      "uptime": 129848.72228908337
+    },
+    {
+      "deadline": 129848.73657420833,
+      "deliveryRunLoopPass": 370,
+      "deliveryUICycle": 37,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "35",
+      "stage": "curl_scheduled",
+      "targetPresentation": 129848.74490745834,
+      "uptime": 129848.72278008336
+    },
+    {
+      "deadline": 129848.73657420833,
+      "deliveryRunLoopPass": 370,
+      "deliveryUICycle": 37,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "35",
+      "stage": "curl_gpu_start",
+      "targetPresentation": 129848.74490745834,
+      "uptime": 129848.722801625
+    },
+    {
+      "deadline": 129848.73657420833,
+      "deliveryRunLoopPass": 370,
+      "deliveryUICycle": 37,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "35",
+      "stage": "curl_gpu_end",
+      "targetPresentation": 129848.74490745834,
+      "uptime": 129848.72303037501
+    },
+    {
+      "deadline": 129848.73657420833,
+      "deliveryRunLoopPass": 370,
+      "deliveryUICycle": 37,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "35",
+      "stage": "curl_drawable_requested",
+      "targetPresentation": 129848.74490745834,
+      "uptime": 129848.7138007917
+    },
+    {
+      "deadline": 129848.73657420833,
+      "deliveryRunLoopPass": 370,
+      "deliveryUICycle": 37,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "35",
+      "stage": "curl_drawable_worker_began",
+      "targetPresentation": 129848.74490745834,
+      "uptime": 129848.71389983337
+    },
+    {
+      "deadline": 129848.73657420833,
+      "deliveryRunLoopPass": 370,
+      "deliveryUICycle": 37,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "35",
+      "stage": "curl_next_drawable_began",
+      "targetPresentation": 129848.74490745834,
+      "uptime": 129848.71389995835
+    },
+    {
+      "deadline": 129848.73657420833,
+      "deliveryRunLoopPass": 370,
+      "deliveryUICycle": 37,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "35",
+      "stage": "curl_next_drawable_returned",
+      "targetPresentation": 129848.74490745834,
+      "uptime": 129848.71966787503
+    },
+    {
+      "deadline": 129848.73657420833,
+      "deliveryRunLoopPass": 370,
+      "deliveryUICycle": 37,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "35",
+      "stage": "curl_drawable_drained",
+      "targetPresentation": 129848.74490745834,
+      "uptime": 129848.71967037502
+    },
+    {
+      "deadline": 129848.73657420833,
+      "deliveryRunLoopPass": 370,
+      "deliveryUICycle": 37,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "35",
+      "stage": "curl_drawable_main_delivery_before_take",
+      "targetPresentation": 129848.74490745834,
+      "uptime": 129848.71972800003
+    },
+    {
+      "deadline": 129848.73657420833,
+      "deliveryRunLoopPass": 370,
+      "deliveryUICycle": 37,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "35",
+      "stage": "curl_drawable_taken",
+      "targetPresentation": 129848.74490745834,
+      "uptime": 129848.7220969167
+    },
+    {
+      "deliveryRunLoopPass": 376,
+      "deliveryUICycle": 38,
+      "source": "34",
+      "stage": "curl_os_callback",
+      "uptime": 129848.72884441669
+    },
+    {
+      "deliveryRunLoopPass": 376,
+      "deliveryUICycle": 38,
+      "source": "34",
+      "stage": "curl_os_presented",
+      "uptime": 129848.72823745836
+    },
+    {
+      "deadline": 129848.74491095834,
+      "deliveryRunLoopPass": 380,
+      "deliveryUICycle": 38,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "36",
+      "stage": "curl_clock_request",
+      "targetPresentation": 129848.75324420835,
+      "uptime": 129848.42099991669
+    },
+    {
+      "deadline": 129848.74491095834,
+      "deliveryRunLoopPass": 380,
+      "deliveryUICycle": 38,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "36",
+      "stage": "curl_update_received",
+      "targetPresentation": 129848.75324420835,
+      "uptime": 129848.73046683337
+    },
+    {
+      "deadline": 129848.74491095834,
+      "deliveryRunLoopPass": 380,
+      "deliveryUICycle": 38,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "36",
+      "stage": "curl_encode",
+      "targetPresentation": 129848.75324420835,
+      "uptime": 129848.7304672917
+    },
+    {
+      "deadline": 129848.74491095834,
+      "deliveryRunLoopPass": 380,
+      "deliveryUICycle": 38,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "36",
+      "stage": "curl_submit",
+      "targetPresentation": 129848.75324420835,
+      "uptime": 129848.7306055417
+    },
+    {
+      "deadline": 129848.74491095834,
+      "deliveryRunLoopPass": 380,
+      "deliveryUICycle": 38,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "36",
+      "stage": "curl_scheduled",
+      "targetPresentation": 129848.75324420835,
+      "uptime": 129848.73099037503
+    },
+    {
+      "deadline": 129848.74491095834,
+      "deliveryRunLoopPass": 380,
+      "deliveryUICycle": 38,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "36",
+      "stage": "curl_gpu_start",
+      "targetPresentation": 129848.75324420835,
+      "uptime": 129848.731008125
+    },
+    {
+      "deadline": 129848.74491095834,
+      "deliveryRunLoopPass": 380,
+      "deliveryUICycle": 38,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "36",
+      "stage": "curl_gpu_end",
+      "targetPresentation": 129848.75324420835,
+      "uptime": 129848.73123441667
+    },
+    {
+      "deadline": 129848.74491095834,
+      "deliveryRunLoopPass": 380,
+      "deliveryUICycle": 38,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "36",
+      "stage": "curl_drawable_requested",
+      "targetPresentation": 129848.75324420835,
+      "uptime": 129848.72212575004
+    },
+    {
+      "deadline": 129848.74491095834,
+      "deliveryRunLoopPass": 380,
+      "deliveryUICycle": 38,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "36",
+      "stage": "curl_drawable_worker_began",
+      "targetPresentation": 129848.75324420835,
+      "uptime": 129848.72214425003
+    },
+    {
+      "deadline": 129848.74491095834,
+      "deliveryRunLoopPass": 380,
+      "deliveryUICycle": 38,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "36",
+      "stage": "curl_next_drawable_began",
+      "targetPresentation": 129848.75324420835,
+      "uptime": 129848.72214429169
+    },
+    {
+      "deadline": 129848.74491095834,
+      "deliveryRunLoopPass": 380,
+      "deliveryUICycle": 38,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "36",
+      "stage": "curl_next_drawable_returned",
+      "targetPresentation": 129848.75324420835,
+      "uptime": 129848.7279969167
+    },
+    {
+      "deadline": 129848.74491095834,
+      "deliveryRunLoopPass": 380,
+      "deliveryUICycle": 38,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "36",
+      "stage": "curl_drawable_drained",
+      "targetPresentation": 129848.75324420835,
+      "uptime": 129848.72799958337
+    },
+    {
+      "deadline": 129848.74491095834,
+      "deliveryRunLoopPass": 380,
+      "deliveryUICycle": 38,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "36",
+      "stage": "curl_drawable_main_delivery_before_take",
+      "targetPresentation": 129848.75324420835,
+      "uptime": 129848.72805375003
+    },
+    {
+      "deadline": 129848.74491095834,
+      "deliveryRunLoopPass": 380,
+      "deliveryUICycle": 38,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "36",
+      "stage": "curl_drawable_taken",
+      "targetPresentation": 129848.75324420835,
+      "uptime": 129848.73041491669
+    },
+    {
+      "deliveryRunLoopPass": 386,
+      "deliveryUICycle": 39,
+      "source": "35",
+      "stage": "curl_os_callback",
+      "uptime": 129848.73713987503
+    },
+    {
+      "deliveryRunLoopPass": 386,
+      "deliveryUICycle": 39,
+      "source": "35",
+      "stage": "curl_os_presented",
+      "uptime": 129848.73657412503
+    },
+    {
+      "deadline": 129848.75324745834,
+      "deliveryRunLoopPass": 389,
+      "deliveryUICycle": 39,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "37",
+      "stage": "curl_clock_request",
+      "targetPresentation": 129848.76158070833,
+      "uptime": 129848.42099991669
+    },
+    {
+      "deadline": 129848.75324745834,
+      "deliveryRunLoopPass": 389,
+      "deliveryUICycle": 39,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "37",
+      "stage": "curl_update_received",
+      "targetPresentation": 129848.76158070833,
+      "uptime": 129848.73882137502
+    },
+    {
+      "deadline": 129848.75324745834,
+      "deliveryRunLoopPass": 389,
+      "deliveryUICycle": 39,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "37",
+      "stage": "curl_encode",
+      "targetPresentation": 129848.76158070833,
+      "uptime": 129848.73882187503
+    },
+    {
+      "deadline": 129848.75324745834,
+      "deliveryRunLoopPass": 389,
+      "deliveryUICycle": 39,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "37",
+      "stage": "curl_submit",
+      "targetPresentation": 129848.76158070833,
+      "uptime": 129848.73896425003
+    },
+    {
+      "deadline": 129848.75324745834,
+      "deliveryRunLoopPass": 389,
+      "deliveryUICycle": 39,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "37",
+      "stage": "curl_scheduled",
+      "targetPresentation": 129848.76158070833,
+      "uptime": 129848.73941441669
+    },
+    {
+      "deadline": 129848.75324745834,
+      "deliveryRunLoopPass": 389,
+      "deliveryUICycle": 39,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "37",
+      "stage": "curl_gpu_start",
+      "targetPresentation": 129848.76158070833,
+      "uptime": 129848.73943825
+    },
+    {
+      "deadline": 129848.75324745834,
+      "deliveryRunLoopPass": 389,
+      "deliveryUICycle": 39,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "37",
+      "stage": "curl_gpu_end",
+      "targetPresentation": 129848.76158070833,
+      "uptime": 129848.73965925
+    },
+    {
+      "deadline": 129848.75324745834,
+      "deliveryRunLoopPass": 389,
+      "deliveryUICycle": 39,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "37",
+      "stage": "curl_drawable_requested",
+      "targetPresentation": 129848.76158070833,
+      "uptime": 129848.73044287502
+    },
+    {
+      "deadline": 129848.75324745834,
+      "deliveryRunLoopPass": 389,
+      "deliveryUICycle": 39,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "37",
+      "stage": "curl_drawable_worker_began",
+      "targetPresentation": 129848.76158070833,
+      "uptime": 129848.73054891669
+    },
+    {
+      "deadline": 129848.75324745834,
+      "deliveryRunLoopPass": 389,
+      "deliveryUICycle": 39,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "37",
+      "stage": "curl_next_drawable_began",
+      "targetPresentation": 129848.76158070833,
+      "uptime": 129848.73054912503
+    },
+    {
+      "deadline": 129848.75324745834,
+      "deliveryRunLoopPass": 389,
+      "deliveryUICycle": 39,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "37",
+      "stage": "curl_next_drawable_returned",
+      "targetPresentation": 129848.76158070833,
+      "uptime": 129848.7363647917
+    },
+    {
+      "deadline": 129848.75324745834,
+      "deliveryRunLoopPass": 389,
+      "deliveryUICycle": 39,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "37",
+      "stage": "curl_drawable_drained",
+      "targetPresentation": 129848.76158070833,
+      "uptime": 129848.73636737502
+    },
+    {
+      "deadline": 129848.75324745834,
+      "deliveryRunLoopPass": 389,
+      "deliveryUICycle": 39,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "37",
+      "stage": "curl_drawable_main_delivery_before_take",
+      "targetPresentation": 129848.76158070833,
+      "uptime": 129848.73642170837
+    },
+    {
+      "deadline": 129848.75324745834,
+      "deliveryRunLoopPass": 389,
+      "deliveryUICycle": 39,
+      "owner": "C2E60A5E-812A-49D1-AF95-270D4290E296",
+      "source": "37",
+      "stage": "curl_drawable_taken",
+      "targetPresentation": 129848.76158070833,
+      "uptime": 129848.73877087503
+    },
+    {
+      "deliveryRunLoopPass": 395,
+      "deliveryUICycle": 40,
+      "source": "36",
+      "stage": "curl_os_callback",
+      "uptime": 129848.74562400003
+    },
+    {
+      "deliveryRunLoopPass": 395,
+      "deliveryUICycle": 40,
+      "source": "36",
+      "stage": "curl_os_presented",
+      "uptime": 129848.74491095837
+    },
+    {
+      "deliveryRunLoopPass": 399,
+      "deliveryUICycle": 40,
+      "source": "37",
+      "stage": "curl_os_callback",
+      "uptime": 129848.75364395836
+    },
+    {
+      "deliveryRunLoopPass": 399,
+      "deliveryUICycle": 40,
+      "source": "37",
+      "stage": "curl_os_presented",
+      "uptime": 129848.7532476667
+    },
+    {
+      "deliveryRunLoopPass": 401,
+      "deliveryUICycle": 41,
+      "stage": "curl_owner_landed",
+      "uptime": 129848.7554382917
+    }
+  ],
+  "format": 1,
+  "measurementEndedUptime": 129848.75543883337,
+  "omittedDiagnosticEvents": {
+    "runloop_after_wait": 381,
+    "runloop_before_sources": 401,
+    "runloop_before_wait": 381,
+    "runloop_entry": 400,
+    "runloop_exit": 400,
+    "ui_after_ca_commit": 41,
+    "ui_after_display_link": 41,
+    "ui_after_event": 41,
+    "ui_before_ca_commit": 41,
+    "ui_before_display_link": 41,
+    "ui_before_event": 41,
+    "ui_complete": 41
+  },
+  "originUptime": 129848.42029441669,
+  "processID": 7433,
+  "scenario": "first-curl",
+  "scope": "Source event clocks retained unchanged, including delivery UI/runloop identity. Repetitive observer UI/runloop events omitted; full original attachment remains in the cited local verification export."
+}

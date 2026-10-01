@@ -1,0 +1,55 @@
+{
+  "evidence": {
+    "scenario": "Real renderer with installed opaque receiver. Six alternating turns, exact same pool, shown endpoint, reparent, resize and cancellation. Actual notebook receiver additionally asserted by lifecycle test.",
+    "sourceSHA256": "2e85dc9f628b683d21d4b23a848c8e0e92109309cd5233c1e3a851388f64e891",
+    "verificationDirectory": "/private/tmp/notebook-230-installed-output-0126"
+  },
+  "turns": [
+    {
+      "discardedSequences": [
+        0,
+        1,
+        3
+      ],
+      "endpointOSMS": 328.0044999992242,
+      "firstOSMS": 27.882708338438533,
+      "firstProgress": 0.15018609574638167,
+      "turn": 0
+    },
+    {
+      "discardedSequences": [],
+      "endpointOSMS": 328.8729166670237,
+      "firstOSMS": 20.41449998796452,
+      "firstProgress": 0.9485948350812552,
+      "turn": 1
+    },
+    {
+      "discardedSequences": [],
+      "endpointOSMS": 330.99316665902734,
+      "firstOSMS": 22.534749994520098,
+      "firstProgress": 0.05140516491874476,
+      "turn": 2
+    },
+    {
+      "discardedSequences": [],
+      "endpointOSMS": 332.09633332444355,
+      "firstOSMS": 23.63783333566971,
+      "firstProgress": 0.9485948350812552,
+      "turn": 3
+    },
+    {
+      "discardedSequences": [],
+      "endpointOSMS": 330.1204166637035,
+      "firstOSMS": 21.66208333801478,
+      "firstProgress": 0.05140516491874476,
+      "turn": 4
+    },
+    {
+      "discardedSequences": [],
+      "endpointOSMS": 332.11404166650027,
+      "firstOSMS": 23.655708326259628,
+      "firstProgress": 0.9485948350812552,
+      "turn": 5
+    }
+  ]
+}

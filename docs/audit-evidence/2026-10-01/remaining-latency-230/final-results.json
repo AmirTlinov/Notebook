@@ -1,0 +1,86 @@
+{
+  "baseCommit": "f6793c9d312ca666ab01c3850c9493adba7384b7",
+  "build": "230",
+  "coldObservationMS": {
+    "allNative": 814.9872916692402,
+    "firstNative": 258.4117079968564
+  },
+  "counts": {
+    "ipad": {
+      "failedTests": 0,
+      "passedTests": 24,
+      "result": "Passed",
+      "skippedTests": 0,
+      "totalTestCount": 24
+    },
+    "mac": {
+      "failedTests": 0,
+      "passedTests": 2,
+      "result": "Passed",
+      "skippedTests": 0,
+      "totalTestCount": 2
+    }
+  },
+  "curlObservationMS": {
+    "discardedDrawables": 1,
+    "firstGPU": 2.7489583153510466,
+    "firstOS": 24.49400001205504,
+    "landing": 335.14387501054443
+  },
+  "format": 1,
+  "fullAcceptance": false,
+  "localEvidence": "/private/tmp/notebook-230-installed-output-0126",
+  "parkedOutputFirstOSMS": [
+    27.882708338438533,
+    20.41449998796452,
+    22.534749994520098,
+    23.63783333566971,
+    21.66208333801478,
+    23.655708326259628
+  ],
+  "parkedOutputInitialDiscards": [
+    3,
+    0,
+    0,
+    0,
+    0,
+    0
+  ],
+  "scope": "Final focused correctness, actual installed paper output lifetime and source scheduling observation. Physical iPad; optimized DEBUG fixtures; no full acceptance.",
+  "selectedChecks": {
+    "commands": [],
+    "core": [],
+    "ipad": [
+      "NotebookTests/AgentSceneFingerRoutingTests/testDensePassiveDOMKeepsItsInputIndexAcrossAuthorFramePaintingAndReleasesItOnClose",
+      "NotebookTests/AgentSceneFingerRoutingTests/testReadyMapRoutesControlsAndAuthoredHandlersAtTheActualContact",
+      "NotebookTests/AgentSceneFingerRoutingTests/testReadyMapTracksMovedControlsAndListenerRemovalWithoutRuntimeRestart",
+      "NotebookTests/DocumentShellPreparationTests/testNativePaperInstallsBeforeHeldShellFrameAndSurvivesItsFailure",
+      "NotebookTests/DocumentShellPreparationTests/testNativePaperInstallsWhileWebAdmissionWaitsAndKeepsItsSourceForInput",
+      "NotebookTests/InkCanvasLifecycleTests/testPageLiftKeepsThePendingFirstRevealUntilItsOwnResolution",
+      "NotebookTests/NotebookColdInputUXTests/testFirstPencilAfterColdOpenWritesAndErasesTheDisplayedPage",
+      "NotebookTests/NotebookFirstPresentationSchedulingTests/testColdProgramConstructorsAgainstUIOpportunities",
+      "NotebookTests/NotebookFirstPresentationSchedulingTests/testFirstCurlAgainstUIAndOSBoundaries",
+      "NotebookTests/NotebookInteractionUXTests/testLassoRequiresOneCorrectCompositionDuringOutlineCutMoveLiftAndDeselect",
+      "NotebookTests/NotebookPageCurlInteractionTests/testCancellationAtPagePublicationDiscardsScheduledPixelsAndStopsUpdates",
+      "NotebookTests/NotebookPageCurlInteractionTests/testRegrabPreservesTheVisiblePoseAndReusesThePair",
+      "NotebookTests/NotebookPageLifecycleUXTests/testNativePageTurnsShowTheStoredLeafAfterEvictionReverseAndCancellation",
+      "NotebookTests/NotebookPageLifecycleUXTests/testPeerRemovedLeafCannotCommitAnOldCurlIntoItsReplacementSlot",
+      "NotebookTests/NotebookPageMotionUXTests/testCommittedCurlHierarchyPublishesTheNextPoseWithoutAnOSAdmissionGate",
+      "NotebookTests/NotebookPageMotionUXTests/testFirstSmallBendCannotExposeTheOtherLeafBeforeItsCurlPixels",
+      "NotebookTests/NotebookPageMotionUXTests/testHeldCurlPublishesCommittedMotionAfterInputBeforeCA",
+      "NotebookTests/NotebookPageMotionUXTests/testInstalledPaperParksOnlyItsCompletedOutputAndRevokesOnResizeOrCancellation",
+      "NotebookTests/PageTurnSelectionTests/testMountedSceneCancellationFinishesTheTurnAndRejectsLateBorrowAndColdReadiness",
+      "NotebookTests/SceneRenderResourcesTests/testConstructorLifetimeEndsWithItsBoundSceneAndResumesOnActivation",
+      "NotebookTests/SceneRenderResourcesTests/testExpensiveConstructorLeavesTheNextGrantForActualUICompletion",
+      "NotebookTests/SceneRenderResourcesTests/testRuntimeConstructionAdmissionEndsBeforeNavigationAndPreservesRunningOwners",
+      "NotebookUITests/NotebookNavigationLoadUITests/testTwentyFourPageProgramsAcceptFirstTapAfterZoomAndKeepStateAcrossTurns",
+      "NotebookUITests/NotebookPrintSourceUITests/testDocumentZoomOutReturnsToBoardAndReopensTheSamePaper"
+    ],
+    "mac": [
+      "NotebookMacTests/AgentInkRenderingTests/testAgentPenReachesNativeCompositeAndUndoWithoutMovingCamera",
+      "NotebookMacTests/MacInkInputTests/testNativeMouseContactPersistsItsExactSourceAndEraserUndoKeepsThePen"
+    ]
+  },
+  "sourceSHA256": "2e85dc9f628b683d21d4b23a848c8e0e92109309cd5233c1e3a851388f64e891",
+  "version": "0.3.160"
+}

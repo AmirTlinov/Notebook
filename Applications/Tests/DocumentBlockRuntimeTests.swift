@@ -487,7 +487,7 @@ final class DocumentBlockRuntimeTests: XCTestCase {
     fixture.runtime.start(priority: .input)
     XCTAssertEqual(fixture.runtime.pendingAdmissionID, request)
     XCTAssertEqual(resources.activeWebConstructionCount, 2)
-    first.finishConstruction()
+    first.finishConstruction(elapsed: .zero)
     try await fixture.waitUntilReady()
     XCTAssertEqual(resources.activeWebConstructionCount, 1,
       "Only the unrelated second constructor remains; JS readiness does not retain the runtime's constructor allowance")
