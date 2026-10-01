@@ -3,6 +3,29 @@
 Срез: **1 октября 2026**. Функциональная проверка, доставка и полная приёмка
 учитываются отдельно; результат относится к исходникам своего receipt.
 
+## Владение готовностью и восстановлением — 235
+
+Исправлены повторные readiness обходы страницы/состава, лишние Main tasks для
+чужого source, пропущенное освобождение raster admission и поздние positive
+receipts прежнего consumer. Требования принадлежат принятой странице;
+source callback обновляет один slot. Настоящий cut заново проверяет установленное
+представление до/после ожидания. Прежние full readiness query, постоянный WebKit
+observer и waitingForAdmission удалены. [Причины](cold-first-publication-2026-10-01.md).
+
+Физический первичный scope:13PASS/2FAIL из15, MCP168PASS. Две ошибки относились
+к требованиям fixture: пустой global allocator и удалённый automatic zoom capture.
+После их исправления **2 physical-iPad +3 Mac PASS**, fail/skip0, final inventory
+`aac20f2c…`; код продукта одинаковый в обоих прогонах. Проверены100000 logical
+source receipts, fresh cut при потере sibling, replacement/retirement, stationary
+recovery, cold24, stored-leaf turn/reverse/eviction/cancel/first ink и Mac compositor.
+Не запускались повторно13 уже успешных сценариев и неизменившийся MCP.
+Receipts: `/private/tmp/notebook-cold-235-{final,recovery}-verify`.
+
+Source clocks: curl action→actualOS24,140мс; sequence0 time0 приходит до первого
+CA commit, Main delivery0,377мс. WebKit request→policy220,328мс; first/all24 native
+installation454,150/1153,228мс. Эти наблюдения локализуют ожидания, strict latency
+и полную приёмку не закрывают. Сборка/доставка235 фиксируется после установки.
+
 ## Notebook plugin — canonical appearance 234
 
 После отклонения панели0.1.1 заменён generic SVG painter: native compositor

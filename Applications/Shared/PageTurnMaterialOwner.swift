@@ -191,7 +191,16 @@ final class PageTurnMaterialOwner {
   private weak var frameReadiness: PageTurnReadiness?
   private weak var slotActivity: PageTurnActivity?
   private weak var slotReadiness: PageTurnReadiness?
+  private var slotPageIndex: Int?
   private var slotObserver: UUID?
+  // Requirements belong to the accepted layer directory. Installation receipts
+  // update one slot; a fresh hierarchy cut is taken only when borrowing pixels.
+  private var slotRequirements: [String: Layer] = [:]
+  private var missingStaticMaterials: Set<String> = []
+  private var missingProviders: Set<String> = []
+  private var pendingStaticSlots: Set<String> = []
+  private var runtimeProviders: Set<String> = []
+  private var providerVersions: [String: PageTurnActivity.ElementFrameVersion] = [:]
   private var reclamationOwner: UUID?
   init() {
     reclamationOwner = SceneRenderResources.shared.registerReclamationOwner { [weak self] in
@@ -216,21 +225,44 @@ final class PageTurnMaterialOwner {
     return material.key == expected ? material : nil
   }
   var isPrepared: Bool {
-    guard let layers else { return false }
-    return layers.allSatisfy { layer in
-      guard case .element(let element, _, _, _) = layer, !element.requiresLiveRuntime else { return true }
-      return staticMaterial(for: layer) != nil
+    layers != nil && missingStaticMaterials.isEmpty
+  }
+
+  /// Accepted installation facts can publish readiness without querying every
+  /// sibling. This hint is never an OS receipt or permission to borrow pixels.
+  func isCaptureReady(readiness: PageTurnReadiness) -> Bool {
+    !readiness.isRetired && slotReadiness === readiness && slotActivity === readiness.activity
+      && slotPageIndex == readiness.pageIndex && isPrepared && missingProviders.isEmpty
+  }
+
+  private func rebuildSlotRequirements() {
+    slotRequirements.removeAll(keepingCapacity: true)
+    missingStaticMaterials.removeAll(keepingCapacity: true)
+    missingProviders.removeAll(keepingCapacity: true)
+    pendingStaticSlots.removeAll(keepingCapacity: true)
+    runtimeProviders.removeAll(keepingCapacity: true)
+    providerVersions.removeAll(keepingCapacity: true)
+    for layer in layers ?? [] {
+      guard case .element(let element, _, _, _) = layer else { continue }
+      slotRequirements[element.id] = layer
+      updateSlotRequirement(element.id)
     }
   }
 
-  func isCapturable(readiness: PageTurnReadiness) -> Bool {
-    guard isPrepared, let layers else { return false }
-    return layers.allSatisfy { layer in
-      guard case .element(let element, _, _, _) = layer else { return true }
-      let source = element.requiresLiveRuntime ? liveSources[element.id] : element
-      guard let source, let version = readiness.activity?.elementFrameVersion(page: readiness.pageIndex, source: source) else { return false }
-      return element.requiresLiveRuntime || staticMaterial(for: layer, provider: version) != nil
+  private func updateSlotRequirement(_ id: String) {
+    guard let layer = slotRequirements[id], case .element(let element, _, _, _) = layer else { return }
+    let source = element.requiresLiveRuntime ? liveSources[id] : element
+    let version = source.flatMap { source in
+      slotReadiness?.activity?.publishedElementFrameVersion(page: slotReadiness?.pageIndex ?? -1, source: source)
     }
+    providerVersions[id] = version
+    if version?.content == .runtime { runtimeProviders.insert(id) } else { runtimeProviders.remove(id) }
+    let materialReady = element.requiresLiveRuntime || staticMaterial(for: layer) != nil
+    if materialReady { missingStaticMaterials.remove(id) } else { missingStaticMaterials.insert(id) }
+    let providerReady = version != nil && (element.requiresLiveRuntime || staticMaterial(for: layer, provider: version) != nil)
+    if providerReady { missingProviders.remove(id) } else { missingProviders.insert(id) }
+    if !element.requiresLiveRuntime, version != nil, !providerReady { pendingStaticSlots.insert(id) }
+    else { pendingStaticSlots.remove(id) }
   }
 
   func prepare(page: PageDocument, erasures: InkElementErasureMap, ordered: Set<String>, scale: Double,
@@ -249,6 +281,7 @@ final class PageTurnMaterialOwner {
       })
       if liveSources != currentLiveSources {
         liveSources = currentLiveSources; liveSourceGeneration &+= 1; invalidateFrame(reason: "live_source")
+        rebuildSlotRequirements()
       }
       key = .init(native: page.elements.filter { $0.graphic != nil || $0.kind == .nativeText || $0.kind == .group },
         slots: Dictionary(uniqueKeysWithValues: slots.compactMap { element in
@@ -263,6 +296,7 @@ final class PageTurnMaterialOwner {
     invalidateFrame(reason: "native_material"); preparation?.cancel(); slotPreparation?.cancel(); slotPreparation = nil
     slotPreparationHasWake = false
     notifySlotsReady = nil; layers = nil
+    rebuildSlotRequirements()
     let retainedNative = nativeMaterials
     preparation = Task { @MainActor [weak self] in
       do {
@@ -275,6 +309,7 @@ final class PageTurnMaterialOwner {
             if case .element(let element, _, _, _) = layer, !element.requiresLiveRuntime { return element.id }; return nil
           })
           self.slotMaterials = self.slotMaterials.filter { slots.contains($0.key) }
+          self.rebuildSlotRequirements()
           let notify = self.notifyReady; self.notifyReady = nil; notify?()
         }
         return result
@@ -297,37 +332,41 @@ final class PageTurnMaterialOwner {
   func prepareStaticSlots(readiness: PageTurnReadiness,
     onReady: @escaping @MainActor () -> Void,
     onFailure: @escaping @MainActor (PageTurnPreparationFailure) -> Void) {
-    guard let layers, let key else { return }
+    guard layers != nil, let key else { return }
     notifySlotsReady = key.staticSources.isEmpty ? nil : onReady
+    let changedReadiness = slotReadiness !== readiness || slotActivity !== readiness.activity || slotPageIndex != readiness.pageIndex
     slotReadiness = readiness
+    slotPageIndex = readiness.pageIndex
     if slotActivity !== readiness.activity {
       if let slotObserver { slotActivity?.removePreparationObserver(slotObserver) }
       slotActivity = readiness.activity
       slotObserver = slotActivity?.observePreparation { [weak self] change in
-        guard case .elementFrames(let page, let changed) = change, let self,
-          let readiness = self.slotReadiness, readiness.pageIndex == page else { return }
+        guard case .elementFrames(let page, let id, let changed) = change, let self,
+          let readiness = self.slotReadiness, readiness.pageIndex == page,
+          self.slotRequirements[id] != nil else { return }
         if changed { self.invalidateFrame(reason: "slot_material") }
-        // Live frames already carry their provider version and availability.
-        // They never need the parent's static-slot preparation loop on a page
-        // whose slots are all live; their material/readiness edge remains below.
-        if self.key?.staticSources.isEmpty == false {
+        if self.slotPageIndex != page {
+          self.slotPageIndex = page; self.rebuildSlotRequirements()
+        } else { self.updateSlotRequirement(id) }
+        if self.pendingStaticSlots.contains(id) {
           self.slotPreparationHasWake = true
           if self.slotPreparation == nil { self.notifySlotsReady?() }
         }
         self.refreshPassiveFrame()
-        let capturable = self.isCapturable(readiness: readiness) && readiness.inkFrameIsReady?() == true
+        let capturable = self.isCaptureReady(readiness: readiness) && readiness.inkFrameIsReady?() == true
         if capturable != readiness.state.capturable {
           readiness(readiness.state.presented, capturable: capturable, paperReady: readiness.state.paperReady)
         } else if changed { readiness.materialDidChange() }
         else { readiness.materialAvailabilityDidChange() }
       }
     }
+    if changedReadiness { rebuildSlotRequirements() }
     guard !key.staticSources.isEmpty, slotPreparation == nil else { return }
     var missing: [(AgentElement, NotebookElementPresentation, [InkElementErasure], CGRect, SlotKey)] = []
-    for layer in layers {
-      guard case .element(let element, let presentation, let cuts, let frame) = layer,
+    for id in pendingStaticSlots {
+      guard let layer = slotRequirements[id], case .element(let element, let presentation, let cuts, let frame) = layer,
         !element.requiresLiveRuntime else { continue }
-      guard let version = readiness.activity?.elementFrameVersion(page: readiness.pageIndex, source: element) else { continue }
+      guard let version = providerVersions[element.id] else { continue }
       let next = SlotKey(source: element, size: frame.size, bodySize: presentation.bodySize,
         transform: presentation.transform, cuts: cuts, scale: key.scale, provider: version)
       if slotMaterials[element.id]?.key != next { missing.append((element, presentation, cuts, frame, next)) }
@@ -348,6 +387,7 @@ final class PageTurnMaterialOwner {
             throw PageTurnMaterialUnavailable.changed
           }
           self.slotMaterials[element.id] = .init(key: next, frame: image)
+          self.updateSlotRequirement(element.id)
         }
         guard let self, self.key == key else { return }
         self.slotPreparation = nil; self.slotPreparationHasWake = false
@@ -374,8 +414,9 @@ final class PageTurnMaterialOwner {
     slotPreparationHasWake = false
     notifyReady = nil; notifySlotsReady = nil
     if let slotObserver { slotActivity?.removePreparationObserver(slotObserver) }
-    slotObserver = nil; slotActivity = nil; slotReadiness = nil
+    slotObserver = nil; slotActivity = nil; slotReadiness = nil; slotPageIndex = nil
     key = nil; sourcePage = nil; layers = nil; nativeMaterials.removeAll(); slotMaterials.removeAll()
+    rebuildSlotRequirements()
     liveSources = [:]; liveSourceGeneration &+= 1
     invalidateFrame(reason: "retired"); preparesPassiveFrame = false; frameReadiness = nil
   }
@@ -424,6 +465,10 @@ final class PageTurnMaterialOwner {
   private func refreshPassiveFrame() {
     guard preparesPassiveFrame || cachedFrame != nil || framePreparation != nil else { return }
     guard let readiness = frameReadiness else { return }
+    guard isCaptureReady(readiness: readiness) else { return }
+    // A live browser is frozen by its accepted turn, never by speculation.
+    // Its receipt replaces any old static cut before this callback arrives.
+    guard runtimeProviders.isEmpty || cachedFrame != nil || framePreparation != nil else { return }
     guard let input = frameInput(readiness: readiness) else {
       // A temporary native detach or ink installation gap prevents borrowing,
       // but does not change pixels already borrowed by the page. Both pending

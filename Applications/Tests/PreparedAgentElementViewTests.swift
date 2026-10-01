@@ -442,6 +442,93 @@ final class PreparedAgentElementViewTests: XCTestCase {
   }
 
   @MainActor
+  func testQueuedPositiveNativeReceiptsCannotAcknowledgeAReplacementConsumer() async throws {
+    let model = makeModel(), resources = SceneRenderResources()
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let pageID = try XCTUnwrap(model.activePage?.id), activity = PageTurnActivity()
+    let preparations = PageAgentPreparationOwner(resources: resources)
+    let source = AgentElement(id: UUID().uuidString, kind: .web,
+      frame: .init(x: 0, y: 0, width: 160, height: 120), source: "Installed predecessor",
+      html: "<button>Installed predecessor</button>", javaScript: "notebook.ready(Promise.resolve());")
+    let owner = preparations.owner(for: source.id)
+    defer { preparations.retire() }
+    func accept(_ source: AgentElement, failure: AgentWebSourceFailure? = nil) {
+      owner.accept(.init(model: model,
+        demand: .init(source: source, basis: nil, active: true, inputEnabled: false, focused: false,
+          permitsPreparation: true, policy: .exact(scale: 1), capture: nil, fallbackEntryID: nil, runtimeFailure: failure),
+        focus: .page(pageID: pageID, elementID: source.id), pageTurnActivity: activity,
+        rasterPreparation: .init(owner: activity.rasters, pageIndex: 0), cohort: nil,
+        onState: { _, _ in false }))
+    }
+    accept(source)
+    await owner.waitForPreparation()
+    let session = try XCTUnwrap(owner.session)
+    // Hold the existing native-to-owner edge; the real runtime still loads and
+    // its physical installation remains available throughout source acceptance.
+    var runtimeReceipt: SceneSourceInstallation?
+    session.coordinator.use(onSourceInstalled: { runtimeReceipt = $0 })
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+    let controller = UIViewController()
+    window.rootViewController = controller; window.makeKeyAndVisible()
+    let viewport = PhysicalWebViewport(webView: session.webView, contentSize: .init(width: 160, height: 120))
+    viewport.frame = .init(x: 20, y: 20, width: 160, height: 120)
+    viewport.onInstalled = {
+      if let installed = session.coordinator.installation(for: source) { runtimeReceipt = installed }
+    }
+    controller.view.addSubview(viewport); viewport.layoutIfNeeded()
+    defer {
+      viewport.retire(); window.isHidden = true; window.rootViewController = nil; previous?.makeKey()
+    }
+    try await waitUntil("The real predecessor runtime and pending status are prepared") {
+      owner.showsLiveProgram && runtimeReceipt?.isInstalled == true
+        && owner.statusPresentation?.key.source == source
+    }
+    let status = try XCTUnwrap(owner.statusPresentation)
+    let statusView = PageElementStatusView.NativeView()
+    statusView.frame = .init(x: 200, y: 20, width: 160, height: 120)
+    var statusReceipt: SceneSourceInstallation?
+    statusView.onInstallation = { _, installed in statusReceipt = installed }
+    controller.view.addSubview(statusView); statusView.install(status); statusView.layoutIfNeeded()
+    defer { statusView.uninstall() }
+    let installedStatus = try XCTUnwrap(statusReceipt), installedRuntime = try XCTUnwrap(runtimeReceipt)
+    XCTAssertTrue(installedStatus.isInstalled); XCTAssertTrue(installedRuntime.isInstalled)
+    let oldDelivery = owner.runtimeView(session.lease, session: session, basis: nil)
+    let oldConsumer = PreparedAgentElementPreparationOwner.Consumer()
+    owner.attach(oldConsumer)
+    owner.statusInstalled(status, installation: installedStatus)
+    oldDelivery.onInstalled(installedRuntime)
+
+    // No await between queued positive receipts and accepting their successor.
+    // An accepted source-local preparation failure keeps the real predecessor
+    // WK installation alive, so native teardown cannot conceal a missing fence.
+    let replacement = AgentElement(id: source.id, kind: source.kind, frame: source.frame,
+      source: "Replacement", html: "<button>Replacement</button>", javaScript: source.javaScript)
+    let failure = AgentWebSourceFailure(diagnostic: .init(kind: "load_error", elementID: replacement.id,
+      message: "Accepted replacement preparation failed"), source: replacement, leaseID: session.lease.id,
+      loadToken: try XCTUnwrap(session.coordinator.loadToken), policy: nil, rasterAdmission: nil)
+    accept(replacement, failure: failure)
+    let consumer = PreparedAgentElementPreparationOwner.Consumer()
+    var deliveries: [Bool] = []
+    consumer.onRenderReady = { deliveries.append($0) }
+    owner.attach(consumer); owner.detach(oldConsumer)
+    let predecessorProgram = owner.liveProgram
+    XCTAssertNotNil(predecessorProgram)
+    oldDelivery.onInteractionReady(false)
+    XCTAssertEqual(owner.liveProgram, predecessorProgram, "A late old interaction callback cannot clear the retained program during source replacement")
+    XCTAssertTrue(installedStatus.isInstalled); XCTAssertTrue(installedRuntime.isInstalled)
+    await owner.waitForPreparation()
+    try await waitUntil("The successor's preparation boundary drains the queued native deliveries") {
+      owner.statusPresentation?.key.source == replacement
+    }
+    XCTAssertTrue(owner.session === session)
+    XCTAssertTrue(installedRuntime.isInstalled, "The old real installation stayed eligible until callback delivery")
+    XCTAssertFalse(deliveries.isEmpty, "The replacement consumer receives its own pending preparation result")
+    XCTAssertFalse(deliveries.contains(true), "Neither predecessor status nor runtime may acknowledge the replacement consumer")
+    XCTAssertNil(activity.elementFrameVersion(page: 0, source: replacement))
+  }
+
+  @MainActor
   func testRetiringRetainedPageCancelsItsQueuedWebAdmission() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("retained-page-cancel-\(UUID())")
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
@@ -748,14 +835,22 @@ final class PreparedAgentElementViewTests: XCTestCase {
 
   @MainActor
   func testReadyRuntimeRetriesItsCaptureOnlyAfterWholeRasterAdmissionRecovers() async throws {
-    let model = makeModel(), resources = SceneRenderResources.shared
+    let resources = SceneRenderResources()
     let source = element(id: UUID().uuidString, source: "A running control survives snapshot pressure")
     let focus = InteractiveElementReference.page(pageID: UUID(), elementID: source.id)
+    let lease = try await resources.acquireWebSurface(priority: .liveProgram)
+    let session = AgentWebNativeSession(lease: lease, resources: resources, snapshotPolicy: .exact(scale: 2))
+    defer { session.retire() }
     var ready = false
+    var failures: [AgentWebSourceFailure] = []
     func content(scale: Double) -> AnyView {
-      AnyView(PreparedAgentElementView(element: source, allowsInteraction: true, capturePolicy: .exact(scale: scale),
-        focus: focus, onRenderReady: { ready = $0 }, onState: { _, _ in false })
-        .frame(width: 160, height: 120).environment(model))
+      // This consumer actually requests a passive copy of its running control.
+      // The ordinary live page releases that request after first paint; zoom
+      // alone must not recreate the old automatic snapshot path.
+      AnyView(AgentWebElementView(element: source, session: session,
+        snapshotPolicy: .exact(scale: scale), preparesPassiveSnapshot: true,
+        focus: focus, onRenderReady: { ready = $0 }, onFailure: { failures.append($0) },
+        onState: { _, _ in false }).frame(width: 160, height: 120))
     }
     let host = try SurfaceHost(content: content(scale: 2)); defer { host.close() }
     try await waitUntil("The actual control is ready before raster pressure") {
@@ -771,15 +866,23 @@ final class PreparedAgentElementViewTests: XCTestCase {
     let insufficientRelease = try XCTUnwrap(resources.reserveDerivedBytes(8 * 1024, priority: .passive))
     defer { pressure.release(); insufficientRelease.release() }
     host.controller.rootView = content(scale: 3)
-    try await waitUntil("A real higher-density capture reaches resource_limit while its control stays installed") {
-      resources.diagnostics(for: [source]).contains { $0.kind == "resource_limit" }
+    try await waitUntil("A real higher-density capture reaches resource_limit while its control stays installed", diagnostic: {
+      "failures=\(failures), admission=\(resources.rasterAdmission), pendingCaptures=\(coordinator.pendingSnapshotCaptures.count), ready=\(ready)"
+    }) {
+      failures.last?.diagnostic.kind == "resource_limit" && failures.last?.policy == .exact(scale: 3)
         && coordinator.installation(for: source)?.isInstalled == true
     }
+    let failure = try XCTUnwrap(failures.last)
+    XCTAssertEqual(failure.source, source); XCTAssertEqual(failure.leaseID, lease.id)
+    XCTAssertEqual(failure.loadToken, navigation)
     let refusal = resources.lastRasterRefusal?.generation
     insufficientRelease.release()
     try await Task.sleep(for: .milliseconds(150))
+    XCTAssertFalse(failure.canResumeCapture(with: resources.rasterAdmission),
+      "The partial release still cannot admit the complete requested raster")
     XCTAssertEqual(resources.lastRasterRefusal?.generation, refusal,
       "A small unrelated release cannot trigger another impossible capture")
+    XCTAssertEqual(failures.count, 1)
     XCTAssertTrue(webViews(in: host.controller.view).first === web)
     XCTAssertEqual(coordinator.loadToken, navigation)
     XCTAssertTrue(coordinator.installation(for: source)?.isInstalled == true)
@@ -1328,43 +1431,85 @@ final class PreparedAgentElementViewTests: XCTestCase {
 
   @MainActor
   func testPassiveCaptureResumesAfterRealRasterAdmissionWithoutAnotherViewUpdate() async throws {
-    let model = makeModel(), resources = SceneRenderResources.shared
+    let model = makeModel(), resources = SceneRenderResources()
     await model.start(pageSize: NotebookAppModel.defaultPageSize)
     XCTAssertTrue(model.permitsBackgroundPreparation, "Passive preparation requires the real workspace startup")
-    try await waitUntil("Earlier mounted owners must release their asynchronous backing before measuring this pressure") {
-      resources.activeWebSurfaceCount == 0 && resources.pendingWebRequestCount == 0
-        && resources.rasterAdmission.pinnedBytes == 0 && resources.rasterAdmission.passiveReservedBytes == 0
-    }
-    let source = element(id: UUID().uuidString, source: "Stationary passive page")
+    let source = AgentElement(id: UUID().uuidString, kind: .web,
+      frame: .init(x: 0, y: 0, width: 160, height: 120), source: "Stationary passive page",
+      html: "<div style='width:100%;height:100%;background:#67aade'>Stationary passive page</div>",
+      javaScript: "notebook.ready(new Promise(resolve=>window.releaseReady=resolve));")
     let activityReference = InteractiveElementReference.page(pageID: UUID(), elementID: source.id)
+    let preparations = PageAgentPreparationOwner(resources: resources), owner = preparations.owner(for: source.id)
+    defer { preparations.retire() }
     let admission = resources.rasterAdmission
     let available = min(admission.byteLimit - admission.heldBytes,
       admission.passiveByteLimit - admission.pinnedBytes - admission.passiveReservedBytes)
     XCTAssertGreaterThan(available, 1024 * 1024)
     let pressure = try XCTUnwrap(resources.reserveDerivedBytes(available - 64 * 1024, priority: .passive))
     defer { pressure.release() }
+    var acquired: [UUID] = []
+    XCTAssertNil(NotebookNavigationObservation.onWebPreparation)
+    NotebookNavigationObservation.onWebPreparation = { stage, lease, id, _ in
+      if id == source.id, stage == "prepared_admission_acquired" { acquired.append(lease) }
+    }
+    defer { NotebookNavigationObservation.onWebPreparation = nil }
     var ready = false
     let host = try SurfaceHost(content: AnyView(PreparedAgentElementView(element: source,
       allowsInteraction: false, capturePolicy: .exact(scale: 2),
-      focus: activityReference,
+      focus: activityReference, preparations: preparations,
       onRenderReady: { ready = $0 }, onState: { _, _ in XCTFail("A passive capture cannot commit"); return false })
       .frame(width: 160, height: 120).environment(model)))
     defer { host.close() }
-    try await waitUntil("The actual WebKit capture reaches the local resource limit and retires", diagnostic: {
+    try await waitUntil("The admitted passive source is mounted and waiting for its authored ready Promise") {
+      owner.session?.webView.superview != nil && owner.session != nil
+    }
+    let session = try XCTUnwrap(owner.session), coordinator = session.coordinator
+    let deliverFailure = owner.runtimeView(session.lease, session: session, basis: owner.demand?.basis).onFailure
+    var heldFailure: AgentWebSourceFailure?
+    coordinator.use(onFailure: { heldFailure = $0 })
+    func releaseAuthorReady(_ web: WKWebView) async throws {
+      let deadline = ContinuousClock.now + .seconds(3)
+      while (try? await web.evaluateJavaScript("typeof window.releaseReady==='function'")) as? Bool != true,
+        ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
+      let installed = try await web.evaluateJavaScript("typeof window.releaseReady==='function'") as? Bool
+      XCTAssertEqual(installed, true, "The actual authored Promise must install its resolver")
+      _ = try await web.evaluateJavaScript("window.releaseReady();true")
+    }
+    try await releaseAuthorReady(session.webView)
+    try await waitUntil("The actual WebKit capture reports its typed local resource refusal", diagnostic: {
       "source=\(source.id), diagnostics=\(resources.diagnostics(for: [source])), activity=\(resources.webActivity(for: activityReference)), "
         + "mountedWK=\(self.webViews(in: host.controller.view).count), activeWK=\(resources.activeWebSurfaceCount), "
         + "pendingWK=\(resources.pendingWebRequestCount), admission=\(resources.rasterAdmission), ready=\(ready)"
     }) {
-      resources.diagnostics(for: [source]).contains { $0.kind == "resource_limit" }
-        && self.webViews(in: host.controller.view).isEmpty && resources.webActivity(for: activityReference).activeLeaseCount == 0
+      heldFailure != nil && resources.diagnostics(for: [source]).contains { $0.kind == "resource_limit" }
     }
+    let failure = try XCTUnwrap(heldFailure)
+    XCTAssertEqual(failure.source, source); XCTAssertEqual(failure.leaseID, session.lease.id)
+    XCTAssertEqual(failure.policy, .exact(scale: 2)); XCTAssertNotNil(failure.rasterAdmission)
+    XCTAssertEqual(failure.stateCreditBytes, 0, "A passive executor does not reserve interactive restart credit")
     XCTAssertFalse(ready)
     let refusal = resources.lastRasterRefusal?.generation
     try await Task.sleep(for: .milliseconds(120))
     XCTAssertEqual(resources.lastRasterRefusal?.generation, refusal,
-      "Releasing the failed executor cannot create a repeated capture/admission loop")
+      "An unchanged refusal cannot create a repeated capture/admission loop")
+    // Hold only the existing native-to-owner failure delivery. Stop the old
+    // coordinator's passive job so it cannot consume the recovery before the
+    // page owner receives this exact refusal and chooses its next executor.
+    coordinator.use(passiveSnapshot: false)
+    let generation = resources.rasterAdmissionGeneration
     pressure.release()
-    // No rootView replacement, camera change, source edit or synthetic ready.
+    try await waitUntil("The real capacity event is published before failure delivery registers its listener") {
+      resources.rasterAdmissionGeneration > generation
+    }
+    XCTAssertTrue(failure.canResumeCapture(with: resources.rasterAdmission))
+    deliverFailure(failure)
+    try await waitUntil("The owner accepts the already recovered capacity and replaces exactly the failed executor") {
+      owner.session != nil && owner.session !== session
+    }
+    let replacement = try XCTUnwrap(owner.session)
+    try await releaseAuthorReady(replacement.webView)
+    // No rootView replacement, camera change, source edit or further capacity
+    // release. The replacement completes the same authored readiness contract.
     try await waitUntil("Released external pressure wakes the stationary source and installs its actual pixels") {
       guard ready, self.webViews(in: host.controller.view).isEmpty,
         let raster = resources.retainRaster(for: .agent(source), minimumScale: 2) else { return false }
@@ -1374,6 +1519,8 @@ final class PreparedAgentElementViewTests: XCTestCase {
     let raster = try XCTUnwrap(resources.retainRaster(for: .agent(source), minimumScale: 2))
     defer { raster.release() }
     XCTAssertTrue(rasterViews(in: host.controller.view).contains { $0.installation(for: raster).isInstalled })
+    XCTAssertEqual(acquired.count, 2, "The already processed capacity edge admits one replacement, without an extra wake or retry loop")
+    XCTAssertTrue(session.isRetired)
     XCTAssertLessThanOrEqual(resources.residentBytes + resources.reservedBytes, resources.byteLimit)
   }
 

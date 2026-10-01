@@ -241,6 +241,50 @@ import XCTest
     defer { trace.stop() }
     let previousReadiness = curl.onPageFrameReady
     var shown = false
+    struct LayerWitness {
+      let id: ObjectIdentifier
+      let hidden: Bool, opacity: Float, clips: Bool
+      let bounds: CGRect, position: CGPoint
+      let transform: CATransform3D
+      let viewHidden: Bool?, viewAlpha: CGFloat?, viewClips: Bool?
+    }
+    struct HierarchyWitness {
+      let timing: SheetCurlMetalView.PageUpdateTiming
+      let captureBegan: TimeInterval
+      let captureUICycle: Int?, captureRunLoopPass: Int?
+      let windowID: ObjectIdentifier, sceneID: ObjectIdentifier, sceneState: Int
+      let windowHidden: Bool, windowBounds: CGRect, curlWindowMatches: Bool, curlBounds: CGRect
+      let outputOnCurl: Bool, windowLayerReached: Bool, drawableSize: CGSize?, transactional: Bool?
+      let ancestors: [LayerWitness]
+      let captureEnded: TimeInterval
+    }
+    var hierarchy: [HierarchyWitness] = []
+    hierarchy.reserveCapacity(6)
+    var receipts: [SheetCurlMetalView.PageReceiptTiming] = []
+    receipts.reserveCapacity(96)
+    func captureHierarchy(_ timing: SheetCurlMetalView.PageUpdateTiming) -> HierarchyWitness {
+      let began = CACurrentMediaTime()
+      var ancestor = curl.pageOutputLayer as CALayer?, nodes: [LayerWitness] = []
+      nodes.reserveCapacity(8)
+      var windowLayerReached = false
+      while let node = ancestor, nodes.count < 32 {
+        if node === window.layer { windowLayerReached = true }
+        let view = node.delegate as? UIView
+        nodes.append(.init(id: ObjectIdentifier(node), hidden: node.isHidden, opacity: node.opacity,
+          clips: node.masksToBounds, bounds: node.bounds, position: node.position,
+          transform: node.transform,
+          viewHidden: view?.isHidden, viewAlpha: view?.alpha, viewClips: view?.clipsToBounds))
+        ancestor = node.superlayer
+      }
+      let output = curl.pageOutputLayer
+      return .init(timing: timing, captureBegan: began,
+        captureUICycle: trace.events.last?.deliveryUICycle, captureRunLoopPass: trace.events.last?.deliveryRunLoopPass,
+        windowID: ObjectIdentifier(window), sceneID: ObjectIdentifier(scene), sceneState: scene.activationState.rawValue,
+        windowHidden: window.isHidden, windowBounds: window.bounds, curlWindowMatches: curl.window === window,
+        curlBounds: curl.bounds, outputOnCurl: output?.superlayer === curl.layer, windowLayerReached: windowLayerReached,
+        drawableSize: output?.drawableSize, transactional: output?.presentsWithTransaction, ancestors: nodes,
+        captureEnded: CACurrentMediaTime())
+    }
     curl.onPageUpdateMeasured = { timing in
       trace.record("curl_\(timing.phase.rawValue)", at: timing.recorded,
         owner: timing.operationID.uuidString, source: String(timing.nextSequence), modelTime: timing.modelTime,
@@ -251,8 +295,10 @@ import XCTest
         let drawable = timing.drawableID.map { String($0) } ?? "none"
         trace.record("curl_publication_identity", at: timing.recorded, owner: timing.operationID.uuidString,
           source: "phase=\(timing.phase.rawValue),sequence=\(sequence),drawableID=\(drawable),outputID=\(timing.outputID?.uuidString ?? "none"),caRevision=\(timing.caRevision),committedCARevision=\(timing.committedCARevision)")
+        hierarchy.append(captureHierarchy(timing))
       }
     }
+    curl.onPageReceiptMeasured = { receipts.append($0) }
     curl.onFrameMeasured = { timing in
       trace.record("curl_drawable_identity", at: timing.encodingBegan, owner: timing.operationID?.uuidString,
         source: "sequence=\(timing.sequence),drawableID=\(timing.drawableID)")
@@ -285,7 +331,7 @@ import XCTest
     }
     defer {
       curl.onPageFrameReady = previousReadiness
-      curl.onPageUpdateMeasured = nil; curl.onFrameMeasured = nil
+      curl.onPageUpdateMeasured = nil; curl.onFrameMeasured = nil; curl.onPageReceiptMeasured = nil
     }
     trace.record("curl_command_enter")
     XCTAssertTrue(commands.send(.step(1), ownerID: owner, source: "scheduling-curl"))
@@ -293,9 +339,40 @@ import XCTest
     let deadline = ContinuousClock.now + .seconds(2)
     while selected != 1, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(1)) }
     trace.record("curl_owner_landed")
+    trace.record("measurement_completed")
+    // Formatting is diagnostic work after the measured turn. Capture cost has
+    // its own source interval and is never subtracted from application latency.
+    trace.record("curl_observation_serialization_began")
+    for timing in receipts {
+      let receipt = timing.receipt
+      let identity = "sequence=\(timing.sequence),drawableID=\(receipt.drawableID),outputID=\(timing.outputID?.uuidString ?? "none"),generation=\(timing.generation),current=\(timing.isCurrent),ready=\(receipt.isReady),presentedTime=\(receipt.presentedTime)"
+      trace.record("curl_os_handler_entered", at: receipt.handlerEntered,
+        owner: timing.operationID?.uuidString, source: identity)
+      trace.record("curl_os_handler_read", at: receipt.handlerRead,
+        owner: timing.operationID?.uuidString, source: identity)
+      trace.record("curl_os_handler_main_delivered", at: receipt.mainDelivered,
+        owner: timing.operationID?.uuidString, source: identity)
+    }
+    for witness in hierarchy {
+      let timing = witness.timing
+      let identity = "phase=\(timing.phase.rawValue),sequence=\(timing.publicationSequence.map { String($0) } ?? "none"),drawableID=\(timing.drawableID.map { String($0) } ?? "none"),outputID=\(timing.outputID?.uuidString ?? "none"),captureUICycle=\(witness.captureUICycle.map { String($0) } ?? "none"),captureRunLoopPass=\(witness.captureRunLoopPass.map { String($0) } ?? "none")"
+      trace.record("curl_hierarchy_capture_began", at: witness.captureBegan,
+        owner: timing.operationID.uuidString, source: identity)
+      trace.record("curl_hierarchy_capture_ended", at: witness.captureEnded,
+        owner: timing.operationID.uuidString, source: identity)
+      let nodes = witness.ancestors.map { node in
+        let t = node.transform
+        return "id=\(node.id),hidden=\(node.hidden),opacity=\(node.opacity),clips=\(node.clips),bounds=\(NSCoder.string(for: node.bounds)),position=\(NSCoder.string(for: node.position)),transform=[\(t.m11),\(t.m12),\(t.m13),\(t.m14);\(t.m21),\(t.m22),\(t.m23),\(t.m24);\(t.m31),\(t.m32),\(t.m33),\(t.m34);\(t.m41),\(t.m42),\(t.m43),\(t.m44)],viewHidden=\(node.viewHidden.map { String($0) } ?? "none"),viewAlpha=\(node.viewAlpha.map { String(describing: $0) } ?? "none"),viewClips=\(node.viewClips.map { String($0) } ?? "none")"
+      }
+      let values = "window=\(witness.windowID),scene=\(witness.sceneID),sceneState=\(witness.sceneState),windowHidden=\(witness.windowHidden),windowBounds=\(NSCoder.string(for: witness.windowBounds)),curlWindowMatches=\(witness.curlWindowMatches),curlBounds=\(NSCoder.string(for: witness.curlBounds)),outputOnCurl=\(witness.outputOnCurl),windowLayerReached=\(witness.windowLayerReached),drawableSize=\(witness.drawableSize.map { NSCoder.string(for: $0) } ?? "none"),transactional=\(witness.transactional.map { String($0) } ?? "none"),ancestors=[\(nodes.joined(separator: ";"))]"
+      trace.record("curl_publication_hierarchy", at: timing.recorded,
+        owner: timing.operationID.uuidString, source: identity + "," + values)
+    }
+    trace.record("curl_observation_serialization_ended")
     trace.stop()
     add(try trace.attachment(scenario: "first-curl"))
     XCTAssertEqual(selected, 1); XCTAssertTrue(shown); XCTAssertEqual(trace.droppedEvents, 0)
     XCTAssertTrue(trace.events.contains { $0.stage == "curl_os_presented" })
+    XCTAssertTrue(trace.events.contains { $0.stage == "curl_os_handler_read" })
   }
 }

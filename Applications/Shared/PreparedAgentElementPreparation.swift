@@ -62,7 +62,9 @@ final class PreparedAgentElementPreparationOwner {
   @ObservationIgnored private var request: UUID?
   @ObservationIgnored private var task: Task<Void, Never>?
   @ObservationIgnored private var interactionUpdate: Task<Void, Never>?
-  @ObservationIgnored private var notifications: Set<AnyCancellable> = []
+  @ObservationIgnored private var sourceObservation: AnyCancellable?
+  @ObservationIgnored private var observedSourceID: String?
+  @ObservationIgnored private var rasterAdmissionObservation: AnyCancellable?
   @ObservationIgnored private weak var consumer: Consumer?
   @ObservationIgnored private var lastFailure: PageTurnPreparationFailure?
   @ObservationIgnored private(set) var isRetired = false
@@ -80,12 +82,11 @@ final class PreparedAgentElementPreparationOwner {
   private(set) var failure: String?
   private var failedSource: AgentElement?
   private var failedCapturePolicy: AgentSnapshotPolicy?
-  @ObservationIgnored private var failedCaptureAdmission: SceneRasterAdmission?
-  private var waitingForAdmission = false
+  @ObservationIgnored private var failedCapture: AgentWebSourceFailure?
   #if DEBUG
   @ObservationIgnored private var rejectedWebAdmission: String?
   func diagnostic() -> String {
-    "active=\(demand?.active == true),web=\(web != nil),live=\(showsLiveProgram),waiting=\(waitingForAdmission),failure=\(failure ?? "none"),rejection=\(rejectedWebAdmission ?? "none")"
+    "active=\(demand?.active == true),web=\(web != nil),live=\(showsLiveProgram),failure=\(failure ?? "none"),rejection=\(rejectedWebAdmission ?? "none")"
   }
   #endif
   #if os(iOS)
@@ -141,7 +142,8 @@ final class PreparedAgentElementPreparationOwner {
     // Runtime input readiness remains liveProgram/onInteractionReady.
     if installation.isInstalled {
       Task { @MainActor [weak self, weak value] in
-        guard let self, let value, self.statusPresentation === value, installation.isInstalled else { return }
+        guard let self, let value, !self.isRetired, self.demand?.source == value.key.source,
+          self.statusPresentation === value, installation.isInstalled else { return }
         self.publishReady(true)
       }
     } else {
@@ -179,7 +181,7 @@ final class PreparedAgentElementPreparationOwner {
     #if os(iOS)
     prepareStatus(requestedStatus)
     #endif
-    if let previous, configuration.demand.hasSamePreparation(as: previous), !waitingForAdmission {
+    if let previous, configuration.demand.hasSamePreparation(as: previous) {
       // Input/focus changes reconfigure this accepted job. They do not replace
       // its queue position, timeout or in-flight passive WebKit capture.
       if let request { resources.updatePendingWebPriority(request, priority: configuration.demand.webPriority) }
@@ -219,6 +221,7 @@ final class PreparedAgentElementPreparationOwner {
   }
   private func restart() {
     guard !isRetired, demand != nil else { return }
+    rasterAdmissionObservation = nil
     interactionUpdate?.cancel(); interactionUpdate = nil
     task?.cancel(); let id = UUID(); request = id
     task = Task { @MainActor [weak self] in
@@ -262,34 +265,40 @@ final class PreparedAgentElementPreparationOwner {
     failedSource = nil; failure = nil; lastFailure = nil; restart()
   }
   private func observeResourcesIfNeeded() {
-    guard notifications.isEmpty else { return }
-    NotificationCenter.default.publisher(for: SceneRenderResources.didChange).sink { [weak self] note in
-      let id = note.object as? String
+    guard let sourceID = demand?.source.id,
+      sourceObservation == nil || observedSourceID != sourceID else { return }
+    sourceObservation = nil; observedSourceID = sourceID
+    sourceObservation = NotificationCenter.default.publisher(for: SceneRenderResources.didChange)
+      .filter { ($0.object as? String) == sourceID }.sink { [weak self] _ in
       Task { @MainActor [weak self] in
-        guard let self, !self.isRetired, id == self.demand?.source.id else { return }
+        guard let self, !self.isRetired, sourceID == self.demand?.source.id else { return }
         self.adoptPreparedRaster()
       }
-    }.store(in: &notifications)
-    NotificationCenter.default.publisher(for: SceneRenderResources.didGainRasterAdmission).sink { [weak self] _ in
-      Task { @MainActor [weak self] in
-        guard let self, !self.isRetired else { return }; self.retryAfterRasterAdmission()
-      }
-    }.store(in: &notifications)
-    observeWebAdmission()
-  }
-  private func observeWebAdmission() {
-    guard !isRetired else { return }
-    withObservationTracking { _ = resources.webAdmissionGeneration } onChange: { [weak self] in
-      Task { @MainActor [weak self] in
-        guard let self, !self.isRetired else { return }
-        if self.waitingForAdmission { self.waitingForAdmission = false; self.restart() }
-        self.observeWebAdmission()
-      }
     }
+  }
+  private func observeRasterAdmissionIfNeeded() {
+    guard rasterAdmissionObservation == nil, !isRetired, web == nil,
+      failedSource == demand?.source, failedCapturePolicy == demand?.policy,
+      failedCapture != nil else { return }
+    // Only the exact refused capture waits for capacity. Healthy live programs
+    // and ordinary queued requests have their own completion, so they do not
+    // receive every unrelated staging/pixel release in the scene.
+    rasterAdmissionObservation = NotificationCenter.default.publisher(
+      for: SceneRenderResources.didGainRasterAdmission, object: resources).sink { [weak self] _ in
+        Task { @MainActor [weak self] in
+          guard let self, !self.isRetired else { return }
+          self.retryAfterRasterAdmission()
+        }
+      }
+    // Failure delivery and capacity publication are independent deferred
+    // callbacks. Accept an already available whole request before waiting for
+    // the next event, using the same exact refusal/restart price as later wakes.
+    retryAfterRasterAdmission()
   }
   func retire(afterUpdate: Bool = false) {
     guard !isRetired else { return }
     isRetired = true; request = nil; task?.cancel(); task = nil
+    rasterAdmissionObservation = nil
     #if os(iOS)
     statusTask?.cancel(); statusTask = nil; statusKey = nil; statusInstallation = nil
     #endif
@@ -303,7 +312,7 @@ final class PreparedAgentElementPreparationOwner {
       pageTurnActivity?.removeElementFrame(page: context.pageIndex, element: element.id, owner: pageFrameOwner)
     }
     #endif
-    notifications.removeAll(); lastFailure = nil
+    sourceObservation = nil; observedSourceID = nil; lastFailure = nil
     if afterUpdate {
       task = Task { @MainActor [self] in finishRetirement(); task = nil }
     } else { finishRetirement() }
@@ -327,12 +336,13 @@ final class PreparedAgentElementPreparationOwner {
   private func replaceSupersededSession(_ previous: AgentWebNativeSession) {
     guard !isRetired, session === previous, !previous.isRetired else { return }
     task?.cancel(); task = nil; request = nil
+    rasterAdmissionObservation = nil
     interactionUpdate?.cancel(); interactionUpdate = nil
     releaseWeb(); retireRuntime()
     liveProgram = nil; preparedSource = nil; nativeRuntimeToken = nil; paintedRuntime = nil
     runtimeWasPresented = false
-    failedSource = nil; failedCapturePolicy = nil; failedCaptureAdmission = nil
-    failure = nil; lastFailure = nil; waitingForAdmission = false
+    failedSource = nil; failedCapturePolicy = nil; failedCapture = nil
+    failure = nil; lastFailure = nil
     #if os(iOS)
       statusTask?.cancel(); statusTask = nil; statusKey = nil; statusPresentation = nil; statusInstallation = nil
       if let context = rasterPreparation {
@@ -504,7 +514,9 @@ final class PreparedAgentElementPreparationOwner {
           }
         } else if !ready, owner.preparedSource != element { owner.publishReady(false) }
       }, onInteractionReady: { [weak owner, weak model] ready in
-        guard let owner, let model, !owner.isRetired, model.shutdownPhase != .stopped, owner.web?.id == web.id, !web.isReleased else { return }
+        guard let owner, let model, !owner.isRetired, model.shutdownPhase != .stopped,
+          let current = owner.demand, AgentProgramSource(current.source) == AgentProgramSource(element),
+          owner.web?.id == web.id, !web.isReleased else { return }
         let next = ready ? AgentProgramSource(element) : nil
         if owner.liveProgram != next { owner.liveProgram = next }
         if !ready { owner.nativeRuntimeToken = nil; owner.paintedRuntime = nil }
@@ -516,13 +528,14 @@ final class PreparedAgentElementPreparationOwner {
         guard let installed = installation.source.agentElement else { return }
         if !installation.isInstalled { installationContext.record(installation); return }
         guard let owner, !owner.isRetired,
+          owner.demand?.source == element,
           SceneRasterSource.agent(installed) == .agent(element),
           owner.demand?.active == true || owner.runtimeWasPresented,
           owner.web?.id == web.id, owner.liveProgram == AgentProgramSource(installed) else { return }
         installationContext.record(installation)
         Task { @MainActor [weak owner] in
           guard let owner, !owner.isRetired, installation.isInstalled, owner.web?.id == web.id,
-            owner.liveProgram == AgentProgramSource(element) else { return }
+            owner.demand?.source == element, owner.liveProgram == AgentProgramSource(element) else { return }
           owner.nativeRuntimeToken = installation.runtimeToken
           if owner.demand?.active == true, !owner.runtimeWasPresented { owner.runtimeWasPresented = true }
           owner.publishReady(true)
@@ -551,11 +564,12 @@ final class PreparedAgentElementPreparationOwner {
         }
         owner.failedSource = owned ? nil : event.source
         owner.failedCapturePolicy = event.policy
-        owner.failedCaptureAdmission = event.diagnostic.kind == "resource_limit" ? event.rasterAdmission : nil
+        owner.failedCapture = event.diagnostic.kind == "resource_limit" ? event : nil
         if event.policy == nil || !current.active || owner.liveProgram != AgentProgramSource(element) {
           owner.liveProgram = nil; owner.runtimeWasPresented = false
           owner.retireRuntime(); owner.releaseWeb()
         }
+        owner.observeRasterAdmissionIfNeeded()
         owner.publishReady(false)
       }, onState: configuration!.onState)
   }
@@ -597,14 +611,13 @@ final class PreparedAgentElementPreparationOwner {
     // retired board producer; only a standalone retired consumer retries here.
     guard !isRetired, configuration?.model != nil, web == nil, failedSource == element,
       failedCapturePolicy == snapshotPolicy,
-      let previous = failedCaptureAdmission else { return }
+      let failedCapture else { return }
     let current = resources.rasterAdmission
     // A notification is only a wake-up. The failed source retries after a real
     // capacity improvement that admits its whole capture, never on its own
     // staging release or while the same impossible request remains unchanged.
-    guard AgentWebSourceFailure.captureFitsAfterImprovement(source: element, policy: snapshotPolicy,
-      previous: previous, current: current) else { return }
-    failedSource = nil; failedCapturePolicy = nil; failedCaptureAdmission = nil
+    guard failedCapture.canResumeCapture(with: current, restartingRuntime: demand?.active == true) else { return }
+    failedSource = nil; failedCapturePolicy = nil; self.failedCapture = nil
     failure = nil; restart()
   }
 
@@ -613,7 +626,6 @@ final class PreparedAgentElementPreparationOwner {
     guard !Task.isCancelled, !isRetired, configuration?.model != nil, model.shutdownPhase != .stopped,
       let request, let demand else { return }
     let model = model, focus = focus, rasterPreparation = rasterPreparation
-    waitingForAdmission = false
     if !demand.active, runtimeWasPresented, let retiring = web,
       liveProgram == AgentProgramSource(demand.source) {
       // The departing page first saves its frozen model. Its already accepted
@@ -661,7 +673,7 @@ final class PreparedAgentElementPreparationOwner {
     }
     if demand.runtimeFailure != nil { return }
     if failedSource == demand.source, failedCapturePolicy == nil || failedCapturePolicy == demand.policy { return }
-    failedSource = nil; failedCapturePolicy = nil; failedCaptureAdmission = nil
+    failedSource = nil; failedCapturePolicy = nil; failedCapture = nil
     failure = nil
     if preparedSource != demand.source { publishReady(false) }
     if !demand.active && preparedSource == demand.source {
@@ -726,14 +738,12 @@ final class PreparedAgentElementPreparationOwner {
       rejectedWebAdmission = "\(String(describing: error));leases=\(resources.activeWebSurfaceCount),queued=\(resources.pendingWebRequestCount),constructors=\(resources.activeWebConstructionCount)"
       #endif
       switch error {
-      case SceneWebAdmissionError.backgroundQueueFull:
-        failure = nil; waitingForAdmission = true
       case SceneWebAdmissionError.timedOut:
-        failure = "Не удалось дождаться запуска программы"; waitingForAdmission = false
+        failure = "Не удалось дождаться запуска программы"
       case SceneWebAdmissionError.preparationDisabled:
-        failure = "Не удалось подготовить программу"; waitingForAdmission = false
+        failure = "Не удалось подготовить программу"
       default:
-        failure = "Не удалось запустить программу"; waitingForAdmission = false
+        failure = "Не удалось запустить программу"
       }
       publishReady(false)
     }

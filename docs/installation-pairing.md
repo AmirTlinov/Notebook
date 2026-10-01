@@ -85,6 +85,14 @@ existing one. See [archive transfer](archive-transfer.md).
 
 ## Release and verification
 
+An ordinary pair update stages and verifies the Mac bundle, drains accepted
+writes through ordinary quit, exchanges the bundle atomically and launches it
+before the long iPad installation. A launcher can reopen the departing Mac
+between quit and exchange. Read the actual IPC socket peer PID and its in-memory
+code-signature CDHash, and compare it with the signed built Mac before and after
+the iPad update. A stale peer requires ordinary quit and a fresh launch. Bundle
+version and signature on disk alone do not identify the serving runtime.
+
 Current wire/manifest admission is specified by the
 [transport contract](transport-contract.md). Signed builds use team `M94V58FCVP` and
 preserve installed container identities. The `NotebookDevices` schema must be

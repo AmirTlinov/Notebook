@@ -128,7 +128,7 @@ final class PageTurnActivity {
     let materialChanged = previous?.published.version != selected.version
     guard materialChanged || previous?.published.isInstalled != selected.isInstalled else { return }
     for observer in Array(preparationObservers.values) {
-      observer(.elementFrames(pageIndex: page, materialChanged: materialChanged))
+      observer(.elementFrames(pageIndex: page, elementID: element, materialChanged: materialChanged))
     }
   }
   func removeElementFrame(page: Int, element: String, owner: UUID) {
@@ -136,7 +136,7 @@ final class PageTurnActivity {
     elementFrames[page]?[element] = nil
     if elementFrames[page]?.isEmpty == true { elementFrames[page] = nil }
     for observer in Array(preparationObservers.values) {
-      observer(.elementFrames(pageIndex: page, materialChanged: true))
+      observer(.elementFrames(pageIndex: page, elementID: element, materialChanged: true))
     }
   }
   func remapElementFrames(_ indices: [Int: Int]) {
@@ -174,6 +174,13 @@ final class PageTurnActivity {
     guard let retained = raster.retainedCopy() else { throw SceneRenderError.snapshotPending("page_element_pixels") }
     return .init(raster: retained)
   }
+  /// The addressed owner's last installation receipt is a readiness hint.
+  /// Borrowing still checks today's hierarchy through elementFrameVersion.
+  func publishedElementFrameVersion(page: Int, source: AgentElement) -> ElementFrameVersion? {
+    guard let provider = elementFrames[page]?[source.id]?.published,
+      provider.source == source, provider.isInstalled, provider.acquisition != nil else { return nil }
+    return provider.version
+  }
   func elementFrameVersion(page: Int, source: AgentElement) -> ElementFrameVersion? {
     guard let provider = elementFrames[page]?[source.id]?.installed, provider.source == source else { return nil }
     return provider.version
@@ -194,7 +201,7 @@ final class PageTurnActivity {
     case demand
     case refine(pageIndex: Int)
     case stage(pageIndex: Int)
-    case elementFrames(pageIndex: Int, materialChanged: Bool)
+    case elementFrames(pageIndex: Int, elementID: String, materialChanged: Bool)
   }
   @ObservationIgnored private var preparationObservers: [UUID: @MainActor (PreparationChange) -> Void] = [:]
 

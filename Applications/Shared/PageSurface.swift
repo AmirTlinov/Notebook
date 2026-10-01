@@ -286,7 +286,7 @@ struct PageSurface: View {
       return try await owner.acquire(page: page, readiness: receipt, priority: priority)
     }
     onRenderReady(readiness.isReady(page),
-      capturable: materialOwner.isCapturable(readiness: onRenderReady) && onRenderReady.inkFrameIsReady?() == true,
+      capturable: materialOwner.isCaptureReady(readiness: onRenderReady) && onRenderReady.inkFrameIsReady?() == true,
       paperReady: readiness.paperIsReady(page))
     #else
     onRenderReady(readiness.isReady(page))

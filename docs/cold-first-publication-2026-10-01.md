@@ -151,3 +151,83 @@ receipts24,294–43,266мс при цели16,667мс. Порог сохранё
 PASS приёмки скорости. Он относится к предшествующей версии исходников
 `ba505e70…`, до исправления endpoint ordering. Release scope и этот открытый
 latency scope записываются раздельно.
+
+## Адресные условия готовности после 233
+
+**Причина оставшейся работы Main.** `AgentOverlayReadiness.publish` проверял весь
+состав после каждого локального receipt. `PageTurnActivity` сообщал только номер
+страницы; `PageTurnMaterialOwner` повторно обходил её layers и запрашивал каждый
+provider. Этот запрос проверял `SceneSourceInstallation.isInstalled`, включая
+ancestor visibility и преобразование bounds. Последовательная установка N
+программ давала повторные обходы растущего установленного состава. Отсечение
+одинаковых parent publications в233 сохраняло эти обходы перед отсечением.
+Доля этой работы в исторических168,969мс отдельно не установлена.
+
+**Ремонт.** Overlay хранит отсутствующие условия у своей immutable presentation.
+Принятие состава пересчитывает их один раз; source/material callback меняет одну
+запись, публикация читает пустоту множества. Material owner хранит требования
+своего принятого layer directory. Событие provider несёт elementID; обновляются
+его version/availability и необходимый static slot. Новый состав, размер,
+readiness binding или перестановка страницы пересоздают эти требования;
+retirement освобождает их. Runtime не запускает спекулятивную полную подготовку.
+Прежний `isCapturable` и его вызовы на каждом callback удалены. Перед реальным
+acquire и после ожидания сохраняется свежая проверка всего заимствуемого cut:
+hint готовности не заменяет установленное представление или OS показ.
+
+**Уведомления и восстановление.** `PreparedAgentElementPreparationOwner` фильтрует
+новый raster по sourceID до создания Main task. Подписка на освобождение памяти
+существует только у конкретного отказавшего capture и заканчивается при restart,
+замене или retirement. Прежние `waitingForAdmission` и постоянный WebKit observer
+удалены: этот owner запрашивает input/liveProgram/visible, а отказ ограниченной
+очереди относится только к background; принятый запрос завершает его continuation.
+Точный `AgentWebSourceFailure` сохраняет baseline и state credit. После подписки
+проверяется уже доступный целый запрос: отказ и освобождение могли доставиться в
+обратном порядке. Active restart учитывает цену состояния, passive restart не
+получает начальный credit. Это устраняет пропущенный wake и повторный запуск за
+счёт ресурсов собственного завершённого executor.
+
+**Актуальность публикации.** Отложенные positive receipts status/runtime
+повторно проверяют принятый source при доставке. Между постановкой callback
+и его выполнением может прийти новое содержимое при ещё смонтированном старом
+слое. Старый слой подтверждает только свой источник и не завершает graphics
+receipt нового consumer. Interaction callback проверяет `AgentProgramSource`:
+placement/state echo сохраняет готовность того же исполнения, смена кода
+отсекает callback предшественника.
+
+**Проверка.** Существующие сценарии расширены100000 логическими source receipts,
+адресными material/availability переходами и потерей sibling без callback перед
+настоящим acquire. Отдельно проверяются stationary capture recovery, pending
+program turn, cold24, отмена/возврат и первый штрих. Физический прогон235 дал13PASS из15. Две
+проверки давления требовали пустого shared allocator и уже удалённого автоматического
+снимка на zoom; исправлены их владельцы нагрузки/явного capture, результат адресного
+повтора фиксируется отдельно. Код продукта между этими прогонами одинаковый.
+
+**Оставшаяся диагностика.** Optional Metal probe разделяет source handler,
+`presentedTime` и Main delivery; test сохраняет значения exact layer hierarchy
+перед/после present. Форматирование выполняется после окончания сценария, стоимость
+снятия значений записывается отдельно и не вычитается. WebKit cold24 не имеет
+HTTP/file/package ожидания между return и policy. В upstream `afc5c2a4…`
+`WebKit2Logging` передаётся дочерним процессам; release log перед
+[policy IPC](https://github.com/WebKit/WebKit/blob/afc5c2a4647ccacf4755d91a618f042609142768/Source/WebKit/WebProcess/WebCoreSupport/WebFrameLoaderClient.cpp#L243)
+отсутствует. Loading `WebPage::loadData` и UI policy связываются navigation/page/PID;
+Network содержит ответ, Layout — layout. Пересланный через UIProcess лог получает
+время получателя. Logging-only capture с обоими процессами может установить порядок
+и начало WebContent load, однако sender→Main задержка требует отдельной исходной
+отметки. Нулевые строки старой записи и флаги установленного iOS27 не объяснены.
+
+
+**Новые source clocks235.** Первый curl action→OS24,140мс; sequence0 уже в
+Metal handler имеет presentedTime0 в10,529мс, до CA commit10,776мс. Main
+получает его через0,377мс. GPU завершён7,672мс; видимость, attachment, transform
+и размеры десяти предков корректны в model tree. Первый успешный OS показ
+совпадает с UIKit target с отклонением0,0035мс. Server discard первого drawable
+и server installation layer этим не установлены. Strict16,667мс остаётся открытым.
+
+Cold24: первая native installation454,150мс, все24 —1153,228мс; первый конструктор
+24,933мс. Navigation request→UI policy220,328мс, return→policy219,868мс — основной
+неразложенный интервал. Между UI opportunities встречается96,238мс с несколькими
+run-loop entries/callbacks; непрерывный Main block этим не доказан. Два поздних
+конструктора соседней страницы принадлежат существующим transient visible workers,
+не дополнительным persistent runtimes. Их вклад не измерен. Диагностика находится
+в `/private/tmp/notebook-cold-235-final-{cold,curl}-receipts/`; её PASS означает
+получение наблюдения, не приёмку скорости.

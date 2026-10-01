@@ -9,6 +9,12 @@ enum NotebookMetalFrameReadiness: Sendable {
   case osPresentation(TimeInterval)
   case simulatorCommandCompletion(Bool)
 
+  struct OSObservation: Sendable {
+    let drawableID: UInt64
+    let handlerEntered, handlerRead, presentedTime, mainDelivered: TimeInterval
+    var isReady: Bool { NotebookMetalFrameReadiness.osPresentation(presentedTime).isReady }
+  }
+
   var presentedTime:TimeInterval? {
     if case .osPresentation(let time)=self, isReady { return time };return nil
   }
@@ -23,6 +29,7 @@ enum NotebookMetalFrameReadiness: Sendable {
   /// completed. Its owner presents it in this same actor transaction.
   @MainActor static func observe(_ drawable:any CAMetalDrawable,
     commandBuffer:(any MTLCommandBuffer)?,
+    observed:(@MainActor @Sendable (OSObservation)->Void)? = nil,
     ready:@escaping @MainActor @Sendable (Self)->Void) {
     #if targetEnvironment(simulator)
     if let commandBuffer {
@@ -35,8 +42,17 @@ enum NotebookMetalFrameReadiness: Sendable {
     }
     #else
     drawable.addPresentedHandler { drawable in
+      let entered = observed.map { _ in CACurrentMediaTime() }
       let time=drawable.presentedTime
-      Task { @MainActor in ready(.osPresentation(time)) }
+      let read = entered.map { _ in CACurrentMediaTime() }
+      let id = entered.map { _ in UInt64(drawable.drawableID) }
+      Task { @MainActor in
+        if let entered, let read, let id {
+          observed?(.init(drawableID: id, handlerEntered: entered, handlerRead: read,
+            presentedTime: time, mainDelivered: CACurrentMediaTime()))
+        }
+        ready(.osPresentation(time))
+      }
     }
     #endif
   }

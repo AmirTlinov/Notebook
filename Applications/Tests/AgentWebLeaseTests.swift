@@ -806,8 +806,21 @@ final class AgentWebLeaseTests: XCTestCase {
         publish: { publications.append(($0, $1)) })
       readiness.publish()
     }
-    prepare([previous, second, third]); prepare([previous, second, third])
+    let cohort = (0..<100_000).map { index in
+      AgentElement(id: "cohort-\(index)", kind: .web, frame: previous.frame, source: "cohort", html: "cohort")
+    }
+    prepare(cohort + [previous, second, third]); prepare(cohort + [previous, second, third])
     XCTAssertEqual(publications.map(\.ready), [false], "The pending presentation publishes once")
+    let receiptStarted = CACurrentMediaTime()
+    var accepted = 0
+    for source in cohort {
+      if readiness.record(source, ready: true) { accepted += 1 }
+      readiness.publish()
+    }
+    XCTAssertEqual(accepted, cohort.count)
+    XCTAssertEqual(publications.count, 1, "100000 local receipts leave the same three pending requirements")
+    let timing = XCTAttachment(string: "100000 overlay source receipts: \((CACurrentMediaTime() - receiptStarted) * 1000)ms")
+    timing.name = "overlay-addressed-receipts"; timing.lifetime = .keepAlways; add(timing)
     readiness.record(previous, ready: true); readiness.publish()
     readiness.record(second, ready: true); readiness.publish()
     XCTAssertEqual(publications.count, 1, "Intermediate installed facts do not rerun the parent's unchanged readiness")

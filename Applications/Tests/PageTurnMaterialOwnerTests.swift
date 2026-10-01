@@ -41,7 +41,7 @@ final class PageTurnMaterialOwnerTests: XCTestCase {
     fixture.activity.retireElementFrames(at: 0)
     var changes: [Bool] = []
     let observer = fixture.activity.observePreparation { change in
-      if case .elementFrames(pageIndex: 0, materialChanged: let changed) = change { changes.append(changed) }
+      if case .elementFrames(pageIndex: 0, elementID: _, materialChanged: let changed) = change { changes.append(changed) }
     }
     defer { fixture.activity.removePreparationObserver(observer) }
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
@@ -118,16 +118,30 @@ final class PageTurnMaterialOwnerTests: XCTestCase {
     XCTAssertEqual(changes, [true, false, false, true, false, false, true])
   }
 
-  func testUnchangedProviderLayoutDoesNotWakeThePageButPixelsAndAvailabilityDo() throws {
-    let fixture = try Fixture()
+  func testUnchangedProviderLayoutDoesNotWakeThePageButPixelsAndAvailabilityDo() async throws {
+    let siblings = (0..<24).map { index in
+      AgentElement(id: "sibling-\(index)", kind: .web,
+        frame: .init(x: 0, y: 0, width: 32, height: 32), source: "Sibling", html: "<canvas/>")
+    }
+    let fixture = try Fixture(additionalElements: siblings)
     defer { fixture.owner.retire() }
+    try await fixture.prepare()
+    let siblingOwner = InstalledOwner()
+    for source in siblings {
+      let installation = SceneSourceInstallation(source: .agent(source), runtimeToken: source.id,
+        requiresVisibility: false, owner: siblingOwner)
+      fixture.activity.installElementFrame(page: 0, element: source.id, owner: UUID(), source: source,
+        installation: installation, acquisition: .runtime { _ in throw PageTurnMaterialUnavailable.changed })
+    }
     var changes: [Bool] = []
     let observer = fixture.activity.observePreparation { change in
-      if case .elementFrames(pageIndex: 0, materialChanged: let changed) = change { changes.append(changed) }
+      if case .elementFrames(pageIndex: 0, elementID: _, materialChanged: let changed) = change { changes.append(changed) }
     }
     defer { fixture.activity.removePreparationObserver(observer) }
     let provider = try fixture.install(.red, content: .raster)
     let version = try XCTUnwrap(fixture.activity.elementFrameVersion(page: 0, source: fixture.source))
+    XCTAssertTrue(fixture.owner.isCaptureReady(readiness: fixture.readiness))
+    let siblingChecks = siblingOwner.visibilityChecks
     func layout() {
       let installation = SceneSourceInstallation(source: .agent(fixture.source), entryID: provider.raster.entryID,
         requiresVisibility: false, owner: fixture.installedOwner)
@@ -140,12 +154,27 @@ final class PageTurnMaterialOwnerTests: XCTestCase {
     fixture.installedOwner.visible = false; layout(); layout()
     XCTAssertFalse(fixture.activity.hasElementFrame(page: 0, source: fixture.source))
     XCTAssertEqual(changes, [true, false], "Loss of availability is a real edge, not a material replacement")
+    XCTAssertFalse(fixture.owner.isCaptureReady(readiness: fixture.readiness))
     fixture.installedOwner.visible = true; layout(); layout()
     XCTAssertEqual(changes, [true, false, false])
     XCTAssertEqual(fixture.activity.elementFrameVersion(page: 0, source: fixture.source), version)
+    XCTAssertTrue(fixture.owner.isCaptureReady(readiness: fixture.readiness))
     _ = try fixture.install(.blue, content: .raster)
     XCTAssertEqual(changes, [true, false, false, true])
     XCTAssertNotEqual(fixture.activity.elementFrameVersion(page: 0, source: fixture.source), version)
+    XCTAssertEqual(siblingOwner.visibilityChecks, siblingChecks,
+      "An addressed material/availability edge never rechecks every native sibling")
+    // An ancestor can change before its child reports another layout. The hint
+    // is unchanged, while the fresh borrow boundary must reject the lost source.
+    siblingOwner.visible = false
+    XCTAssertTrue(fixture.owner.isCaptureReady(readiness: fixture.readiness))
+    XCTAssertFalse(fixture.activity.hasElementFrame(page: 0, source: siblings[0]))
+    do {
+      _ = try await fixture.owner.acquire(page: fixture.page, readiness: fixture.readiness, priority: .input)
+      XCTFail("Accepted turn must validate native availability even without a provider callback")
+    } catch is PageTurnMaterialUnavailable { }
+    fixture.activity.removeElementFrame(page: 0, element: fixture.source.id, owner: fixture.providerID)
+    XCTAssertFalse(fixture.owner.isCaptureReady(readiness: fixture.readiness), "Removing the exact owner revokes its hint")
   }
 
   func testPassiveProgramFrameSurvivesNativeDetachmentAndReusesItsExactMaterial() async throws {
@@ -221,7 +250,7 @@ final class PageTurnMaterialOwnerTests: XCTestCase {
         source: fixture.source, installation: installation, acquisition: .runtime { _ in try await provider.acquire() })
     }
     func publishReadiness() {
-      fixture.readiness(true, capturable: fixture.owner.isCapturable(readiness: fixture.readiness))
+      fixture.readiness(true, capturable: fixture.owner.isCaptureReady(readiness: fixture.readiness))
     }
     publishAvailability(); publishReadiness()
     fixture.owner.prepareStaticSlots(readiness: fixture.readiness, onReady: publishReadiness, onFailure: { _ in })
@@ -373,7 +402,7 @@ final class PageTurnMaterialOwnerTests: XCTestCase {
     fixture.activity.installElementFrame(page: 0, element: fixture.source.id, owner: fixture.providerID,
       source: fixture.source, installation: installed, acquisition: .status(status.cut))
     XCTAssertEqual(fixture.activity.elementFrameVersion(page: 0, source: fixture.source)?.content, .status)
-    XCTAssertTrue(fixture.owner.isCapturable(readiness: fixture.readiness))
+    XCTAssertTrue(fixture.owner.isCaptureReady(readiness: fixture.readiness))
     fixture.activeTurn = true
     _ = try await fixture.owner.acquire(page: fixture.page, readiness: fixture.readiness, priority: .input)
     XCTAssertEqual(runtime.calls, 0, "A displayed error is the accepted cut; the failed program cannot block navigation")
@@ -393,7 +422,8 @@ final class PageTurnMaterialOwnerTests: XCTestCase {
 
   @MainActor private final class InstalledOwner: SceneSourceInstallationOwner {
     var visible = true
-    func isShowing(_ installation: SceneSourceInstallation) -> Bool { visible }
+    var visibilityChecks = 0
+    func isShowing(_ installation: SceneSourceInstallation) -> Bool { visibilityChecks += 1; return visible }
   }
 
   @MainActor private final class NativeInstalledOwner: SceneSourceInstallationOwner {
@@ -429,11 +459,11 @@ final class PageTurnMaterialOwnerTests: XCTestCase {
     lazy var readiness = PageTurnReadiness(activity: activity, isInActiveTurn: { [weak self] in self?.activeTurn == true }) { _ in }
     var prepared = false
     var failures: [String] = []
-    init() throws {
+    init(additionalElements: [AgentElement] = []) throws {
       source = .init(id: UUID().uuidString, kind: .web,
         frame: .init(x: 0, y: 0, width: 32, height: 32), source: "Program",
         html: "<canvas/>", javaScript: "window.value = 1")
-      page = .init(size: .init(width: 32, height: 32), actor: UUID(), elements: [source])
+      page = .init(size: .init(width: 32, height: 32), actor: UUID(), elements: [source] + additionalElements)
       readiness.inkFrameIsReady = { true }; readiness.inkFrameIsEmpty = { true }
     }
     func prepare() async throws {

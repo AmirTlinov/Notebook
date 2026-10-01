@@ -506,6 +506,16 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
   /// Opt-in observation of the layer-tree boundary, separate from the Metal/OS
   /// receipt: first six CA phases and three present calls only.
   var onPageUpdateMeasured: ((PageUpdateTiming) -> Void)?
+  struct PageReceiptTiming: Sendable {
+    let operationID: UUID?
+    let generation: UInt64
+    let sequence: Int
+    let outputID: UUID?
+    let isCurrent: Bool
+    let receipt: NotebookMetalFrameReadiness.OSObservation
+  }
+  /// Source-handler clocks and Main delivery, without retaining the drawable.
+  var onPageReceiptMeasured: ((PageReceiptTiming) -> Void)?
   var onPageFrameReady: ((PageTurnFrame, Double, Int, NotebookMetalFrameReadiness) -> Void)?
   var onPageFrameWillPresent: ((UUID) -> Void)?
   var onPageRenderFailure: ((Error) -> Void)?
@@ -1118,7 +1128,19 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
       }
     }
     if let frames {
-      NotebookMetalFrameReadiness.observe(drawable, commandBuffer: commandBuffer) { [weak self, frames] readiness in
+      let outputID = pageOutput?.id
+      let observed: (@MainActor @Sendable (NotebookMetalFrameReadiness.OSObservation) -> Void)?
+      if onPageReceiptMeasured != nil {
+        observed = { [weak self] receipt in
+          guard let self else { return }
+          self.onPageReceiptMeasured?(.init(operationID: operationID, generation: presentationGeneration,
+            sequence: sequence, outputID: outputID,
+            isCurrent: self.pageOperationID == operationID && self.pagePresentationGeneration == presentationGeneration
+              && self.pageOutput?.id == outputID,
+            receipt: receipt))
+        }
+      } else { observed = nil }
+      NotebookMetalFrameReadiness.observe(drawable, commandBuffer: commandBuffer, observed: observed) { [weak self, frames] readiness in
         guard let self, self.pageOperationID == operationID,
           self.pagePresentationGeneration == presentationGeneration, self.pageFrames?.leaf === frames.leaf else { return }
         // A display boundary may contain several newer drawable receipts.

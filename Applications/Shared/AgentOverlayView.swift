@@ -230,6 +230,7 @@ struct AgentOverlayView: View {
   private var publisher: ((Bool, PageElementErasurePresentation) -> Void)?
   private var published: (presentationID: UUID, ready: Bool)?
   private var sources: [String: AgentElement] = [:]
+  private var missingElements: Set<String> = []
   private var materials: [String: NotebookInkMaterialReadiness] = [:]
   #if DEBUG
   func diagnostic() -> String {
@@ -261,17 +262,14 @@ struct AgentOverlayView: View {
     presentation = next
     sources = sources.filter { elements[$0.key] == $0.value }
     self.materials = self.materials.filter { elements[$0.key] != nil }
+    missingElements = Set(elements.keys)
+    for id in elements.keys { updateRequirement(id) }
     return next.id
   }
 
   func publish() {
     guard let presentation, let publisher else { return }
-    let ready = presentation.elements.values.allSatisfy { element in
-      // A fully erased body has no source view. Undo requires its real source.
-      (presentation.erasedIDs.contains(element.id) || [.graphic,.nativeText].contains(element.kind)
-        || sources[element.id] == element)
-        && (materials[element.id] ?? .init()).isReady(for: presentation.materials[element.id] ?? [])
-    }
+    let ready = missingElements.isEmpty
     // Facts arrive separately for every installed source/material. Only a new
     // immutable presentation or a readiness transition changes the parent's
     // receipt; intermediate facts stay in this ledger. The presentation ID
@@ -284,7 +282,19 @@ struct AgentOverlayView: View {
   @discardableResult
   func recordMaterial(_ element: String, id: UUID, content: NotebookInkMaterialView.Content?, ready: Bool) -> Bool {
     guard presentation?.elements[element] != nil else { return false }
-    return materials[element, default: .init()].record(id, content: content, ready: ready)
+    guard materials[element, default: .init()].record(id, content: content, ready: ready) else { return false }
+    updateRequirement(element)
+    return true
+  }
+
+  private func updateRequirement(_ id: String) {
+    guard let presentation, let element = presentation.elements[id] else { return }
+    // Erased content has no source view; undo reinstates this exact requirement.
+    let sourceReady = presentation.erasedIDs.contains(id) || element.kind == .graphic || element.kind == .nativeText
+      || sources[id] == element
+    let materialReady = (materials[id] ?? .init()).isReady(for: presentation.materials[id] ?? [])
+    if sourceReady && materialReady { missingElements.remove(id) }
+    else { missingElements.insert(id) }
   }
 
   @discardableResult
@@ -296,6 +306,7 @@ struct AgentOverlayView: View {
       guard sources[element.id] == element else { return false }
       sources[element.id] = nil
     }
+    updateRequirement(element.id)
     return true
   }
 }
