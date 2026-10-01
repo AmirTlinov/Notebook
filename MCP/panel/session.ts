@@ -14,6 +14,9 @@ function body(result:ToolResult):Record<string,unknown> {
 function isSnapshot(value:Record<string,unknown>):value is Record<string,unknown>&PanelSnapshot {
   return typeof value.workspaceID==="string"&&typeof value.socketKey==="string"&&Array.isArray(value.elements)&&!!value.target;
 }
+function sameAddress(a:PanelAddress,b:PanelAddress):boolean {
+  return a.workspaceID===b.workspaceID&&a.socketKey===b.socketKey&&a.target.kind===b.target.kind&&a.target.id===b.target.id;
+}
 
 /** The bridge carries snapshots and completed gestures. Native Notebook owns all saved state. */
 export class NotebookSession {
@@ -34,6 +37,9 @@ export class NotebookSession {
 
   async connect() {
     this.app.ontoolresult=result=>{
+      // The host hands this view its initial surface. Later tool calls cannot
+      // redirect a mounted view or an in-progress human gesture.
+      if(this.snapshot)return;
       try { const value=body(result as ToolResult);if(isSnapshot(value))this.accept(value); }
       catch(error){this.report(error,null);}
     };
@@ -49,9 +55,12 @@ export class NotebookSession {
   async openSurface(target:PanelTarget){
     if(this.busy||this.pending)return;
     this.busy=true;this.onStatus("Открытие…");
+    const request={...this.address(),target};
     try {
-      const result=await this.app.callServerTool({name:"notebook_panel_read",arguments:{...this.address(),target}});
-      this.accept(body(result as ToolResult));this.boundsDirty=true;
+      const result=await this.app.callServerTool({name:"notebook_panel_read",arguments:request});
+      const value=body(result as ToolResult);
+      if(!isSnapshot(value)||!sameAddress(request,value))throw new Error("Notebook вернул другую поверхность.");
+      this.accept(value);this.boundsDirty=true;
     }catch(error){this.report(error,null);}
     finally{this.busy=false;}
   }
@@ -62,6 +71,7 @@ export class NotebookSession {
     if(!force&&!this.boundsDirty)request.knownCursor=this.snapshot.cursor;
     try {
       const result=await this.app.callServerTool({name:"notebook_panel_read",arguments:request});
+      if(!sameAddress(request,this.address())||this.suspended||this.busy||this.pending)return;
       const value=body(result as ToolResult);this.onError("",null);if(!value.unchanged)this.accept(value);
       this.boundsDirty=false;
     }catch(error){this.report(error,()=>this.refresh(true));}
@@ -104,7 +114,7 @@ export class NotebookSession {
   }
   private accept(value:Record<string,unknown>) {
     if(!isSnapshot(value))throw new Error("Notebook вернул неполную поверхность.");
-    if(this.snapshot?.workspaceID===value.workspaceID&&this.snapshot.target.id===value.target.id
+    if(this.snapshot&&sameAddress(this.snapshot,value)
       &&/^\d+$/.test(value.cursor)&&/^\d+$/.test(this.snapshot.cursor)&&BigInt(value.cursor)<BigInt(this.snapshot.cursor))return;
     this.snapshot=value;this.onSnapshot(value);this.onStatus("Подключено");
   }
