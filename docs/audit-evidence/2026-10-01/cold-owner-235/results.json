@@ -1,0 +1,113 @@
+{
+  "status": "installed-verified-slice",
+  "version": "0.3.165",
+  "build": "235",
+  "commit": "13a495b61a5cc2a344345396654aba3ed1f92fb7",
+  "sourceSHA256": "aac20f2c107ce469623b823089c0c8e3215ad2e50cccaee133451afe319d1df6",
+  "verification": {
+    "initial": {
+      "sourceSHA256": "973c3f87a2d85edaf40d09db8f71c4c4d86409a12ee6d1f1f426a8aa49c21491",
+      "ipadPassed": 13,
+      "ipadFailed": 2,
+      "mcpPassed": 168,
+      "evidence": "/private/tmp/notebook-cold-235-final-verify"
+    },
+    "final": {
+      "sourceSHA256": "aac20f2c107ce469623b823089c0c8e3215ad2e50cccaee133451afe319d1df6",
+      "ipadPassed": 2,
+      "macPassed": 3,
+      "failed": 0,
+      "skipped": 0,
+      "evidence": "/private/tmp/notebook-cold-235-recovery-verify"
+    },
+    "delta": [
+      "Applications/Tests/PreparedAgentElementViewTests.swift"
+    ],
+    "productionInputsIdentical": true,
+    "core": {
+      "passed": 1,
+      "case": "NotebookIPCTests.panelPresentationWireAdmitsFullTypedProjectionAndRejectsStoreSelection",
+      "sourceSHA256": "6f4d0fbba2a114774a9b92591564b6e7852ed4d06cca54d62c541306fcfc9f70",
+      "deltaToRelease": [
+        "Applications/Tests/NotebookFirstPresentationSchedulingTests.swift",
+        "Applications/Tests/PreparedAgentElementViewTests.swift"
+      ],
+      "evidence": "/private/tmp/notebook-cold-235-core"
+    }
+  },
+  "buildReceipt": {
+    "path": "/private/tmp/notebook-cold-235-pair/build.json",
+    "sha256": "711759de99c17dde29dd0345266d09a3674b487e2f2e0b3d910948a42d3e5943"
+  },
+  "installation": {
+    "status": "installed-pair-and-native-continuity-verified",
+    "build": "235",
+    "version": "0.3.165",
+    "previousBuild": "234",
+    "sourceSHA256": "aac20f2c107ce469623b823089c0c8e3215ad2e50cccaee133451afe319d1df6",
+    "buildReceiptSHA256": "711759de99c17dde29dd0345266d09a3674b487e2f2e0b3d910948a42d3e5943",
+    "inPlaceUpdate": true,
+    "dataAccess": "none",
+    "dataContainerPathChanged": true,
+    "finishedAt": "2026-10-01T06:56:33.300742+00:00",
+    "fullAcceptance": false,
+    "checks": {
+      "actualSigned235SocketPeerCodeBeforeAndAfter": true,
+      "workspaceRetained": true,
+      "trustedPhysicalDeviceRetained": true,
+      "presencePageCameraSelectedItemRetained": true,
+      "typedSelectionChoiceRetained": true,
+      "runtimeConnected": true,
+      "singleInstalledMacOwner": true
+    },
+    "actualOwnerCDHash": "8eeaa70c36aae2898ade17260506e8c11af0767f",
+    "actualOwnerPID": 92197,
+    "previousSessionID": "D622E776-5E19-480A-B47D-66B7A6D2836B",
+    "newSessionID": "82676236-E7A1-4C49-B3CF-907A3D945B31",
+    "physicalUIAcceptance": "not performed by installer; browser/native appearance acceptance follows separately"
+  },
+  "appInventory": {
+    "status": "PASS",
+    "notebookAppsOnIPad": 1,
+    "bundleIdentifier": "com.amirtlinov.notebook.preview",
+    "build": "235",
+    "QAAndNativeTestAbsent": true
+  },
+  "measurements": {
+    "curl": {
+      "actionToActualOSms": 24.1398,
+      "initialDiscardHandlerReadms": 10.528708,
+      "firstCACommitms": 10.7755,
+      "initialHandlerToMainms": 0.377333,
+      "GPUCompletedms": 7.672042,
+      "firstOSToUIKitTargetDeltams": 0.003458
+    },
+    "cold24": {
+      "firstNativeInstallms": 454.15,
+      "allNativeInstallms": 1153.228,
+      "firstConstructorms": 24.933,
+      "navigationRequestToUIPolicyms": 220.328,
+      "navigationReturnToUIPolicyms": 219.868
+    },
+    "sourceScope": "ordinary physical iPad diagnostic run; screenshot/formatting excluded; instrumentation itself remains in execution"
+  },
+  "logging": {
+    "path": "/private/tmp/notebook-cold-235-logging",
+    "cold24Passed": true,
+    "recordingStartedAcknowledged": true,
+    "captureLimitSeconds": 60,
+    "finalizationDeadlineSeconds": 95,
+    "recorderExitCode": 1,
+    "localTOCExportCode": 10,
+    "exportError": "Document Missing Template Error",
+    "usableOSTables": false,
+    "repeated": false
+  },
+  "open": [
+    "first drawable server acceptance/discard",
+    "WebContent policy sender timestamp / launch-to-load boundary",
+    "strict latency and hardware Pencil latency",
+    "full system acceptance GUI-190"
+  ],
+  "recordedAt": "2026-10-01T06:59:57.788428+00:00"
+}

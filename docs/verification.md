@@ -5,6 +5,15 @@
 
 ## Владение готовностью и восстановлением — 235
 
+**0.3.165 (235)** установлена поверх234 на Mac и физическом iPad
+1 октября09:56 МСК. Main `13a495b6`, pushed; signed source `aac20f2c…`.
+Оба IPC endpoints обслуживает PID92197 с in-memory CDHash подписанной235,
+проверенным до и после iPad update. **7 continuity checks PASS**: workspace,
+trusted device, страница/камера/selected item, typed selection и соединение
+сохранены; один Mac owner. На iPad одна Notebook Lab235, QA/native-test отсутствуют.
+In-place update сохраняет содержимое, ключи и identities; iOS изменил путь
+контейнера. [Доставка](audit-evidence/2026-10-01/cold-owner-235/delivery.json).
+
 Исправлены повторные readiness обходы страницы/состава, лишние Main tasks для
 чужого source, пропущенное освобождение raster admission и поздние positive
 receipts прежнего consumer. Требования принадлежат принятой странице;
@@ -24,7 +33,9 @@ Receipts: `/private/tmp/notebook-cold-235-{final,recovery}-verify`.
 Source clocks: curl action→actualOS24,140мс; sequence0 time0 приходит до первого
 CA commit, Main delivery0,377мс. WebKit request→policy220,328мс; first/all24 native
 installation454,150/1153,228мс. Эти наблюдения локализуют ожидания, strict latency
-и полную приёмку не закрывают. Сборка/доставка235 фиксируется после установки.
+и полную приёмку не закрывают. Logging-only60s: actual start ACK и cold24PASS, затем finalization остановлена
+по deadline95s. Local export не имеет finalized document template; usable OS
+tables отсутствуют. Capture не повторялся. [Scope/source/results](audit-evidence/2026-10-01/cold-owner-235/results.json).
 
 ## Notebook plugin — canonical appearance 234
 

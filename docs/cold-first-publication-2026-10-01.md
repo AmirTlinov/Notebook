@@ -199,8 +199,10 @@ placement/state echo сохраняет готовность того же ис�
 настоящим acquire. Отдельно проверяются stationary capture recovery, pending
 program turn, cold24, отмена/возврат и первый штрих. Физический прогон235 дал13PASS из15. Две
 проверки давления требовали пустого shared allocator и уже удалённого автоматического
-снимка на zoom; исправлены их владельцы нагрузки/явного capture, результат адресного
-повтора фиксируется отдельно. Код продукта между этими прогонами одинаковый.
+снимка на zoom; исправлены их владельцы нагрузки/явного capture, **2 physical-iPad +3 Mac PASS** в адресном
+повторе, fail/skip0. Изменился только PreparedAgentElementViewTests; код продукта
+между прогонами одинаковый. Source deltas и доставка235 записаны в
+[результатах](audit-evidence/2026-10-01/cold-owner-235/results.json).
 
 **Оставшаяся диагностика.** Optional Metal probe разделяет source handler,
 `presentedTime` и Main delivery; test сохраняет значения exact layer hierarchy
@@ -231,3 +233,10 @@ run-loop entries/callbacks; непрерывный Main block этим не до
 не дополнительным persistent runtimes. Их вклад не измерен. Диагностика находится
 в `/private/tmp/notebook-cold-235-final-{cold,curl}-receipts/`; её PASS означает
 получение наблюдения, не приёмку скорости.
+
+
+Logging-only capture после ремонта: реальный start ACK, cold24PASS, source и
+binary неизменны; native-test удалён. 60s recording затем не завершил finalization
+за общий95s deadline. Export сообщает `Document Missing Template Error`;
+доступных OS tables нет. Это не подтверждает отсутствие WebKit logs. Повтор
+не запускался, обычные source clocks выше остаются отдельным результатом.
