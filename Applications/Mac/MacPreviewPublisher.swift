@@ -136,6 +136,11 @@ final class MacPreviewPublisher {
   private var stoppingTask: Task<Void, Never>?
   private var targetTask: Task<Void, Never>?
   private var targetInProgress: UUID?
+  private struct PanelWaiter {
+    let requestID: UUID
+    let continuation: CheckedContinuation<JSONValue, any Error>
+  }
+  private var panelWaiters: [UUID: PanelWaiter] = [:]
 
   init(
     model: NotebookAppModel,
@@ -195,6 +200,8 @@ final class MacPreviewPublisher {
     guard !stopped else { return }
     stopped = true
     started = false
+    let waiters = panelWaiters.values; panelWaiters.removeAll()
+    for waiter in waiters { waiter.continuation.resume(throwing: CancellationError()) }
     documentSnapshotObserver?.cancel(); documentSnapshotObserver = nil
     agentSnapshotObserver?.cancel(); agentSnapshotObserver = nil
     let tasks = [currentViewTask, pageRequestTask, reconciliationTask, targetTask, sourceReadTask, healthWriteTask].compactMap { $0 }
@@ -210,6 +217,73 @@ final class MacPreviewPublisher {
     }
     stoppingTask = drain
     await drain.value
+  }
+
+  /// App-only delivery joins the ordinary target queue. A waiter owns no
+  /// renderer or poller and is completed exactly once by that existing job.
+  func panelPresentation(_ request: NotebookPanelPresentationRequest) async throws -> JSONValue {
+    guard started, !stopped, let model, model.permitsBackgroundPreparation else {
+      throw CollaborationError("snapshot_pending", "Представление Notebook ждёт завершения ввода.")
+    }
+    let rendering = try await model.performStoreCommand { try $0.requestPanelPresentation(request) }
+    if let unchanged = try await model.performStoreCommand({ try $0.unchangedPanelPresentation(request, rendering: rendering) }) { return unchanged }
+    let waiterID = UUID()
+    return try await withTaskCancellationHandler {
+      try Task.checkCancellation()
+      return try await withCheckedThrowingContinuation { continuation in
+        guard started, !stopped, model.permitsBackgroundPreparation else { continuation.resume(throwing: CancellationError()); return }
+        panelWaiters[waiterID] = .init(requestID: rendering.id, continuation: continuation)
+        scheduleTargetRender(model)
+      }
+    } onCancel: {
+      Task { @MainActor [weak self] in
+        self?.panelWaiters.removeValue(forKey: waiterID)?.continuation.resume(throwing: CancellationError())
+      }
+    }
+  }
+
+  private func panelReply(_ request: TargetRenderRequest, model: NotebookAppModel) async throws -> JSONValue? {
+    guard let projection = request.panelProjection else { return nil }
+    let actor = model.actorID
+    return try await model.performStoreCommand { store in
+      guard let receipt = try store.loadTargetRenderReceipt(request.id) else { return nil }
+      guard receipt.request == request, receipt.status == "ready", let appearance = receipt.panelPresentation else {
+        throw CollaborationError("render_error", receipt.diagnostics.first?.message ?? "Не удалось подготовить представление Notebook.")
+      }
+      guard try store.storedWorkspaceID() == projection.workspaceID,
+        try store.referenceRevision(target: request.target) == request.sourceRevision else {
+        throw CollaborationError("revision_conflict", "Материал изменился во время подготовки панели; обновите представление.")
+      }
+      var snapshot = try store.readPanel(.init(workspaceID: projection.workspaceID, target: request.target,
+        bounds: request.target.kind == .board ? projection.readBounds : nil), actor: actor)
+      let editable = Set(appearance["layers"]?.arrayValues.compactMap { $0["elementID"]?.stringValue } ?? [])
+      snapshot = snapshot.setting("elements", .array((snapshot["elements"]?.arrayValues ?? []).map { entry in
+        entry.setting("editable", .bool(entry["source"]?["id"]?.stringValue.map(editable.contains) == true))
+      }))
+      let geometries = appearance["cardGeometry"]?.arrayValues ?? []
+      snapshot = snapshot.setting("cards", .array((snapshot["cards"]?.arrayValues ?? []).map { card in
+        guard let geometry = geometries.first(where: { $0["id"] == card["item"]?["id"] }) else { return card }
+        return card.setting("frame", geometry["frame"]).setting("geometry", geometry["geometry"])
+          .setting("center", geometry["center"]).setting("worldOrigin", geometry["worldOrigin"])
+      }))
+      if request.target.kind == .page { snapshot = snapshot.setting("worldOrigin", try .encode(WorldPoint.zero)) }
+      snapshot = snapshot.setting("appearance", appearance)
+      guard try JSONEncoder().encode(snapshot).count <= NotebookPanelRenderProjection.maximumEncodedBytes else {
+        throw CollaborationError("resource_limit", "Представление панели превышает ограничение передачи.")
+      }
+      return snapshot
+    }
+  }
+
+  private func completePanelWaiters(_ request: TargetRenderRequest, model: NotebookAppModel) async {
+    let ids = panelWaiters.filter { $0.value.requestID == request.id }.map(\.key)
+    guard !ids.isEmpty else { return }
+    let result: Result<JSONValue, any Error>
+    do {
+      guard let reply = try await panelReply(request, model: model) else { throw CancellationError() }
+      result = .success(reply)
+    } catch { result = .failure(error) }
+    for id in ids { panelWaiters.removeValue(forKey: id)?.continuation.resume(with: result) }
   }
 
   func suspendForInput() {
@@ -249,24 +323,39 @@ final class MacPreviewPublisher {
     guard started, model.permitsBackgroundPreparation, targetTask == nil else { return }
     let selectedPage = pageKey?.pageID
     targetTask = Task { [weak self, weak model] in
-      defer { self?.targetInProgress = nil; self?.targetTask = nil }
+      defer {
+        self?.targetInProgress = nil; self?.targetTask = nil
+        if model?.permitsBackgroundPreparation != true {
+          let waiters = self?.panelWaiters.values.map { $0 } ?? []
+          self?.panelWaiters.removeAll()
+          for waiter in waiters { waiter.continuation.resume(throwing: CancellationError()) }
+        }
+        if let self, let model, !panelWaiters.isEmpty { scheduleTargetRender(model) }
+      }
       guard self?.started == true, !Task.isCancelled, let model else { return }
       do {
+        // Registration precedes receipt lookup. A ready artifact is a queue
+        // completion too, so publication cannot race an unattached waiter.
+        let awaited = Set(self?.panelWaiters.values.map(\.requestID) ?? [])
         let request = try await model.performStoreCommand { store in
           try store.targetRenderRequests().sorted { left, right in
             let leftCurrent = left.pageVisionRevision != nil && left.target.id == selectedPage
             let rightCurrent = right.pageVisionRevision != nil && right.target.id == selectedPage
             return leftCurrent == rightCurrent ? left.createdAt < right.createdAt : leftCurrent
-          }.first { !FileManager.default.fileExists(atPath: store.targetReceiptURL($0.id).path) }
+          }.first { awaited.contains($0.id) || !FileManager.default.fileExists(atPath: store.targetReceiptURL($0.id).path) }
         }
         guard self?.started == true, !Task.isCancelled, model.permitsBackgroundPreparation, let request else { return }
         self?.targetInProgress = request.id
         do {
-          try await CurrentViewPreviewWriter.writeTarget(request, model: model)
+          if !FileManager.default.fileExists(atPath: model.store.targetReceiptURL(request.id).path) {
+            try await CurrentViewPreviewWriter.writeTarget(request, model: model)
+          }
         } catch is CancellationError {
           // A cancelled producer has no terminal result. The durable request
           // remains owned by this publisher's queue and can resume on admission.
           // Historical ready/error receipts are never rewritten here.
+          let ids = self?.panelWaiters.filter { $0.value.requestID == request.id }.map(\.key) ?? []
+          for id in ids { self?.panelWaiters.removeValue(forKey: id)?.continuation.resume(throwing: CancellationError()) }
           return
         } catch {
           guard self?.started == true, !Task.isCancelled, model.permitsBackgroundPreparation else { return }
@@ -278,7 +367,13 @@ final class MacPreviewPublisher {
             programs: request.target.kind == .document ? rendering?.programs ?? [] : nil)
           try await model.performStoreCommand { try $0.saveTargetRender(receipt) }
         }
-      } catch { /* The next publisher observation can retry an unread request. */ }
+        await self?.completePanelWaiters(request, model: model)
+      } catch {
+        let waiters = self?.panelWaiters.values.map { $0 } ?? []
+        self?.panelWaiters.removeAll()
+        for waiter in waiters { waiter.continuation.resume(throwing: error) }
+        // Durable requests still belong to the existing publisher observation.
+      }
     }
   }
 

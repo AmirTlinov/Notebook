@@ -37,19 +37,32 @@ enum PageCompositionRenderer {
 
   /// The transparent regional proof uses the exact same accepted drawing,
   /// source-anchored contact plan and cuts as the full physical page.
-  static func renderInk(_ page: PageDocument, scale: Double = 2,
+  static func renderInk(_ page: PageDocument, region: PageRect? = nil, scale: Double = 2,
     resources: SceneRenderResources = .shared,
     permitsPreparation: @escaping @MainActor () -> Bool = { true }
   ) async throws -> SceneCompositionRenderer.Result {
-    try await render(page, region: nil, elementID: nil, scale: scale, resources: resources,
+    try await render(page, region: region, elementID: nil, scale: scale, resources: resources,
       permitsPreparation: permitsPreparation, inkOnly: true) { _ in
         throw SceneRenderError.snapshotPending("ink_source_scope")
       }
   }
 
+  /// A painter run excludes the independently movable panel subjects while
+  /// retaining the existing native text/graphic/web preparation and erasures.
+  static func renderAuthoredLayer(_ page: PageDocument, ids: Set<String>, region: PageRect,
+    scale: Double, resources: SceneRenderResources = .shared,
+    permitsPreparation: @escaping @MainActor () -> Bool,
+    raster: @escaping @MainActor (AgentElement) async throws -> RasterLease
+  ) async throws -> SceneCompositionRenderer.Result {
+    try await render(page, region: region, elementID: nil, scale: scale, resources: resources,
+      permitsPreparation: permitsPreparation, inkOnly: false, authoredIDs: ids, includesPaper: false,
+      includesInk: false, raster: raster)
+  }
+
   private static func render(_ page: PageDocument, region: PageRect?, elementID: String?, scale: Double,
     resources: SceneRenderResources, permitsPreparation: @escaping @MainActor () -> Bool,
-    inkOnly: Bool, raster: @escaping @MainActor (AgentElement) async throws -> RasterLease
+    inkOnly: Bool, authoredIDs: Set<String>? = nil, includesPaper: Bool = true, includesInk: Bool = true,
+    raster: @escaping @MainActor (AgentElement) async throws -> RasterLease
   ) async throws -> SceneCompositionRenderer.Result {
     let region = region ?? .init(x: 0, y: 0, width: page.size.width, height: page.size.height)
     guard region.x >= 0, region.y >= 0,
@@ -63,7 +76,7 @@ enum PageCompositionRenderer {
       scale: scale, resources: resources, permitsPreparation: permitsPreparation)
     // A selected element authorizes only that layer. Its transparent pixels do
     // not expose another element or the handwriting underneath it.
-    if elementID == nil, !inkOnly {
+    if elementID == nil, !inkOnly, includesPaper {
       try await canvas.drawPaper(size: size, in: frame)
     }
     let graph = page.graphicGraph()
@@ -78,6 +91,7 @@ enum PageCompositionRenderer {
     let (drawing,erasures)=try await withTaskCancellationHandler { try await decode.value } onCancel:{decode.cancel()}
     try Task.checkCancellation()
     let selected=elements(in:page,region:region,elementID:elementID,graph:graph)
+      .filter { authoredIDs == nil || authoredIDs!.contains($0.id) }
     let layouts=Dictionary(uniqueKeysWithValues:selected.compactMap { element in
       graph.resolve(element.id).layout.map { (element.id,$0) }
     })
@@ -136,7 +150,7 @@ enum PageCompositionRenderer {
       }
       canvas.recordDiagnostics(resources.diagnostics(for: [element]))
     }
-    if elementID == nil || !plan.isEmpty {
+    if includesInk, elementID == nil || !plan.isEmpty {
       try await drawInk(elementID == nil ? drawing : .init(), plan:plan,
         size:size,frame:frame,resources:resources,canvas:canvas)
     }

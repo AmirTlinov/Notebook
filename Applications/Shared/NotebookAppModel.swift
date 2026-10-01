@@ -4991,6 +4991,18 @@ final class NotebookAppModel {
         }
         return try presentationRelay.handle(command)
       }
+      if command.command == .panelPresentation {
+        guard let request = command.panelPresentation, let publisher = previewPublisher,
+          let socket = commandSocketURL else {
+          throw CollaborationError("owner_unavailable", "Представление Notebook ещё не готово.")
+        }
+        let result = try await publisher.panelPresentation(request)
+        guard case .object(var fields) = result else {
+          throw CollaborationError("invalid_panel_presentation", "Представление Notebook не содержит адреса.")
+        }
+        fields["socketKey"] = .string(socket.deletingPathExtension().lastPathComponent)
+        return .object(fields)
+      }
       let deadline = ContinuousClock.now.advanced(by: .seconds(4))
       while true {
         // Core admits the actual affected carriers in the writer transaction.
@@ -6578,11 +6590,11 @@ final class NotebookAppModel {
       if let sync, !(await sync.stopAndDrainTrust()) { return false }
       sync = nil
       #if os(macOS)
+        await previewPublisher?.stop()
         await commandServer?.stopAndDrain(); commandServer = nil
         codexSidecar?.detachView(); codexSidecar = nil
         await scriptCoordinator?.shutdown(); scriptCoordinator = nil
         let agentStopped = true
-        await previewPublisher?.stop()
       #else
         await chatSubmissionTask?.value
         await chat?.stop()

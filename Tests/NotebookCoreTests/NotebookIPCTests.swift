@@ -130,6 +130,37 @@ struct NotebookIPCTests {
     }
   }
 
+  @Test func panelPresentationWireAdmitsFullTypedProjectionAndRejectsStoreSelection() async throws {
+    let workspaceID = UUID(), target = CollaborationTarget(kind: .page, id: UUID()), requestID = UUID()
+    let panel = NotebookPanelPresentationRequest(workspaceID: workspaceID, target: target,
+      appearance: .init(viewport: .init(x: 1100, y: 780), pixelScale: 1,
+        camera: .init(center: .init(x: 417, y: 597), scale: 0.6)),
+      knownCursor: "42", knownRequestID: requestID)
+    // The MCP bridge sends a plain JSON object, before Swift command decoding.
+    let wire = JSONValue.object(["command": .string("panelPresentation"), "panelPresentation": try .encode(panel)])
+    let command = try NotebookIPC.decodeCommand(JSONEncoder().encode(wire))
+    #expect(command.command == .panelPresentation)
+    #expect(command.panelPresentation?.workspaceID == workspaceID)
+    #expect(command.panelPresentation?.target == target)
+    #expect(command.panelPresentation?.appearance == panel.appearance)
+    #expect(command.panelPresentation?.knownCursor == "42")
+    #expect(command.panelPresentation?.knownRequestID == requestID)
+    #expect(throws: CollaborationError.self) {
+      try NotebookIPC.decodeCommand(JSONEncoder().encode(wire.setting("root", .string("/tmp/another-owner"))))
+    }
+    let endpoint = try IPCEndpoint(); defer { endpoint.remove() }
+    let server = NotebookIPCServer(socketURL: endpoint.socket) { accepted in
+      guard accepted.command == .panelPresentation, let request = accepted.panelPresentation else {
+        throw CollaborationError("invalid_command", "The complete typed panel request must reach its native owner")
+      }
+      return try .encode(request)
+    }
+    try server.start(); defer { server.stop() }
+    let response = try await blockingIPC { try NotebookIPCClient(socketURL: endpoint.socket).send(command) }
+    #expect(response == (try JSONValue.encode(panel)))
+    try await drainIPC(server)
+  }
+
   @Test func anOversizedFrameIsRejectedWithoutCallingTheOwner() async throws {
     let endpoint = try IPCEndpoint(); defer { endpoint.remove() }
     let calls = IPCCount()

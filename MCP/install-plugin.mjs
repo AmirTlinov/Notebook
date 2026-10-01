@@ -34,7 +34,8 @@ async function installedApp() {
       const server = join(app, 'Contents/Resources/NotebookTools/dist/index.mjs');
       await access(node, constants.X_OK);
       const body = await readFile(server, 'utf8');
-      return { app, panelReady: body.includes('notebook_open') && body.includes('ui://notebook/workspace.html') };
+      return { app, panelReady: body.includes('notebook_open') && body.includes('notebook_panel_presentation')
+        && body.includes('ui://notebook/workspace.html') };
     } catch (error) {
       if (!['ENOENT', 'EACCES', 'ENOTDIR'].includes(error.code)) throw error;
     }
@@ -75,10 +76,12 @@ if (action === 'check') {
 } else if (action === 'install') {
   assert.equal(process.platform, 'darwin', 'The Notebook plugin uses the installed macOS runtime.');
   const runtime = await installedApp();
-  assert(runtime?.panelReady, 'Install the signed Notebook update containing notebook_open before installing this plugin.');
+  assert(runtime?.panelReady, 'Install the signed Notebook update with native panel presentation before installing this plugin.');
   const signature = spawnSync('/usr/bin/codesign', ['--verify', '--strict', '--deep', runtime.app], { encoding: 'utf8' });
   assert.equal(signature.status, 0, signature.stderr);
-  const existing = run(['mcp', 'get', 'notebook', '--json'], { optional: true });
+  // The merged MCP view also contains this installed plugin. Inspect global
+  // configuration with plugins disabled for this read-only CLI invocation.
+  const existing = run(['--disable', 'plugins', 'mcp', 'get', 'notebook', '--json'], { optional: true });
   if (existing.status === 0) assert(JSON.parse(existing.stdout).enabled === false,
     'An enabled global notebook MCP already provides these tools. Migrate that entry before installing the plugin.');
   else assert(existing.stderr.includes("No MCP server named 'notebook' found"), existing.stderr);

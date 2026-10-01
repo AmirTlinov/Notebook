@@ -13,6 +13,18 @@ public enum JSONValue: Codable, Equatable, Sendable {
     return values[key]
   }
 
+  public var objectFields: [String: JSONValue] { if case .object(let value) = self { value } else { [:] } }
+  public var arrayValues: [JSONValue] { if case .array(let value) = self { value } else { [] } }
+  public var stringValue: String? { if case .string(let value) = self { value } else { nil } }
+  var object: [String: JSONValue] { objectFields }
+  var array: [JSONValue] { arrayValues }
+  var string: String? { stringValue }
+  public func setting(_ key: String, _ value: JSONValue?) -> JSONValue {
+    var result = object
+    result[key] = value
+    return .object(result)
+  }
+
   public static func encode<T: Encodable>(_ value: T) throws -> JSONValue {
     try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(value))
   }

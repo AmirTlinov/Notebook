@@ -17,7 +17,6 @@ const workspaceID = randomUUID();
 const target = {kind: 'board', id: randomUUID()};
 const address = {workspaceID, target, socketKey};
 const origin = {tileX: 7, tileY: -3, localX: 40, localY: 60};
-const bounds = {anchor: origin, region: {x: -200, y: -100, width: 600, height: 400}};
 
 async function connectedPanel(socketPath: string) {
   const server = new McpServer({name: 'panel-contract', version: '1'});
@@ -77,7 +76,7 @@ test('Notebook exposes one HTML app resource, a model opener and app-only gestur
   try {
     const {tools} = await panel.client.listTools();
     assert.deepEqual(tools.map(tool => tool.name).sort(),
-      ['notebook_open', 'notebook_panel_edit', 'notebook_panel_read', 'notebook_panel_undo']);
+      ['notebook_open', 'notebook_panel_edit', 'notebook_panel_presentation', 'notebook_panel_undo']);
     const opener = tools.find(tool => tool.name === 'notebook_open')!;
     assert.deepEqual(opener._meta?.ui, {resourceUri: panelResourceURI});
     assert.deepEqual(opener._meta?.['openai/ui'], {entrypoints: [{type: 'thread'}, {type: 'global'}]});
@@ -93,13 +92,37 @@ test('Notebook exposes one HTML app resource, a model opener and app-only gestur
     assert.ok('text' in resource);
     assert.equal(resource.text, html);
     assert.deepEqual(contents[0]!._meta?.ui,
-      {csp: {connectDomains: [], resourceDomains: []}, prefersBorder: false});
+      {csp: {connectDomains: [], resourceDomains: ['blob:']}, prefersBorder: false});
     assert.deepEqual(contents[0]!._meta?.['openai/ui'],
       {availableDisplayModes: ['fullscreen'], preferredDisplayMode: 'fullscreen'});
   } finally {await panel.close();}
 });
 
-test('panel gestures keep the admitted endpoint, exact native sources and unchanged-read cursor', async () => {
+test('native presentation stays pinned, bounds pixels and avoids duplicating PNG bytes in text', async () => {
+  const appearance={status:'ready',requestID:randomUUID(),sourceRevision:'native-cut',
+    camera:{center:origin,scale:.22},viewport:{x:834,y:1194},
+    layers:[{id:'native-ink',order:1,pngBase64:'iVBORw0KGgo-native-png-fixture'}]};
+  const view={viewport:{x:834,y:1194},pixelScale:1.5,camera:{center:origin,scale:.22}};
+  const known={knownCursor:'42',knownRequestID:randomUUID()};
+  const value={...address,cursor:'43',elements:[],cards:[],appearance};
+  const panel=await nativeFixture(()=>({result:value}));
+  try {
+    const result=await panel.client.callTool({name:'notebook_panel_presentation',arguments:{...address,appearance:view,...known}});
+    assert.notEqual(result.isError,true);
+    assert.deepEqual(result.structuredContent,value);
+    const text=(result.content[0] as {text:string}).text;
+    assert.equal(text.includes(appearance.layers[0]!.pngBase64),false);
+    assert.deepEqual(JSON.parse(text),{workspaceID,target,cursor:'43',status:'ready'});
+    assert.deepEqual(panel.requests,[{endpoint:'pinned',request:{command:'panelPresentation',
+      panelPresentation:{workspaceID,target,appearance:view,...known}}}]);
+    const oversized=await panel.client.callTool({name:'notebook_panel_presentation',arguments:{...address,
+      appearance:{viewport:{x:2048,y:2048},pixelScale:2}}});
+    assert.equal(oversized.isError,true);
+    assert.equal(panel.requests.length,1,'Over-budget projection does not enter native preparation');
+  } finally {await panel.close();}
+});
+
+test('panel gestures keep the admitted endpoint and exact native sources', async () => {
   const cursor = '42', actionID = randomUUID();
   const source = {
     id: 'text-1', kind: 'nativeText', surface: {kind: 'board', ownerID: target.id},
@@ -112,12 +135,10 @@ test('panel gestures keep the admitted endpoint, exact native sources and unchan
   const readValue = {...address, cursor, worldOrigin: origin, elements: [{source}],
     cards: [{item: {id: randomUUID(), kind: 'notebook', title: 'Заметки'}, center: origin}],
     rawInkPresent: true, unsupportedElements: [{id: 'ink-1', kind: 'graphic', reason: 'native_graphic'}]};
-  const unchanged = {workspaceID, target, socketKey, cursor, unchanged: true};
   const saved = {status: 'saved', actionID, cursor: '43', human: true};
   const undone = {status: 'undone', actionID, cursor: '44'};
   const panel = await nativeFixture((endpoint, request) => {
     if (endpoint === 'default') return {result: readValue};
-    if (request.command === 'panelRead') return {result: unchanged};
     if (request.command === 'panelEdit') return {result: saved};
     return {result: undone};
   });
@@ -126,12 +147,6 @@ test('panel gestures keep the admitted endpoint, exact native sources and unchan
     assert.notEqual(opened.isError, true);
     assert.deepEqual(opened.structuredContent, readValue);
     assert.deepEqual(panel.requests, [{endpoint: 'default', request: {command: 'panelRead', panelRead: {}}}]);
-
-    const read = await panel.client.callTool({name: 'notebook_panel_read', arguments: {...address, bounds, knownCursor: cursor}});
-    assert.deepEqual(read.structuredContent, unchanged);
-    assert.deepEqual(panel.requests.at(-1), {endpoint: 'pinned', request: {
-      command: 'panelRead', panelRead: {workspaceID, target, bounds, knownCursor: cursor},
-    }});
 
     const edit = {workspaceID, target, actionID, summary: 'Move text',
       operations: [{kind: 'updateElement', target, id: source.id,

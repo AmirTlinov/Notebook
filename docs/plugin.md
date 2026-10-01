@@ -4,11 +4,17 @@ The local plugin opens saved Notebook boards and pages beside a Codex conversati
 Codex owns the conversation and agent. The signed Notebook Mac runtime owns the
 existing workspace, ordered writes, script services, and iPad delivery.
 
-The current panel supports plain native text, basic geometric shapes, unbound
-arrows, move/resize/delete, native human undo, board/notebook navigation, and agent
-updates. Raw ink, rich/erased/grouped material, documents and programs retain
-their native view; the panel marks that coverage explicitly. All existing agent
-tools remain available. This slice does not retire the native iPad editor.
+The panel displays Notebook's native paper, handwriting, authored content and
+physical covers through the existing compositor. Opening follows the admitted
+page or board; the panel then owns its camera independently of the iPad. Native
+pixel layers keep painter order and refresh together after their source fence
+and image decoding complete.
+
+Plain native text, basic geometry and unbound arrows can be moved, resized,
+edited, deleted and undone through human history. Independently editable bodies
+receive separate native layers before the gesture starts. Ink and complex
+subjects keep their canonical appearance; drawing with Pencil remains available
+on iPad. All existing agent tools remain available for the same material.
 
 `MCP/panel` owns disposable camera, selection, draft and gesture presentation.
 `Sources/NotebookCore/NotebookPanel.swift` admits each completed human action
@@ -16,6 +22,12 @@ against its exact captured native subjects; the installed Mac supplies authorshi
 One UUID and immutable request survive response-loss retries. Read polling uses
 the native cursor shortcut while unchanged. A panel pins its workspace socket
 and target; later model results and old polls cannot redirect a draft or gesture.
+
+`notebook_panel_presentation` joins the existing native addressed-render queue.
+Its bounded output contains derived PNG layers and canonical hit geometry.
+Business subjects are read again at the completed source revision; PNG bytes
+remain in the app-only response and never enter model context. The installed
+runtime and the iPad keep one saved workspace and the same delivery path.
 
 `MCP/plugin` is the `notebook-local` marketplace; `notebook/` contains the plugin.
 Its `.codex-plugin/plugin.json` manifest references `mcp.json`, as supported by
@@ -31,7 +43,7 @@ node MCP/install-plugin.mjs uninstall
 ```
 
 `check` validates source packaging without changing Codex. Installation requires
-the updated signed app containing `notebook_open`, registers this source with
+the updated signed app containing native panel presentation, registers this source with
 `codex plugin marketplace add`, and installs `notebook@notebook-local` with
 `codex plugin add`. An enabled global `notebook` MCP must first be migrated to
 the plugin to keep one tool provider. Existing unrelated configuration is preserved.

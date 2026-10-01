@@ -23,16 +23,28 @@ const worldDelta=(a:NonNullable<typeof session.snapshot>["worldOrigin"],b:NonNul
   {x:(a.tileX-b.tileX)*TILE_SIZE+a.localX-b.localX,y:(a.tileY-b.tileY)*TILE_SIZE+a.localY-b.localY}:{x:0,y:0};
 function choose(id:string|null){selected=id;surface.select(id);buttons();session.context(id);}
 function active(){return session.snapshot?.elements.find(e=>e.source.id===selected);}
-function canEdit(element:PanelElement){return editable(element)&&!session.snapshot?.unsupportedElements.some(e=>e.id===element.source.id);}
+function canEdit(element:PanelElement){return editable(element)&&surface.hasSubject(element.source.id)&&!session.snapshot?.unsupportedElements.some(e=>e.id===element.source.id);}
 function canMove(element:PanelElement){return canEdit(element)&&!element.source.graphic?.connection?.start?.binding&&!element.source.graphic?.connection?.end?.binding;}
+function neighbor(direction:number):PanelTarget|undefined{
+  const navigation=session.snapshot?.navigation,index=navigation?.position?.index;
+  if(session.snapshot?.target.kind!=="page"||index===undefined)return;
+  const page=navigation?.directory?.pages.find(page=>page.position.index===index+direction);
+  return page?{kind:"page",id:page.position.pageID}:undefined;
+}
 function buttons(){
-  const waiting=session.busy||session.hasPending;
+  const waiting=session.busy||session.hasPending||!session.hasAppearance;
   el<HTMLButtonElement>("delete").disabled=!active()||!canEdit(active()!)||waiting;
   el<HTMLButtonElement>("undo").disabled=!session.snapshot?.history.undoActionID||waiting;
   editor.readOnly=waiting;
   document.querySelectorAll<HTMLButtonElement>("[data-tool]").forEach(button=>button.disabled=waiting);
-  el<HTMLButtonElement>("back").hidden=path.length===0;
+  el<HTMLButtonElement>("back").hidden=path.length===0&&!session.snapshot?.navigation?.parentBoard;
   el<HTMLButtonElement>("back").disabled=waiting;
+  for(const id of ["zoom-in","zoom-out","zoom-fit"])el<HTMLButtonElement>(id).disabled=waiting||!!draft||!!gesture;
+  const navigation=session.snapshot?.navigation;
+  el("page-navigation").hidden=session.snapshot?.target.kind!=="page"||!navigation?.directory||!navigation.position;
+  el("page-position").textContent=navigation?.position&&navigation.directory?`${navigation.position.index+1} / ${navigation.directory.header.item.pageCount}`:"";
+  el<HTMLButtonElement>("page-previous").disabled=waiting||!neighbor(-1);
+  el<HTMLButtonElement>("page-next").disabled=waiting||!neighbor(1);
   el<HTMLButtonElement>("zoom-fit").textContent=`${Math.round(camera.scale*100)}%`;
 }
 function setCamera(next:Camera){camera=next;surface.setCamera(camera);buttons();session.viewportChanged();}
@@ -45,23 +57,40 @@ async function save(request:PanelMutation){
 }
 session.bounds=()=>session.snapshot?.worldOrigin?{anchor:session.snapshot.worldOrigin,
   region:{x:camera.x,y:camera.y,width:Math.max(1,workspace.clientWidth/camera.scale),height:Math.max(1,workspace.clientHeight/camera.scale)}}:undefined;
+session.view=navigation=>{
+  const width=Math.max(1,workspace.clientWidth),height=Math.max(1,workspace.clientHeight);
+  const ratio=Math.min(1,2048/width,2048/height);
+  const viewport={x:Math.max(1,Math.round(width*ratio)),y:Math.max(1,Math.round(height*ratio))};
+  const pixelScale=Math.max(.5,Math.floor(Math.min(2,window.devicePixelRatio||1,Math.sqrt(4_194_304/(viewport.x*viewport.y)))*1000)/1000);
+  const origin=session.snapshot?.worldOrigin;
+  return {viewport,pixelScale,...(!navigation&&session.hasAppearance&&origin?{camera:{
+    center:offsetWorld(origin,camera.x+width/(2*camera.scale),camera.y+height/(2*camera.scale)),
+    scale:camera.scale*viewport.x/width}}:{})};
+};
+session.onPrepareSnapshot=snapshot=>surface.prepare(snapshot);
+session.onClose=()=>surface.dispose();
 let priorOrigin:NonNullable<typeof session.snapshot>["worldOrigin"]=null;
 let first=true;
 let priorTarget:string|undefined;
 session.onSnapshot=snapshot=>{
-  if(gesture||draft)return;
   if(priorTarget!==snapshot.target.id){first=true;selected=null;priorTarget=snapshot.target.id;}
   const delta=worldDelta(snapshot.worldOrigin,priorOrigin);priorOrigin=snapshot.worldOrigin;
   surface.render(snapshot);
-  if(first){camera=surface.fit();first=false;}else{camera={...camera,x:camera.x-delta.x,y:camera.y-delta.y};}
+  if(first){
+    const appearance=snapshot.appearance!;
+    const center=worldDelta(appearance.camera.center,snapshot.worldOrigin);
+    const scale=appearance.camera.scale*workspace.clientWidth/appearance.viewport.x;
+    camera={x:center.x-workspace.clientWidth/(2*scale),y:center.y-workspace.clientHeight/(2*scale),scale};first=false;
+  }else{camera={...camera,x:camera.x-delta.x,y:camera.y-delta.y};}
   surface.setCamera(camera);
-  el("surface-name").textContent=snapshot.target.kind==="board"?"Доска":"Лист";
+  el("surface-name").textContent=snapshot.navigation?.directory?.header.item.title??(snapshot.target.kind==="board"?"Доска":"Лист");
   if(selected&&!snapshot.elements.some(e=>e.source.id===selected))selected=null;
   surface.select(selected);buttons();session.context(selected);
   const notes=[];
-  if(snapshot.rawInkPresent)notes.push("Рукописный слой доступен в Notebook на iPad.");
   if(snapshot.truncated)notes.push("Видимая область содержит больше объектов. Приблизьте нужный участок.");
+  for(const diagnostic of snapshot.appearance?.diagnostics??[])if(diagnostic.message)notes.push(diagnostic.message);
   el("coverage").textContent=notes.join(" ");
+  if(draft&&!draft.isNew)surface.hideSubject(draft.element.source.id,true);
 };
 session.onStatus=text=>{el("status").textContent=text;buttons();};
 session.onError=(message,action)=>{
@@ -81,11 +110,14 @@ function newElement(point:Point,kind:string):PanelElement {
 function openEditor(element:PanelElement,isNew=false){
   if(!isNew&&!canEdit(element))return;
   draft={element,isNew};session.suspended=true;
-  const frame=isNew?element.source.frame:surface.frame(element);
+  if(!isNew)surface.hideSubject(element.source.id,true);
+  const text=element.source.kind==="nativeText";
+  const frame=isNew?element.source.frame:text?surface.authoredFrame(element):surface.frame(element);
   editor.value=element.source.kind==="nativeText"?element.source.source:String(element.source.graphic?.label??"");
   editor.style.left=`${(frame.x-camera.x)*camera.scale}px`;
   editor.style.top=`${(frame.y-camera.y)*camera.scale}px`;
-  editor.style.width=`${Math.max(120,frame.width*camera.scale)}px`;
+  editor.style.minWidth=text?"0":"60px";
+  editor.style.width=`${text?frame.width*camera.scale:Math.max(120,frame.width*camera.scale)}px`;
   editor.style.height=`${Math.max(60,frame.height*camera.scale)}px`;
   const fontSize=element.source.kind==="nativeText"?element.source.textStyle?.fontSize??34:24;
   const weight=element.source.kind==="nativeText"?element.source.textStyle?.weight??.45:.3;
@@ -96,7 +128,7 @@ function openEditor(element:PanelElement,isNew=false){
 async function finishEditor(cancel=false):Promise<boolean>{
   const captured=draft;if(!captured)return true;
   if(session.busy||session.hasPending)return false;
-  if(cancel){draft=null;editor.hidden=true;session.suspended=false;await session.refresh(true);workspace.focus();return true;}
+  if(cancel){if(!captured.isNew)surface.hideSubject(captured.element.source.id,false);draft=null;editor.hidden=true;session.suspended=false;await session.refresh(true);workspace.focus();return true;}
   const value=editor.value,element=captured.element;
   if(captured.isNew&&!value.trim())return finishEditor(true);
   const previous=element.source.kind==="nativeText"?element.source.source:String(element.source.graphic?.label??"");
@@ -126,7 +158,7 @@ editor.addEventListener("keydown",event=>{
 editor.addEventListener("blur",()=>{if(draft)void finishEditor();});
 
 paper.addEventListener("pointerdown",event=>{
-  if(!session.snapshot||session.busy||session.hasPending||event.button===2)return;
+  if(!session.snapshot||!session.hasAppearance||session.busy||session.hasPending||event.button===2)return;
   if(draft){void finishEditor();return;}
   const point=surface.point(event.clientX,event.clientY);
   const resizing=(event.target as Element).hasAttribute("data-resize-handle");
@@ -141,7 +173,8 @@ paper.addEventListener("pointerdown",event=>{
     if(!element||!canMove(element)){workspace.focus();return;}
     mode=resizing?"resize":"move";
   }
-  gesture={pointer:event.pointerId,start:point,last:point,mode,camera:{...camera},...(element?{element,frame:surface.frame(element)}:{})};
+  gesture={pointer:event.pointerId,start:point,last:point,mode,camera:{...camera},...(element?{element,
+    frame:mode==="resize"&&element.source.kind==="nativeText"?surface.authoredFrame(element):surface.frame(element)}:{})};
   session.suspended=true;paper.setPointerCapture(event.pointerId);workspace.focus();event.preventDefault();
 });
 paper.addEventListener("pointermove",event=>{
@@ -159,8 +192,10 @@ paper.addEventListener("pointermove",event=>{
 function drawGesture(g:Gesture,dx:number,dy:number){
   selection.replaceChildren();
   const shape=document.createElementNS("http://www.w3.org/2000/svg",tool==="ellipse"&&g.mode==="create"?"ellipse":"rect");
-  const f=g.mode==="resize"?{...g.frame!,width:Math.max(20,g.frame!.width+dx),height:Math.max(20,g.frame!.height+dy)}:
+  const textWidth=g.mode==="resize"&&g.element!.source.kind==="nativeText";
+  const f=g.mode==="resize"?{...g.frame!,width:Math.max(20,g.frame!.width+dx),height:textWidth?g.frame!.height:Math.max(20,g.frame!.height+dy)}:
     {x:Math.min(g.start.x,g.start.x+dx),y:Math.min(g.start.y,g.start.y+dy),width:Math.max(1,Math.abs(dx)),height:Math.max(1,Math.abs(dy))};
+  if(g.mode==="resize")surface.previewSize(g.element!.source.id,f.width,f.height);
   const attrs=shape.tagName==="ellipse"?{cx:f.x+f.width/2,cy:f.y+f.height/2,rx:f.width/2,ry:f.height/2}:{x:f.x,y:f.y,width:f.width,height:f.height};
   for(const [key,value]of Object.entries(attrs))shape.setAttribute(key,String(value));
   shape.setAttribute("fill","#496d8710");shape.setAttribute("stroke","#496d87");shape.setAttribute("stroke-width",String(1.5/camera.scale));selection.append(shape);
@@ -169,11 +204,11 @@ async function finishGesture(event:PointerEvent,cancel=false){
   const g=gesture;if(!g||g.pointer!==event.pointerId)return;gesture=null;session.suspended=false;
   if(paper.hasPointerCapture(event.pointerId))paper.releasePointerCapture(event.pointerId);
   const dx=g.last.x-g.start.x,dy=g.last.y-g.start.y;
-  if(cancel||g.mode==="pan"||Math.hypot(dx,dy)<2/camera.scale){surface.select(selected);await session.refresh(true);return;}
+  if(cancel||g.mode==="pan"||Math.hypot(dx,dy)<2/camera.scale){surface.clearPreview();await session.refresh(true);return;}
   if(g.mode==="move"||g.mode==="resize"){
     const source=g.element!.source;
     const frame={...source.frame};const values:Record<string,unknown>={frame};
-    if(g.mode==="resize"){frame.width=Math.max(20,frame.width+dx);frame.height=Math.max(20,frame.height+dy);}
+    if(g.mode==="resize"){frame.width=Math.max(20,frame.width+dx);if(source.kind!=="nativeText")frame.height=Math.max(20,frame.height+dy);}
     else if(source.worldOrigin)values.worldOrigin=offsetWorld(source.worldOrigin,dx,dy);
     else{frame.x+=dx;frame.y+=dy;}
     await save(mutation(g.mode==="move"?"Переместить элемент":"Изменить размер",operation("updateElement",source.id,values),g.element));
@@ -194,7 +229,7 @@ async function openCard(id:string){
   const target:PanelTarget|undefined=card.item.kind==="board"?{kind:"board",id}:
     card.item.kind==="notebook"&&typeof card.item.firstPageID==="string"?{kind:"page",id:card.item.firstPageID}:undefined;
   if(!target){session.onError("Этот документ пока открывается в приложении Notebook. Агент может работать с ним через инструменты плагина.",null);return;}
-  path.push(session.address().target);await session.openSurface(target);buttons();
+  const previous=session.address().target;if(await session.openSurface(target))path.push(previous);buttons();
 }
 paper.addEventListener("dblclick",event=>{
   const card=(event.target as Element).closest("[data-card-id]")?.getAttribute("data-card-id");
@@ -202,12 +237,13 @@ paper.addEventListener("dblclick",event=>{
   const element=active();if(element&&!session.busy&&!session.hasPending){event.preventDefault();openEditor(element);}
 });
 paper.addEventListener("wheel",event=>{
-  if(draft||gesture)return;event.preventDefault();
+  if(draft||gesture||session.busy||session.hasPending||!session.hasAppearance)return;event.preventDefault();
   if(event.ctrlKey||event.metaKey){const point=surface.point(event.clientX,event.clientY);zoom(Math.exp(-event.deltaY*.008),point);}
   else setCamera({...camera,x:camera.x+event.deltaX/camera.scale,y:camera.y+event.deltaY/camera.scale});
 },{passive:false});
 function zoom(factor:number,point:Point={x:camera.x+workspace.clientWidth/camera.scale/2,y:camera.y+workspace.clientHeight/camera.scale/2}){
-  const scale=Math.min(8,Math.max(.05,camera.scale*factor));
+  const ratio=workspace.clientWidth/session.view(false).viewport.x;
+  const scale=Math.min(4*ratio,Math.max(.0125*ratio,camera.scale*factor));
   setCamera({x:point.x-(point.x-camera.x)*camera.scale/scale,y:point.y-(point.y-camera.y)*camera.scale/scale,scale});
 }
 function toolButtons(){document.querySelectorAll<HTMLButtonElement>("[data-tool]").forEach(button=>button.setAttribute("aria-pressed",String(button.dataset.tool===tool)));}
@@ -217,7 +253,12 @@ el("delete").addEventListener("click",()=>{void remove();});
 el("undo").addEventListener("click",()=>{void session.undo().catch(()=>{});});
 el("zoom-in").addEventListener("click",()=>zoom(1.2));el("zoom-out").addEventListener("click",()=>zoom(1/1.2));
 el("zoom-fit").addEventListener("click",()=>setCamera(surface.fit()));
-el("back").addEventListener("click",()=>{void(async()=>{if(!(await finishEditor()))return;const target=path.pop();if(target)await session.openSurface(target);buttons();})();});
+el("back").addEventListener("click",()=>{void(async()=>{if(!(await finishEditor()))return;
+  const history=path.length>0,target=path.at(-1)??session.snapshot?.navigation?.parentBoard;
+  if(target&&await session.openSurface(target)&&history)path.pop();buttons();})();});
+async function stepPage(direction:number){if(!(await finishEditor()))return;const target=neighbor(direction);if(target)await session.openSurface(target);buttons();}
+el("page-previous").addEventListener("click",()=>{void stepPage(-1);});
+el("page-next").addEventListener("click",()=>{void stepPage(1);});
 workspace.addEventListener("keydown",event=>{
   if(event.target===editor)return;
   const card=(event.target as Element).closest("[data-card-id]")?.getAttribute("data-card-id");

@@ -1,33 +1,8 @@
 {
   "format": 1,
-  "implementationCommit": "7ef1d946",
   "plugin": "notebook@notebook-local",
-  "pluginVersion": "0.1.1",
-  "workspaceOwner": "signed Notebook Mac runtime; one canonical-root FIFO",
-  "core": {
-    "status": "passed",
-    "command": "swift test --filter 'notebookPanelHumanEdit|notebookPanelBoardAppearance'",
-    "testFunctions": 2,
-    "argumentCases": 4,
-    "scope": "human authorship, page/board CAS, identical retry/reopen, undo preserving later agent text; partial/full board erasures preserve canonical source",
-    "panelSourceSHA256": "640f62b7fdfcd8284e2ce87213171a275afbaace01b2d443e7f80ae53b9ec005",
-    "testSourceSHA256": "971f48d3a96c370aae636dd9632f8034d6485cff63f86652d86feec1f2f2167f"
-  },
-  "mcp": {
-    "status": "passed",
-    "typecheck": "npm run check",
-    "command": "tsx --test test/panel.test.ts test/sidecar-bundle.test.ts",
-    "passed": 4,
-    "failed": 0,
-    "scope": "app/tool registration, pinned endpoint, exact native sources/cursor, conflict detail and caller field rejection; standalone sidecar and valid inline module"
-  },
-  "browser": {
-    "status": "passed",
-    "surface": "Chrome CUA; ext-apps 2.0.3 AppBridge/PostMessageTransport",
-    "storage": "isolated in-memory native-shaped fixture",
-    "checks": "ui-checks.md",
-    "mountedCodexUI": false
-  },
+  "pluginVersion": "0.1.2",
+  "workspaceOwner": "signed Notebook Mac runtime; one canonical-root FIFO and existing addressed-render queue",
   "release233": {
     "status": "installed-pair-and-physical-presentation-verified",
     "version": "0.3.163",
@@ -47,7 +22,8 @@
     "commit": "8ab2f69b"
   },
   "openChecks": [
-    "canonical Notebook appearance and gestures on the actual Codex surface"
+    "own native fixture gestures/agent/undo/reopen cleanup",
+    "canonical appearance and gestures on refreshed Codex surface"
   ],
   "fullAcceptance": false,
   "coldStartup233": {
@@ -115,9 +91,314 @@
     "baselineRestored": true,
     "fixtureDeletedAndReceivedByIPad": true
   },
+  "historical233": {
+    "core": {
+      "status": "passed",
+      "command": "swift test --filter 'notebookPanelHumanEdit|notebookPanelBoardAppearance'",
+      "testFunctions": 2,
+      "argumentCases": 4,
+      "scope": "human authorship, page/board CAS, identical retry/reopen, undo preserving later agent text; partial/full board erasures preserve canonical source",
+      "panelSourceSHA256": "640f62b7fdfcd8284e2ce87213171a275afbaace01b2d443e7f80ae53b9ec005",
+      "testSourceSHA256": "971f48d3a96c370aae636dd9632f8034d6485cff63f86652d86feec1f2f2167f"
+    },
+    "mcp": {
+      "status": "passed",
+      "typecheck": "npm run check",
+      "command": "tsx --test test/panel.test.ts test/sidecar-bundle.test.ts",
+      "passed": 4,
+      "failed": 0,
+      "scope": "app/tool registration, pinned endpoint, exact native sources/cursor, conflict detail and caller field rejection; standalone sidecar and valid inline module"
+    },
+    "browser": {
+      "status": "passed",
+      "surface": "Chrome CUA; ext-apps 2.0.3 AppBridge/PostMessageTransport",
+      "storage": "isolated in-memory native-shaped fixture",
+      "checks": "ui-checks.md",
+      "mountedCodexUI": false
+    },
+    "productAcceptance": {
+      "status": "rejected",
+      "reason": "generic 220x144 cards replaced native 834x1194 covers; initial auto-fit33% replaced native camera; ink and native composition missing",
+      "requiredRepair": "canonical existing native appearance, geometry and initial projection in the panel"
+    },
+    "implementationCommit": "7ef1d946"
+  },
+  "status": "installed-native-content-passed-gestures-in-progress",
+  "canonical234": {
+    "status": "installed-native-content-passed-gestures-in-progress",
+    "sourceSHA256": "839a6636c64f055e20b0d6216a74bf4cef4a1bbe91d33d8f9fb4e8ac657ddb0d",
+    "verificationSHA256": "4bacbe8fc19e4afdb41cba916383f9008918ee4906480a664b1592800ac12ce0",
+    "verificationRoute": "./verify.sh:selected",
+    "verificationEvidence": "/tmp/notebook-plugin-234-verified",
+    "core": {
+      "status": "passed",
+      "testFunctions": 5,
+      "argumentCases": 8,
+      "scope": "human authorship, exact CAS, immutable retry, causal undo, appearance projection/source fences, native ink ownership, bounded receipt reader",
+      "evidence": "/tmp/notebook-panel-canonical-core-234-module-boundary.log"
+    },
+    "mcp": {
+      "status": "passed",
+      "passed": 168,
+      "failed": 0,
+      "skipped": 0,
+      "typecheck": "passed"
+    },
+    "mac": {
+      "status": "passed",
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "scope": "native canonical layers/covers, fitted text body versus authored constraint, bounded subject admission, joined/cached receipt, unchanged shortcut and pending capacity shutdown"
+    },
+    "physical": {
+      "scope": "Physical iPad ordered page compositor, implementation sources unchanged between this PASS and final selected MCP/Mac receipt",
+      "test": "NotebookTests/SceneCompositionSQLTests/testPageOrderedExportPreservesRanksCapturedCutsAndSelectedLayerScope",
+      "physicalEvidence": "/tmp/notebook-plugin-234-final-r2",
+      "physicalSourceSHA256": "ace1c48b13a4a46e06601d0620e559ed5e50fa2a2786c0ce063b8558942644aa",
+      "finalSourceSHA256": "839a6636c64f055e20b0d6216a74bf4cef4a1bbe91d33d8f9fb4e8ac657ddb0d",
+      "changedFiles": [
+        "Applications/MacTests/NotebookPanelPresentationTests.swift",
+        "MCP/panel/panel.ts",
+        "MCP/panel/surface.ts"
+      ],
+      "physicalSummary": {
+        "result": "Passed",
+        "passedTests": 1,
+        "failedTests": 0,
+        "skippedTests": 0,
+        "runtimeWarnings": []
+      },
+      "fullAcceptance": false
+    },
+    "browserFixtures": {
+      "scope": "actual Chrome SDK2.0.3, synthetic native-shaped pixels; no native writes or mounted Codex acceptance",
+      "composition": {
+        "scope": "Canonical native appearance consumer, isolated actual Chrome MCP Apps SDK2.0.3 using synthetic native-shaped PNG cohorts; no native runtime/device writes or product fidelity acceptance",
+        "sourceHashes": {
+          "MCP/panel/index.html": "27fa28190442e4636f29b27cd61c2b4b7013fc664bd7055af93b33be2f113d08",
+          "MCP/panel/model.ts": "45a2ac8c2c8e61df6b9c57a0982740b9702b45932b1c21db365360b0f12f86d0",
+          "MCP/panel/panel.ts": "809724c28c5def1958eff3a14d749ca23c2ca203d0f21fae4750a3375d1e2a4c",
+          "MCP/panel/session.ts": "4a051e281aee92b0620179bef91e4c8738af972b465590dfa8285e5e68de87b6",
+          "MCP/panel/styles.css": "4abd311ddc1e3ff51c32c528cc9e4440b54aaa91a9c62b9507669287362a8492",
+          "MCP/panel/surface.ts": "24a55d18f9f302e99804a7d6447144d54e0dec468a9e79995e5bdda09d7a30fd",
+          "MCP/src/panel-tools.ts": "3369e8954d6b65732efd0d5467e912b7b38c7461733fa96187688242833ee270",
+          "MCP/test/panel.test.ts": "54feb92c7497a46d274a575e9dd9a04b67b8ddd581f714083212f9748d4b7e09"
+        },
+        "checks": {
+          "typescript": "PASS",
+          "panelContracts": "4/4 PASS",
+          "blobCSP": "PASS strict default none, img-src blob; no warning/error logs",
+          "atomicDecode": "PASS accepted cohort rendered only after decoded images",
+          "camera": "PASS native .9 projection on initial open without fit, 2048x1278 virtual viewport maps to 2556x1595 CSS",
+          "cover": "PASS native-shaped 834x1194 bounds preserved",
+          "readonlyContext": "PASS rich subject selects context, no editor or gesture write",
+          "dragPreview": "PASS native subject moves singly, static PNG ink stays; screenshot drag-preview.jpg",
+          "resize": "PASS exact captured source frame width/height operation",
+          "editAndMultiline": "PASS graphical label edit and new multiline nativeText save",
+          "uncertainRetry": "PASS actionID and full payload identical; foreign B/workspace host results preserve A",
+          "navigationResize": "PASS held B request 2048x1278 then resize1300x864; fresh B request before acceptance; busy zoom disabled",
+          "pageNavigation": "PASS native directory page1/2 -> page2/2 -> page1/2, canonical parent Back; no added page history",
+          "latePoll": "PASS held presentation idle A response released after B stays B",
+          "teardown": "PASS SDK teardown clears0materialimages, controls disabled, no error logs"
+        },
+        "cleanup": {
+          "browserTabs": "closed",
+          "viewportOverride": "reset",
+          "localhostServer": "stopped"
+        },
+        "remaining": "Canonical publisher native integration, actual existing Notebook fidelity and mounted Codex screenshot acceptance belong to root final slice"
+      },
+      "textConstraint": {
+        "scope": "Focused actual Chrome MCP Apps SDK2.0.3 regression using RAM source layout280x80 and synthetic native PNG body225x22; no native owner/device calls",
+        "sourceHashes": {
+          "MCP/panel/surface.ts": "4d64a9dc3ce7d09dd5c376e884382a53fd867afc9bd7e9dd108aa87505b434ce",
+          "MCP/panel/panel.ts": "1dc5ae6cef711b0abe829b541026d49a8d366db8efc18ca5880a1613c794cdbb"
+        },
+        "checks": {
+          "typescript": "PASS",
+          "panelContracts": "4/4 PASS",
+          "hit": "225x22 canonical subject body",
+          "selection": "280x80 authored layout constraint; trailing-center horizontal resize grip",
+          "zeroDelta": "PASS no panel edit call; raw280x80 retained",
+          "editor": "PASS width314.508CSS = authored280 at camera1.123242; minWidth0; fitted225 unused",
+          "resizePreview": "PASS draftbox330.00038x80; PNG remains translate(60 60), no scale transform",
+          "save": "PASS capturedraw280x80 -> saved330.00038036863157x80, ignores vertical pointerdelta",
+          "reopenEditor": "PASS width370.67CSS reflects saved330.00038 constraint",
+          "csp": "strict blob-only images, no warning/error logs"
+        },
+        "cleanup": {
+          "tab": "closed",
+          "localhostServer": "stopped"
+        },
+        "artifact": "width-preview.jpg"
+      }
+    },
+    "delivery": {
+      "status": "installed-pair-and-native-continuity-verified",
+      "version": "0.3.164",
+      "build": "234",
+      "sourceSHA256": "839a6636c64f055e20b0d6216a74bf4cef4a1bbe91d33d8f9fb4e8ac657ddb0d",
+      "buildReceiptSHA256": "f3822420d372a6b17d8a90c35e4745833b41a3947936b4ce7ab9a609ca006feb",
+      "installationReceiptSHA256": "3ae59efb82ad80d3a24aa0042f07e2ea514948a545365b9a980f912245ad5da2",
+      "continuity": "7 checks passed including actual socket owner in-memory code attestation",
+      "globalNotebookMCP": "absent",
+      "pluginVersion": "0.1.2",
+      "scope": "signed installed pair, plugin discovery and exact resource; warm helper is not cold headless acceptance"
+    },
+    "liveNativeBoundary": {
+      "scope": "Actual installed signed234 + official0.1.2 resource via real MCP SDK stdio and AppBridge local browser; no native writes",
+      "result": "FAIL before native appearance",
+      "resource": {
+        "uri": "ui://notebook/workspace.html",
+        "bytes": 614651,
+        "sha256": "dcd136fc933cf68b99f27c84c0ec79d39e41c2df462041795839d9ca4c14894f",
+        "metadata": {
+          "ui": {
+            "csp": {
+              "connectDomains": [],
+              "resourceDomains": [
+                "blob:"
+              ]
+            },
+            "prefersBorder": false
+          },
+          "openai/ui": {
+            "availableDisplayModes": [
+              "fullscreen"
+            ],
+            "preferredDisplayMode": "fullscreen"
+          }
+        }
+      },
+      "tools": [
+        "notebook_context",
+        "notebook_execute",
+        "notebook_import_document",
+        "notebook_import_document_resource",
+        "notebook_import_program",
+        "notebook_open",
+        "notebook_panel_edit",
+        "notebook_panel_presentation",
+        "notebook_panel_undo"
+      ],
+      "openRead": {
+        "target": {
+          "id": "C74869CD-CE04-4AC2-A12E-66B00996B8E6",
+          "kind": "page"
+        },
+        "cursor": "56270",
+        "unchanged": false,
+        "elements": 14,
+        "cards": 0,
+        "rawInkPresent": true
+      },
+      "failedTool": "notebook_panel_presentation",
+      "error": {
+        "code": "invalid_command",
+        "message": "Команда содержит только типизированные поля Notebook; выбор хранилища не допускается."
+      },
+      "requestFieldMetadata": {
+        "toolArguments": [
+          "workspaceID",
+          "target",
+          "socketKey",
+          "appearance"
+        ],
+        "nativeCommand": [
+          "command",
+          "panelPresentation"
+        ],
+        "nativePanelPresentation": [
+          "workspaceID",
+          "target",
+          "appearance"
+        ],
+        "target": {
+          "kind": "page",
+          "id": "C74869CD-CE04-4AC2-A12E-66B00996B8E6"
+        },
+        "appearance": {
+          "viewport": {
+            "x": 2048,
+            "y": 1275
+          },
+          "pixelScale": 1
+        },
+        "omitted": [
+          "camera",
+          "knownCursor",
+          "knownRequestID"
+        ],
+        "origin": "Frozen session initial view(false), hasAppearance=false; viewport observed in actual iframe"
+      },
+      "ui": {
+        "pngLayersAccepted": 0,
+        "consoleErrors": [],
+        "screenshot": "failed-native-boundary-234.jpg"
+      },
+      "cleanup": {
+        "SDKTeardown": "confirmed",
+        "browserTab": "closed",
+        "stdioClient": "closed",
+        "localhostServer": "stopped",
+        "fixtureBoardCreated": false,
+        "nativeWrites": 0
+      }
+    },
+    "liveOwnerCause": {
+      "status": "proved",
+      "error": "pinned socket served old233 process after signed234 installation",
+      "peerPID": 79853,
+      "inMemoryCDHash": "c108d5c6d9cae6addfba4622a8ea264c8f56ae93",
+      "signed234CDHash": "a2fa39d9895b77a138276b6d343e1be110e91ff6",
+      "sequence": "233 quit05:33:02UTC; external reopen23305:33:37 during iPad install; atomic Mac exchange05:33:44",
+      "evidence": "/tmp/notebook-plugin-delivery-234/live-owner-audit/peer-code-identity.json",
+      "validatorSourceChange": false
+    },
+    "fullWireRegression": {
+      "status": "passed",
+      "cases": 2,
+      "scope": "exact full typed projection and secured Unix socket admission; rejects root-store selection",
+      "sourceDelta": "test only after signed234; enters coordinated235",
+      "evidence": "/tmp/notebook-panel-wire-admission-235.log"
+    },
+    "actualOwner234": {
+      "peerPID": 81818,
+      "memoryCDHash": "a2fa39d9895b77a138276b6d343e1be110e91ff6",
+      "matchesSignedBuild": true,
+      "status": "passed",
+      "receipt": "/tmp/notebook-plugin-delivery-234/cold-owner-repair/receipt.json",
+      "receiptSHA256": "f1bebf964ee73e55a395a20406d3fb79f74d8360f8ae7790d0ac27f6937414f6",
+      "scope": "ordinary quit of stale233, explicit background234 launch, secure default/named peers, preserved workspace/trust/presence/typedchoice",
+      "background": {
+        "activationPolicy": "accessory",
+        "onScreenWindowsBeforeAndAfterFirstPresentation": 0
+      },
+      "firstNativePresentation": {
+        "status": "ready",
+        "layers": 13,
+        "viewport": "800x600",
+        "pixelScale": 1
+      }
+    }
+  },
   "productAcceptance": {
-    "status": "rejected",
-    "reason": "generic 220x144 cards replaced native 834x1194 covers; initial auto-fit33% replaced native camera; ink and native composition missing",
-    "requiredRepair": "canonical existing native appearance, geometry and initial projection in the panel"
+    "status": "pending-refreshed-Codex-panel",
+    "scope": "real native content shown through installed0.1.2 SDK browser host; manual Codex acceptance pending",
+    "remaining": "own fixture gesture/agent/undo/reopen and refreshed Codex surface",
+    "previousVersion": "0.1.1 rejected by user"
+  },
+  "installerRepair": {
+    "scope": "standalone install CLI; excluded plugin servers from global conflict check via --disable plugins",
+    "cases": [
+      "enabled plugin alone excluded",
+      "isolated enabled global retained",
+      "isolated disabled global retained",
+      "actual0.1.2 update with installed plugin succeeded"
+    ],
+    "status": "passed",
+    "nativeSourceDelta": false
   }
 }

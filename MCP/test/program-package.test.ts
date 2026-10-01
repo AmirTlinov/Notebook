@@ -104,7 +104,8 @@ test('program CLI prepares a descriptor and animation publishes only its staged 
       'program',join(root,'input.json'),join(root,'prepared.json')],{encoding:'utf8'});
     const descriptor=JSON.parse(await readFile(join(root,'prepared.json'),'utf8'));
     assert.equal(JSON.parse(output).packageHash,descriptor.packageHash);
-    for(const kind of ['page','board','document']) {
+    assert.throws(()=>makeRecipe('animation',{target:{kind:'document',id:randomUUID()},programPackage:descriptor.packageHash}),/editable document files/);
+    for(const kind of ['page','board']) {
       const input={target:{kind,id:randomUUID()},programPackage:descriptor.packageHash,
         anchor:{tileX:0,tileY:0,localX:0,localY:0},title:'Large program'};
       const request=makeRecipe('animation',input);

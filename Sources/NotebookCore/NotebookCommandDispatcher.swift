@@ -8,7 +8,7 @@ public struct NotebookCommand: Codable, Sendable {
     case apply, admitAction, prepareAction, commitAction, undo, action, actions, continuations, search, contexts, point, delivery
     case referenceStatus, referenceStatuses, actionDetails, reference, placement, render, pageVision, read, artifact, presentation
     case script, scriptContext, scriptArtifact, importProgram, importDocument, importDocumentResource
-    case panelRead, panelEdit, panelUndo
+    case panelRead, panelEdit, panelUndo, panelPresentation
   }
   public var command: Kind
   public var query: String?
@@ -45,11 +45,12 @@ public struct NotebookCommand: Codable, Sendable {
   public var panelRead: NotebookPanelReadRequest?
   public var panelEdit: NotebookPanelEditRequest?
   public var panelUndo: NotebookPanelUndoRequest?
+  public var panelPresentation: NotebookPanelPresentationRequest?
 
   enum CodingKeys: String, CodingKey, CaseIterable {
     case command, query, filters, next, limit, action, actionID, target, elementID, reference
     case expectedRevision, region, worldOrigin, pageIndex, placement, contextID
-    case replyTo, references, queries, expectedCursor, artifact, presentation, cancel, fingerprint, script, scriptContext, actionPage, scriptEffect, readSnapshots, programImport, documentImport, documentResourceImport, panelRead, panelEdit, panelUndo
+    case replyTo, references, queries, expectedCursor, artifact, presentation, cancel, fingerprint, script, scriptContext, actionPage, scriptEffect, readSnapshots, programImport, documentImport, documentResourceImport, panelRead, panelEdit, panelUndo, panelPresentation
   }
 
   public init(command: Kind) { self.command = command }
@@ -57,7 +58,7 @@ public struct NotebookCommand: Codable, Sendable {
   /// These commands can commit or enqueue work; the Mac owner orders them with native intents.
   public var changesStore: Bool {
     switch command {
-    case .apply, .admitAction, .commitAction, .undo, .point, .placement, .render, .pageVision, .panelEdit, .panelUndo: true
+    case .apply, .admitAction, .commitAction, .undo, .point, .placement, .render, .pageVision, .panelEdit, .panelUndo, .panelPresentation: true
     default: false
     }
   }
@@ -155,6 +156,8 @@ public struct NotebookCommandDispatcher: Sendable {
     case .panelRead:
       guard let nativeActor, let panel = request.panelRead else { throw invalid("panel_owner_unavailable", "Панель обслуживает владелец установленного Notebook.") }
       return try store.readPanel(panel, actor: nativeActor)
+    case .panelPresentation:
+      throw invalid("panel_owner_unavailable", "Представление панели готовит установленный Mac-владелец.")
     case .panelEdit:
       guard let nativeActor, let panel = request.panelEdit else { throw invalid("panel_owner_unavailable", "Правку панели принимает владелец Notebook.") }
       return try store.editPanel(panel, actor: nativeActor)

@@ -25,7 +25,7 @@ test("public SDK help covers every method, all 20 operations, native content and
   assert.match(JSON.stringify(sdkReference.operationDetails.insertElement),/"nativeText"/);
   assert.match(JSON.stringify(sdkReference.operationDetails.insertElement),/"textStyle"/);
   const old=new Set(Object.values(sdkReference.methods).flatMap(value=>value.old??[]));
-  assert.equal(old.size,21);
+  assert.equal(old.size,19);
   const bundled=JSON.parse(await readFile(new URL("../../Sources/NotebookScriptHost/Resources/sdk-reference.json",import.meta.url),"utf8"));
   assert.deepEqual(bundled,sdkReference);
 });
@@ -241,7 +241,7 @@ test("MCP preserves attention statuses and exact run identity across start/resum
     await chmod(root,0o700);await new Promise<void>(resolve=>native.listen(path,resolve));await chmod(path,0o600);
     const [clientTransport,serverTransport]=InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);await client.connect(clientTransport);
-    assert.deepEqual((await client.listTools()).tools.map(t=>t.name).sort(),["notebook_context","notebook_execute","notebook_import_document","notebook_import_document_resource","notebook_import_program"]);
+    assert.deepEqual((await client.listTools()).tools.map(t=>t.name).sort(),["notebook_context","notebook_execute","notebook_import_document","notebook_import_document_resource","notebook_import_program","notebook_open","notebook_panel_edit","notebook_panel_presentation","notebook_panel_undo"]);
     for(const status of ["source_pixels","source_pixels_unavailable"]) {
       attentionStatus=status;
       const result=await client.callTool({name:"notebook_context",arguments:{method:"attention",args:{contextID:randomUUID(),referenceID:randomUUID()}}});

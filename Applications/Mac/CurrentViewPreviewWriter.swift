@@ -168,6 +168,7 @@ enum CurrentViewPreviewWriter {
   @MainActor
   static func writeTarget(_ request: TargetRenderRequest, model: NotebookAppModel) async throws {
     try request.requireCurrentRenderingRecipe()
+    if request.panelProjection != nil { try await writePanel(request, model: model); return }
     let store = model.store
     if let revision = request.pageVisionRevision {
       guard request.target.kind == .page, request.region == nil, request.worldOrigin == nil,

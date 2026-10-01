@@ -7,7 +7,7 @@ import {fileURLToPath} from 'node:url';
 import {createHash, randomUUID} from 'node:crypto';
 import {spawnSync} from 'node:child_process';
 
-test('public verifier accepts current three-tool bundle only in its checkout scope', {skip:process.platform !== 'darwin'}, async () => {
+test('public verifier accepts the shared-workspace bundle only in its checkout scope', {skip:process.platform !== 'darwin'}, async () => {
   const repo=await realpath(resolve(dirname(fileURLToPath(import.meta.url)), '../..'));
   const root=await mkdtemp(join(tmpdir(),'notebook-public-transport-'));
   try {
@@ -25,7 +25,7 @@ test('public verifier accepts current three-tool bundle only in its checkout sco
     await info(`com.amirtlinov.notebook.mac.acceptance.${scope}`);
     const listed=invoke('list-tools');
     assert.equal(listed.status,0,listed.stderr);
-    assert.deepEqual(JSON.parse(listed.stdout).tools.map((x:{name:string})=>x.name).sort(),['notebook_context','notebook_execute','notebook_import_program']);
+    assert.deepEqual(JSON.parse(listed.stdout).tools.map((x:{name:string})=>x.name).sort(),['notebook_context','notebook_execute','notebook_import_document','notebook_import_document_resource','notebook_import_program','notebook_open','notebook_panel_edit','notebook_panel_presentation','notebook_panel_undo']);
     assert.equal(invoke('call','notebook_import_program').status,1,'Extra server tool is not extra client authority');
     for(const identifier of ['com.amirtlinov.notebook.mac','com.amirtlinov.notebook.mac.acceptance','com.amirtlinov.notebook.mac.acceptance.000000000000']) {
       await info(identifier); const denied=invoke('list-tools');

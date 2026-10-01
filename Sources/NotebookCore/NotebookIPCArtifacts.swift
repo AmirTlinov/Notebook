@@ -218,7 +218,8 @@ extension NotebookStore {
   }
 
   public func loadTargetRenderReceipt(_ id: UUID) throws -> TargetRenderReceipt? {
-    guard let receipt: TargetRenderReceipt = try readDerivative(targetReceiptURL(id)) else { return nil }
+    guard let receipt: TargetRenderReceipt = try readDerivative(targetReceiptURL(id),
+      maximum: NotebookPanelRenderProjection.maximumEncodedBytes) else { return nil }
     guard receipt.request.id == id, ["ready", "error"].contains(receipt.status) else {
       throw CollaborationError("invalid_artifact", "Квитанция целевого снимка повреждена.")
     }
@@ -302,9 +303,9 @@ extension NotebookStore {
     guard let id else { throw CollaborationError("invalid_artifact", "Изображение имеет устойчивый ID владельца.") }; return id
   }
 
-  private func readDerivative<T: Decodable>(_ url: URL) throws -> T? {
+  private func readDerivative<T: Decodable>(_ url: URL, maximum: Int = 8 * 1_024 * 1_024) throws -> T? {
     let data: Data
-    do { data = try boundedArtifactData(url, maximum: 8 * 1_024 * 1_024) }
+    do { data = try boundedArtifactData(url, maximum: maximum) }
     catch let error as CollaborationError where error.code == "artifact_missing" { return nil }
     do { return try JSONDecoder().decode(T.self, from: data) }
     catch { throw CollaborationError("invalid_artifact", "Производная квитанция повреждена: \(url.lastPathComponent).") }

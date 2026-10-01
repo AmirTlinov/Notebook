@@ -1,6 +1,6 @@
 {
   "name": "notebook",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Work with your agent on shared Notebook boards and pages inside Codex.",
   "author": {
     "name": "Amir Tlinov"

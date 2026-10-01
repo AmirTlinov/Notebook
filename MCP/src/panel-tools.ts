@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { readFile } from "node:fs/promises";
 import { BridgeError, defaultSocketPath, runBridge } from "./bridge.js";
 import { operationSchema } from "./actions.js";
-import { sceneBoundsSchema } from "./spatial.js";
+import { sceneBoundsSchema, worldPointSchema } from "./spatial.js";
 
 declare const NOTEBOOK_PANEL_HTML: string;
 export const panelResourceURI = "ui://notebook/workspace.html";
@@ -13,6 +13,12 @@ export const panelTargetSchema = z.object({kind:z.enum(["board","page"]),id:z.uu
 export const panelAddressSchema = z.object({
   workspaceID:z.uuid(),target:panelTargetSchema,socketKey:z.string().regex(/^[a-f0-9]{24}$/),
 }).strict();
+export const panelViewSchema=z.object({
+  viewport:z.object({x:z.number().min(1).max(2048),y:z.number().min(1).max(2048)}).strict(),
+  pixelScale:z.number().min(.5).max(2),
+  camera:z.object({center:worldPointSchema,scale:z.number().min(.0125).max(4)}).strict().optional(),
+}).strict().refine(view=>view.viewport.x*view.viewport.y*view.pixelScale**2<=4_194_304,
+  "The panel view exceeds its native pixel budget.");
 const panelSourceSchema=z.object({id:z.string().min(1).max(120),
   page:z.record(z.string(),z.json()).optional(),spatial:z.record(z.string(),z.json()).optional(),
 }).strict();
@@ -29,10 +35,12 @@ export function panelSocket(address:Address,initialSocket=defaultSocketPath()):s
   return join(dirname(initialSocket),`${address.socketKey}.sock`);
 }
 
-async function result(operation:()=>Promise<Value>) {
+async function result(operation:()=>Promise<Value>,appearance=false) {
   try {
     const value=await operation();
-    return {content:[{type:"text" as const,text:JSON.stringify(value)}],structuredContent:value};
+    const text=appearance?{workspaceID:value.workspaceID,target:value.target,cursor:value.cursor,
+      status:(value.appearance as Value|undefined)?.status??"ready"}:value;
+    return {content:[{type:"text" as const,text:JSON.stringify(text)}],structuredContent:value};
   } catch(cause) {
     const value=cause instanceof BridgeError ? {...cause.detail,status:"error"}
       :{status:"error",code:"panel_failed",message:cause instanceof Error?cause.message:String(cause)};
@@ -46,23 +54,23 @@ export function registerNotebookPanel(server:McpServer,socketPath:string,html?:s
     uri:panelResourceURI,mimeType:RESOURCE_MIME_TYPE,
     text:html??(typeof NOTEBOOK_PANEL_HTML!=="undefined"?NOTEBOOK_PANEL_HTML
       :await readFile(new URL("../../.build/notebook-panel.html",import.meta.url),"utf8")),
-    _meta:{ui:{csp:{connectDomains:[],resourceDomains:[]},prefersBorder:false},
+    _meta:{ui:{csp:{connectDomains:[],resourceDomains:["blob:"]},prefersBorder:false},
       "openai/ui":{availableDisplayModes:["fullscreen"],preferredDisplayMode:"fullscreen"}},
   }]}));
   registerAppTool(server,"notebook_open",{
     title:"Open Notebook beside this conversation",
-    description:"Open the real Notebook workspace for human and agent collaboration. Uses the installed Mac runtime and existing saved material. Pass an exact board/page target when known; omitted target opens the root board. The panel keeps its own camera and selection and never changes the iPad camera. Other Notebook tools remain usable without opening the panel.",
+    description:"Open the real Notebook workspace for human and agent collaboration. Uses the installed Mac runtime and existing saved material. Pass an exact board/page target when known; omitted target follows the admitted Notebook focus. The panel keeps its own camera and selection and never changes the iPad camera. Other Notebook tools remain usable without opening the panel.",
     inputSchema:z.object({target:panelTargetSchema.optional(),bounds:sceneBoundsSchema.optional()}).strict(),
     annotations:{readOnlyHint:true,destructiveHint:false,openWorldHint:false},
     _meta:{ui:{resourceUri:panelResourceURI},"openai/ui":{entrypoints:[{type:"thread"},{type:"global"}]}},
   },input=>result(()=>runBridge<Value>(socketPath,{command:"panelRead",panelRead:input})));
-  registerAppTool(server,"notebook_panel_read",{
-    title:"Read this Notebook panel",
-    description:"Read the panel's exact admitted workspace and surface without moving any device camera.",
-    inputSchema:panelAddressSchema.extend({bounds:sceneBoundsSchema.optional(),knownCursor:z.string().optional()}).strict(),
+  registerAppTool(server,"notebook_panel_presentation",{
+    title:"Prepare this Notebook view",
+    description:"Read exact native composed appearance and source geometry for the panel's bounded viewport. This preserves Notebook ink, physical covers and painter order without changing any device camera.",
+    inputSchema:panelAddressSchema.extend({appearance:panelViewSchema,knownCursor:z.string().optional(),knownRequestID:z.uuid().optional()}).strict(),
     annotations:{readOnlyHint:true,destructiveHint:false,openWorldHint:false},_meta:appMetadata,
   },({socketKey,...request})=>result(()=>runBridge<Value>(panelSocket({...request,socketKey},socketPath),
-    {command:"panelRead",panelRead:request})));
+    {command:"panelPresentation",panelPresentation:request}),true));
   registerAppTool(server,"notebook_panel_edit",{
     title:"Save a human Notebook edit",
     description:"Apply the completed human gesture through Notebook native commands with exact captured sources. Reuse actionID and identical payload after an uncertain response. The native owner chooses authorship and validates surface, sources and operations.",

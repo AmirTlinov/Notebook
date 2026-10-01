@@ -186,6 +186,87 @@ final class SceneCompositionRenderer {
     return .init(png: png, diagnostics: canvas.diagnostics)
   }
 
+  /// The embedded panel consumes the same painter in separate immutable runs.
+  /// All ordinary editable bodies are excluded before the first gesture; ink
+  /// contacts remain in their native ordered plane and never gain a duplicate.
+  func renderPanel(presence: SessionPresence, projection: NotebookPanelRenderProjection,
+    editableIDs: Set<String>) async throws -> [NotebookPanelRasterLayer] {
+    defer { finishPreparation() }
+    try projection.validated(); try checkPreparation()
+    let size = CGSize(width: presence.viewport.x, height: presence.viewport.y)
+    let frame = CGRect(origin: .zero, size: size)
+    let bounds = WorkspaceSpatialBounds(origin: projection.worldOrigin,
+      width: size.width / presence.camera.scale, height: size.height / presence.camera.scale)
+    var positions: [ScenePaintPosition] = [], all: [ScenePaintPosition] = [], hasCovers = false
+    var bodies: [(position: ScenePaintPosition, read: SceneCompositionSource.ElementPaint,
+      presentation: NotebookElementPresentation?, local: PageRect, origin: WorldPoint)] = []
+    var cursor: SceneCompositionReadCursor?
+    repeat {
+      let page = try await source.readPaintOrder(boardID: presence.boardID, bounds: bounds, after: cursor)
+      cursor = page.next
+      for entry in page.entries {
+        let position = ScenePaintPosition(entry: entry)
+        if case .item = entry.id { hasCovers = true; continue }
+        guard all.count < 8192 else { throw SceneRenderError.resourceLimit }
+        all.append(position)
+        guard case .element(let id) = entry.id, editableIDs.contains(id),
+          bodies.count < NotebookPanelRenderProjection.maximumSubjects,
+          let read = try await source.readElementForPaint(id, boardID: presence.boardID),
+          read.element.graphic?.sourceInkContactID == nil else { continue }
+        let presentation = read.placement.map { NotebookElementPresentation(read.element, placement: $0) }
+        guard let local = read.layout?.frame ?? presentation?.frame,
+          let origin = read.layout?.origin ?? presentation?.placement.origin,
+          local.width > 0, local.height > 0,
+          local.width * presence.camera.scale * projection.pixelScale <= 2048,
+          local.height * presence.camera.scale * projection.pixelScale <= 2048 else { continue }
+        bodies.append((position, read, presentation, local, origin)); positions.append(position)
+      }
+    } while cursor != nil
+    bodies.sort { $0.position < $1.position }; positions.sort()
+    var output = NotebookPanelRasterSet()
+    func viewportLayer(_ id: String, order: Int, range: ScenePaintRange?) async throws -> NotebookPanelRasterLayer {
+      let canvas = try await SceneRasterCompositor.create(size: size, scale: projection.pixelScale,
+        resources: resources, permitsPreparation: permitsPreparation)
+      if let range {
+        _ = try await paintBoard(presence: presence, frame: frame, visible: frame,
+          transitionViewport: presence.viewport, passes: WorkspaceSceneProjection.portalPasses, range: range, canvas: canvas)
+      } else { try await canvas.drawBoardGrid(camera: presence.camera, size: size, in: frame) }
+      return try .init(id: id, order: order, worldOrigin: projection.worldOrigin,
+        frame: .init(x: 0, y: 0, width: bounds.width, height: bounds.height), png: await canvas.finishPNG())
+    }
+    try output.append(await viewportLayer("board-grid", order: -1, range: nil))
+    let passive = all.filter { !positions.contains($0) }
+    for index in 0...positions.count {
+      let lower = index == 0 ? nil : positions[index - 1]
+      let upper = index == positions.count ? nil : positions[index]
+      if passive.contains(where: { (lower == nil || lower! < $0) && (upper == nil || $0 < upper!) }) {
+        try output.append(await viewportLayer("elements-\(index)", order: index * 2,
+          range: .init(layer: .elements, lower: lower, upper: upper)))
+      }
+      if index < bodies.count {
+        let body = bodies[index], bodySize = CGSize(width: body.local.width, height: body.local.height)
+        let canvas = try await SceneRasterCompositor.create(size: bodySize,
+          scale: presence.camera.scale * projection.pixelScale, resources: resources, permitsPreparation: permitsPreparation)
+        try await paintElement(body.read, boardID: presence.boardID, frame: .init(origin: .zero, size: bodySize),
+          canvas: canvas, presentation: body.presentation)
+        let delta = projection.worldOrigin.delta(to: body.origin)
+        try output.append(.init(id: "subject-\(body.read.element.id)", order: index * 2 + 1,
+          worldOrigin: projection.worldOrigin,
+          frame: .init(x: delta.x + body.local.x, y: delta.y + body.local.y, width: body.local.width, height: body.local.height),
+          png: await canvas.finishPNG(), elementID: body.read.element.id))
+      }
+    }
+    // Root ink is deliberately absent from static plan bands. Its canonical
+    // ordered projection is a separate material between authored bodies/covers.
+    if let ink = try await renderInk(presence: presence, scale: projection.pixelScale) {
+      try output.append(.init(id: "board-ink", order: 1000, worldOrigin: projection.worldOrigin,
+        frame: .init(x: 0, y: 0, width: bounds.width, height: bounds.height), png: ink.png))
+    }
+    if hasCovers { try output.append(await viewportLayer("covers", order: 2000, range: .whole(.covers))) }
+    try await source.validate()
+    return output.layers
+  }
+
   /// A physical cover contains only its paper, contents and ink. Neighbouring
   /// boards and shadows behind its transparent corners are not its sources.
   func renderCover(itemID: UUID, boardID: UUID, scale: Double = 2) async throws -> Result {

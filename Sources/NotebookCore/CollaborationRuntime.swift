@@ -83,7 +83,25 @@ public struct TargetRenderRequest: Codable, Equatable, Sendable, Identifiable {
   /// A page-vision request asks only for final ink, its map and detail windows.
   /// Without this constraint the request is a composite content snapshot.
   public let pageVisionRevision: String?
+  public let panelProjection: NotebookPanelRenderProjection?
   public let createdAt: Date
+
+  public init(id: UUID, target: CollaborationTarget, sourceRevision: String, region: PageRect?,
+    worldOrigin: WorldPoint?, pageIndex: Int, pageVisionRevision: String?, createdAt: Date,
+    panelProjection: NotebookPanelRenderProjection? = nil) {
+    self.id = id; self.target = target; self.sourceRevision = sourceRevision; self.region = region
+    self.worldOrigin = worldOrigin; self.pageIndex = pageIndex; self.pageVisionRevision = pageVisionRevision
+    self.createdAt = createdAt; self.panelProjection = panelProjection
+  }
+
+  static func panelID(target: CollaborationTarget, source: String, projection: NotebookPanelRenderProjection) throws -> UUID {
+    let hash = try collaborationHash(JSONValue.object(["renderer": .string("NotebookPanelComposition/1"),
+      "target": try .encode(target), "source": .string(source), "projection": try .encode(projection)]))
+    let hex = Array(hash)
+    let first = String(hex[0..<8]) + "-" + String(hex[8..<12]) + "-4" + String(hex[13..<16])
+    let second = "-8" + String(hex[17..<20]) + "-" + String(hex[20..<32])
+    return UUID(uuidString: first + second)!
+  }
 
   /// A durable picture depends on both its content and the rendering recipe.
   /// Source revisions do not change with MathJax or spatial raster preparation;
@@ -113,6 +131,15 @@ public struct TargetRenderRequest: Codable, Equatable, Sendable, Identifiable {
   /// An executor cannot publish today's pixels under a different recipe's ID.
   /// Page vision has its own ink-only recipe and is validated by that executor.
   public func requireCurrentRenderingRecipe() throws {
+    if let panelProjection {
+      try panelProjection.validated()
+      guard [.board, .page].contains(target.kind), target.boardID == nil,
+        region == nil, worldOrigin == nil, pageIndex == 0, pageVisionRevision == nil,
+        id == (try Self.panelID(target: target, source: sourceRevision, projection: panelProjection)) else {
+        throw CollaborationError("render_recipe_unavailable", "Представление панели принадлежит точной проекции и источнику.", target: target)
+      }
+      return
+    }
     if pageVisionRevision != nil { return }
     let current = try Self.compositeID(target: target, source: sourceRevision,
       region: region, worldOrigin: worldOrigin, pageIndex: pageIndex)
@@ -160,13 +187,15 @@ public struct TargetRenderReceipt: Codable, Equatable, Sendable {
   public let programs: [DocumentProgramCheck]?
   public let inkRegions: [PageRect]
   public let completedAt: Date
+  public let panelPresentation: JSONValue?
 
   public init(request: TargetRenderRequest, status: String, buildID: String? = nil, pngSHA256: String? = nil, referenceFingerprint: String? = nil,
     pixelSize: SpatialPoint? = nil, camera: SpatialCamera? = nil,
-    diagnostics: [RenderDiagnostic] = [], programs: [DocumentProgramCheck]? = nil, inkRegions: [PageRect] = []) {
+    diagnostics: [RenderDiagnostic] = [], programs: [DocumentProgramCheck]? = nil, inkRegions: [PageRect] = [], panelPresentation: JSONValue? = nil) {
     self.buildID = buildID; self.request = request; self.status = status; self.pngSHA256 = pngSHA256; self.referenceFingerprint = referenceFingerprint
     self.pixelSize = pixelSize; self.camera = camera; self.diagnostics = diagnostics; self.programs = programs
     self.inkRegions = inkRegions
+    self.panelPresentation = panelPresentation
     completedAt = Date()
   }
 }
@@ -305,6 +334,15 @@ extension NotebookStore {
     }
   }
 
+  func enqueuePanelRender(target: CollaborationTarget, projection: NotebookPanelRenderProjection) throws -> TargetRenderRequest {
+    try projection.validated()
+    guard projection.workspaceID == (try storedWorkspaceID()) else { throw NotebookStorageError.transactionConflict }
+    let source = try referenceRevision(target: target)
+    return try enqueueRenderRequest(.init(id: TargetRenderRequest.panelID(target: target, source: source, projection: projection),
+      target: target, sourceRevision: source, region: nil, worldOrigin: nil, pageIndex: 0,
+      pageVisionRevision: nil, createdAt: Date(), panelProjection: projection))
+  }
+
   private func enqueueTargetRender(target: CollaborationTarget, expectedRevision: String,
     region: PageRect?, worldOrigin: WorldPoint?, pageIndex: Int) throws -> TargetRenderRequest {
     guard target.kind != .workspace && target.kind != .codeFragment else { throw CollaborationError("invalid_reference", "Снимок принадлежит доске, обложке, листу или странице документа.") }
@@ -414,10 +452,14 @@ extension NotebookStore {
   }
 
   public func saveTargetRender(_ receipt: TargetRenderReceipt, png: Data? = nil) throws {
+    let encoded = try JSONEncoder().encode(receipt)
+    if receipt.request.panelProjection != nil, encoded.count > NotebookPanelRenderProjection.maximumEncodedBytes {
+      throw CollaborationError("resource_limit", "Квитанция панели превышает ограничение передачи.")
+    }
     try prepare()
     try publishReferenceBaseline(receipt)
     if let png { try png.write(to: targetPNGURL(receipt.request.id), options: .atomic) }
-    try JSONEncoder().encode(receipt).write(to: targetReceiptURL(receipt.request.id), options: .atomic)
+    try encoded.write(to: targetReceiptURL(receipt.request.id), options: .atomic)
     try commandTransaction {
       try currentSQL!.run("UPDATE metadata_index SET status=? WHERE address=? AND kind='renderRequest'", [.text(receipt.status), .text("collaboration/render-requests/" + receipt.request.id.uuidString.lowercased() + ".json#")])
     }

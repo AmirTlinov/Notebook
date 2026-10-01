@@ -6,7 +6,7 @@ description: Work together on the user's saved Notebook boards and pages beside 
 # Notebook
 
 Use `notebook_open` when the user wants to open or work together in Notebook.
-Pass a known board/page target; otherwise open the root board. The panel is an
+Pass a known board/page target; otherwise open the admitted current surface. The panel is an
 editable view of the user's existing workspace. Conversation and agent execution
 belong to Codex.
 

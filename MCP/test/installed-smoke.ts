@@ -13,7 +13,7 @@ const transport=new StdioClientTransport({command:join(app,"Contents/Resources/C
   args:[join(app,"Contents/Resources/NotebookTools/dist/index.mjs")],env:environment,stderr:"pipe"});
 try {
   await client.connect(transport);
-  assert.deepEqual((await client.listTools()).tools.map(t=>t.name).sort(),["notebook_context","notebook_execute","notebook_import_document","notebook_import_document_resource","notebook_import_program","notebook_open","notebook_panel_edit","notebook_panel_read","notebook_panel_undo"]);
+  assert.deepEqual((await client.listTools()).tools.map(t=>t.name).sort(),["notebook_context","notebook_execute","notebook_import_document","notebook_import_document_resource","notebook_import_program","notebook_open","notebook_panel_edit","notebook_panel_presentation","notebook_panel_undo"]);
   const help=await client.callTool({name:"notebook_context",arguments:{method:"help",args:{topic:"operation/insertElement"}}});
   assert.notEqual(help.isError,true,JSON.stringify(help));assert.match(JSON.stringify(help.structuredContent),/"nativeText"/);
   const deadline=Date.now()+30_000;

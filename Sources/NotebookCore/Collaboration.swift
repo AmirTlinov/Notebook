@@ -247,15 +247,6 @@ extension VersionStamp {
 }
 
 extension JSONValue {
-  var object: [String: JSONValue] { if case .object(let value) = self { value } else { [:] } }
-  var array: [JSONValue] { if case .array(let value) = self { value } else { [] } }
-  var string: String? { if case .string(let value) = self { value } else { nil } }
-  func setting(_ key: String, _ value: JSONValue?) -> JSONValue {
-    var result = object
-    result[key] = value
-    return .object(result)
-  }
-
   var memberIdentity: String? {
     (self["id"]?.string ?? self["itemID"]?.string).map(collaborationIdentity)
   }
