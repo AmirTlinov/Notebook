@@ -18,6 +18,9 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
   var didAcceptTurn: (UIViewController) -> Void = { _ in }
   var onFailure: (Error) -> Void = { _ in }
   var acquireSheetFrame: @MainActor @Sendable (UIViewController) async throws -> PageTurnFrame = { _ in throw SceneRenderError.snapshotPending("page_frame_owner") }
+  /// A frozen cut admits pair acquisition; it does not establish readiness of
+  /// the currently installed live host used by endpoint/staging decisions.
+  var hasAcceptedSheetFrame: (UIViewController) -> Bool = { _ in false }
   var isSheetReadyForCapture: (UIViewController) -> Bool = { _ in true }
   var isSheetPresented: (UIViewController) -> Bool = { _ in true }
   var onStageLiveSheet: (UIViewController) -> Void = { _ in }
@@ -197,7 +200,8 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
 
   private func acquireCurrentFrames(for id: UUID) {
     guard let motion, motion.id == id, motion.frame == nil, frameAcquisition == nil,
-      isSheetReadyForCapture(motion.source), isSheetReadyForCapture(motion.target) else { return }
+      hasAcceptedSheetFrame(motion.source) || isSheetReadyForCapture(motion.source),
+      hasAcceptedSheetFrame(motion.target) || isSheetReadyForCapture(motion.target) else { return }
     let acquisition = FrameAcquisition()
     frameAcquisition = acquisition
     let task = Task.immediate { @MainActor [weak self] in

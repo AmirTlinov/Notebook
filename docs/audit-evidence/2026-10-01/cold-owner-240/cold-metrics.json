@@ -1,0 +1,750 @@
+{
+  "schemaVersion": 1,
+  "scope": "One fresh physical cold1 and cold24 source-clock run per version; observed phase receipts, not a statistical latency verdict; source timestamps and observer cost are not subtracted",
+  "versions": [
+    239,
+    240
+  ],
+  "runs": [
+    {
+      "version": 239,
+      "scenario": "cold1",
+      "processID": 8401,
+      "originUptime": 184192.9967211667,
+      "droppedEvents": 0,
+      "evidence": {
+        "sourceClock": "/private/tmp/notebook-web-startup-239-final-cold/cold1/source-clock.json",
+        "sourceClockSHA256": "bb5fd56d9d58b1269ad6c022d2c93ace9d9f8cfff9c80a16109a188d980c9eb3",
+        "attachment": "/private/tmp/notebook-web-startup-239-final-cold/cold1/attachments/4349403A-4854-44C2-89E4-D5D9045DE84A.json",
+        "attachmentSHA256": "a24d9ded1d6110885d0d8bc3bd068822bd9230f57b5823e6dcf8960aea352eef",
+        "binding": "/private/tmp/notebook-web-startup-239-final-cold/binding.json",
+        "bindingSHA256": "c80169874f65fb4499d3c2aaedc04e36e24ff9de037ca5a75afae57e3cb96389"
+      },
+      "sceneFirstPublication": {
+        "requestOrdinal": "1",
+        "published": {
+          "ms": 98.187,
+          "owner": "2ED0CAB1-4A75-4A9C-A918-2F2C5D9C13DF",
+          "source": "1",
+          "deliveryUICycle": 3,
+          "deliveryRunLoopPass": 55
+        },
+        "firstAcceptedAfterPublication": {
+          "ms": 99.526,
+          "owner": "2ED0CAB1-4A75-4A9C-A918-2F2C5D9C13DF",
+          "deliveryUICycle": 3,
+          "deliveryRunLoopPass": 55
+        },
+        "firstResolvedAfterAccepted": null,
+        "firstPagePreparationAfterAccepted": {
+          "ms": 136.582,
+          "owner": "C025C787-9D9E-4754-B346-0225431FA7A7",
+          "source": "C025C787-9D9E-4754-B346-0225431FA7A7",
+          "deliveryUICycle": 4,
+          "deliveryRunLoopPass": 57
+        },
+        "publicationToAcceptedMs": 1.339,
+        "acceptedToPagePreparationMs": 37.056,
+        "publicationToPagePreparationMs": 38.395,
+        "sameDeliveryUICycleAndRunLoopPass": false,
+        "acceptedCapturedSourceWasNil": true
+      },
+      "indexWorker": {
+        "dispatchToWorkerBeginMs": 0.07,
+        "workerDurationMs": 0.657,
+        "workerEndToMainDeliveryMs": 19.14,
+        "mainDeliveryToPublicationMs": 0.052,
+        "workerTimestampScope": "worker-origin uptime; delivery UI cycle/pass on worker events describes later Main delivery, not worker execution"
+      },
+      "pageLifecycle": {
+        "firstPreparedAppeared": {
+          "ms": 153.973,
+          "owner": "508CE017-85BD-4BE0-B27B-3F00C66C7386",
+          "source": "2506CFB2-0569-4255-B13C-593A4BE94B9D-0-0",
+          "deliveryUICycle": 5,
+          "deliveryRunLoopPass": 59
+        },
+        "firstAdmissionRequested": {
+          "ms": 159.751,
+          "owner": "CE689461-3420-4B68-95A9-0A17CD352AD0",
+          "source": "2506CFB2-0569-4255-B13C-593A4BE94B9D-0-0",
+          "deliveryUICycle": 5,
+          "deliveryRunLoopPass": 59
+        },
+        "pagePreparationToAppearanceMs": 17.391,
+        "pagePreparationToAdmissionMs": 23.169,
+        "admissionBeforeAppearance": false
+      },
+      "constructors": {
+        "all": {
+          "count": 1,
+          "sumMs": 28.575,
+          "medianMs": 28.575,
+          "maxMs": 28.575,
+          "firstStartedMs": 159.891,
+          "lastFinishedMs": 188.466
+        },
+        "currentPage": {
+          "count": 1,
+          "sumMs": 28.575,
+          "medianMs": 28.575,
+          "maxMs": 28.575,
+          "firstStartedMs": 159.891,
+          "lastFinishedMs": 188.466
+        },
+        "firstRequestedSourceConstructorMs": 28.575
+      },
+      "matchingFirstRequestedRuntime": {
+        "source": "2506CFB2-0569-4255-B13C-593A4BE94B9D-0-0",
+        "owner": "CE689461-3420-4B68-95A9-0A17CD352AD0",
+        "events": {
+          "navigation_requested": {
+            "ms": 189.149,
+            "owner": "CE689461-3420-4B68-95A9-0A17CD352AD0",
+            "source": "2506CFB2-0569-4255-B13C-593A4BE94B9D-0-0",
+            "deliveryUICycle": 5,
+            "deliveryRunLoopPass": 59
+          },
+          "navigation_returned": {
+            "ms": 189.983,
+            "owner": "CE689461-3420-4B68-95A9-0A17CD352AD0",
+            "source": "2506CFB2-0569-4255-B13C-593A4BE94B9D-0-0",
+            "deliveryUICycle": 5,
+            "deliveryRunLoopPass": 59
+          },
+          "navigation_policy": {
+            "ms": 314.161,
+            "owner": "CE689461-3420-4B68-95A9-0A17CD352AD0",
+            "source": "2506CFB2-0569-4255-B13C-593A4BE94B9D-0-0",
+            "deliveryUICycle": 11,
+            "deliveryRunLoopPass": 133
+          },
+          "navigation_started": {
+            "ms": 320.091,
+            "owner": "CE689461-3420-4B68-95A9-0A17CD352AD0",
+            "source": "2506CFB2-0569-4255-B13C-593A4BE94B9D-0-0",
+            "deliveryUICycle": 13,
+            "deliveryRunLoopPass": 157
+          },
+          "navigation_committed": {
+            "ms": 320.934,
+            "owner": "CE689461-3420-4B68-95A9-0A17CD352AD0",
+            "source": "2506CFB2-0569-4255-B13C-593A4BE94B9D-0-0",
+            "deliveryUICycle": 13,
+            "deliveryRunLoopPass": 159
+          },
+          "runtime_ready": {
+            "ms": 334.723,
+            "owner": "CE689461-3420-4B68-95A9-0A17CD352AD0",
+            "source": "2506CFB2-0569-4255-B13C-593A4BE94B9D-0-0",
+            "deliveryUICycle": 13,
+            "deliveryRunLoopPass": 166
+          }
+        },
+        "requestToPolicyMs": 125.012,
+        "returnedToPolicyMs": 124.178,
+        "policyToStartedMs": 5.93,
+        "startedToReadyMs": 14.632,
+        "globalFirstPolicy": {
+          "ms": 314.161,
+          "owner": "CE689461-3420-4B68-95A9-0A17CD352AD0",
+          "source": "2506CFB2-0569-4255-B13C-593A4BE94B9D-0-0",
+          "deliveryUICycle": 11,
+          "deliveryRunLoopPass": 133
+        }
+      },
+      "nativeInstallation": {
+        "currentPageSourceCount": 1,
+        "installedUniqueCurrentSources": 1,
+        "firstSourceNativeInstalled": {
+          "ms": 335.36,
+          "source": "2506CFB2-0569-4255-B13C-593A4BE94B9D-0-0",
+          "deliveryUICycle": 13,
+          "deliveryRunLoopPass": 166
+        },
+        "allCurrentSourcesNativeInstalled": {
+          "ms": 335.36,
+          "source": "2506CFB2-0569-4255-B13C-593A4BE94B9D-0-0",
+          "deliveryUICycle": 13,
+          "deliveryRunLoopPass": 166
+        },
+        "allMetricStage": "source_native_installed",
+        "allMetricSelection": "last first-install receipt across the accepted current-page sources; does not use measurement_completed"
+      }
+    },
+    {
+      "version": 239,
+      "scenario": "cold24",
+      "processID": 8411,
+      "originUptime": 184241.67215637505,
+      "droppedEvents": 0,
+      "evidence": {
+        "sourceClock": "/private/tmp/notebook-web-startup-239-final-cold/cold24/source-clock.json",
+        "sourceClockSHA256": "4c7d610cadffc4e918772ecf608c8e09f4e05d56b287bfc1e00e9a075cbe7c80",
+        "attachment": "/private/tmp/notebook-web-startup-239-final-cold/cold24/attachments/5F74AD48-35DA-4974-B9C9-C93232511E39.json",
+        "attachmentSHA256": "f7fa3fe22ac15bf5a6049e01727fb53f1856db9accd8e11cdde973f8776597df",
+        "binding": "/private/tmp/notebook-web-startup-239-final-cold/binding.json",
+        "bindingSHA256": "c80169874f65fb4499d3c2aaedc04e36e24ff9de037ca5a75afae57e3cb96389"
+      },
+      "sceneFirstPublication": {
+        "requestOrdinal": "1",
+        "published": {
+          "ms": 90.159,
+          "owner": "4C223BAC-DA79-477F-B2BE-EC440B19D93D",
+          "source": "1",
+          "deliveryUICycle": 4,
+          "deliveryRunLoopPass": 39
+        },
+        "firstAcceptedAfterPublication": {
+          "ms": 91.585,
+          "owner": "4C223BAC-DA79-477F-B2BE-EC440B19D93D",
+          "deliveryUICycle": 4,
+          "deliveryRunLoopPass": 39
+        },
+        "firstResolvedAfterAccepted": null,
+        "firstPagePreparationAfterAccepted": {
+          "ms": 116.049,
+          "owner": "10E89BC0-8CA3-4A00-A1AE-B7F5C4F3AFBA",
+          "source": "10E89BC0-8CA3-4A00-A1AE-B7F5C4F3AFBA",
+          "deliveryUICycle": 5,
+          "deliveryRunLoopPass": 41
+        },
+        "publicationToAcceptedMs": 1.427,
+        "acceptedToPagePreparationMs": 24.464,
+        "publicationToPagePreparationMs": 25.89,
+        "sameDeliveryUICycleAndRunLoopPass": false,
+        "acceptedCapturedSourceWasNil": true
+      },
+      "indexWorker": {
+        "dispatchToWorkerBeginMs": 0.261,
+        "workerDurationMs": 0.729,
+        "workerEndToMainDeliveryMs": 34.745,
+        "mainDeliveryToPublicationMs": 0.071,
+        "workerTimestampScope": "worker-origin uptime; delivery UI cycle/pass on worker events describes later Main delivery, not worker execution"
+      },
+      "pageLifecycle": {
+        "firstPreparedAppeared": {
+          "ms": 178.281,
+          "owner": "78E74166-2EBF-43F1-8462-58F69F729997",
+          "source": "6B606D85-167E-4DC9-9211-A32F072C7BD7-0-23",
+          "deliveryUICycle": 6,
+          "deliveryRunLoopPass": 45
+        },
+        "firstAdmissionRequested": {
+          "ms": 118.319,
+          "owner": "01900644-7562-43D4-B7C3-C7FD497DF9CB",
+          "source": "6B606D85-167E-4DC9-9211-A32F072C7BD7-0-0",
+          "deliveryUICycle": 5,
+          "deliveryRunLoopPass": 43
+        },
+        "pagePreparationToAppearanceMs": 62.232,
+        "pagePreparationToAdmissionMs": 2.27,
+        "admissionBeforeAppearance": true
+      },
+      "constructors": {
+        "all": {
+          "count": 26,
+          "sumMs": 181.074,
+          "medianMs": 5.598,
+          "maxMs": 23.748,
+          "firstStartedMs": 118.468,
+          "lastFinishedMs": 1034.348
+        },
+        "currentPage": {
+          "count": 24,
+          "sumMs": 165.057,
+          "medianMs": 5.549,
+          "maxMs": 23.748,
+          "firstStartedMs": 118.468,
+          "lastFinishedMs": 936.676
+        },
+        "firstRequestedSourceConstructorMs": 23.748,
+        "adjacentPages": {
+          "count": 2,
+          "sumMs": 16.017,
+          "medianMs": 8.009,
+          "maxMs": 8.407,
+          "firstStartedMs": 953.065,
+          "lastFinishedMs": 1034.348
+        }
+      },
+      "matchingFirstRequestedRuntime": {
+        "source": "6B606D85-167E-4DC9-9211-A32F072C7BD7-0-0",
+        "owner": "01900644-7562-43D4-B7C3-C7FD497DF9CB",
+        "events": {
+          "navigation_requested": {
+            "ms": 142.812,
+            "owner": "01900644-7562-43D4-B7C3-C7FD497DF9CB",
+            "source": "6B606D85-167E-4DC9-9211-A32F072C7BD7-0-0",
+            "deliveryUICycle": 5,
+            "deliveryRunLoopPass": 43
+          },
+          "navigation_returned": {
+            "ms": 144.274,
+            "owner": "01900644-7562-43D4-B7C3-C7FD497DF9CB",
+            "source": "6B606D85-167E-4DC9-9211-A32F072C7BD7-0-0",
+            "deliveryUICycle": 5,
+            "deliveryRunLoopPass": 43
+          },
+          "navigation_policy": {
+            "ms": 327.115,
+            "owner": "01900644-7562-43D4-B7C3-C7FD497DF9CB",
+            "source": "6B606D85-167E-4DC9-9211-A32F072C7BD7-0-0",
+            "deliveryUICycle": 9,
+            "deliveryRunLoopPass": 63
+          },
+          "navigation_started": {
+            "ms": 364.323,
+            "owner": "01900644-7562-43D4-B7C3-C7FD497DF9CB",
+            "source": "6B606D85-167E-4DC9-9211-A32F072C7BD7-0-0",
+            "deliveryUICycle": 10,
+            "deliveryRunLoopPass": 66
+          },
+          "navigation_committed": {
+            "ms": 364.774,
+            "owner": "01900644-7562-43D4-B7C3-C7FD497DF9CB",
+            "source": "6B606D85-167E-4DC9-9211-A32F072C7BD7-0-0",
+            "deliveryUICycle": 10,
+            "deliveryRunLoopPass": 66
+          },
+          "runtime_ready": {
+            "ms": 365.01,
+            "owner": "01900644-7562-43D4-B7C3-C7FD497DF9CB",
+            "source": "6B606D85-167E-4DC9-9211-A32F072C7BD7-0-0",
+            "deliveryUICycle": 10,
+            "deliveryRunLoopPass": 66
+          }
+        },
+        "requestToPolicyMs": 184.302,
+        "returnedToPolicyMs": 182.841,
+        "policyToStartedMs": 37.208,
+        "startedToReadyMs": 0.687,
+        "globalFirstPolicy": {
+          "ms": 327.115,
+          "owner": "01900644-7562-43D4-B7C3-C7FD497DF9CB",
+          "source": "6B606D85-167E-4DC9-9211-A32F072C7BD7-0-0",
+          "deliveryUICycle": 9,
+          "deliveryRunLoopPass": 63
+        }
+      },
+      "nativeInstallation": {
+        "currentPageSourceCount": 24,
+        "installedUniqueCurrentSources": 24,
+        "firstSourceNativeInstalled": {
+          "ms": 368.622,
+          "source": "6B606D85-167E-4DC9-9211-A32F072C7BD7-0-0",
+          "deliveryUICycle": 10,
+          "deliveryRunLoopPass": 66
+        },
+        "allCurrentSourcesNativeInstalled": {
+          "ms": 1077.271,
+          "source": "6B606D85-167E-4DC9-9211-A32F072C7BD7-0-23",
+          "deliveryUICycle": 35,
+          "deliveryRunLoopPass": 293
+        },
+        "allMetricStage": "source_native_installed",
+        "allMetricSelection": "last first-install receipt across the accepted current-page sources; does not use measurement_completed"
+      }
+    },
+    {
+      "version": 240,
+      "scenario": "cold1",
+      "processID": 8591,
+      "originUptime": 199871.93801437505,
+      "droppedEvents": 0,
+      "evidence": {
+        "sourceClock": "/private/tmp/notebook-cold-owner-240-final-cold/cold1/source-clock.json",
+        "sourceClockSHA256": "3bcde48767d0fbb5a24fdc3cbde037dc0e09f6b4e4f45c36461c3f6c069d6484",
+        "attachment": "/private/tmp/notebook-cold-owner-240-final-cold/cold1/attachments/892003B8-FFDB-4695-B473-0CF34F372903.json",
+        "attachmentSHA256": "8ff455d81f45a0f0110f526375dc4e76cbc2b17eb0e060e53ebaa051aeb0ca91",
+        "binding": "/private/tmp/notebook-cold-owner-240-final-cold/binding.json",
+        "bindingSHA256": "212baa1b8c4f82ffd87101444972e83d127affb0ec56dd396e67ccfb32d03fe0"
+      },
+      "sceneFirstPublication": {
+        "requestOrdinal": "1",
+        "published": {
+          "ms": 115.706,
+          "owner": "7429B37E-A2F3-4D7A-BF94-0214982E870A",
+          "source": "1",
+          "deliveryUICycle": 4,
+          "deliveryRunLoopPass": 44
+        },
+        "firstAcceptedAfterPublication": {
+          "ms": 117.198,
+          "owner": "7429B37E-A2F3-4D7A-BF94-0214982E870A",
+          "deliveryUICycle": 4,
+          "deliveryRunLoopPass": 44
+        },
+        "firstResolvedAfterAccepted": {
+          "ms": 117.288,
+          "owner": "7429B37E-A2F3-4D7A-BF94-0214982E870A",
+          "source": "65ACC2B0-5440-43F9-8FDE-7EC15FA8248C",
+          "deliveryUICycle": 4,
+          "deliveryRunLoopPass": 44
+        },
+        "firstPagePreparationAfterAccepted": {
+          "ms": 117.503,
+          "owner": "75C329A0-C3B4-4D3D-B6AF-2749E0AD13C3",
+          "source": "75C329A0-C3B4-4D3D-B6AF-2749E0AD13C3",
+          "deliveryUICycle": 4,
+          "deliveryRunLoopPass": 44
+        },
+        "publicationToAcceptedMs": 1.492,
+        "acceptedToPagePreparationMs": 0.305,
+        "publicationToPagePreparationMs": 1.797,
+        "sameDeliveryUICycleAndRunLoopPass": true,
+        "acceptedCapturedSourceWasNil": true,
+        "acceptedToResolvedMs": 0.09,
+        "resolvedToPagePreparationMs": 0.215
+      },
+      "indexWorker": {
+        "dispatchToWorkerBeginMs": 0.082,
+        "workerDurationMs": 0.587,
+        "workerEndToMainDeliveryMs": 35.606,
+        "mainDeliveryToPublicationMs": 0.055,
+        "workerTimestampScope": "worker-origin uptime; delivery UI cycle/pass on worker events describes later Main delivery, not worker execution"
+      },
+      "pageLifecycle": {
+        "firstPreparedAppeared": {
+          "ms": 156.76,
+          "owner": "BCB211D8-D629-4F9E-B1A9-51EC5645F310",
+          "source": "84EE9D19-AB6E-4F0F-AAF1-D14A75F328BD-0-0",
+          "deliveryUICycle": 5,
+          "deliveryRunLoopPass": 45
+        },
+        "firstAdmissionRequested": {
+          "ms": 163.178,
+          "owner": "E1E83A2F-0D23-4003-BDF5-5795DE2956B2",
+          "source": "84EE9D19-AB6E-4F0F-AAF1-D14A75F328BD-0-0",
+          "deliveryUICycle": 6,
+          "deliveryRunLoopPass": 46
+        },
+        "pagePreparationToAppearanceMs": 39.256,
+        "pagePreparationToAdmissionMs": 45.675,
+        "admissionBeforeAppearance": false
+      },
+      "constructors": {
+        "all": {
+          "count": 1,
+          "sumMs": 27.636,
+          "medianMs": 27.636,
+          "maxMs": 27.636,
+          "firstStartedMs": 163.316,
+          "lastFinishedMs": 190.952
+        },
+        "currentPage": {
+          "count": 1,
+          "sumMs": 27.636,
+          "medianMs": 27.636,
+          "maxMs": 27.636,
+          "firstStartedMs": 163.316,
+          "lastFinishedMs": 190.952
+        },
+        "firstRequestedSourceConstructorMs": 27.636
+      },
+      "matchingFirstRequestedRuntime": {
+        "source": "84EE9D19-AB6E-4F0F-AAF1-D14A75F328BD-0-0",
+        "owner": "E1E83A2F-0D23-4003-BDF5-5795DE2956B2",
+        "events": {
+          "navigation_requested": {
+            "ms": 191.616,
+            "owner": "E1E83A2F-0D23-4003-BDF5-5795DE2956B2",
+            "source": "84EE9D19-AB6E-4F0F-AAF1-D14A75F328BD-0-0",
+            "deliveryUICycle": 6,
+            "deliveryRunLoopPass": 46
+          },
+          "navigation_returned": {
+            "ms": 193.508,
+            "owner": "E1E83A2F-0D23-4003-BDF5-5795DE2956B2",
+            "source": "84EE9D19-AB6E-4F0F-AAF1-D14A75F328BD-0-0",
+            "deliveryUICycle": 6,
+            "deliveryRunLoopPass": 46
+          },
+          "navigation_policy": {
+            "ms": 317.985,
+            "owner": "E1E83A2F-0D23-4003-BDF5-5795DE2956B2",
+            "source": "84EE9D19-AB6E-4F0F-AAF1-D14A75F328BD-0-0",
+            "deliveryUICycle": 11,
+            "deliveryRunLoopPass": 130
+          },
+          "navigation_started": {
+            "ms": 327.304,
+            "owner": "E1E83A2F-0D23-4003-BDF5-5795DE2956B2",
+            "source": "84EE9D19-AB6E-4F0F-AAF1-D14A75F328BD-0-0",
+            "deliveryUICycle": 12,
+            "deliveryRunLoopPass": 135
+          },
+          "navigation_committed": {
+            "ms": 327.98,
+            "owner": "E1E83A2F-0D23-4003-BDF5-5795DE2956B2",
+            "source": "84EE9D19-AB6E-4F0F-AAF1-D14A75F328BD-0-0",
+            "deliveryUICycle": 12,
+            "deliveryRunLoopPass": 135
+          },
+          "runtime_ready": {
+            "ms": 329.936,
+            "owner": "E1E83A2F-0D23-4003-BDF5-5795DE2956B2",
+            "source": "84EE9D19-AB6E-4F0F-AAF1-D14A75F328BD-0-0",
+            "deliveryUICycle": 12,
+            "deliveryRunLoopPass": 143
+          }
+        },
+        "requestToPolicyMs": 126.369,
+        "returnedToPolicyMs": 124.477,
+        "policyToStartedMs": 9.319,
+        "startedToReadyMs": 2.631,
+        "globalFirstPolicy": {
+          "ms": 317.985,
+          "owner": "E1E83A2F-0D23-4003-BDF5-5795DE2956B2",
+          "source": "84EE9D19-AB6E-4F0F-AAF1-D14A75F328BD-0-0",
+          "deliveryUICycle": 11,
+          "deliveryRunLoopPass": 130
+        }
+      },
+      "nativeInstallation": {
+        "currentPageSourceCount": 1,
+        "installedUniqueCurrentSources": 1,
+        "firstSourceNativeInstalled": {
+          "ms": 330.515,
+          "source": "84EE9D19-AB6E-4F0F-AAF1-D14A75F328BD-0-0",
+          "deliveryUICycle": 12,
+          "deliveryRunLoopPass": 143
+        },
+        "allCurrentSourcesNativeInstalled": {
+          "ms": 330.515,
+          "source": "84EE9D19-AB6E-4F0F-AAF1-D14A75F328BD-0-0",
+          "deliveryUICycle": 12,
+          "deliveryRunLoopPass": 143
+        },
+        "allMetricStage": "source_native_installed",
+        "allMetricSelection": "last first-install receipt across the accepted current-page sources; does not use measurement_completed"
+      }
+    },
+    {
+      "version": 240,
+      "scenario": "cold24",
+      "processID": 8600,
+      "originUptime": 199929.18855770837,
+      "droppedEvents": 0,
+      "evidence": {
+        "sourceClock": "/private/tmp/notebook-cold-owner-240-final-cold/cold24/source-clock.json",
+        "sourceClockSHA256": "e44b466e2f895dfe08abc229730396eaa778d1080690447b23a67b4a0e70d993",
+        "attachment": "/private/tmp/notebook-cold-owner-240-final-cold/cold24/attachments/804862C4-AFEC-4A02-B99E-BF65D84E97A0.json",
+        "attachmentSHA256": "2d517d14767bd5d05617c036d2322ca9fed5289e12fe98de4b545452a28d9ba5",
+        "binding": "/private/tmp/notebook-cold-owner-240-final-cold/binding.json",
+        "bindingSHA256": "212baa1b8c4f82ffd87101444972e83d127affb0ec56dd396e67ccfb32d03fe0"
+      },
+      "sceneFirstPublication": {
+        "requestOrdinal": "1",
+        "published": {
+          "ms": 91.306,
+          "owner": "10D019E6-359F-4833-A90C-EB3A0B5D0A37",
+          "source": "1",
+          "deliveryUICycle": 4,
+          "deliveryRunLoopPass": 44
+        },
+        "firstAcceptedAfterPublication": {
+          "ms": 92.758,
+          "owner": "10D019E6-359F-4833-A90C-EB3A0B5D0A37",
+          "deliveryUICycle": 4,
+          "deliveryRunLoopPass": 44
+        },
+        "firstResolvedAfterAccepted": {
+          "ms": 92.844,
+          "owner": "10D019E6-359F-4833-A90C-EB3A0B5D0A37",
+          "source": "93768A8D-D38E-4FD0-A378-B53A29A9955B",
+          "deliveryUICycle": 4,
+          "deliveryRunLoopPass": 44
+        },
+        "firstPagePreparationAfterAccepted": {
+          "ms": 93.042,
+          "owner": "B9C6DBE5-C4CD-47E5-8599-F643619C1A0E",
+          "source": "B9C6DBE5-C4CD-47E5-8599-F643619C1A0E",
+          "deliveryUICycle": 4,
+          "deliveryRunLoopPass": 44
+        },
+        "publicationToAcceptedMs": 1.452,
+        "acceptedToPagePreparationMs": 0.283,
+        "publicationToPagePreparationMs": 1.735,
+        "sameDeliveryUICycleAndRunLoopPass": true,
+        "acceptedCapturedSourceWasNil": true,
+        "acceptedToResolvedMs": 0.086,
+        "resolvedToPagePreparationMs": 0.198
+      },
+      "indexWorker": {
+        "dispatchToWorkerBeginMs": 0.083,
+        "workerDurationMs": 0.571,
+        "workerEndToMainDeliveryMs": 35.527,
+        "mainDeliveryToPublicationMs": 0.058,
+        "workerTimestampScope": "worker-origin uptime; delivery UI cycle/pass on worker events describes later Main delivery, not worker execution"
+      },
+      "pageLifecycle": {
+        "firstPreparedAppeared": {
+          "ms": 139.945,
+          "owner": "AFDBD6FC-5761-4955-8B3E-64F922A7F241",
+          "source": "EE853931-345E-439A-A9C2-A1CCBC87F046-0-23",
+          "deliveryUICycle": 5,
+          "deliveryRunLoopPass": 45
+        },
+        "firstAdmissionRequested": {
+          "ms": 147.584,
+          "owner": "F4F220E4-7609-4188-B504-89977A7A0EBB",
+          "source": "EE853931-345E-439A-A9C2-A1CCBC87F046-0-0",
+          "deliveryUICycle": 5,
+          "deliveryRunLoopPass": 46
+        },
+        "pagePreparationToAppearanceMs": 46.903,
+        "pagePreparationToAdmissionMs": 54.543,
+        "admissionBeforeAppearance": false
+      },
+      "constructors": {
+        "all": {
+          "count": 26,
+          "sumMs": 193.659,
+          "medianMs": 6.464,
+          "maxMs": 29.35,
+          "firstStartedMs": 147.72,
+          "lastFinishedMs": 948.778
+        },
+        "currentPage": {
+          "count": 24,
+          "sumMs": 177.96,
+          "medianMs": 6.464,
+          "maxMs": 29.35,
+          "firstStartedMs": 147.72,
+          "lastFinishedMs": 906.558
+        },
+        "firstRequestedSourceConstructorMs": 29.35,
+        "adjacentPages": {
+          "count": 2,
+          "sumMs": 15.698,
+          "medianMs": 7.849,
+          "maxMs": 10.409,
+          "firstStartedMs": 920.968,
+          "lastFinishedMs": 948.778
+        }
+      },
+      "matchingFirstRequestedRuntime": {
+        "source": "EE853931-345E-439A-A9C2-A1CCBC87F046-0-0",
+        "owner": "F4F220E4-7609-4188-B504-89977A7A0EBB",
+        "events": {
+          "navigation_requested": {
+            "ms": 177.727,
+            "owner": "F4F220E4-7609-4188-B504-89977A7A0EBB",
+            "source": "EE853931-345E-439A-A9C2-A1CCBC87F046-0-0",
+            "deliveryUICycle": 5,
+            "deliveryRunLoopPass": 46
+          },
+          "navigation_returned": {
+            "ms": 179.525,
+            "owner": "F4F220E4-7609-4188-B504-89977A7A0EBB",
+            "source": "EE853931-345E-439A-A9C2-A1CCBC87F046-0-0",
+            "deliveryUICycle": 5,
+            "deliveryRunLoopPass": 46
+          },
+          "navigation_policy": {
+            "ms": 355.457,
+            "owner": "F4F220E4-7609-4188-B504-89977A7A0EBB",
+            "source": "EE853931-345E-439A-A9C2-A1CCBC87F046-0-0",
+            "deliveryUICycle": 10,
+            "deliveryRunLoopPass": 68
+          },
+          "navigation_started": {
+            "ms": 433.322,
+            "owner": "F4F220E4-7609-4188-B504-89977A7A0EBB",
+            "source": "EE853931-345E-439A-A9C2-A1CCBC87F046-0-0",
+            "deliveryUICycle": 11,
+            "deliveryRunLoopPass": 81
+          },
+          "navigation_committed": {
+            "ms": 433.623,
+            "owner": "F4F220E4-7609-4188-B504-89977A7A0EBB",
+            "source": "EE853931-345E-439A-A9C2-A1CCBC87F046-0-0",
+            "deliveryUICycle": 11,
+            "deliveryRunLoopPass": 81
+          },
+          "runtime_ready": {
+            "ms": 434.772,
+            "owner": "F4F220E4-7609-4188-B504-89977A7A0EBB",
+            "source": "EE853931-345E-439A-A9C2-A1CCBC87F046-0-0",
+            "deliveryUICycle": 11,
+            "deliveryRunLoopPass": 82
+          }
+        },
+        "requestToPolicyMs": 177.73,
+        "returnedToPolicyMs": 175.932,
+        "policyToStartedMs": 77.865,
+        "startedToReadyMs": 1.45,
+        "globalFirstPolicy": {
+          "ms": 355.164,
+          "owner": "5E9EFE51-2FBD-425D-9E83-3CB61339CF4B",
+          "source": "EE853931-345E-439A-A9C2-A1CCBC87F046-0-2",
+          "deliveryUICycle": 10,
+          "deliveryRunLoopPass": 68
+        }
+      },
+      "nativeInstallation": {
+        "currentPageSourceCount": 24,
+        "installedUniqueCurrentSources": 24,
+        "firstSourceNativeInstalled": {
+          "ms": 436.173,
+          "source": "EE853931-345E-439A-A9C2-A1CCBC87F046-0-0",
+          "deliveryUICycle": 11,
+          "deliveryRunLoopPass": 82
+        },
+        "allCurrentSourcesNativeInstalled": {
+          "ms": 1057.57,
+          "source": "EE853931-345E-439A-A9C2-A1CCBC87F046-0-23",
+          "deliveryUICycle": 33,
+          "deliveryRunLoopPass": 207
+        },
+        "allMetricStage": "source_native_installed",
+        "allMetricSelection": "last first-install receipt across the accepted current-page sources; does not use measurement_completed"
+      }
+    }
+  ],
+  "comparison": {
+    "cold1": {
+      "acceptedToPagePreparationMs": {
+        "239": 37.056,
+        "240": 0.305
+      },
+      "firstNativeInstalledMs": {
+        "239": 335.36,
+        "240": 330.515,
+        "delta240minus239": -4.845
+      },
+      "allCurrentSourcesNativeInstalledMs": {
+        "239": 335.36,
+        "240": 330.515,
+        "delta240minus239": -4.845
+      }
+    },
+    "cold24": {
+      "acceptedToPagePreparationMs": {
+        "239": 24.464,
+        "240": 0.283
+      },
+      "firstNativeInstalledMs": {
+        "239": 368.622,
+        "240": 436.173,
+        "delta240minus239": 67.551
+      },
+      "allCurrentSourcesNativeInstalledMs": {
+        "239": 1077.271,
+        "240": 1057.57,
+        "delta240minus239": -19.701
+      }
+    }
+  },
+  "codeReview": {
+    "newSourceResolutionIntroducesMountDependency": false,
+    "path": "NotebookWorkspaceCompositionRequest.prepare -> NotebookAppModel.prepareComposition -> NotebookPagePreparationWindow.prepareCurrent -> PageAgentPreparationOwner.prepare -> PreparedAgentElementPreparationOwner.accept/restart",
+    "mountSemantics": "prepareCurrent accepts before a native factory; restart enqueues the existing MainActor task. PreparedAgentElementView.onAppear attaches the consumer and reconfigures role, not an additional preparation prerequisite. Binding a physical consumer preserves the accepted task. The source-resolution helper adds no await, retry or body gate.",
+    "239Cold24Correction": "prepared_appeared begins178.281ms, not ~117ms; admission begins118.319ms before appearance. The existing mount/UI scheduling gap was62.232ms in239 and46.903ms in240. These clocks do not attribute Main scheduling time or prove a new cancellation dependency."
+  },
+  "remainingUncertainty": [
+    "Source request-to-policy and policy-to-started spans do not reveal WebContent sender/IPC-ready time.",
+    "Main task admission opportunities shifted; elapsed pageprep-to-admission alone does not identify synchronous work or a regression."
+  ]
+}

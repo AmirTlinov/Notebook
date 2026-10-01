@@ -99,7 +99,11 @@ import XCTest
     XCTAssertNil(NotebookNavigationObservation.onWebPreparation)
     XCTAssertNil(NotebookNavigationObservation.onSourceInstalled)
     let sourceClock = ContinuousClock.now, sourceUptime = CACurrentMediaTime()
+    var publishedGenerations: [String: String] = [:]
     NotebookNavigationObservation.onWebPreparation = { stage, owner, source, at in
+      if stage == "scene_index_published", owner == model.actorID, let source, let generation = model.sceneIndex?.generationID {
+        publishedGenerations[source] = generation.uuidString
+      }
       let duration = sourceClock.duration(to: at).components
       trace.record(stage, at: sourceUptime + Double(duration.seconds) + Double(duration.attoseconds) / 1e18,
         owner: owner.uuidString, source: source)
@@ -138,6 +142,26 @@ import XCTest
     XCTAssertEqual(installed.count, sources.count)
     XCTAssertTrue(first)
     XCTAssertTrue(trace.events.contains { $0.stage == "ui_after_ca_commit" })
+    if singleProgram {
+      let events = trace.events
+      let owner = model.actorID.uuidString
+      let published = try XCTUnwrap(events.firstIndex { $0.stage == "scene_index_published" && $0.owner == owner })
+      let accepted = try XCTUnwrap(events.indices.first { $0 > published && events[$0].stage == "native_preparation_accepted" && events[$0].owner == owner })
+      let nextAccepted = events.indices.first { $0 > accepted && events[$0].stage == "native_preparation_accepted" && events[$0].owner == owner } ?? events.endIndex
+      let resolved = try XCTUnwrap(events.indices.first { $0 > accepted && events[$0].stage == "native_preparation_source_resolved" && events[$0].owner == owner })
+      let pagePrepared = try XCTUnwrap(events.firstIndex { $0.stage == "page_preparation_accepted" && $0.owner == page.id.uuidString })
+      let currentPublication = try XCTUnwrap(events[..<resolved].last { $0.stage == "scene_index_published" && $0.owner == owner })
+      let currentGeneration = try XCTUnwrap(publishedGenerations[try XCTUnwrap(currentPublication.source)])
+      XCTAssertEqual(events[resolved].source, currentGeneration,
+        "The accepted native request must resolve the source published since its view was evaluated")
+      XCTAssertLessThan(resolved, nextAccepted)
+      XCTAssertGreaterThan(pagePrepared, accepted)
+      XCTAssertLessThan(pagePrepared, nextAccepted,
+        "The first accepted opportunity with an index must prepare the page without another SwiftUI request")
+      XCTAssertEqual(events[pagePrepared].owner, page.id.uuidString)
+      XCTAssertEqual(events[pagePrepared].deliveryUICycle, events[resolved].deliveryUICycle)
+      XCTAssertEqual(events[pagePrepared].deliveryRunLoopPass, events[resolved].deliveryRunLoopPass)
+    }
     if programs {
       var constructors = 0
       for event in trace.events.sorted(by: { $0.uptime < $1.uptime }) {

@@ -203,6 +203,120 @@ import XCTest
     XCTAssertTrue(curl.isHidden); XCTAssertTrue(try XCTUnwrap(curl.pageOutputLayer).isHidden)
   }
 
+  func testPartialAcceptedPairRetriesOnlyMissingSheetAndCancellationDropsItsCut() async throws {
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow)
+    for cancelWhileWaiting in [false, true] {
+      let window = UIWindow(windowScene: scene), controller = IPadPageTurnController()
+      window.frame = .init(x: 0, y: 0, width: 300, height: 400)
+      let commands = NotebookPageNavigation(), owner = UUID()
+      var readiness: [Int: PageTurnReadiness] = [:], selected = 0
+      var sourceAcquisitions = 0, targetAcquisitions = 0, pairs = 0
+      var sourceAccepted = false, targetRejected = false
+      var sourceAcceptedWaiter: CheckedContinuation<Void, Never>?
+      var initialSourceID: UUID?, latestSourceID: UUID?, shownCuts: [UUID] = []
+      weak var acceptedSource: PageTurnFrame?
+      controller.update(ownerID: owner, sequenceRevision: "partial", pageCount: 2, selectedIndex: 0,
+        navigationIsEnabled: true, pageIsInteractive: true, canBeginNavigation: { true },
+        page: { index, _, ready in
+          if readiness[index] !== ready {
+            readiness[index] = ready
+            if index == 0 {
+              ready.setFrameProvider { _ in
+                sourceAcquisitions += 1
+                return try await PageTurnFrameFixture.solid(.blue)
+              }
+            } else {
+              ready.setFrameProvider { [weak ready] _ in
+                targetAcquisitions += 1
+                if targetAcquisitions == 1 {
+                  // Fail only after the real source producer has returned its
+                  // accepted cut to Operation; no timer chooses this boundary.
+                  if !sourceAccepted {
+                    await withCheckedContinuation { sourceAcceptedWaiter = $0 }
+                  }
+                  ready?(false, capturable: false, paperReady: true)
+                  targetRejected = true
+                  throw PageTurnMaterialUnavailable.changed
+                }
+                return try await PageTurnFrameFixture.solid(.red)
+              }
+            }
+            ready(true)
+          }
+          return AnyView(index == 0 ? Color.blue : Color.red)
+        }, onCommit: { index, _ in selected = index }, onTransitioningChange: { _ in },
+        notebookNavigation: commands, pageIdentities: [0: UUID(), 1: UUID()])
+      window.rootViewController = controller; window.makeKeyAndVisible(); window.layoutIfNeeded()
+      let native = controller.sheetController
+      let source = try XCTUnwrap(native.page), target = try XCTUnwrap(native.neighbor(source, .forward))
+      let sourceReady = try XCTUnwrap(readiness[0]), targetReady = try XCTUnwrap(readiness[1])
+      let curl = try XCTUnwrap(native.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
+      let acquire = native.acquireSheetFrame, resolve = curl.onPageFrameReady
+      defer {
+        sourceAcceptedWaiter?.resume(); sourceAcceptedWaiter = nil
+        native.cancelMotion(); native.acquireSheetFrame = acquire; curl.onPageFrameReady = resolve
+        window.isHidden = true; window.rootViewController = nil; previous?.makeKey()
+      }
+      native.onFramesAcquired = { _ in pairs += 1 }
+      native.acquireSheetFrame = { sheet in
+        let frame = try await acquire(sheet)
+        if sheet === source {
+          initialSourceID = initialSourceID ?? frame.id; latestSourceID = frame.id
+          acceptedSource = frame; sourceAccepted = true
+          sourceAcceptedWaiter?.resume(); sourceAcceptedWaiter = nil
+        }
+        return frame
+      }
+      curl.onPageFrameReady = { image, progress, sequence, receipt in
+        if receipt.isReady, progress > 0, progress < 1 { shownCuts.append(image.id) }
+        resolve?(image, progress, sequence, receipt)
+      }
+      XCTAssertTrue(native.beginInteractiveTurn(direction: .forward, target: target))
+      native.updateInteractiveTurn(translation: -native.view.bounds.width * 0.35)
+      var limit = ContinuousClock.now + .seconds(2)
+      while !targetRejected, ContinuousClock.now < limit { try await Task.sleep(for: .milliseconds(2)) }
+      XCTAssertTrue(targetRejected); XCTAssertEqual(sourceAcquisitions, 1); XCTAssertEqual(targetAcquisitions, 1)
+      let firstCut = try XCTUnwrap(initialSourceID)
+      XCTAssertNotNil(acceptedSource); XCTAssertEqual(pairs, 0)
+      // The live source changes while the other sheet is missing. Acquisition
+      // uses its already accepted pixels; landing still uses live readiness.
+      sourceReady.setFrameProvider { _ in
+        sourceAcquisitions += 1
+        return try await PageTurnFrameFixture.solid(.green)
+      }
+      sourceReady(false, capturable: false, paperReady: true); sourceReady.materialDidChange()
+      XCTAssertTrue(native.hasAcceptedSheetFrame(source)); XCTAssertFalse(native.isSheetReadyForCapture(source))
+      if cancelWhileWaiting {
+        native.cancelMotion()
+        limit = .now + .seconds(2)
+        while acceptedSource != nil, ContinuousClock.now < limit { try await Task.sleep(for: .milliseconds(2)) }
+        XCTAssertNil(acceptedSource); XCTAssertFalse(native.hasAcceptedSheetFrame(source))
+        XCTAssertFalse(native.containsInActiveTurn(source)); XCTAssertEqual(pairs, 0); XCTAssertEqual(selected, 0)
+        XCTAssertNil(curl.pageOutputLayer)
+        sourceReady(true); targetReady(true)
+        XCTAssertTrue(native.beginInteractiveTurn(direction: .forward, target: target))
+        native.updateInteractiveTurn(translation: -native.view.bounds.width * 0.35)
+      } else { targetReady(true) }
+      limit = .now + .seconds(2)
+      while shownCuts.isEmpty, ContinuousClock.now < limit { try await Task.sleep(for: .milliseconds(2)) }
+      XCTAssertFalse(shownCuts.isEmpty, "The accepted pair must earn an actual curved OS receipt")
+      XCTAssertEqual(pairs, 1); XCTAssertEqual(targetAcquisitions, 2)
+      XCTAssertEqual(sourceAcquisitions, cancelWhileWaiting ? 2 : 1)
+      if cancelWhileWaiting { XCTAssertNotEqual(latestSourceID, firstCut) }
+      else { XCTAssertEqual(latestSourceID, firstCut) }
+      XCTAssertEqual(shownCuts.last, latestSourceID)
+      native.endInteractiveTurn(completed: true, duration: 0)
+      limit = .now + .seconds(2)
+      while selected != 1, ContinuousClock.now < limit { try await Task.sleep(for: .milliseconds(2)) }
+      XCTAssertEqual(selected, 1)
+      native.cancelMotion()
+      limit = .now + .seconds(2)
+      while acceptedSource != nil, ContinuousClock.now < limit { try await Task.sleep(for: .milliseconds(2)) }
+      XCTAssertNil(acceptedSource, "Terminal ownership releases the operation's accepted cut")
+    }
+  }
+
   func testCancellingAnAdmittedPairDrainsBothCapturesWithoutPublishing() async throws {
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)

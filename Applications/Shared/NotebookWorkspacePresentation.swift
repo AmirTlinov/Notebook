@@ -55,6 +55,22 @@ struct NotebookWorkspaceCompositionRequest: Equatable {
   let refinesDetails: Bool
   let groupPoses: [SceneCompositionPlane:[String:NotebookElementPlacement.Source]]
   var operationID: UUID? = nil
+
+  /// Source can arrive between a native update and its accepted callback.
+  /// Keep the admitted spatial intent, but resolve its immutable index here.
+  func prepare(model: NotebookAppModel, displayScale: Double, activeOperationID: UUID?,
+    portalCamera: (UUID) -> BoardPortalCamera?) {
+    guard operationID == activeOperationID else { return }
+    let index = model.sceneIndex
+    let frame = index.map { WorkspaceSceneFrame(index: $0, presence: presence,
+      portalCamera: portalCamera, pinned: pinned) }
+    if NotebookNavigationObservation.onWebPreparation != nil {
+      NotebookNavigationObservation.webPreparation("native_preparation_source_resolved", ownerID: model.actorID,
+        sourceID: index?.generationID.uuidString)
+    }
+    model.prepareComposition(presence: presence, frame: frame, pinned: pinned, displayScale: displayScale,
+      installedItemOwners: itemOwners, preparationOperationID: operationID)
+  }
 }
 
 @MainActor

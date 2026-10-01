@@ -272,7 +272,9 @@ final class IPadPageTurnController: UIViewController {
       sourceID = source.pageID; targetID = target.pageID; self.gesture = gesture
       self.documentSource = documentSource; self.preparation = preparation; self.completion = completion
     }
-    func contains(_ host: IPadIndexedPageController) -> Bool { source === host || target === host }
+    func contains(_ host: IPadIndexedPageController) -> Bool {
+      (source === host && sourceID == host.pageID) || (target === host && targetID == host.pageID)
+    }
   }
   private var operation: Operation?
   private struct DeferredDocumentUpdate {
@@ -444,17 +446,32 @@ final class IPadPageTurnController: UIViewController {
     }
     sheetController.acquireSheetFrame = { [weak self] controller in
       guard let self, let sheet = controller as? IPadIndexedPageController,
-        let operation = self.operation, operation.contains(sheet), let readiness = sheet.readiness else {
+        let operation = self.operation, operation.ownerID == ownerID,
+        operation.contains(sheet), controllers[sheet.pageIndex] === sheet else {
         throw PageTurnMaterialUnavailable.changed
       }
+      try Task.checkCancellation()
+      // Acceptance belongs to this physical operation, one host at a time.
+      // A missing/replaced other sheet cannot recapture an already accepted
+      // live cut or replace its retained pixels with a later source version.
+      if let accepted = operation.frames[sheet.hostID] { return accepted }
+      guard let readiness = sheet.readiness, !readiness.isRetired else { throw PageTurnMaterialUnavailable.changed }
       let frame = try await readiness.acquireFrame(priority: .input)
-      guard self.operation === operation, sheet.readiness === readiness,
+      try Task.checkCancellation()
+      guard self.operation === operation, operation.ownerID == ownerID,
+        operation.contains(sheet), controllers[sheet.pageIndex] === sheet, sheet.readiness === readiness,
         !readiness.isRetired else {
         NotebookNavigationObservation.onPageMaterialPreparation?("acquire_rejected_controller_owner", sheet.hostID, sheet.pageID, frame.id, nil, CACurrentMediaTime())
         throw PageTurnMaterialUnavailable.changed
       }
       operation.frames[sheet.hostID] = frame
       return frame
+    }
+    sheetController.hasAcceptedSheetFrame = { [weak self] sheet in
+      guard let self, !isRetired, let sheet = sheet as? IPadIndexedPageController,
+        let operation, operation.ownerID == ownerID, operation.contains(sheet),
+        controllers[sheet.pageIndex] === sheet else { return false }
+      return operation.frames[sheet.hostID] != nil
     }
     sheetController.isSheetPresented = { [weak self] sheet in
       guard let self, let sheet = sheet as? IPadIndexedPageController else { return false }

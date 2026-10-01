@@ -1,0 +1,80 @@
+{
+  "baseCommit": "07a8ce6110b46465dca4a9c1cb21949bc5b84855",
+  "sourceSHA256": "bbcbe80500ee6ad9ecfbeb48e7a1f771d27c9aef395b285f07d86bf4bd7089b0",
+  "verification": "/private/tmp/notebook-cold-owner-240-final-verify",
+  "verificationSHA256": "70eab08a4cac47914174957369d860adce8608bc8060f50a4ec3a929677426bd",
+  "scope": "Selected optimized tests on physical iPad and Mac; not full performance acceptance",
+  "selectors": {
+    "commands": [
+      "mcp"
+    ],
+    "core": [],
+    "ipad": [
+      "NotebookTests/AgentWebLeaseTests/testForegroundRestartsInitialStatePreparationCancelledByModelCheckpoint",
+      "NotebookTests/AgentWebLeaseTests/testPendingInitialStateAcceptsLatestAgentCutBeforeItsOnlyNavigation",
+      "NotebookTests/NotebookFirstPresentationSchedulingTests/testColdSingleProgramAgainstUIOpportunities",
+      "NotebookTests/NotebookPageCurlInteractionTests/testPartialAcceptedPairRetriesOnlyMissingSheetAndCancellationDropsItsCut",
+      "NotebookTests/NotebookPageLifecycleUXTests/testNativePageTurnsShowTheStoredLeafAfterEvictionReverseAndCancellation",
+      "NotebookTests/NotebookPageLifecycleUXTests/testPeerRemovedLeafCannotCommitAnOldCurlIntoItsReplacementSlot",
+      "NotebookTests/NotebookPageLifecycleUXTests/testWorkspaceCompositionDeliveryCoalescesCancelsAndRebindsTheNativeOwner",
+      "NotebookTests/SceneCompositionSQLTests/testPageOrderedExportPreservesRanksCapturedCutsAndSelectedLayerScope"
+    ],
+    "mac": [
+      "NotebookMacTests/NotebookPanelPresentationTests/testNotebookCardFirstPageOpensNativePixelsAndNavigationWithoutMovingPresence",
+      "NotebookMacTests/NotebookPanelPresentationTests/testRegionalMaterialPreparationPreservesOrderedCutsAndBaselineAcrossRegionsAndReleasesGeometry"
+    ]
+  },
+  "passed": {
+    "ipad": {
+      "passedTests": 8,
+      "failedTests": 0,
+      "skippedTests": 0,
+      "runtimeWarnings": []
+    },
+    "mac": {
+      "passedTests": 2,
+      "failedTests": 0,
+      "skippedTests": 0,
+      "runtimeWarnings": []
+    }
+  },
+  "mcp": {
+    "typecheck": "passed",
+    "tests": 175,
+    "failed": 0,
+    "skipped": 0
+  },
+  "initialAttempt": {
+    "directory": "/private/tmp/notebook-cold-owner-240-verify",
+    "passed": {
+      "physicalIPad": 8,
+      "mcp": 175
+    },
+    "macFailed": 2,
+    "cause": "Test expected a fixed 1024px square and no lazy per-cut geometry growth. Actual selected region now uses its exact X/Y pixel grid; repeated rendering must not grow geometry, all raster admissions and final cut reservations must release. Product sources unchanged across correction.",
+    "changedFilesAfterAttempt": [
+      "Applications/MacTests/NotebookPanelPresentationTests.swift"
+    ]
+  },
+  "coldObservationSetup": {
+    "initialDirectory": "/private/tmp/notebook-cold-owner-240-cold",
+    "outcome": "devicectl installation exceeded 60s before any test; cleanup confirmed native-test absent",
+    "followupDirectory": "/private/tmp/notebook-cold-owner-240-final-cold",
+    "instrumentChange": "Installation deadline 180s; product/test binaries unchanged",
+    "result": "cold1 and cold24 passed; fresh separate isolated hosts; no screenshots or profiler"
+  },
+  "fullAcceptance": false,
+  "openBoundaries": [
+    "WebKit sender-ready, process launch and IPC/Main delivery remain unseparated.",
+    "First curl zero drawable receipt and strict16.667ms unchanged.",
+    "Hardware contact-to-display and full GUI-190 acceptance remain open."
+  ],
+  "coldMetrics": {
+    "path": "cold-metrics.json",
+    "sha256": "c2dffa43d55c32645716c84d75e1f96494f2ea215959ac6b563760bcc3d0c32e",
+    "conclusion": "First accepted request resolves the current scene and prepares the page in the same UI opportunity in both runs. Matching WebKit policy and first native installation remain variable; no statistical or OS first-pixel speedup claim."
+  },
+  "delivery": "delivery.json",
+  "installedBuild": "240",
+  "installedVersion": "0.3.170"
+}

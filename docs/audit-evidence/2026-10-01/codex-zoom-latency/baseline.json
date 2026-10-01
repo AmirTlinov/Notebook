@@ -1,0 +1,223 @@
+{
+  "scope": "Installed239 cached0.1.5 registered consumer, readonly realC748 page in Chrome actualMCP Apps SDK strictblob CSP; DPR1 CSS1064x750. No canonical/native presence/camera writes, no fixture, no builds/installs or production edits. Temporary harness logging only.",
+  "resource": {
+    "uri": "ui://notebook/workspace.html",
+    "bytes": 626714,
+    "sha256": "cb72e096cfa904f58314dd4557ff57192806f3920061359a69b39510f3dfb65e",
+    "metadata": {
+      "ui": {
+        "csp": {
+          "connectDomains": [],
+          "resourceDomains": [
+            "blob:"
+          ]
+        },
+        "prefersBorder": false
+      },
+      "openai/ui": {
+        "availableDisplayModes": [
+          "fullscreen"
+        ],
+        "preferredDisplayMode": "fullscreen"
+      }
+    }
+  },
+  "result": "Transient old bitmap magnification reproduced; settled content sharp. Continuous100→191 and50→95 bursts coalesce behind an older native presentation. Matching final projection arrives later than first sufficient-density material.",
+  "bursts": [
+    {
+      "startUTC": 1790885523589,
+      "stopUTC": 1790885524637,
+      "wheelCount": 8,
+      "firstAcceptedMaterialAfterStopMs": 606,
+      "matchingFinalProjectionMaterialAfterStopMs": 2077,
+      "latestRequestWaitAfterStopMs": 746,
+      "materialFrames": [
+        {
+          "atUTC": 1790885525243,
+          "groups": 29,
+          "now": 56706.39999985695,
+          "type": "material-frame",
+          "zoom": "191%"
+        },
+        {
+          "atUTC": 1790885526714,
+          "groups": 23,
+          "now": 58176.89999985695,
+          "type": "material-frame",
+          "zoom": "191%"
+        }
+      ],
+      "requests": [
+        {
+          "startedAtUTC": 1790885524045,
+          "returnedAtUTC": 1790885525100,
+          "mcpElapsedMs": 1055.3367919999946,
+          "scale": 1.2775389742295782,
+          "layers": 29,
+          "minimumInkSubjectDensity": 2.463030303030303,
+          "newAssets": 28,
+          "retainedAssets": 1,
+          "pngBase64Chars": 848292
+        },
+        {
+          "startedAtUTC": 1790885525383,
+          "returnedAtUTC": 1790885526642,
+          "mcpElapsedMs": 1258.2400830000042,
+          "scale": 1.9058641939549799,
+          "layers": 23,
+          "minimumInkSubjectDensity": 2.4630303030303033,
+          "newAssets": 12,
+          "retainedAssets": 11,
+          "pngBase64Chars": 647984
+        }
+      ]
+    },
+    {
+      "startUTC": 1790885570843,
+      "stopUTC": 1790885571868,
+      "wheelCount": 8,
+      "firstAcceptedMaterialAfterStopMs": 374,
+      "matchingFinalProjectionMaterialAfterStopMs": 1200,
+      "latestRequestWaitAfterStopMs": 470,
+      "materialFrames": [
+        {
+          "atUTC": 1790885572242,
+          "groups": 19,
+          "now": 103705.19999980928,
+          "type": "material-frame",
+          "zoom": "95%"
+        },
+        {
+          "atUTC": 1790885573068,
+          "groups": 19,
+          "now": 104530.89999985696,
+          "type": "material-frame",
+          "zoom": "95%"
+        }
+      ],
+      "requests": [
+        {
+          "startedAtUTC": 1790885571275,
+          "returnedAtUTC": 1790885572197,
+          "mcpElapsedMs": 921.8845409999922,
+          "scale": 0.6391958163824932,
+          "layers": 19,
+          "minimumInkSubjectDensity": 1.2315151515151517,
+          "newAssets": 15,
+          "retainedAssets": 4,
+          "pngBase64Chars": 317696
+        },
+        {
+          "startedAtUTC": 1790885572338,
+          "returnedAtUTC": 1790885573028,
+          "mcpElapsedMs": 690.117333000002,
+          "scale": 0.9535681055083784,
+          "layers": 19,
+          "minimumInkSubjectDensity": 1.2315151515151517,
+          "newAssets": 8,
+          "retainedAssets": 11,
+          "pngBase64Chars": 338852
+        }
+      ]
+    }
+  ],
+  "measurementLimits": [
+    "material-frame records DOM layer replacement on requestAnimationFrame; does not measure GPU display/compositor presentation",
+    "MCP elapsed includes native preparation and sidecar IPC/JSON. Browser HTTP/JSON adds about8ms. Pure paint time not separately instrumented.",
+    "First adequate density inferred from accepted native manifests; screenshot captures immediately after burst and settled terminal result, not each intermediate frame."
+  ],
+  "idle": {
+    "last10Unchanged": true,
+    "last10McpDurationMs": [
+      4.06454200000735,
+      3.9317909999808762,
+      3.4625830000150017,
+      2.9761660000076517,
+      9.837708999984898,
+      8.157708999991883,
+      4.062333999987459,
+      2.7455839999893215,
+      3.3275830000056885,
+      3.379165999998804
+    ]
+  },
+  "teardown": {
+    "SDKClosed": true,
+    "tabClosed": true,
+    "metricsReset": true,
+    "temporaryServerClientExit": 0
+  },
+  "evidence": [
+    "timeline.json",
+    "readonly-calls.json",
+    "warmup-calls.json",
+    "resource-proof.json",
+    "burst100-stop.jpg",
+    "burst100-settled.jpg",
+    "burst50-stop.jpg",
+    "burst50-settled.jpg",
+    "settled55.jpg",
+    "settled90.jpg",
+    "settled110-up.jpg"
+  ],
+  "installedNative": "0.3.169 (239)",
+  "pluginVersion": "0.1.5",
+  "sourceCommit": "07a8ce6110b46465dca4a9c1cb21949bc5b84855",
+  "evidenceRoot": "/tmp/notebook-live-panel-239-blur",
+  "coverageProof": [
+    {
+      "burstStop": 1790885524637,
+      "visibleWorldBounds": {
+        "x": 122.44880331583033,
+        "y": 398.162311067654,
+        "width": 558.276924124392,
+        "height": 346.2995957914462
+      },
+      "coverageWorldBounds": {
+        "x": -415.74803149606305,
+        "y": -415.74803149606305,
+        "width": 1662.9921259842522,
+        "height": 1662.9921259842522
+      },
+      "completeViewportInsideCoverage": true,
+      "nativePageVisibleIntersection": {
+        "x": 122.44880331583033,
+        "y": 398.162311067654,
+        "right": 680.7257274402224,
+        "bottom": 744.4619068591003
+      },
+      "inkRegionsFullyCoverVisiblePage": true,
+      "minimumInkDensity": 2.463030303030303,
+      "currentScreenDemand": 1.9058641939549799,
+      "inkQualitySatisfied": true,
+      "uncovered": []
+    },
+    {
+      "burstStop": 1790885571868,
+      "visibleWorldBounds": {
+        "x": -150.0293433338203,
+        "y": 235.72341594959335,
+        "width": 1115.8091318844465,
+        "height": 692.1372434621567
+      },
+      "coverageWorldBounds": {
+        "x": -831.4960629921261,
+        "y": -831.4960629921261,
+        "width": 3325.9842519685035,
+        "height": 3325.9842519685035
+      },
+      "completeViewportInsideCoverage": true,
+      "nativePageVisibleIntersection": {
+        "x": 0,
+        "y": 235.72341594959335,
+        "right": 834,
+        "bottom": 927.86065941175
+      },
+      "inkRegionsFullyCoverVisiblePage": true,
+      "minimumInkDensity": 1.2315151515151517,
+      "currentScreenDemand": 0.9535681055083784,
+      "inkQualitySatisfied": true,
+      "uncovered": []
+    }
+  ]
+}

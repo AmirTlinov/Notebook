@@ -120,6 +120,59 @@ final class AgentWebLeaseTests: XCTestCase {
   }
 
   @MainActor
+  func testPendingInitialStateAcceptsLatestAgentCutBeforeItsOnlyNavigation() async throws {
+    let resources = SceneRenderResources(byteLimit: 2 * 1024 * 1024, profile: .headless)
+    let pressure = try XCTUnwrap(resources.reserveDerivedBytes(resources.passiveByteLimit, priority: .passive))
+    let lease = try await resources.acquireWebSurface(priority: .input)
+    let session = AgentWebNativeSession(lease: lease, resources: resources, snapshotPolicy: .display(scale: 2))
+    let previous = NotebookNavigationObservation.onWebPreparation
+    var stages: [String] = [], accepted: [JSONValue] = [], ready = false
+    NotebookNavigationObservation.onWebPreparation = { stage, id, _, _ in if id == lease.id { stages.append(stage) } }
+    defer {
+      NotebookNavigationObservation.onWebPreparation = previous
+      session.retire(); pressure.release()
+    }
+    let source = AgentElement(id: "latest-initial-cut", kind: .web,
+      frame: .init(x: 0, y: 0, width: 32, height: 32), source: "Agent changes before navigation",
+      html: "<output>Latest</output>", javaScript: """
+        window.bootState=notebook.state;
+        window.earlyAccepted=notebook.commit({boot:window.bootState.count});
+        notebook.ready(Promise.resolve());
+        """, state: .object(["count": .number(0)]))
+    func prepare(_ value: AgentElement) {
+      AgentWebElementView(element: value, session: session, snapshotPolicy: .display(scale: 2),
+        onRenderReady: { _ in }, onInteractionReady: { ready = $0 }, onState: { value, completion in
+          accepted.append(value); completion(nil); return true
+        }).prepare()
+    }
+    func waitFor(_ message: String, _ condition: () -> Bool) async throws {
+      let deadline = ContinuousClock.now + .seconds(3)
+      while !condition(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+      guard condition() else { XCTFail(message); throw NSError(domain: "AgentWebLeaseTests", code: 3) }
+    }
+    prepare(source)
+    let originalToken = try XCTUnwrap(session.coordinator.loadToken)
+    try await waitFor("The original packet waits for real external pressure") { resources.pendingDerivedRequestCount == 1 }
+    prepare(source.updating(state: .object(["count": .number(1)])))
+    prepare(source.updating(state: .object(["count": .number(2)])))
+    let latestToken = try XCTUnwrap(session.coordinator.loadToken)
+    XCTAssertNotEqual(latestToken, originalToken)
+    XCTAssertFalse(stages.contains("navigation_requested")); XCTAssertTrue(accepted.isEmpty)
+    pressure.release()
+    try await waitFor("The latest accepted cut owns the first authored bootstrap") { ready && accepted.count == 1 }
+    let boot = try await session.webView.evaluateJavaScript("window.bootState.count") as? Int
+    XCTAssertEqual(boot, 2)
+    XCTAssertEqual(accepted, [.object(["boot": .number(2)])], "No obsolete author heap can commit the superseded cut")
+    XCTAssertEqual(stages.filter { $0 == "navigation_requested" }.count, 1)
+    XCTAssertEqual(session.coordinator.loadToken, latestToken)
+    XCTAssertEqual(resources.pendingDerivedRequestCount, 0)
+    session.retire()
+    try await waitFor("All cancelled initial packets and accepted state ownership retire") {
+      resources.activeWebSurfaceCount == 0 && resources.reservedBytes == 0 && resources.pendingDerivedRequestCount == 0
+    }
+  }
+
+  @MainActor
   func testForegroundRestartsInitialStatePreparationCancelledByModelCheckpoint() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)

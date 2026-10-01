@@ -83,7 +83,7 @@ extension CurrentViewPreviewWriter {
           "coverage": .object(["anchor": try .encode(materialBounds.origin),
             "region": try .encode(PageRect(x: 0, y: 0, width: materialBounds.width, height: materialBounds.height)),
             "level": .number(Double(coverage.level)),
-            "pixelDensity": .number(layers.filter { $0.repeatSize == nil && !$0.id.hasPrefix("page-paper:") }
+            "pixelDensity": .number(layers.filter { $0.repeatSize == nil }
               .map { min(Double($0.pixelWidth) / $0.frame.width, Double($0.pixelHeight) / $0.frame.height) }.min()
               ?? projection.camera.scale * projection.pixelScale)]),
           "layers": .array(try layers.map { try $0.encoded }), "diagnostics": try .encode(diagnostics)])
@@ -196,7 +196,9 @@ extension CurrentViewPreviewWriter {
         for row in 0..<Int(ceil(frame.height / side)) {
           for column in 0..<Int(ceil(frame.width / side)) {
             let x = frame.minX + Double(column) * side, y = frame.minY + Double(row) * side
-            result.append((tile, CGRect(x: x, y: y, width: min(side, frame.maxX - x), height: min(side, frame.maxY - y))))
+            let width = min(side, frame.maxX - x), height = min(side, frame.maxY - y)
+            guard width > 0, height > 0 else { continue }
+            result.append((tile, CGRect(x: x, y: y, width: width, height: height)))
           }
         }
       }
@@ -207,7 +209,7 @@ extension CurrentViewPreviewWriter {
       guard width <= 8192, height <= 8192 else { return NotebookPanelRenderProjection.maximumDecodedPixels + 1 }
       return Int(width) * Int(height)
     }
-    let paperDensity = Double(CompositionTile.pixelSize) / coverage.tiles[0].worldSize
+    let minimumDensity = Double(CompositionTile.pixelSize) / coverage.tiles[0].worldSize / 1024
     var tileDensity = max(requestedDensity, Double(SceneCompositionTileKey.requiredPixelSize(for: coverage.tiles[0],
       density: requestedDensity)) / coverage.tiles[0].worldSize)
     var clipped = false, tiles = regions(clipped: false, density: tileDensity), diagnostics: [RenderDiagnostic] = []
@@ -218,7 +220,7 @@ extension CurrentViewPreviewWriter {
       var pixels = subjects.values.reduce(0) { $0 + pixelCount(CGRect(x: 0, y: 0, width: $1.width, height: $1.height), scale: density) }
       var count = subjects.count
       for (_, frame) in tiles {
-        pixels += pixelCount(frame, scale: paperDensity); count += 1
+        pixels += pixelCount(frame, scale: tileDensity); count += 1
         if hasInk { pixels += pixelCount(frame, scale: tileDensity); count += 1 }
         let visible = visibleIDs(in: frame)
         for band in runs.bands where !band.ids.isDisjoint(with: visible) {
@@ -236,12 +238,25 @@ extension CurrentViewPreviewWriter {
     }
     while !fits() {
       try Task.checkCancellation()
-      guard tileDensity > paperDensity / 1024 else { throw SceneRenderError.resourceLimit }
+      guard tileDensity > minimumDensity else { throw SceneRenderError.resourceLimit }
       tileDensity *= 0.9
       tiles = regions(clipped: true, density: tileDensity)
     }
     if tileDensity + 0.000001 < requestedDensity {
       diagnostics.append(.init(kind: "quality_limit", message: "Разрешение видимой страницы ограничено общим объёмом пикселей. Приблизьте меньший участок."))
+    }
+    var materialPreparation: PageCompositionRenderer.MaterialPreparation?
+    func preparedMaterial() async throws -> PageCompositionRenderer.MaterialPreparation {
+      if let materialPreparation { return materialPreparation }
+      let inkRegion = tiles.reduce(CGRect.null) { $0.union($1.frame) }
+      let region = subjects.values.reduce(inkRegion) { bounds, frame in
+        bounds.union(CGRect(x: frame.x, y: frame.y, width: frame.width, height: frame.height))
+      }
+      let value = try await PageCompositionRenderer.prepareMaterial(page, graph: graph, region: region,
+        scale: max(density, tileDensity), resources: resources,
+        permitsPreparation: { model.permitsBackgroundPreparation })
+      materialPreparation = value
+      return value
     }
     let bands = runs.bands
     for element in elements {
@@ -252,7 +267,7 @@ extension CurrentViewPreviewWriter {
       if let cached = resources.retainMaterial(key) { body = cached }
       else {
         body = try await PageCompositionRenderer.renderMaterial(page, ids: [element.id], region: frame,
-          scale: density, key: key, resources: resources,
+          scale: density, key: key, preparation: preparedMaterial(), resources: resources,
           permitsPreparation: { model.permitsBackgroundPreparation }, raster: raster)
         resources.cacheComposition(body, receipts: receipts, sources: sourceRasters)
       }
@@ -269,7 +284,7 @@ extension CurrentViewPreviewWriter {
         if index >= 0 && index < bands.count && bands[index].ids.isDisjoint(with: owners) { continue }
         let role = index == -1 ? "page-paper" : index == bands.count ? "page-ink" : "page-elements:" + bands[index].ids.sorted().joined(separator: ",")
         let order = index == -1 ? -1 : index == bands.count ? 1000 : bands[index].rank
-        let rasterDensity = index == -1 ? paperDensity : tileDensity
+        let rasterDensity = tileDensity
         let key = try SceneMaterialKey(workspaceID: projection.workspaceID, target: target, revision: sourceRevision,
           role: role, frame: region, density: rasterDensity)
         let body: RasterLease
@@ -283,7 +298,8 @@ extension CurrentViewPreviewWriter {
         } else {
           body = try await PageCompositionRenderer.renderMaterial(page,
             ids: index == bands.count ? nil : bands[index].ids, region: region, scale: rasterDensity,
-            key: key, resources: resources, permitsPreparation: { model.permitsBackgroundPreparation }, raster: raster)
+            key: key, preparation: preparedMaterial(), resources: resources,
+            permitsPreparation: { model.permitsBackgroundPreparation }, raster: raster)
           resources.cacheComposition(body, receipts: receipts, sources: sourceRasters)
         }
         defer { body.release() }

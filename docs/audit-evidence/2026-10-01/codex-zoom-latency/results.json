@@ -1,0 +1,325 @@
+{
+  "status": "installed-native-and-sdk-verified-codex-consumer-stale",
+  "recordedAt": "2026-10-01T21:18:32.561059+00:00",
+  "runtime": {
+    "build": "240",
+    "nativeSourceSHA": "bbcbe80500ee6ad9ecfbeb48e7a1f771d27c9aef395b285f07d86bf4bd7089b0",
+    "beforeBaseline": "/tmp/notebook-panel-240-before-gestures/readback.json",
+    "nativePIDAtHandoff": 10580,
+    "nativeMemoryCDHash": "ce68ea8b827fe0fd01082e64da4eff94278ed316",
+    "pluginVersion": "0.1.6",
+    "resource": {
+      "uri": "ui://notebook/workspace.html",
+      "bytes": 627133,
+      "sha256": "72eab740d07434b2e1defac8dc43d54dc6f0153cc179758667f55f64b834570f",
+      "metadata": {
+        "ui": {
+          "csp": {
+            "connectDomains": [],
+            "resourceDomains": [
+              "blob:"
+            ]
+          },
+          "prefersBorder": false
+        },
+        "openai/ui": {
+          "availableDisplayModes": [
+            "fullscreen"
+          ],
+          "preferredDisplayMode": "fullscreen"
+        }
+      }
+    },
+    "scriptSHA": "e2099d8bf942f714b73c1b08a2e5c5bd02db3677479dd75ed4e082ca3537ac6a"
+  },
+  "viewport": {
+    "width": 1064,
+    "height": 750,
+    "workspaceWidth": 1064,
+    "workspaceHeight": 660,
+    "DPR": 1
+  },
+  "scope": "Readonly installed240/plugin0.1.6 actual registered HTML through MCP Apps AppBridge in isolated Chrome. Three actual Ctrl-wheel bursts on canonical page; no writes, agent programs, native camera changes, fixtures, restarts or source edits.",
+  "cases": [
+    {
+      "name": "100 burst",
+      "input": {
+        "wheelCount": 8,
+        "firstAtUTC": 1790888935977,
+        "lastAtUTC": 1790888936963,
+        "durationMs": 986,
+        "deltaY": [
+          -10,
+          -10,
+          -10,
+          -10,
+          -10,
+          -10,
+          -10,
+          -10
+        ]
+      },
+      "expectedTarget": 1.9,
+      "prequalifiedPriorCohort": true,
+      "firstAdequateAfterStopMs": null,
+      "comparisonTo239": "Not comparable: entry133% admitted density2.463 prior to100% warm and already adequate for190%. No zero-latency improvement claim.",
+      "errorCount": 0,
+      "acceptedQuality": {
+        "actualUIScale": 1.8964808658971386,
+        "visiblePageRegion": {
+          "x": 133.802280739511,
+          "y": 419.4226352537839,
+          "width": 561.0391431482597,
+          "height": 348.01300232880754
+        },
+        "coverageContainsVisiblePage": true,
+        "classes": {
+          "page-ink": {
+            "visibleLayerCount": 2,
+            "minimumDensity": 2.463030303030303,
+            "adequateLayerCount": 2,
+            "adequateRegionFraction": 0.9999999999999999
+          },
+          "page-paper": {
+            "visibleLayerCount": 2,
+            "minimumDensity": 2.463030303030303,
+            "adequateLayerCount": 2,
+            "adequateRegionFraction": 0.9999999999999999
+          },
+          "subject": {
+            "visibleLayerCount": 0,
+            "minimumDensity": null,
+            "adequateLayerCount": 0,
+            "adequateRegionFraction": 0
+          }
+        },
+        "allIntersectingLayersDense": true
+      }
+    },
+    {
+      "name": "50 burst",
+      "input": {
+        "wheelCount": 8,
+        "firstAtUTC": 1790888994412,
+        "lastAtUTC": 1790888995398,
+        "durationMs": 986,
+        "deltaY": [
+          -10,
+          -10,
+          -10,
+          -10,
+          -10,
+          -10,
+          -10,
+          -10
+        ]
+      },
+      "expectedTarget": 0.95,
+      "prequalifiedPriorCohort": false,
+      "firstAdequateAfterStopMs": 228,
+      "comparisonTo239": {
+        "baselineFirstInkMs": 374,
+        "currentFirstInkMs": 228,
+        "baselineMatchingFinalMs": 1200,
+        "currentFinalCameraReadNeeded": false
+      },
+      "errorCount": 0,
+      "acceptedQuality": {
+        "actualUIScale": 0.9482403985872486,
+        "visiblePageRegion": {
+          "x": 0,
+          "y": 253.85280093423057,
+          "width": 834,
+          "height": 696.0260298794608
+        },
+        "coverageContainsVisiblePage": true,
+        "classes": {
+          "page-ink": {
+            "visibleLayerCount": 4,
+            "minimumDensity": 1.2315151515151517,
+            "adequateLayerCount": 4,
+            "adequateRegionFraction": 0.9999999999999998
+          },
+          "page-paper": {
+            "visibleLayerCount": 4,
+            "minimumDensity": 1.2315151515151517,
+            "adequateLayerCount": 4,
+            "adequateRegionFraction": 0.9999999999999998
+          },
+          "subject": {
+            "visibleLayerCount": 0,
+            "minimumDensity": null,
+            "adequateLayerCount": 0,
+            "adequateRegionFraction": 0
+          }
+        },
+        "allIntersectingLayersDense": true
+      },
+      "acceptedReply": {
+        "stopToRPCStartMs": -567,
+        "serverElapsedMs": 741.3413750000182,
+        "outerSDKMs": 752,
+        "stopToMaterialFrameMs": 228,
+        "newAssets": 19,
+        "layers": 19,
+        "pngBase64Characters": 366900
+      }
+    },
+    {
+      "name": "350 burst",
+      "input": {
+        "wheelCount": 3,
+        "firstAtUTC": 1790889049832,
+        "lastAtUTC": 1790889050020,
+        "durationMs": 188,
+        "deltaY": [
+          -52.20000076293945,
+          -52.20000076293945,
+          -52.20000076293945
+        ]
+      },
+      "expectedTarget": 3.5,
+      "prequalifiedPriorCohort": false,
+      "firstAdequateAfterStopMs": 1672,
+      "comparisonTo239": {
+        "baseline": "SIGTRAP / ipc unavailable: final adequate material never arrived.",
+        "currentFirstAdequateMs": 1672,
+        "currentFinalCameraReadNeeded": true
+      },
+      "errorCount": 0,
+      "acceptedQuality": {
+        "actualUIScale": 3.500129678713883,
+        "visiblePageRegion": {
+          "x": 259.4284191340917,
+          "y": 495.2814957458961,
+          "width": 303.98873689473265,
+          "height": 188.56444205876278
+        },
+        "coverageContainsVisiblePage": true,
+        "classes": {
+          "page-ink": {
+            "visibleLayerCount": 4,
+            "minimumDensity": 4.926060606060606,
+            "adequateLayerCount": 4,
+            "adequateRegionFraction": 1
+          },
+          "page-paper": {
+            "visibleLayerCount": 4,
+            "minimumDensity": 4.926060606060606,
+            "adequateLayerCount": 4,
+            "adequateRegionFraction": 1
+          },
+          "subject": {
+            "visibleLayerCount": 0,
+            "minimumDensity": null,
+            "adequateLayerCount": 0,
+            "adequateRegionFraction": 0
+          }
+        },
+        "allIntersectingLayersDense": true
+      },
+      "acceptedReply": {
+        "stopToRPCStartMs": 788,
+        "serverElapsedMs": 730.6736670000246,
+        "outerSDKMs": 746,
+        "stopToMaterialFrameMs": 1672,
+        "newAssets": 25,
+        "layers": 25,
+        "pngBase64Characters": 1120764
+      }
+    }
+  ],
+  "rawComparison": {
+    "path": "/tmp/notebook-live-panel-240-zoom/comparison.json",
+    "sha256": "674894b06c5304c0191f5f89a4c24bd6331563bbc347e64de9b40ebf47737b07"
+  },
+  "idleObservation": {
+    "sameCutFullManifests": 13,
+    "exactSameCursor": 3,
+    "changedCursor": 10,
+    "newPNGAssets": 0,
+    "meaning": "Repeated full manifests with zero new PNG assets, mostly after cursor changes; exact same-cursor/cut repeats also occurred. Separate from obsolete camera followup; root existing older Codex panel polled concurrently. No causal diagnosis of cursor/cache owner from this readonly scenario."
+  },
+  "codex": {
+    "tabID": "7",
+    "checkedAt": "2026-10-01T21:17:06Z",
+    "nativeBuild": "240",
+    "installedPluginVersion": "0.1.6",
+    "mountedInterfaceVersion": "0.1.5",
+    "actualScriptBytes": 620075,
+    "actualScriptSHA256": "9632238606640b5eaae45e2844ddd0bb33e036234e9d772082ef9a84a5dbd7ed",
+    "expectedScriptSHA256": "e2099d8bf942f714b73c1b08a2e5c5bd02db3677479dd75ed4e082ca3537ac6a",
+    "cases": [
+      "Exact saved notes first page opened",
+      "Next1/5to2/5",
+      "Previous2/5to1/5",
+      "Three synthetic zoom button clicks110to190percent; no timing claim",
+      "Settled native handwriting and paper visually crisp at190percent"
+    ],
+    "screenshot": "/Users/amir/.codex/visualizations/2026/09/29/01a0ee86-4b0d-7580-8067-c7b7dcd3552b/notebook-codex-240-native-stale-frontend-190.png",
+    "screenshotSHA256": "6c2748137a661cd5cddea8d7a52feda5e7f5504feadad72d294a03060583c14c",
+    "reload": {
+      "checkedAt": "2026-10-01T21:15:51.729119+00:00",
+      "cliVersion": "0.159.3",
+      "transport": "codex app-server proxy",
+      "purpose": "Supported MCP configuration reload after reinstalling Notebook0.1.6; no settings or other thread actions",
+      "reloadCalls": 0,
+      "responses": [],
+      "status": "unavailable",
+      "error": "No RPC response within bounded handshake window",
+      "proxyExitCode": 0
+    },
+    "freshConsumerAccepted": false,
+    "requiredNextStep": "Reconnect Notebook in a fresh Codex session and verify scriptSHA before accepting frontend latency there."
+  },
+  "continuity": {
+    "status": "post-camera-native-continuity-verified",
+    "checkedAt": "2026-10-01T21:17:16.149097+00:00",
+    "build": "240",
+    "sourceSHA256": "bbcbe80500ee6ad9ecfbeb48e7a1f771d27c9aef395b285f07d86bf4bd7089b0",
+    "installationReceiptSHA256": "c4afb143809018dd39732ec5ce6e83c69140b78e652be3418f3a9603b7c2d0b2",
+    "scope": "Read-only admitted installed owner after browser page navigation and camera input; no content or native camera writes.",
+    "checks": {
+      "sameSignedInstalled240Owner": true,
+      "workspaceRetained": true,
+      "trustedDeviceRetained": true,
+      "nativePageCameraSelectedItemRetained": true,
+      "typedSelectionRetained": true,
+      "nativeRuntimeConnected": true
+    },
+    "socketPeers": [
+      {
+        "socket": "/tmp/notebook-501/bridge.sock",
+        "peerPID": 10580,
+        "uid": 501,
+        "gid": 20,
+        "processCDHash": "ce68ea8b827fe0fd01082e64da4eff94278ed316"
+      },
+      {
+        "socket": "/tmp/notebook-501/1c96b27a4539f36c46a70df7.sock",
+        "peerPID": 10580,
+        "uid": 501,
+        "gid": 20,
+        "processCDHash": "ce68ea8b827fe0fd01082e64da4eff94278ed316"
+      }
+    ]
+  },
+  "limitations": [
+    "Material-frame is DOM replacement observed with requestAnimationFrame, not compositor/GPU present timestamp.",
+    "Server elapsed includes native preparation and sidecar IPC/JSON, not isolated native paint CPU time.",
+    "Saved settled screenshots were captured after acceptance; timeline marks the first accepted replacement.",
+    "Actual scales differ less than1% from239 due wheel step quantization; same count/deltas and screen anchor.",
+    "No overall UX or physical-device latency claim. Root owns actual Codex mount and one post-SDK native continuity comparison.",
+    "350percent abrupt zoom still needs1672ms for adequately dense material; GUI-388 remains InProgress."
+  ],
+  "teardown": {
+    "closedPanel": true,
+    "AppBridgeTeardownResourceAndClose": true,
+    "CDPViewportCleared": true,
+    "ephemeralChromeTabClosed": true,
+    "serverSession": 69663,
+    "serverSIGINTExit": 0,
+    "MCPClientClosed": true,
+    "noFurtherLiveCalls": true
+  }
+}

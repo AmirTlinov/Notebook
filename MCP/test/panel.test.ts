@@ -8,6 +8,8 @@ import {Client, InMemoryTransport} from '@modelcontextprotocol/client';
 import {McpServer} from '@modelcontextprotocol/server';
 import {RESOURCE_MIME_TYPE} from '@modelcontextprotocol/ext-apps/server';
 import {panelResourceURI, registerNotebookPanel} from '../src/panel-tools.js';
+import {NotebookSession} from '../panel/session.js';
+import type {PanelSnapshot} from '../panel/model.js';
 
 type Value = Record<string, unknown>;
 type Reply = {result: Value} | {error: Value};
@@ -17,6 +19,60 @@ const workspaceID = randomUUID();
 const target = {kind: 'board', id: randomUUID()};
 const address = {workspaceID, target, socketKey};
 const origin = {tileX: 7, tileY: -3, localX: 40, localY: 60};
+
+test('session coalesces viewport demand against accepted pixels without delaying required reads', async t => {
+  for (const scenario of ['covered', 'needed', 'forced', 'fit'] as const) await t.test(scenario, async t => {
+    t.mock.timers.enable({apis: ['setTimeout']});
+    const session = new NotebookSession();
+    let density = 0, wanted = 1;
+    const calls: {arguments: Value; resolve: (value: Awaited<ReturnType<typeof session.app.callServerTool>>) => void}[] = [];
+    const contexts: Value[] = [];
+    session.app.callServerTool = async input => new Promise(resolve => calls.push({arguments: input.arguments!, resolve}));
+    session.app.updateModelContext = async input => {contexts.push(JSON.parse((input.content![0] as {text: string}).text)); return {};};
+    session.view = () => ({viewport: {x: 800, y: 600}, pixelScale: 1, camera: {center: origin, scale: wanted}});
+    session.bounds = () => ({anchor: origin, region: {x: 0, y: 0, width: 800 / wanted, height: 600 / wanted}});
+    session.needsPresentation = () => density < wanted;
+    session.onSnapshot = value => {density = value.appearance!.coverage!.pixelDensity;};
+    const snapshot = (scale: number, pixels: number, cursor: string): PanelSnapshot => ({
+      ...address, target: {...target, kind: 'board'}, cursor, worldOrigin: origin, size: {width: 800, height: 600},
+      elements: [], cards: [], rawInkPresent: false, unsupportedElements: [], history: {}, truncated: false,
+      appearance: {status: 'ready', requestID: randomUUID(), sourceRevision: 'same-source',
+        camera: {center: origin, scale}, viewport: {x: 800, y: 600}, layers: [],
+        coverage: {anchor: origin, region: {x: 0, y: 0, width: 800, height: 600}, level: 0, pixelDensity: pixels}},
+      ...(scenario === 'fit' ? {fitBounds: {anchor: origin, region: {x: 0, y: 0, width: 1200, height: 900}}} : {}),
+    });
+    session.snapshot = snapshot(1, 1, '1');
+    const initial = session.refresh(true);
+    calls[0]!.resolve({content: [], structuredContent: snapshot(1, 1, '1')});
+    await initial;
+    wanted = 1.28; session.viewportChanged(); t.mock.timers.tick(80);
+    assert.equal(calls.length, 2);
+    wanted = 1.906; session.viewportChanged(); t.mock.timers.tick(80);
+    assert.equal(calls.length, 2, 'The active native read stays serial while the latest camera coalesces');
+    if (scenario === 'forced') await session.refresh(true);
+    const fit = scenario === 'fit' ? session.requestFit() : undefined;
+    calls[1]!.resolve({content: [], structuredContent: snapshot(1.28, scenario === 'needed' ? 1.28 : 2.463, '2')});
+    await new Promise<void>(resolve => setImmediate(resolve));
+    assert.equal(density, scenario === 'needed' ? 1.28 : 2.463, 'A useful intermediate cohort is accepted');
+    assert.equal(calls.length, scenario === 'covered' ? 2 : 3,
+      'Covered camera demand is dropped; unmet demand or explicit reads run without another 80ms');
+    if (scenario !== 'covered') {
+      assert.equal(calls[2]!.arguments.includeFitBounds, scenario === 'fit' ? true : undefined,
+        'An explicit fit reader gets the released read slot before viewport-only work');
+      assert.equal(calls[2]!.arguments.knownRequestID, undefined, 'Content invalidation is not downgraded to an idle shortcut');
+      calls[2]!.resolve({content: [], structuredContent: snapshot(wanted, 2.463, '3')});
+      await new Promise<void>(resolve => setImmediate(resolve));
+      if (fit) assert.deepEqual(await fit, snapshot(wanted, 2.463, '3').fitBounds);
+    }
+    t.mock.timers.tick(40);
+    await new Promise<void>(resolve => setImmediate(resolve));
+    assert.equal((contexts.at(-1)!.notebookPanel as Value).visibleBounds &&
+      ((contexts.at(-1)!.notebookPanel as Value).visibleBounds as {region: {width: number}}).region.width, 800 / wanted,
+      'Dropping a redundant camera read preserves the latest context bounds');
+    t.mock.timers.tick(80);
+    assert.equal(calls.length, scenario === 'covered' ? 2 : 3);
+  });
+});
 
 async function connectedPanel(socketPath: string) {
   const server = new McpServer({name: 'panel-contract', version: '1'});

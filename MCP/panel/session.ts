@@ -53,7 +53,8 @@ export class NotebookSession {
   private generation=0;
   private viewRevision=0;
   private navigation=0;
-  private refreshQueued=false;
+  private forcedRefreshQueued=false;
+  private viewportRefreshQueued=false;
   private refreshTimer:ReturnType<typeof setTimeout>|undefined;
   get hasAppearance(){return this.presented;}
   private pending:{name:string;arguments:Record<string,unknown>;resolve:()=>void;reject:(error:unknown)=>void}|undefined;
@@ -80,12 +81,17 @@ export class NotebookSession {
   }
   viewportChanged(){
     this.boundsDirty=this.needsPresentation();++this.viewRevision;this.queueContext();
-    if(this.boundsDirty)this.queueRefresh();
-    else {clearTimeout(this.refreshTimer);this.refreshTimer=undefined;this.refreshQueued=false;}
+    if(this.boundsDirty){if(!this.viewportRefreshQueued)this.queueRefresh();}
+    else {clearTimeout(this.refreshTimer);this.refreshTimer=undefined;this.viewportRefreshQueued=false;}
   }
   private queueRefresh(){
     if(this.closed||this.refreshTimer!==undefined)return;
-    this.refreshTimer=setTimeout(()=>{this.refreshTimer=undefined;void this.refresh(true);},80);
+    this.refreshTimer=setTimeout(()=>{this.refreshTimer=undefined;this.viewportRefreshQueued=true;this.drainRefresh();},80);
+  }
+  private drainRefresh(){
+    if(!this.boundsDirty){clearTimeout(this.refreshTimer);this.refreshTimer=undefined;this.viewportRefreshQueued=false;}
+    if(this.closed||this.reading||this.suspended||this.busy||this.pending)return;
+    if(this.forcedRefreshQueued||this.viewportRefreshQueued)void this.refresh(this.forcedRefreshQueued);
   }
   async openSurface(target:PanelTarget,camera?:PanelView["camera"]){
     if(this.busy||this.pending||this.closed)return false;
@@ -103,12 +109,12 @@ export class NotebookSession {
         // A resized panel still opens the requested target, using a fresh native
         // entry projection for its latest bounds before any pixels are accepted.
         if(generation!==this.generation||viewRevision!==this.viewRevision)continue;
-        this.accept(value,request.appearance);this.boundsDirty=this.needsPresentation();this.refreshQueued=false;
+        this.accept(value,request.appearance);this.boundsDirty=this.needsPresentation();this.viewportRefreshQueued=false;
         clearTimeout(this.refreshTimer);this.refreshTimer=undefined;return true;
       }
       return false;
     }catch(error){if(!this.closed)this.report(error,null);return false;}
-    finally{this.busy=false;if(this.refreshQueued&&!this.closed)this.queueRefresh();}
+    finally{this.busy=false;this.drainRefresh();}
   }
   async requestFit():Promise<SceneBounds|undefined>{
     if(!this.mutationReady||this.suspended||this.closed)return;
@@ -121,9 +127,10 @@ export class NotebookSession {
   async refresh(force=false,includeFitBounds=false):Promise<PanelSnapshot|undefined> {
     if(this.closed||!this.snapshot)return;
     // Idle polling never queues a forced repaint behind a slow native render.
-    if(this.reading||this.suspended||this.busy||this.pending){this.refreshQueued ||= force;return;}
+    if(this.reading||this.suspended||this.busy||this.pending){this.forcedRefreshQueued ||= force;return;}
     clearTimeout(this.refreshTimer);this.refreshTimer=undefined;
-    this.reading=true;this.refreshQueued=false;
+    force ||= this.forcedRefreshQueued;
+    this.reading=true;this.forcedRefreshQueued=false;this.viewportRefreshQueued=false;
     const generation=this.generation,viewRevision=this.viewRevision;
     const view=!force&&!includeFitBounds&&!this.boundsDirty&&this.presentedView?this.presentedView:this.view(false);
     const request={...this.address(),appearance:view,knownAssets:this.knownAssets(),...(includeFitBounds?{includeFitBounds:true}:{}),...(!force&&!this.boundsDirty&&this.presented?{
@@ -149,8 +156,13 @@ export class NotebookSession {
     finally{
       this.reading=false;
       for(const resolve of this.readers.splice(0))resolve();
-      this.refreshQueued ||= viewRevision!==this.viewRevision&&this.needsPresentation();
-      if(this.refreshQueued&&!this.suspended&&!this.busy&&!this.pending&&!this.closed)this.queueRefresh();
+      if(viewRevision!==this.viewRevision){
+        this.boundsDirty=this.needsPresentation();
+        if(this.boundsDirty&&this.refreshTimer===undefined)this.viewportRefreshQueued=true;
+      }
+      // A useful intermediate cohort can already cover the final camera. Only
+      // unmet viewport demand survives; an elapsed coalesce never waits twice.
+      queueMicrotask(()=>this.drainRefresh());
     }
   }
   private stale(request:PanelAddress,generation:number){return this.closed||generation!==this.generation

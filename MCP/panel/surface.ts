@@ -67,7 +67,7 @@ export class Surface {
     const offset=delta(bounds.anchor,coverage.anchor),a=coverage.region,b=bounds.region;
     if(!(b.x+offset.x>=a.x&&b.y+offset.y>=a.y&&b.x+offset.x+b.width<=a.x+a.width&&b.y+offset.y+b.height<=a.y+a.height))return false;
     const sharp=appearance!.layers.every(layer=>{
-      if(layer.repeatSize||layer.id.startsWith('page-paper:'))return true;
+      if(layer.repeatSize)return true;
       const origin=delta(layer.worldOrigin,bounds.anchor),f=layer.frame,x=origin.x+f.x,y=origin.y+f.y;
       if(x>=b.x+b.width||y>=b.y+b.height||x+f.width<=b.x||y+f.height<=b.y)return true;
       return Math.min(layer.pixelWidth/f.width,layer.pixelHeight/f.height)>=density*.995;

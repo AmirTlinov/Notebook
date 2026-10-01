@@ -1615,6 +1615,12 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
       return
     }
     if !sourceChanged, let previous = loadedElement, AgentProgramSource(previous) == AgentProgramSource(element) {
+      if previous.state != element.state, let preparation = preNavigationPreparation {
+        // No author has observed this initial cut yet. Replace its queued
+        // packet instead of navigating it and applying the newer cut afterward.
+        beginLoad(element, in: webView, snapshotOnly: snapshotOnly, joiningInitialPreparation: preparation)
+        return
+      }
       loadedElement = element
       if previous.state != element.state {
         #if os(iOS)
@@ -1683,6 +1689,11 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   private var loadFailed = false
   private var staticRasterShellReady = false
 
+  private var preNavigationPreparation: Task<Void, Never>? {
+    guard !runtimeLoaded, activeNavigation == nil, stateTransfer == nil else { return nil }
+    return programLoadTask
+  }
+
   /// The mounted view requests a passive copy only when it is actually using
   /// one (including the bridge from an old raster). A live cold program owns
   /// its native output; turns and checkpoints borrow that output explicitly.
@@ -1700,7 +1711,8 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     }
   }
 
-  private func beginLoad(_ element: AgentElement, in webView: WKWebView, snapshotOnly: Bool = false) {
+  private func beginLoad(_ element: AgentElement, in webView: WKWebView, snapshotOnly: Bool = false,
+    joiningInitialPreparation: Task<Void, Never>? = nil) {
     NotebookNavigationObservation.webPreparation("source_accepted", ownerID: lease.id, sourceID: element.id)
     let staticRaster = snapshotOnly && element.kind == .web && !element.requiresLiveRuntime
     let reusesStaticShell = staticRaster && staticRasterShellReady
@@ -1721,7 +1733,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     snapshotInFlight = false; needsSnapshot = false; runtimeLoaded = false
     fingerRegions = nil
     activeNavigation = nil
-    if !reusesStaticShell, loadedElement != nil {
+    if !reusesStaticShell, loadedElement != nil, joiningInitialPreparation == nil {
       if let token = loadToken { retireRuntimeDocument(token: token, in: webView) }
       webView.stopLoading()
     }
@@ -1762,7 +1774,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     // An inline program with a small initial state already has everything
     // needed for navigation. Do not queue its first request behind the next
     // native constructions merely to encode a bounded JSON value.
-    if element.programPackage == nil {
+    if element.programPackage == nil, joiningInitialPreparation == nil {
       do {
         if case .prepared(let encoded) = try NotebookProgramStateEncoding.prepareImmediately(element.state,
           resources: resources, forHTML: true) {
@@ -1779,6 +1791,9 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
       guard let self, let webView else { return }
       defer { if accepts(token) { programLoadTask = nil } }
       do {
+        if let joiningInitialPreparation { await joiningInitialPreparation.value }
+        try Task.checkCancellation()
+        guard accepts(token), attachedWebView === webView else { return }
         let encoded = try await NotebookProgramStateEncoding.prepare(element.state, resources: resources, forHTML: true)
         guard !Task.isCancelled, accepts(token), attachedWebView === webView else { return }
         if let hash = element.programPackage {

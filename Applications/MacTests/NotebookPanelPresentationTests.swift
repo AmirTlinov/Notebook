@@ -257,10 +257,18 @@ final class NotebookPanelPresentationTests: XCTestCase {
     let ink = try layers.filter { $0["order"] == .number(1000) }.map { try alpha($0, at: .init(x: 160, y: 140)) }
     XCTAssertGreaterThan(paper.max() ?? 0, 0.9, "The first page includes actual native paper pixels")
     XCTAssertGreaterThan(ink.max() ?? 0, 0.5, "The addressed first page includes its ordered native handwriting")
-    for scale in [1.0, 2.0] {
+    let detailedProjections: [NotebookPanelAppearanceProjection] = [
+      .init(viewport: .init(x: 2048, y: 1400), pixelScale: 2,
+        camera: .init(center: .init(x: 417, y: 597), scale: 1)),
+      .init(viewport: .init(x: 2048, y: 1400), pixelScale: 2,
+        camera: .init(center: .init(x: 417, y: 597), scale: 2)),
+      .init(viewport: .init(x: 1394, y: 990), pixelScale: 1,
+        camera: .init(center: .init(x: 398.7188887550497, y: 572.625185006733), scale: 3.500604197139754))
+    ]
+    for projection in detailedProjections {
+      let scale = try XCTUnwrap(projection.camera).scale
       command.panelPresentation = .init(workspaceID: header.workspaceID, target: page,
-        appearance: .init(viewport: .init(x: 2048, y: 1400), pixelScale: 2,
-          camera: .init(center: .init(x: 417, y: 597), scale: scale)))
+        appearance: projection)
       let detailed = try await fixture.send(command)
       let detailedLayers = try XCTUnwrap(detailed["appearance"]?["layers"]?.arrayValues)
       let handwriting = detailedLayers.filter { $0["order"] == .number(1000) }
@@ -269,10 +277,10 @@ final class NotebookPanelPresentationTests: XCTestCase {
       for layer in detailedLayers {
         let image = try bitmap(layer), frame = try XCTUnwrap(layer["frame"]).decode(PageRect.self)
         decodedPixels += image.pixelsWide * image.pixelsHigh
-        if layer["order"] == .number(1000) {
+        if layer["order"] == .number(1000) || layer["order"] == .number(-1) {
           let actualDensity = min(Double(image.pixelsWide) / frame.width, Double(image.pixelsHigh) / frame.height)
-          XCTAssertGreaterThanOrEqual(actualDensity, scale * 2 * 0.995,
-            "World coverage coarsening must preserve the decoded native handwriting resolution")
+          XCTAssertGreaterThanOrEqual(actualDensity, scale * projection.pixelScale * 0.995,
+            "Accepted native paper and handwriting must both retain the requested display resolution")
         }
       }
       XCTAssertLessThanOrEqual(decodedPixels, NotebookPanelRenderProjection.maximumDecodedPixels)
@@ -281,24 +289,29 @@ final class NotebookPanelPresentationTests: XCTestCase {
         let drawing = try source.inkDrawing()
         let materials = try handwriting.map { (frame: try XCTUnwrap($0["frame"]).decode(PageRect.self), image: try bitmap($0)) }
         let material = try XCTUnwrap(materials.first { entry in
-          entry.image.pixelsWide == 1024 && entry.image.pixelsHigh == 1024
+          entry.image.pixelsWide >= 64 && entry.image.pixelsHigh >= 64
             && 200.125 >= entry.frame.x && 600.375 >= entry.frame.y
             && 200.125 < entry.frame.x + entry.frame.width && 600.375 < entry.frame.y + entry.frame.height
-        }, "The diagonal crosses an admitted full native ink region")
+        }, "The diagonal crosses an admitted native ink region")
         let actual = material.image, frame = material.frame
-        let density = Double(actual.pixelsWide) / frame.width
+        // Paper and ink share one output budget, so the admitted region may be
+        // clipped rather than a square 1024px tile. Match its exact two-axis
+        // pixel grid instead of assuming a particular tile size or density.
+        let densityX = Double(actual.pixelsWide) / frame.width
+        let densityY = Double(actual.pixelsHigh) / frame.height
+        let pixelSize = CGSize(width: actual.pixelsWide, height: actual.pixelsHigh)
         let sharp = try await Task.detached(priority: .utility) {
           guard let image = InkRasterRenderer.shared.render(mesh: SpatialInkMesh.page(drawing),
-            size: .init(width: frame.width, height: frame.height), scale: density,
-            affine: .init(.init(1, 1, -Float(frame.x), -Float(frame.y))))
+            size: pixelSize, scale: 1,
+            affine: .init(.init(Float(densityX), Float(densityY), -Float(frame.x * densityX), -Float(frame.y * densityY))))
           else { throw SceneRenderError.resourceLimit }
           return image
         }.value
         let reference = NSBitmapImageRep(cgImage: sharp)
         XCTAssertEqual(reference.pixelsWide, actual.pixelsWide)
         XCTAssertEqual(reference.pixelsHigh, actual.pixelsHigh)
-        let startX = max(0, min(actual.pixelsWide - 64, Int((200.125 - frame.x) * density) - 32))
-        let startY = max(0, min(actual.pixelsHigh - 64, Int((600.375 - frame.y) * density) - 32))
+        let startX = max(0, min(actual.pixelsWide - 64, Int((200.125 - frame.x) * densityX) - 32))
+        let startY = max(0, min(actual.pixelsHigh - 64, Int((600.375 - frame.y) * densityY) - 32))
         var edgeError: CGFloat = 0, edgeSamples = 0
         for y in startY..<(startY + 64) {
           for x in startX..<(startX + 64) {
@@ -317,6 +330,96 @@ final class NotebookPanelPresentationTests: XCTestCase {
     let afterPresence = try await fixture.read(.init(kind: .presence))
     XCTAssertEqual(afterPresence, observedPresence,
       "Plugin navigation leaves the native selected surface and camera untouched")
+  }
+
+  @MainActor
+  func testRegionalMaterialPreparationPreservesOrderedCutsAndBaselineAcrossRegionsAndReleasesGeometry() async throws {
+    func action(_ sequence: UInt64, _ tool: SpatialInkTool, _ color: SpatialInkColor,
+      _ points: [CGPoint], width: Double = 12, targets: [InkElementTarget]? = nil) -> PageInkAction {
+      .init(tool: tool, color: color, samples: points.enumerated().map { index, point in
+        .init(point: .init(x: point.x, y: point.y), timeOffset: Double(index) / 10,
+          width: width, opacity: 1, force: 1, azimuth: 0, altitude: 1)
+      }, sequence: sequence, elementTargets: targets)
+    }
+    let red = SpatialInkColor(red: 1, green: 0, blue: 0)
+    let blue = SpatialInkColor(red: 0, green: 0, blue: 1)
+    let green = SpatialInkColor(red: 0, green: 1, blue: 0)
+    let early = action(1, .pen, red, [.init(x: 10, y: 40), .init(x: 110, y: 40)])
+    let moved = action(2, .pen, blue, [.init(x: 48, y: 10), .init(x: 48, y: 86)])
+    let later = action(3, .pen, green, [.init(x: 10, y: 65), .init(x: 110, y: 65)])
+    let capturedCut = action(4, .eraser, .black, [.init(x: 40, y: 25), .init(x: 56, y: 25)], width: 10)
+    let frame = PageRect(x: 8, y: 0, width: 96, height: 96)
+    let sourceFrame = PageRect(x: 0, y: 0, width: 96, height: 96)
+    let target = InkElementTarget(elementID: "regional-ordered-body", frame: frame)
+    let targetCut = action(5, .eraser, .black, [.init(x: 50, y: 50), .init(x: 62, y: 50)],
+      width: 8, targets: [target])
+    let baselineCut = action(6, .eraser, .black, [.init(x: 105, y: 105)], width: 14)
+    let baselineCanvas = try XCTUnwrap(CGContext(data: nil, width: 128, height: 128, bitsPerComponent: 8,
+      bytesPerRow: 128 * 4, space: CGColorSpaceCreateDeviceRGB(),
+      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+    baselineCanvas.setFillColor(NSColor.red.cgColor)
+    baselineCanvas.fill(.init(x: 96, y: 96, width: 24, height: 24))
+    let baselineImage = try XCTUnwrap(baselineCanvas.makeImage())
+    let baseline = try await CompositionPixels.encodePNG(baselineImage)
+    let drawing = PageInkDrawing(baselinePNG: baseline, baselineActionCount: 1,
+      actions: [early, moved, later, capturedCut, targetCut, baselineCut])
+    let graphic = NotebookGraphic(shape: .freehand, sourceInkIDs: [moved.id], freehand: .init(layers: [
+      .init(tool: .pen, color: blue, measured: .init(sourceID: moved.id, measurements: moved.samples, frame: sourceFrame)),
+      .init(tool: .eraser, color: .black,
+        measured: .init(sourceID: capturedCut.id, measurements: capturedCut.samples, frame: sourceFrame))]))
+    let element = AgentElement(id: target.elementID, kind: .graphic, frame: frame, source: "", html: "", graphic: graphic)
+    let page = PageDocument(size: .init(width: 128, height: 128), actor: UUID(),
+      drawingData: try drawing.dataRepresentation(), elements: [element])
+    let resources = SceneRenderResources()
+    let reference = try await PageCompositionRenderer.renderInk(page, scale: 2, resources: resources)
+    let expected = try XCTUnwrap(NSBitmapImageRep(data: reference.png))
+    let regions = [PageRect(x: 0, y: 0, width: 64, height: 128), PageRect(x: 64, y: 0, width: 64, height: 128)]
+    func renderRegions() async throws {
+      let preparation = try await PageCompositionRenderer.prepareMaterial(page, graph: page.graphicGraph(),
+        region: .init(x: 0, y: 0, width: 128, height: 128), scale: 2, resources: resources,
+        permitsPreparation: { true })
+      let retainedGeometryBytes = resources.reservedBytes
+      XCTAssertGreaterThan(retainedGeometryBytes, 0)
+      for region in regions {
+        let key = try SceneMaterialKey(workspaceID: UUID(), target: .init(kind: .page, id: page.id),
+          revision: "regional-cut", role: "page-ink", frame: region, density: 2)
+        let body = try await PageCompositionRenderer.renderMaterial(page, ids: nil, region: region,
+          scale: 2, key: key, preparation: preparation, resources: resources, permitsPreparation: { true }) { _ in
+            throw SceneRenderError.snapshotPending("unexpected_webkit")
+          }
+        let image = try XCTUnwrap(body.sampledImage(for: .init(width: Double.greatestFiniteMagnitude,
+          height: Double.greatestFiniteMagnitude)))
+        let png = try await CompositionPixels.encodePNG(image)
+        let actual = try XCTUnwrap(NSBitmapImageRep(data: png))
+        body.release()
+        for (x, y) in [(56, 40), (56, 65), (48, 40), (56, 25), (56, 50), (64, 65), (110, 110), (105, 105)] {
+          guard Double(x) >= region.x, Double(x) < region.x + region.width else { continue }
+          let received = try XCTUnwrap(actual.colorAt(x: (x - Int(region.x)) * 2, y: y * 2)?.usingColorSpace(.deviceRGB))
+          let native = try XCTUnwrap(expected.colorAt(x: x * 2, y: y * 2)?.usingColorSpace(.deviceRGB))
+          for channel in [\NSColor.redComponent, \NSColor.greenComponent, \NSColor.blueComponent, \NSColor.alphaComponent] {
+            XCTAssertEqual(received[keyPath: channel], native[keyPath: channel], accuracy: 2.0 / 255,
+              "Regional reuse preserves moved-body rank, captured/target cuts and erased baseline pixels")
+          }
+        }
+        // OrderedBody uploads only the body/cut buffers visible in this region
+        // and retains them for the cut. Those accounted derived buffers are
+        // reusable geometry, whereas all regional pixel backings must retire.
+        XCTAssertEqual(resources.rasterAdmission.reservedCount, 0,
+          "A finished region releases every temporary raster backing")
+        let reusableGeometryBytes = resources.reservedBytes
+        XCTAssertGreaterThanOrEqual(reusableGeometryBytes, retainedGeometryBytes)
+        let repeated = try await PageCompositionRenderer.renderMaterial(page, ids: nil, region: region,
+          scale: 2, key: key, preparation: preparation, resources: resources, permitsPreparation: { true }) { _ in
+            throw SceneRenderError.snapshotPending("unexpected_webkit")
+          }
+        repeated.release()
+        XCTAssertEqual(resources.rasterAdmission.reservedCount, 0)
+        XCTAssertEqual(resources.reservedBytes, reusableGeometryBytes,
+          "Repeated regional pixels reuse the cut's admitted body and cut buffers without growing their geometry")
+      }
+    }
+    try await renderRegions()
+    XCTAssertEqual(resources.reservedBytes, 0, "The cut releases its prepared mesh and body clips after its last region")
   }
 
   @MainActor

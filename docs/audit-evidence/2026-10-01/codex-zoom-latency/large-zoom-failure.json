@@ -1,0 +1,125 @@
+{
+  "scope": "Single authorized readonly actual239 cached0.1.5 C748 page zoom100→350 atDPR1 CSS1064x750. No nativepresence/camera/data writes, no repeat or restart.",
+  "resource": {
+    "uri": "ui://notebook/workspace.html",
+    "bytes": 626714,
+    "sha256": "cb72e096cfa904f58314dd4557ff57192806f3920061359a69b39510f3dfb65e",
+    "metadata": {
+      "ui": {
+        "csp": {
+          "connectDomains": [],
+          "resourceDomains": [
+            "blob:"
+          ]
+        },
+        "prefersBorder": false
+      },
+      "openai/ui": {
+        "availableDisplayModes": [
+          "fullscreen"
+        ],
+        "preferredDisplayMode": "fullscreen"
+      }
+    }
+  },
+  "result": "FAILED: latest350projection not accepted; UI helper connection interrupted. Intermediate151% material accepted but below350%density.",
+  "burst": {
+    "events": [
+      {
+        "atUTC": 1790886051427,
+        "ctrl": true,
+        "deltaY": -52.20000076293945,
+        "now": 79666.89999985695,
+        "type": "wheel"
+      },
+      {
+        "atUTC": 1790886051519,
+        "ctrl": true,
+        "deltaY": -52.20000076293945,
+        "now": 79758.20000004768,
+        "type": "wheel"
+      },
+      {
+        "atUTC": 1790886051609,
+        "ctrl": true,
+        "deltaY": -52.20000076293945,
+        "now": 79848.29999995232,
+        "type": "wheel"
+      }
+    ],
+    "durationMs": 182,
+    "latestRequest": {
+      "atUTC": 1790886052391,
+      "name": "notebook_panel_presentation",
+      "now": 80630.29999995232,
+      "request": {
+        "camera": {
+          "center": {
+            "localX": 398.7188887550497,
+            "localY": 572.625185006733,
+            "tileX": 0,
+            "tileY": 0
+          },
+          "scale": 3.500604197139754
+        },
+        "pixelScale": 1,
+        "viewport": {
+          "x": 1394,
+          "y": 990
+        }
+      },
+      "type": "rpc-start"
+    },
+    "latestRequestWaitAfterStopMs": 782
+  },
+  "error": {
+    "uiMessage": "Notebook helper прервал соединение. Проверьте сохранение по ID хода перед повтором.",
+    "seenByUTC": "2026-10-01T20:21:23Z",
+    "codeSourceMapping": "MCP/src/bridge.ts:91 socket error -> ipc_unavailable; code not persisted in old harness HTTP catch",
+    "errorUTCLimit": "Actual first error time not captured. Do not substitute inspection time.",
+    "MCProcessExitObserved": false,
+    "nativeCrashCause": "Parent owner audit; this harness cannot determine from generic socket error"
+  },
+  "intermediate": {
+    "cameraScale": 1.5185190780078364,
+    "mcpElapsedMs": 680.9652079999942,
+    "inkDensity": 2.4630303030303033,
+    "currentDemand": 3.500604197139754,
+    "layers": 23,
+    "newAssets": 23,
+    "pngBase64Chars": 663048,
+    "qualityAdequate": false
+  },
+  "teardown": {
+    "SDKClosed": true,
+    "tabClosed": true,
+    "metricsReset": true,
+    "serverClient": "Closed SIGINT, exit0"
+  },
+  "evidence": [
+    "timeline.json",
+    "readonly-calls.json",
+    "burst350-stop.jpg",
+    "burst350-failed.jpg",
+    "failure-dom.txt",
+    "browser-errors.json"
+  ],
+  "diagnosis": {
+    "kind": "native-zero-width-region",
+    "installedBuild": "239",
+    "fault": "Swift runtime precondition in PageRect.init(width: 0)",
+    "faultingFrame": "CurrentViewPreviewWriter.pagePanelMaterials at NotebookPanelPreviewWriter.swift:265",
+    "rect": {
+      "x": 727.5590551181102,
+      "y": 311.81102362204723,
+      "width": 0,
+      "height": 207.87401574803147
+    },
+    "cause": "ceil(frame.width / side) admits an extra column at a floating-point boundary; its x rounds to maxX.",
+    "debuggerReproduction": "Exact readonly panel projection against verified installed239 PID99998 reproduced the same trap. Stopped failed process was then terminated in LLDB and installed239 relaunched in background. No content/presence writes.",
+    "stack": {
+      "path": "/tmp/notebook-live-panel-239-blur-large/lldb-backtrace.txt",
+      "sha256": "e57fdb6ae3449311d511ca28e6ffb0c1c30e9c3e79acbd44212a6ef09e0ed6bd"
+    }
+  }
+}

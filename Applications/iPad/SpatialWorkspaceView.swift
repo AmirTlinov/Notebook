@@ -125,10 +125,6 @@ struct SpatialWorkspaceView: View {
     }
     return nil
   }
-  private func transitionPortal(_ boardID:UUID) -> BoardPortalCamera? {
-    if let override=transitionPortalOverride,override.boardID == boardID { return override.camera }
-    return model.scenePortalCamera(boardID:boardID)
-  }
   private var navigationID:UUID? {
     switch navigation { case .idle:nil;case .interacting(let value):value.id;case .settling(let value):value.id }
   }
@@ -168,10 +164,7 @@ struct SpatialWorkspaceView: View {
       )
       let presence = normalizedPresence(for: viewport)
       let preparing = NotebookWorkspaceCompositionRequest.preparationPresence(target: preparationPresence, visible: presence)
-      let requestedFrame = model.sceneIndex.map {
-        WorkspaceSceneFrame(index:$0,presence:preparing,portalCamera:transitionPortal,
-          pinned:scenePins(presence:preparing))
-      }
+      let portalOverride = transitionPortalOverride
       let cohort = model.compositionTiles.published.flatMap {
         $0.plan.presentations[.board(presence.boardID)] != nil ? $0 : nil
       }
@@ -187,9 +180,11 @@ struct SpatialWorkspaceView: View {
 
       ZStack {
         NotebookWorkspacePresentation(presence: presence, cohort: cohort, preparation: compositionRequest, prepare: {
-          model.prepareComposition(presence:preparing,frame:requestedFrame,
-            pinned:compositionRequest.pinned,displayScale:displayScale,installedItemOwners:compositionRequest.itemOwners,
-            preparationOperationID: compositionRequest.operationID)
+          compositionRequest.prepare(model: model, displayScale: displayScale, activeOperationID: cameraOwner.id,
+            portalCamera: { board in
+              if let portalOverride, portalOverride.boardID == board { return portalOverride.camera }
+              return model.scenePortalCamera(boardID: board)
+            })
         }) { [weak cohort] in
         ZStack {
         LiveSpatialBoardGrid(presence: presence)

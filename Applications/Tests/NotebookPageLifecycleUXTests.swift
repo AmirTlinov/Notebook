@@ -393,15 +393,27 @@ import XCTest
     let presence = try XCTUnwrap(first.presence)
     let owner = NotebookWorkspacePresentationController()
     defer { owner.uninstall() }
-    func request(_ publication: UInt64) -> NotebookWorkspaceCompositionRequest {
-      .init(presence: presence, generation: first.sceneIndex?.generationID, publication: publication,
-        revision: first.workspaceHeader?.cursor, pinned: [], itemOwners: [:], permitsPreparation: true,
+    XCTAssertNil(NotebookNavigationObservation.onWebPreparation)
+    var resolvedSources: [(owner: UUID, source: String?)] = []
+    NotebookNavigationObservation.onWebPreparation = { stage, owner, source, _ in
+      if stage == "native_preparation_source_resolved" { resolvedSources.append((owner, source)) }
+    }
+    defer { NotebookNavigationObservation.onWebPreparation = nil }
+    var activeOperation: UUID?
+    func request(_ publication: UInt64, model: NotebookAppModel) -> NotebookWorkspaceCompositionRequest {
+      // The queued initial view had no index; rebinding also carries the old
+      // model's non-nil generation. Execution must resolve today's source.
+      .init(presence: model.presence ?? presence, generation: publication == 3 ? nil : first.sceneIndex?.generationID, publication: publication,
+        revision: model.workspaceHeader?.cursor, pinned: [], itemOwners: [:], permitsPreparation: true,
         refinesDetails: true, groupPoses: [:])
     }
     var delivered: [String] = []
     func update(_ model: NotebookAppModel, _ publication: UInt64, _ label: String,
       completed: XCTestExpectation? = nil) {
-      owner.update(model: model, presence: presence, cohort: nil, preparation: request(publication), prepare: {
+      let preparation = request(publication, model: model)
+      owner.update(model: model, presence: preparation.presence, cohort: nil, preparation: preparation, prepare: {
+        preparation.prepare(model: model, displayScale: 2, activeOperationID: activeOperation,
+          portalCamera: model.scenePortalCamera)
         delivered.append(label); completed?.fulfill()
       }, content: AnyView(EmptyView()))
     }
@@ -412,6 +424,9 @@ import XCTest
     XCTAssertTrue(delivered.isEmpty, "Preparation must not publish inside updateUIViewController")
     await fulfillment(of: [latest], timeout: 1)
     XCTAssertEqual(delivered, ["latest"])
+    XCTAssertEqual(resolvedSources.count, 1)
+    XCTAssertEqual(resolvedSources.last?.owner, first.actorID)
+    XCTAssertEqual(resolvedSources.last?.source, try XCTUnwrap(first.sceneIndex).generationID.uuidString)
 
     let repeated = expectation(description: "An unchanged request is not prepared again")
     repeated.isInverted = true
@@ -424,13 +439,23 @@ import XCTest
     update(second, 4, "new-model", completed: rebound)
     await fulfillment(of: [rebound], timeout: 1)
     XCTAssertEqual(delivered, ["latest", "new-model"])
+    XCTAssertEqual(resolvedSources.count, 2)
+    XCTAssertEqual(resolvedSources.last?.owner, second.actorID)
+    XCTAssertEqual(resolvedSources.last?.source, try XCTUnwrap(second.sceneIndex).generationID.uuidString)
+
+    let cancelled = expectation(description: "A new gesture revokes queued idle preparation")
+    update(second, 5, "cancelled-idle", completed: cancelled)
+    activeOperation = UUID()
+    await fulfillment(of: [cancelled], timeout: 1)
+    XCTAssertEqual(resolvedSources.count, 2, "An idle request cannot prepare after a new operation owns the camera")
 
     let retired = expectation(description: "Retired native owners cannot prepare a late request")
     retired.isInverted = true
-    update(second, 5, "retired", completed: retired)
+    update(second, 6, "retired", completed: retired)
     owner.uninstall()
     await fulfillment(of: [retired], timeout: 0.05)
-    XCTAssertEqual(delivered, ["latest", "new-model"])
+    XCTAssertEqual(delivered, ["latest", "new-model", "cancelled-idle"])
+    XCTAssertEqual(resolvedSources.count, 2)
   }
 
   func testShowReferenceApproachesAnOffscreenNotebookBeforeOpeningItsExactPaper() async throws {
