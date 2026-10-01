@@ -15,9 +15,9 @@ export const panelAddressSchema = z.object({
 }).strict();
 export const panelViewSchema=z.object({
   viewport:z.object({x:z.number().min(1).max(2048),y:z.number().min(1).max(2048)}).strict(),
-  pixelScale:z.number().min(.5).max(2),
+  pixelScale:z.number().min(.5).max(4),
   camera:z.object({center:worldPointSchema,scale:z.number().min(.0125).max(4)}).strict().optional(),
-}).strict().refine(view=>view.viewport.x*view.viewport.y*view.pixelScale**2<=4_194_304,
+}).strict().refine(view=>view.viewport.x*view.viewport.y*view.pixelScale**2<=16_777_216.000001,
   "The panel view exceeds its native pixel budget.");
 const panelSourceSchema=z.object({id:z.string().min(1).max(120),
   page:z.record(z.string(),z.json()).optional(),spatial:z.record(z.string(),z.json()).optional(),

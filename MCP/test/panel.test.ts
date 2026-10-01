@@ -118,7 +118,7 @@ test('native presentation stays pinned, bounds pixels and avoids duplicating PNG
     assert.deepEqual(panel.requests,[{endpoint:'pinned',request:{command:'panelPresentation',
       panelPresentation:{workspaceID,target,appearance:view,...known}}}]);
     const oversized=await panel.client.callTool({name:'notebook_panel_presentation',arguments:{...address,
-      appearance:{viewport:{x:2048,y:2048},pixelScale:2}}});
+      appearance:{viewport:{x:2048,y:2048},pixelScale:3}}});
     assert.equal(oversized.isError,true);
     const excessiveAssets=await panel.client.callTool({name:'notebook_panel_presentation',arguments:{...address,
       appearance:view,knownAssets:Array.from({length:97},()=>randomUUID())}});

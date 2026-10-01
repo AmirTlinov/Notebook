@@ -11,9 +11,9 @@ public struct NotebookPanelAppearanceProjection: Codable, Equatable, Sendable {
   }
   public func validated() throws {
     guard viewport.x.isFinite, viewport.y.isFinite, (1...2048).contains(viewport.x),
-      (1...2048).contains(viewport.y), pixelScale.isFinite, (0.5...2).contains(pixelScale),
-      viewport.x * viewport.y * pixelScale * pixelScale <= 4_194_304,
-      camera?.isValid != false else { throw CollaborationError("resource_limit", "Проекция панели ограничена 2048 points и четырьмя миллионами pixels.") }
+      (1...2048).contains(viewport.y), pixelScale.isFinite, (0.5...4).contains(pixelScale),
+      viewport.x * viewport.y * pixelScale * pixelScale <= 16_777_216.000001,
+      camera?.isValid != false else { throw CollaborationError("resource_limit", "Проекция панели превышает предел размера или разрешения.") }
   }
 }
 
@@ -66,7 +66,7 @@ public struct NotebookPanelPresentationCut: Sendable {
 
   init(target: CollaborationTarget, sourceRevision: String, cursor: UInt64,
     projection: NotebookPanelRenderProjection, includeFitBounds: Bool = false) throws {
-    let hash = try collaborationHash(JSONValue.object(["renderer": .string("NotebookPanelMaterials/2"),
+    let hash = try collaborationHash(JSONValue.object(["renderer": .string("NotebookPanelMaterials/3"),
       "target": try .encode(target), "source": .string(sourceRevision), "projection": try .encode(projection),
       "fit": .bool(includeFitBounds)]))
     let hex = Array(hash)
@@ -179,7 +179,8 @@ extension NotebookStore {
           throw NotebookStorageError.corruptRecord("panel page size")
         }
         camera = .init(center: .init(x: size.width / 2, y: size.height / 2),
-          scale: min(request.appearance.viewport.x / size.width, request.appearance.viewport.y / size.height))
+          scale: max(SpatialCamera.minimumScale,
+            min(request.appearance.viewport.x / size.width, request.appearance.viewport.y / size.height)))
       }
       let projection = NotebookPanelRenderProjection(workspaceID: workspaceID, camera: camera,
         viewport: request.appearance.viewport, pixelScale: request.appearance.pixelScale)

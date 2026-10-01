@@ -41,7 +41,7 @@ type Hit={selection:PanelSelection;frame:Frame;label:string;editable:boolean;ord
 type Group={node:SVGGElement;origin:Point;frame:Frame};
 type Cohort={snapshot:PanelSnapshot;fragment:DocumentFragment;assets:Map<string,Asset>;
   groups:Map<string,Group[]>;frames:Map<string,Frame>;hits:Map<string,Hit>;
-  backdrop:{rect:SVGRectElement;origin:Point}|null;density:number};
+  backdrop:{rect:SVGRectElement;origin:Point}|null;view:PanelView};
 const key=(selection:PanelSelection)=>`${selection.kind}:${selection.id}`;
 
 /** Native material owns pixels. This edge owns camera transforms, stable hits and controls. */
@@ -59,12 +59,25 @@ export class Surface {
   constructor(private readonly svg:SVGSVGElement,private readonly material:SVGGElement,private readonly selection:SVGGElement){
     svg.insertBefore(this.hitPlane,selection);
   }
-  covers(bounds:{anchor:WorldPoint;region:Frame}|undefined,density:number):boolean{
-    const coverage=this.accepted?.snapshot.appearance?.coverage;
-    const requested=this.accepted?.density;
-    if(!bounds||!coverage||!requested||density<requested*.6||density>requested*Math.SQRT2)return false;
+  covers(bounds:{anchor:WorldPoint;region:Frame}|undefined,view:PanelView):boolean{
+    const accepted=this.accepted,appearance=accepted?.snapshot.appearance,coverage=appearance?.coverage;
+    if(!bounds||!coverage||!accepted||!view.camera||!accepted.view.camera)return false;
+    const density=view.camera.scale*view.pixelScale,prior=accepted.view;
+    if(density<prior.camera!.scale*prior.pixelScale*.6)return false;
     const offset=delta(bounds.anchor,coverage.anchor),a=coverage.region,b=bounds.region;
-    return b.x+offset.x>=a.x&&b.y+offset.y>=a.y&&b.x+offset.x+b.width<=a.x+a.width&&b.y+offset.y+b.height<=a.y+a.height;
+    if(!(b.x+offset.x>=a.x&&b.y+offset.y>=a.y&&b.x+offset.x+b.width<=a.x+a.width&&b.y+offset.y+b.height<=a.y+a.height))return false;
+    const sharp=appearance!.layers.every(layer=>{
+      if(layer.repeatSize||layer.id.startsWith('page-paper:'))return true;
+      const origin=delta(layer.worldOrigin,bounds.anchor),f=layer.frame,x=origin.x+f.x,y=origin.y+f.y;
+      if(x>=b.x+b.width||y>=b.y+b.height||x+f.width<=b.x||y+f.height<=b.y)return true;
+      return Math.min(layer.pixelWidth/f.width,layer.pixelHeight/f.height)>=density*.995;
+    });
+    if(sharp)return true;
+    // A bounded native reply may be below the requested density. Do not render
+    // that identical projection repeatedly; a changed zoom/viewport tries again.
+    const center=delta(view.camera.center,prior.camera!.center);
+    return center.x===0&&center.y===0&&view.camera.scale===prior.camera!.scale
+      &&view.pixelScale===prior.pixelScale&&view.viewport.x===prior.viewport.x&&view.viewport.y===prior.viewport.y;
   }
   private useful(snapshot:PanelSnapshot):boolean{
     const previous=this.accepted?.snapshot;
@@ -150,7 +163,7 @@ export class Surface {
         hits.set(id,{selection,frame,label:element.source.kind==='nativeText'?element.source.source:String(element.source.graphic?.label??element.source.kind),
           editable:groups.has(id)&&editable(element)&&!snapshot.unsupportedElements.some(value=>value.id===selection.id),order:orders.get(id)??-1});
       }
-      this.discardPrepared();this.prepared={snapshot,fragment,assets,groups,frames,hits,backdrop,density:(view.camera?.scale??a.camera.scale)*view.pixelScale};return true;
+      this.discardPrepared();this.prepared={snapshot,fragment,assets,groups,frames,hits,backdrop,view:{...view,camera:a.camera}};return true;
     }catch(error){this.release(assets);throw error;}
   }
   render(snapshot:PanelSnapshot){

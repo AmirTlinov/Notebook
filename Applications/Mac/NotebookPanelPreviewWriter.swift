@@ -34,9 +34,10 @@ extension CurrentViewPreviewWriter {
     let candidates = Array((capturedSnapshot["elements"]?.arrayValues ?? []).filter(NotebookPanelEditableSubject.allows)
       .prefix(NotebookPanelRenderProjection.maximumSubjects))
     let ids = Set(candidates.compactMap { $0["source"]?["id"]?.stringValue })
-    let layers: [NotebookPanelRasterLayer], coverage: CompositionTileCoverage
+    let layers: [NotebookPanelRasterLayer], coverage: CompositionTileCoverage, diagnostics: [RenderDiagnostic]
+    let materialBounds: WorkspaceSpatialBounds
     if let page {
-      (layers, coverage) = try await pagePanelMaterials(page, projection: projection, editableIDs: ids,
+      (layers, coverage, diagnostics, materialBounds) = try await pagePanelMaterials(page, projection: projection, editableIDs: ids,
         knownAssets: knownAssets, sourceRevision: cut.sourceRevision, model: model)
     } else {
       let presence = SessionPresence(boardID: target.id, mode: .board, camera: projection.camera, viewport: projection.viewport)
@@ -45,10 +46,8 @@ extension CurrentViewPreviewWriter {
         .compactMap { $0["item"]?["id"]?.stringValue.flatMap(UUID.init(uuidString:)) })
       let result = try await renderer.renderPanel(presence: presence, projection: projection,
         editableIDs: ids, movableItemIDs: movable, knownAssets: knownAssets)
-      layers = result.layers; coverage = result.coverage
+      layers = result.layers; coverage = result.coverage; diagnostics = result.diagnostics; materialBounds = result.bounds
     }
-    let materialBounds = WorkspaceSpatialBounds(origin: coverage.tiles.first!.origin,
-      maximum: coverage.tiles.last!.bounds.maximum)
     let dependencies = try await source.pixelDependencies()
     try Task.checkCancellation()
     guard model.permitsBackgroundPreparation else { throw CancellationError() }
@@ -84,8 +83,10 @@ extension CurrentViewPreviewWriter {
           "coverage": .object(["anchor": try .encode(materialBounds.origin),
             "region": try .encode(PageRect(x: 0, y: 0, width: materialBounds.width, height: materialBounds.height)),
             "level": .number(Double(coverage.level)),
-            "pixelDensity": .number(Double(CompositionTile.pixelSize) / coverage.tiles[0].worldSize)]),
-          "layers": .array(try layers.map { try $0.encoded }), "diagnostics": .array([])])
+            "pixelDensity": .number(layers.filter { $0.repeatSize == nil && !$0.id.hasPrefix("page-paper:") }
+              .map { min(Double($0.pixelWidth) / $0.frame.width, Double($0.pixelHeight) / $0.frame.height) }.min()
+              ?? projection.camera.scale * projection.pixelScale)]),
+          "layers": .array(try layers.map { try $0.encoded }), "diagnostics": try .encode(diagnostics)])
         snapshot = snapshot.setting("appearance", appearance)
         guard try JSONEncoder().encode(snapshot).count <= NotebookPanelRenderProjection.maximumEncodedBytes else {
           throw SceneRenderError.resourceLimit
@@ -100,14 +101,16 @@ extension CurrentViewPreviewWriter {
   @MainActor
   private static func pagePanelMaterials(_ page: PageDocument, projection: NotebookPanelRenderProjection,
     editableIDs: Set<String>, knownAssets: Set<UUID>, sourceRevision: String, model: NotebookAppModel)
-    async throws -> ([NotebookPanelRasterLayer], CompositionTileCoverage) {
+    async throws -> ([NotebookPanelRasterLayer], CompositionTileCoverage, [RenderDiagnostic], WorkspaceSpatialBounds) {
     let resources = SceneRenderResources.shared, graph = page.graphicGraph()
     let requested = WorkspaceSpatialBounds(origin: projection.worldOrigin,
       width: projection.viewport.x / projection.camera.scale, height: projection.viewport.y / projection.camera.scale)
     var coverage = try CompositionTileCoverage(bounds: requested,
       pixelsPerWorldPoint: projection.camera.scale * projection.pixelScale, maximumTiles: 8)
     let target = CollaborationTarget(kind: .page, id: page.id)
-    let density = Double(CompositionTile.pixelSize) / coverage.tiles[0].worldSize
+    let requestedDensity = projection.camera.scale * projection.pixelScale
+    let density = max(requestedDensity, Double(SceneCompositionTileKey.requiredPixelSize(for: coverage.tiles[0],
+      density: requestedDensity)) / coverage.tiles[0].worldSize)
     let physical = CGRect(x: 0, y: 0, width: page.size.width, height: page.size.height)
     var borrowed: RasterLease?, preparation: SceneWebRasterPreparation?
     var sourceRasters: [SceneSourceAddress: RasterLease] = [:], receipts: [SceneSourceAddress: SceneSourceReceipt] = [:]
@@ -145,6 +148,19 @@ extension CurrentViewPreviewWriter {
     }
     let elements = PageCompositionRenderer.elements(in: page,
       region: .init(x: 0, y: 0, width: page.size.width, height: page.size.height), elementID: nil)
+    let elementFrames = Dictionary(uniqueKeysWithValues: elements.compactMap { element -> (String, CGRect)? in
+      let frame = graph.resolve(element.id).layout?.frame
+        ?? graph.placement(element.id).map { NotebookElementPresentation(element, placement: $0).frame }
+      return frame.map { (element.id, CGRect(x: $0.x, y: $0.y, width: $0.width, height: $0.height)) }
+    })
+    func visibleIDs(in frame: CGRect) -> Set<String> {
+      Set(elementFrames.compactMap { $0.value.intersects(frame) ? $0.key : nil })
+    }
+    let inkSource = page.inkSource
+    let inkRead = Task.detached(priority: .utility) { try inkSource.drawing() }
+    let drawing = try await withTaskCancellationHandler { try await inkRead.value } onCancel: { inkRead.cancel() }
+    try Task.checkCancellation()
+    let hasInk = !drawing.isEmpty || elements.contains { $0.graphic?.sourceInkContactID != nil }
     func painterRuns() -> (bands: [(ids: Set<String>, rank: Int)], subjects: [String: Int]) {
       var bands: [(Set<String>, Int)] = [], pending = Set<String>(), ranks: [String: Int] = [:], rank = 0
       for element in elements {
@@ -157,13 +173,75 @@ extension CurrentViewPreviewWriter {
       return (bands, ranks)
     }
     var runs = painterRuns()
-    while coverage.tiles.count * (runs.bands.count + 2) > SceneCompositionPlan.maximumTiles {
+    while coverage.tiles.count * (runs.bands.count + 1 + (hasInk ? 1 : 0)) > SceneCompositionPlan.maximumTiles {
       let coarser = try CompositionTileCoverage(bounds: requested,
         pixelsPerWorldPoint: Double(CompositionTile.pixelSize) / (coverage.tiles[0].worldSize * 2), maximumTiles: 8)
       if coarser.level > coverage.level { coverage = coarser }
       else if let optional = elements.last(where: { subjects[$0.id] != nil }) {
         subjects.removeValue(forKey: optional.id); runs = painterRuns()
       } else { throw SceneRenderError.resourceLimit }
+    }
+    let requestedOffset = WorldPoint.zero.delta(to: requested.origin)
+    let viewport = CGRect(x: requestedOffset.x, y: requestedOffset.y, width: requested.width, height: requested.height)
+    func regions(clipped: Bool, density: Double) -> [(tile: CompositionTile, frame: CGRect)] {
+      var result: [(CompositionTile, CGRect)] = []
+      let side = 1024 / density
+      for tile in coverage.tiles {
+        let offset = WorldPoint.zero.delta(to: tile.origin)
+        var frame = physical.intersection(.init(x: offset.x, y: offset.y, width: tile.worldSize, height: tile.worldSize))
+        if clipped { frame = frame.intersection(viewport) }
+        guard !frame.isNull, !frame.isEmpty else { continue }
+        // The ordered renderer needs eight temporary backings. Admit a bounded
+        // regional working set within the existing passive allocation window.
+        for row in 0..<Int(ceil(frame.height / side)) {
+          for column in 0..<Int(ceil(frame.width / side)) {
+            let x = frame.minX + Double(column) * side, y = frame.minY + Double(row) * side
+            result.append((tile, CGRect(x: x, y: y, width: min(side, frame.maxX - x), height: min(side, frame.maxY - y))))
+          }
+        }
+      }
+      return result
+    }
+    func pixelCount(_ frame: CGRect, scale: Double) -> Int {
+      let width = ceil(frame.width * scale), height = ceil(frame.height * scale)
+      guard width <= 8192, height <= 8192 else { return NotebookPanelRenderProjection.maximumDecodedPixels + 1 }
+      return Int(width) * Int(height)
+    }
+    let paperDensity = Double(CompositionTile.pixelSize) / coverage.tiles[0].worldSize
+    var tileDensity = max(requestedDensity, Double(SceneCompositionTileKey.requiredPixelSize(for: coverage.tiles[0],
+      density: requestedDensity)) / coverage.tiles[0].worldSize)
+    var clipped = false, tiles = regions(clipped: false, density: tileDensity), diagnostics: [RenderDiagnostic] = []
+    func cost() -> (pixels: Int, layers: Int) {
+      if tiles.count + subjects.count > 96 {
+        return (NotebookPanelRenderProjection.maximumDecodedPixels + 1, tiles.count + subjects.count)
+      }
+      var pixels = subjects.values.reduce(0) { $0 + pixelCount(CGRect(x: 0, y: 0, width: $1.width, height: $1.height), scale: density) }
+      var count = subjects.count
+      for (_, frame) in tiles {
+        pixels += pixelCount(frame, scale: paperDensity); count += 1
+        if hasInk { pixels += pixelCount(frame, scale: tileDensity); count += 1 }
+        let visible = visibleIDs(in: frame)
+        for band in runs.bands where !band.ids.isDisjoint(with: visible) {
+          pixels += pixelCount(frame, scale: tileDensity); count += 1
+        }
+      }
+      return (pixels, count)
+    }
+    func fits() -> Bool { let value = cost(); return value.pixels <= NotebookPanelRenderProjection.maximumDecodedPixels && value.layers <= 96 }
+    if !fits() {
+      clipped = true; tileDensity = requestedDensity; tiles = regions(clipped: true, density: tileDensity)
+    }
+    while !fits(), let optional = elements.last(where: { subjects[$0.id] != nil }) {
+      subjects.removeValue(forKey: optional.id); runs = painterRuns()
+    }
+    while !fits() {
+      try Task.checkCancellation()
+      guard tileDensity > paperDensity / 1024 else { throw SceneRenderError.resourceLimit }
+      tileDensity *= 0.9
+      tiles = regions(clipped: true, density: tileDensity)
+    }
+    if tileDensity + 0.000001 < requestedDensity {
+      diagnostics.append(.init(kind: "quality_limit", message: "Разрешение видимой страницы ограничено общим объёмом пикселей. Приблизьте меньший участок."))
     }
     let bands = runs.bands
     for element in elements {
@@ -182,37 +260,40 @@ extension CurrentViewPreviewWriter {
       try output.append(await .completed(id: "subject-" + element.id, order: rank, worldOrigin: .zero,
         frame: frame, raster: body, knownAssets: knownAssets, elementID: element.id, subjectFrame: frame))
     }
-    let tileDensity = Double(CompositionTile.pixelSize) / coverage.tiles[0].worldSize
-    for tile in coverage.tiles {
-      let delta = WorldPoint.zero.delta(to: tile.origin)
-      let visible = physical.intersection(.init(x: delta.x, y: delta.y, width: tile.worldSize, height: tile.worldSize))
-      guard !visible.isEmpty, !visible.isNull else { continue }
+    for (regionIndex, entry) in tiles.enumerated() {
+      let (tile, visible) = entry
       let region = PageRect(x: visible.minX, y: visible.minY, width: visible.width, height: visible.height)
+      let owners = visibleIDs(in: visible)
       for index in -1...bands.count {
+        if index == bands.count && !hasInk { continue }
+        if index >= 0 && index < bands.count && bands[index].ids.isDisjoint(with: owners) { continue }
         let role = index == -1 ? "page-paper" : index == bands.count ? "page-ink" : "page-elements:" + bands[index].ids.sorted().joined(separator: ",")
         let order = index == -1 ? -1 : index == bands.count ? 1000 : bands[index].rank
+        let rasterDensity = index == -1 ? paperDensity : tileDensity
         let key = try SceneMaterialKey(workspaceID: projection.workspaceID, target: target, revision: sourceRevision,
-          role: role, frame: region, density: tileDensity)
+          role: role, frame: region, density: rasterDensity)
         let body: RasterLease
         if let cached = resources.retainMaterial(key) { body = cached }
         else if index == -1 {
-          let canvas = try await SceneRasterCompositor.create(size: visible.size, scale: tileDensity, resources: resources,
+          let canvas = try await SceneRasterCompositor.create(size: visible.size, scale: rasterDensity, resources: resources,
             permitsPreparation: { model.permitsBackgroundPreparation })
           try await canvas.drawPaper(size: physical.size, in: physical.offsetBy(dx: -visible.minX, dy: -visible.minY))
           body = try await canvas.finishRaster(for: .material(key))
           resources.cacheComposition(body, receipts: [:], sources: [:])
         } else {
           body = try await PageCompositionRenderer.renderMaterial(page,
-            ids: index == bands.count ? nil : bands[index].ids, region: region, scale: tileDensity,
+            ids: index == bands.count ? nil : bands[index].ids, region: region, scale: rasterDensity,
             key: key, resources: resources, permitsPreparation: { model.permitsBackgroundPreparation }, raster: raster)
           resources.cacheComposition(body, receipts: receipts, sources: sourceRasters)
         }
         defer { body.release() }
-        try output.append(await .completed(id: role + ":\(tile.column):\(tile.row):\(tile.localColumn):\(tile.localRow)",
+        try output.append(await .completed(id: role + ":\(tile.column):\(tile.row):\(tile.localColumn):\(tile.localRow):\(regionIndex)",
           order: order, worldOrigin: .zero, frame: region, raster: body, knownAssets: knownAssets))
       }
     }
-    return (output.layers, coverage)
+    let admitted = clipped ? requested : WorkspaceSpatialBounds(origin: coverage.tiles.first!.origin,
+      maximum: coverage.tiles.last!.bounds.maximum)
+    return (output.layers, coverage, diagnostics, admitted)
   }
 
 }

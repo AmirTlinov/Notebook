@@ -1,5 +1,6 @@
 import { NotebookSession } from "./session.js";
 import { Surface, editable } from "./surface.js";
+import { panelProjection } from "./projection.js";
 import { offsetWorld, TILE_SIZE } from "../src/spatial.js";
 import { capturedSource, type Camera, type Frame, type PanelElement, type PanelMutation, type PanelOperation, type PanelCard, type PanelSelection, type Point, type PanelTarget, type PanelView } from "./model.js";
 
@@ -78,21 +79,11 @@ async function save(request:PanelMutation){
 session.bounds=()=>session.snapshot?.worldOrigin?{anchor:session.snapshot.worldOrigin,
   region:{x:camera.x,y:camera.y,width:Math.max(1,workspace.clientWidth/camera.scale),height:Math.max(1,workspace.clientHeight/camera.scale)}}:undefined;
 session.knownAssets=()=>surface.assetIDs;
-session.needsPresentation=()=>{const view=session.view(false);return !surface.covers(session.bounds(),(view.camera?.scale??camera.scale)*view.pixelScale);};
+session.needsPresentation=()=>!surface.covers(session.bounds(),session.view(false));
 session.view=(navigation,restoredCamera)=>{
-  const width=Math.max(1,workspace.clientWidth),height=Math.max(1,workspace.clientHeight);
-  // Reserve nearby native material for camera motion within the same pixel budget.
-  // Near minimum zoom, shrink the margin instead of crossing native scale limits.
-  const margin=navigation||!session.hasAppearance?0:Math.max(0,Math.min(256,Math.min(width,height)/4,
-    (2048*camera.scale/.0125-Math.max(width,height))/2));
-  const renderWidth=width+2*margin,renderHeight=height+2*margin;
-  const ratio=Math.min(1,2048/renderWidth,2048/renderHeight);
-  const viewport={x:Math.max(1,Math.round(renderWidth*ratio)),y:Math.max(1,Math.round(renderHeight*ratio))};
-  const pixelScale=Math.max(.5,Math.floor(Math.min(2,window.devicePixelRatio||1,Math.sqrt(4_194_304/(viewport.x*viewport.y)))*1000)/1000);
-  const origin=session.snapshot?.worldOrigin;
-  return {viewport,pixelScale,...((restoredCamera||!navigation&&session.hasAppearance&&origin)?{camera:{
-    center:restoredCamera?.center??worldCamera.center,
-    scale:Math.max(.0125,Math.min(4,(restoredCamera?.scale??camera.scale)*viewport.x/renderWidth))}}:{})};
+  const supplied=restoredCamera??(!navigation&&session.hasAppearance&&session.snapshot?.worldOrigin?worldCamera:undefined);
+  return panelProjection(workspace.clientWidth,workspace.clientHeight,window.devicePixelRatio,
+    supplied,!navigation&&session.hasAppearance);
 };
 session.onPrepareSnapshot=(snapshot,view)=>surface.prepare(snapshot,view);
 session.onClose=()=>surface.dispose();
@@ -271,9 +262,14 @@ async function openCard(id:string){
   if(await session.openSurface(target))path.push(previous);buttons();
 }
 paper.addEventListener("dblclick",event=>{
-  const card=(event.target as Element).closest("[data-card-id]")?.getAttribute("data-card-id");
-  if(card){event.preventDefault();void openCard(card);return;}
-  const element=active();if(element&&!session.busy&&!session.hasPending){event.preventDefault();openEditor(element);}
+  // Pointer capture delivers click events to the canvas. Resolve the actual
+  // hit under the pointer, including cards while the hand tool is active.
+  const target=paper.ownerDocument.elementFromPoint(event.clientX,event.clientY);
+  const card=target?.closest("[data-card-id]")?.getAttribute("data-card-id");
+  if(card){event.preventDefault();choose({kind:"item",id:card});void openCard(card);return;}
+  const elementID=target?.closest("[data-element-id]")?.getAttribute("data-element-id");
+  const element=session.snapshot?.elements.find(value=>value.source.id===elementID);
+  if(element&&!session.busy&&!session.hasPending){event.preventDefault();choose({kind:"element",id:element.source.id});openEditor(element);}
 });
 paper.addEventListener("wheel",event=>{
   if(draft||gesture||!session.hasAppearance)return;event.preventDefault();
@@ -324,4 +320,10 @@ new ResizeObserver(()=>{
   setCamera(camera);
   if(draft)positionEditor(draft.element,draft.isNew);
 }).observe(workspace);
+function observeDisplayScale(){
+  window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`).addEventListener("change",()=>{
+    setCamera(camera);observeDisplayScale();
+  },{once:true});
+}
+observeDisplayScale();
 void session.connect().catch(error=>session.onError(error instanceof Error?error.message:String(error),null));

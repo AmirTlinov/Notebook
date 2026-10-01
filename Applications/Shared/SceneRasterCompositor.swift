@@ -226,9 +226,12 @@ final class SceneRasterCompositor {
       frame.width > 0, frame.height > 0 else { throw SceneRenderError.resourceLimit }
     let visible = frame.intersection(CGRect(origin: .zero, size: self.size))
     guard !visible.isNull, !visible.isEmpty else { return }
-    let pixelsWide = Int(ceil(size.width * 2)), pixelsHigh = Int(ceil(size.height * 2))
-    let sx = Double(pixelsWide) / size.width, sy = Double(pixelsHigh) / size.height
     let projectedX = frame.width / size.width, projectedY = frame.height / size.height
+    let inkScale = max(2, max(projectedX, projectedY) * scale)
+    guard inkScale.isFinite, size.width * inkScale < Double(Int.max / 2),
+      size.height * inkScale < Double(Int.max / 2) else { throw SceneRenderError.resourceLimit }
+    let pixelsWide = Int(ceil(size.width * inkScale)), pixelsHigh = Int(ceil(size.height * inkScale))
+    let sx = Double(pixelsWide) / size.width, sy = Double(pixelsHigh) / size.height
     let local = CGRect(x: (visible.minX - frame.minX) / projectedX,
       y: (visible.minY - frame.minY) / projectedY,
       width: visible.width / projectedX, height: visible.height / projectedY)
@@ -239,19 +242,18 @@ final class SceneRasterCompositor {
     let firstY = max(0, Int(floor(local.minY * sy)) - haloY)
     let lastX = min(pixelsWide, Int(ceil(local.maxX * sx)) + haloX)
     let lastY = min(pixelsHigh, Int(ceil(local.maxY * sy)) + haloY)
-    // Keep the physical image extent as well as its pixel grid. Cropping this
-    // mask before projection changes Core Graphics' downsampling kernel phase.
-    // The CPU mask is accounted before allocation; expensive MSAA work visits
-    // only the visible regions and a reconstruction-filter halo.
-    // At the native pixel grid, each disjoint tile goes directly into the
-    // output. A second full-size mask would spend the entire 256 MiB budget
-    // for a 2048-point region before its first 512-pixel tile can render.
-    // Resampled projections still need one assembled mask to preserve seams.
-    let nativeGrid = projectedX * scale == 2 && projectedY * scale == 2
-      && Double(pixelsWide) == size.width * 2 && Double(pixelsHigh) == size.height * 2
+    // Preserve the physical 2x downsampling phase. Magnified material instead
+    // renders vectors on its display grid and assembles only the visible crop;
+    // a full magnified cover mask would exhaust the shared native allocation.
+    let maskRegion = inkScale > 2
+      ? CGRect(x: Double(firstX) / sx, y: Double(firstY) / sy,
+        width: Double(lastX - firstX) / sx, height: Double(lastY - firstY) / sy)
+      : CGRect(origin: .zero, size: size)
+    let nativeGrid = projectedX * scale == inkScale && projectedY * scale == inkScale
+      && Double(pixelsWide) == size.width * inkScale && Double(pixelsHigh) == size.height * inkScale
       && (frame.minX * scale).rounded() == frame.minX * scale
       && (frame.minY * scale).rounded() == frame.minY * scale
-    let mask = nativeGrid ? nil : try await Self.create(size: size, scale: 2,
+    let mask = nativeGrid ? nil : try await Self.create(size: maskRegion.size, scale: inkScale,
       resources: resources, priority: priority, permitsPreparation: permitsPreparation)
     // Body-present composition prepares one immutable source for all tiles;
     // the raw-only specialization keeps its existing forward renderer.
@@ -289,15 +291,14 @@ final class SceneRasterCompositor {
         let width = min(side, lastX - x), height = min(side, lastY - y)
         let region = CGRect(x: Double(x) / sx, y: Double(y) / sy,
           width: Double(width) / sx, height: Double(height) / sy)
-        // MSAA, resolve texture and CPU readback coexist for only this 512-pixel
-        // region. The physical 2x sampling grid remains the original owner's.
+        // MSAA, resolve texture and CPU readback coexist for one 512-pixel region.
         guard let allocation = resources.reserveRaster(pixelWidth: width, pixelHeight: height, backingCount: 8, priority: priority)
         else { throw SceneRenderError.resourceLimit }
         do {
           let image:CGImage?
           if let ordered {
             image=try await InkRasterRenderer.shared.orderedImage(mesh:ordered.mesh,plan:plan,
-              camera:camera,viewport:.init(x:size.width,y:size.height),region:region,scale:2,
+              camera:camera,viewport:.init(x:size.width,y:size.height),region:region,scale:inkScale,
               resources:resources,preparedGeometry:ordered.geometry,priority:priority)
           } else {
             let shiftedCamera=camera.map {
@@ -311,7 +312,7 @@ final class SceneRasterCompositor {
                 ?? SpatialInkComposer.localLayers(for:surface,journal:rawJournal,origin:.init(x:region.minX,y:region.minY))
               guard !layers.isEmpty else {return nil as CGImage?}
               try await InkRasterRenderer.shared.prepareInk()
-              guard let image=InkRasterRenderer.shared.render(layers:layers,size:region.size,scale:2) else {
+              guard let image=InkRasterRenderer.shared.render(layers:layers,size:region.size,scale:inkScale) else {
                 throw SceneRenderError.snapshotPending("ink_pixels")
               }
               try Task.checkCancellation();return image
@@ -320,7 +321,7 @@ final class SceneRasterCompositor {
           }
           try checkPreparation()
           if let image {
-            if let mask {try await mask.buffer.draw(image,in:region)}
+            if let mask {try await mask.buffer.draw(image,in:region.offsetBy(dx: -maskRegion.minX, dy: -maskRegion.minY))}
             else {
               try await buffer.draw(image,in:.init(x:frame.minX+region.minX*projectedX,
                 y:frame.minY+region.minY*projectedY,width:region.width*projectedX,height:region.height*projectedY))
@@ -330,10 +331,10 @@ final class SceneRasterCompositor {
         } catch { allocation.release(); throw error }
       }
     }
-    // Assemble the transparent mask on its integer source grid first. Scaling
-    // separate tiles over paper would blend their shared edge twice or leave a
-    // faint seam. The physical mask is projected exactly once.
-    if let mask { try await mask.finishInto(self, in: frame) }
+    // Assemble before projection so independently sampled edges never blend twice.
+    if let mask { try await mask.finishInto(self, in: .init(
+      x: frame.minX + maskRegion.minX * projectedX, y: frame.minY + maskRegion.minY * projectedY,
+      width: maskRegion.width * projectedX, height: maskRegion.height * projectedY)) }
   }
 
   private func finishInto(_ destination: SceneRasterCompositor, in frame: CGRect) async throws {

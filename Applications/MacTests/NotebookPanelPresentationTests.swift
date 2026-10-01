@@ -209,6 +209,117 @@ final class NotebookPanelPresentationTests: XCTestCase {
   }
 
   @MainActor
+  func testNotebookCardFirstPageOpensNativePixelsAndNavigationWithoutMovingPresence() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("panel-notebook-entry-\(UUID())")
+    let fixture = MacCommandFixture(root: root)
+    retainNotebookUntilTeardown(fixture.model, removing: root)
+    try await fixture.start()
+    let header = try await fixture.read(.init(kind: .workspaceHeader)).decode(NotebookWorkspaceHeader.self)
+    let item = try XCTUnwrap(fixture.store.readItemHeaders(limit: 1).first)
+    let pageID = try XCTUnwrap(item.firstPageID)
+    let board = CollaborationTarget(kind: .board, id: header.rootBoardID)
+    let page = CollaborationTarget(kind: .page, id: pageID)
+    try await fixture.move(item.id, boardID: board.id, to: .zero)
+    try await fixture.apply([
+      .init(kind: .appendInkStroke, target: page, id: UUID().uuidString,
+        values: ["width": .number(12), "points": .array([
+          .object(["x": .number(100), "y": .number(140)]),
+          .object(["x": .number(300), "y": .number(140)])])]),
+      .init(kind: .appendInkStroke, target: page, id: UUID().uuidString,
+        values: ["width": .number(1.5), "points": .array([
+          .object(["x": .number(100.125), "y": .number(500.375)]),
+          .object(["x": .number(300.125), "y": .number(700.375)])])])])
+    let nativePresence = fixture.model.presence
+    let observedPresence = try await fixture.read(.init(kind: .presence))
+    let viewport = SpatialPoint(x: 600, y: 800)
+    var command = NotebookCommand(command: .panelPresentation)
+    command.panelPresentation = .init(workspaceID: header.workspaceID, target: board,
+      appearance: .init(viewport: viewport, pixelScale: 1, camera: .init(center: .zero, scale: 0.5)))
+    let overview = try await fixture.send(command)
+    let card = try XCTUnwrap(overview["cards"]?.arrayValues.first {
+      $0["item"]?["id"]?.stringValue?.lowercased() == item.id.uuidString.lowercased()
+    })
+    let openedPageID = try XCTUnwrap(card["item"]?["firstPageID"]?.stringValue.flatMap(UUID.init(uuidString:)))
+    command.panelPresentation = .init(workspaceID: header.workspaceID, target: .init(kind: .page, id: openedPageID),
+      appearance: .init(viewport: viewport, pixelScale: 1))
+    let opened = try await fixture.send(command)
+    XCTAssertEqual(opened["target"], try .encode(page))
+    XCTAssertEqual(opened["appearance"]?["status"], .string("ready"))
+    let camera = try XCTUnwrap(opened["appearance"]?["camera"]).decode(SpatialCamera.self)
+    XCTAssertEqual(camera.center, WorldPoint(x: 417, y: 597))
+    XCTAssertEqual(camera.scale, min(600.0 / 834, 800.0 / 1194), accuracy: 0.000001,
+      "Opening the first page uses its native entry projection instead of the board camera")
+    XCTAssertEqual(opened["navigation"]?["itemID"], try .encode(item.id))
+    XCTAssertEqual(opened["navigation"]?["parentBoard"], try .encode(board))
+    XCTAssertEqual(opened["navigation"]?["position"]?["index"], .number(0))
+    let layers = try XCTUnwrap(opened["appearance"]?["layers"]?.arrayValues)
+    let paper = try layers.filter { $0["order"] == .number(-1) }.map { try alpha($0, at: .init(x: 40, y: 40)) }
+    let ink = try layers.filter { $0["order"] == .number(1000) }.map { try alpha($0, at: .init(x: 160, y: 140)) }
+    XCTAssertGreaterThan(paper.max() ?? 0, 0.9, "The first page includes actual native paper pixels")
+    XCTAssertGreaterThan(ink.max() ?? 0, 0.5, "The addressed first page includes its ordered native handwriting")
+    for scale in [1.0, 2.0] {
+      command.panelPresentation = .init(workspaceID: header.workspaceID, target: page,
+        appearance: .init(viewport: .init(x: 2048, y: 1400), pixelScale: 2,
+          camera: .init(center: .init(x: 417, y: 597), scale: scale)))
+      let detailed = try await fixture.send(command)
+      let detailedLayers = try XCTUnwrap(detailed["appearance"]?["layers"]?.arrayValues)
+      let handwriting = detailedLayers.filter { $0["order"] == .number(1000) }
+      XCTAssertFalse(handwriting.isEmpty)
+      var decodedPixels = 0
+      for layer in detailedLayers {
+        let image = try bitmap(layer), frame = try XCTUnwrap(layer["frame"]).decode(PageRect.self)
+        decodedPixels += image.pixelsWide * image.pixelsHigh
+        if layer["order"] == .number(1000) {
+          let actualDensity = min(Double(image.pixelsWide) / frame.width, Double(image.pixelsHigh) / frame.height)
+          XCTAssertGreaterThanOrEqual(actualDensity, scale * 2 * 0.995,
+            "World coverage coarsening must preserve the decoded native handwriting resolution")
+        }
+      }
+      XCTAssertLessThanOrEqual(decodedPixels, NotebookPanelRenderProjection.maximumDecodedPixels)
+      if scale == 2 {
+        let source = try await fixture.read(.init(kind: .page, id: pageID)).decode(PageDocument.self)
+        let drawing = try source.inkDrawing()
+        let materials = try handwriting.map { (frame: try XCTUnwrap($0["frame"]).decode(PageRect.self), image: try bitmap($0)) }
+        let material = try XCTUnwrap(materials.first { entry in
+          entry.image.pixelsWide == 1024 && entry.image.pixelsHigh == 1024
+            && 200.125 >= entry.frame.x && 600.375 >= entry.frame.y
+            && 200.125 < entry.frame.x + entry.frame.width && 600.375 < entry.frame.y + entry.frame.height
+        }, "The diagonal crosses an admitted full native ink region")
+        let actual = material.image, frame = material.frame
+        let density = Double(actual.pixelsWide) / frame.width
+        let sharp = try await Task.detached(priority: .utility) {
+          guard let image = InkRasterRenderer.shared.render(mesh: SpatialInkMesh.page(drawing),
+            size: .init(width: frame.width, height: frame.height), scale: density,
+            affine: .init(.init(1, 1, -Float(frame.x), -Float(frame.y))))
+          else { throw SceneRenderError.resourceLimit }
+          return image
+        }.value
+        let reference = NSBitmapImageRep(cgImage: sharp)
+        XCTAssertEqual(reference.pixelsWide, actual.pixelsWide)
+        XCTAssertEqual(reference.pixelsHigh, actual.pixelsHigh)
+        let startX = max(0, min(actual.pixelsWide - 64, Int((200.125 - frame.x) * density) - 32))
+        let startY = max(0, min(actual.pixelsHigh - 64, Int((600.375 - frame.y) * density) - 32))
+        var edgeError: CGFloat = 0, edgeSamples = 0
+        for y in startY..<(startY + 64) {
+          for x in startX..<(startX + 64) {
+            let expected = try XCTUnwrap(reference.colorAt(x: x, y: y)).alphaComponent
+            guard expected > 0.05 && expected < 0.95 else { continue }
+            edgeError += abs(try XCTUnwrap(actual.colorAt(x: x, y: y)).alphaComponent - expected)
+            edgeSamples += 1
+          }
+        }
+        XCTAssertGreaterThan(edgeSamples, 20)
+        XCTAssertLessThan(edgeError / CGFloat(max(1, edgeSamples)), 0.035,
+          "Thin diagonal edges retain native4× detail instead of interpolating a fixed2× page image")
+      }
+    }
+    XCTAssertEqual(fixture.model.presence, nativePresence)
+    let afterPresence = try await fixture.read(.init(kind: .presence))
+    XCTAssertEqual(afterPresence, observedPresence,
+      "Plugin navigation leaves the native selected surface and camera untouched")
+  }
+
+  @MainActor
   func testStoppingTheOwnerCompletesQueuedPanelReadBeforeCapacityReturns() async throws {
     let resources = SceneRenderResources.shared
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("panel-stop-\(UUID())")

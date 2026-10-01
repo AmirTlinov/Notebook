@@ -62,6 +62,11 @@ struct SceneCompositionTileKey: Hashable, Codable, Sendable {
     self.focusedItemID = followsPresentation ? focusedItemID : nil
     self.mode = followsPresentation ? mode : ""; self.pixelSize = pixelSize
   }
+  /// The native painter refines pixels independently of its world cell size.
+  static func requiredPixelSize(for tile: CompositionTile, density: Double) -> Int {
+    let required = min(2048, max(Double(CompositionTile.pixelSize), tile.worldSize * density))
+    return Int(pow(2, ceil(log2(required))))
+  }
   func atRevision(_ revision: UInt64) -> Self {
     .init(workspaceID: workspaceID, revision: revision, plane: plane, tile: tile, range: range,
       presentationScale: presentationScale, viewportWidth: viewportWidth, viewportHeight: viewportHeight,
@@ -262,8 +267,7 @@ struct SceneCompositionPlan: Sendable {
       var candidates: [SceneCompositionTileKey] = []
       for band in populated {
         for tile in prepared.tiles {
-          let required = min(2048, max(Double(CompositionTile.pixelSize), tile.worldSize * pixels))
-          let quantized = Int(pow(2, ceil(log2(required))))
+          let quantized = SceneCompositionTileKey.requiredPixelSize(for: tile, density: pixels)
           // Do not alternate 512/1024 at a density boundary of a retained LOD.
           let retained = previous?.tiles.first { $0.plane == plane && $0.tile.level == tile.level }?.pixelSize ?? 0
           let pixelSize = max(quantized, retained)

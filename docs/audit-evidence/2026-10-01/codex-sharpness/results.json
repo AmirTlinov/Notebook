@@ -1,0 +1,230 @@
+{
+  "date": "2026-10-01",
+  "issue": "GUI-388",
+  "status": "Installed238/plugin0.1.5; registered HTML navigation and sharpness verified through SDK. Mounted Codex still has old frontend.",
+  "reportedDefects": [
+    "Notebook card cannot be opened by double-click",
+    "Covers and handwriting remain blurry during and after zoom"
+  ],
+  "repair": [
+    "Hit-test the actual pointer location after canvas pointer capture, including Hand mode.",
+    "Preserve display density through transport scaling and give visible pixels priority over overscan.",
+    "Reuse the native cover painter through bounded local cells and render material ink directly at admitted density.",
+    "Compare actual layer density for camera reuse and re-request after display pixel ratio changes."
+  ],
+  "initialChecks": {
+    "sourceSHA256": "cb3f4f061ed3112d709f38f294b08b53308403be4f49d3030cecc02c2e36caa3",
+    "typecheck": "passed",
+    "mcpPassed": 170,
+    "physicalIPadPassed": 2,
+    "macPassed": 3,
+    "macFailed": 2,
+    "failedChecksCause": "New pixel assertions compared different sample grids; page assertion also required a single fragment. Product sources did not change after this run.",
+    "mcpOutput": {
+      "path": "/tmp/notebook-panel-238-verify/mcp-test.stdout.log",
+      "sha256": "c5f4c434b0a312e3cac104e86688ee22edcea06e8c57c43094b60f87f0ce4274"
+    },
+    "ipadSummary": {
+      "path": "/tmp/notebook-panel-238-verify/ipad-summary.json",
+      "sha256": "657b87d6ec0cd17a7957509a492f2f1d658dfd94b86f9bad02893df18eaab159"
+    },
+    "macSummary": {
+      "path": "/tmp/notebook-panel-238-verify/mac-summary.json",
+      "sha256": "4322d9849479a6961453d135d108afd72a5513ce747a3687755fd5d4404b4073"
+    }
+  },
+  "finalNativeChecks": {
+    "sourceSHA256": "77052d05920b26b6de52b39c6929bd562c324d1e2ab929488a8b7194bdf503c8",
+    "receipt": {
+      "path": "/tmp/notebook-panel-238-final-verify/verification.json",
+      "sha256": "f98e727e02a4f9d02af2de24fef52d254bbcb7e479ccd6b0de6dace5d1c324d6"
+    },
+    "macPassed": 2,
+    "failed": 0,
+    "skipped": 0,
+    "runtimeWarnings": [],
+    "sourceDelta": [
+      "Applications/MacTests/NotebookPanelDensityTests.swift",
+      "Applications/MacTests/NotebookPanelPresentationTests.swift"
+    ],
+    "productInputsUnchanged": true,
+    "scope": [
+      "Exact native pixel-grid edge comparison for magnified board and page ink",
+      "Native firstPageID opening, navigation and unchanged presence",
+      "Decoded pixel/layer budget, cover cell reuse and safe camera coverage"
+    ]
+  },
+  "coreChecks": {
+    "receipt": {
+      "path": "/tmp/notebook-panel-238-core/final-receipt.json",
+      "sha256": "6cdf2b83d67598c368a97b46ff1ffc3c396a57d501adc1890d6930a1cc4ef9e8"
+    },
+    "definitions": 1,
+    "cases": 2,
+    "passed": 2
+  },
+  "isolatedBrowserNavigation": {
+    "receipt": {
+      "path": "/tmp/notebook-panel-navigation-browser/receipt.json",
+      "sha256": "b4a1f52381b63c16d659d7898e9b5dca441deed6996ac8992de54323494c8e78"
+    },
+    "scope": "Real Chrome mouse down/up double clicks through MCP Apps SDK with RAM fixtures; no native writes. Exact per-case bundle hashes remain in the receipt."
+  },
+  "limitations": [
+    "Mounted Codex is still executing the previous frontend; registered updated HTML was checked separately through the SDK.",
+    "A same-size CDP DPR1-to-DPR2 change did not request new density without a gesture; physical monitor transfer remains unaccepted. Ordinary zoom at DPR2 requested and displayed sharp native pixels.",
+    "Full board/performance acceptance is not established by this repair slice."
+  ],
+  "delivery": {
+    "version": "0.3.168",
+    "build": "238",
+    "pluginVersion": "0.1.5",
+    "finishedAt": "2026-10-01T15:53:14.357673+00:00",
+    "sourceSHA256": "77052d05920b26b6de52b39c6929bd562c324d1e2ab929488a8b7194bdf503c8",
+    "buildReceipt": {
+      "path": "/tmp/notebook-panel-238-pair/build.json",
+      "sha256": "e5ee0fe47533e57650117cf51d466f7ad7364edf9e03567622523f8f432083f9"
+    },
+    "installationReceipt": {
+      "path": "/tmp/notebook-panel-238-delivery/installation.json",
+      "sha256": "5daefa6f5d4c8a53eb41724f7b878bc3c0e5374f35a0ad23cafeb819b935f720"
+    },
+    "installationChecks": {
+      "actualSigned238SocketPeerCodeBeforeAndAfter": true,
+      "workspaceRetained": true,
+      "trustedPhysicalDeviceRetained": true,
+      "presencePageCameraSelectedItemRetained": true,
+      "typedSelectionChoiceRetained": true,
+      "runtimeConnected": true,
+      "singleInstalledMacOwner": true
+    },
+    "pluginInstallReceipt": {
+      "path": "/tmp/notebook-live-panel-238/plugin-install.jsonl",
+      "sha256": "dc698f5f1a3c2f3ed1fac6fcb44a5a0d8bf9885990eb61c76fe275a9ff9f0f27"
+    },
+    "actualOwnerCDHash": "cf61d814b5c1a507d98c4356a429d69c8b02f17d"
+  },
+  "installedResource": {
+    "path": "/tmp/notebook-live-panel-238/resource-proof.json",
+    "sha256": "8ab1b34c7322c3f13b2b6a85e4ca4fe257c09f7726e6d65c27faf38364e3cdd9"
+  },
+  "mountedCodex": {
+    "status": "DOM and camera buttons work; active connection serves previous frontend",
+    "scriptComparison": {
+      "path": "/tmp/notebook-live-panel-238/codex-resource-comparison.json",
+      "sha256": "e4ee79b2c723c9bca2ac2155ef03cf4234cffa1f4fd2ab6829668e038d74e5dd"
+    },
+    "screenshot": {
+      "path": "/tmp/notebook-live-panel-238/codex-stale-panel.png",
+      "sha256": "15282eafd08fc1ba1baf4a38406beddecb004280351d30303ac644fc8eb264cb"
+    },
+    "reloadAttempt": {
+      "path": "/tmp/notebook-live-panel-238/codex-reload.json",
+      "sha256": "f95a53f3d07ef3f06d15b3a6a1293b95c705565c977834ebac1fcc0d62af6aaa",
+      "result": "Official proxy initialize timed out; no reload sent, no config or thread changes."
+    }
+  },
+  "installedSDK": {
+    "receipt": {
+      "path": "/tmp/notebook-live-panel-238/acceptance.json",
+      "sha256": "7ae1a617de686bdf97291002902a95c493148faad61b79f51af6addf84b495a7"
+    },
+    "navigationAndVisibleClarity": "PASS",
+    "cases": [
+      {
+        "name": "Actual Hand doubleclick real notebook card",
+        "pass": true
+      },
+      {
+        "name": "Next canonical neighboring page",
+        "pass": true
+      },
+      {
+        "name": "Back restores board and selected real card",
+        "pass": true
+      },
+      {
+        "name": "Enter reopens first page",
+        "pass": true
+      },
+      {
+        "name": "Settled targeted cover zoom102% then readable fullcover52%",
+        "pass": true
+      },
+      {
+        "name": "Settled handwriting184% DPR1",
+        "pass": true
+      },
+      {
+        "name": "Ordinary zoom220% DPR2",
+        "pass": true
+      },
+      {
+        "name": "Same CSS DPR1→2 automatic media observer under CDP emulation",
+        "pass": false
+      }
+    ],
+    "terminalRetina": {
+      "target": {
+        "kind": "page",
+        "id": "C74869CD-CE04-4AC2-A12E-66B00996B8E6"
+      },
+      "viewport": {
+        "x": 1394,
+        "y": 990
+      },
+      "pixelScale": 2,
+      "cameraScale": 2.2022886120664533,
+      "nativeElapsedMs": 575.2289170000004,
+      "minimumVisibleInkDensity": 4.926060606060606,
+      "requiredDensity": 4.404577224132907,
+      "layers": 42,
+      "diagnostics": []
+    },
+    "readOnlyRequests": {
+      "count": 313,
+      "fullManifests": 25,
+      "unchanged": 287,
+      "errors": 0,
+      "names": [
+        "notebook_open",
+        "notebook_panel_presentation"
+      ],
+      "maxInflightIncludingNavigationOldReadOverlap": 2,
+      "terminalIdleConsecutiveUnchanged": 9,
+      "terminalIdleNativeMs": [
+        6.808707999996841,
+        6.1590829999768175,
+        5.655458000022918
+      ]
+    },
+    "mutations": 0,
+    "nativePresenceCameraWrites": 0,
+    "teardown": "SDK closed; CDP metrics override cleared; ephemeral Chrome tab closed; HTTP9814 server and MCP client exited.",
+    "screenshots": [
+      {
+        "path": "/tmp/notebook-live-panel-238/settled-cover-full.jpg",
+        "sha256": "9618657a87faa5074d8dc32dac83976d8e6d9cc64ec3dfbaa368c4f2cd74b7bf"
+      },
+      {
+        "path": "/tmp/notebook-live-panel-238/first-page-fit.jpg",
+        "sha256": "de890789a05bb6835e0d69f29a03fb607706f48366e12b1c7a556b34856fed25"
+      },
+      {
+        "path": "/tmp/notebook-live-panel-238/settled-handwritten-page-dpr1.jpg",
+        "sha256": "048d6c66ca73322c45ea853c481745ea44e27cd6b946d302db5fd2bc9a6b0385"
+      },
+      {
+        "path": "/tmp/notebook-live-panel-238/settled-handwritten-page-dpr2.jpg",
+        "sha256": "341ecc0e623d138852ab92360eaf7c115846de9d114b30f249b4787aeea3aeae"
+      }
+    ]
+  },
+  "postGestureContinuity": {
+    "receipt": {
+      "path": "/tmp/notebook-panel-238-post-browser/receipt.json",
+      "sha256": "ddeebb0b01951aebb0ffe929a1b43af53f219239a71cfaecd6ccc23f5f76cdfd"
+    },
+    "passed": 6
+  }
+}

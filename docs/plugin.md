@@ -18,6 +18,13 @@ identified by their native raster lease; unchanged polling returns no pixels.
 The agent's visible bounds follow the local camera even when no new pixels are
 needed; camera context is coalesced after movement.
 
+The projection preserves display pixel density when transport coordinates shrink;
+overscan yields to visible pixels. One projection admits 16 Mi pixels within the
+existing 32 Mi decoded-material limit. Large covers use visible native regions
+at the requested density. The consumer checks actual image dimensions before
+reusing a cohort at a new zoom; an identical budget-limited reply does not trigger
+an idle redraw loop.
+
 Plain native text, basic geometry and unbound arrows can be moved, resized,
 edited, deleted and undone through human history. Independently editable bodies
 receive separate native layers before the gesture starts. Ink and complex
@@ -66,11 +73,13 @@ After install, connect the plugin in a Codex conversation and call
 `notebook_open`. Verify editing, agent changes, undo, and reopening on that
 surface. Native tests and package validation do not establish host rendering.
 An existing chat can retain its previous MCP process after installation. If it
-reports `Tool notebook_open not found` or `resources/read: Method not found`,
+reports `Tool notebook_open not found`, `resources/read: Method not found`, or
+still displays the old interface after an update,
 restart Codex to reconnect that chat, or use a new chat. Reinstalling the same
 package does not replace a connection already held by a running chat.
 Current delivery and exact check scopes are recorded in
-[board verification](audit-evidence/2026-10-01/codex-board/results.json). Previous
+[opening and sharpness verification](audit-evidence/2026-10-01/codex-sharpness/results.json). Previous
+[board](audit-evidence/2026-10-01/codex-board/results.json),
 [camera](audit-evidence/2026-10-01/codex-camera/results.json) and
 [initial plugin](audit-evidence/2026-10-01/codex-plugin/results.json) receipts retain
 their original scope.

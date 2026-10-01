@@ -189,10 +189,8 @@ final class SceneCompositionRenderer {
   struct PanelMaterials {
     let layers: [NotebookPanelRasterLayer]
     let coverage: CompositionTileCoverage
-    var bounds: WorkspaceSpatialBounds {
-      .init(origin: coverage.tiles.first!.origin, maximum: coverage.tiles.last!.bounds.maximum)
-    }
-    var pixelDensity: Double { Double(CompositionTile.pixelSize) / coverage.tiles[0].worldSize }
+    let bounds: WorkspaceSpatialBounds
+    let diagnostics: [RenderDiagnostic]
   }
 
   /// The panel borrows world-addressed native material. Camera movement changes
@@ -206,18 +204,26 @@ final class SceneCompositionRenderer {
     let initial = try CompositionTileCoverage(bounds: requested,
       pixelsPerWorldPoint: projection.camera.scale * projection.pixelScale)
     let bounds = WorkspaceSpatialBounds(origin: initial.tiles.first!.origin, maximum: initial.tiles.last!.bounds.maximum)
-    let density = Double(CompositionTile.pixelSize) / initial.tiles[0].worldSize
+    let requestedDensity = projection.camera.scale * projection.pixelScale
+    let density = pow(2, ceil(log2(requestedDensity) * 2) / 2)
     let revision = try await source.materialRevision(.init(kind: .board, id: presence.boardID))
     var output = NotebookPanelRasterSet()
     try output.append(await Self.panelGridLayer(camera: presence.camera, pixelScale: projection.pixelScale,
       workspaceID: projection.workspaceID, knownAssets: knownAssets, resources: resources,
       permitsPreparation: permitsPreparation))
-    var separated: [ScenePaintPosition: NotebookPanelRasterLayer] = [:]
-    var available = NotebookPanelRenderProjection.maximumDecodedPixels - (SceneCompositionPlan.maximumTiles + 1) * CompositionTile.pixelSize * CompositionTile.pixelSize
+    var separated: [ScenePaintPosition: [NotebookPanelRasterLayer]] = [:]
+    let firstMargin = requested.origin.delta(to: bounds.origin)
+    let lastMargin = requested.maximum.delta(to: bounds.maximum)
+    var leftMargin = max(0, -firstMargin.x), topMargin = max(0, -firstMargin.y)
+    var rightMargin = max(0, lastMargin.x), bottomMargin = max(0, lastMargin.y)
+    let gridPixels = output.layers.reduce(0) { $0 + $1.pixelWidth * $1.pixelHeight }
+    var available = NotebookPanelRenderProjection.maximumDecodedPixels - gridPixels - CompositionTile.pixelSize * CompositionTile.pixelSize
     // Carriers cannot consume the last ordinary-body grant. One maximal body
     // fits even when the board contains many large covers.
     var cardPixels = available - (editableIDs.isEmpty ? 0 : 2048 * 2048)
     var cardCount = 0, subjectCount = 0
+    let bodyLayerBudget = 96 - SceneCompositionPlan.maximumTiles - output.layers.count
+    let ordinaryLayerReserve = min(editableIDs.count, NotebookPanelRenderProjection.maximumSubjects)
     // The captured scene admits only bounded independent subjects. Everything
     // else stays in the native streaming painter, including large fitted boards.
     let candidates = movableItemIDs.sorted { $0.uuidString < $1.uuidString }.map(WorkspaceSpatialID.item)
@@ -227,7 +233,9 @@ final class SceneCompositionRenderer {
       let position = owner.position
       switch owner.id {
       case .element(let id):
-        guard subjectCount < NotebookPanelRenderProjection.maximumSubjects, editableIDs.contains(id), let read = try await source.readElementForPaint(id, boardID: presence.boardID),
+        guard subjectCount < NotebookPanelRenderProjection.maximumSubjects,
+          separated.values.reduce(0, { $0 + $1.count }) < bodyLayerBudget,
+          editableIDs.contains(id), let read = try await source.readElementForPaint(id, boardID: presence.boardID),
           read.element.graphic?.sourceInkContactID == nil else { continue }
         let presentation = read.placement.map { NotebookElementPresentation(read.element, placement: $0) }
         guard let local = read.layout?.frame ?? presentation?.frame,
@@ -250,41 +258,31 @@ final class SceneCompositionRenderer {
           resources.cacheComposition(raster, receipts: receipts(), sources: sourceRasters)
         }
         defer { raster.release() }
-        separated[position] = try await .completed(id: "subject-" + id, order: 0, worldOrigin: origin,
-          frame: local, raster: raster, knownAssets: knownAssets, elementID: id, subjectFrame: local)
+        separated[position] = [try await .completed(id: "subject-" + id, order: 0, worldOrigin: origin,
+          frame: local, raster: raster, knownAssets: knownAssets, elementID: id, subjectFrame: local)]
         subjectCount += 1
       case .item(let id):
         guard cardCount < NotebookPanelRenderProjection.maximumSubjects,
           let item = try await source.item(id, presence: presence) else { continue }
-        let padding = WorkspaceCoverRaster.shadowPadding
-        let local = PageRect(x: -item.geometry.width / 2 - padding, y: -item.geometry.height / 2 - padding,
-          width: item.geometry.width + 2 * padding, height: item.geometry.height + 2 * padding)
-        let materialDensity = min(density, 2048 / max(local.width, local.height))
-        let pixels = Int(ceil(local.width * materialDensity)) * Int(ceil(local.height * materialDensity))
-        guard pixels <= available, pixels <= cardPixels else { continue }
+        let result = try await panelCoverMaterials(item, presence: presence, projection: projection,
+          requested: requested, density: density, requestedDensity: requestedDensity,
+          pixelBudget: min(available, cardPixels), layerBudget: bodyLayerBudget
+            - separated.values.reduce(0) { $0 + $1.count } - max(0, ordinaryLayerReserve - subjectCount),
+          knownAssets: knownAssets)
+        guard !result.layers.isEmpty else { continue }
+        let pixels = result.layers.reduce(0) { $0 + $1.pixelWidth * $1.pixelHeight }
         available -= pixels; cardPixels -= pixels
-        let target = CollaborationTarget(kind: .cover, id: id, boardID: presence.boardID)
-        let coverRevision = try await source.materialRevision(target)
-        let key = try SceneMaterialKey(workspaceID: projection.workspaceID, target: target,
-          revision: coverRevision, role: "closed-cover", frame: local, density: materialDensity)
-        let raster: RasterLease
-        if let cached = resources.retainMaterial(key) { raster = cached }
-        else {
-          let size = CGSize(width: local.width, height: local.height)
-          let canvas = try await SceneRasterCompositor.create(size: size, scale: materialDensity,
-            resources: resources, permitsPreparation: permitsPreparation)
-          try await paintCover(item, boardID: presence.boardID,
-            frame: .init(x: padding, y: padding, width: item.geometry.width, height: item.geometry.height),
-            visible: .init(origin: .zero, size: size), transitionViewport: .init(x: item.geometry.width, y: item.geometry.height),
-            passes: WorkspaceSceneProjection.portalPasses, canvas: canvas)
-          raster = try await canvas.finishRaster(for: .material(key))
-          resources.cacheComposition(raster, receipts: receipts(), sources: sourceRasters)
+        if let covered = result.localCoverage {
+          let padding = WorkspaceCoverRaster.shadowPadding
+          let padded = CGRect(x: -item.geometry.width / 2 - padding, y: -item.geometry.height / 2 - padding,
+            width: item.geometry.width + padding * 2, height: item.geometry.height + padding * 2)
+          let origin = item.center.delta(to: requested.origin)
+          if covered.minX > padded.minX + 0.000001 { leftMargin = min(leftMargin, max(0, origin.x - covered.minX)) }
+          if covered.minY > padded.minY + 0.000001 { topMargin = min(topMargin, max(0, origin.y - covered.minY)) }
+          if covered.maxX < padded.maxX - 0.000001 { rightMargin = min(rightMargin, max(0, covered.maxX - origin.x - requested.width)) }
+          if covered.maxY < padded.maxY - 0.000001 { bottomMargin = min(bottomMargin, max(0, covered.maxY - origin.y - requested.height)) }
         }
-        defer { raster.release() }
-        separated[position] = try await .completed(id: "item-" + id.uuidString, order: 0, worldOrigin: item.center,
-          frame: local, raster: raster, knownAssets: knownAssets, itemID: id,
-          subjectFrame: .init(x: -item.geometry.width / 2, y: -item.geometry.height / 2,
-            width: item.geometry.width, height: item.geometry.height))
+        separated[position] = result.layers
         cardCount += 1
       }
     }
@@ -302,29 +300,43 @@ final class SceneCompositionRenderer {
       return result
     }
     var bands = paintBands(), coverage = initial, keys: [SceneCompositionTileKey] = []
-    while true {
-      keys = try await source.tilesRequiringPaint(bands.flatMap { band in coverage.tiles.map { tile in
+    func tileKeys(_ coverage: CompositionTileCoverage) async throws -> [SceneCompositionTileKey] {
+      try await source.tilesRequiringPaint(bands.flatMap { band in coverage.tiles.map { tile in
         .init(workspaceID: projection.workspaceID, revision: source.revision,
           plane: .board(presence.boardID), tile: tile, range: band.range,
           presentationScale: presence.camera.scale, viewportWidth: presence.viewport.x,
           viewportHeight: presence.viewport.y, focusedItemID: nil, mode: WorkspaceSemanticMode.board.rawValue,
+          pixelSize: SceneCompositionTileKey.requiredPixelSize(for: tile, density: requestedDensity),
           contentRevision: revision)
       } })
-      if keys.count <= SceneCompositionPlan.maximumTiles { break }
+    }
+    while true {
+      keys = try await tileKeys(coverage)
+      let bodyLayers = separated.values.reduce(0) { $0 + $1.count }
+      let subjectPixels = separated.values.flatMap { $0 }.reduce(0) { $0 + $1.pixelWidth * $1.pixelHeight }
+      let tilePixels = keys.reduce(0) { $0 + $1.pixelSize * $1.pixelSize }
+      if keys.count <= SceneCompositionPlan.maximumTiles,
+        output.layers.count + bodyLayers + keys.count <= 96,
+        gridPixels + subjectPixels + tilePixels <= NotebookPanelRenderProjection.maximumDecodedPixels { break }
       let coarser = try CompositionTileCoverage(bounds: bounds,
         pixelsPerWorldPoint: Double(CompositionTile.pixelSize) / (coverage.tiles[0].worldSize * 2))
-      if coarser.level > coverage.level { coverage = coarser }
-      else if let optional = separated.keys.filter({ $0.layer == .elements }).sorted().last ?? separated.keys.sorted().last {
-        // The authored painter retains a demoted body. Even extreme world
-        // addresses cannot turn the finite coverage budget into a retry loop.
-        separated.removeValue(forKey: optional); bands = paintBands()
-      } else { throw SceneRenderError.resourceLimit }
+      let coarseKeys = coarser.level > coverage.level ? try await tileKeys(coarser) : keys
+      let improves = coarseKeys.count < keys.count
+        || coarseKeys.reduce(0, { $0 + $1.pixelSize * $1.pixelSize }) < tilePixels
+      let keepsDensity = coarseKeys.allSatisfy { Double($0.pixelSize) / $0.tile.worldSize + 0.000001 >= requestedDensity }
+      if coarser.level > coverage.level, improves, keepsDensity { coverage = coarser; continue }
+      if let optional = separated.keys.filter({ $0.layer == .elements }).sorted().last ?? separated.keys.sorted().last {
+        // Rejoin optional bodies before reducing display detail. Every retry
+        // removes a subject or reduces finite tile demand.
+        separated.removeValue(forKey: optional); bands = paintBands(); coverage = initial
+      } else if coarser.level > coverage.level, improves { coverage = coarser }
+      else { throw SceneRenderError.resourceLimit }
     }
     for layer in [ScenePaintPosition.Layer.elements, .covers] {
       let positions = separated.keys.filter { $0.layer == layer }.sorted()
       let base = layer == .elements ? 0 : 2000
       for (index, position) in positions.enumerated() {
-        try output.append(separated[position]!.withOrder(base + index * 2 + 1))
+        for body in separated[position]! { try output.append(body.withOrder(base + index * 2 + 1)) }
       }
     }
     for key in keys {
@@ -343,7 +355,71 @@ final class SceneCompositionRenderer {
         raster: raster, knownAssets: knownAssets))
     }
     try await source.validate()
-    return .init(layers: output.layers, coverage: coverage)
+    let limited = keys.contains { Double($0.pixelSize) / $0.tile.worldSize + 0.000001 < requestedDensity }
+    let diagnostics: [RenderDiagnostic] = limited ? [.init(kind: "quality_limit",
+      message: "Нативное представление достигло предела деталей этой области.")] : []
+    let admitted = WorkspaceSpatialBounds(origin: requested.origin.offsetBy(x: -leftMargin, y: -topMargin),
+      width: requested.width + leftMargin + rightMargin, height: requested.height + topMargin + bottomMargin)
+    return .init(layers: output.layers, coverage: coverage, bounds: admitted, diagnostics: diagnostics)
+  }
+
+  /// A magnified carrier borrows only its admitted native local cells. Body
+  /// dimensions, title, ink and shadow still come from the same cover painter.
+  private func panelCoverMaterials(_ item: RenderedWorkspaceItem, presence: SessionPresence,
+    projection: NotebookPanelRenderProjection, requested: WorkspaceSpatialBounds, density: Double,
+    requestedDensity: Double, pixelBudget: Int, layerBudget: Int, knownAssets: Set<UUID>)
+    async throws -> (layers: [NotebookPanelRasterLayer], localCoverage: CGRect?) {
+    guard pixelBudget > 0, layerBudget > 0 else { return ([], nil) }
+    let padding = WorkspaceCoverRaster.shadowPadding, width = item.geometry.width, height = item.geometry.height
+    let padded = CGRect(x: -width / 2 - padding, y: -height / 2 - padding,
+      width: width + padding * 2, height: height + padding * 2)
+    let delta = item.center.delta(to: requested.origin)
+    let visible = padded.intersection(CGRect(x: delta.x, y: delta.y, width: requested.width, height: requested.height))
+    guard !visible.isNull, !visible.isEmpty else { return ([], nil) }
+    var regions: [CGRect], materialDensity = density
+    if padded.width * density <= 2048, padded.height * density <= 2048 { regions = [padded] }
+    else {
+      let local = WorkspaceSpatialBounds(origin: .init(x: visible.minX, y: visible.minY), width: visible.width, height: visible.height)
+      let cells = try CompositionTileCoverage(bounds: local, pixelsPerWorldPoint: density, maximumTiles: min(64, layerBudget))
+      regions = cells.tiles.map { tile in
+        let point = WorldPoint.zero.delta(to: tile.origin)
+        return padded.intersection(CGRect(x: point.x, y: point.y, width: tile.worldSize, height: tile.worldSize))
+      }.filter { !$0.isEmpty && !$0.isNull }
+    }
+    func cost(_ values: [CGRect], _ scale: Double) -> Int {
+      values.reduce(0) { $0 + Int(ceil($1.width * scale)) * Int(ceil($1.height * scale)) }
+    }
+    if cost(regions, materialDensity) > pixelBudget || regions.contains(where: { max($0.width, $0.height) * materialDensity > 2048 }) {
+      regions = regions.map { $0.intersection(visible) }.filter { !$0.isEmpty && !$0.isNull }
+      if cost(regions, materialDensity) > pixelBudget { materialDensity = requestedDensity }
+    }
+    guard regions.count <= layerBudget, cost(regions, materialDensity) <= pixelBudget,
+      regions.allSatisfy({ max($0.width, $0.height) * materialDensity <= 2048 }) else { return ([], nil) }
+    let target = CollaborationTarget(kind: .cover, id: item.id, boardID: presence.boardID)
+    let revision = try await source.materialRevision(target)
+    var result: [NotebookPanelRasterLayer] = []
+    for region in regions {
+      let frame = PageRect(x: region.minX, y: region.minY, width: region.width, height: region.height)
+      let key = try SceneMaterialKey(workspaceID: projection.workspaceID, target: target, revision: revision,
+        role: "closed-cover-cell", frame: frame, density: materialDensity)
+      let raster: RasterLease
+      if let cached = resources.retainMaterial(key) { raster = cached }
+      else {
+        let canvas = try await SceneRasterCompositor.create(size: region.size, scale: materialDensity,
+          resources: resources, permitsPreparation: permitsPreparation)
+        try await paintCover(item, boardID: presence.boardID,
+          frame: .init(x: -width / 2 - region.minX, y: -height / 2 - region.minY, width: width, height: height),
+          visible: .init(origin: .zero, size: region.size), transitionViewport: .init(x: width, y: height),
+          passes: WorkspaceSceneProjection.portalPasses, canvas: canvas)
+        raster = try await canvas.finishRaster(for: .material(key))
+        resources.cacheComposition(raster, receipts: receipts(), sources: sourceRasters)
+      }
+      defer { raster.release() }
+      result.append(try await .completed(id: "item-" + item.id.uuidString + ":" + key.fingerprint,
+        order: 0, worldOrigin: item.center, frame: frame, raster: raster, knownAssets: knownAssets,
+        itemID: item.id, subjectFrame: .init(x: -width / 2, y: -height / 2, width: width, height: height)))
+    }
+    return (result, regions.reduce(CGRect.null) { $0.union($1) })
   }
 
   /// One periodic native desk cell shares the same immutable image pool.

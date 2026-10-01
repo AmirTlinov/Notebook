@@ -148,6 +148,10 @@ func notebookPanelPresentationRecipe(onBoard: Bool) throws {
   if !onBoard {
     #expect(recipe.camera.center == WorldPoint(x: 417, y: 597))
     #expect(recipe.camera.scale == min(1100.0 / 834, 780.0 / 1194))
+    let collapsed = try store.requestPanelPresentation(.init(workspaceID: workspaceID, target: target,
+      appearance: .init(viewport: .init(x: 1, y: 1), pixelScale: 1)))
+    #expect(collapsed.projection.camera.center == recipe.camera.center)
+    #expect(collapsed.projection.camera.scale == SpatialCamera.minimumScale)
   }
   let other = try store.requestPanelPresentation(.init(workspaceID: workspaceID, target: target,
     appearance: .init(viewport: projection.viewport, pixelScale: 1,
@@ -157,7 +161,7 @@ func notebookPanelPresentationRecipe(onBoard: Bool) throws {
     try store.requestPanelPresentation(.init(workspaceID: UUID(), target: target, appearance: projection))
   }
   #expect(throws: CollaborationError.self) {
-    try NotebookPanelAppearanceProjection(viewport: .init(x: 2048, y: 2048), pixelScale: 2).validated()
+    try NotebookPanelAppearanceProjection(viewport: .init(x: 2048, y: 2048), pixelScale: 3).validated()
   }
   var command = NotebookCommand(command: .panelPresentation); command.panelPresentation = request
   #expect(throws: CollaborationError.self) { try NotebookCommandDispatcher(store: store, nativeActor: actor).handle(command) }

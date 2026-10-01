@@ -56,7 +56,7 @@ enum PageCompositionRenderer {
   ) async throws -> RasterLease {
     let canvas = try await renderCanvas(page, region: region, elementID: nil, scale: scale, resources: resources,
       permitsPreparation: permitsPreparation, inkOnly: ids == nil, authoredIDs: ids, includesPaper: false,
-      includesInk: ids == nil, raster: raster)
+      includesInk: ids == nil, regionalInk: true, raster: raster)
     return try await canvas.finishRaster(for: .material(key))
   }
 
@@ -73,6 +73,7 @@ enum PageCompositionRenderer {
   private static func renderCanvas(_ page: PageDocument, region: PageRect?, elementID: String?, scale: Double,
     resources: SceneRenderResources, permitsPreparation: @escaping @MainActor () -> Bool,
     inkOnly: Bool, authoredIDs: Set<String>? = nil, includesPaper: Bool = true, includesInk: Bool = true,
+    regionalInk: Bool = false,
     raster: @escaping @MainActor (AgentElement) async throws -> RasterLease
   ) async throws -> SceneRasterCompositor {
     let region = region ?? .init(x: 0, y: 0, width: page.size.width, height: page.size.height)
@@ -163,25 +164,31 @@ enum PageCompositionRenderer {
     }
     if includesInk, elementID == nil || !plan.isEmpty {
       try await drawInk(elementID == nil ? drawing : .init(), plan:plan,
-        size:size,frame:frame,resources:resources,canvas:canvas)
+        size:size,frame:frame,resources:resources,canvas:canvas,
+        materialRegion: regionalInk ? CGRect(x: region.x, y: region.y, width: region.width, height: region.height) : nil,
+        materialScale: scale)
     }
     return canvas
   }
 
   private static func drawInk(_ drawing:PageInkDrawing,plan:NotebookOrderedInkPlan,size:CGSize,frame:CGRect,
-    resources:SceneRenderResources,canvas:SceneRasterCompositor) async throws {
+    resources:SceneRenderResources,canvas:SceneRasterCompositor,
+    materialRegion: CGRect? = nil, materialScale: Double = 2) async throws {
     guard !drawing.isEmpty || !plan.isEmpty else {return}
     let byteLimit=resources.byteLimit
     let prepare=Task.detached(priority:.utility) {
       try Task.checkCancellation()
-      return try inkGeometryBytes(drawing,excluding:plan.suppressedInkIDs,size:size,limit:byteLimit)
+      return try inkGeometryBytes(drawing,excluding:plan.suppressedInkIDs,size:size,limit:byteLimit,
+        region: materialRegion, scale: materialRegion == nil ? 2 : materialScale)
     }
     let geometryBytes=try await withTaskCancellationHandler {try await prepare.value} onCancel:{prepare.cancel()}
     try Task.checkCancellation()
-    // Keep the same physical 2x mask and sampling phase as live page ink. The
-    // output clips to the granted region; raw endpoints never leave this owner.
-    guard let pixels = resources.reserveRaster(pixelWidth: Int(ceil(size.width * 2)),
-      pixelHeight: Int(ceil(size.height * 2)), backingCount: 8) else { throw SceneRenderError.resourceLimit }
+    // Ordinary exports retain their physical 2x source. Panel materials query
+    // the same raw/ordered owner directly at their admitted regional density.
+    let inkRegion = materialRegion ?? CGRect(origin: .zero, size: size)
+    let inkScale = materialRegion == nil ? 2 : materialScale
+    guard let pixels = resources.reserveRaster(pixelWidth: Int(ceil(inkRegion.width * inkScale)),
+      pixelHeight: Int(ceil(inkRegion.height * inkScale)), backingCount: 8) else { throw SceneRenderError.resourceLimit }
     defer { pixels.release() }
     var baselineBytes = 0
     if let png = drawing.baselinePNG {
@@ -199,7 +206,7 @@ enum PageCompositionRenderer {
     }
     defer { geometry.release() }
     let image:CGImage
-    if plan.isEmpty {
+    if plan.isEmpty && materialRegion == nil {
       // No extracted body: preserve the existing forward page specialization.
       let worker=Task.detached(priority:.utility) {
         try Task.checkCancellation()
@@ -211,6 +218,7 @@ enum PageCompositionRenderer {
       }
       image=try await withTaskCancellationHandler {try await worker.value} onCancel:{worker.cancel()}
     } else {
+      try await InkRasterRenderer.shared.prepareOrdered()
       let worker=Task.detached(priority:.utility) {
         try Task.checkCancellation()
         return SpatialInkMesh.page(drawing,suppressedInkIDs:plan.suppressedInkIDs)
@@ -219,17 +227,18 @@ enum PageCompositionRenderer {
       guard let device=InkRasterRenderer.shared.device else {throw SceneRenderError.resourceLimit}
       let prepared=try await InkOrderedGeometry(plan,reusing:nil,device:device,resources:resources,owner:nil)
       image=try await InkRasterRenderer.shared.orderedImage(mesh:mesh,plan:plan,camera:nil,
-        viewport:.init(x:size.width,y:size.height),region:.init(origin:.zero,size:size),scale:2,
+        viewport:.init(x:size.width,y:size.height),region:inkRegion,scale:inkScale,
         resources:resources,preparedGeometry:prepared,baselinePNG:drawing.baselinePNG)
     }
-    try await canvas.drawImage(image, in: frame)
+    try await canvas.drawImage(image, in: materialRegion.map { CGRect(origin: .zero, size: $0.size) } ?? frame)
   }
 
   /// Admission follows the same virtual ranges as InkRasterRenderer. A compact
   /// million-event body must not be charged for a million unbuilt GPU nodes.
   /// The query runs on the worker; ambiguous coalescing still pays for the full
   /// normalizer, and overlapping visible repeats still pay for every draw.
-  nonisolated private static func inkGeometryBytes(_ drawing: PageInkDrawing,excluding suppressed:Set<UUID>,size: CGSize,limit: Int) throws -> Int {
+  nonisolated private static func inkGeometryBytes(_ drawing: PageInkDrawing,excluding suppressed:Set<UUID>,size: CGSize,limit: Int,
+    region: CGRect? = nil, scale: Double = 2) throws -> Int {
     var total=0
     func add(_ count: Int,_ stride: Int = 1) throws {
       let bytes=count.multipliedReportingOverflow(by:stride)
@@ -237,8 +246,7 @@ enum PageCompositionRenderer {
       guard !bytes.overflow,!sum.overflow,sum.partialValue <= limit else { throw SceneRenderError.resourceLimit }
       total=sum.partialValue
     }
-    // page() uses physical 2x pixels and the same half-point AA margin.
-    let viewport=CGRect(origin:.zero,size:size).insetBy(dx:-0.5,dy:-0.5)
+    let viewport=(region ?? CGRect(origin:.zero,size:size)).insetBy(dx:-1 / scale,dy:-1 / scale)
     for action in drawing.actions where action.isActive && !suppressed.contains(action.id) {
       try Task.checkCancellation()
       try add(action.samples.payloadBytes);try add(2304)
