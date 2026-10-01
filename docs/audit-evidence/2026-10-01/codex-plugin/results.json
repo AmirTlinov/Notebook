@@ -421,5 +421,52 @@
     "status": "passed",
     "nativeSourceDelta": false
   },
+  "release235": {
+    "status": "installed-pair-and-readonly-plugin-smoke-passed",
+    "version": "0.3.165",
+    "build": "235",
+    "commit": "13a495b6",
+    "sourceSHA256": "aac20f2c107ce469623b823089c0c8e3215ad2e50cccaee133451afe319d1df6",
+    "buildReceipt": "/private/tmp/notebook-cold-235-pair/build.json",
+    "buildReceiptSHA256": "711759de99c17dde29dd0345266d09a3674b487e2f2e0b3d910948a42d3e5943",
+    "installationReceipt": "/private/tmp/notebook-cold-235-install/installation.json",
+    "installationReceiptSHA256": "d3a536e89ea31441a511d4773ab7bcb406e8bcefa7d5c9c601634f61728adf79",
+    "inPlaceUpdate": true,
+    "containerPathUnchangedClaimed": false,
+    "verificationReceipt": "/private/tmp/notebook-cold-235-recovery-verify/verification.json",
+    "verificationReceiptSHA256": "859e82abd765f4af2544d16a21178f1f55e95b18dfb3d0c3a358615c2927a1e8",
+    "verificationScope": "final2physical-iPad+3Mac PASS; prior13physical-iPad and MCP168 PASS retain their own source receipt; product unchanged, two fixture corrections",
+    "liveBrowser": {
+      "status": "passed",
+      "scope": "one real canonical page through installed0.1.2 MCP Apps SDK in Chrome; read only",
+      "receipt": "/tmp/notebook-live-panel-235/acceptance.json",
+      "receiptSHA256": "3348a0ba2041338c902bb668417060fbf6c5c57866e96fa8388a457c17769ba2",
+      "resourceSHA256": "dcd136fc933cf68b99f27c84c0ec79d39e41c2df462041795839d9ca4c14894f",
+      "resourceUnchangedFrom234": true,
+      "toolCount": 9,
+      "nativeLayers": 12,
+      "handwritingAndPaperReadable": true,
+      "consoleAndToolErrors": 0,
+      "mutations": 0,
+      "nativeRestarts": 0,
+      "sdkTabAndServerClosed": true
+    },
+    "ownerAudit": {
+      "receipt": "/tmp/notebook-post-install-235-audit/receipt.json",
+      "receiptSHA256": "a8855fd615c6aade62b47840b1ccb377eea0a7ebf1863ea832849c6537da41a0",
+      "checksPassed": 18,
+      "peerPID": 92197,
+      "memoryCDHash": "8eeaa70c36aae2898ade17260506e8c11af0767f",
+      "bothSecurePeersMatchSigned235": true,
+      "accessoryActivationPolicy": true,
+      "onScreenNotebookWindows": 0,
+      "workspaceTrustAndPresenceRetained": true,
+      "originalItems": 7,
+      "fixtureAbsent": true,
+      "physicalSession": "82676236-E7A1-4C49-B3CF-907A3D945B31"
+    },
+    "fullAcceptance": false,
+    "refreshedCodexUserCheck": "pending"
+  },
   "implementationCommit": "a599d9ce"
 }

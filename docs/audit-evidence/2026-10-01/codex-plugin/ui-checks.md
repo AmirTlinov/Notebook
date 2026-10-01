@@ -36,3 +36,11 @@ create/move/width/edit → agent sameID → preserving human undo → reopen pas
 Native width240→289.6701 retained height90 despite vertical drag; PNG letters
 stayed unscaled. The fixture was deleted and receivedByIPad confirmed; independent
 cleanup14 checks retained all baseline choices and7 original items. Errors:0.
+
+Common signed0.3.165/235 is installed on Mac and physical iPad. Its read-only
+smoke opened one real handwritten page through cached0.1.2 and the actual SDK:
+12 native layers, unchanged HTML hash,9 tools, errors0. No material, camera or
+presence writes; SDK/tab/server closed. Independent owner audit18 PASS: both
+secure sockets match signed235 in memory, accessory mode/no visible windows,
+workspace/trust/choices and7 original items retained, fixture absent. In-place
+container paths may change. Refreshed Codex user acceptance remains open.
