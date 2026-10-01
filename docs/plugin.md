@@ -10,6 +10,11 @@ page or board; the panel then owns its camera independently of the iPad. Native
 pixel layers keep painter order and refresh together after their source fence
 and image decoding complete.
 
+The board background repeats one cell painted by the native grid owner. Camera
+motion requests bounded nearby material through one coalesced render at a time;
+the panel keeps one world camera across changes of raster origin. A late response
+cannot replace better current coverage, and idle polling does not force another raster.
+
 Plain native text, basic geometry and unbound arrows can be moved, resized,
 edited, deleted and undone through human history. Independently editable bodies
 receive separate native layers before the gesture starts. Ink and complex
@@ -54,7 +59,8 @@ After install, connect the plugin in a Codex conversation and call
 `notebook_open`. Verify editing, agent changes, undo, and reopening on that
 surface. Native tests and package validation do not establish host rendering.
 Current delivery and exact check scopes are recorded in
-[plugin verification](audit-evidence/2026-10-01/codex-plugin/results.json).
+[camera verification](audit-evidence/2026-10-01/codex-camera/results.json) and the
+[initial plugin verification](audit-evidence/2026-10-01/codex-plugin/results.json).
 
 This package runs locally on macOS. Public directory submission and remote
 hosting are separate distribution work. Plugin manifests follow the

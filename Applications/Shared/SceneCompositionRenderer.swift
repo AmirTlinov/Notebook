@@ -224,17 +224,16 @@ final class SceneCompositionRenderer {
     } while cursor != nil
     bodies.sort { $0.position < $1.position }; positions.sort()
     var output = NotebookPanelRasterSet()
-    func viewportLayer(_ id: String, order: Int, range: ScenePaintRange?) async throws -> NotebookPanelRasterLayer {
+    func viewportLayer(_ id: String, order: Int, range: ScenePaintRange) async throws -> NotebookPanelRasterLayer {
       let canvas = try await SceneRasterCompositor.create(size: size, scale: projection.pixelScale,
         resources: resources, permitsPreparation: permitsPreparation)
-      if let range {
-        _ = try await paintBoard(presence: presence, frame: frame, visible: frame,
-          transitionViewport: presence.viewport, passes: WorkspaceSceneProjection.portalPasses, range: range, canvas: canvas)
-      } else { try await canvas.drawBoardGrid(camera: presence.camera, size: size, in: frame) }
+      _ = try await paintBoard(presence: presence, frame: frame, visible: frame,
+        transitionViewport: presence.viewport, passes: WorkspaceSceneProjection.portalPasses, range: range, canvas: canvas)
       return try .init(id: id, order: order, worldOrigin: projection.worldOrigin,
         frame: .init(x: 0, y: 0, width: bounds.width, height: bounds.height), png: await canvas.finishPNG())
     }
-    try output.append(await viewportLayer("board-grid", order: -1, range: nil))
+    try output.append(await Self.panelGridLayer(camera: presence.camera, pixelScale: projection.pixelScale,
+      resources: resources, permitsPreparation: permitsPreparation))
     let passive = all.filter { !positions.contains($0) }
     for index in 0...positions.count {
       let lower = index == 0 ? nil : positions[index - 1]
@@ -265,6 +264,29 @@ final class SceneCompositionRenderer {
     if hasCovers { try output.append(await viewportLayer("covers", order: 2000, range: .whole(.covers))) }
     try await source.validate()
     return output.layers
+  }
+
+  /// The desk has one native periodic cell. Unlike finite authored artwork,
+  /// its accepted pixels can cover an arbitrary camera without another painter.
+  static func panelGridLayer(camera: SpatialCamera, pixelScale: Double,
+    resources: SceneRenderResources = .shared, permitsPreparation: @escaping @MainActor () -> Bool = { true }
+  ) async throws -> NotebookPanelRasterLayer {
+    let step = SpatialBoardGrid.worldStep(cameraScale: camera.scale)
+    let anchor = WorldPoint(tileX: camera.center.tileX, tileY: camera.center.tileY, localX: 0, localY: 0)
+    // Keep the admitted canvas on whole pixels. Its extra right/bottom padding
+    // is cropped by the exact repeat period, rather than squeezed into it.
+    let side = ceil(step * camera.scale * pixelScale) / pixelScale
+    let worldSide = side / camera.scale
+    let padding = (worldSide - step) / 2
+    let size = CGSize(width: side, height: side)
+    let canvas = try await SceneRasterCompositor.create(size: size, scale: pixelScale,
+      resources: resources, permitsPreparation: permitsPreparation)
+    try await canvas.drawBoardGrid(camera: .init(center: anchor.offsetBy(x: padding, y: padding), scale: camera.scale), size: size,
+      in: .init(origin: .zero, size: size))
+    return try .init(id: "board-grid", order: -1,
+      worldOrigin: anchor.offsetBy(x: -step / 2, y: -step / 2),
+      frame: .init(x: 0, y: 0, width: worldSide, height: worldSide), png: await canvas.finishPNG(),
+      repeatSize: .init(width: step, height: step))
   }
 
   /// A physical cover contains only its paper, contents and ink. Neighbouring

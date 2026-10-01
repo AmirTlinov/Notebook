@@ -38,7 +38,8 @@ export function editable(element:PanelElement):boolean {
 
 type Asset={url:string;image:HTMLImageElement};
 type Cohort={snapshot:PanelSnapshot;fragment:DocumentFragment;assets:Map<string,Asset>;
-  groups:Map<string,SVGGElement>;frames:Map<string,Frame>;origins:Map<string,Point>};
+  groups:Map<string,SVGGElement>;frames:Map<string,Frame>;origins:Map<string,Point>;
+  backdrop:{rect:SVGRectElement;origin:Point}|null};
 
 /** Native accepted pixels are disposable presentation. SVG owns only hit regions and handles. */
 export class Surface {
@@ -50,10 +51,26 @@ export class Surface {
   get ready(){return this.accepted!==null;}
   constructor(private readonly svg:SVGSVGElement,private readonly material:SVGGElement,private readonly selection:SVGGElement){}
 
+  private useful(snapshot:PanelSnapshot):boolean{
+    const previous=this.accepted?.snapshot;
+    if(!previous||previous.target.kind!==snapshot.target.kind||previous.target.id!==snapshot.target.id)return true;
+    const width=this.svg.clientWidth/this.camera.scale,height=this.svg.clientHeight/this.camera.scale;
+    const coverage=(value:PanelSnapshot)=>{
+      const appearance=value.appearance!;
+      const center=delta(appearance.camera.center,previous.worldOrigin??zero);
+      const w=appearance.viewport.x/appearance.camera.scale,h=appearance.viewport.y/appearance.camera.scale;
+      return Math.max(0,Math.min(this.camera.x+width,center.x+w/2)-Math.max(this.camera.x,center.x-w/2))
+        *Math.max(0,Math.min(this.camera.y+height,center.y+h/2)-Math.max(this.camera.y,center.y-h/2));
+    };
+    // A late pan/zoom response can still add useful world-placed pixels. After
+    // a quick reversal, retain the cohort that covers more of the current view.
+    return coverage(snapshot)+width*height*1e-6>=coverage(previous);
+  }
   async prepare(snapshot:PanelSnapshot):Promise<boolean>{
     const generation=++this.generation;
     const appearance=snapshot.appearance;
     if(appearance?.status!=='ready')throw new Error('Notebook ещё готовит изображение поверхности.');
+    if(!this.useful(snapshot))return false;
     if(appearance.layers.length>96)throw new Error('Notebook превысил предел слоёв поверхности.');
     let encoded=0,pixels=0;
     for(const layer of appearance.layers){
@@ -61,6 +78,10 @@ export class Surface {
       if(!validFrame(layer.frame)||!validPoint(layer.worldOrigin)||!Number.isSafeInteger(layer.pixelWidth)||!Number.isSafeInteger(layer.pixelHeight)
         ||layer.pixelWidth<1||layer.pixelHeight<1||!Number.isFinite(layer.order)
         ||!/^[a-f0-9]{64}$/.test(layer.sha256)||!layer.pngBase64.startsWith('iVBORw0KGgo'))throw new Error('Notebook вернул неполное изображение слоя.');
+      const period=layer.repeatSize;
+      if(period&&(snapshot.target.kind!=='board'||layer.id!=='board-grid'||layer.elementID
+        ||!Number.isFinite(period.width)||!Number.isFinite(period.height)||period.width<=0||period.height<=0
+        ||period.width>layer.frame.width||period.height>layer.frame.height))throw new Error('Notebook вернул неверный фон поверхности.');
     }
     if(encoded>maximumEncodedBytes||pixels>maximumDecodedPixels)throw new Error('Видимая поверхность превышает предел изображений. Приблизьте нужный участок.');
     const assets=new Map<string,Asset>();
@@ -75,8 +96,9 @@ export class Surface {
         await image.decode();
         if(image.naturalWidth!==layer.pixelWidth||image.naturalHeight!==layer.pixelHeight)throw new Error('Размер изображения Notebook изменился.');
       }));
-      if(generation!==this.generation){this.release(assets);return false;}
+      if(generation!==this.generation||!this.useful(snapshot)){this.release(assets);return false;}
       const fragment=document.createDocumentFragment(),groups=new Map<string,SVGGElement>(),frames=new Map<string,Frame>(),origins=new Map<string,Point>();
+      let backdrop:Cohort['backdrop']=null;
       const origin=snapshot.worldOrigin??zero;
       const placed=(layer:AppearanceLayer):Frame=>{const offset=delta(layer.worldOrigin,origin);return {...layer.frame,x:layer.frame.x+offset.x,y:layer.frame.y+offset.y};};
       const separated=new Set(appearance.layers.flatMap(layer=>layer.elementID?[layer.elementID]:[]));
@@ -94,8 +116,15 @@ export class Surface {
       for(const layer of [...appearance.layers].sort((a,b)=>a.order-b.order)){
         const frame=placed(layer);
         const group=node('g',{'data-layer-id':layer.id,transform:`translate(${frame.x} ${frame.y})`});
-        group.append(node('image',{href:assets.get(layer.sha256)!.url,width:frame.width,height:frame.height,
-          preserveAspectRatio:'none','pointer-events':'none'}));
+        const image=node('image',{href:assets.get(layer.sha256)!.url,width:frame.width,height:frame.height,
+          preserveAspectRatio:'none','pointer-events':'none'});
+        if(layer.repeatSize){
+          const id=`notebook-grid-${crypto.randomUUID()}`;
+          const pattern=node('pattern',{id,...layer.repeatSize,patternUnits:'userSpaceOnUse',overflow:'hidden'});
+          pattern.append(image);group.append(pattern);
+          const rect=node('rect',{fill:`url(#${id})`,'pointer-events':'none'});group.append(rect);
+          backdrop={rect,origin:{x:frame.x,y:frame.y}};
+        }else group.append(image);
         if(layer.elementID){
           const element=snapshot.elements.find(value=>value.source.id===layer.elementID);
           if(element){
@@ -120,7 +149,7 @@ export class Surface {
         const hit=node('rect',{...frame,fill:'transparent','pointer-events':'all','data-card-id':card.item.id,role:'button',tabindex:0,
           'aria-label':`Открыть ${card.item.title}`});fragment.append(hit);
       }
-      this.discardPrepared();this.prepared={snapshot,fragment,assets,groups,frames,origins};return true;
+      this.discardPrepared();this.prepared={snapshot,fragment,assets,groups,frames,origins,backdrop};return true;
     }catch(error){this.release(assets);throw error;}
   }
 
@@ -145,8 +174,11 @@ export class Surface {
     return {...element.source.frame,x:element.source.frame.x+offset.x,y:element.source.frame.y+offset.y};
   }
   setCamera(camera:Camera){
-    this.camera={...camera};this.svg.setAttribute('viewBox',`${camera.x} ${camera.y} ${Math.max(1,this.svg.clientWidth/camera.scale)} ${Math.max(1,this.svg.clientHeight/camera.scale)}`);
+    const width=Math.max(1,this.svg.clientWidth/camera.scale),height=Math.max(1,this.svg.clientHeight/camera.scale);
+    this.camera={...camera};this.svg.setAttribute('viewBox',`${camera.x} ${camera.y} ${width} ${height}`);
     this.svg.setAttribute('preserveAspectRatio','none');
+    const backdrop=this.accepted?.backdrop;
+    if(backdrop)for(const [key,value]of Object.entries({x:camera.x-backdrop.origin.x,y:camera.y-backdrop.origin.y,width,height}))backdrop.rect.setAttribute(key,String(value));
   }
   select(id:string|null){
     this.selected=id;this.selection.removeAttribute('transform');this.selection.replaceChildren();
@@ -184,14 +216,13 @@ export class Surface {
   point(clientX:number,clientY:number):Point{
     const bounds=this.svg.getBoundingClientRect();return {x:this.camera.x+(clientX-bounds.left)/this.camera.scale,y:this.camera.y+(clientY-bounds.top)/this.camera.scale};
   }
-  fit():Camera{
+  fit(minScale:number,maxScale:number):Camera{
     const frames=[...this.accepted?.frames.values()??[]];
     if(this.accepted?.snapshot.target.kind==='page')frames.push({x:0,y:0,...this.accepted.snapshot.size});
     if(!frames.length)return {...this.camera};
     const left=Math.min(...frames.map(frame=>frame.x)),top=Math.min(...frames.map(frame=>frame.y));
     const right=Math.max(...frames.map(frame=>frame.x+frame.width)),bottom=Math.max(...frames.map(frame=>frame.y+frame.height));
-    const ratio=this.svg.clientWidth/(this.accepted?.snapshot.appearance?.viewport.x??this.svg.clientWidth);
-    const scale=Math.min(4*ratio,Math.max(.0125*ratio,Math.min((this.svg.clientWidth-80)/Math.max(1,right-left),(this.svg.clientHeight-120)/Math.max(1,bottom-top))));
+    const scale=Math.min(maxScale,Math.max(minScale,Math.min((this.svg.clientWidth-80)/Math.max(1,right-left),(this.svg.clientHeight-120)/Math.max(1,bottom-top))));
     return {x:(left+right)/2-this.svg.clientWidth/(2*scale),y:(top+bottom)/2-this.svg.clientHeight/(2*scale),scale};
   }
 }

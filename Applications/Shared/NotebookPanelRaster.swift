@@ -13,11 +13,12 @@ struct NotebookPanelRasterLayer {
   let frame: PageRect
   let png: Data
   let elementID: String?
+  let repeatSize: CGSize?
   let pixelWidth: Int
   let pixelHeight: Int
 
   init(id: String, order: Int, worldOrigin: WorldPoint, frame: PageRect, png: Data,
-    elementID: String? = nil) throws {
+    elementID: String? = nil, repeatSize: CGSize? = nil) throws {
     guard let image = CGImageSourceCreateWithData(png as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
       let values = CGImageSourceCopyPropertiesAtIndex(image, 0, nil) as? [CFString: Any],
       let width = values[kCGImagePropertyPixelWidth] as? Int,
@@ -25,7 +26,7 @@ struct NotebookPanelRasterLayer {
       throw SceneRenderError.snapshotPending("panel_pixels")
     }
     self.id = id; self.order = order; self.worldOrigin = worldOrigin; self.frame = frame
-    self.png = png; self.elementID = elementID; pixelWidth = width; pixelHeight = height
+    self.png = png; self.elementID = elementID; self.repeatSize = repeatSize; pixelWidth = width; pixelHeight = height
   }
 
   var encoded: JSONValue {
@@ -36,6 +37,9 @@ struct NotebookPanelRasterLayer {
         "pngBase64": .string(png.base64EncodedString()),
         "sha256": .string(SHA256.hash(data: png).map { String(format: "%02x", $0) }.joined())]
       if let elementID { value["elementID"] = .string(elementID) }
+      if let repeatSize {
+        value["repeatSize"] = .object(["width": .number(Double(repeatSize.width)), "height": .number(Double(repeatSize.height))])
+      }
       return .object(value)
     }
   }

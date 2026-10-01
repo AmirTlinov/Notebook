@@ -1,0 +1,267 @@
+{
+  "date": "2026-10-01",
+  "issue": "GUI-388",
+  "status": "Installed236/plugin0.1.3 camera repair passed native, MCP and real-board SDK checks; refreshed Codex user acceptance pending.",
+  "reportedSurface": "User-mounted Codex plugin 0.1.2, gray board ending above a white band during camera motion at 9%.",
+  "reproduced": {
+    "surface": "Chrome MCP Apps SDK with RAM fixture; no live Notebook calls",
+    "whiteBandCSSPixels": {
+      "bottom": 840,
+      "right": 300
+    },
+    "stationaryFullResponsesBeforeRepair": 49
+  },
+  "causes": [
+    "Board background was a finite viewport PNG.",
+    "Trailing camera debounce and suspended pan deferred new material; camera generations discarded useful late pixels.",
+    "Idle polling queued forced reads behind slow renders.",
+    "Reconstructing the world camera through each new raster origin changed floating-point request keys."
+  ],
+  "repair": [
+    "The existing native grid painter supplies an opaque periodic cell with an exact world repeat size.",
+    "One world camera survives origin changes; local SVG coordinates are derived.",
+    "Single-flight, coalesced camera reads request bounded overscan; useful late layers preserve the current camera.",
+    "Idle reads preserve the native unchanged shortcut.",
+    "Resize repositions the text draft without changing its value or focus, and cancels unfinished geometry previews without writing."
+  ],
+  "nativeVerification": {
+    "receipt": {
+      "path": "/tmp/notebook-plugin-236-verified/verification.json",
+      "sha256": "42fbe48ad70f6f4e322c48fce852ef78b57cae97db1eaaa410d11c03dd2699a6"
+    },
+    "sourceSHA256": "f2f6c99cdcb6418c078114c1ed5dd1b11d2be7fbd00736602262bcb9904faf4d",
+    "macPassed": 2,
+    "physicalIPadPassed": 1,
+    "failed": 0,
+    "skipped": 0,
+    "selectors": {
+      "commands": [],
+      "core": [],
+      "ipad": [
+        "NotebookTests/SceneCompositionSQLTests/testSQLRenderKeepsTheSameCoverPixelsAtEveryWorldCorner"
+      ],
+      "mac": [
+        "NotebookMacTests/NotebookPanelPresentationTests/testCanonicalBoardMaterialsSplitSubjectsBeforeFirstDragAndJoinCachedRequests",
+        "NotebookMacTests/NotebookPanelPresentationTests/testRepeatingGridKeepsNativePhaseAndOpaqueBackgroundAcrossCameraTilesAndZoomSteps"
+      ]
+    }
+  },
+  "limitations": [
+    "A browser SDK host does not establish the refreshed Codex 0.1.3 user acceptance.",
+    "No full performance acceptance or hardware contact-to-display measurement in this focused camera repair.",
+    "Abrupt zoom scales the prior native grid cell until the next projection; observed transient dot density is recorded separately from settled visuals."
+  ],
+  "finalPanelInputs": {
+    "MCP/panel/model.ts": "b98468b2b71c8c20741972537a43727c656c63ca3bea76404a2668800fdf8717",
+    "MCP/panel/panel.ts": "a46e0c8410291ffd4da281e1e174881b1cdc45a07f8fff3f0df98be066221589",
+    "MCP/panel/session.ts": "8c1ab2c2014473109ea8365df6af9ac56c51a170df100e9ae11dbe3a71b2ce81",
+    "MCP/panel/surface.ts": "854c0a01fed6d8c606ee4eca18f10bedfb82242a6d0d01562db16c512cc67d98"
+  },
+  "releaseVerification": {
+    "receipt": {
+      "path": "/tmp/notebook-plugin-236-release-verified/verification.json",
+      "sha256": "c056ff43ecd9f5b358e9a36b4e1d9ce7eda782929a95a6607a5d143289a3c6ef"
+    },
+    "sourceSHA256": "31c450e5f37ae47e2db1591ac55c50733401787752aac6b7f6e6aeffc1439210",
+    "typecheck": "passed",
+    "mcpPassed": 168,
+    "failed": 0,
+    "skipped": 0
+  },
+  "nativeToReleaseDelta": {
+    "changedInputs": [
+      "MCP/panel/panel.ts"
+    ],
+    "nativeInputsUnchanged": true,
+    "description": "World camera and resize handling in the browser consumer; native raster implementation/test inputs remain identical."
+  },
+  "browserFixture": {
+    "receipt": {
+      "path": "/tmp/notebook-panel-camera-browser/acceptance.json",
+      "sha256": "b9f698cb02af4a637dcc0b8e343ce1648c27a19323bb66deafe6f67d3a7ca617"
+    },
+    "status": "PASS",
+    "scope": "Camera consumer regression through actual MCP Apps SDK and strict Blob CSP, RAM native-shaped projection only. No live Notebook socket, store or writes; Codex mount and native pixels are separate acceptance.",
+    "stages": "Original reversal/responsiveness checks predate the world camera correction; exact stationary cache check includes world camera and predates only editor resize extraction. Final editor/preview resize cases use panel a46e0c. See per-case source deltas in receipt.",
+    "stationary": {
+      "fullResponses": 3,
+      "unchangedResponses": 23,
+      "maximumInflight": 1
+    },
+    "finalEditorResize": {
+      "textFocusCaretPreserved": true,
+      "previewCancelledWithoutWrite": true,
+      "warningsAndErrors": 0
+    },
+    "teardown": {
+      "sdkClosed": true,
+      "tabClosed": true,
+      "temporaryViewportReset": true,
+      "staticServerStopped": true
+    }
+  },
+  "delivery": {
+    "version": "0.3.166",
+    "build": "236",
+    "pluginVersion": "0.1.3",
+    "finishedAt": "2026-10-01T07:56:08.453606+00:00",
+    "buildReceipt": {
+      "path": "/tmp/notebook-plugin-pair-236/build.json",
+      "sha256": "022010cd5c92f01aacccc040d86483d3ced921c53ca15a69fe22dc71869440bb"
+    },
+    "installationReceipt": {
+      "path": "/tmp/notebook-plugin-delivery-236/installation.json",
+      "sha256": "b1161bae85f1ee56e0dd85ed4271c5c649d70705d91c54b22af0b977862e0753"
+    },
+    "pluginReceipt": {
+      "path": "/tmp/notebook-plugin-installed-236/receipt.json",
+      "sha256": "7c66295df764dd0bf7a05031620c829b89cfe60b72a6f252a12c9e64d54dc211"
+    },
+    "checks": {
+      "actualSigned236SocketPeerCodeBeforeAndAfter": true,
+      "workspaceRetained": true,
+      "trustedPhysicalDeviceRetained": true,
+      "presencePageCameraSelectedItemRetained": true,
+      "typedSelectionChoiceRetained": true,
+      "runtimeConnected": true,
+      "singleInstalledMacOwner": true
+    },
+    "inPlaceUpdate": true,
+    "containerPathChanged": true,
+    "actualOwnerPID": 9256,
+    "actualOwnerCDHash": "192b68469232fd26e327d3642eedcc640264b36e",
+    "newPhysicalSessionID": "D93B487F-C2DE-428E-8D8C-29D6D4CE0D86",
+    "resource": {
+      "uri": "ui://notebook/workspace.html",
+      "mimeType": "text/html;profile=mcp-app",
+      "bytes": 617009,
+      "sha256": "085e3eefebb340e8e29fbcfd832b530a446e2e54def63935e65894293891988f",
+      "equalsFrozenPanelSource": true,
+      "metadata": {
+        "ui": {
+          "csp": {
+            "connectDomains": [],
+            "resourceDomains": [
+              "blob:"
+            ]
+          },
+          "prefersBorder": false
+        },
+        "openai/ui": {
+          "availableDisplayModes": [
+            "fullscreen"
+          ],
+          "preferredDisplayMode": "fullscreen"
+        }
+      }
+    },
+    "toolCount": 9,
+    "ownerAudit": {
+      "path": "/tmp/notebook-post-install-236-audit/receipt.json",
+      "sha256": "ea1204079934a49b4d59d2dffae09d8cde8d65c9d9eea7a2576846de52a74e96",
+      "checks": {
+        "secureSocketPeersActual236Code": true,
+        "singleSocketOwner": true,
+        "sameInstalledAttestedOwner": true,
+        "diskSignedCodeMatchesMemory": true,
+        "backgroundAccessoryPolicy": true,
+        "noOnScreenMacWindows": true,
+        "plugin013Enabled": true,
+        "globalNotebookProviderAbsent": true,
+        "exactNineTools": true,
+        "resourceMatchesFrozen236": true,
+        "installationContinuitySevenPass": true
+      },
+      "onScreenNotebookWindows": 0
+    }
+  },
+  "postCameraNativeContinuity": {
+    "path": "/tmp/notebook-post-smoke-236/receipt.json",
+    "sha256": "7af51095d032fda7aec50568fdb71a37408145bffcf8b69aa8d7d6935b08d7d5",
+    "checks": {
+      "sameLiveSigned236Owner": true,
+      "workspaceRetained": true,
+      "trustedPhysicalDeviceRetained": true,
+      "nativePageCameraSelectedItemRetained": true,
+      "semanticTypedSelectionRetained": true,
+      "physicalRuntimeConnected": true
+    }
+  },
+  "realBoardBrowser": {
+    "receipt": {
+      "path": "/tmp/notebook-live-panel-236/acceptance.json",
+      "sha256": "aeff66c1ec494539ffbc716d7c06db9ac27089e9e4868a378df87295b74cf90f"
+    },
+    "status": "PASS",
+    "scope": "Actual installed Notebook236/plugin0.1.3, real root board through actual MCP Apps SDK AppBridge/PostMessageTransport in Chrome, strict Blob CSP. Readonly panel camera inputs; mounted Codex surface is separate user acceptance.",
+    "sourceSHA256": "31c450e5f37ae47e2db1591ac55c50733401787752aac6b7f6e6aeffc1439210",
+    "resourceSHA256": "085e3eefebb340e8e29fbcfd832b530a446e2e54def63935e65894293891988f",
+    "covers": 7,
+    "cameraCases": {
+      "heldMiddlePointer": {
+        "acceptedNativeOriginWhileHeld": true,
+        "deltaCSS": [
+          300,
+          150
+        ],
+        "expectedWorldCenter": {
+          "x": 4068.9742658637006,
+          "y": 3425.1158022310965
+        },
+        "beforeRelease": {
+          "x": 4068.974265863697,
+          "y": 3425.1158022310938
+        },
+        "afterRelease": {
+          "x": 4068.974265863697,
+          "y": 3425.115802231092
+        },
+        "maxWorldError": 4.547473508864641e-12
+      },
+      "continuousPanZoomReversal": {
+        "whiteBandAbsent": true,
+        "nativeGridCoversViewport": true,
+        "ninePercentStartWorld": {
+          "x": 6977.363911906143,
+          "y": 10334.799280109033
+        },
+        "ninePercentEndWorld": {
+          "x": 6977.3639119061445,
+          "y": 10334.799280109037
+        },
+        "finalDisplayedScale": 0.1083121049997746,
+        "maxInflight": 1
+      },
+      "stationaryShortcut": {
+        "trailingUnchangedReplies": 29,
+        "exactSameCameraRecipe": true,
+        "sameKnownRequestID": true,
+        "medianMs": 14.90887499996461
+      }
+    },
+    "consoleWarningsErrors": 0,
+    "mutationRequests": 0,
+    "nativePresenceCameraCommands": 0,
+    "teardown": {
+      "sdkClosed": true,
+      "tabClosed": true,
+      "httpAndStdioServerStopped": true
+    }
+  },
+  "transientGridDuringAbruptZoom": {
+    "screenshot": "root-board-continuous-pan-zoom.jpg",
+    "state": "Abrupt zoom to minimum used previous accepted native cell while new projection was queued/preparing; this is a transient capture, not settled minimum-zoom visual parity.",
+    "previousRepeatWorld": 415.748031496063,
+    "displayedScaleAtCapture": 0.0156005859375,
+    "transientDotSpacingCSS": 6.485912893700787,
+    "nextNativeRepeatWorld": 3325.984251968504,
+    "nextNativeDotSpacingCSS": 51.887303149606296,
+    "nextNativeReadyMs": 179.43820799997775,
+    "finalSettledDotSpacingCSS": 45.03054444085117
+  },
+  "manualCodexAcceptance": {
+    "status": "pending",
+    "requestedFromUser": true,
+    "version": "0.1.3"
+  }
+}

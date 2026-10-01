@@ -7,6 +7,89 @@ final class NotebookPanelPresentationTests: XCTestCase {
   override func setUp() async throws { try await InkRasterRenderer.shared.prepareInk() }
 
   @MainActor
+  func testRepeatingGridKeepsNativePhaseAndOpaqueBackgroundAcrossCameraTilesAndZoomSteps() async throws {
+    let threshold = BoardAppearance.minimumDotSpacing / PhysicalPaper.gridSpacing
+    let cases: [(SpatialCamera, Double)] = [
+      (.init(center: .init(x: -143.75, y: -318.25), scale: 0.09), 2),
+      (.init(center: .init(tileX: -2, tileY: 3, localX: WorldPoint.tileSize - 0.25, localY: 0.25), scale: 0.09), 1.25),
+      (.init(center: .init(tileX: -1, tileY: 2, localX: 0.25, localY: WorldPoint.tileSize - 0.25), scale: threshold * (1 - 0.000001)), 2),
+      (.init(center: .init(tileX: -1, tileY: 3, localX: 0.25, localY: 0.25), scale: threshold * (1 + 0.000001)), 2)
+    ]
+    let size = CGSize(width: 240, height: 180)
+    var previousStep: Double?
+    for (index, entry) in cases.enumerated() {
+      let (camera, pixelScale) = entry
+      let layer = try await SceneCompositionRenderer.panelGridLayer(camera: camera, pixelScale: pixelScale)
+      let period = try XCTUnwrap(layer.repeatSize)
+      let expectedStep = SpatialBoardGrid.worldStep(cameraScale: camera.scale)
+      XCTAssertEqual(Double(period.width), expectedStep)
+      XCTAssertEqual(Double(period.height), expectedStep)
+      XCTAssertEqual(layer.pixelWidth, Int(ceil(expectedStep * camera.scale * pixelScale)))
+      XCTAssertEqual(layer.pixelHeight, layer.pixelWidth)
+      XCTAssertEqual(layer.frame.width * camera.scale * pixelScale, Double(layer.pixelWidth), accuracy: 0.000001)
+      XCTAssertGreaterThanOrEqual(layer.frame.width, expectedStep)
+      XCTAssertLessThan(layer.frame.width - expectedStep, 1 / (camera.scale * pixelScale))
+      let anchor = layer.worldOrigin.offsetBy(x: expectedStep / 2, y: expectedStep / 2)
+      let nativeAnchor = WorldPoint(tileX: camera.center.tileX, tileY: camera.center.tileY, localX: 0, localY: 0)
+      XCTAssertEqual(nativeAnchor.delta(to: anchor).x, 0, accuracy: 0.000001)
+      XCTAssertEqual(nativeAnchor.delta(to: anchor).y, 0, accuracy: 0.000001)
+      let encoded = try layer.encoded
+      XCTAssertEqual(encoded["repeatSize"]?["width"], .number(expectedStep))
+      XCTAssertNil(encoded["repeating"], "One explicit period owns repeat placement")
+      let cell = try XCTUnwrap(NSBitmapImageRep(data: layer.png))
+      let referenceCanvas = try await SceneRasterCompositor.create(size: size, scale: pixelScale, resources: .shared)
+      try await referenceCanvas.drawBoardGrid(camera: camera, size: size, in: .init(origin: .zero, size: size))
+      let referencePNG = try await referenceCanvas.finishPNG()
+      let reference = try XCTUnwrap(NSBitmapImageRep(data: referencePNG))
+      func color(_ bitmap: NSBitmapImageRep, x: Int, y: Int) throws -> NSColor {
+        try XCTUnwrap(bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB))
+      }
+      func darkest(_ bitmap: NSBitmapImageRep, x: Double, y: Double) throws -> NSColor {
+        var result = try color(bitmap, x: Int(x), y: Int(y))
+        for row in max(0, Int(y) - 2)...min(bitmap.pixelsHigh - 1, Int(y) + 2) {
+          for column in max(0, Int(x) - 2)...min(bitmap.pixelsWide - 1, Int(x) + 2) {
+            let candidate = try color(bitmap, x: column, y: row)
+            if candidate.redComponent < result.redComponent { result = candidate }
+          }
+        }
+        return result
+      }
+      // The consumer clips the padded image to this period. No seam may expose
+      // transparency or replace the accepted native desk with browser paper.
+      let background = try color(cell, x: 0, y: 0)
+      for position in 0..<cell.pixelsWide {
+        for edge in [(position, 0), (position, cell.pixelsHigh - 1), (0, position), (cell.pixelsWide - 1, position)] {
+          let pixel = try color(cell, x: edge.0, y: edge.1)
+          XCTAssertGreaterThan(pixel.alphaComponent, 0.99)
+          XCTAssertEqual(pixel.redComponent, background.redComponent, accuracy: 1.0 / 255)
+          XCTAssertEqual(pixel.greenComponent, background.greenComponent, accuracy: 1.0 / 255)
+          XCTAssertEqual(pixel.blueComponent, background.blueComponent, accuracy: 1.0 / 255)
+        }
+      }
+      let delta = camera.center.delta(to: nativeAnchor)
+      let screenPeriod = expectedStep * camera.scale
+      func visibleDot(_ projected: Double) -> Double {
+        projected + ceil((8 - projected) / screenPeriod) * screenPeriod
+      }
+      let dotX = visibleDot(Double(size.width) / 2 + delta.x * camera.scale)
+      let dotY = visibleDot(Double(size.height) / 2 + delta.y * camera.scale)
+      let nativeBackground = try color(reference,
+        x: Int((dotX + screenPeriod / 2) * pixelScale), y: Int(dotY * pixelScale))
+      XCTAssertEqual(background.redComponent, nativeBackground.redComponent, accuracy: 1.0 / 255)
+      XCTAssertEqual(background.greenComponent, nativeBackground.greenComponent, accuracy: 1.0 / 255)
+      XCTAssertEqual(background.blueComponent, nativeBackground.blueComponent, accuracy: 1.0 / 255)
+      let cellDot = try darkest(cell, x: screenPeriod * pixelScale / 2, y: screenPeriod * pixelScale / 2)
+      let nativeDot = try darkest(reference, x: dotX * pixelScale, y: dotY * pixelScale)
+      XCTAssertLessThan(cellDot.redComponent, background.redComponent - 0.01)
+      XCTAssertLessThan(nativeDot.redComponent, nativeBackground.redComponent - 0.01,
+        "The cell anchor must land on the actual native camera's dots")
+      XCTAssertEqual(cellDot.redComponent, nativeDot.redComponent, accuracy: 0.06)
+      if index == 3, let previousStep { XCTAssertEqual(expectedStep * 2, previousStep) }
+      previousStep = expectedStep
+    }
+  }
+
+  @MainActor
   func testCanonicalBoardMaterialsSplitSubjectsBeforeFirstDragAndJoinCachedRequests() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("panel-materials-\(UUID())")
     let fixture = MacCommandFixture(root: root)

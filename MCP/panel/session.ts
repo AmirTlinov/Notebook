@@ -40,9 +40,10 @@ export class NotebookSession {
   private initialClaimed=false;
   private presented=false;
   private generation=0;
+  private viewRevision=0;
   private navigation=0;
   private refreshQueued=false;
-  private settled:ReturnType<typeof setTimeout>|undefined;
+  private refreshTimer:ReturnType<typeof setTimeout>|undefined;
   get hasAppearance(){return this.presented;}
   private pending:{name:string;arguments:Record<string,unknown>;resolve:()=>void;reject:(error:unknown)=>void}|undefined;
 
@@ -56,7 +57,7 @@ export class NotebookSession {
       } }
       catch(error){this.report(error,null);}
     };
-    this.app.onteardown=async()=>{this.closed=true;this.presented=false;++this.generation;clearInterval(this.timer);clearTimeout(this.settled);
+    this.app.onteardown=async()=>{this.closed=true;this.presented=false;++this.generation;clearInterval(this.timer);clearTimeout(this.refreshTimer);
       this.pending?.reject(new Error("Панель закрыта."));this.pending=undefined;this.onClose();this.onStatus("Панель закрыта");return {};};
     await this.app.connect();
     if(this.closed)return;
@@ -67,8 +68,11 @@ export class NotebookSession {
     const {workspaceID,target,socketKey}=this.snapshot;return {workspaceID,target,socketKey};
   }
   viewportChanged(){
-    this.boundsDirty=true;++this.generation;clearTimeout(this.settled);
-    this.settled=setTimeout(()=>void this.refresh(true),140);
+    this.boundsDirty=true;++this.viewRevision;this.queueRefresh();
+  }
+  private queueRefresh(){
+    if(this.closed||this.refreshTimer!==undefined)return;
+    this.refreshTimer=setTimeout(()=>{this.refreshTimer=undefined;void this.refresh(true);},80);
   }
   async openSurface(target:PanelTarget){
     if(this.busy||this.pending||this.closed)return false;
@@ -76,33 +80,37 @@ export class NotebookSession {
     this.busy=true;this.onStatus("Открытие…");
     try {
       while(!this.closed&&navigation===this.navigation){
-        const generation=this.generation,request={...this.address(),target,appearance:this.view(true)};
+        const generation=this.generation,viewRevision=this.viewRevision,request={...this.address(),target,appearance:this.view(true)};
         const value=body(await this.app.callServerTool({name:"notebook_panel_presentation",arguments:request}) as ToolResult);
         if(!isSnapshot(value)||!sameAddress(request,value))throw new Error("Notebook вернул другую поверхность.");
         if(this.closed||navigation!==this.navigation)return false;
-        if(generation!==this.generation)continue;
+        if(generation!==this.generation||viewRevision!==this.viewRevision)continue;
         if(!(await this.onPrepareSnapshot(value)))return false;
         if(this.closed||navigation!==this.navigation)return false;
         // A resized panel still opens the requested target, using a fresh native
         // entry projection for its latest bounds before any pixels are accepted.
-        if(generation!==this.generation)continue;
-        this.accept(value);this.boundsDirty=false;this.refreshQueued=false;return true;
+        if(generation!==this.generation||viewRevision!==this.viewRevision)continue;
+        this.accept(value);this.boundsDirty=false;this.refreshQueued=false;
+        clearTimeout(this.refreshTimer);this.refreshTimer=undefined;return true;
       }
       return false;
     }catch(error){if(!this.closed)this.report(error,null);return false;}
-    finally{this.busy=false;if(this.refreshQueued&&!this.closed)void this.refresh(true);}
+    finally{this.busy=false;if(this.refreshQueued&&!this.closed)this.queueRefresh();}
   }
   async refresh(force=false) {
     if(this.closed||!this.snapshot)return;
-    if(this.reading||this.suspended||this.busy||this.pending){this.refreshQueued=true;return;}
+    // Idle polling never queues a forced repaint behind a slow native render.
+    if(this.reading||this.suspended||this.busy||this.pending){this.refreshQueued ||= force;return;}
+    clearTimeout(this.refreshTimer);this.refreshTimer=undefined;
     this.reading=true;this.refreshQueued=false;
-    const generation=this.generation;
+    const generation=this.generation,viewRevision=this.viewRevision;
     const request={...this.address(),appearance:this.view(false),...(!force&&!this.boundsDirty&&this.presented?{
       knownCursor:this.snapshot.cursor,knownRequestID:this.snapshot.appearance?.requestID}: {})};
     try {
       if(force||this.boundsDirty||!this.presented)this.onStatus("Подготовка поверхности…");
       const value=body(await this.app.callServerTool({name:"notebook_panel_presentation",arguments:request}) as ToolResult);
       if(this.stale(request,generation))return;
+      if(!this.presented&&viewRevision!==this.viewRevision)return;
       if(value.unchanged){
         if(typeof value.workspaceID!=="string"||!value.target
           ||!sameAddress(request,{workspaceID:value.workspaceID,target:value.target as PanelTarget,socketKey:request.socketKey}))throw new Error("Notebook вернул другую поверхность.");
@@ -111,9 +119,15 @@ export class NotebookSession {
       if(!isSnapshot(value)||!sameAddress(request,value))throw new Error("Notebook вернул другую поверхность.");
       if(!(await this.onPrepareSnapshot(value))||this.stale(request,generation))return;
       this.onError("",null);this.accept(value);
-      this.boundsDirty=false;
+      // Camera motion does not invalidate world-placed pixels. Keep the current
+      // camera and coalesce the latest projection after accepting useful coverage.
+      this.boundsDirty=viewRevision!==this.viewRevision;
     }catch(error){if(!this.stale(request,generation))this.report(error,()=>this.refresh(true));}
-    finally{this.reading=false;if(this.refreshQueued&&!this.suspended&&!this.busy&&!this.pending&&!this.closed)void this.refresh(true);}
+    finally{
+      this.reading=false;
+      this.refreshQueued ||= viewRevision!==this.viewRevision;
+      if(this.refreshQueued&&!this.suspended&&!this.busy&&!this.pending&&!this.closed)this.queueRefresh();
+    }
   }
   private stale(request:PanelAddress,generation:number){return this.closed||generation!==this.generation
     ||!sameAddress(request,this.address())||this.suspended||this.busy||!!this.pending;}
@@ -125,6 +139,7 @@ export class NotebookSession {
   private async mutate(name:string,args:Record<string,unknown>) {
     if(this.closed)throw new Error("Панель закрыта.");
     if(this.busy||this.pending)throw new Error("Дождитесь сохранения текущей правки.");
+    ++this.generation;
     const completion=new Promise<void>((resolve,reject)=>{this.pending={name,arguments:args,resolve,reject};});
     void this.sendPending();return completion;
   }

@@ -1,7 +1,7 @@
 import { NotebookSession } from "./session.js";
 import { Surface, editable } from "./surface.js";
 import { offsetWorld, TILE_SIZE } from "../src/spatial.js";
-import { capturedSource, type Camera, type Frame, type PanelElement, type PanelMutation, type PanelOperation, type Point, type PanelTarget } from "./model.js";
+import { capturedSource, type Camera, type Frame, type PanelElement, type PanelMutation, type PanelOperation, type Point, type PanelTarget, type PanelView } from "./model.js";
 
 const el=<T extends HTMLElement>(id:string)=>document.getElementById(id) as T;
 const workspace=el<HTMLElement>("workspace");
@@ -11,12 +11,19 @@ const selection=document.getElementById("selection") as unknown as SVGGElement;
 const editor=el<HTMLTextAreaElement>("text-editor");
 const session=new NotebookSession();
 const surface=new Surface(paper,material,selection);
-let camera:Camera={x:0,y:0,scale:1};
+// Native projections may change their local origin. Keep one world camera so
+// accepting pixels never changes the exact request center through a round trip.
+let worldCamera:NonNullable<PanelView["camera"]>={center:{tileX:0,tileY:0,localX:0,localY:0},scale:1};
+const camera:Camera={
+  get x(){return worldDelta(worldCamera.center,session.snapshot?.worldOrigin??null).x-workspace.clientWidth/(2*worldCamera.scale);},
+  get y(){return worldDelta(worldCamera.center,session.snapshot?.worldOrigin??null).y-workspace.clientHeight/(2*worldCamera.scale);},
+  get scale(){return worldCamera.scale;},
+};
 let selected:string|null=null;
 let tool="select",space=false;
 let retry:(()=>Promise<void>)|null=null;
 let draft:{element:PanelElement;isNew:boolean}|null=null;
-type Gesture={pointer:number;start:Point;last:Point;mode:"pan"|"move"|"resize"|"create";element?:PanelElement;frame?:Frame;camera:Camera};
+type Gesture={pointer:number;start:Point;last:Point;client:Point;mode:"pan"|"move"|"resize"|"create";element?:PanelElement;frame?:Frame};
 let gesture:Gesture|null=null;
 const path:PanelTarget[]=[];
 const worldDelta=(a:NonNullable<typeof session.snapshot>["worldOrigin"],b:NonNullable<typeof session.snapshot>["worldOrigin"]):Point=>a&&b?
@@ -47,7 +54,17 @@ function buttons(){
   el<HTMLButtonElement>("page-next").disabled=waiting||!neighbor(1);
   el<HTMLButtonElement>("zoom-fit").textContent=`${Math.round(camera.scale*100)}%`;
 }
-function setCamera(next:Camera){camera=next;surface.setCamera(camera);buttons();session.viewportChanged();}
+function cameraScaleBounds(){
+  const ratio=Math.min(1,2048/Math.max(1,workspace.clientWidth),2048/Math.max(1,workspace.clientHeight));
+  return {min:.0125/ratio,max:4/ratio};
+}
+function setCamera(next:Camera){
+  const bounds=cameraScaleBounds(),scale=Math.max(bounds.min,Math.min(bounds.max,next.scale));
+  const center=next===camera?worldCamera.center:offsetWorld(session.snapshot?.worldOrigin??worldCamera.center,
+    next.x+workspace.clientWidth/(2*next.scale),next.y+workspace.clientHeight/(2*next.scale));
+  worldCamera={center,scale};
+  surface.setCamera(camera);buttons();session.viewportChanged();
+}
 function mutation(summary:string,operation:PanelOperation,element?:PanelElement):PanelMutation {
   return {...session.address(),actionID:crypto.randomUUID(),summary,operations:[operation],
     sources:[element?capturedSource(session.address().target,element.source):{id:operation.id}]};
@@ -59,29 +76,31 @@ session.bounds=()=>session.snapshot?.worldOrigin?{anchor:session.snapshot.worldO
   region:{x:camera.x,y:camera.y,width:Math.max(1,workspace.clientWidth/camera.scale),height:Math.max(1,workspace.clientHeight/camera.scale)}}:undefined;
 session.view=navigation=>{
   const width=Math.max(1,workspace.clientWidth),height=Math.max(1,workspace.clientHeight);
-  const ratio=Math.min(1,2048/width,2048/height);
-  const viewport={x:Math.max(1,Math.round(width*ratio)),y:Math.max(1,Math.round(height*ratio))};
+  // Reserve nearby native material for camera motion within the same pixel budget.
+  // Near minimum zoom, shrink the margin instead of crossing native scale limits.
+  const margin=navigation||!session.hasAppearance?0:Math.max(0,Math.min(256,Math.min(width,height)/4,
+    (2048*camera.scale/.0125-Math.max(width,height))/2));
+  const renderWidth=width+2*margin,renderHeight=height+2*margin;
+  const ratio=Math.min(1,2048/renderWidth,2048/renderHeight);
+  const viewport={x:Math.max(1,Math.round(renderWidth*ratio)),y:Math.max(1,Math.round(renderHeight*ratio))};
   const pixelScale=Math.max(.5,Math.floor(Math.min(2,window.devicePixelRatio||1,Math.sqrt(4_194_304/(viewport.x*viewport.y)))*1000)/1000);
   const origin=session.snapshot?.worldOrigin;
   return {viewport,pixelScale,...(!navigation&&session.hasAppearance&&origin?{camera:{
-    center:offsetWorld(origin,camera.x+width/(2*camera.scale),camera.y+height/(2*camera.scale)),
-    scale:camera.scale*viewport.x/width}}:{})};
+    center:worldCamera.center,
+    scale:Math.max(.0125,Math.min(4,camera.scale*viewport.x/renderWidth))}}:{})};
 };
 session.onPrepareSnapshot=snapshot=>surface.prepare(snapshot);
 session.onClose=()=>surface.dispose();
-let priorOrigin:NonNullable<typeof session.snapshot>["worldOrigin"]=null;
 let first=true;
 let priorTarget:string|undefined;
 session.onSnapshot=snapshot=>{
   if(priorTarget!==snapshot.target.id){first=true;selected=null;priorTarget=snapshot.target.id;}
-  const delta=worldDelta(snapshot.worldOrigin,priorOrigin);priorOrigin=snapshot.worldOrigin;
   surface.render(snapshot);
   if(first){
     const appearance=snapshot.appearance!;
-    const center=worldDelta(appearance.camera.center,snapshot.worldOrigin);
     const scale=appearance.camera.scale*workspace.clientWidth/appearance.viewport.x;
-    camera={x:center.x-workspace.clientWidth/(2*scale),y:center.y-workspace.clientHeight/(2*scale),scale};first=false;
-  }else{camera={...camera,x:camera.x-delta.x,y:camera.y-delta.y};}
+    worldCamera={center:appearance.camera.center,scale};first=false;
+  }
   surface.setCamera(camera);
   el("surface-name").textContent=snapshot.navigation?.directory?.header.item.title??(snapshot.target.kind==="board"?"Доска":"Лист");
   if(selected&&!snapshot.elements.some(e=>e.source.id===selected))selected=null;
@@ -111,9 +130,12 @@ function openEditor(element:PanelElement,isNew=false){
   if(!isNew&&!canEdit(element))return;
   draft={element,isNew};session.suspended=true;
   if(!isNew)surface.hideSubject(element.source.id,true);
+  editor.value=element.source.kind==="nativeText"?element.source.source:String(element.source.graphic?.label??"");
+  positionEditor(element,isNew);editor.hidden=false;editor.focus();editor.select();
+}
+function positionEditor(element:PanelElement,isNew:boolean){
   const text=element.source.kind==="nativeText";
   const frame=isNew?element.source.frame:text?surface.authoredFrame(element):surface.frame(element);
-  editor.value=element.source.kind==="nativeText"?element.source.source:String(element.source.graphic?.label??"");
   editor.style.left=`${(frame.x-camera.x)*camera.scale}px`;
   editor.style.top=`${(frame.y-camera.y)*camera.scale}px`;
   editor.style.minWidth=text?"0":"60px";
@@ -123,7 +145,6 @@ function openEditor(element:PanelElement,isNew=false){
   const weight=element.source.kind==="nativeText"?element.source.textStyle?.weight??.45:.3;
   editor.style.fontSize=`${fontSize*camera.scale}px`;
   editor.style.fontWeight=String(weight<.2?300:weight<.4?400:weight<.6?500:weight<.8?600:700);
-  editor.hidden=false;editor.focus();editor.select();
 }
 async function finishEditor(cancel=false):Promise<boolean>{
   const captured=draft;if(!captured)return true;
@@ -173,19 +194,20 @@ paper.addEventListener("pointerdown",event=>{
     if(!element||!canMove(element)){workspace.focus();return;}
     mode=resizing?"resize":"move";
   }
-  gesture={pointer:event.pointerId,start:point,last:point,mode,camera:{...camera},...(element?{element,
+  gesture={pointer:event.pointerId,start:point,last:point,client:{x:event.clientX,y:event.clientY},mode,...(element?{element,
     frame:mode==="resize"&&element.source.kind==="nativeText"?surface.authoredFrame(element):surface.frame(element)}:{})};
-  session.suspended=true;paper.setPointerCapture(event.pointerId);workspace.focus();event.preventDefault();
+  session.suspended=mode!=="pan";paper.setPointerCapture(event.pointerId);workspace.focus();event.preventDefault();
 });
 paper.addEventListener("pointermove",event=>{
   if(!gesture||event.pointerId!==gesture.pointer)return;
   const point=surface.point(event.clientX,event.clientY);gesture.last=point;
   const dx=point.x-gesture.start.x,dy=point.y-gesture.start.y;
   if(gesture.mode==="pan"){
-    const rect=paper.getBoundingClientRect();
-    const sx=(gesture.start.x-gesture.camera.x)*gesture.camera.scale+rect.left;
-    const sy=(gesture.start.y-gesture.camera.y)*gesture.camera.scale+rect.top;
-    setCamera({...gesture.camera,x:gesture.camera.x-(event.clientX-sx)/gesture.camera.scale,y:gesture.camera.y-(event.clientY-sy)/gesture.camera.scale});
+    // A newly accepted projection may rebase the world origin mid-pan.
+    // Screen deltas remain valid across that rebase and never rewind the gesture.
+    setCamera({...camera,x:camera.x-(event.clientX-gesture.client.x)/camera.scale,
+      y:camera.y-(event.clientY-gesture.client.y)/camera.scale});
+    gesture.client={x:event.clientX,y:event.clientY};
   }else if(gesture.mode==="move")surface.preview(gesture.element!.source.id,dx,dy);
   else drawGesture(gesture,dx,dy);
 });
@@ -242,8 +264,8 @@ paper.addEventListener("wheel",event=>{
   else setCamera({...camera,x:camera.x+event.deltaX/camera.scale,y:camera.y+event.deltaY/camera.scale});
 },{passive:false});
 function zoom(factor:number,point:Point={x:camera.x+workspace.clientWidth/camera.scale/2,y:camera.y+workspace.clientHeight/camera.scale/2}){
-  const ratio=workspace.clientWidth/session.view(false).viewport.x;
-  const scale=Math.min(4*ratio,Math.max(.0125*ratio,camera.scale*factor));
+  const bounds=cameraScaleBounds();
+  const scale=Math.min(bounds.max,Math.max(bounds.min,camera.scale*factor));
   setCamera({x:point.x-(point.x-camera.x)*camera.scale/scale,y:point.y-(point.y-camera.y)*camera.scale/scale,scale});
 }
 function toolButtons(){document.querySelectorAll<HTMLButtonElement>("[data-tool]").forEach(button=>button.setAttribute("aria-pressed",String(button.dataset.tool===tool)));}
@@ -252,7 +274,7 @@ async function remove(){const element=active();if(element&&canEdit(element)&&!dr
 el("delete").addEventListener("click",()=>{void remove();});
 el("undo").addEventListener("click",()=>{void session.undo().catch(()=>{});});
 el("zoom-in").addEventListener("click",()=>zoom(1.2));el("zoom-out").addEventListener("click",()=>zoom(1/1.2));
-el("zoom-fit").addEventListener("click",()=>setCamera(surface.fit()));
+el("zoom-fit").addEventListener("click",()=>{const bounds=cameraScaleBounds();setCamera(surface.fit(bounds.min,bounds.max));});
 el("back").addEventListener("click",()=>{void(async()=>{if(!(await finishEditor()))return;
   const history=path.length>0,target=path.at(-1)??session.snapshot?.navigation?.parentBoard;
   if(target&&await session.openSurface(target)&&history)path.pop();buttons();})();});
@@ -271,5 +293,15 @@ workspace.addEventListener("keydown",event=>{
 });
 window.addEventListener("keyup",event=>{if(event.code==="Space")space=false;});
 window.addEventListener("blur",()=>{space=false;});
-new ResizeObserver(()=>{surface.setCamera(camera);session.viewportChanged();}).observe(workspace);
+new ResizeObserver(()=>{
+  // A resized viewport changes the local origin. Cancel an unfinished geometry
+  // preview before its captured anchor can become a false movement delta.
+  if(gesture&&gesture.mode!=="pan"){
+    const pointer=gesture.pointer;gesture=null;session.suspended=!!draft;
+    if(paper.hasPointerCapture(pointer))paper.releasePointerCapture(pointer);
+    surface.clearPreview();
+  }
+  setCamera(camera);
+  if(draft)positionEditor(draft.element,draft.isNew);
+}).observe(workspace);
 void session.connect().catch(error=>session.onError(error instanceof Error?error.message:String(error),null));

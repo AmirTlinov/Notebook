@@ -18,7 +18,7 @@ export type PanelCard={item:{id:string;kind:string;title:string;[key:string]:unk
   frame?:Frame;worldOrigin?:WorldPoint};
 export type PanelView={viewport:{x:number;y:number};pixelScale:number;camera?:{center:WorldPoint;scale:number}};
 export type AppearanceLayer={id:string;order:number;worldOrigin:WorldPoint;frame:Frame;
-  pixelWidth:number;pixelHeight:number;pngBase64:string;sha256:string;elementID?:string};
+  pixelWidth:number;pixelHeight:number;pngBase64:string;sha256:string;elementID?:string;repeatSize?:{width:number;height:number}};
 export type PanelAppearance={status:"ready"|"pending"|"error";requestID:string;sourceRevision:string;
   camera:{center:WorldPoint;scale:number};viewport:{x:number;y:number};layers:AppearanceLayer[];
   diagnostics?:{message?:string;[key:string]:unknown}[]};

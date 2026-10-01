@@ -405,9 +405,9 @@
     }
   },
   "productAcceptance": {
-    "status": "pending-refreshed-Codex-panel",
-    "scope": "real native content shown through installed0.1.2 SDK browser host; manual Codex acceptance pending",
-    "remaining": "fresh actual Codex0.1.2 mount/gestures",
+    "status": "user-mounted-0.1.2-camera-defect-reported",
+    "scope": "Actual Codex 0.1.2 screenshot exposes a white band when moving the camera at 9%.",
+    "remaining": "Camera repair and refreshed 0.1.3 user acceptance; see ../codex-camera/results.json.",
     "previousVersion": "0.1.1 rejected by user"
   },
   "installerRepair": {
@@ -466,7 +466,7 @@
       "physicalSession": "82676236-E7A1-4C49-B3CF-907A3D945B31"
     },
     "fullAcceptance": false,
-    "refreshedCodexUserCheck": "pending"
+    "refreshedCodexUserCheck": "performed; user reported camera coverage defect, tracked in ../codex-camera/results.json"
   },
   "implementationCommit": "a599d9ce"
 }

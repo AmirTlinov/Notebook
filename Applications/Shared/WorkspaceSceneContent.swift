@@ -485,6 +485,12 @@ struct SpatialBoardGrid: View {
   let camera: SpatialCamera
   var outputScale: Double = 1
 
+  static func worldStep(cameraScale: Double, outputScale: Double = 1) -> Double {
+    var step = PhysicalPaper.gridSpacing
+    while step * cameraScale * outputScale < BoardAppearance.minimumDotSpacing { step *= 2 }
+    return step
+  }
+
   var body: some View {
     Canvas(opaque: true, colorMode: .nonLinear) { context, size in
       context.fill(
@@ -492,10 +498,7 @@ struct SpatialBoardGrid: View {
         with: .color(BoardAppearance.background)
       )
 
-      var worldStep = PhysicalPaper.gridSpacing
-      while worldStep * camera.scale * outputScale < BoardAppearance.minimumDotSpacing {
-        worldStep *= 2
-      }
+      let worldStep = Self.worldStep(cameraScale: camera.scale, outputScale: outputScale)
       let step = worldStep * camera.scale
       let phaseX =
         camera.center.localX
