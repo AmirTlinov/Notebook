@@ -54,19 +54,21 @@ struct Vertex { @builtin(position) p:vec4f, @location(0) color:vec4f }
 async function isolatedProgram(){
   const token=crypto.randomUUID();program=document.createElement('iframe');
   program.title='Изолированная программа';program.sandbox='allow-scripts';
-  const source=`<!doctype html><html lang="ru"><body><p>Изолированная программа</p><button id="step">Счётчик: 0</button><script>
+  const source=`<!doctype html><html lang="ru"><head><meta charset="utf-8"></head><body><p>Изолированная программа</p><button id="step">Счётчик: 0</button><script>
   let count=0;const token=${JSON.stringify(token)};let isolated=false;try{void parent.document.body}catch{isolated=true}
-  function report(){parent.postMessage({notebookSurfaceCheck:token,count,isolated},'*')}
+  function report(){parent.postMessage({notebookSurfaceCheck:token,count,isolated,charset:document.characterSet,title:document.querySelector('p').textContent,counter:document.getElementById('step').textContent},'*')}
   document.getElementById('step').onclick=()=>{count++;document.getElementById('step').textContent='Счётчик: '+count;report()};report();
   <\/script></body></html>`;
-  const url=URL.createObjectURL(new Blob([source],{type:'text/html'}));program.src=url;
+  const url=URL.createObjectURL(new Blob([source],{type:'text/html;charset=utf-8'}));program.src=url;
   await new Promise((resolve,reject)=>{
     const timeout=setTimeout(()=>{window.removeEventListener('message',received);URL.revokeObjectURL(url);reject(Error('Программа не прислала готовность за 5 секунд'));},5000);
     function received(event){
       if(event.source!==program.contentWindow||event.data?.notebookSurfaceCheck!==token)return;
       clearTimeout(timeout);URL.revokeObjectURL(url);
-      if(!event.data.isolated){window.removeEventListener('message',received);reject(Error('Программа получила доступ к DOM панели'));return;}
-      show('Изоляция программы','PASS',`Отдельный origin; счётчик ${event.data.count}`);resolve();
+      const error=!event.data.isolated?'Программа получила доступ к DOM панели':
+        event.data.charset!=='UTF-8'||event.data.title!=='Изолированная программа'||event.data.counter!==`Счётчик: ${event.data.count}`?'Повреждена кодировка текста программы':null;
+      if(error){window.removeEventListener('message',received);show('Изоляция программы','FAIL',error);reject(Error(error));return;}
+      show('Изоляция программы','PASS',`Отдельный origin; UTF-8; счётчик ${event.data.count}`);resolve();
     }
     window.addEventListener('message',received);document.getElementById('program').replaceChildren(program);
   });

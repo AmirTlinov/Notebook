@@ -34,7 +34,7 @@ in the real Codex panel. Remove that plugin and marketplace after acceptance.
 The resource bundles all code and WASM bytes; it performs no network fetches.
 
 The host check exercises the real Swift camera, WebGPU rendering/readback,
-an opaque-origin program, and a text field for manual IME/focus checks.
+an opaque-origin program with verified UTF-8 labels, and a text field for manual IME/focus checks.
 Neither a successful build nor a standalone browser proves Codex support.
 The parity check compares the actual native and WASM camera and ink outputs,
 including address limits, memory growth and refusal without partial writes.
