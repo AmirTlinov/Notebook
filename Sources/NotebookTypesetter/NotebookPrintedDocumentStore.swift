@@ -42,6 +42,8 @@ public actor NotebookPrintedDocumentStore {
     for value in mounted.reversed().compactMap(\.value) where try value.dependencies.matches(&source, compilerRevision: revision) {
       demand.record("lookup", since: lookupStart)
       demand.record("memoryLookup", since: lookupStart)
+      let bindStart = ContinuousClock.now
+      defer { demand.record("bind", since: bindStart) }
       return remember(try value.bound(to: &source))
     }
     if let artifact = try cached(&source, compilerRevision: revision) {

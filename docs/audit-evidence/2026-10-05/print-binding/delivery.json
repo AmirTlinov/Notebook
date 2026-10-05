@@ -1,0 +1,102 @@
+{
+  "recordedAt": "2026-10-05T14:46:27.487662+00:00",
+  "version": "0.3.176",
+  "build": "246",
+  "sourceSHA256": "5df737e9d528281896343e370de04f92c1a3db46493cbc475fdb1f61a755af13",
+  "method": "Verified signed pair, ordinary Mac quit and atomic bundle exchange, in-place iPad install. No container/key/identity deletion or archive operations. Old swapped bundle removed after new Mac peer signature verification.",
+  "buildReceipt": {
+    "path": ".build/print-comparison-20261005/pair-246/build.json",
+    "sha256": "00a63966418752475b9a36ee86c674fe2601fdc2ae4dff1f78f302469a651bac"
+  },
+  "sourceReceipt": {
+    "path": ".build/print-comparison-20261005/pair-246/source-before.json",
+    "sha256": "987351f14ddefc119c8a04094aa53c4594c2a20f5b03d029366a344b842e1c48"
+  },
+  "signatures": {
+    "iPad": {
+      "identifier": "com.amirtlinov.notebook.preview",
+      "team": "M94V58FCVP",
+      "cdhash": "254f22c36aadcea33b331867c66bc06db1a4c190"
+    },
+    "mac": {
+      "identifier": "com.amirtlinov.notebook.mac",
+      "team": "M94V58FCVP",
+      "cdhash": "3bd13103d9d6de5d7af0f142eb003995f82d6864"
+    }
+  },
+  "mac": {
+    "firstPeer": {
+      "cdhash": "3bd13103d9d6de5d7af0f142eb003995f82d6864",
+      "dynamicValidityChecked": true,
+      "executable": "/Users/amir/Applications/Notebook.app/Contents/MacOS/Notebook",
+      "identifier": "com.amirtlinov.notebook.mac",
+      "pid": 76803,
+      "team": "M94V58FCVP"
+    },
+    "afterIPadPeer": {
+      "cdhash": "3bd13103d9d6de5d7af0f142eb003995f82d6864",
+      "dynamicValidityChecked": true,
+      "executable": "/Users/amir/Applications/Notebook.app/Contents/MacOS/Notebook",
+      "identifier": "com.amirtlinov.notebook.mac",
+      "pid": 77422,
+      "team": "M94V58FCVP"
+    },
+    "finalPeer": {
+      "cdhash": "3bd13103d9d6de5d7af0f142eb003995f82d6864",
+      "dynamicValidityChecked": true,
+      "executable": "/Users/amir/Applications/Notebook.app/Contents/MacOS/Notebook",
+      "identifier": "com.amirtlinov.notebook.mac",
+      "pid": 77422,
+      "team": "M94V58FCVP"
+    },
+    "state": "Workspace header unchanged throughout. Presence and selected device unchanged in immediate readbacks before/after iPad install; session and selection receipt IDs changed on restart. Later shared context moved to a different device with834x1194 viewport after iPad launch, consistent with active iPad presentation. Mac AX showed page23/24, zoom61%, periodic table F and volume slider0.",
+    "firstProcessExit": "AppKit terminate at17:38:02 Moscow, delegate returned NSTerminateLater then YES, ordinary termination completed. Initiator not identified. No new Notebook crash report found. CUA observation reopened app at17:38:36. Final signed peer77422 remained active through17:42:55.",
+    "evidence": [
+      {
+        "path": ".build/print-comparison-20261005/live/before-install.json",
+        "sha256": "aa0903923495b236ede3e91fabebca65730cfa19cbf8d239d1f647d494907d40"
+      },
+      {
+        "path": ".build/print-comparison-20261005/live/mac-before-ipad.json",
+        "sha256": "bf92fadb7d391507a700a74b4908ef94112edb43fb5a6d4ec0b045f1399f49c3"
+      },
+      {
+        "path": ".build/print-comparison-20261005/live/mac-after-ipad.json",
+        "sha256": "efe714ec66d1316ed5c4c9ddc4e4c4ddec53b05cc7fb37114083a380b2faebfd"
+      },
+      {
+        "path": ".build/print-comparison-20261005/live/mac-final.json",
+        "sha256": "4258c625ad83018e49782e14f85969ccc38acadc85e2e94af5be529b1cfaddd7"
+      },
+      {
+        "path": ".build/print-comparison-20261005/live/mac-first-process.log",
+        "sha256": "672a655d8d9b4026ab7d8d03d715aff01a1530c99b5cbd659dfb12d37e432b5d"
+      }
+    ]
+  },
+  "ipad": {
+    "bundleID": "com.amirtlinov.notebook.preview",
+    "version": "0.3.176",
+    "build": "246",
+    "visual": "Physical iPad screenshot1668x2388 reviewed: live handwritten notes and page1/5 visible.",
+    "evidence": [
+      {
+        "path": ".build/print-comparison-20261005/live/ipad-install.json",
+        "sha256": "cacf2c5b1fd8d5fe5d78d2838eaa77acdc22461ef56ced60d7edd9acaffd2866"
+      },
+      {
+        "path": ".build/print-comparison-20261005/live/ipad-launch.json",
+        "sha256": "e3de7aa7e22834d2288601aac3866ca15f59fa30427241776440485685b81cba"
+      },
+      {
+        "path": ".build/print-comparison-20261005/live/ipad-apps.json",
+        "sha256": "d072627d88ff363a5441f15f03ac418c4b1e7efed9cdb732342f526c66eccd29"
+      },
+      {
+        "path": ".build/print-comparison-20261005/live/ipad-installed-246.png",
+        "sha256": "d914f9cb9076fb728eb696bb37b711bd14e76425699aeb7ad3f2b14360e21c45"
+      }
+    ]
+  },
+  "scope": "Installation, serving-peer signature, state readback and live visual check. The changed document lifecycle gesture passed before Release installation on identical product sources. Not full system acceptance."
+}

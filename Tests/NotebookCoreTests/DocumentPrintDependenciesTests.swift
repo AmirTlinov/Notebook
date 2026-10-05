@@ -122,6 +122,38 @@ final class DocumentPrintDependenciesTests: XCTestCase {
     XCTAssertTrue(try dependencies.matches(&source, compilerRevision: revision))
   }
 
+  func testReorderedLookupsCrossInteriorGapsAndNearPrefixDirectories() throws {
+    let files = ["main.tex", "b/one.tex", "b-extra/one.tex", "f/one.tex", "r/one.tex", "r-more/one.tex"]
+      .enumerated().map { DocumentFile(id: "f\($0.offset)", path: $0.element, source: "Text") }
+    let document = DocumentDocument(actor: UUID(), files: files)
+    let order: [(DocumentPrintDependencies.Lookup.Kind, String)] = [
+      (.directory, "m"), (.path, "a"), (.path, "b"), (.directory, "r"), (.path, "q"),
+      (.directory, "b"), (.directory, "b-"), (.path, "r-more"), (.directory, "r-"),
+      (.path, "b-extra"), (.directory, "c"), (.path, "z"), (.directory, "f"), (.path, "m"), (.path, "main.tex")]
+    var records = Data()
+    for (kind, path) in order { records.append(contentsOf: ((kind == .path ? "p" : "d") + "\0" + path + "\0").utf8) }
+    var source = DocumentPrintDependencies.Source(document)
+    let observed = try DocumentPrintDependencies(records: records, source: &source, compilerRevision: revision)
+    struct Receipt: Encodable {
+      let entrypoint: String, compilerRevision: String
+      let lookups: [DocumentPrintDependencies.Lookup]
+    }
+    // Persisted receipts may arrive in arbitrary order. Exercise both ends of
+    // each reused interval, including names close to a real directory prefix.
+    let encoded = try JSONEncoder().encode(Receipt(entrypoint: document.entrypoint, compilerRevision: revision,
+      lookups: order.map { kind, path in observed.lookups.first { $0.kind == kind && $0.path == path }! }))
+    let reordered = try JSONDecoder().decode(DocumentPrintDependencies.self, from: encoded)
+    var fresh = DocumentPrintDependencies.Source(document)
+    XCTAssertTrue(try reordered.matches(&fresh, compilerRevision: revision))
+    XCTAssertTrue(try reordered.matches(&fresh, compilerRevision: revision))
+    var nearPrefix = DocumentPrintDependencies.Source(DocumentDocument(actor: UUID(),
+      files: files + [.init(id: "new", path: "b-extra2/one.tex", source: "Unobserved")]))
+    XCTAssertTrue(try reordered.matches(&nearPrefix, compilerRevision: revision))
+    var addedDirectory = DocumentPrintDependencies.Source(DocumentDocument(actor: UUID(),
+      files: files + [.init(id: "new", path: "m/one.tex", source: "Observed")]))
+    XCTAssertFalse(try reordered.matches(&addedDirectory, compilerRevision: revision))
+  }
+
   private let revision = "dependency-probe-v1"
   private var fixtureReads: Data {
     Data("p\0main.tex\0p\0media/scan.pdf\0p\0chapters\0p\0missing.tex\0d\0chapters\0d\0\0d\0missing\0p\0\0p\0collision\0d\0collision\0".utf8)
