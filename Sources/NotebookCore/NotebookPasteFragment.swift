@@ -42,17 +42,13 @@ public struct NotebookPasteFragment: Codable, Sendable {
   /// Every paste receives fresh identities. Internal links remain internal;
   /// an imported fragment cannot claim measurements already in the workspace.
   public func reidentified(namespace: UUID = UUID()) throws -> Self {
-    guard canInsert,(1...32).contains(elements.count),Set(elements.map(\.id)).count == elements.count,
-      size.x.isFinite,size.y.isFinite,size.x > 0,size.y > 0,size.x <= 1_000_000,size.y <= 1_000_000 else {
-      throw CollaborationError("invalid_fragment","Неполный или слишком большой фрагмент буфера.")
-    }
+    try validateTransfer()
     let ids=Dictionary(uniqueKeysWithValues:elements.map { ($0.id,NotebookStore.submissionID(namespace,suffix:$0.id).uuidString.lowercased()) })
     let copies=try elements.map { element -> AgentElement in
       var values=try JSONValue.encode(element).object
       values["id"] = .string(ids[element.id]!)
       if let parent=element.parentID {
-        guard let replacement=ids[parent] else { throw CollaborationError("invalid_fragment","Группа отсутствует в скопированном фрагменте.") }
-        values["parentID"] = .string(replacement)
+        values["parentID"] = .string(ids[parent]!)
       }
       if let graphic=element.graphic {
         var content=try JSONValue.encode(graphic).object
@@ -73,8 +69,37 @@ public struct NotebookPasteFragment: Codable, Sendable {
     return .init(elements:copies,size:size)
   }
 
+  private func validateTransfer() throws {
+    guard canInsert,(1...32).contains(elements.count),Set(elements.map(\.id)).count == elements.count,
+      Set(elements.map { collaborationIdentity($0.id) }).count == elements.count,
+      size.x.isFinite,size.y.isFinite,size.x > 0,size.y > 0,size.x <= 1_000_000,size.y <= 1_000_000 else {
+      throw CollaborationError("invalid_fragment","Неполный или слишком большой фрагмент буфера.")
+    }
+    let byID=Dictionary(uniqueKeysWithValues:elements.map { ($0.id,$0) })
+    for element in elements {
+      try Task.checkCancellation()
+      guard element.id.utf16.count <= 120,element.hasValidSource,
+        NotebookElementBasis.validLocalFrame(element.frame) else {
+        throw CollaborationError("invalid_fragment","Содержимое фрагмента не проходит проверку вставки.")
+      }
+      // A package hash without its resources cannot be pasted in another
+      // workspace. Keep the original until its complete transfer is available.
+      guard element.programPackage == nil else {
+        throw CollaborationError("incomplete_fragment","Для переноса программы нужны все её ресурсы.")
+      }
+      var visited:Set<String>=[element.id],parentID=element.parentID
+      while let id=parentID {
+        guard visited.insert(id).inserted,let parent=byID[id],parent.kind == .group else {
+          throw CollaborationError("invalid_fragment","Неполная или циклическая группа в буфере.")
+        }
+        parentID=parent.parentID
+      }
+    }
+  }
+
   public func operations(target: CollaborationTarget, offset: SpatialPoint = .init(x:0,y:0),
     worldOrigin: WorldPoint? = nil) throws -> [CollaborationOperation] {
+    try validateTransfer()
     guard canInsert, [.page,.board,.cover].contains(target.kind), offset.x.isFinite, offset.y.isFinite,
       abs(offset.x) <= 1_000_000, abs(offset.y) <= 1_000_000,
       target.kind == .board ? worldOrigin?.isValid == true : worldOrigin == nil else {

@@ -35,6 +35,7 @@ final class NotebookSQLConnection {
   fileprivate(set) var writable: Bool
   var receivedChange: NotebookDurableChange?
   var pendingChangeCount = 0
+  var acceptedWriteAdvancesReadRevision = false
   var pendingOwnersPrepared = false
   var actionRecordCapturesPrepared = false
   var activeActionRecordCapture: NotebookActionRecordCaptureState?
@@ -165,7 +166,11 @@ final class NotebookSQLConnection {
       let index = Int32(offset + 1)
       let status: Int32
       switch value {
-      case .text(let string): status = sqlite3_bind_text(statement, index, string, -1, sqliteTransient)
+      case .text(let string):
+        guard let count = Int32(exactly: string.utf8.count) else {
+          throw NotebookStorageError.limitExceeded("sql_text_bytes")
+        }
+        status = string.withCString { sqlite3_bind_text(statement, index, $0, count, sqliteTransient) }
       case .integer(let number): status = sqlite3_bind_int64(statement, index, number)
       case .real(let number): status = sqlite3_bind_double(statement, index, number)
       case .blob(let data): status = data.withUnsafeBytes { sqlite3_bind_blob64(statement, index, $0.baseAddress, UInt64(data.count), sqliteTransient) }
@@ -207,7 +212,16 @@ final class NotebookSQLConnection {
         switch sqlite3_column_type(statement, index) {
         case SQLITE_INTEGER: row.append(.integer(sqlite3_column_int64(statement, index)))
         case SQLITE_FLOAT: row.append(.real(sqlite3_column_double(statement, index)))
-        case SQLITE_TEXT: row.append(.text(String(cString: sqlite3_column_text(statement, index))))
+        case SQLITE_TEXT:
+          let count = Int(sqlite3_column_bytes(statement, index))
+          if count == 0 { row.append(.text("")) }
+          else {
+            guard let bytes = sqlite3_column_text(statement, index),
+              let value = String(bytes: UnsafeBufferPointer(start: bytes, count: count), encoding: .utf8) else {
+              throw NotebookStorageError.corruptRecord("sql_text_utf8")
+            }
+            row.append(.text(value))
+          }
         case SQLITE_BLOB:
           let count = Int(sqlite3_column_bytes(statement, index))
           row.append(.blob(count == 0 ? Data() : Data(bytes: sqlite3_column_blob(statement, index)!, count: count)))
@@ -737,18 +751,26 @@ extension NotebookStore {
 
   func commandTransaction<T>(advancesReadRevision: Bool = true,
     readAllowance: NotebookSQLReadAllowance? = nil, preparedDatabase: NotebookSQLConnection? = nil,
+    attestsAcceptedOutcome: Bool = false,
     _ operation: () throws -> T) throws -> T {
     if let currentSQL {
       guard currentSQL.writable else { throw NotebookStorageError.readOnlyTransaction }
+      currentSQL.acceptedWriteAdvancesReadRevision = currentSQL.acceptedWriteAdvancesReadRevision || advancesReadRevision
       if let readAllowance { try currentSQL.limitReads(readAllowance) }
       return try operation()
     }
     let database: NotebookSQLConnection
-    if let preparedDatabase { database = preparedDatabase }
-    else { database = try prepareDatabase() }
-    if let readAllowance { try database.limitReads(readAllowance) }
-    try database.run("BEGIN IMMEDIATE")
+    do {
+      if let preparedDatabase { database = preparedDatabase }
+      else { database = try prepareDatabase() }
+      if let readAllowance { try database.limitReads(readAllowance) }
+      try database.run("BEGIN IMMEDIATE")
+    } catch {
+      if attestsAcceptedOutcome { throw NotebookAcceptedWriteError(.storageUnavailable, error) }
+      throw error
+    }
     let changesAtStart = sqlite3_total_changes64(database.handle)
+    database.acceptedWriteAdvancesReadRevision = false
     Thread.current.threadDictionary[connectionKey] = database
     defer { Thread.current.threadDictionary.removeObject(forKey: connectionKey) }
     var committed = false
@@ -761,12 +783,14 @@ extension NotebookStore {
       try refreshBoardFrontier(database: database)
       try refreshReferenceIndex(database: database)
       try refreshItemLifecycleIndex(database: database)
-      if !advancesReadRevision, database.pendingChangeCount > 0 { throw NotebookStorageError.invalidTransaction("local chat changed shared content") }
+      let advancesAcceptedReadRevision = attestsAcceptedOutcome
+        ? database.acceptedWriteAdvancesReadRevision : advancesReadRevision
+      if !advancesAcceptedReadRevision, database.pendingChangeCount > 0 { throw NotebookStorageError.invalidTransaction("local chat changed shared content") }
       // Schema admission may rebuild derived indexes without changing any
       // accepted content. Only a real publication advances its read cut.
       let changesReadCut = preparedDatabase == nil
         ? sqlite3_total_changes64(database.handle) > changesAtStart : database.pendingChangeCount > 0
-      if advancesReadRevision && changesReadCut {
+      if advancesAcceptedReadRevision && changesReadCut {
         let revision = try currentReadCursor()
         guard revision < UInt64(Int64.max) else { throw NotebookStorageError.limitExceeded("read_revision") }
         try database.run("UPDATE metadata SET value=? WHERE key='read_revision'", [.text(String(revision + 1))])
@@ -779,7 +803,25 @@ extension NotebookStore {
       try database.run("COMMIT"); committed = true
       try storageFault?(.afterCommit)
       return result
-    } catch { if !committed { try? database.run("ROLLBACK") }; throw error }
+    } catch {
+      if committed {
+        if attestsAcceptedOutcome { throw NotebookAcceptedWriteError(.unresolved, error) }
+        throw error
+      }
+      do { try database.run("ROLLBACK") }
+      catch let rollbackFailure {
+        // A COMMIT whose acknowledgement was lost can leave no transaction to
+        // roll back. Neither its response nor a failed rollback proves absence.
+        if attestsAcceptedOutcome { throw NotebookAcceptedWriteError(.unresolved, error) }
+        _ = rollbackFailure
+        throw error
+      }
+      if attestsAcceptedOutcome {
+        throw NotebookAcceptedWriteError(NotebookAcceptedWriteError.isDomainRefusal(error)
+          ? .rejected : .storageUnavailable, error)
+      }
+      throw error
+    }
   }
 
   static var storageEncoder: JSONEncoder {

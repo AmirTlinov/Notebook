@@ -7,6 +7,23 @@ private enum SQLTestFault: Error { case injected }
 
 @Suite("SQLite owns atomic addressed publication")
 struct NotebookSQLiteTests {
+  @Test func textBindingAndRowsPreserveEmbeddedNULAndUnicode() throws {
+    try fixture { store, _ in
+      try store.readTransaction { _ in
+        let sql = try #require(store.currentSQL)
+        let values = ["", "\u{0}", "до\u{0}после 🖋️", "尾\u{0}終"]
+        for value in values {
+          let row = try #require(sql.rows("SELECT ?,hex(CAST(? AS BLOB))", [.text(value), .text(value)]).first)
+          #expect(row[0].text == value)
+          #expect(row[1].text == Data(value.utf8).map { String(format: "%02X", $0) }.joined())
+        }
+      }
+      let file = "local/nul-source.json", source = "до\u{0}после 🖋️"
+      try store.publishRecords(writes: [file: .object(["source": .string(source)])])
+      #expect(try JSONDecoder().decode(JSONValue.self, from: store.storedData(file))["source"]?.string == source)
+    }
+  }
+
   @Test(arguments: [1_000, 100_000])
   func dictionaryReconstructionIgnoresPositionsAndPreservesArrayOrder(count: Int) throws {
     let file = "codec.json", root = file + "#"

@@ -7,8 +7,43 @@ public struct NotebookNativeElementSource: Equatable, Sendable {
   public let id: String
   public let page: AgentElement?
   public let spatial: SpatialElement?
-  public init(target: CollaborationTarget, id: String, page: AgentElement? = nil, spatial: SpatialElement? = nil) {
-    self.target = target; self.id = id; self.page = page; self.spatial = spatial
+  public let versions: [String: ContentFieldVersion]?
+  public init(target: CollaborationTarget, id: String, page: AgentElement? = nil, spatial: SpatialElement? = nil,
+    versions: [String: ContentFieldVersion]? = nil) {
+    self.target = target; self.id = id; self.page = page; self.spatial = spatial; self.versions = versions
+  }
+}
+
+extension CollaborativeContent {
+  /// Fixed addressed lookups, including optional fields that may have been
+  /// removed. A same-valued peer edit still changes its causal source.
+  public func elementVersions(id: String) -> [String: ContentFieldVersion] {
+    Self.elementVersionKeys(id: id).reduce(into: [:]) { result, key in result[key] = fields[key] }
+  }
+
+  static func elementVersionKeys(id: String) -> [String] {
+    AgentElement.causalFieldKeys(id: id, allGraphicFields: true)
+      + ["surface", "worldOrigin"].map { fieldKey(["elements", collaborationIdentity(id), $0]) }
+  }
+}
+
+extension NotebookStore {
+  public func readNativeElementSource(target: CollaborationTarget, id: String) throws -> NotebookNativeElementSource {
+    guard [.page, .board, .cover].contains(target.kind), !id.isEmpty, id.utf16.count <= 120 else {
+      throw CollaborationError("invalid_reference", "Нужен адрес элемента листа, доски или обложки.")
+    }
+    return try readTransaction { _ in
+      let root = target.kind == .page ? pageFile(target.id) + "#"
+        : "board.json#/boards/@" + (target.boardID ?? target.id).uuidString.lowercased() + "/board"
+      let keys = CollaborativeContent.elementVersionKeys(id: id)
+      let rows = try boundedStoredFragments(keys.map { (root + "/collaboration/fields/@" + fieldKey([$0]), false) },
+        maximumCount: keys.count, maximumBytes: 1_048_576, budget: "native_element_versions")
+      let versions = try Dictionary(uniqueKeysWithValues: rows.map { ($0.member, try $0.value.decode(ContentFieldVersion.self)) })
+      return try .init(target: target, id: id,
+        page: target.kind == .page ? readPageElement(pageID: target.id, elementID: id) : nil,
+        spatial: target.kind == .page ? nil : readSpatialElement(boardID: target.boardID ?? target.id, elementID: id),
+        versions: versions)
+    }
   }
 }
 
@@ -16,10 +51,12 @@ extension NotebookNativeCommand where Source == NotebookNativeElementSource {
   public convenience init(_ operations: [CollaborationOperation], summary: String,
     sources: [NotebookNativeElementSource], layerMove: NotebookElementLayerMove? = nil,
     copiedFrom: [String:String] = [:], expectedInkRevision: String? = nil, inkReadSets:[NotebookInkReadSet] = [],
+    transferWitness: NotebookElementTransferWitness? = nil,
     actionID: UUID = UUID(), actor: UUID, requestFingerprint: String? = nil) {
     self.init { store, didPrepare in
       try store.commitNativeElementEdits(operations, summary: summary, sources: sources,
         layerMove: layerMove, copiedFrom: copiedFrom, expectedInkRevision: expectedInkRevision, inkReadSets:inkReadSets,
+        transferWitness: transferWitness,
         actionID: actionID, actor: actor, requestFingerprint: requestFingerprint, didPrepare: didPrepare)
     }
   }
@@ -66,16 +103,18 @@ public enum NotebookElementLayerMove: String, CaseIterable, Sendable {
 extension NotebookStore {
   public func applyNativeElementEdits(_ operations: [CollaborationOperation], summary: String,
     sources: [NotebookNativeElementSource], layerMove: NotebookElementLayerMove? = nil, copiedFrom: [String:String] = [:], expectedInkRevision: String? = nil, inkReadSets:[NotebookInkReadSet] = [],
+    transferWitness: NotebookElementTransferWitness? = nil,
     actionID:UUID=UUID(),actor: UUID, requestFingerprint: String? = nil
   ) throws -> (receipt: CollaborationReceipt, sources: [NotebookNativeElementSource]) {
     try NotebookNativeCommand(operations, summary: summary, sources: sources,
       layerMove: layerMove, copiedFrom: copiedFrom, expectedInkRevision: expectedInkRevision, inkReadSets:inkReadSets,
+      transferWitness: transferWitness,
       actionID: actionID, actor: actor, requestFingerprint: requestFingerprint).apply(to: self)
   }
 
   fileprivate func commitNativeElementEdits(_ operations: [CollaborationOperation], summary: String,
     sources: [NotebookNativeElementSource], layerMove: NotebookElementLayerMove?, copiedFrom: [String:String],
-    expectedInkRevision: String?, inkReadSets:[NotebookInkReadSet], actionID: UUID, actor: UUID,
+    expectedInkRevision: String?, inkReadSets:[NotebookInkReadSet], transferWitness: NotebookElementTransferWitness?, actionID: UUID, actor: UUID,
     requestFingerprint: String?,
     didPrepare: (NotebookNativeCommand<NotebookNativeElementSource>.Output) -> Void
   ) throws -> NotebookNativeCommand<NotebookNativeElementSource>.Output {
@@ -87,11 +126,17 @@ extension NotebookStore {
         throw CollaborationError("invalid_operation", "Одна поверхность: не более 32 правок и 64 проверяемых исходников.")
       }
       for source in sources {
-        let page = target.kind == .page ? try readPageElement(pageID: target.id, elementID: source.id) : nil
-        let spatial = target.kind == .page ? nil : try readSpatialElement(boardID: target.boardID ?? target.id, elementID: source.id)
-        guard page == source.page, spatial == source.spatial else {
+        let current = try readNativeElementSource(target: target, id: source.id)
+        guard current.page == source.page, current.spatial == source.spatial,
+          source.versions.map({ $0 == current.versions }) ?? true else {
           throw CollaborationError("revision_conflict", "Выбранный элемент \(source.id) изменился до завершения действия.")
         }
+      }
+      if let witness = transferWitness {
+        guard witness.target == target, witness.sources.allSatisfy({ expected in
+          sources.contains { $0 == expected }
+        }) else { throw CollaborationError("invalid_operation", "Перенос требует всех проверенных исходников.") }
+        try witness.validateMembership(in: self)
       }
       guard operations.allSatisfy({ operation in
         operation.id.map { id in sources.contains { $0.id == id } } == true
@@ -166,9 +211,7 @@ extension NotebookStore {
         references: admitted.map { .init(target:target,elementID:$0.kind == .reorderElements ? nil : $0.id,revision:revision) },
         expected: [.init(target: target, revision: revision, inkRevision: ink)], operations: admitted), actor: actor, requestFingerprint: requestFingerprint)
       let result = (receipt, try sources.map { source in
-        NotebookNativeElementSource(target: target, id: source.id,
-          page: target.kind == .page ? try readPageElement(pageID: target.id, elementID: source.id) : nil,
-          spatial: target.kind == .page ? nil : try readSpatialElement(boardID: target.boardID ?? target.id, elementID: source.id))
+        try readNativeElementSource(target: target, id: source.id)
       })
       didPrepare(result)
       return result

@@ -94,6 +94,21 @@ public struct AgentElement: Codable, Equatable, Identifiable, Sendable {
   public let parentID: String?
   public let basis: NotebookElementBasis?
 
+  /// The authored body contract is shared by storage and portable transfers.
+  /// Surface containment is checked separately against the destination.
+  var hasValidSource: Bool {
+    !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+      && NotebookElementBasis.validParent(parentID, childID: id)
+      && state.isValid
+      && NotebookProgramPackage.validSourceReference(programPackage, isProgram: kind == .web,
+        source: source, html: html, css: css, javaScript: javaScript)
+      && (textStyle?.isValid(for: source) ?? true)
+      && (kind == .nativeText || textStyle == nil)
+      && (kind == .graphic ? graphic?.isValid == true : graphic == nil)
+      && (kind == .group ? basis?.isValid == true && source.isEmpty && html.isEmpty
+        && css.isEmpty && javaScript.isEmpty && state == .object([:]) : (basis?.isValid ?? true))
+  }
+
   public init(
     id: String,
     kind: AgentElementKind,
@@ -345,18 +360,10 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
     let ids = elements.map(\.id)
     return Set(ids).count == ids.count
       && elements.allSatisfy {
-        !$0.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        $0.hasValidSource
           && ($0.parentID == nil && $0.kind != .group
             ? ($0.frame.isContained(in:size) || visibleMaskedFragmentIsContained($0,in:size))
             : NotebookElementBasis.validLocalFrame($0.frame))
-          && NotebookElementBasis.validParent($0.parentID,childID:$0.id)
-          && $0.state.isValid
-          && NotebookProgramPackage.validSourceReference($0.programPackage, isProgram: $0.kind == .web, source: $0.source, html: $0.html, css: $0.css, javaScript: $0.javaScript)
-          && ($0.textStyle?.isValid(for:$0.source) ?? true)
-          && ($0.kind == .nativeText || $0.textStyle == nil)
-          && ($0.kind == .graphic ? $0.graphic?.isValid == true : $0.graphic == nil)
-          && ($0.kind == .group ? $0.basis?.isValid == true && $0.source.isEmpty && $0.html.isEmpty
-            && $0.css.isEmpty && $0.javaScript.isEmpty && $0.state == .object([:]) : ($0.basis?.isValid ?? true))
       }
   }
 
