@@ -1,0 +1,197 @@
+{
+  "recordedAt": "2026-10-05T15:55:12.116172+00:00",
+  "version": "0.3.177",
+  "build": "247",
+  "commit": "838977ed",
+  "sourceSHA256": "93af0e377e64e846ee7d0e261f7dafdbaed2ae081286f08161f0fdeef250378f",
+  "scope": "Verified signed pair installed in place. Runtime readback, registered plugin, real Pencil trace. C1 and standalone Mac removal remain incomplete.",
+  "method": "Ordinary Mac quit, verified atomic bundle exchange, launch and dynamic IPC peer validation before and after in-place iPad update. Current containers and identities retained; no archive operations. The departed code bundle was removed after validation.",
+  "buildReceipt": {
+    "path": ".build/surface-pair-247/build.json",
+    "sha256": "00fda3ca2422c0d5638ef1e08596d72085667d48bb9ad4243b4c2c91e453ce09"
+  },
+  "signatures": {
+    "iPad": {
+      "identifier": "com.amirtlinov.notebook.preview",
+      "team": "M94V58FCVP",
+      "cdhash": "27fe4df81976ce4d59864ffa255036f554725ae9"
+    },
+    "mac": {
+      "identifier": "com.amirtlinov.notebook.mac",
+      "team": "M94V58FCVP",
+      "cdhash": "b933cac94c06ad5ca5cac29744358955774cdcc9"
+    }
+  },
+  "mac": {
+    "beforeIPadPeer": {
+      "cdhash": "b933cac94c06ad5ca5cac29744358955774cdcc9",
+      "dynamicValidityChecked": true,
+      "executable": "/Users/amir/Applications/Notebook.app/Contents/MacOS/Notebook",
+      "identifier": "com.amirtlinov.notebook.mac",
+      "pid": 50317,
+      "team": "M94V58FCVP"
+    },
+    "afterIPadPeer": {
+      "cdhash": "b933cac94c06ad5ca5cac29744358955774cdcc9",
+      "dynamicValidityChecked": true,
+      "executable": "/Users/amir/Applications/Notebook.app/Contents/MacOS/Notebook",
+      "identifier": "com.amirtlinov.notebook.mac",
+      "pid": 50317,
+      "team": "M94V58FCVP"
+    },
+    "state": "Workspace header identical except advanced read/data cursors. CUA observed the same notebook page1/24 and zoom61% after update. Runtime was disconnected before update and connected after iPad launch; installed read-only smoke including ready image passed.",
+    "evidence": [
+      {
+        "path": ".build/surface-247-live/immediate-before-install.json",
+        "sha256": "7ffdaf095e76439f45664b305724fb0509cabc245cfe8bb92088d8b264afb048"
+      },
+      {
+        "path": ".build/surface-247-live/mac-exchange.json",
+        "sha256": "14cfc82207102b5e26538b7ca5472bb3c753490c1d83647b5ad774947fa89def"
+      },
+      {
+        "path": ".build/surface-247-live/mac-before-ipad.json",
+        "sha256": "2590b23b5ebf1bf4a4a354e2f2fb04793fdc7e072dae523b2c7365ae108a0f8c"
+      },
+      {
+        "path": ".build/surface-247-live/mac-after-ipad.json",
+        "sha256": "5e70d38fd7a9722b141eae800e0697a635d0fc15994d4e30a2f8ffe6bdc8d4f9"
+      },
+      {
+        "path": ".build/surface-247-live/installed-smoke.log",
+        "sha256": "b71547693d07ed108e1e3661cfc6431d02fec4624719067f140665cd4e2e35d2"
+      }
+    ]
+  },
+  "ipad": {
+    "launchArguments": [
+      "--notebook-profile-input"
+    ],
+    "selectedWorkspacePreserved": true,
+    "evidence": [
+      {
+        "path": ".build/surface-247-live/ipad-before.json",
+        "sha256": "a6ec45426fc5ac77e88f6ec7eda29d8d9fb7691b30d1439dd46e0f3e251b81af"
+      },
+      {
+        "path": ".build/surface-247-live/ipad-install.json",
+        "sha256": "57c90f30ad860fb2f4a3e2d1b826cb6896fd2d8779fd91c7baeaac73c4d5028d"
+      },
+      {
+        "path": ".build/surface-247-live/ipad-after.json",
+        "sha256": "42de474550590ebe69411c6e29e8bfab8803218f35fc3e0773db43b394cde553"
+      },
+      {
+        "path": ".build/surface-247-live/ipad-profile-launch.json",
+        "sha256": "de5ba908008de445d39c2fd4873a5221df69af4f4ad342cce8fa4dcbf5df6e94"
+      },
+      {
+        "path": ".build/surface-247-live/ipad-spaces.json",
+        "sha256": "5d03583ffab0142507b4aa2164b29fa994003f1ea43a3ee2eab124618312f76c"
+      }
+    ]
+  },
+  "plugin": {
+    "id": "notebook@notebook-local",
+    "version": "0.1.6",
+    "installed": true,
+    "enabled": true,
+    "evidence": {
+      "path": ".build/surface-247-live/plugin-installed.json",
+      "sha256": "f751e500b6de64c4eb9ac7e6e873ce9283cc12f2ea56592cccde793db3fe1615"
+    }
+  },
+  "pencil": {
+    "trace": {
+      "path": ".build/surface-247-live/pencil-input.json",
+      "sha256": "8799696ce8d086b5ba05ffdf62f06b2f55d0e6b5aa2a8a74f2ed966f80b88189"
+    },
+    "summary": {
+      "metadata": {
+        "testProcess": false,
+        "build": "247",
+        "startedAt": 812907752.500788,
+        "operatingSystem": "Version 27.0 (Build 24A435)",
+        "mediaTime": 303756.66138654173,
+        "systemUptime": 303756.66138683335,
+        "scope": "pencil/page"
+      },
+      "droppedEvents": 0,
+      "droppedSamples": 0,
+      "writeFailures": 0,
+      "tools": {
+        "pen": {
+          "inputBatches": 3223,
+          "samples": 4258,
+          "unresolved": {
+            "contactEnded": 136
+          },
+          "handlerMS": {
+            "count": 3223,
+            "p50": 0.07479166379198432,
+            "p95": 0.24504167959094048,
+            "max": 1.7620833241380751
+          },
+          "actualToDisplayMS": {
+            "count": 2120,
+            "p50": 48.631916695740074,
+            "p95": 57.82195838401094,
+            "max": 119.83033339492977
+          },
+          "dispatchMS": {
+            "count": 2146,
+            "p50": 7.895583403296769,
+            "p95": 11.163958406541497,
+            "max": 29.640500084497035
+          },
+          "correctionToDisplayMS": {
+            "count": 1998,
+            "p50": 38.20300003280863,
+            "p95": 48.93829167122021,
+            "max": 82.73245830787346
+          }
+        },
+        "eraser": {
+          "inputBatches": 2607,
+          "samples": 3477,
+          "unresolved": {
+            "contactEnded": 3
+          },
+          "handlerMS": {
+            "count": 2607,
+            "p50": 0.07595831993967295,
+            "p95": 0.21166668739169836,
+            "max": 1.9286666647531092
+          },
+          "actualToDisplayMS": {
+            "count": 1739,
+            "p50": 48.63691673381254,
+            "p95": 57.417500065639615,
+            "max": 104.18554174248129
+          },
+          "dispatchMS": {
+            "count": 1739,
+            "p50": 7.792583375703543,
+            "p95": 10.943000030238181,
+            "max": 27.07766671665013
+          },
+          "correctionToDisplayMS": {
+            "count": 1735,
+            "p50": 38.25358336325735,
+            "p95": 48.76487498404458,
+            "max": 68.90466663753614
+          }
+        }
+      },
+      "scope": "Real Pencil page trace in installed build247; instrument overhead not calibrated, unresolved batches retained."
+    },
+    "userObservation": "Eraser works well; outlining, moving and deleting the selected element are awful and severely delayed.",
+    "acceptance": "20ms NOT accepted: unresolved batches, uncalibrated instrumentation, observed actual-to-OS p95 above threshold."
+  },
+  "remaining": [
+    "Main Codex panel rendering/interactions after MCP server registration",
+    "Shared lasso/selection move and delete delay reported by user",
+    "Plugin-owned signed runtime and removal of standalone Mac app",
+    "C1 IME/offline/full scenario and full physical acceptance"
+  ]
+}
