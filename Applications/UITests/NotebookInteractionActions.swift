@@ -98,7 +98,15 @@ import XCTest
       XCUIElement.ElementType.menuItem.rawValue,XCUIElement.ElementType.button.rawValue,title)).firstMatch
   }
   func notebookMenuAction(_ title:String,in app:XCUIApplication) {
+    let panel=app.otherElements["notebook-context-menu"]
+    let direct=panel.buttons.matching(NSPredicate(format:"label == %@",title)).firstMatch
+    if direct.exists && direct.isHittable { direct.tap();return }
     let action=notebookMenuItem(title,in:app)
+    if action.exists && action.isHittable { action.tap();return }
+    // Secondary actions belong to the visible More button. Do not spend a
+    // timeout looking for a command which has not been presented yet.
+    let more=panel.buttons["selection-more-actions"]
+    if more.exists && more.isHittable { more.tap() }
     if action.waitForExistence(timeout:3) && action.isHittable { action.tap();return }
     XCTFail("Context action unavailable: \(title)\n\(app.debugDescription)")
   }
@@ -111,10 +119,6 @@ import XCTest
   }
   func openNotebookSelectionMenu(at coordinate:XCUICoordinate,in app:XCUIApplication) {
     coordinate.press(forDuration:0.5)
-    let menu = app.descendants(matching:.any).matching(NSPredicate(
-      format:"(elementType == %d OR elementType == %d) AND label IN %@",
-      XCUIElement.ElementType.menuItem.rawValue,XCUIElement.ElementType.button.rawValue,
-      ["Копировать","Открыть тетрадь","Открыть документ","Открыть доску","Удалить выбранные фигуры","Удалить выбранное"])).firstMatch
-    XCTAssertTrue(menu.waitForExistence(timeout:3))
+    XCTAssertTrue(app.otherElements["notebook-context-menu"].waitForExistence(timeout:3),app.debugDescription)
   }
 }

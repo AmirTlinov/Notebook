@@ -431,9 +431,13 @@ import XCTest
     let menus = mountContextMenus(in:controller.view,gate:gate)
     let object = UUID(), text = UUID(), button = UIButton(type:.system)
     NotebookContextMenus.configure(button,symbol:"textformat",title:"Текст",id:"text")
-    menus.show(source:object,anchor:.init(x:100,y:300,width:240,height:44),in:controller.view,buttons:[UIButton(type:.system)])
+    menus.registerSelectionActions(source:object,selection:object,anchor:.init(x:100,y:300,width:240,height:44),in:controller.view,
+      primary:[],secondary:[UIAction(title:"Подпись фигуры") { _ in }],destructive:[],enabled:true)
+    menus.requestSelectionMenu(object,at:.init(x:150,y:320))
+    let more=try XCTUnwrap(menuButtons(menus).compactMap { $0 as? NotebookContextMenuButton }.first)
     menus.show(source:text,anchor:.init(x:140,y:400,width:180,height:44),in:controller.view,buttons:[button])
     menus.view.layoutIfNeeded()
+    more.onMenuDismiss?() // The old native menu finishes after text has acquired its controls.
     menus.hide(source:object) // A late dismantle must not hide the new text selection.
     XCTAssertEqual(menuButtons(menus),[button])
     let surface=try XCTUnwrap(menus.view.subviews.first { $0.accessibilityIdentifier == "notebook-context-menu" })
@@ -445,6 +449,62 @@ import XCTest
     menus.hide(source:text)
     XCTAssertTrue(surface.isHidden)
     XCTAssertTrue(gate.permitsSceneContact(at:point,kind:.pencil))
+  }
+
+  func testRequestedActionsFollowOffsetGeometryAndLeaveTheCanvasAvailable() throws {
+    let scene=try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous=scene.windows.first(where:\.isKeyWindow)
+    let window=UIWindow(windowScene:scene),controller=UIViewController()
+    window.rootViewController=controller;window.makeKeyAndVisible()
+    defer { window.isHidden=true;window.rootViewController=nil;previous?.makeKey() }
+    let gate=NotebookInputGate(),menus=mountContextMenus(in:controller.view,gate:gate)
+    menus.view.frame=controller.view.bounds.insetBy(dx:20,dy:60)
+    let geometry=UIView(frame:controller.view.bounds.offsetBy(dx:45,dy:90))
+    controller.view.insertSubview(geometry,belowSubview:menus.view)
+    let selection=UUID(),source=UUID()
+    var copies=0
+    menus.selectionActions = { _,_ in NotebookContextMenus.clipboardActions(cut:nil,copy:{ copies += 1 },paste:nil) }
+    let remove=UIAction(title:"Удалить",image:UIImage(systemName:"trash"),identifier:.init("remove"),attributes:.destructive) { _ in }
+    let surface=try XCTUnwrap(menus.view.subviews.first { $0.accessibilityIdentifier == "notebook-context-menu" })
+    func register(_ frame:CGRect) {
+      menus.registerSelectionActions(source:source,selection:selection,anchor:frame,in:geometry,
+        primary:[],secondary:[],destructive:[remove],enabled:true)
+      menus.view.layoutIfNeeded()
+    }
+    let frames=[CGRect(x:300,y:10,width:120,height:100),
+      CGRect(x:20,y:menus.view.bounds.height-200,width:160,height:100)]
+    for frame in frames {
+      register(frame)
+      // The earlier touch may be far away after a new camera projection.
+      menus.requestSelectionMenu(selection,at:.init(x:5,y:5))
+      menus.view.layoutIfNeeded()
+      let selected=geometry.convert(frame,to:menus.view),panel=surface.frame
+      XCTAssertFalse(surface.isHidden)
+      XCTAssertTrue(menus.view.bounds.contains(panel))
+      XCTAssertFalse(panel.intersects(selected))
+      XCTAssertGreaterThan(min(panel.maxX,selected.maxX)-max(panel.minX,selected.minX),0)
+      let gap=max(selected.minY-panel.maxY,panel.minY-selected.maxY)
+      XCTAssertEqual(gap,14,accuracy:0.5,"Actions stay adjacent to the current material, in the host's coordinate space")
+      let body=geometry.convert(CGPoint(x:frame.midX,y:frame.midY),to:window)
+      XCTAssertTrue(gate.permitsSceneContact(at:body,kind:.finger),"An open row must allow the next direct drag")
+      XCTAssertTrue(gate.permitsSceneContact(at:body,kind:.pencil))
+      let control=surface.convert(CGPoint(x:surface.bounds.midX,y:surface.bounds.midY),to:window)
+      XCTAssertFalse(gate.permitsSceneContact(at:control,kind:.finger))
+      XCTAssertFalse(menus.blocksCanvasInput)
+    }
+    menus.detachSelectionActions(source:source)
+    XCTAssertTrue(surface.isHidden,"An unmounted geometry lease cannot leave stale clickable controls")
+    register(frames[0])
+    XCTAssertFalse(surface.isHidden,"The same selection recovers its requested actions after repaint")
+    let copy=try XCTUnwrap(menuButtons(menus).first { $0.accessibilityIdentifier == "selection-copy" })
+    copy.sendActions(for:.touchUpInside)
+    XCTAssertEqual(copies,1)
+    XCTAssertFalse(menus.hasPresentedMenu)
+    menus.requestSelectionMenu(selection,at:.zero)
+    menus.hide(source:source)
+    register(frames[1])
+    XCTAssertTrue(surface.isHidden,"Finishing a manipulation must not resurrect the old requested row")
+    menus.uninstall()
   }
 
   func testProgrammaticallyDismissedPopoverReleasesCanvasInput() async throws {
@@ -523,6 +583,8 @@ import XCTest
         controls()?.primaryActions.contains { $0.title == "Оформление фигуры" } == true
       }
       let menu = try XCTUnwrap(descendants(window).compactMap { ($0 as? NotebookContextMenus.HostView)?.owner }.first)
+      XCTAssertEqual(menu.view.convert(menu.view.bounds,to:window),window.bounds,
+        "The real SwiftUI action host uses the same full viewport as the selected geometry")
       let action = try XCTUnwrap(controls()?.primaryActions.first { $0.title == "Оформление фигуры" } as? UIAction)
       UIButton().sendAction(action)
       let palette = try XCTUnwrap(window.rootViewController?.presentedViewController as? NotebookElementStyleController)

@@ -1,0 +1,170 @@
+{
+  "format": 1,
+  "date": "2026-10-05",
+  "issue": "GUI-481",
+  "status": "verified-awaiting-integrated-installation",
+  "baseCommit": "bdcd012bf245dff894acdd65536b165326f29ba0",
+  "sourceSHA256": "3360c406bf0d9cef133b53dd86b4be8c315435b745bf56f22d983a1ec9bd5fd7",
+  "changes": [
+    "Requested quick actions follow the current selection rectangle; the hidden one-pixel menu trigger is removed.",
+    "A short repeat tap opens actions; the row leaves object dragging and canvas input available.",
+    "Primary action, Copy, Duplicate and Delete are direct; secondary actions use More. Selection and palette ownership remain in the existing controller."
+  ],
+  "verification": {
+    "route": "./verify.sh:selected",
+    "optimized": true,
+    "passed": 12,
+    "failed": 0,
+    "skipped": 0,
+    "expectedFailures": 0,
+    "runtimeWarnings": [],
+    "nativeTests": 8,
+    "systemGestureTests": 4,
+    "device": {
+      "architecture": "arm64e",
+      "deviceId": "00008103-001E059934D9001E",
+      "deviceName": "iPad (Елизавета)",
+      "modelName": "iPad Pro (11-inch) (3rd generation)",
+      "osBuildNumber": "24A435",
+      "osVersion": "27.0",
+      "platform": "iOS"
+    },
+    "startedAt": "2026-10-05T18:12:46.693000+00:00",
+    "finishedAt": "2026-10-05T18:15:14.762000+00:00",
+    "selection": [
+      "NotebookTests/AgentSceneFingerRoutingTests/testWindowObserverRetiresControlAndPopupContactsBeforeTheNextPickup",
+      "NotebookTests/NotebookElementManipulationTests/testContextMenuReplacementRetiresOnlyItsOwnSource",
+      "NotebookTests/NotebookElementManipulationTests/testDeferredMenuCannotReturnAfterItsContactOrSelectionEnds",
+      "NotebookTests/NotebookElementManipulationTests/testProgrammaticallyDismissedPopoverReleasesCanvasInput",
+      "NotebookTests/NotebookElementManipulationTests/testRequestedActionsFollowOffsetGeometryAndLeaveTheCanvasAvailable",
+      "NotebookTests/NotebookElementManipulationTests/testStylePaletteKeepsAcceptedEditsAcrossRepaintAndRetiresWithSelection",
+      "NotebookTests/NotebookLassoMotionTests/testMultipleSelectionControlsHaveNoConfirmationAction",
+      "NotebookTests/NotebookPageLifecycleUXTests/testLassoFragmentKeepsBothSidesThroughSecondMoveResizeAndColdReopen",
+      "NotebookUITests/DrawingResponsivenessTests/testContextMenuOpensSelectedNotebook",
+      "NotebookUITests/DrawingResponsivenessTests/testLineEndpointControlsOnPage",
+      "NotebookUITests/DrawingResponsivenessTests/testSelectionMenuFollowsTheObjectAtBothEdgesAndOpensOnShortRepeatTap",
+      "NotebookUITests/DrawingResponsivenessTests/testSelectionPaletteAndContextMenuStayAnchoredAndKeepThePaper"
+    ],
+    "receipt": {
+      "path": ".build/object-actions-481/run-1/verification.json",
+      "sha256": "830c6e42569eae5695c6c33a29196a39d48ec25f3b6ac28afeb0122de75dec4f"
+    },
+    "summary": {
+      "path": ".build/object-actions-481/run-1/ipad-summary.json",
+      "sha256": "9566c60ffb5b853e5e1c7877b71f29d6584281f1b49a98be656727d577c538ae"
+    },
+    "executedTests": {
+      "path": ".build/object-actions-481/run-1/ipad-tests.json",
+      "sha256": "ed4560c91c1f5f04e21d499fa9e3e3320ba62ee8c185f765a53e325f0933e82e"
+    }
+  },
+  "placement": {
+    "unit": "points",
+    "rowSize": [
+      228,
+      44
+    ],
+    "observations": [
+      {
+        "state": "original",
+        "object": [
+          80,
+          240,
+          40,
+          32
+        ],
+        "row": [
+          12,
+          182,
+          228,
+          44
+        ],
+        "gap": 14
+      },
+      {
+        "state": "near-top",
+        "object": [
+          272,
+          76,
+          40,
+          32
+        ],
+        "row": [
+          178,
+          122,
+          228,
+          44
+        ],
+        "gap": 14
+      },
+      {
+        "state": "hold-near-top",
+        "object": [
+          272,
+          76,
+          40,
+          32
+        ],
+        "row": [
+          178,
+          122,
+          228,
+          44
+        ],
+        "gap": 14
+      },
+      {
+        "state": "near-bottom-after-move",
+        "object": [
+          480.5,
+          1082,
+          40,
+          32
+        ],
+        "row": [
+          386.5,
+          1024,
+          228,
+          44
+        ],
+        "gap": 14
+      }
+    ],
+    "probe": {
+      "path": ".build/object-actions-481/attachments-1/46E57365-1BFD-4EF9-83A8-9AD3A69AEEDE.txt",
+      "sha256": "24b9a5790d4dc9b3ab996bb86701cb1ea3371b12c5b8d666d3b76957a7f637c7"
+    }
+  },
+  "visualReview": [
+    {
+      "state": "near-top",
+      "reviewed": true,
+      "path": ".build/object-actions-481/attachments-1/A1153084-0539-410C-B492-58D1B3CB4221.png",
+      "sha256": "649d30c21787854462e1320c15ee6d5a7fd7bb9817038fdca552340804d08ac6"
+    },
+    {
+      "state": "near-bottom-after-move",
+      "reviewed": true,
+      "path": ".build/object-actions-481/attachments-1/7BFB74FC-8474-4395-9FDF-0C17B4B689F9.png",
+      "sha256": "d3c4a76f39728e08a25326742739b419f711cea56c6b3bf38e6e0e82ce63171f"
+    },
+    {
+      "state": "notebook-actions",
+      "reviewed": true,
+      "path": ".build/object-actions-481/attachments-1/E7F4B9C7-A132-48A7-B778-FEC8B5CC88CA.png",
+      "sha256": "b019f4bfba94a7753d7c34c5968ea04608e788bf77a97025e0d997ba8b258f94"
+    },
+    {
+      "state": "style-palette",
+      "reviewed": true,
+      "path": ".build/object-actions-481/attachments-1/8606EF0C-A8CE-4174-8EA0-9FC67D6E732B.png",
+      "sha256": "11dbe6e6d9132e2e8ebfb4cbf7cf133a3d2c6f0f29f5cd7e5839ddb81cfd5693"
+    }
+  ],
+  "scope": "Physical iPad: short 50 ms repeat contact, long press, direct object drag with actions visible, upper/lower viewport edges, notebook open, geometry endpoint menus, retained palette, contact retirement and lasso cold reopen. The short contact proves no mandatory hold; XCTest delivery and accessibility observation are not display latency.",
+  "limits": [
+    "No zoom gesture or system frame/CPU/GPU/memory acceptance in this focused run.",
+    "Production remains build 248 until this slice is integrated with the plugin runtime delivery owner."
+  ],
+  "review": "Independent review completed; stale secondary-menu state and late dismissal of a newly mounted text toolbar were repaired before the recorded run."
+}

@@ -297,11 +297,13 @@ struct SpatialWorkspaceView: View {
           NotebookMultipleElementControls(contextMenus:contextMenus,selectionID:model.selectionSession.id,frames:frames,scale:presence.camera.scale,camera:presence)
             .frame(width:viewport.x,height:viewport.y)
         }
-        NotebookContextMenuHost(owner:contextMenus,gate:model.inputGate).zIndex(9_600)
+        NotebookContextMenuHost(owner:contextMenus,gate:model.inputGate)
+          .frame(width:viewport.x,height:viewport.y).zIndex(9_600)
         NotebookSelectionGesture(inputGate: model.inputGate,
           onPoint: { point, tapCount in selectionPoint(at:point,tapCount:tapCount,presence:presence,cohort:cohort)
         }, onLift: { point in selectionLift(at:point,presence:presence,cohort:cohort)
-        }, onHold: { point in showContextMenu(at:point,presence:presence,cohort:cohort) }).allowsHitTesting(false)
+        }, onHold: { point in showContextMenu(at:point,presence:presence,cohort:cohort) })
+          .frame(width:viewport.x,height:viewport.y).allowsHitTesting(false)
         if let rect = model.selectionSession.preview {
           RoundedRectangle(cornerRadius: 4).stroke(.indigo, style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
             .frame(width: rect.width, height: rect.height).position(x: rect.midX, y: rect.midY).allowsHitTesting(false)
@@ -570,12 +572,14 @@ struct SpatialWorkspaceView: View {
     if let raw=NotebookAttentionProjection.selectedInk(at:end,model:model,presence:presence,cohort:cohort) {
       if model.selectionSession.addingElements {
         model.removeInkFromMultipleSelection(raw)
-      }
+      } else { contextMenus.requestSelectionMenu(model.selectionSession.id,at:end) }
       return
     }
     if let selected = selectedElement(at: end, presence: presence) {
       if model.selectionSession.addingElements { model.toggleGraphicSelection(selected); return }
-      if tapCount > 1 { model.selectElement(selected); model.editSelectedElement(selected) }; return
+      if tapCount > 1 { model.selectElement(selected); model.editSelectedElement(selected) }
+      else { contextMenus.requestSelectionMenu(model.selectionSession.id,at:end) }
+      return
     }
     let fragment:NotebookAttentionSelection.Fragment
     switch NotebookAttentionProjection.pointResolution(at:end,model:model,presence:presence,cohort:cohort) {
@@ -698,7 +702,7 @@ struct SpatialWorkspaceView: View {
       copy:canCopy ? { copy(cut:false) } : nil,paste:destination.map { captured in {
         guard model.selectionSession.id == selection else { return };pasteContext(at:captured,point:point)
       } }).filter { ($0 as? UIAction)?.attributes.contains(.disabled) != true }
-    if canCopy { actions.append(UIAction(title:"Дублировать",image:UIImage(systemName:"plus.square.on.square")) { _ in
+    if canCopy { actions.append(UIAction(title:"Дублировать",image:UIImage(systemName:"plus.square.on.square"),identifier:.init("selection-duplicate")) { _ in
       guard model.selectionSession.id == selection else { return }
       model.duplicateSelectedContent()
     }) }
@@ -1873,11 +1877,7 @@ private struct WorkspaceSceneItem: View {
       portalOpenProgress: openProgress,
       portalViewport: viewport,
       onTap:handleTap,
-      onHold: { point in
-        let center=camera.worldToScreen(rendered.center,viewport:viewport)
-        onContext(rendered.id,.init(x:center.x+(point.x-rendered.geometry.width/2)*camera.scale,
-          y:center.y+(point.y-rendered.geometry.height/2)*camera.scale))
-      },
+      onHold:showItemActions,
       onTextEditingEnded: onTextEditingEnded,
       portalPixelScale: projectedScale
     )
@@ -1893,6 +1893,12 @@ private struct WorkspaceSceneItem: View {
     )
   }
 
+  private func showItemActions(at point:CGPoint) {
+    let center=camera.worldToScreen(rendered.center,viewport:viewport)
+    onContext(rendered.id,.init(x:center.x+(point.x-rendered.geometry.width/2)*camera.scale,
+      y:center.y+(point.y-rendered.geometry.height/2)*camera.scale))
+  }
+
   private func handleTap(_ point: CGPoint, tapCount: Int) {
     guard openProgress < 0.999, !model.isItemBeingDeleted(rendered.id) else { return }
     if model.drawingTool == .text {
@@ -1901,12 +1907,13 @@ private struct WorkspaceSceneItem: View {
         screenScale:projectedScale)
       return
     }
+    let wasSelected=isSelected
     onSelect(rendered.id)
     if let editingTextID {
       onTextEditingEnded(editingTextID)
     }
-    guard tapCount >= 2 else { return }
-    onOpen(rendered.id)
+    if tapCount >= 2 { onOpen(rendered.id) }
+    else if wasSelected { showItemActions(at:point) }
   }
 
 }
