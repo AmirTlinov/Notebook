@@ -1,0 +1,37 @@
+{
+  "surface": "Actual Codex MCP Apps panel in the current task",
+  "observedAt": "2026-10-05T14:35:51Z",
+  "moduleSHA256": "f95020c15d2477430566ee4f06b4c3665b31c57bd7089b9e8c50fe2f70525391",
+  "secureContext": true,
+  "checks": {
+    "Swift/WASM": {
+      "state": "PASS",
+      "detail": "Загрузка и точная камера: 83.4 мс"
+    },
+    "WebGPU": {
+      "state": "PASS",
+      "detail": "Swift: 84 вершин; 300 incremental samples; MSAA 4×; RGBA 178, 26, 102, 255"
+    },
+    "Контур и давление": {
+      "state": "PASS",
+      "detail": "6 пикселей контура совпали с каноническим Swift-штрихом"
+    },
+    "Retina/resize": {
+      "state": "PASS",
+      "detail": "6016×3384 → 5461×3072; 32768×256 → 8192×64; 600×180 → 600×180"
+    },
+    "Изоляция программы": {
+      "state": "PASS",
+      "detail": "Отдельный origin; UTF-8; счётчик 0"
+    }
+  },
+  "text": {
+    "multilineCyrillicCharacters": 50,
+    "imeCompositions": 0
+  },
+  "programInteraction": {
+    "state": "PENDING_MANUAL_CLICK",
+    "reason": "Browser URL policy rejected entry into the blob iframe; parent reports UTF-8 and isolated origin."
+  },
+  "acceptance": "Capability check only; real IME, offline, complete shared editing scenario and strict 20 ms physical input remain open."
+}

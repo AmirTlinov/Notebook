@@ -13,7 +13,7 @@
     ],
     "rawResult": ".build/surface-mac-adapters-prepared/mac.xcresult",
     "receiptSHA256": "ceb97a36bc10f15ae10db5df213229f7def2c27fde15c97338835a005052b129",
-    "laterChanges": "Only test path normalization and browser GPU budget; native Mac source unchanged after this run."
+    "laterChanges": "Test path normalization and browser GPU budget were changed after this run. Merge 294a9d30 then integrated independently verified print changes from 15c24b63 (pair 244); these two Mac selectors were not rerun after that merge."
   },
   "surfaceStage": {
     "moduleSHA256": "f95020c15d2477430566ee4f06b4c3665b31c57bd7089b9e8c50fe2f70525391",
