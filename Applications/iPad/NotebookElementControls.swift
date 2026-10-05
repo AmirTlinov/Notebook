@@ -99,11 +99,12 @@ struct NotebookElementControls: UIViewRepresentable {
     }
     let text = model.nativeTextTarget(reference)
     if !isGroup && !isRegion {
-      primary.append(UIAction(title:graphic != nil ? "Подпись фигуры" : text != nil ? "Редактировать текст" : "Редактировать элемент",
+      let edit=UIAction(title:graphic != nil ? "Подпись фигуры" : text != nil ? "Редактировать текст" : "Редактировать элемент",
         image:UIImage(systemName:"character.cursor.ibeam"),identifier:.init("edit-agent-element")) { _ in
         guard isCurrent() else { return }
         model.editSelectedElement(reference)
-      })
+      }
+      if graphic?.freehand != nil { secondary.append(edit) } else { primary.append(edit) }
     }
     if graphic?.connection != nil {
       for (mode,title,symbol,id) in [(NotebookConnectionController.Mode.routing,"Стиль соединения","line.diagonal","graphic-routing-menu"),
@@ -614,7 +615,7 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
     // handle. The window-space control registry owns admission, not that
     // implementation-specific hit-view identity; other chrome still wins.
     guard let window = installedWindow, touch.view?.window === window, !isHidden, isEnabled, gate.permitsObjectPickup,
-      !contextMenus.hasPresentedMenu,
+      !contextMenus.blocksCanvasInput,
       gate.permitsSceneContact(at:touch.location(in:window),kind:.finger,excludingControl:source),
       handle(at: touch.location(in: self)) != nil else { return false }
     return true

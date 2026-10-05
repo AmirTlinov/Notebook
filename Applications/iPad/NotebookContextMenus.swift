@@ -22,13 +22,14 @@ final class NotebookContextMenus: NSObject, UIPopoverPresentationControllerDeleg
   private weak var popover: UIViewController?
   private weak var gate: NotebookInputGate?
   private let controlSource = UUID()
-  private let selectionMenu = NotebookContextMenuButton(type:.system)
+  private let selectionMore = NotebookContextMenuButton(type:.system)
   private var selectionCommands: (primary:[UIMenuElement],secondary:[UIMenuElement],destructive:[UIMenuElement])?
   private var selectionActionsEnabled=false
   private var selectionAnchor = CGRect.zero
   private var selectionPopover: (selection:UUID,reference:EditableElementReference,isCurrent:()->Bool)?
   private weak var selectionModel: NotebookAppModel?
   private var inlineControls = false
+  private var selectionActionsVisible = false
   private var registeredSelection: UUID?
   private var pendingSelection: (id:UUID,point:CGPoint)?
   var selectionActions: ((UUID,CGPoint) -> [UIMenuElement])?
@@ -94,11 +95,12 @@ final class NotebookContextMenus: NSObject, UIPopoverPresentationControllerDeleg
     stack.axis = .horizontal; stack.alignment = .center; stack.distribution = .fillEqually
     stack.translatesAutoresizingMaskIntoConstraints = false
     surface.addSubview(stack); view.addSubview(surface)
-    selectionMenu.isHidden=true; selectionMenu.isAccessibilityElement=false
-    selectionMenu.accessibilityElementsHidden=true
-    view.addSubview(selectionMenu)
-    selectionMenu.onMenuDismiss = { [weak self] in
-      self?.selectionMenu.isHidden=true
+    Self.configure(selectionMore,symbol:"ellipsis",title:"Ещё",id:"selection-more-actions")
+    selectionMore.preferredMenuElementOrder = .fixed
+    selectionMore.onMenuDismiss = { [weak self] in
+      // A finished secondary command ends this request as well. Reopening
+      // actions reads fresh modes and identities from the current selection.
+      self?.hideSelectionActions()
       self?.presentRegisteredSelectionIfReady()
     }
     NSLayoutConstraint.activate([stack.leadingAnchor.constraint(equalTo:surface.leadingAnchor,constant:4),
@@ -113,7 +115,7 @@ final class NotebookContextMenus: NSObject, UIPopoverPresentationControllerDeleg
     gate.registerControlRegion(source:controlSource) { [weak self] point, _ in
       guard let self, view.window != nil else { return false }
       // The dismissal contact belongs to UIKit, never to the paper underneath.
-      if hasPresentedMenu { return true }
+      if blocksCanvasInput { return true }
       return !surface.isHidden && surface.bounds.contains(surface.convert(point,from:view.window))
     }
   }
@@ -131,8 +133,9 @@ final class NotebookContextMenus: NSObject, UIPopoverPresentationControllerDeleg
     button.heightAnchor.constraint(equalToConstant:NotebookChrome.controlSize).isActive = true
   }
   static func clipboardActions(cut: (() -> Void)?, copy: (() -> Void)?, paste: (() -> Void)?) -> [UIMenuElement] {
-    [("Вырезать",cut),("Копировать",copy),("Вставить",paste)].map { title, action in
-      UIAction(title:title,attributes:action == nil ? .disabled : []) { _ in action?() }
+    [("Вырезать","scissors","selection-cut",cut),("Копировать","doc.on.doc","selection-copy",copy),
+      ("Вставить","doc.on.clipboard","selection-paste",paste)].map { title,symbol,id,action in
+      UIAction(title:title,image:UIImage(systemName:symbol),identifier:.init(id),attributes:action == nil ? .disabled : []) { _ in action?() }
     }
   }
   func show(source: UUID, anchor: CGRect, in anchorView: UIView, buttons: [UIButton],
@@ -141,13 +144,16 @@ final class NotebookContextMenus: NSObject, UIPopoverPresentationControllerDeleg
     if self.source != source { dismissCurrent(); self.source = source }
     inlineControls = true
     self.anchorView = anchorView; self.anchor = anchor; self.exclusions = exclusions
+    installButtons(buttons)
+    surface.isUserInteractionEnabled = enabled; surface.alpha = enabled ? 1 : 0.45
+    place(); view.setNeedsLayout()
+  }
+  private func installButtons(_ buttons:[UIButton]) {
     if self.buttons != buttons {
       for child in stack.arrangedSubviews { stack.removeArrangedSubview(child); child.removeFromSuperview() }
       for button in buttons { stack.addArrangedSubview(button) }
       self.buttons = buttons
     }
-    surface.isUserInteractionEnabled = enabled; surface.alpha = enabled ? 1 : 0.45
-    place(); view.setNeedsLayout()
   }
   func hide(source: UUID) {
     guard self.source == source else { return }
@@ -159,6 +165,7 @@ final class NotebookContextMenus: NSObject, UIPopoverPresentationControllerDeleg
   func detachSelectionActions(source: UUID) {
     guard self.source == source,!inlineControls else { return }
     self.source=nil;anchorView=nil;selectionCommands=nil;selectionActionsEnabled=false
+    surface.isHidden=true;surface.isUserInteractionEnabled=false
   }
   func updateSelection(_ model: NotebookAppModel) {
     selectionModel=model
@@ -205,14 +212,15 @@ final class NotebookContextMenus: NSObject, UIPopoverPresentationControllerDeleg
   private func dismissCurrent(preservingPending selection:UUID? = nil) {
     if pendingSelection?.id != selection { pendingSelection=nil }
     dismissPopover()
-    selectionMenu.dismissMenu();selectionMenu.isHidden=true;selectionMenu.contents=[]
+    selectionMore.dismissMenu();selectionMore.contents=[]
     selectionCommands=nil;selectionActionsEnabled=false
-    registeredSelection=nil; inlineControls=false
+    registeredSelection=nil; inlineControls=false;selectionActionsVisible=false
     for button in buttons { (button as? NotebookContextMenuButton)?.contextMenuInteraction?.dismissMenu() }
     for child in stack.arrangedSubviews { stack.removeArrangedSubview(child); child.removeFromSuperview() }
     buttons = []; surface.isHidden = true
   }
-  var hasPresentedMenu: Bool { selectionMenu.isMenuPresented || popover?.presentingViewController != nil || buttons.contains { ($0 as? NotebookContextMenuButton)?.isMenuPresented == true } }
+  var hasPresentedMenu: Bool { selectionActionsVisible || blocksCanvasInput }
+  var blocksCanvasInput: Bool { selectionMore.isMenuPresented || popover?.presentingViewController != nil || buttons.contains { ($0 as? NotebookContextMenuButton)?.isMenuPresented == true } }
   private func permitsSelectionMenu(_ selection:UUID) -> Bool {
     guard let model=selectionModel else { return true }
     return model.selectionSession.id == selection && model.selectionSession.count > 0
@@ -236,7 +244,9 @@ final class NotebookContextMenus: NSObject, UIPopoverPresentationControllerDeleg
     selectionCommands=(primary,secondary,destructive)
     selectionActionsEnabled=enabled
     registeredSelection=selection; inlineControls=false
-    surface.isHidden=true
+    surface.isUserInteractionEnabled=enabled
+    surface.alpha=enabled ? 1 : 0.45
+    place()
     if selectionPopover?.selection == selection {
       popover?.popoverPresentationController?.sourceRect=selectionAnchor
     }
@@ -247,22 +257,61 @@ final class NotebookContextMenus: NSObject, UIPopoverPresentationControllerDeleg
       pendingSelection=nil
     }
     guard let pending=pendingSelection, registeredSelection == pending.id,
-      let commands=selectionCommands,selectionActionsEnabled,view.window != nil,!selectionMenu.isMenuPresented else { return }
+      let commands=selectionCommands,selectionActionsEnabled,view.window != nil,!selectionMore.isMenuPresented else { return }
     pendingSelection=nil
-    let actions=selectionActions?(pending.id,pending.point) ?? []
-    func group(_ elements:[UIMenuElement])->[UIMenuElement] {
-      elements.isEmpty ? [] : [UIMenu(options:.displayInline,children:elements)]
+    // The contact chooses a command's destination. Placement belongs to the
+    // current selected geometry, including camera projection and remounts.
+    let clipboard=selectionActions?(pending.id,pending.point) ?? []
+    func flattened(_ elements:[UIMenuElement])->[UIMenuElement] {
+      elements.flatMap { element in
+        if let menu=element as? UIMenu,menu.options.contains(.displayInline) { return flattened(menu.children) }
+        return [element]
+      }
     }
-    selectionMenu.contents=group(commands.primary)+actions+group(commands.secondary)+group(commands.destructive)
-    selectionMenu.frame = .init(x:pending.point.x,y:pending.point.y,width:1,height:1)
-    selectionMenu.isHidden=false
-    selectionMenu.presentMenu()
+    let clipboardActions=flattened(clipboard).compactMap { $0 as? UIAction }
+    var quick:[UIAction]=[]
+    if let primary=commands.primary.first as? UIAction,!primary.attributes.contains(.disabled) { quick.append(primary) }
+    quick += clipboardActions.filter { ["selection-copy","selection-duplicate"].contains($0.identifier.rawValue) }
+    quick += commands.destructive.compactMap { $0 as? UIAction }.prefix(1)
+    let quickIDs=Set(quick.map(\.identifier))
+    func group(_ elements:[UIMenuElement])->[UIMenuElement] {
+      let remaining=flattened(elements).filter { element in
+        guard let action=element as? UIAction else { return true }
+        return !quickIDs.contains(action.identifier)
+      }
+      return remaining.isEmpty ? [] : [UIMenu(options:.displayInline,children:remaining)]
+    }
+    selectionMore.contents=group(commands.primary)+group(clipboard)+group(commands.secondary)+group(commands.destructive)
+    var controls=quick.map { action in
+      let button=UIButton(type:.system)
+      Self.configure(button,symbol:"circle",title:action.title,id:action.identifier.rawValue,destructive:action.attributes.contains(.destructive))
+      button.configuration?.image=action.image
+      button.toolTip=action.title
+      button.isEnabled = !action.attributes.contains(.disabled)
+      button.addAction(UIAction { [weak self,weak button] _ in
+        guard let self,let button,registeredSelection == pending.id,permitsSelectionMenu(pending.id) else { return }
+        hideSelectionActions()
+        button.sendAction(action)
+      },for:.touchUpInside)
+      return button
+    }
+    if !selectionMore.contents.isEmpty { controls.append(selectionMore) }
+    guard !controls.isEmpty else { return }
+    installButtons(controls)
+    selectionActionsVisible=true
+    place()
+  }
+  private func hideSelectionActions() {
+    guard selectionActionsVisible,!inlineControls else { return }
+    selectionActionsVisible=false;surface.isHidden=true
+    installButtons([])
   }
   func performAfterSelectionMenuDismiss(selection:UUID,_ action:@escaping()->Void) {
     if pendingSelection?.id == selection { pendingSelection=nil }
-    selectionMenu.performAfterDismiss { [weak self] in
+    selectionMore.performAfterDismiss { [weak self] in
       guard let self,registeredSelection == selection,
         permitsSelectionMenu(selection) else { return }
+      hideSelectionActions()
       action()
     }
   }
@@ -301,18 +350,29 @@ final class NotebookContextMenus: NSObject, UIPopoverPresentationControllerDeleg
   func popoverPresentationControllerDidDismissPopover(_ controller: UIPopoverPresentationController) { presentationControllerDidDismiss(controller) }
   func adaptivePresentationStyle(for controller: UIPresentationController) -> UIModalPresentationStyle { .none }
   private func place() {
-    guard inlineControls, source != nil, !buttons.isEmpty, let anchorView, let window = view.window,
-      anchorView.window === window, !view.bounds.isEmpty else { surface.isHidden = true; return }
-    let selected = anchorView.convert(anchor,to:view)
+    guard (inlineControls || (selectionActionsVisible && selectionActionsEnabled)), !buttons.isEmpty,view.window != nil,
+      !view.bounds.isEmpty else { surface.isHidden = true; return }
+    let selected:CGRect
+    let obstacles:[CGRect]
+    if inlineControls,let anchorView,anchorView.window === view.window {
+      selected=anchorView.convert(anchor,to:view)
+      obstacles=exclusions.map { anchorView.convert($0,to:view) }
+    } else if selectionActionsVisible { selected=selectionAnchor;obstacles=[] }
+    else { surface.isHidden=true;return }
     guard selected.intersects(view.bounds) else { surface.isHidden = true; return }
-    let obstacles = exclusions.map { anchorView.convert($0,to:view) }
     let clearance = obstacles.reduce(selected) { $0.union($1) }
     let safe = view.bounds.inset(by:.init(top:max(12,view.safeAreaInsets.top+76),left:12,
       bottom:max(12,view.safeAreaInsets.bottom+76),right:12))
     let width = CGFloat(buttons.count)*NotebookChrome.controlSize+8, height = NotebookChrome.controlSize
-    let x = min(max(selected.midX-width/2,safe.minX),max(safe.minX,safe.maxX-width))
-    let candidates = [clearance.minY-height-12,clearance.maxY+12,safe.minY,safe.maxY-height].map {
+    let visible=selected.intersection(safe)
+    let center=visible.isNull ? selected.midX : visible.midX
+    let x = min(max(center-width/2,safe.minX),max(safe.minX,safe.maxX-width))
+    var candidates = [clearance.minY-height-14,clearance.maxY+14].map {
       CGRect(x:x,y:min(max($0,safe.minY),max(safe.minY,safe.maxY-height)),width:width,height:height)
+    }
+    let y=min(max(selected.midY-height/2,safe.minY),max(safe.minY,safe.maxY-height))
+    candidates += [clearance.minX-width-14,clearance.maxX+14].map {
+      CGRect(x:min(max($0,safe.minX),max(safe.minX,safe.maxX-width)),y:y,width:width,height:height)
     }
     surface.frame = candidates.first { !$0.intersects(selected) && !obstacles.contains(where:$0.intersects) }
       ?? candidates.first { candidate in !obstacles.contains(where:candidate.intersects) } ?? candidates[0]
@@ -346,10 +406,9 @@ struct NotebookContextMenuHost: UIViewRepresentable {
 final class NotebookContextMenuButton: UIButton {
   var contents: [UIMenuElement] = []
   private var presentedConfiguration: UIContextMenuConfiguration?
-  private var requested = false
   private var afterDismiss: (UIContextMenuConfiguration,()->Void)?
   var onMenuDismiss: (() -> Void)?
-  var isMenuPresented: Bool { requested || presentedConfiguration != nil }
+  var isMenuPresented: Bool { presentedConfiguration != nil }
   override init(frame: CGRect) {
     super.init(frame:frame)
     menu = UIMenu(children:[UIDeferredMenuElement.uncached { [weak self] completion in
@@ -358,13 +417,8 @@ final class NotebookContextMenuButton: UIButton {
     showsMenuAsPrimaryAction = true
   }
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-  func presentMenu() {
-    guard window != nil,!isMenuPresented else { return }
-    requested=true
-    performPrimaryAction()
-  }
   func dismissMenu() {
-    requested=false;afterDismiss=nil
+    afterDismiss=nil
     contextMenuInteraction?.dismissMenu()
   }
   func performAfterDismiss(_ action:@escaping()->Void) {
@@ -374,7 +428,7 @@ final class NotebookContextMenuButton: UIButton {
   }
   override func contextMenuInteraction(_ interaction: UIContextMenuInteraction,
     willDisplayMenuFor configuration: UIContextMenuConfiguration, animator: (any UIContextMenuInteractionAnimating)?) {
-    requested=false;presentedConfiguration = configuration
+    presentedConfiguration = configuration
     super.contextMenuInteraction(interaction,willDisplayMenuFor:configuration,animator:animator)
   }
   override func contextMenuInteraction(_ interaction: UIContextMenuInteraction,

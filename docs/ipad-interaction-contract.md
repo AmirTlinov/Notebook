@@ -21,17 +21,23 @@ formats are unchanged. Tool styles remain independent device preferences.
   contacts exclude QuickShape. Pose changes wait for accepted Pencil completion.
   Material units do not change with camera scale; angle display is 0.1 degrees.
 - `NotebookSelectionGesture` resolves and freezes callbacks on finger-down.
-  Quiet hold-up opens actions; hold then motion moves the original material.
+  Tap selects; a repeat tap or quiet hold-up opens actions. Selected material
+  moves directly; hold then motion picks up other material.
   Geometry grips use the same recognizer: motion edits their captured geometry,
   while a quiet hold opens the selected object's menu.
   Another finger or Pencil cancels that ownership. There is no competing hold
   recognizer or zero-motion edit. Selection frames and grips remain visible;
-  whole-object actions live only in the contextual menu. Native inline text
-  selection retains its system editing controls.
+  whole-object actions appear only on request. Native inline text selection
+  retains its system editing controls.
 - `NotebookContextMenus` owns menu/popover presentation. Existing model operations
   revalidate captured selection identity and their addressed source when invoked.
-  Its native menu exposes relevant primary actions before clipboard and secondary
-  commands. Geometry modes are explicit checked choices. The selected material,
+  A compact row exposes the primary action, Copy, Duplicate and Delete; More
+  opens the remaining native commands. The row follows the current visible
+  selection frame with 14-point clearance, including camera projection and
+  offset hosts. It consumes only its own controls: a direct drag, another
+  selection or an outside canvas tap continues immediately and retires the row.
+  Completing a command retires the request; reopening reads current actions.
+  Geometry modes are explicit checked choices. The selected material,
   rather than its temporary geometry frame, owns an open parameter palette;
   repaint refreshes it, while an ended target or replaced material closes it.
   Deferred presentation cannot outlive its selection or become a later contact's menu.
@@ -43,7 +49,7 @@ formats are unchanged. Tool styles remain independent device preferences.
   reidentifies it through the existing atomic element/history writer. Text also exports plain text for
   other applications. An unavailable target fails, never redirects to a new one.
 - Confirmed blank single taps toggle chrome without resizing/remounting content.
-  Open tool/context panels consume their dismissal contact first. Selection,
+  Modal tool/context panels consume their dismissal contact first. Selection,
   text input, Pencil and a second tap are not blank-toggle commands. Hidden chrome
   has neither accessibility nor touch regions; failures/decisions remain visible.
   An explicitly expanded chat stays visible and interactive independently of this

@@ -201,7 +201,6 @@ import XCTest
     view.setActions(primary:[],secondary:[],destructive:[UIAction(title:"Удалить выбранные фигуры",attributes:.destructive) { _ in }])
     let scene=try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
     let previous=scene.windows.first(where: \.isKeyWindow)
-    let existingWindows=Set(scene.windows.map(ObjectIdentifier.init))
     let window=UIWindow(windowScene:scene);window.frame = .init(x:0,y:0,width:834,height:1194)
     window.rootViewController=UIViewController();window.rootViewController!.view.addSubview(view)
     window.rootViewController!.view.addSubview(menus.view);menus.use(gate)
@@ -214,17 +213,9 @@ import XCTest
     XCTAssertTrue(menus.hasPresentedMenu)
     func titles(_ root:UIView)->[String] {
       guard !root.isHidden,root.alpha > 0 else { return [] }
-      return (root as? UILabel).flatMap(\.text).map { [$0] } ?? root.subviews.flatMap(titles)
+      return (root as? UIButton).flatMap(\.accessibilityLabel).map { [$0] } ?? root.subviews.flatMap(titles)
     }
-    func displayedTitles()->Set<String> {
-      let menuWindows=scene.windows.filter { $0 === window || !existingWindows.contains(ObjectIdentifier($0)) }
-      return Set(menuWindows.flatMap(titles).filter { !$0.isEmpty })
-    }
-    let deadline=ContinuousClock.now + .seconds(2)
-    while !displayedTitles().contains("Удалить выбранные фигуры"),ContinuousClock.now < deadline {
-      try await Task.sleep(for:.milliseconds(10))
-    }
-    XCTAssertEqual(displayedTitles(),["Удалить выбранные фигуры"],
+    XCTAssertEqual(Set(titles(menus.view)),["Удалить выбранные фигуры"],
       "Multiple selection offers Delete, without an Edit or confirmation action")
   }
 }

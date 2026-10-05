@@ -658,6 +658,93 @@ final class DrawingResponsivenessTests: XCTestCase {
     app.terminate()
   }
 
+  func testSelectionMenuFollowsTheObjectAtBothEdgesAndOpensOnShortRepeatTap() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture","--notebook-native-graphics-fixture",
+      "--notebook-native-polygons","--notebook-native-graphic-page"]
+    launchPortraitFixture(app)
+    let triangle = app.images["Треугольник"], panel = app.otherElements["notebook-context-menu"]
+    let handle = app.otherElements["resize-agent-element-topLeading"]
+    XCTAssertTrue(triangle.waitForExistence(timeout:10))
+    let paper = app.otherElements["paper-input"], paperFrame = paper.frame, window = app.frame
+    let companion = app.buttons["notebook-companion-compose"]
+    XCTAssertTrue(companion.waitForExistence(timeout:5))
+    if companion.frame.intersects(triangle.frame) {
+      companion.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5))
+        .press(forDuration:0.1,thenDragTo:app.coordinate(withNormalizedOffset:.init(dx:0.85,dy:0.85)))
+    }
+    func contact() -> XCUICoordinate { triangle.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.6)) }
+    var observations: [String] = []
+    func assertLocalPanel(_ name: String, below: Bool? = nil) {
+      XCTAssertTrue(panel.exists)
+      let menuFrame = panel.frame, objectFrame = triangle.frame
+      XCTAssertEqual(app.otherElements.matching(identifier:"notebook-context-menu").count,1)
+      XCTAssertGreaterThan(menuFrame.width,0); XCTAssertGreaterThan(menuFrame.height,0)
+      XCTAssertLessThanOrEqual(menuFrame.height,52,"Object actions remain one compact row")
+      XCTAssertTrue(window.contains(menuFrame),"The complete action row stays inside the window")
+      XCTAssertFalse(menuFrame.intersects(objectFrame),"Actions leave the selected object visible")
+      XCTAssertGreaterThan(min(menuFrame.maxX,objectFrame.maxX)-max(menuFrame.minX,objectFrame.minX),0,
+        "The row stays horizontally beside its current object")
+      let isBelow = menuFrame.minY >= objectFrame.maxY
+      let gap = isBelow ? menuFrame.minY-objectFrame.maxY : objectFrame.minY-menuFrame.maxY
+      XCTAssertGreaterThanOrEqual(gap,8)
+      XCTAssertLessThanOrEqual(gap,24,"The row belongs at the object's edge, not at a distant contact or screen corner")
+      if let below { XCTAssertEqual(isBelow,below) }
+      for id in ["graphic-style-menu","selection-copy","selection-duplicate","delete-agent-element","selection-more-actions"] {
+        XCTAssertTrue(panel.buttons[id].isHittable,"Direct object action: \(id)")
+      }
+      XCTAssertEqual(paper.frame,paperFrame)
+      observations.append("\(name): object=\(objectFrame); menu=\(menuFrame); gap=\(gap)")
+      let picture = XCTAttachment(screenshot:app.screenshot())
+      picture.name = name; picture.lifetime = .keepAlways; add(picture)
+    }
+    func repeatTap(_ name: String, below: Bool? = nil) {
+      let start = ContinuousClock.now
+      // A 50 ms contact exercises the ordinary tap path, below the pickup
+      // hold threshold. Observe immediately when system event delivery returns.
+      contact().press(forDuration:0.05)
+      let delivered = start.duration(to:.now)
+      XCTAssertTrue(panel.exists,"A selected object exposes actions after a short repeat tap without a hold")
+      observations.append("\(name): contact=50ms; automation delivery=\(delivered); observed=\(start.duration(to:.now))")
+      assertLocalPanel(name,below:below)
+    }
+    func moveWithOpenMenu(to center: CGPoint) {
+      let before = triangle.frame
+      let delta = CGVector(dx:center.x-before.midX,dy:center.y-before.midY)
+      let start = contact()
+      start.press(forDuration:0.05,thenDragTo:start.withOffset(delta),withVelocity:.slow,thenHoldForDuration:0)
+      let moved = XCTNSPredicateExpectation(predicate:NSPredicate { _,_ in
+        let current = triangle.frame
+        return !panel.exists && abs(current.midX-center.x)<4 && abs(current.midY-center.y)<4
+      },object:nil)
+      XCTAssertEqual(XCTWaiter.wait(for:[moved],timeout:3),.completed,
+        "Dragging the selected body immediately moves it and retires its row")
+      XCTAssertEqual(paper.frame,paperFrame)
+    }
+    contact().tap()
+    XCTAssertTrue(handle.waitForExistence(timeout:3))
+    XCTAssertFalse(panel.exists,"Initial selection keeps the canvas clear until actions are requested")
+    repeatTap("selection-row-original")
+    moveWithOpenMenu(to:.init(x:window.minX+window.width*0.35,y:window.minY+92))
+    repeatTap("selection-row-near-top",below:true)
+
+    app.coordinate(withNormalizedOffset:.init(dx:0.9,dy:0.65)).tap()
+    XCTAssertTrue(panel.waitForNonExistence(timeout:3))
+    XCTAssertTrue(handle.waitForNonExistence(timeout:3),"One outside canvas tap clears selection and actions")
+    let holdStart = ContinuousClock.now
+    contact().press(forDuration:0.5)
+    XCTAssertTrue(panel.exists,"A quiet hold retains the familiar context-action path")
+    observations.append("selection-row-hold: contact=500ms; automation delivery+observation=\(holdStart.duration(to:.now))")
+    assertLocalPanel("selection-row-hold-near-top",below:true)
+    moveWithOpenMenu(to:.init(x:window.minX+window.width*0.6,y:window.maxY-96))
+    repeatTap("selection-row-near-bottom-after-move",below:false)
+    let report = XCTAttachment(string:observations.joined(separator:"\n")
+      + "\nAutomation timings include XCTest delivery and accessibility observation; they are not physical display latency.")
+    report.name = "selection-row-contact-and-placement"; report.lifetime = .keepAlways; add(report)
+    app.terminate()
+  }
+
   func testSelectionPaletteAndContextMenuStayAnchoredAndKeepThePaper() {
     continueAfterFailure = false
     let app = XCUIApplication()
@@ -3807,7 +3894,10 @@ final class DrawingResponsivenessTests: XCTestCase {
     let card = app.descendants(matching:.any).matching(identifier:"workspace-item-7e7a1000-0000-4000-8000-000000000004").firstMatch
     XCTAssertTrue(card.waitForExistence(timeout:5)); card.tap()
     XCTAssertFalse(app.buttons["open-workspace-item"].exists)
-    openNotebookSelectionMenu(on:card,in:app)
+    card.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)).press(forDuration:0.05)
+    let panel=app.otherElements["notebook-context-menu"]
+    XCTAssertTrue(panel.waitForExistence(timeout:3),"A selected cover exposes its actions with the same short repeat tap")
+    XCTAssertFalse(panel.frame.intersects(card.frame))
     let proof = XCTAttachment(screenshot:app.screenshot())
     proof.name = "notebook-context-actions"; proof.lifetime = .keepAlways; add(proof)
     notebookMenuAction("Открыть тетрадь",in:app)
