@@ -36,44 +36,74 @@ final class DocumentCanonicalPrintTests: XCTestCase {
     let identities = ["com.amirtlinov.notebook.mac", "com.amirtlinov.notebook.mac.architecture-tests",
       "com.amirtlinov.notebook.mac.acceptance.0123456789ab"]
     let directories = identities.map { DocumentCanonicalPrint.cacheDirectory(bundleIdentifier: $0, under: userCaches) }
-    let legacy = userCaches.appendingPathComponent("NotebookPrintedPages", isDirectory: true)
-    // One old sparse entry exceeds the unchanged 128 MiB budget. This exercises
-    // the real save/evict route with three compilations, not 100 large documents.
-    func oldEntry(in directory: URL) throws -> URL {
-      let folder = directory.appendingPathComponent(String(repeating: "a", count: 64), isDirectory: true)
-      try fm.createDirectory(at: folder, withIntermediateDirectories: true)
-      let file = folder.appendingPathComponent("pressure.bin")
-      XCTAssertTrue(fm.createFile(atPath: file.path, contents: nil))
-      let handle = try FileHandle(forWritingTo: file)
-      defer { try? handle.close() }
-      try handle.truncate(atOffset: 129 * 1024 * 1024)
-      try fm.setAttributes([.modificationDate: Date(timeIntervalSince1970: 1)], ofItemAtPath: folder.path)
-      return file
-    }
-    let oldFiles = try directories.map(oldEntry)
-    let legacyFile = try oldEntry(in: legacy)
+    let legacy = userCaches.appendingPathComponent("NotebookPrintedPages/untouched.txt")
+    try fm.createDirectory(at: legacy.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try Data("Another cache owner".utf8).write(to: legacy)
     let resources = Bundle.main.resourceURL!.appendingPathComponent("NotebookTypesetter", isDirectory: true)
     let document = document("Isolated printed cache.")
-    var saved: [(URL, Data)] = []
+
+    // The third owner begins with the replaced file layout, including a link
+    // to a sibling. Retiring this derived tree must only remove its own nodes.
+    let flat = directories[2].appendingPathComponent(String(repeating: "c", count: 64), isDirectory: true)
+    try fm.createDirectory(at: flat, withIntermediateDirectories: true)
+    try Data("obsolete artifact".utf8).write(to: flat.appendingPathComponent("map.json"))
+    try fm.createSymbolicLink(at: flat.appendingPathComponent("sibling"), withDestinationURL: directories[1])
+    let pressure = String(repeating: "f", count: 64)
+    var saved: [(URL, String, Data)] = []
     for (index, directory) in directories.enumerated() {
       let store = NotebookPrintedDocumentStore(resources: resources, directory: directory)
-      let artifact = try await store.artifact(for: document)
-      XCTAssertTrue(artifact.pdf.starts(with: Data("%PDF-".utf8)))
-      XCTAssertFalse(fm.fileExists(atPath: oldFiles[index].path), "This application's actual eviction ran")
-      for other in oldFiles.dropFirst(index + 1) {
-        XCTAssertTrue(fm.fileExists(atPath: other.path), "A sibling's older entry was not evicted")
+      if index == 0 {
+        // Let the owner create its real schema without compiling. Four bounded
+        // payloads fill exactly 128 MiB; the next save must evict only one.
+        do {
+          _ = try await store.artifact(for: document, inputFactory: { throw NotebookTypesetterError("fixture_schema_ready") })
+          XCTFail("The empty cache unexpectedly had paper")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("fixture_schema_ready")) }
+        var sql = "BEGIN;"
+        for number in 0..<4 {
+          let identity = String(repeating: "a", count: 63) + String(number)
+          sql += "INSERT INTO artifacts(identity,bucket,accessed) VALUES ('\(identity)','\(pressure)',\(number + 1)); INSERT INTO payloads(identity,metadata,pdf,synctex,interactive_map) VALUES ('\(identity)',zeroblob(8388608),zeroblob(16777216),zeroblob(4194304),zeroblob(4194304));"
+        }
+        try DocumentPrintCacheFixture.execute(directory, sql + "COMMIT;")
       }
-      XCTAssertTrue(fm.fileExists(atPath: legacyFile.path), "No migration, eviction or deletion of the old shared cache")
-      let folder = try XCTUnwrap(fm.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil).first)
-      let pdf = folder.appendingPathComponent("document.pdf")
-      XCTAssertEqual(try Data(contentsOf: pdf), artifact.pdf)
-      saved.append((pdf, artifact.pdf))
-      let cached = try await store.artifact(for: document)
-      XCTAssertEqual(cached.pdf, artifact.pdf)
-      XCTAssertEqual(cached.syncTeX, artifact.syncTeX)
+      let artifact = try await store.artifact(for: document)
+      let identity = try artifact.dependencies.identity
+      XCTAssertTrue(artifact.pdf.starts(with: Data("%PDF-".utf8)))
+      if index == 0 {
+        let remaining = try XCTUnwrap(DocumentPrintCacheFixture.bytes(directory, "SELECT CAST(count(*) AS TEXT) FROM artifacts WHERE bucket='\(pressure)'"))
+        XCTAssertEqual(String(decoding: remaining, as: UTF8.self), "3", "Only the required least-recent entry is evicted")
+      }
+      XCTAssertEqual(try Data(contentsOf: legacy), Data("Another cache owner".utf8))
+      let cached = try await NotebookPrintedDocumentStore(resources: resources, directory: directory).artifact(for: document, inputFactory: {
+        throw NotebookTypesetterError("A saved artifact must reopen without compilation")
+      })
+      XCTAssertEqual(cached.pdf, artifact.pdf); XCTAssertEqual(cached.syncTeX, artifact.syncTeX)
+      saved.append((directory, identity, artifact.pdf))
+      for (root, key, expected) in saved {
+        XCTAssertEqual(try DocumentPrintCacheFixture.bytes(root, "SELECT pdf FROM payloads WHERE identity='\(key)'"), expected)
+      }
     }
-    for (path, expected) in saved { XCTAssertEqual(try Data(contentsOf: path), expected) }
-    XCTAssertTrue(fm.fileExists(atPath: legacyFile.path))
+    XCTAssertFalse(fm.fileExists(atPath: flat.path), "The replaced file cache has no fallback reader")
+    // Neither a linked root nor a linked database may expose another owner's
+    // artifact. A failing input factory prevents another compiler from hiding it.
+    for boundary in 0..<2 {
+      let root = userCaches.appendingPathComponent("linked-cache-\(boundary)", isDirectory: true)
+      if boundary == 0 { try fm.createSymbolicLink(at: root, withDestinationURL: directories[0]) }
+      else {
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        try fm.createSymbolicLink(at: root.appendingPathComponent("artifacts.sqlite3"),
+          withDestinationURL: directories[0].appendingPathComponent("artifacts.sqlite3"))
+      }
+      do {
+        _ = try await NotebookPrintedDocumentStore(resources: resources, directory: root).artifact(for: document, inputFactory: {
+          throw NotebookTypesetterError("cache_symlink_rejected")
+        })
+        XCTFail("A linked cache served another owner's paper")
+      } catch { XCTAssertTrue(error.localizedDescription.contains("cache_symlink_rejected"), error.localizedDescription) }
+    }
+    for (root, key, expected) in saved {
+      XCTAssertEqual(try DocumentPrintCacheFixture.bytes(root, "SELECT pdf FROM payloads WHERE identity='\(key)'"), expected)
+    }
   }
 
   func testCancelledQueuedRasterDoesNotCancelItsSourceOrLeakTheParserAndAdmission() async throws {

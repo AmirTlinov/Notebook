@@ -72,6 +72,10 @@ match verification and remain unchanged.
 The source snapshot reuses the selected checkout’s prepared Codex/Node runtime.
 The same preparer still checks its pinned version marker and official signatures;
 Mac build phases receive that exact stage, not a fresh network-only copy.
+`NOTEBOOK_TYPESETTER_RUNTIME` selects the print compiler stage for verification
+and pair builds. Both platforms use that same resolved path; without an override
+the checkout's `.build/notebook-typesetter-runtime` remains the default. The
+preparer verifies source identity and resources before reusing a stage.
 
 Both apps require genuine Apple Development signatures from team `M94V58FCVP`,
 matching pair versions and exact bundle identities:
@@ -135,6 +139,12 @@ produce discarded digests. Primary source, `/input`, generated auxiliary files
 and outputs retain their digest semantics; TeX convergence still compares
 actual auxiliary bytes. Resource validation, bounded memory and cancellation
 remain owned by the same capability runtime.
+
+The pinned AOT generator polls cancellation at guest function entries and loop
+back-edge targets; forward-only labels carry no gate. It rejects unknown control
+flow. `build/test-supervisor.py` executes generated loops, indirect recursion and
+trap recovery; native checks join ten cancelled compilations. Resource reads
+validate the ZIP entry's CRC and declared length before admitting cached bytes.
 
 `bundle_notebook_typesetter.py` copies only declared, hash-checked resources.
 Release validates the inventory in both apps. `--check` neither downloads nor

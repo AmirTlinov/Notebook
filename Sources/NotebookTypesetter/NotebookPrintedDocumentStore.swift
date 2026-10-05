@@ -8,6 +8,7 @@ public actor NotebookPrintedDocumentStore {
   private let compiler: NotebookTypesetter
   private let directory: URL
   private let resources: URL
+  private var disk: NotebookPrintedArtifactCache?
   private struct Job { let id = UUID(); let task: Task<NotebookPrintedDocument, Error>; let demand: NotebookTypesetterDemand; var readers: Set<UUID>; var saved = false }
   private var jobs: [String: Job] = [:]
   private final class WeakArtifact {
@@ -87,6 +88,7 @@ public actor NotebookPrintedDocumentStore {
         demand.record("save", since: saveStart)
         current.saved = true; jobs[key] = current
       }
+      try Task.checkCancellation()
       let bindStart = ContinuousClock.now
       defer { demand.record("bind", since: bindStart) }
       return remember(try value.bound(to: document))
@@ -122,29 +124,50 @@ public actor NotebookPrintedDocumentStore {
     let diagnostics: [NotebookPrintDiagnostic]
     let guestMemoryBytes: Int
   }
-  private func cached(_ document: DocumentDocument, compilerRevision: String) throws -> NotebookPrintedDocument? {
-    let fm = FileManager.default
-    guard let folders = try? fm.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.contentModificationDateKey]) else { return nil }
-    let ordered = folders.filter { NotebookProgramPackage.validHash($0.lastPathComponent) }.sorted {
-      ((try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast)
-        > ((try? $1.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast)
+  /// Every successful print reads its entrypoint. It selects the input group;
+  /// the observed read set still decides which version inside that group fits.
+  private func bucket(_ document: DocumentDocument, compilerRevision: String) throws -> String {
+    guard let source = document.files.first(where: { $0.path == document.entrypoint && $0.resource == nil })?.source else {
+      throw NotebookTypesetterError("typesetter_entrypoint_missing_encoding_or_limit")
     }
-    for folder in ordered {
+    let key = Self.hash(try JSONEncoder().encode([DocumentPrintSourceMap.renderingRecipe,
+      compilerRevision, document.entrypoint, Self.hash(Data(source.utf8))]))
+    return key
+  }
+  private func diskCache() throws -> NotebookPrintedArtifactCache {
+    if let disk { return disk }
+    let cache = try NotebookPrintedArtifactCache(directory: directory)
+    disk = cache
+    return cache
+  }
+  private func cached(_ document: DocumentDocument, compilerRevision: String) throws -> NotebookPrintedDocument? {
+    let bucket = try bucket(document, compilerRevision: compilerRevision)
+    guard let cache = try? diskCache() else { return nil }
+    var metadata: Metadata?
+    while let record = try? cache.find(in: bucket, matching: { identity, bytes in
       try Task.checkCancellation()
-      guard let meta = try? JSONDecoder().decode(Metadata.self, from: read(folder.appendingPathComponent("map.json"), limit: 8*1024*1024)),
-        (try? meta.dependencies.identity) == folder.lastPathComponent,
-        (try? meta.dependencies.matches(document, compilerRevision: compilerRevision)) == true else { continue }
-      if let value = try? load(document, folder: folder, metadata: meta) { return value }
+      guard let meta = try? JSONDecoder().decode(Metadata.self, from: bytes),
+        (try? meta.dependencies.identity) == identity,
+        (try? meta.dependencies.matches(document, compilerRevision: compilerRevision)) == true else { return false }
+      metadata = meta
+      return true
+    }) {
+      if let metadata {
+        do { return try load(document, record: record, metadata: metadata) }
+        catch is CancellationError { throw CancellationError() }
+        catch { }
+      }
+      // A corrupt derived record cannot block a valid older version or editing.
+      try Task.checkCancellation()
+      do { try cache.remove(record.identity) } catch { return nil }
     }
     return nil
   }
-  private func load(_ document: DocumentDocument, folder: URL, metadata meta: Metadata) throws -> NotebookPrintedDocument {
+  private func load(_ document: DocumentDocument, record: NotebookPrintedArtifactCache.Record, metadata meta: Metadata) throws -> NotebookPrintedDocument {
     let source = document.files.first { $0.path == document.entrypoint && $0.resource == nil }!.source
-    let pdf = try read(folder.appendingPathComponent("document.pdf"), limit: 16*1024*1024)
-    guard Self.hash(pdf) == meta.pdfSHA256 else { throw NotebookTypesetterError("print_cache_invalid") }
-    let interactiveMap = try read(folder.appendingPathComponent("document.nbmap"), limit: 4*1024*1024)
-    let syncTeX = try read(folder.appendingPathComponent("document.synctex.gz"), limit: 4*1024*1024)
-    guard meta.hashes["document.synctex.gz"] == Self.hash(syncTeX),
+    let pdf = record.pdf, syncTeX = record.syncTeX, interactiveMap = record.interactiveMap
+    guard Self.hash(pdf) == meta.pdfSHA256,
+      meta.hashes["document.synctex.gz"] == Self.hash(syncTeX),
       meta.hashes["document.nbmap"] == Self.hash(interactiveMap) else { throw NotebookTypesetterError("print_cache_invalid") }
     let map = try DocumentPrintSourceMap(document: document, source: source, pdfSHA256: meta.pdfSHA256,
       compilerRevision: meta.dependencies.compilerRevision)
@@ -152,7 +175,6 @@ public actor NotebookPrintedDocumentStore {
     let projection = try NotebookPrintedDocument.projection(syncTeX: syncTeX, files: map.files, pages: pages)
     guard try NotebookPrintedDocument.regionMap(projection.interactiveRegions) == interactiveMap else { throw NotebookTypesetterError("print_cache_invalid") }
     try Task.checkCancellation()
-    try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: folder.path)
     return .init(document: document, source: source, pdf: pdf, syncTeX: syncTeX, sourceMap: map,
       interactiveMap: interactiveMap, pages: pages, projection: projection, dependencies: meta.dependencies,
       diagnostics: meta.diagnostics.map { $0.bound(to: document) }, log: meta.log, guestMemoryBytes: meta.guestMemoryBytes)
@@ -172,35 +194,15 @@ public actor NotebookPrintedDocumentStore {
     return data
   }
   private func save(_ value: NotebookPrintedDocument) throws {
-    let fm = FileManager.default, key = try value.dependencies.identity
-    try fm.createDirectory(at: directory, withIntermediateDirectories: true)
-    let pending = directory.appendingPathComponent("pending-" + UUID().uuidString, isDirectory: true)
-    try fm.createDirectory(at: pending, withIntermediateDirectories: false)
-    defer { try? fm.removeItem(at: pending) }
     let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
-    let hashes = ["document.synctex.gz": Self.hash(value.syncTeX), "document.nbmap": Self.hash(value.interactiveMap)]
     let metadata = Metadata(dependencies: value.dependencies, pdfSHA256: value.sourceMap.pdfSHA256,
-      hashes: hashes, log: value.log, diagnostics: value.diagnostics, guestMemoryBytes: value.guestMemoryBytes)
-    for (name, data) in [("map.json", try encoder.encode(metadata)), ("document.pdf", value.pdf),
-      ("document.synctex.gz", value.syncTeX), ("document.nbmap", value.interactiveMap)] {
-      try data.write(to: pending.appendingPathComponent(name), options: .atomic)
-    }
-    let target = directory.appendingPathComponent(key, isDirectory: true)
-    if fm.fileExists(atPath: target.path) { try fm.removeItem(at: target) }
-    try fm.moveItem(at: pending, to: target)
-    func modified(_ url: URL) -> Date { (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast }
-    let entries = try fm.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.contentModificationDateKey])
-    for orphan in entries where orphan.lastPathComponent.hasPrefix("pending-") && modified(orphan) < Date().addingTimeInterval(-3600) {
-      try? fm.removeItem(at: orphan)
-    }
-    let folders = entries.filter { $0.lastPathComponent.count == 64 }.sorted { modified($0) > modified($1) }
-    var kept = 0
-    for folder in folders {
-      let files = try fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.fileSizeKey])
-      kept += files.reduce(0) { $0 + ((try? $1.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) }
-      if kept > 128*1024*1024, folder != target { try fm.removeItem(at: folder) }
-    }
+      hashes: ["document.synctex.gz": Self.hash(value.syncTeX), "document.nbmap": Self.hash(value.interactiveMap)],
+      log: value.log, diagnostics: value.diagnostics, guestMemoryBytes: value.guestMemoryBytes)
+    try diskCache().save(.init(identity: value.dependencies.identity, metadata: encoder.encode(metadata),
+      pdf: value.pdf, syncTeX: value.syncTeX, interactiveMap: value.interactiveMap),
+      in: bucket(value.document, compilerRevision: value.dependencies.compilerRevision))
   }
+
 }
 
 extension NotebookPrintedDocument {

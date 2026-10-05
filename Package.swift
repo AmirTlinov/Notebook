@@ -26,7 +26,7 @@ let package = Package(
     .systemLibrary(name: "CSQLite", pkgConfig: "sqlite3"),
     .systemLibrary(name: "CZlib"),
     .target(name: "CNotebookTypesetter", publicHeadersPath: "include", linkerSettings: [.linkedLibrary("z")]),
-    .target(name: "NotebookTypesetter", dependencies: ["NotebookCore", "CNotebookTypesetter"]),
+    .target(name: "NotebookTypesetter", dependencies: ["NotebookCore", "CNotebookTypesetter", "CSQLite"]),
     .target(name: "NotebookSurface"),
     .executableTarget(name: "NotebookSurfaceWasm", dependencies: ["NotebookSurface"]),
     .target(name: "NotebookCore", dependencies: ["CSQLite", "CZlib", "NotebookSurface"]),

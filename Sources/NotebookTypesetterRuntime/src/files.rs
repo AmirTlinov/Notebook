@@ -262,6 +262,12 @@ impl Bundle {
             // Charge before decompression; a lazy index does not relax bounds.
             let mut data = Buffer::new(Vec::new(), budget)?; data.resize(size)?;
             file.read_exact(data.bytes.owned()?).map_err(|error| budget.resource_error(error))?;
+            // Zip validates CRC at EOF, not after an exact-sized read. One
+            // bounded probe also rejects a false uncompressed-size header.
+            let mut end = [0];
+            if file.read(&mut end).map_err(|error| budget.resource_error(error))? != 0 {
+                return Err(budget.resource_error("TeX resource size differs"));
+            }
             Ok(Arc::new(Mutex::new(data)))
         })
     }
@@ -325,7 +331,9 @@ impl Directory {
         let name = self.path(name)?;
         let mut files = self.files.lock().unwrap();
         if files.len() >= MAX_ENTRIES && !files.contains_key(&name) { return Err(Error::io()); }
-        if files.contains_key(&name) || files.keys().any(|p| p.starts_with(&(name.clone()+"/")))
+        let prefix = format!("{name}/");
+        if files.contains_key(&name)
+            || files.range(prefix.clone()..).next().is_some_and(|(path, _)| path.starts_with(&prefix))
             || name.match_indices('/').any(|(at, _)| files.contains_key(&name[..at])) { return Err(Error::exist()); }
         files.insert(name, Arc::new(Mutex::new(Buffer::admit(bytes, &self.budget)?))); Ok(())
     }
@@ -349,7 +357,7 @@ impl Directory {
     fn is_directory(&self, path: &str) -> bool {
         let prefix = format!("{path}/");
         self.directories.lock().unwrap().contains(path)
-            || self.files.lock().unwrap().keys().any(|name| name.starts_with(&prefix))
+            || self.files.lock().unwrap().range(prefix.clone()..).next().is_some_and(|(name, _)| name.starts_with(&prefix))
     }
     fn child(&self, path: &str) -> Self { Self { prefix: format!("{path}/"), ..self.clone() } }
 
@@ -582,13 +590,63 @@ mod tests {
     }
     #[test]
     fn namespace_rejects_duplicates_and_file_directory_collisions() {
+        let names = ["a-plain.tex", "a.b.tex", "a/b.tex", "ab.tex"];
+        for order in [names.to_vec(), names.into_iter().rev().collect()] {
+            let directory = Directory::new(false, &Arc::new(Budget::default()));
+            for name in order { directory.put(name, vec![]).unwrap(); }
+            assert!(directory.put("a/b.tex", vec![]).is_err());
+            assert!(directory.put("a", vec![]).is_err());
+            assert!(directory.put("a/b.tex/c", vec![]).is_err());
+            assert_eq!(ready(directory.get_path_filestat("a", false)).unwrap().filetype, FileType::Directory);
+            assert!(ready(directory.get_path_filestat("a-", false)).is_err());
+            let entries: Vec<_> = ready(directory.readdir(0u64.into())).unwrap().map(|v| v.unwrap().name).collect();
+            assert_eq!(entries, ["a", "a-plain.tex", "a.b.tex", "ab.tex"]);
+        }
         let directory = Directory::new(false, &Arc::new(Budget::default()));
-        directory.put("a/b.tex", vec![]).unwrap();
+        directory.put("a", vec![]).unwrap();
         assert!(directory.put("a/b.tex", vec![]).is_err());
-        assert!(directory.put("a", vec![]).is_err());
-        assert!(directory.put("a/b.tex/c", vec![]).is_err());
-        let entries: Vec<_> = ready(directory.readdir(0u64.into())).unwrap().map(|v| v.unwrap().name).collect();
-        assert_eq!(entries, ["a"]);
+    }
+
+    #[test]
+    fn archive_entries_require_complete_bytes_and_matching_crc() {
+        #[derive(Clone, Copy)]
+        enum Damage { None, Checksum, Size(u32) }
+        let content = b"Immutable archive payload";
+        let cases: [(&str, &[u8], Damage); 6] = [
+            ("valid", content, Damage::None), ("checksum", content, Damage::Checksum),
+            ("short", content, Damage::Size(content.len() as u32 - 1)),
+            ("long", content, Damage::Size(content.len() as u32 + 1)),
+            ("empty", b"", Damage::None), ("empty-checksum", b"", Damage::Checksum),
+        ];
+        for method in [zip::CompressionMethod::Stored, zip::CompressionMethod::Deflated] {
+            for (case, source, damage) in cases {
+                let mut zip = zip::ZipWriter::new(io::Cursor::new(Vec::new()));
+                zip.start_file("entry.sty", zip::write::SimpleFileOptions::default().compression_method(method)).unwrap();
+                zip.write_all(source).unwrap();
+                let mut bytes = zip.finish().unwrap().into_inner();
+                let central = bytes.windows(4).position(|v| v == b"PK\x01\x02").unwrap();
+                match damage {
+                    Damage::None => {},
+                    Damage::Checksum => bytes[central + 16] ^= 1,
+                    Damage::Size(size) => bytes[central + 24..central + 28].copy_from_slice(&size.to_le_bytes()),
+                }
+                let path = std::env::temp_dir().join(format!("notebook-archive-validation-{}-{method:?}-{case}.zip", std::process::id()));
+                File::create_new(&path).unwrap().write_all(&bytes).unwrap();
+                let budget = Arc::new(Budget::default());
+                let result = Bundle::new(&path).read("entry.sty", &budget);
+                std::fs::remove_file(path).unwrap();
+                if matches!(damage, Damage::None) {
+                    let buffer = result.unwrap();
+                    assert_eq!(buffer.lock().unwrap().bytes.data(), source);
+                    assert!(budget.resource_failure().is_none());
+                    drop(buffer);
+                } else {
+                    assert!(result.is_err(), "{method:?}/{case} must fail before caching its bytes");
+                    assert!(budget.resource_failure().is_some(), "{method:?}/{case} must fail the physical run");
+                }
+                assert_eq!(budget.bytes.load(Ordering::Relaxed), 0, "{method:?}/{case} retains a byte charge");
+            }
+        }
     }
     #[test]
     fn entry_budget_does_not_reduce_open_handle_budget() {

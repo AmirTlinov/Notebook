@@ -1,5 +1,5 @@
 //! The same non-JIT, capability-only typesetter on iPad and Mac. Every guest
-//! basic block (TeX, fonts, BibTeX and PDF) has a bounded cancellation checkpoint.
+//! function entry and loop (TeX, fonts, BibTeX and PDF) has a cancellation gate.
 //! A trap stays in generated C; no Rust or Swift host frame is skipped.
 mod files;
 mod ffi;
