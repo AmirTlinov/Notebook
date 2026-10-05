@@ -4,14 +4,13 @@ import simd
 /// Raw measurements map to the single normalized strip. A coincident sample
 /// replaces the final point without invalidating the already sealed prefix.
 struct IncrementalInkMesh {
-  private(set) var nodes: [SpatialInkGeometry.Node] = []
+  private var geometry = IncrementalInkGeometry()
+  var nodes: [SpatialInkGeometry.Node] { geometry.nodes }
   private(set) var chunks: [SpatialInkGeometry.Chunk] = []
   private(set) var chunkRevisions: [UInt64] = []
   private var revision: UInt64 = 0
-  private(set) var rebuiltPointCount = 0
-  private(set) var rebuiltNodeStart = 0
-  private var normalized: [SpatialInkGeometry.RenderPoint] = []
-  private var rawToNormalized: [Int] = []
+  var rebuiltPointCount: Int { geometry.rebuiltPointCount }
+  var rebuiltNodeStart: Int { geometry.rebuiltNodeStart }
   private var color: SIMD4<Float>?
   let eraser: Bool
   init(eraser: Bool = false) { self.eraser = eraser }
@@ -29,39 +28,17 @@ struct IncrementalInkMesh {
   mutating func update(count: Int,sample: (Int)->SpatialInkSample,
     forEach: (Range<Int>,(SpatialInkSample)->Void)->Void,
     changedFrom: Int,color: SIMD4<Float>,projection: InkSampleProjection) {
-    let oldCount = normalized.count
-    let start = self.color == color ? max(0, min(changedFrom, rawToNormalized.count, count)) : 0
+    let start = self.color == color ? changedFrom : 0
     self.color = color
-    var changed: Int
-    if start == 0 {
-      normalized.removeAll(keepingCapacity: true)
-      rawToNormalized.removeAll(keepingCapacity: true)
-      changed = 0
-    } else {
-      let last = rawToNormalized[start - 1]
-      let restored = SpatialInkGeometry.renderPoint(from:sample(start-1),color:color,projection:projection)
-      changed = normalized[last] == restored ? last + 1 : last
-      normalized.removeSubrange((last + 1)...)
-      normalized[last] = restored
-      rawToNormalized.removeSubrange(start...)
-    }
-    forEach(start..<count) { sample in
-      let next = SpatialInkGeometry.renderPoint(from:sample,color:color,projection:projection)
-      if let last = normalized.last, SpatialInkGeometry.areCoincident(last, next) {
-        changed = min(changed, normalized.count - 1)
-        normalized[normalized.count - 1] = next
-      } else {
-        normalized.append(next)
-      }
-      rawToNormalized.append(normalized.count - 1)
-    }
-
-    rebuiltNodeStart = max(0, min(changed, oldCount) - 1)
-    nodes.removeSubrange(min(rebuiltNodeStart, nodes.count)...)
-    for i in rebuiltNodeStart..<normalized.count {
-      nodes.append(InkRenderGeometry.node(at: i, in: normalized))
-    }
-    rebuiltPointCount = normalized.count - rebuiltNodeStart
+    geometry.update(count: count, changedFrom: start,
+      point: { SpatialInkGeometry.renderPoint(from: sample($0), color: color, projection: projection) },
+      forEach: { range, emit in
+        // Both traversals are synchronous. Borrow the callback across the
+        // projection closure without materializing another sample buffer.
+        withoutActuallyEscaping(emit) { borrowed in
+          forEach(range) { borrowed(SpatialInkGeometry.renderPoint(from: $0, color: color, projection: projection)) }
+        }
+      })
     let firstSegment = max(0, rebuiltNodeStart - 1)
     let chunkIndex = min(firstSegment / InkRenderGeometry.maximumSegments, chunks.count)
     chunks.removeSubrange(chunkIndex...)

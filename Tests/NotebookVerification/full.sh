@@ -121,6 +121,7 @@ npm ci --ignore-scripts --prefix "$ROOT/Tests/NotebookRecognitionHarness"
 npm test --prefix "$ROOT/Tests/NotebookRecognitionHarness" 2>&1 | tee "$EVIDENCE/recognition-preparation.log"
 
 cd "$ROOT/Applications"
+node "$ROOT/MCP/build-surface.mjs" > "$EVIDENCE/surface-resources.json"
 NOTEBOOK_TYPESETTER_RUNTIME=${NOTEBOOK_TYPESETTER_RUNTIME:-"$ROOT/.build/notebook-typesetter-runtime"}
 export NOTEBOOK_TYPESETTER_RUNTIME
 for platform in macosx iphoneos; do

@@ -7,6 +7,7 @@
     <span id="status" role="status">Подключение…</span></header>
   <main id="workspace" tabindex="0" aria-label="Рабочая поверхность Notebook">
     <svg id="paper" xmlns="http://www.w3.org/2000/svg" aria-label="Доска Notebook"><g id="material"></g><g id="selection"></g></svg>
+    <canvas id="ink-preview" aria-hidden="true" hidden></canvas>
     <textarea id="text-editor" aria-label="Текст элемента" hidden spellcheck="false"></textarea>
     <span id="coverage"></span>
     <div id="message" role="alert" hidden><span></span><button id="retry">Повторить</button></div>
@@ -14,6 +15,7 @@
   <nav aria-label="Инструменты Notebook">
     <button data-tool="select" aria-label="Выделение (V)" title="Выделение (V). Перетаскивание пустого места двигает доску" aria-pressed="true">↖</button>
     <button data-tool="hand" aria-label="Перемещение доски (H)" title="Перемещение доски (H), пробел или средняя кнопка" aria-pressed="false">✋</button>
+    <button data-tool="pen" aria-label="Ручка (P)" title="Ручка (P)" aria-pressed="false">✎</button>
     <button data-tool="text" aria-label="Текст (T)" title="Текст (T). ⌘Enter — сохранить, Escape — отменить" aria-pressed="false">T</button>
     <button data-tool="rectangle" aria-label="Прямоугольник" aria-pressed="false">□</button>
     <button data-tool="ellipse" aria-label="Эллипс" aria-pressed="false">○</button>

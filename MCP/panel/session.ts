@@ -63,15 +63,22 @@ export class NotebookSession {
     this.app.ontoolresult=result=>{
       // The host hands this view its initial surface. Later tool calls cannot
       // redirect a mounted view or an in-progress human gesture.
-      if(this.initialClaimed)return;
+      if(this.closed||this.initialClaimed)return;
       try { const value=body(result as ToolResult);if(isSnapshot(value)){
         this.initialClaimed=true;this.snapshot=value;this.onStatus("Подготовка поверхности…");void this.refresh(true);
       } }
       catch(error){this.report(error,null);}
     };
-    this.app.onteardown=async()=>{this.closed=true;this.presented=false;++this.generation;clearInterval(this.timer);clearTimeout(this.refreshTimer);clearTimeout(this.contextTimer);this.contextTimer=undefined;
-      this.pending?.reject(new Error("Панель закрыта."));this.pending=undefined;this.onClose();this.onStatus("Панель закрыта");return {};};
-    await this.app.connect();
+    this.app.onteardown=async()=>{
+      if(this.closed)return {};
+      this.closed=true;this.presented=false;++this.generation;
+      clearInterval(this.timer);clearTimeout(this.refreshTimer);clearTimeout(this.contextTimer);
+      this.timer=undefined;this.refreshTimer=undefined;this.contextTimer=undefined;
+      this.pending?.reject(new Error("Панель закрыта."));this.pending=undefined;
+      this.busy=false;this.releaseReaders();
+      this.onStatus("Панель закрыта");this.onClose();return {};
+    };
+    try{await this.app.connect();}catch(error){if(!this.closed)throw error;}
     if(this.closed)return;
     this.timer=setInterval(()=>{if(!document.hidden&&!this.suspended&&!this.busy)void this.refresh();},1500);
   }
@@ -80,6 +87,7 @@ export class NotebookSession {
     const {workspaceID,target,socketKey}=this.snapshot;return {workspaceID,target,socketKey};
   }
   viewportChanged(){
+    if(this.closed)return;
     this.boundsDirty=this.needsPresentation();++this.viewRevision;this.queueContext();
     if(this.boundsDirty){if(!this.viewportRefreshQueued)this.queueRefresh();}
     else {clearTimeout(this.refreshTimer);this.refreshTimer=undefined;this.viewportRefreshQueued=false;}
@@ -89,8 +97,9 @@ export class NotebookSession {
     this.refreshTimer=setTimeout(()=>{this.refreshTimer=undefined;this.viewportRefreshQueued=true;this.drainRefresh();},80);
   }
   private drainRefresh(){
+    if(this.closed)return;
     if(!this.boundsDirty){clearTimeout(this.refreshTimer);this.refreshTimer=undefined;this.viewportRefreshQueued=false;}
-    if(this.closed||this.reading||this.suspended||this.busy||this.pending)return;
+    if(this.reading||this.suspended||this.busy||this.pending)return;
     if(this.forcedRefreshQueued||this.viewportRefreshQueued)void this.refresh(this.forcedRefreshQueued);
   }
   async openSurface(target:PanelTarget,camera?:PanelView["camera"]){
@@ -155,16 +164,19 @@ export class NotebookSession {
     }catch(error){if(!this.stale(request,generation))this.report(error,async()=>{await this.refresh(true);});}
     finally{
       this.reading=false;
-      for(const resolve of this.readers.splice(0))resolve();
-      if(viewRevision!==this.viewRevision){
-        this.boundsDirty=this.needsPresentation();
-        if(this.boundsDirty&&this.refreshTimer===undefined)this.viewportRefreshQueued=true;
+      this.releaseReaders();
+      if(!this.closed){
+        if(viewRevision!==this.viewRevision){
+          this.boundsDirty=this.needsPresentation();
+          if(this.boundsDirty&&this.refreshTimer===undefined)this.viewportRefreshQueued=true;
+        }
+        // A useful intermediate cohort can already cover the final camera. Only
+        // unmet viewport demand survives; an elapsed coalesce never waits twice.
+        queueMicrotask(()=>this.drainRefresh());
       }
-      // A useful intermediate cohort can already cover the final camera. Only
-      // unmet viewport demand survives; an elapsed coalesce never waits twice.
-      queueMicrotask(()=>this.drainRefresh());
     }
   }
+  private releaseReaders(){for(const resolve of this.readers.splice(0))resolve();}
   private stale(request:PanelAddress,generation:number){return this.closed||generation!==this.generation
     ||!sameAddress(request,this.address())||this.suspended||this.busy||!!this.pending;}
   async save(request:PanelMutation){return this.mutate("notebook_panel_edit",request);}
@@ -180,22 +192,28 @@ export class NotebookSession {
     void this.sendPending();return completion;
   }
   private async sendPending() {
-    if(!this.pending||this.busy)return;
+    if(this.closed||!this.pending||this.busy)return;
     this.busy=true;this.onStatus("Сохранение…");
     const pending=this.pending;
     try {
-      body(await this.app.callServerTool({name:pending.name,arguments:pending.arguments}) as ToolResult);
+      const result=await this.app.callServerTool({name:pending.name,arguments:pending.arguments}) as ToolResult;
+      if(this.closed||this.pending!==pending)return;
+      body(result);
       this.pending=undefined;this.synchronizing=true;this.onError("",null);pending.resolve();
     }catch(error) {
+      if(this.closed||this.pending!==pending)return;
       const uncertain=!(error instanceof PanelError)||["ipc_timeout","ipc_unavailable","ipc_protocol"].includes(error.code);
       if(!uncertain){this.pending=undefined;this.failedWrite=true;pending.reject(error);}
       this.report(error,uncertain?()=>this.sendPending():null);
     }finally {
       this.busy=false;
-      if(!this.pending){await this.refresh();}
+      // The accepted command retires any pre-contact read. Its replacement
+      // must survive that reader's slot, even when camera coverage is current.
+      if(!this.closed&&!this.pending){await this.refresh(true);}
     }
   }
   context(selection:PanelSelection|null) {
+    if(this.closed)return;
     this.contextSelection=selection;clearTimeout(this.contextTimer);this.contextTimer=undefined;void this.publishContext();
   }
   private queueContext(){
@@ -225,6 +243,7 @@ export class NotebookSession {
     this.snapshot=value;this.presentedView={...view,camera:value.appearance.camera};this.presented=true;this.synchronizing=false;this.onSnapshot(value);this.onStatus("Подключено");
   }
   private report(error:unknown,retry:(()=>Promise<void>)|null) {
+    if(this.closed)return;
     this.onStatus("Проверьте связь");
     this.onError(error instanceof Error?error.message:String(error),retry);
   }

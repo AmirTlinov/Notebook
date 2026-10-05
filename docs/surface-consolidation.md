@@ -1,7 +1,8 @@
 # Portable Notebook surface
 
-`NotebookSurface` owns tiled coordinates, camera transforms and canonical ink
-geometry. `NotebookCore` exports those same types in its content API; its
+`NotebookSurface` owns tiled coordinates, camera trajectories, rectangular
+manipulation, pen pressure and incremental measured/predicted ink geometry.
+`NotebookCore` exports those same types in its content API; its
 `InkRenderBounds` only converts the portable envelope to CoreGraphics.
 Native Metal consumers use the extracted implementation directly.
 
@@ -10,6 +11,20 @@ Native Metal consumers use the extracted implementation directly.
 Its WASI adapter supplies clocks, randomness and diagnostic output; it grants
 no files, sockets or process environment. Content commands and SQLite remain
 with the native persistence owner.
+
+The browser input adapter retains measured PointerEvents and projects them into
+the physical owner. Predictions never enter a command. The WebGPU adapter paints
+Swift's compact nodes with the same strip/caps, premultiplied blend and MSAA as
+Metal; ordinary samples update only the changed tail. Contact and GPU capacities
+grow together, and device recovery replays the retained prepared geometry.
+
+`notebook_panel_edit` saves a pen contact through the existing native action
+owner: one `appendInkStroke`, stable action/stroke UUIDs and empty `sources`.
+Human contacts commute; addressed undo preserves other contacts. Page commands
+read the named stroke and drawing header. The disposable `page_ink_order` index
+supplies the complete painter frontier without reading older measurements.
+Human admission preserves native widths and page-edge measurements, up to
+65,536 samples. Agent admission retains its existing limits and read basis.
 
 ## Build and first host gate
 
@@ -26,6 +41,13 @@ node MCP/test/surface-parity.mjs
 node MCP/test/surface-host/build.mjs
 ```
 
+Native verification and pair builds prepare the WASM stage before invoking
+Xcode. Its sandboxed bundle phase reads `NOTEBOOK_SURFACE_STAGE` and checks the
+module against the current Swift inputs and byte digest; it never launches
+SwiftPM inside Xcode's script sandbox. A direct Xcode build requires
+`node MCP/build-surface.mjs` first. Pair snapshots reuse the checked stage from
+their original checkout. `node MCP/test/surface-stage.mjs` exercises this boundary.
+
 The last command prepares an isolated temporary MCP plugin in
 `.build/surface-host-plugin`; it never opens a Notebook store. Register its
 **absolute path** with `codex plugin marketplace add`, install
@@ -40,4 +62,5 @@ The parity check compares the actual native and WASM camera and ink outputs,
 including address limits, memory growth and refusal without partial writes.
 Bulk migration waits for this gate and the physical iPad scenario in
 [GUI-475](https://linear.app/main-cluster/issue/GUI-475).
-The existing panel remains active until this gate is accepted.
+This first slice extends the existing panel. Native raster coverage, polling and
+the Mac runtime remain until their respective accepted C2 and C4 replacements.

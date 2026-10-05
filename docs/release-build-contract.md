@@ -76,6 +76,10 @@ Mac build phases receive that exact stage, not a fresh network-only copy.
 and pair builds. Both platforms use that same resolved path; without an override
 the checkout's `.build/notebook-typesetter-runtime` remains the default. The
 preparer verifies source identity and resources before reusing a stage.
+The browser Swift module is also compiled before Xcode. `NOTEBOOK_SURFACE_STAGE`
+points at the original checkout's prepared WASM and receipt. The Mac bundle
+phase verifies that receipt against the snapshot's inputs and module bytes;
+the Xcode script sandbox remains enabled.
 
 Both apps require genuine Apple Development signatures from team `M94V58FCVP`,
 matching pair versions and exact bundle identities:

@@ -848,6 +848,8 @@ class SelectionTests(unittest.TestCase):
                 labels = [item[0] for item in calls]
                 self.assertEqual(labels.count("mcp-dependencies"), 1)
                 self.assertLess(labels.index("mcp-dependencies"), labels.index("mac-build-for-testing"))
+                self.assertEqual(labels.count("surface-resources"), 1)
+                self.assertLess(labels.index("surface-resources"), labels.index("mac-build-for-testing"))
                 dependency = next(item for item in calls if item[0] == "mcp-dependencies")
                 self.assertEqual(dependency[1], ["npm", "ci", "--ignore-scripts"])
                 self.assertEqual(dependency[2]["cwd"], self.root / "MCP")
@@ -855,6 +857,7 @@ class SelectionTests(unittest.TestCase):
                 build = next(item[1] for item in calls if item[0] == "mac-build-for-testing")
                 self.assertIn("NOTEBOOK_TYPESETTER_RUNTIME=" + str(self.root / "typesetter"), build)
                 self.assertIn("NOTEBOOK_TYPESCRIPT_RUNTIME=" + str(self.root / "typescript"), build)
+                self.assertIn("NOTEBOOK_SURFACE_STAGE=" + str(self.root.resolve() / ".build/surface"), build)
 
     def test_submitted_pixel_owner_selects_native_display_and_immutable_attention_contracts(self):
         self.change("Applications/Shared/NotebookWorkspacePresentation.swift")

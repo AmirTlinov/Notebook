@@ -9,7 +9,7 @@ import {McpServer} from '@modelcontextprotocol/server';
 import {RESOURCE_MIME_TYPE} from '@modelcontextprotocol/ext-apps/server';
 import {panelResourceURI, registerNotebookPanel} from '../src/panel-tools.js';
 import {NotebookSession} from '../panel/session.js';
-import type {PanelSnapshot} from '../panel/model.js';
+import type {PanelMutation, PanelSnapshot} from '../panel/model.js';
 
 type Value = Record<string, unknown>;
 type Reply = {result: Value} | {error: Value};
@@ -72,6 +72,165 @@ test('session coalesces viewport demand against accepted pixels without delaying
     t.mock.timers.tick(80);
     assert.equal(calls.length, scenario === 'covered' ? 2 : 3);
   });
+});
+
+function sessionSnapshot(cursor = '1'): PanelSnapshot {
+  return {...address, target: {...target, kind: 'board'}, cursor, worldOrigin: origin,
+    size: {width: 800, height: 600}, elements: [], cards: [], rawInkPresent: false,
+    unsupportedElements: [], history: {}, truncated: false,
+    appearance: {status: 'ready', requestID: randomUUID(), sourceRevision: cursor,
+      camera: {center: origin, scale: 1}, viewport: {x: 800, y: 600}, layers: []}};
+}
+
+async function controlledSession() {
+  const session = new NotebookSession(), events: string[] = [];
+  const calls: {name: string; arguments: Value;
+    resolve: (value: Awaited<ReturnType<typeof session.app.callServerTool>>) => void}[] = [];
+  let disposed = false, retry: (() => Promise<void>) | null = null;
+  const observe = (event: string) => {assert.equal(disposed, false, `Callback after disposal: ${event}`); events.push(event);};
+  session.app.connect = async () => {};
+  session.app.callServerTool = async input => new Promise(resolve => calls.push({name: input.name, arguments: input.arguments!, resolve}));
+  session.app.updateModelContext = async () => ({});
+  session.needsPresentation = () => {observe('coverage'); return true;};
+  session.onPrepareSnapshot = async () => {observe('prepare'); return true;};
+  session.onSnapshot = () => observe('snapshot');
+  session.onStatus = text => observe(text);
+  session.onError = (_message, action) => {observe('error'); retry = action;};
+  session.onClose = () => {observe('close'); disposed = true;};
+  session.snapshot = sessionSnapshot();
+  await session.connect();
+  const initial = session.refresh(true);
+  calls[0]!.resolve({content: [], structuredContent: sessionSnapshot()});
+  await initial;
+  // The registered handler does not consume request context in these scenarios.
+  const close = () => session.app.onteardown!({}, {} as never);
+  const mutation: PanelMutation = {...address, target: session.snapshot.target, actionID: randomUUID(), summary: 'Edit text',
+    operations: [{kind: 'updateElement', target: session.snapshot.target, id: 'text', values: {source: 'Edited'}}],
+    sources: [{id: 'text'}]};
+  return {session, calls, events, close, mutation, retry: () => retry};
+}
+
+test('session teardown releases readers and ignores late read and write completions', async t => {
+  for (const outcome of ['read', 'saved', 'conflict', 'uncertain'] as const) await t.test(outcome, async t => {
+    t.mock.timers.enable({apis: ['setTimeout', 'setInterval']});
+    const {session, calls, events, close, mutation} = await controlledSession();
+    const read = outcome === 'read' ? session.refresh(true) : undefined;
+    const fitResults: unknown[] = [];
+    const fits = read ? [session.requestFit(), session.requestFit()].map(async value => fitResults.push(await value)) : [];
+    const write = outcome !== 'read' ? assert.rejects(session.save(mutation), /Панель закрыта/) : undefined;
+    session.viewportChanged();
+    assert.equal(calls.length, 2);
+    await close();
+    await write;
+    await new Promise<void>(resolve => setImmediate(resolve));
+    assert.equal(fitResults.length, fits.length, 'Readers leave immediately, without waiting for the native read');
+    assert.ok(fitResults.every(value => value === undefined));
+    const afterClose = events.slice();
+    assert.equal(session.hasAppearance, false);
+    assert.equal(session.hasPending, false);
+    assert.equal(session.busy, false);
+    const result = outcome === 'read' ? sessionSnapshot('2') : outcome === 'saved' ? {status: 'saved'}
+      : {status: 'error', code: outcome === 'conflict' ? 'revision_conflict' : 'ipc_timeout', message: outcome};
+    calls[1]!.resolve({content: [], structuredContent: result,
+      ...(outcome === 'conflict' || outcome === 'uncertain' ? {isError: true} : {})});
+    await read;
+    await Promise.all(fits);
+    await new Promise<void>(resolve => setImmediate(resolve));
+    // Host notifications and viewport events may already be queued at teardown.
+    session.app.ontoolresult!({content: [], structuredContent: sessionSnapshot('3')});
+    session.viewportChanged();session.context(null);await close();
+    t.mock.timers.tick(3000);
+    await new Promise<void>(resolve => setImmediate(resolve));
+    assert.deepEqual(events, afterClose);
+    assert.equal(calls.length, 2, 'No late refresh, retry or polling after disposal');
+    assert.equal(session.snapshot?.cursor, '1');
+    assert.equal(session.mutationReady, false);
+  });
+});
+
+test('a confirmed pen contact replaces an in-flight old scene before the next polling tick', async t => {
+  t.mock.timers.enable({apis: ['setTimeout', 'setInterval']});
+  const {session, calls, close} = await controlledSession();
+  session.needsPresentation = () => false;
+  session.viewportChanged();
+  const oldRead = session.refresh();
+  const contact: PanelMutation = {...address, target: session.snapshot!.target,
+    actionID: randomUUID(), summary: 'Measured pen contact', sources: [],
+    operations: [{kind: 'appendInkStroke', target: session.snapshot!.target, id: randomUUID(),
+      values: {worldOrigin: origin, points: [{x: 0, y: 0, width: 2.2, opacity: 0.7,
+        timeOffset: 0.123456789, force: 0.45, azimuth: 1.2, altitude: 0.8}]}}]};
+  const saved = session.save(contact);
+  assert.equal(calls[2]!.name, 'notebook_panel_edit');
+  assert.equal(calls[2]!.arguments.actionID, contact.actionID);
+  assert.deepEqual(calls[2]!.arguments.operations, contact.operations);
+  assert.deepEqual(calls[2]!.arguments.sources, []);
+  calls[2]!.resolve({content: [], structuredContent: {status: 'saved', actionID: contact.actionID}});
+  await saved;
+  assert.equal(session.mutationReady, false, 'The sealed contact still awaits its accepted scene');
+  assert.equal(calls.length, 3, 'The old read retains the serial reader slot');
+  calls[1]!.resolve({content: [], structuredContent: sessionSnapshot('1')});
+  await oldRead;
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(calls.length, 4, 'Content refresh runs without advancing the 1500ms timer');
+  assert.equal(calls[3]!.name, 'notebook_panel_presentation');
+  assert.equal(calls[3]!.arguments.knownCursor, undefined, 'The old cohort cannot authorize an unchanged response');
+  calls[3]!.resolve({content: [], structuredContent: {...sessionSnapshot('2'), rawInkPresent: true,
+    history: {undoActionID: contact.actionID}}});
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(session.snapshot!.cursor, '2');
+  assert.equal(session.snapshot!.history.undoActionID, contact.actionID);
+  assert.equal(session.mutationReady, true, 'A second measured contact is immediately admissible');
+  const next = {...contact, actionID: randomUUID(), operations: [{...contact.operations[0]!, id: randomUUID()}]};
+  const second = session.save(next);
+  assert.equal(calls[4]!.arguments.actionID, next.actionID);
+  assert.notEqual(calls[4]!.arguments.actionID, contact.actionID);
+  calls[4]!.resolve({content: [], structuredContent: {status: 'saved', actionID: next.actionID}});
+  await second;
+  calls[5]!.resolve({content: [], structuredContent: sessionSnapshot('3')});
+  await new Promise<void>(resolve => setImmediate(resolve));
+  await close();
+});
+
+test('an open session retries an uncertain write with the original action and captured sources', async t => {
+  t.mock.timers.enable({apis: ['setTimeout', 'setInterval']});
+  const {session, calls, close, mutation, retry} = await controlledSession();
+  const saved = session.save(mutation);
+  calls[1]!.resolve({content: [], isError: true,
+    structuredContent: {status: 'error', code: 'ipc_timeout', message: 'Unknown write result'}});
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(session.hasPending, true);
+  assert.equal(session.mutationReady, false);
+  assert.equal(session.busy, false);
+  const retryWrite = retry();assert.ok(retryWrite);
+  const retried = retryWrite();
+  assert.equal(calls[2]!.name, calls[1]!.name);
+  assert.deepEqual(calls[2]!.arguments, calls[1]!.arguments);
+  assert.equal(calls[2]!.arguments.actionID, mutation.actionID);
+  calls[2]!.resolve({content: [], structuredContent: {status: 'saved', actionID: mutation.actionID}});
+  await saved;
+  assert.equal(session.hasPending, false);
+  assert.equal(session.mutationReady, false, 'A confirmed write still waits for its presented content');
+  assert.equal(calls[3]!.name, 'notebook_panel_presentation');
+  calls[3]!.resolve({content: [], structuredContent: sessionSnapshot('2')});
+  await retried;
+  assert.equal(session.mutationReady, true);
+  assert.equal(session.snapshot?.cursor, '2');
+  await close();
+});
+
+test('session closed during handshake suppresses the late connection failure', async t => {
+  t.mock.timers.enable({apis: ['setTimeout', 'setInterval']});
+  const session = new NotebookSession();
+  let rejectConnect!: (error: Error) => void, closes = 0;
+  session.app.connect = () => new Promise((_resolve, reject) => {rejectConnect = reject;});
+  session.onClose = () => {closes++;};
+  const connected = session.connect();
+  await session.app.onteardown!({}, {} as never);
+  rejectConnect(new Error('Host was closed before initialization'));
+  await assert.doesNotReject(connected);
+  t.mock.timers.tick(3000);
+  assert.equal(closes, 1);
+  assert.equal(session.hasAppearance, false);
 });
 
 async function connectedPanel(socketPath: string) {

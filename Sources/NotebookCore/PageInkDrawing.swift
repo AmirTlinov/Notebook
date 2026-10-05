@@ -163,13 +163,14 @@ private final class PageInkActionStorage: @unchecked Sendable {
   }
   func action(_ id:UUID) -> PageInkAction? { ids?.value(for:id.uuidString.lowercased()).flatMap { order?.value(for:$0) } }
 
-  func appending(_ action:PageInkAction) throws -> PageInkActionStorage {
+  func appending(_ action:PageInkAction, after frontier:UInt64) throws -> PageInkActionStorage {
     if let accepted=self.action(action.id) {
       guard accepted.hasSameMeasurement(as:action) else { throw PageInkDrawing.InkError.actionIDConflict }
       return self
     }
-    guard maximumSequence < VersionStamp.maximumCounter else { throw PageInkDrawing.InkError.sequenceExhausted }
-    let accepted=action.ordered(maximumSequence+1),position=count
+    let last=max(maximumSequence,frontier)
+    guard last < VersionStamp.maximumCounter else { throw PageInkDrawing.InkError.sequenceExhausted }
+    let accepted=action.ordered(last+1),position=count
     return .init(order:order?.inserting(position,accepted) ?? .init(position,accepted),
       ids:ids?.inserting(accepted.id.uuidString.lowercased(),position) ?? .init(accepted.id.uuidString.lowercased(),position),
       count:count+1,activeCount:activeCount+(accepted.isActive ? 1:0),maximumSequence:accepted.sequence,
@@ -277,7 +278,13 @@ public struct PageInkDrawing: Codable, Equatable, Sendable {
   }
 
   public func appending(_ action: PageInkAction) throws -> Self {
-    let next=try storage.appending(action)
+    try appending(action, after: 0)
+  }
+
+  /// An addressed command carries the complete owner's indexed frontier;
+  /// its bounded measurement projection cannot choose an earlier paint slot.
+  func appending(_ action: PageInkAction, after frontier: UInt64) throws -> Self {
+    let next=try storage.appending(action, after: frontier)
     guard next !== storage else { return self }
     return Self(baselinePNG:baselinePNG,baselineActionCount:baselineActionCount,storage:next)
   }

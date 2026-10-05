@@ -1,0 +1,124 @@
+{
+  "state": "OPEN_20MS_GATE",
+  "scope": "Physical iPad; fixed 120 Hz native replay with OS Metal presentation receipts. Current CAMetalDisplayLink restored; no rejected UIUpdateLink implementation retained. Hardware Pencil/late dispatch and full acceptance remain unmeasured.",
+  "sourceSnapshotSHA256": "2f4331f9cb794652f6c53edaea4bb7c760b0e251b785209f9e0701d0f7c3bf31",
+  "sourceFiles": [
+    {
+      "executable": false,
+      "path": "Applications/Shared/IncrementalInkMesh.swift",
+      "sha256": "40766d6992a0d5bfa7bfe62fe07f8945235a9ea9c8e1aea0a2097f2da9230f8e"
+    },
+    {
+      "executable": false,
+      "path": "Applications/Shared/InkCanvasView.swift",
+      "sha256": "5b85162e0e3cffe14343d4e1fec7824a57a48f3194d12c388482d682c5a1451c"
+    },
+    {
+      "executable": false,
+      "path": "Applications/Tests/InkCanvasLifecycleTests.swift",
+      "sha256": "edb7fd8f8d558938f9a572c5ceca361c5838db516bb249ad18f5c035fab3cd5a"
+    },
+    {
+      "executable": false,
+      "path": "Applications/Tests/NotebookGestureLatencyTests.swift",
+      "sha256": "5106cb3503cd844d5a00f71f26df4f84619dd262b81905b61298daf1aa0a6b11"
+    },
+    {
+      "executable": false,
+      "path": "Sources/NotebookSurface/IncrementalInkGeometry.swift",
+      "sha256": "00833afbea429b9098362353f191c8210bfa9cb70314dafc2259ab2f6fec93fc"
+    }
+  ],
+  "tests": {
+    "passed": 1,
+    "failed": 2,
+    "skipped": 0
+  },
+  "budgetMs": 20,
+  "timings": {
+    "eraser": {
+      "osPresentationMs": {
+        "n": 120,
+        "min": 21.669083333108574,
+        "p50": 21.876625018194318,
+        "p95": 29.995708318892866,
+        "p99": 38.329041679389775,
+        "max": 38.43279165448621
+      },
+      "presentationSamples": 120,
+      "uniqueFrames": 116,
+      "handlerToRenderMs": {
+        "n": 120,
+        "min": 0.06350001785904169,
+        "p50": 3.8790833204984665,
+        "p95": 4.636208352167159,
+        "p99": 12.404500041157007,
+        "max": 13.157833309378475
+      },
+      "renderToTargetMs": {
+        "n": 120,
+        "min": 15.524875023402274,
+        "p50": 16.57750003505498,
+        "p95": 16.632958373520523,
+        "p99": 16.66166662471369,
+        "max": 16.66166662471369
+      },
+      "renderToGPUEndMs": {
+        "n": 120,
+        "min": 0.6612082361243665,
+        "p50": 1.0825415956787765,
+        "p95": 1.5437083202414215,
+        "p99": 1.620041613932699,
+        "max": 2.0574999507516623
+      },
+      "csv": ".build/surface-ink-clock-restored/eraser/C03792E2-901B-4FA9-9673-5957BF5EA209.txt",
+      "csvSHA256": "7edada99d3a1d74e0b25e6fc51a157d932de9b1641ae1a71741b6029625dc79d"
+    },
+    "pen": {
+      "osPresentationMs": {
+        "n": 120,
+        "min": 17.10220833774656,
+        "p50": 25.452333327848464,
+        "p95": 33.588166697882116,
+        "p99": 41.931500018108636,
+        "max": 42.04191663302481
+      },
+      "presentationSamples": 120,
+      "uniqueFrames": 109,
+      "handlerToRenderMs": {
+        "n": 120,
+        "min": 0.06504164775833488,
+        "p50": 7.850750000216067,
+        "p95": 8.24970833491534,
+        "p99": 15.919708355795592,
+        "max": 17.215833358932287
+      },
+      "renderToTargetMs": {
+        "n": 120,
+        "min": 15.540416701696813,
+        "p50": 16.599958355072886,
+        "p95": 16.627000004518777,
+        "p99": 16.66220836341381,
+        "max": 16.66220836341381
+      },
+      "renderToGPUEndMs": {
+        "n": 120,
+        "min": 0.6468333303928375,
+        "p50": 1.0231249616481364,
+        "p95": 1.0950833093374968,
+        "p99": 1.1317083262838423,
+        "max": 2.054249926004559
+      },
+      "csv": ".build/surface-ink-clock-restored/pen/5D3572B1-0049-4BF1-947D-217201679F26.txt",
+      "csvSHA256": "f067ef116343f5213bdc25eb0331a48578982b9a8edc52230f842d3d8f9dbc0c"
+    }
+  },
+  "firstReveal": {
+    "state": "PASS",
+    "observedDrawables": 2,
+    "expectedDrawables": 2,
+    "discarded": 1
+  },
+  "rawResult": ".build/surface-ink-clock-restored/ipad.xcresult",
+  "productionPairChanged": false
+}

@@ -33,7 +33,7 @@ export type PanelSnapshot=PanelAddress&{worldOrigin:WorldPoint|null;size:{width:
   fitBounds?:{anchor:WorldPoint;region:Frame};
   navigation?:{parentBoard?:PanelTarget;itemID?:string;position?:{index:number;pageID:string};
     directory?:{header:{item:{title:string;pageCount:number}};pages:{position:{index:number;pageID:string}}[]}}};
-export type PanelOperation={kind:"insertElement"|"updateElement"|"removeElement"|"moveItem";target:PanelTarget;id:string;values:Record<string,unknown>};
+export type PanelOperation={kind:"insertElement"|"updateElement"|"removeElement"|"moveItem"|"appendInkStroke";target:PanelTarget;id:string;values:Record<string,unknown>};
 export type PanelSource={id:string;page?:NativeElement;spatial?:NativeElement;placements?:Record<string,unknown>[]};
 export type PanelMutation=PanelAddress&{actionID:string;summary:string;operations:PanelOperation[];sources:PanelSource[]};
 export type Camera={x:number;y:number;scale:number};

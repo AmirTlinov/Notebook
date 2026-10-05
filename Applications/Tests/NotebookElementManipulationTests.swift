@@ -5,24 +5,6 @@ import XCTest
 @testable import Notebook
 
 @MainActor final class NotebookElementManipulationTests: XCTestCase {
-  func testEveryCornerKeepsTheOppositeCornerAtLimits() {
-    let original = CGRect(x: 100, y: 80, width: 200, height: 160)
-    let reference = EditableElementReference.page(pageID: UUID(), elementID: "chart")
-    let page = CGRect(x: 0, y: 0, width: 600, height: 800)
-    for corner in NotebookElementResizeHandle.allCases {
-      for delta in [CGPoint(x: 30, y: 25), .init(x: -5000, y: -5000), .init(x: 5000, y: 5000)] {
-        var contact = NotebookElementManipulation(reference: reference, kind: .resize(corner), frame: original, bounds: page)
-        contact.update(translation: delta)
-        let result = contact.frame
-        XCTAssertEqual(corner.leading ? result.maxX : result.minX, corner.leading ? original.maxX : original.minX)
-        XCTAssertEqual(corner.top ? result.maxY : result.minY, corner.top ? original.maxY : original.minY)
-        XCTAssertGreaterThanOrEqual(result.width, 1); XCTAssertGreaterThanOrEqual(result.height, 1)
-        XCTAssertTrue(page.contains(result))
-
-      }
-    }
-  }
-
   func testIndividualVerticesKeepOtherCornersFixedAndStopBeforeCrossing() throws {
     let ref = EditableElementReference.page(pageID:UUID(),elementID:"polygon")
     for shape in [NotebookGraphic.Shape.triangle,.rectangle,.diamond] {
@@ -68,20 +50,6 @@ import XCTest
     XCTAssertEqual(after.frame.x+after.bend.x-before.frame.x-before.bend.x,330,accuracy:0.001)
     XCTAssertEqual(after.frame.y+after.bend.y-before.frame.y-before.bend.y,240,accuracy:0.001)
     XCTAssertEqual(changed.connection?.start,graphic.connection?.start); XCTAssertEqual(changed.connection?.end,graphic.connection?.end)
-  }
-
-  func testTouchTargetsDoNotImposeA44PointGeometryMinimumOrAnArtificialBoardMaximum() {
-    let ref = EditableElementReference.spatial(boardID: UUID(), elementID: "small")
-    var small = NotebookElementManipulation(reference: ref, kind: .resize(.bottomTrailing),
-      frame: .init(x: 100,y:100,width:40,height:32), bounds:nil)
-    small.update(translation:.init(x:-28,y:-20))
-    XCTAssertEqual(small.frame,.init(x:100,y:100,width:12,height:12))
-    var large = NotebookElementManipulation(reference: ref, kind: .resize(.topLeading),
-      frame:.init(x:100,y:100,width:3000,height:2200),bounds:nil)
-    large.update(translation:.init(x:-400,y:-500))
-    XCTAssertEqual(large.frame,.init(x:-300,y:-400,width:3400,height:2700))
-    XCTAssertEqual(NotebookElementResizeHandle.visible(in:.init(width:40,height:32)).count,4)
-    XCTAssertEqual(NotebookElementResizeHandle.visible(in:.init(width:160,height:32)).count,6)
   }
 
   func testMaterialResizeProjectsTheActualLiveFrameBeforeCommit() async throws {

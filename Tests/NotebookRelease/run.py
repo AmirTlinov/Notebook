@@ -83,8 +83,12 @@ class PairCLI(preview.FakeCLI):
         elif label == "typescript-resources":
             assert "--prepare" in argv and "--stage-root" in argv
             output = json.dumps({"status": "ready", "stage": str(self.source / ".build/fixture-typescript-runtime")}).encode()
+        elif label == "surface-resources":
+            assert Path(cwd) == self.source
+            assert argv == ["node", str(self.source / "MCP/build-surface.mjs"), "--stage", str(self.source / ".build/surface")]
         elif label == "build-mac":
             assert "NOTEBOOK_CODEX_RUNTIME=" + str(self.source / ".build/notebook-codex-runtime") in argv
+            assert "NOTEBOOK_SURFACE_STAGE=" + str(self.source / ".build/surface") in argv
             if self.mac_fail:
                 exit_code = 1
             else:

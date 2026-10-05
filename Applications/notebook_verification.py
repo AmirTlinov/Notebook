@@ -708,6 +708,8 @@ def run_selected(root, plan, evidence):
         args.append("NOTEBOOK_TYPESETTER_RUNTIME=" + str(runtime))
         if platform == "mac":
             release.prepare_codex_runtime(root, command)
+            surface_stage = release.prepare_surface_stage(root, command)
+            args.append("NOTEBOOK_SURFACE_STAGE=" + str(surface_stage))
             typescript_runtime = release.prepare_typescript_runtime(root, command)
             args.append("NOTEBOOK_TYPESCRIPT_RUNTIME=" + str(typescript_runtime))
             args.extend(native_mac_signing_settings())

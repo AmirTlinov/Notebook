@@ -1,32 +1,32 @@
 import Foundation
 import NotebookCore
 
-enum NotebookElementResizeHandle: String, CaseIterable, Sendable {
-  case topLeading, topTrailing, bottomLeading, bottomTrailing, topCenter, bottomCenter, leadingCenter, trailingCenter
-  var leading: Bool { self == .topLeading || self == .bottomLeading || self == .leadingCenter }
-  var top: Bool { self == .topLeading || self == .topTrailing || self == .topCenter }
-  var changesWidth: Bool { self != .topCenter && self != .bottomCenter }
-  var changesHeight: Bool { self != .leadingCenter && self != .trailingCenter }
-  var isCorner: Bool { changesWidth && changesHeight }
-  static let textWidth: [Self] = [.leadingCenter,.trailingCenter]
-  /// Side grips need room between the corners. Touch target size never changes
-  /// the authored geometry or makes a small object's centre into a resize grip.
+extension NotebookElementResizeHandle {
   static func visible(in size: CGSize) -> [Self] {
-    allCases.filter { $0.isCorner || ($0.changesWidth ? size.height : size.width) >= 112 }
-  }
-  var label: String {
-    switch self {
-    case .topLeading: "верхний левый угол"
-    case .topTrailing: "верхний правый угол"
-    case .bottomLeading: "нижний левый угол"
-    case .bottomTrailing: "нижний правый угол"
-    case .topCenter: "верхний край"; case .bottomCenter: "нижний край"
-    case .leadingCenter: "левый край"; case .trailingCenter: "правый край"
-    }
+    Self.visible(in: SpatialPoint(x: size.width, y: size.height))
   }
   func point(in frame: CGRect) -> CGPoint {
-    .init(x: changesWidth ? (leading ? frame.minX : frame.maxX) : frame.midX,
-      y: changesHeight ? (top ? frame.minY : frame.maxY) : frame.midY)
+    .init(x: frame.minX + anchor.x * frame.width, y: frame.minY + anchor.y * frame.height)
+  }
+}
+
+private extension SpatialRect {
+  init?(surfaceFrame frame: CGRect) {
+    guard frame.origin.x.isFinite, frame.origin.y.isFinite,
+      frame.width.isFinite, frame.height.isFinite, frame.width > 0, frame.height > 0 else { return nil }
+    self.init(x: frame.minX, y: frame.minY, width: frame.width, height: frame.height)
+  }
+}
+
+private extension SurfaceFrameManipulation {
+  init?(kind: Kind, frame: CGRect, bounds: CGRect?) {
+    guard let original = SpatialRect(surfaceFrame: frame) else { return nil }
+    let limit: SpatialRect?
+    if let bounds {
+      guard let admitted = SpatialRect(surfaceFrame: bounds) else { return nil }
+      limit = admitted
+    } else { limit = nil }
+    self.init(kind: kind, original: original, bounds: limit)
   }
 }
 
@@ -74,6 +74,7 @@ struct NotebookElementManipulation: Equatable, Sendable {
   let originalLayout: NotebookGraphicLayout?
   let placement: NotebookElementPlacement?
   let displayFrame: CGRect
+  private let frameManipulation: SurfaceFrameManipulation?
   private var projectedFrame: CGRect
   /// Input keeps its latest pose while a cold lasso resolves. Until the source
   /// cut and moved material exist, controls must depict the unchanged material,
@@ -125,6 +126,11 @@ struct NotebookElementManipulation: Equatable, Sendable {
     self.frame = frame; self.bounds = bounds
     self.identity = identity; self.worldOrigin = placement?.origin ?? worldOrigin
     self.placement=placement;basis=placement?.basis;self.displayFrame=displayFrame ?? frame;projectedFrame=displayFrame ?? frame
+    switch kind {
+    case .move: frameManipulation = .init(kind: .move, frame: displayFrame ?? frame, bounds: bounds)
+    case .resize(let handle): frameManipulation = .init(kind: .resize(handle), frame: displayFrame ?? frame, bounds: bounds)
+    default: frameManipulation = nil
+    }
     originalConnection = connection; self.connection = connection; originalLayout = layout
     self.graphic = graphic; originalVertices = graphic.flatMap(NotebookGraphicGeometry.polygon); vertices = originalVertices
     self.text=text
@@ -139,11 +145,12 @@ struct NotebookElementManipulation: Equatable, Sendable {
     }
     switch kind {
     case .move:
-      let x = bounds.map { min(max(displayFrame.minX + translation.x, $0.minX), $0.maxX - displayFrame.width) } ?? (displayFrame.minX + translation.x)
-      let y = bounds.map { min(max(displayFrame.minY + translation.y, $0.minY), $0.maxY - displayFrame.height) } ?? (displayFrame.minY + translation.y)
-      let physical=SpatialPoint(x:x-displayFrame.minX,y:y-displayFrame.minY)
+      guard let shown = frameManipulation?.frame(at: .init(x: translation.x, y: translation.y)) else { return }
+      let physical=SpatialPoint(x:shown.x-displayFrame.minX,y:shown.y-displayFrame.minY)
       guard let delta=placement.map({ $0.parentVector(physical) }) ?? physical else { return }
-      frame = .init(x:original.minX+delta.x,y:original.minY+delta.y,width:original.width,height:original.height)
+      let x=original.minX+delta.x,y=original.minY+delta.y
+      guard x.isFinite,y.isFinite,(x+original.width).isFinite,(y+original.height).isFinite else { return }
+      frame = .init(x:x,y:y,width:original.width,height:original.height)
       projectedFrame=displayFrame.offsetBy(dx:physical.x,dy:physical.y)
       if let value=originalConnection,!value.bindings.isEmpty,let layout=originalLayout {
         connection=frame == original ? value : value.detachingEndpoints(in:layout)
@@ -177,26 +184,8 @@ struct NotebookElementManipulation: Equatable, Sendable {
         projectedFrame=CGRect(x:fitted.x,y:fitted.y,width:fitted.width,height:fitted.height).applying(updated.transform)
         return
       }
-      let original=displayFrame
-      let minimumWidth = min(1, original.width), minimumHeight = min(1, original.height)
-      let x: CGFloat, y: CGFloat, right: CGFloat, bottom: CGFloat
-      if !corner.changesWidth { x = original.minX; right = original.maxX }
-      else if corner.leading {
-        right = original.maxX
-        x = min(original.maxX - minimumWidth, max(bounds?.minX ?? -.greatestFiniteMagnitude, original.minX + translation.x))
-      } else {
-        x = original.minX
-        right = max(x + minimumWidth, min(bounds?.maxX ?? .greatestFiniteMagnitude, original.maxX + translation.x))
-      }
-      if !corner.changesHeight { y = original.minY; bottom = original.maxY }
-      else if corner.top {
-        bottom = original.maxY
-        y = min(original.maxY - minimumHeight, max(bounds?.minY ?? -.greatestFiniteMagnitude, original.minY + translation.y))
-      } else {
-        y = original.minY
-        bottom = max(y + minimumHeight, min(bounds?.maxY ?? .greatestFiniteMagnitude, original.maxY + translation.y))
-      }
-      let shown=CGRect(x:x,y:y,width:right-x,height:bottom-y)
+      guard let next = frameManipulation?.frame(at: .init(x: translation.x, y: translation.y)) else { return }
+      let original=displayFrame, shown=CGRect(x:next.x,y:next.y,width:next.width,height:next.height)
       if let placement {
         let change=CGAffineTransform(translationX:-original.minX,y:-original.minY)
           .concatenating(.init(scaleX:shown.width/original.width,y:shown.height/original.height))

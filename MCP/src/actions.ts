@@ -71,16 +71,20 @@ const editFields = z.object({ source: source.optional(), html: source.optional()
   graphic: graphicEdit.optional(), frame: frame.optional(), worldOrigin: point.optional(), textStyle: textStyleSchema.optional() }).strict();
 const op = <K extends string, S extends z.ZodType>(kind: K, values: S, id: z.ZodType | null = z.string().min(1).max(120)) =>
   z.object({ kind: z.literal(kind), target: targetSchema, ...(id ? { id } : {}), values }).strict();
-export const operationSchema = z.discriminatedUnion("kind", [
-  op("appendInkStroke", z.object({
-    points: z.array(z.object({ x: z.number().finite().min(-1e6).max(1e6), y: z.number().finite().min(-1e6).max(1e6),
-      width: z.number().positive().max(128).optional(), opacity: z.number().min(0).max(1).optional() }).strict()).min(1).max(8192)
+export const inkStrokePointSchema=z.object({x:z.number().finite().min(-1e6).max(1e6),y:z.number().finite().min(-1e6).max(1e6),
+  width:z.number().positive().max(128).optional(),opacity:z.number().min(0).max(1).optional(),
+  timeOffset:z.number().finite().nonnegative().optional(),force:z.number().finite().nonnegative().optional(),
+  azimuth:z.number().finite().optional(),altitude:z.number().finite().optional()}).strict();
+export const appendInkStrokeSchema=op("appendInkStroke",z.object({
+    points: z.array(inkStrokePointSchema).min(1).max(8192)
       .describe("Ordered native pen samples in owner-local points; per-point width/opacity override the stroke defaults."),
     width: z.number().positive().max(128).optional().describe("Pen width in physical points; defaults to 2."),
     opacity: z.number().min(0).max(1).optional().describe("Defaults to 1; matches native ink opacity."),
     color: z.object({ red: z.number().min(0).max(1), green: z.number().min(0).max(1), blue: z.number().min(0).max(1) }).strict().optional(),
     worldOrigin: point.optional().describe("Required for board ink: points are offsets from this tiled origin. Omit on pages/covers."),
-  }).strict(), uuid.optional()),
+  }).strict(),uuid.optional());
+export const operationSchema = z.discriminatedUnion("kind", [
+  appendInkStrokeSchema,
   op("insertElement", z.object({ kind: z.enum(["markdown", "web", "nativeText", "graphic"]), source, frame, graphic: graphicSchema.optional(),
     html: source.optional(), css: source.optional(), javaScript: source.optional(), programPackage: programPackage.optional(), state: z.json().optional(), worldOrigin: point.optional(), textStyle: textStyleSchema.optional() }).strict()),
   op("convertInkToElement", z.object({ kind: z.literal("graphic"), source, frame, graphic: graphicSchema, worldOrigin: point.optional() }).strict()),

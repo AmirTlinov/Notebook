@@ -12,7 +12,7 @@ final class NotebookZoomPassageTests: XCTestCase {
       XCTAssertEqual(passage.progress(at:closed),0);XCTAssertEqual(passage.progress(at:open),1)
       XCTAssertEqual(passage.progress(at:sqrt(closed*open)),0.5,accuracy:1e-9)
       let center=CGPoint(x:300,y:350)
-      let trajectory=CameraGestureTrajectory(startingCamera:.init(center:.init(x:30,y:60),scale:closed),startingCentroid:center,viewport:size)
+      let trajectory=CameraGestureTrajectory(startingCamera:.init(center:.init(x:30,y:60),scale:closed),startingCentroid:.init(x:center.x,y:center.y),viewport:size)
       let camera=passage.camera(from:trajectory,magnification:1.5,centroid:center)
       let first=passage.presentation(camera:camera,viewport:size)
       _ = passage.presentation(camera:passage.camera(from:trajectory,magnification:2,centroid:center),viewport:size)
@@ -29,7 +29,7 @@ final class NotebookZoomPassageTests: XCTestCase {
         let passage=NotebookZoomPassage(itemID:UUID(),parentID:UUID(),kind:.board,center:center,geometry:geometry,
           opening:false,closedScale:portal.scale*geometry.coverScale(viewport:size),openScale:scale,returningPortal:portal)
         let centroid=CGPoint(x:size.x*0.6,y:size.y*0.4)
-        let trajectory=CameraGestureTrajectory(startingCamera:child,startingCentroid:centroid,viewport:size)
+        let trajectory=CameraGestureTrajectory(startingCamera:child,startingCentroid:.init(x:centroid.x,y:centroid.y),viewport:size)
         let parent=passage.camera(from:trajectory,magnification:1,centroid:centroid)
         XCTAssertEqual(passage.progress(camera:parent),1,accuracy:1e-9)
         for point in [WorldPoint.zero,.init(x:20,y:40),child.center] {

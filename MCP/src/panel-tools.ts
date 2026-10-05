@@ -4,7 +4,7 @@ import * as z from "zod/v4";
 import { dirname, join } from "node:path";
 import { readFile } from "node:fs/promises";
 import { BridgeError, defaultSocketPath, runBridge } from "./bridge.js";
-import { operationSchema } from "./actions.js";
+import { appendInkStrokeSchema, inkStrokePointSchema, operationSchema } from "./actions.js";
 import { sceneBoundsSchema, worldPointSchema } from "./spatial.js";
 
 declare const NOTEBOOK_PANEL_HTML: string;
@@ -23,10 +23,19 @@ const panelSourceSchema=z.object({id:z.string().min(1).max(120),
   page:z.record(z.string(),z.json()).optional(),spatial:z.record(z.string(),z.json()).optional(),
   placements:z.array(z.record(z.string(),z.json())).optional(),
 }).strict();
+const panelOperationSchema=z.discriminatedUnion('kind',[
+  appendInkStrokeSchema.extend({values:appendInkStrokeSchema.shape.values.extend({
+    points:z.array(inkStrokePointSchema.extend({x:z.number().finite(),y:z.number().finite(),
+      width:z.number().finite().positive().optional()})).min(1).max(65_536),
+    width:z.number().finite().positive().optional(),
+  })}),...operationSchema.options.filter(schema=>schema.shape.kind.value!=='appendInkStroke'),
+]);
 export const panelEditSchema=panelAddressSchema.extend({
   actionID:z.uuid(),summary:z.string().min(1).max(1000),
-  operations:z.array(operationSchema).min(1).max(32),sources:z.array(panelSourceSchema).min(1).max(64),
-}).strict();
+  operations:z.array(panelOperationSchema).min(1).max(32),sources:z.array(panelSourceSchema).max(64),
+}).strict().refine(edit=>edit.operations.some(op=>op.kind==='appendInkStroke')
+  ? edit.operations.length===1&&edit.sources.length===0 : edit.sources.length>0,
+  'A pen contact appends one stroke without element sources; other edits retain their captured sources.');
 
 type Value=Record<string,unknown>;
 type Address=z.infer<typeof panelAddressSchema>;
@@ -75,7 +84,7 @@ export function registerNotebookPanel(server:McpServer,socketPath:string,html?:s
     {command:"panelPresentation",panelPresentation:request}),true));
   registerAppTool(server,"notebook_panel_edit",{
     title:"Save a human Notebook edit",
-    description:"Apply the completed human gesture through Notebook native commands with exact captured sources. Reuse actionID and identical payload after an uncertain response. The native owner chooses authorship and validates surface, sources and operations.",
+    description:"Apply the completed human gesture through Notebook native commands. A pen contact carries one appendInkStroke and sources:[]; element and card edits carry their exact captured sources. Reuse actionID and identical payload after an uncertain response. The native owner chooses authorship and validates the addressed surface.",
     inputSchema:panelEditSchema,
     annotations:{readOnlyHint:false,destructiveHint:true,openWorldHint:false,idempotentHint:true},_meta:appMetadata,
   },({socketKey,...request})=>result(()=>runBridge<Value>(panelSocket({...request,socketKey},socketPath),

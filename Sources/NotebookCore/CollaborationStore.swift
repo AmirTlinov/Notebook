@@ -34,7 +34,7 @@ extension NotebookStore {
   public func collaborationActionIfPresent(_ id: UUID) throws -> CollaborationReceipt? {
     try prepare()
     return try readTransaction { _ in
-      try currentSQL!.limitReads(.agentCommand)
+      try currentSQL!.limitReads(.nativeCommand)
       return try storedValue(actionFile(id))?.decode(CollaborationReceipt.self)
     }
   }
@@ -108,8 +108,8 @@ extension NotebookStore {
   @discardableResult
   public func applyNativeAction(_ action: CollaborationAction, actor: UUID, requestFingerprint: String? = nil) throws -> CollaborationReceipt {
     guard action.operations.allSatisfy({ [.insertElement, .updateElement, .removeElement,
-      .convertInkToElement, .reorderElements, .moveItem, .stackItems, .deleteItem].contains($0.kind) }) else {
-      throw invalid("Нативная правка содержит операции элементов, расположения или удаления предметов.")
+      .appendInkStroke, .convertInkToElement, .reorderElements, .moveItem, .stackItems, .deleteItem].contains($0.kind) }) else {
+      throw invalid("Нативная правка содержит штрихи, элементы, расположение или удаление предметов.")
     }
     return try applyCollaborationActionImmediately(action, actor: actor, requestFingerprint: requestFingerprint, human: true, nativeInputOwner: actor)
   }
@@ -136,7 +136,7 @@ extension NotebookStore {
   /// same executor. Only the public agent entry point accepts agent authorship.
   func applyCollaborationActionImmediately(_ action: CollaborationAction, actor: UUID, requestFingerprint: String?, human: Bool, nativeInputOwner: UUID? = nil, repeating originalID: UUID? = nil) throws -> CollaborationReceipt {
     try prepare()
-    return try commandTransaction(readAllowance: .agentCommand) {
+    return try commandTransaction(readAllowance: human ? .nativeCommand : .agentCommand) {
       if try hasStoredValue(actionFile(action.id)) {
         let previous = try loadAction(action.id)
         guard requestFingerprint.map({ previous.requestFingerprint == $0 }) ?? (previous.action == action) else {
@@ -157,7 +157,10 @@ extension NotebookStore {
       }
       let contextReferences = try action.contextID.map { try self.contextReferences($0) }
       let before = try actionSourceProjection(action, references: contextReferences ?? [])
-      try requireIdleInput(for: action.operations.map(\.target), excludingDevice: nativeInputOwner)
+      // Independent human pen contacts commute by UUID. Other operations
+      // still respect a peer's accepted contact on their shared surface.
+      let heldTargets = action.operations.filter { !(human && $0.kind == .appendInkStroke) }.map(\.target)
+      try requireIdleInput(for: heldTargets, excludingDevice: nativeInputOwner)
       let scopeReferences = contextReferences ?? action.references
       try validateCollaborationExpectations(action, projection: before)
       let hasLifecycle = action.operations.contains(where: \.isLifecycle)
@@ -193,17 +196,18 @@ extension NotebookStore {
       func applyOperations() throws {
         for (index, operation) in action.operations.enumerated() {
           do {
+            let independentContact = human && operation.kind == .appendInkStroke
             if operation.needsInkExpectation {
               inkPointCount += operation.values["points"]?.array.count ?? 0
               guard inkPointCount <= 100_000 else { throw invalid("Один ход содержит не более 100000 точек ручки.") }
-              guard createdTargets.contains(operation.target) || action.expected.contains(where: {
+              guard independentContact || createdTargets.contains(operation.target) || action.expected.contains(where: {
                 $0.target == operation.target && $0.inkRevision != nil
               }) else { throw CollaborationError("revision_required", "Для ручки нужна inkRevision: drawingRevision листа либо spatialInkRevision доски/обложки.", target: operation.target) }
             }
             for subject in try Self.compositionSubjects(operation, files: before.files) where !createdTargets.contains(subject.target) {
               try Self.requireCompositionScope(subject, references: scopeReferences, additionalOwners: action.additionalOwners ?? [], files: before.files)
             }
-            for target in try before.requiredExpectations(for: operation) {
+            for target in try before.requiredExpectations(for: operation) where !independentContact {
               guard createdTargets.contains(target) || action.expected.contains(where: { $0.target == target }) else {
                 throw CollaborationError("revision_required", "Для изменения нужна версия владельца.", target: target)
               }
@@ -229,7 +233,7 @@ extension NotebookStore {
               let following = action.operations.dropFirst(index + 1).prefix { !$0.isLifecycle }
               after = try projection(for: Array(following)); segmentBefore = after
             } else { try after.apply(operation, actor: actor,
-              stackID: Self.submissionID(action.id, suffix: "stack:\(index)")) }
+              stackID: Self.submissionID(action.id, suffix: "stack:\(index)"), human: human) }
             createdTargets.formUnion(operation.createdOwners)
           } catch let error as CollaborationError {
             throw error.atOperation(index, operation)
@@ -411,10 +415,12 @@ extension NotebookStore {
 
   private func undoCollaborationActionImmediately(_ id: UUID, actor: UUID, nativeInputOwner: UUID? = nil) throws -> CollaborationReceipt {
     try prepare()
-    return try commandTransaction(readAllowance: .agentCommand) {
+    return try commandTransaction(readAllowance: nativeInputOwner == nil ? .agentCommand : .nativeCommand) {
       var receipt = try loadAction(id)
       if receipt.undo != nil { return receipt }
-      try requireIdleInput(for: receipt.action.operations.map(\.target), excludingDevice: nativeInputOwner)
+      if nativeInputOwner == nil || receipt.author != .human || !receipt.action.operations.allSatisfy({ $0.kind == .appendInkStroke }) {
+        try requireIdleInput(for: receipt.action.operations.map(\.target), excludingDevice: nativeInputOwner)
+      }
       let hasLifecycle = receipt.lifecycleChanges?.isEmpty == false
       let redoAncestor = try receipt.redoOf.map(loadAction)
       let appended = hasLifecycle ? try prepareAppendedNotebookPageUndo(receipt: receipt) : nil
@@ -782,8 +788,11 @@ struct CollaborationWorkspace {
   var files: [String: JSONValue]
   let projectedPageIDs: Set<UUID>
   var pageGraphicSources: [UUID: [PageInkAction]] = [:]
-  init(files: [String: JSONValue], projectedPageIDs: Set<UUID> = [], pageGraphicSources: [UUID: [PageInkAction]] = [:]) {
+  var pageInkFrontiers: [UUID: UInt64] = [:]
+  init(files: [String: JSONValue], projectedPageIDs: Set<UUID> = [], pageGraphicSources: [UUID: [PageInkAction]] = [:],
+    pageInkFrontiers: [UUID: UInt64] = [:]) {
     self.files = files; self.projectedPageIDs = projectedPageIDs; self.pageGraphicSources = pageGraphicSources
+    self.pageInkFrontiers = pageInkFrontiers
   }
   var ink: SpatialInkJournal { get throws { try files["spatial-ink.json"]!.decode(SpatialInkJournal.self) } }
 
@@ -830,12 +839,12 @@ struct CollaborationWorkspace {
     operation.requiredOwners(workspaceRootID: try workspace.rootBoardID)
   }
 
-  mutating func apply(_ operation: CollaborationOperation, actor: UUID, stackID: UUID) throws {
+  mutating func apply(_ operation: CollaborationOperation, actor: UUID, stackID: UUID, human: Bool = false) throws {
     switch operation.kind {
     case .appendPage, .deleteItem:
       throw invalid("Операция жизненного цикла исполняется адресным владельцем, не проекцией содержания.")
     case .appendInkStroke:
-      try appendInk(operation, actor: actor)
+      try appendInk(operation, actor: actor, human: human)
     case .insertElement, .convertInkToElement, .updateElement, .setElementState, .removeElement, .reorderElements:
       try editElements(operation, actor: actor)
     case .setDocumentProgramState:
@@ -869,17 +878,18 @@ struct CollaborationWorkspace {
     }
   }
 
-  mutating func appendInk(_ operation: CollaborationOperation, actor: UUID) throws {
-    let stroke = try CollaborationInkStroke(operation)
+  mutating func appendInk(_ operation: CollaborationOperation, actor: UUID, human: Bool) throws {
+    let stroke = try CollaborationInkStroke(operation, agentAdmission: !human)
     let target = operation.target
     if target.kind == .page {
       guard let raw = files[pageFile(target.id)] else { throw missing(target) }
       var page = try raw.decode(PageDocument.self)
-      guard stroke.region.isContained(in: page.size) else { throw invalid("Штрих целиком помещается в физический лист.") }
+      guard human || stroke.region.isContained(in: page.size) else { throw invalid("Штрих целиком помещается в физический лист.") }
       let drawing = try PageInkDrawing.decode(page.drawingData)
       guard !drawing.actions.contains(where: { $0.id == stroke.id }) else { throw invalid("UUID штриха уже занят.") }
-      let next = try drawing.appending(stroke.pageAction)
+      let next = try drawing.appending(stroke.pageAction, after: pageInkFrontiers[target.id] ?? 0)
       guard next != drawing, page.replaceDrawing(try next.dataRepresentation(), actor: actor) else { throw invalid("Не удалось добавить штрих.") }
+      pageInkFrontiers[target.id] = next.action(id: stroke.id)!.sequence
       files[pageFile(target.id)] = try .encode(page)
     } else {
       if target.kind == .codeFragment {
@@ -1143,11 +1153,11 @@ struct CollaborationWorkspace {
           throw invalid("Тетрадь содержит существующие листы.")
         }
         if projectedPageIDs.contains(pageID) {
-          let page = try value.decode(NotebookPageElementProjection.self)
+          let page = try value.decode(NotebookPageCommandProjection.self)
           guard scope != nil, page.id == pageID, page.isValid,
-            value["drawingData"] == nil, value["computations"] == nil,
+            value["computations"] == nil,
             try JSONValue.encode(page) == value else {
-            throw invalid("Адресное изменение содержит только элементы существующего листа.")
+            throw invalid("Адресное изменение содержит только выбранный материал существующего листа.")
           }
         } else {
           let page = try value.decode(PageDocument.self)

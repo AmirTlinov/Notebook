@@ -1,0 +1,91 @@
+{
+  "surface": "Codex in-app browser, localhost development page; not the MCP Apps panel",
+  "observedAt": "2026-10-05T13:00:45Z",
+  "moduleSHA256": "f95020c15d2477430566ee4f06b4c3665b31c57bd7089b9e8c50fe2f70525391",
+  "secureContext": true,
+  "swiftCamera": {
+    "state": "PASS",
+    "loadAndCameraMs": 76.5
+  },
+  "webGPU": {
+    "state": "PASS",
+    "canonicalTriangleVertices": 84,
+    "incrementalSamples": 300,
+    "sampleCount": 4,
+    "rgba": [
+      178,
+      26,
+      102,
+      255
+    ],
+    "check": "Actual GPU readback after compact tail uploads and capacity growth matches the canonical triangle pipeline within one channel value. Stroke viewed."
+  },
+  "mcpApps": {
+    "state": "FAIL",
+    "detail": "ProtocolError: Method not found"
+  },
+  "isolatedProgram": {
+    "state": "FAIL",
+    "detail": "No readiness message within five seconds in this browser surface"
+  },
+  "text": {
+    "multilineCyrillicCharacters": 28,
+    "imeCompositions": 0
+  },
+  "curveFollowup": {
+    "observedAt": "2026-10-05T13:14:58Z",
+    "state": "PASS",
+    "samples": 48,
+    "varyingRadius": true,
+    "varyingOpacity": true,
+    "contourPixels": 6,
+    "maximumChannelTolerance": 1
+  },
+  "acceptance": "GPU development evidence only. Actual Codex MCP Apps, IME, offline and full shared interaction acceptance remain open.",
+  "retinaFollowup": {
+    "observedAt": "2026-10-05T14:26:05Z",
+    "state": "PASS",
+    "requestedAndActualPixels": [
+      [
+        [
+          6016,
+          3384
+        ],
+        [
+          5461,
+          3072
+        ]
+      ],
+      [
+        [
+          32768,
+          256
+        ],
+        [
+          8192,
+          64
+        ]
+      ],
+      [
+        [
+          600,
+          180
+        ],
+        [
+          600,
+          180
+        ]
+      ]
+    ],
+    "pixelRGBA": [
+      178,
+      26,
+      102,
+      255
+    ],
+    "maximumChannelTolerance": 1,
+    "cameraLoadMs": 66.1,
+    "screenshot": "browser-retina.png",
+    "independentReview": "Large-display failure corrected; review finding closed."
+  }
+}

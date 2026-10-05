@@ -135,7 +135,7 @@ extension NotebookStore {
     return try commandTransaction {
       guard try ownerItemID(ofPage: command.pageID) != nil else { return .init(basis: nil, changed: false) }
       let before = try pageElementCommandProjection(pageID: command.pageID, elementID: command.elementID, admittedStateBytes: admittedStateBytes)
-      let page = try before.decode(NotebookPageElementProjection.self)
+      let page = try before.decode(NotebookPageCommandProjection.self)
       let storedBasis = NotebookProgramStateBasis(elementID: command.elementID, metadata: page.collaboration, fallback: page.agentStamp)
       guard command.basis.hasSameSource(as: storedBasis),
         let element = page.elements.first(where: { $0.id == command.elementID && $0.kind == .web }) else { return .init(basis: nil, changed: false) }
@@ -154,7 +154,7 @@ extension NotebookStore {
     return try commandTransaction {
       guard try ownerItemID(ofPage: pageID) != nil else { return .init(basis: nil, changed: false) }
       let before = try pageElementCommandProjection(pageID: pageID, elementID: elementID, admittedStateBytes: admittedStateBytes)
-      let page = try before.decode(NotebookPageElementProjection.self)
+      let page = try before.decode(NotebookPageCommandProjection.self)
       let current = NotebookProgramStateBasis(elementID: elementID, metadata: page.collaboration, fallback: page.agentStamp)
       guard basis.hasSameSource(as: current), let element = page.elements.first(where: { $0.id == elementID && $0.kind == .web }) else { return .init(basis: nil, changed: false) }
       return try commitPageProgramState(before: before, page: page, element: element, state: state,
@@ -164,7 +164,7 @@ extension NotebookStore {
 
   /// One causal merge/publisher for optimistic events, cold accepted events and
   /// frozen checkpoints. The optimistic command keeps its already chosen dot.
-  private func commitPageProgramState(before: JSONValue, page: NotebookPageElementProjection, element: AgentElement,
+  private func commitPageProgramState(before: JSONValue, page: NotebookPageCommandProjection, element: AgentElement,
     state: JSONValue, stamp: VersionStamp?, versions: [String: ContentFieldVersion]? = nil) throws -> NotebookPageProgramStateReceipt {
     if versions == nil, element.state == state {
       return .init(basis: .init(elementID: element.id, metadata: page.collaboration, fallback: page.agentStamp), changed: false)
@@ -199,7 +199,7 @@ extension NotebookStore {
       case .page:
         guard try ownerItemID(ofPage: target.id) != nil else { return nil }
         let before = try pageElementCommandProjection(pageID: target.id, elementID: rendered.id, admittedStateBytes: admittedStateBytes)
-        let page = try before.decode(NotebookPageElementProjection.self)
+        let page = try before.decode(NotebookPageCommandProjection.self)
         guard basis == NotebookProgramStateBasis(elementID: rendered.id, metadata: page.collaboration, fallback: page.agentStamp) else { return nil }
         guard let element = page.elements.first(where: { $0.id == rendered.id }),
           element.kind == rendered.kind, element.source == rendered.source, element.html == rendered.html,

@@ -1115,7 +1115,8 @@ struct SpatialWorkspaceView: View {
       guard let currentPresence = actual ?? model.presence else { return }
       let presence = presenceForNewContact(currentPresence)
       let snapshot = CameraGestureSnapshot(presence: presence,
-        trajectory: .init(startingCamera: presence.camera, startingCentroid: centroid, viewport: presence.viewport),
+        trajectory: .init(startingCamera: presence.camera,
+          startingCentroid: .init(x:centroid.x,y:centroid.y), viewport: presence.viewport),
         entry: entryPassage(at: centroid, presence: presence), exit: exitPassage(presence: presence))
       snapshot.rollback = pending?.origin
       snapshot.paperReadiness = inheritedReadiness
@@ -1198,7 +1199,7 @@ struct SpatialWorkspaceView: View {
 
   private func updateMagnification(scale: CGFloat, centroid: CGPoint) {
     guard let snapshot=cameraGesture else { return }
-    let camera=snapshot.trajectory.camera(at:scale,centroid:centroid,maximumScale:SpatialCamera.maximumScale)
+    let camera=snapshot.trajectory.camera(at:Double(scale),centroid:.init(x:centroid.x,y:centroid.y))
     snapshot.latestCamera=openSurfaceCamera(camera,for:snapshot.presence); snapshot.magnification=scale; snapshot.centroid=centroid
     if !snapshot.choseDirection,abs(log(max(0.001,Double(scale)))) > 0.005 {
       snapshot.choseDirection=true

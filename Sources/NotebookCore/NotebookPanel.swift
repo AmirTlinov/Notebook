@@ -344,7 +344,7 @@ extension NotebookStore {
   }
 
   public func editPanel(_ request: NotebookPanelEditRequest, actor: UUID) throws -> JSONValue {
-    try commandTransaction(readAllowance: .agentCommand) {
+    try commandTransaction(readAllowance: .nativeCommand) {
       _ = try requirePanelWorkspace(request.workspaceID)
       try requirePanelTarget(request.target)
       struct Fingerprint: Encodable { let actor: UUID; let request: NotebookPanelEditRequest }
@@ -357,6 +357,20 @@ extension NotebookStore {
           throw CollaborationError("action_id_conflict", "Этот ID уже принадлежит другому действию.")
         }
         guard let original = try savedActionResult(saved.id) else { throw CollaborationError("action_version_unavailable", "Исходный результат действия недоступен.") }
+        return original
+      }
+      if request.operations.contains(where: { $0.kind == .appendInkStroke }) {
+        guard request.operations.count == 1, request.sources.isEmpty,
+          let operation = request.operations.first, operation.target == request.target else {
+          throw CollaborationError("invalid_panel_edit", "Контакт ручки добавляет один штрих на свою поверхность.")
+        }
+        // An append owns its new stroke UUID. It does not adopt or compare a
+        // page-wide revision, so another contact cannot invalidate this lift.
+        let receipt = try applyNativeAction(.init(id: request.actionID, summary: request.summary,
+          expected: [], operations: request.operations), actor: actor, requestFingerprint: fingerprint)
+        guard let original = try savedActionResult(receipt.id) else {
+          throw CollaborationError("action_version_unavailable", "Исходный результат действия недоступен.")
+        }
         return original
       }
       if request.operations.contains(where: { $0.kind == .moveItem }) {
@@ -395,7 +409,7 @@ extension NotebookStore {
   }
 
   public func undoPanel(_ request: NotebookPanelUndoRequest, actor: UUID) throws -> JSONValue {
-    try commandTransaction(readAllowance: .agentCommand) {
+    try commandTransaction(readAllowance: .nativeCommand) {
       _ = try requirePanelWorkspace(request.workspaceID)
       try requirePanelTarget(request.target)
       let receipt = try collaborationAction(request.actionID)

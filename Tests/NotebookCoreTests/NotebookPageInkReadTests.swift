@@ -205,5 +205,49 @@ extension NotebookPageInkReadTests {
     #expect(counter.pointee > 0 && counter.pointee < 20_000)
     #expect(try f.store.currentReadCursor() == cursor)
     print("PAGE_INK_ADDRESSED_READ foreign_actions=100000 SQL_instructions=\(counter.pointee) elapsed=\(started.duration(to: .now))")
+
+    // Keep publication and derived-index maintenance inside the VM budget.
+    // The poisoned bodies above also make an accidental whole-page read fail.
+    func command<T>(_ label: String, store: NotebookStore, _ operation: () throws -> T) throws -> T {
+      let db = try NotebookSQLConnection(url: store.databaseURL, writable: true)
+      counter.pointee = 0
+      sqlite3_progress_handler(db.handle, 1, { pointer in
+        let count = pointer!.assumingMemoryBound(to: Int.self)
+        count.pointee += 1
+        return count.pointee > 100_000 ? 1 : 0
+      }, counter)
+      let begin = ContinuousClock.now
+      defer {
+        sqlite3_progress_handler(db.handle, 0, nil, nil)
+        print("PAGE_INK_COMMAND phase=\(label) foreign_actions=100000 SQL_instructions=\(counter.pointee) elapsed=\(begin.duration(to: .now)) read_rows_budget=4096")
+      }
+      let result = try store.commandTransaction(readAllowance: .init(rows: 4096, bytes: 2_000_000,
+        valueBytes: 65_536, reason: "A contact command may read its own material, not the other 100000 contacts"),
+        preparedDatabase: db, operation)
+      #expect(counter.pointee > 0 && counter.pointee < 100_000)
+      return result
+    }
+    let target = CollaborationTarget(kind: .page, id: f.pageID), strokeID = UUID()
+    let request = NotebookPanelEditRequest(workspaceID: try f.store.storedWorkspaceID(), actionID: UUID(),
+      target: target, summary: "Штрих поверх 100000 касаний", operations: [
+        .init(kind: .appendInkStroke, target: target, id: strokeID.uuidString, values: [
+          "points": .array([.object(["x": .number(40), "y": .number(50)]),
+            .object(["x": .number(60), "y": .number(70)])])])], sources: [])
+    let accepted = try command("append", store: f.store) { try f.store.editPanel(request, actor: f.content.actor) }
+    let appended = try #require(try f.store.readPageInkAction(pageID: f.pageID, actionID: strokeID)).action
+    #expect(appended.isActive && appended.sequence == selected.sequence + 1)
+    let cold = NotebookStore(root: f.store.root)
+    try cold.prepare()
+    let acceptedCursor = try cold.currentReadCursor()
+    #expect(try command("retry_after_reopen", store: cold) { try cold.editPanel(request, actor: f.content.actor) } == accepted)
+    #expect(try cold.currentReadCursor() == acceptedCursor)
+    let undo = NotebookPanelUndoRequest(workspaceID: request.workspaceID, target: target, actionID: request.actionID)
+    _ = try command("undo", store: cold) { try cold.undoPanel(undo, actor: f.content.actor) }
+    let undone = try #require(try cold.readPageInkAction(pageID: f.pageID, actionID: strokeID)).action
+    #expect(!undone.isActive && undone.sequence == appended.sequence)
+    #expect(try cold.readPageInkAction(pageID: f.pageID, actionID: selected.id)?.action == selected)
+    let undoCursor = try cold.currentReadCursor()
+    #expect(try command("retry_after_undo", store: cold) { try cold.editPanel(request, actor: f.content.actor) } == accepted)
+    #expect(try cold.currentReadCursor() == undoCursor)
   }
 }

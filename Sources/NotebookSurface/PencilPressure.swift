@@ -1,4 +1,10 @@
-import Foundation
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(WASILibc)
+import WASILibc
+#else
+import Glibc
+#endif
 
 public enum PencilPressure {
   public static func normalized(force: Double, maximum: Double) -> Double {

@@ -190,6 +190,7 @@ export class Surface {
   dispose(){++this.generation;this.discardPrepared();if(this.accepted)for(const asset of this.accepted.assets.values())URL.revokeObjectURL(asset.url);this.accepted=null;this.material.replaceChildren();this.hitPlane.replaceChildren();this.hits.clear();this.selection.replaceChildren();}
   hasSubject(id:string){return this.accepted?.groups.has(`element:${id}`)===true;}
   hasItemSubject(id:string){return this.accepted?.groups.has(`item:${id}`)===true;}
+  selectionFrame(selection:PanelSelection):Frame|undefined{const frame=this.accepted?.frames.get(key(selection));return frame?{...frame}:undefined;}
   hideSubject(id:string,hidden:boolean){for(const group of this.accepted?.groups.get(`element:${id}`)??[])group.node.style.visibility=hidden?'hidden':'';}
   frame(element:PanelElement):Frame{return {...(this.accepted?.frames.get(`element:${element.source.id}`)??sourceFrame(element,this.accepted?.snapshot.worldOrigin??zero))};}
   authoredFrame(element:PanelElement):Frame{

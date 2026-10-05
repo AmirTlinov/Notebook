@@ -29,7 +29,8 @@ final class CameraGestureSnapshot {
   }
   var passageCamera:SpatialCamera? { passage.map { $0.camera(from:trajectory,magnification:magnification,centroid:centroid) } }
   init(presence:SessionPresence,trajectory:CameraGestureTrajectory,entry:NotebookZoomPassage?,exit:NotebookZoomPassage?) {
-    self.presence=presence;self.trajectory=trajectory;self.entry=entry;self.exit=exit;latestCamera=presence.camera;centroid=trajectory.startingCentroid;documentPageIndex=presence.documentPageIndex
+    self.presence=presence;self.trajectory=trajectory;self.entry=entry;self.exit=exit;latestCamera=presence.camera
+    centroid = .init(x:trajectory.startingCentroid.x,y:trajectory.startingCentroid.y);documentPageIndex=presence.documentPageIndex
   }
   var preparation: SessionPresence? {
     guard let passage,let camera=passageCamera else { return nil }

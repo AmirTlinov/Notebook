@@ -1,5 +1,7 @@
 import {App} from '@modelcontextprotocol/ext-apps';
 import {SwiftSurface} from '../../panel/swift-surface.js';
+import {InkGPU} from '../../panel/ink-gpu.js';
+import {panelPixelBudget} from '../../panel/projection.js';
 const app=new App({name:'Notebook surface verification',version:'1.0.0'});
 const results=document.getElementById('results'),evidence=document.getElementById('evidence');
 const report={moduleSHA256:SURFACE_WASM_SHA256,secureContext:isSecureContext,checks:{}};
@@ -9,9 +11,12 @@ const show=(name,state,detail)=>{
     const row=document.createElement('li');row.textContent=`${key}: ${value.state} — ${value.detail}`;return row;
   }));evidence.textContent=JSON.stringify(report,null,2);
 };
-let kernel,device,program;
+let kernel,gpuRenderer,program;
+const lifetime=new AbortController();
 async function wasm(){
-  const started=performance.now();kernel=await SwiftSurface.compressed(SURFACE_WASM_GZIP);
+  const started=performance.now(),loaded=await SwiftSurface.compressed(SURFACE_WASM_GZIP);
+  if(lifetime.signal.aborted){loaded.dispose();return;}
+  kernel=loaded;
   const camera={center:{tileX:9_007_199_254_740_000,tileY:-9_007_199_254_740_000,localX:30,localY:40},scale:1};
   const next=kernel.camera(camera,{x:600,y:180},{x:300,y:90},{x:320,y:100},2);
   if(next.center.localX!==20||next.center.localY!==35||next.scale!==2)throw Error('Incorrect Swift camera transform');
@@ -19,37 +24,53 @@ async function wasm(){
   show('Swift/WASM','PASS',`Загрузка и точная камера: ${duration.toFixed(1)} мс`);
 }
 async function gpu(){
-  if(!navigator.gpu)throw Error('navigator.gpu отсутствует в панели');
-  const adapter=await navigator.gpu.requestAdapter();if(!adapter)throw Error('GPU adapter недоступен');
-  device=await adapter.requestDevice();device.pushErrorScope('validation');
-  const canvas=document.getElementById('gpu'),context=canvas.getContext('webgpu');
-  if(!context)throw Error('Контекст WebGPU недоступен');
-  const format=navigator.gpu.getPreferredCanvasFormat();
-  context.configure({device,format,alphaMode:'premultiplied',usage:GPUTextureUsage.RENDER_ATTACHMENT|GPUTextureUsage.COPY_SRC});
-  const shader=device.createShaderModule({code:`
-struct Vertex { @builtin(position) p:vec4f, @location(0) color:vec4f }
-@vertex fn vertex(@location(0) p:vec2f,@location(1) color:vec4f)->Vertex {
-  var v:Vertex;v.p=vec4f(p.x/300.0-1.0,1.0-p.y/90.0,0.0,1.0);v.color=color;return v;
-}
-@fragment fn fragment(v:Vertex)->@location(0) vec4f{return v.color;}`});
-  const pipeline=await device.createRenderPipelineAsync({layout:'auto',vertex:{module:shader,entryPoint:'vertex',buffers:[{arrayStride:24,attributes:[{shaderLocation:0,offset:0,format:'float32x2'},{shaderLocation:1,offset:8,format:'float32x4'}]}]},
-    fragment:{module:shader,entryPoint:'fragment',targets:[{format}]},primitive:{topology:'triangle-list'}});
-  const points=new Float32Array(3*7);points.set([80,90,8,.7,.1,.4,1,300,90,8,.7,.1,.4,1,520,90,8,.7,.1,.4,1]);
-  const vertices=kernel?kernel.stroke(points):new Float32Array([80,80,.7,.1,.4,1,300,100,.7,.1,.4,1,520,80,.7,.1,.4,1]);
-  const buffer=device.createBuffer({size:vertices.byteLength,usage:GPUBufferUsage.VERTEX|GPUBufferUsage.COPY_DST});
-  device.queue.writeBuffer(buffer,0,vertices);
-  const pixels=device.createBuffer({size:256,usage:GPUBufferUsage.COPY_DST|GPUBufferUsage.MAP_READ});
+  if(!kernel)throw Error('Сначала нужен успешно загруженный Swift-модуль');
+  gpuRenderer=await InkGPU.create(document.getElementById('gpu'),lifetime.signal,
+    error=>show('WebGPU','FAIL',error.message));
+  gpuRenderer.resize(600,180);
+  const points=new Float32Array([80,90,8,.7,.1,.4,1,300,90,8,.7,.1,.4,1,520,90,8,.7,.1,.4,1]);
+  const vertices=kernel.stroke(points);gpuRenderer.setMesh(vertices);
+  const pixel=await gpuRenderer.sample({x:0,y:0,width:600,height:180},{x:300,y:90});
+  if(pixel.some((value,index)=>Math.abs(value-[179,26,102,255][index])>1))throw Error(`Неверный GPU pixel: ${pixel}`);
+  const contact=kernel.inkContact();
   try{
-    const texture=context.getCurrentTexture(),encoder=device.createCommandEncoder();
-    const pass=encoder.beginRenderPass({colorAttachments:[{view:texture.createView(),clearValue:{r:1,g:1,b:1,a:1},loadOp:'clear',storeOp:'store'}]});
-    pass.setPipeline(pipeline);pass.setVertexBuffer(0,buffer);pass.draw(vertices.length/6);pass.end();
-    encoder.copyTextureToBuffer({texture,origin:{x:300,y:90}},{buffer:pixels,bytesPerRow:256},{width:1,height:1});
-    device.queue.submit([encoder.finish()]);await pixels.mapAsync(GPUMapMode.READ);
-    const pixel=Array.from(new Uint8Array(pixels.getMappedRange()).slice(0,4));pixels.unmap();
-    const error=await device.popErrorScope();if(error)throw Error(error.message);
-    if(pixel[3]!==255||pixel.slice(0,3).every(value=>value===255))throw Error(`GPU не нарисовал геометрию: ${pixel}`);
-    show('WebGPU','PASS',`${kernel?'Штрих Swift':'Тестовый треугольник'}: ${vertices.length/6} вершин; GPU pixel ${pixel.join(', ')}`);
-  }finally{buffer.destroy();pixels.destroy();}
+    // Cross both GPU byte and Swift contact growth boundaries. Ordinary input
+    // uploads only the changed suffix, including prediction retraction.
+    for(let index=0;index<300;index++){
+      gpuRenderer.setNodes(contact.update(new Float32Array([80+index*440/299,90,8,.7,.1,.4,1])),{red:.7,green:.1,blue:.4});
+    }
+    const compact=await gpuRenderer.sample({x:0,y:0,width:600,height:180},{x:300,y:90});
+    if(compact.some((value,index)=>Math.abs(value-pixel[index])>1))throw Error(`Compact GPU pixel: ${compact}; canonical: ${pixel}`);
+    show('WebGPU','PASS',`Swift: ${vertices.length/6} вершин; 300 incremental samples; MSAA 4×; RGBA ${compact.join(', ')}`);
+  }finally{contact.dispose();}
+  const curve=new Float32Array(48*7),probes=[];
+  for(let i=0;i<48;i++){
+    const x=80+i*440/47,y=90+Math.sin(i/47*Math.PI*2)*32,radius=4+i/47*6,alpha=.25+i/47*.65;
+    curve.set([x,y,radius,.7*alpha,.1*alpha,.4*alpha,alpha],i*7);
+    if(i%8===0)probes.push({x:Math.round(x),y:Math.round(y+radius-1)});
+  }
+  const canonical=[],view={x:0,y:0,width:600,height:180};
+  gpuRenderer.setMesh(kernel.stroke(curve));
+  for(const point of probes)canonical.push(await gpuRenderer.sample(view,point));
+  const curvedContact=kernel.inkContact();
+  try{
+    gpuRenderer.setNodes(curvedContact.update(curve),{red:.7,green:.1,blue:.4});
+    for(let i=0;i<probes.length;i++){
+      const actual=await gpuRenderer.sample(view,probes[i]);
+      if(actual.some((value,c)=>Math.abs(value-canonical[i][c])>1))throw Error(`Контур/давление GPU: ${actual}; canonical: ${canonical[i]}`);
+    }
+    show('Контур и давление','PASS',`${probes.length} пикселей контура совпали с каноническим Swift-штрихом`);
+  }finally{curvedContact.dispose();}
+  const canvas=document.getElementById('gpu'),sizes=[];
+  gpuRenderer.setMesh(vertices);
+  for(const [width,height] of [[6016,3384],[32768,256],[600,180]]){
+    gpuRenderer.resize(width,height);
+    if(canvas.width*canvas.height>panelPixelBudget)throw Error('Превышен бюджет пикселей');
+    const actual=await gpuRenderer.sample(view,{x:Math.floor(canvas.width/2),y:Math.floor(canvas.height/2)});
+    if(actual.some((value,c)=>Math.abs(value-pixel[c])>1))throw Error(`Resize GPU pixel: ${actual}`);
+    sizes.push(`${width}×${height} → ${canvas.width}×${canvas.height}`);
+  }
+  show('Retina/resize','PASS',sizes.join('; '));
 }
 async function isolatedProgram(){
   const token=crypto.randomUUID();program=document.createElement('iframe');
@@ -70,7 +91,7 @@ async function isolatedProgram(){
       if(error){window.removeEventListener('message',received);show('Изоляция программы','FAIL',error);reject(Error(error));return;}
       show('Изоляция программы','PASS',`Отдельный origin; UTF-8; счётчик ${event.data.count}`);resolve();
     }
-    window.addEventListener('message',received);document.getElementById('program').replaceChildren(program);
+    window.addEventListener('message',received,{signal:lifetime.signal});document.getElementById('program').replaceChildren(program);
   });
 }
 const text=document.getElementById('text');let compositions=0;
@@ -84,5 +105,7 @@ document.getElementById('run').onclick=async()=>{
   }
   document.getElementById('run').textContent='Проверка завершена';
 };
-window.addEventListener('pagehide',()=>{kernel?.dispose();device?.destroy();program?.remove();},{once:true});
+const close=()=>{lifetime.abort();kernel?.dispose();gpuRenderer?.dispose();program?.remove();};
+window.addEventListener('pagehide',close,{once:true});
+app.onteardown=async()=>{close();return {};};
 void app.connect().catch(error=>show('MCP Apps','FAIL',String(error)));

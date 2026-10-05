@@ -1,0 +1,275 @@
+{
+  "state": "REJECTED",
+  "scope": "Physical iPad candidate; fixed 120 Hz replay through native contact path, actual OS Metal presentation receipts. Not hardware Pencil/photons or full acceptance.",
+  "baseCommit": "d58815862eb2329c8e6d45309796604ba5ae64e1",
+  "sourceSnapshotSHA256": "a82541a47fdacd1825f1f91f035f5045310aea13655a80bd048e4e6ef6f66067",
+  "sourceFiles": [
+    {
+      "executable": false,
+      "path": "Applications/Shared/IncrementalInkMesh.swift",
+      "sha256": "40766d6992a0d5bfa7bfe62fe07f8945235a9ea9c8e1aea0a2097f2da9230f8e"
+    },
+    {
+      "executable": false,
+      "path": "Applications/Shared/InkCanvasView.swift",
+      "sha256": "2621c170a4faaa8d8287efe1aa66d6a3f66ad3398b41e7036b5099042b00c7d9"
+    },
+    {
+      "executable": false,
+      "path": "Applications/Shared/NotebookMetalDrawableRequest.swift",
+      "sha256": "4f6c982dc96934476840715ac50ee1781932ebc1fae6ec5406e4e6022efc205e"
+    },
+    {
+      "executable": false,
+      "path": "Applications/Tests/InkCanvasLifecycleTests.swift",
+      "sha256": "2b8cc7c7ec7c5f8a79ce51ba29e03615131e6ae795b22dbb730fc4d03cb0e4d4"
+    },
+    {
+      "executable": false,
+      "path": "Applications/Tests/NotebookGestureLatencyTests.swift",
+      "sha256": "70da5946bdba5dc75368516e169c839fa4baa482f922a4e65d2a0755c279ac04"
+    },
+    {
+      "executable": false,
+      "path": "Sources/NotebookSurface/IncrementalInkGeometry.swift",
+      "sha256": "00833afbea429b9098362353f191c8210bfa9cb70314dafc2259ab2f6fec93fc"
+    }
+  ],
+  "device": {
+    "model": "iPad Pro 11-inch (3rd generation)",
+    "os": "27.0 (24A435)",
+    "screenMaximumHz": 120,
+    "lowPower": false,
+    "thermalState": 0
+  },
+  "tests": {
+    "total": 18,
+    "passed": 15,
+    "failed": 3,
+    "skipped": 0,
+    "runtimeWarnings": 0,
+    "selectors": [
+      "NotebookTests/IncrementalInkMeshTests/testAppendPredictionsAndCorrectionsMatchTheCompleteGeometry",
+      "NotebookTests/IncrementalInkMeshTests/testCoincidentChainNormalizesOnceAndRestoresMeasuredPrefixAfterPredictions",
+      "NotebookTests/IncrementalInkMeshTests/testEarlyCoincidentSampleNeverRebuildsTheLongSealedPrefix",
+      "NotebookTests/InkCanvasLifecycleTests/testBorrowedPageCutSurvivesARefusedReplacementAndRecoversOnTheNextRequest",
+      "NotebookTests/InkCanvasLifecycleTests/testPageCoalescesNewMaterialUntilTheSystemSuppliesADrawable",
+      "NotebookTests/InkCanvasLifecycleTests/testPageLiftKeepsThePendingFirstRevealUntilItsOwnResolution",
+      "NotebookTests/InkCanvasLifecycleTests/testPageResizeRetainsDemandUntilSubmittedPublicationAndGPUDrain",
+      "NotebookTests/InkCanvasLifecycleTests/testPageResizeWaitsForCancelledDrawableBeforeReadmittingItsPool",
+      "NotebookTests/InkCanvasLifecycleTests/testPageStopsDrawableProductionWhenAResizedPoolCannotBeAdmitted",
+      "NotebookTests/InkCanvasLifecycleTests/testPreparedPageAndMaterialKeepTheOldPixelsUntilTheirCommonInstall",
+      "NotebookTests/InkCanvasLifecycleTests/testRetainedCulledCanvasStopsImmediatelyAndPresentsNewContentAfterRemount",
+      "NotebookTests/NotebookElementManipulationTests/testMaterialResizeProjectsTheActualLiveFrameBeforeCommit",
+      "NotebookTests/NotebookElementManipulationTests/testResizeKeepsPaperAndRejectsASupersededContact",
+      "NotebookTests/NotebookInteractionUXTests/testInkEraserMeetsTwentyMillisecondPresentationBudget",
+      "NotebookTests/NotebookInteractionUXTests/testPencilReplayCannotHideBacklogBySlowingItsInputSchedule",
+      "NotebookTests/NotebookZoomPassageTests/testInversePortalPreservesEveryPointAtBoundaryIncludingMinimumZoom",
+      "NotebookTests/NotebookZoomPassageTests/testProgressIsReversibleAndBoundariesAreGeometric",
+      "NotebookUITests/DrawingResponsivenessTests/testPaperSelectionAndZoomOutReturnToBoardAndReopenSameSheet"
+    ]
+  },
+  "budgetMs": 20,
+  "timings": {
+    "eraser": {
+      "handler_ms": {
+        "n": 120,
+        "p50": 1.1660833260975778,
+        "p95": 1.5973333502188325,
+        "max": 12.603750044945627
+      },
+      "render_began_ms": {
+        "n": 120,
+        "p50": 17.32599997194484,
+        "p95": 25.952208321541548,
+        "max": 26.02891670539975
+      },
+      "target_presentation_ms": {
+        "n": 120,
+        "p50": 34.91570829646662,
+        "p95": 43.50133327534422,
+        "max": 43.57199999503791
+      },
+      "gpu_ended_ms": {
+        "n": 120,
+        "p50": 18.085458257701248,
+        "p95": 27.070583309978247,
+        "max": 27.226374950259924
+      },
+      "metal_present_ms": {
+        "n": 120,
+        "p50": 35.18508333945647,
+        "p95": 51.84154165908694,
+        "max": 51.91220837878063
+      },
+      "drawable_requested_ms": {
+        "n": 120,
+        "p50": -6.872833357192576,
+        "p95": 1.555000024382025,
+        "max": 12.583541683852673
+      },
+      "drawable_taken_ms": {
+        "n": 120,
+        "p50": 17.323833308182657,
+        "p95": 25.946416659280658,
+        "max": 26.02429169928655
+      },
+      "render_began_ms->metal_present_ms": {
+        "n": 120,
+        "p50": 25.86954168509692,
+        "p95": 25.934999983292073,
+        "max": 25.948333321139216
+      },
+      "render_began_ms->target_presentation_ms": {
+        "n": 120,
+        "p50": 17.56624993868172,
+        "p95": 17.618499929085374,
+        "max": 17.63399998890236
+      },
+      "target_presentation_ms->metal_present_ms": {
+        "n": 120,
+        "p50": 8.34020838374272,
+        "p95": 8.340333355590701,
+        "max": 50.02370843430981
+      },
+      "next_drawable_began_ms->next_drawable_returned_ms": {
+        "n": 120,
+        "p50": 16.610916645731777,
+        "p95": 17.82070827903226,
+        "max": 17.87325000623241
+      },
+      "drawable_drained_ms->drawable_taken_ms": {
+        "n": 120,
+        "p50": 6.640666630119085,
+        "p95": 7.812458323314786,
+        "max": 7.832791656255722
+      },
+      "render_began_ms->gpu_ended_ms": {
+        "n": 120,
+        "p50": 1.096708292607218,
+        "p95": 1.2098333099856973,
+        "max": 2.3131666239351034
+      },
+      "immediate": {
+        "false": 120
+      },
+      "uniqueFrames": 47
+    },
+    "pen": {
+      "handler_ms": {
+        "n": 120,
+        "p50": 0.8733749855309725,
+        "p95": 1.5902083250693977,
+        "max": 16.529166663531214
+      },
+      "render_began_ms": {
+        "n": 120,
+        "p50": 15.414250025060028,
+        "p95": 24.04254168504849,
+        "max": 24.520541715901345
+      },
+      "target_presentation_ms": {
+        "n": 120,
+        "p50": 32.98049996374175,
+        "p95": 41.586083301808685,
+        "max": 41.64654167834669
+      },
+      "gpu_ended_ms": {
+        "n": 120,
+        "p50": 16.527708328794688,
+        "p95": 25.574999977834523,
+        "max": 26.265874970704317
+      },
+      "metal_present_ms": {
+        "n": 120,
+        "p50": 33.175624965224415,
+        "p95": 49.926291685551405,
+        "max": 49.98683335725218
+      },
+      "drawable_requested_ms": {
+        "n": 120,
+        "p50": -7.190083328168839,
+        "p95": 1.3072500005364418,
+        "max": 16.509625012986362
+      },
+      "drawable_taken_ms": {
+        "n": 120,
+        "p50": 15.411833359394222,
+        "p95": 24.035708338487893,
+        "max": 24.511458352208138
+      },
+      "render_began_ms->metal_present_ms": {
+        "n": 120,
+        "p50": 25.790125015191734,
+        "p95": 25.924791698344052,
+        "max": 25.939416664186865
+      },
+      "render_began_ms->target_presentation_ms": {
+        "n": 120,
+        "p50": 17.565833288244903,
+        "p95": 17.610666633117944,
+        "max": 17.62704167049378
+      },
+      "target_presentation_ms->metal_present_ms": {
+        "n": 120,
+        "p50": 8.340125030372292,
+        "p95": 8.340291737113148,
+        "max": 8.340333413798362
+      },
+      "next_drawable_began_ms->next_drawable_returned_ms": {
+        "n": 120,
+        "p50": 15.650374989490956,
+        "p95": 16.71358331805095,
+        "max": 16.754833341110498
+      },
+      "drawable_drained_ms->drawable_taken_ms": {
+        "n": 120,
+        "p50": 6.681125028990209,
+        "p95": 7.696416694670916,
+        "max": 7.9171250108629465
+      },
+      "render_began_ms->gpu_ended_ms": {
+        "n": 120,
+        "p50": 1.1074583162553608,
+        "p95": 1.6212916234508157,
+        "max": 2.436749986372888
+      },
+      "immediate": {
+        "false": 120
+      },
+      "uniqueFrames": 50
+    }
+  },
+  "firstReveal": {
+    "state": "FAIL",
+    "observedDrawables": 4,
+    "expectedDrawables": 2,
+    "osDiscardedBeforeShow": 3
+  },
+  "rawResult": ".build/surface-ink-clock-candidate/ipad.xcresult",
+  "productionPairChanged": false,
+  "nextStep": "Measure a real Pencil contact through the existing late-input bridge before another renderer change. The unchanged strict 20 ms replay gate remains open; see ipad-restored.json.",
+  "resolution": "REMOVED: both UIUpdateLink variants worsened physical presentation. Restored CAMetalDisplayLink, removed both new primitives and all experimental test/trace changes; common Surface retained.",
+  "phasedCandidate": {
+    "state": "REJECTED",
+    "sourceSnapshotSHA256": "a7655f4795f758b431af21939432adac7af45ac4e92d6ed7eb56610f778a6337",
+    "passed": 1,
+    "failed": 3,
+    "eraserOSp95MaxMs": [
+      34.73,
+      34.77
+    ],
+    "penOSp95MaxMs": [
+      43.5,
+      43.54
+    ],
+    "uniqueFramesPer120Samples": 61,
+    "immediatePresentationOpportunities": 0,
+    "firstReveal": {
+      "drawables": 6,
+      "expected": 2,
+      "discarded": 5
+    },
+    "rawResult": ".build/surface-ink-clock-phased-retirement/ipad.xcresult"
+  }
+}

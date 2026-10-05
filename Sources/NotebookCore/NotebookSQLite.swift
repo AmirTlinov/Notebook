@@ -11,7 +11,7 @@ enum NotebookSQLValue {
   var blob: Data? { if case .blob(let value) = self { value } else { nil } }
 }
 
-/// An agent command borrows the ordinary WAL connection, including nested
+/// A command borrows the ordinary WAL connection, including nested
 /// reads and the final ownership checks. No helper may renew its allowance.
 struct NotebookSQLReadAllowance {
   let rows: Int
@@ -21,6 +21,11 @@ struct NotebookSQLReadAllowance {
 
   static let agentCommand = Self(rows: 65_536, bytes: 32 * 1_024 * 1_024,
     valueBytes: 8 * 1_024 * 1_024, reason: "agent_command_read")
+  // Completed contacts retain up to 65,536 measured points in their receipt.
+  // Native entry points admit that bounded contact; nested agent commands still
+  // tighten the same lease and can never renew an exhausted allowance.
+  static let nativeCommand = Self(rows: 65_536, bytes: 128 * 1_024 * 1_024,
+    valueBytes: 32 * 1_024 * 1_024, reason: "native_command_read")
 }
 
 /// A connection has one owner. Nested typed APIs borrow its synchronous
@@ -422,7 +427,7 @@ extension NotebookStore {
   var currentSQL: NotebookSQLConnection? { Thread.current.threadDictionary[connectionKey] as? NotebookSQLConnection }
 
   // SQLite admission is local to this database, independently of wire and content formats.
-  static let currentDatabaseVersion: Int64 = 27
+  static let currentDatabaseVersion: Int64 = 28
 
   @discardableResult
   func prepareDatabase(initialWorkspaceID: UUID? = nil,
@@ -604,6 +609,13 @@ extension NotebookStore {
           if fragment.value["tool"] == .string("eraser") {try indexPageInkWindow(fragment,database:database)}
         }
       }
+      if admittedVersion < 28 {
+        var after = ""
+        while let row = try database.rows("SELECT r.address,b.data FROM records r JOIN blobs b ON b.hash=r.hash WHERE r.file LIKE 'pages/%' AND r.collection='actions' AND r.address>? ORDER BY r.address LIMIT 1", [.text(after)]).first {
+          after = row[0].text!
+          try indexPageInkOrder(database.decodeFragmentEnvelope(row[1].blob!), database: database)
+        }
+      }
       try database.run("PRAGMA user_version=\(Self.currentDatabaseVersion)")
     }
     // Admission published its own command. Its pending changes, ownership
@@ -627,6 +639,7 @@ extension NotebookStore {
 
   /// Called only inside the bootstrap or admission writer transaction.
   private func prepareCurrentDatabaseSchema(_ database: NotebookSQLConnection) throws {
+    try Self.createPageInkOrderIndex(database)
     try Self.createCausalFieldCountIndex(database)
     try Self.createElementGroupSpatialIndex(database)
     try Self.createInkWindowIndex(database)

@@ -25,6 +25,7 @@ settings:
     NOTEBOOK_CLOUD_CONTAINER: ""
     NOTEBOOK_TYPESETTER_RUNTIME: $(SRCROOT)/../.build/notebook-typesetter-runtime
     NOTEBOOK_CODEX_RUNTIME: $(SRCROOT)/../.build/notebook-codex-runtime
+    NOTEBOOK_SURFACE_STAGE: $(SRCROOT)/../.build/surface
 
 targets:
   Notebook:
@@ -205,8 +206,16 @@ targets:
           /usr/bin/env node "$SRCROOT/../MCP/build-sidecar.mjs" "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/NotebookTools"
         inputFiles:
           - $(SRCROOT)/../MCP/src
+          - $(SRCROOT)/../MCP/panel
+          - $(SRCROOT)/../MCP/package.json
           - $(SRCROOT)/../MCP/package-lock.json
           - $(SRCROOT)/../MCP/build-sidecar.mjs
+          - $(SRCROOT)/../MCP/build-panel.mjs
+          - $(SRCROOT)/../MCP/build-surface.mjs
+          - $(SRCROOT)/../Package.swift
+          - $(SRCROOT)/../Sources/NotebookSurface
+          - $(SRCROOT)/../Sources/NotebookSurfaceWasm
+          - $(NOTEBOOK_SURFACE_STAGE)
         outputFiles:
           - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/NotebookTools/dist/index.mjs
           - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/NotebookTools/package.json

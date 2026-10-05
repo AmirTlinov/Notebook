@@ -33,7 +33,7 @@ struct NotebookZoomPassage: Sendable {
   func camera(from trajectory:CameraGestureTrajectory,magnification:CGFloat,centroid:CGPoint) -> SpatialCamera {
     let trajectory=CameraGestureTrajectory(startingCamera:parentCamera(from:trajectory.startingCamera),
       startingCentroid:trajectory.startingCentroid,viewport:trajectory.viewport)
-    return trajectory.camera(at:magnification,centroid:centroid,maximumScale:SpatialCamera.maximumScale)
+    return trajectory.camera(at:Double(magnification),centroid:.init(x:centroid.x,y:centroid.y))
   }
 
   func progress(camera:SpatialCamera) -> Double {

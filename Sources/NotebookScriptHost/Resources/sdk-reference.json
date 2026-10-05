@@ -26371,6 +26371,20 @@
                 "type": "number",
                 "minimum": 0,
                 "maximum": 1
+              },
+              "timeOffset": {
+                "type": "number",
+                "minimum": 0
+              },
+              "force": {
+                "type": "number",
+                "minimum": 0
+              },
+              "azimuth": {
+                "type": "number"
+              },
+              "altitude": {
+                "type": "number"
               }
             },
             "required": [
@@ -28772,6 +28786,20 @@
                 "type": "number",
                 "minimum": 0,
                 "maximum": 1
+              },
+              "timeOffset": {
+                "type": "number",
+                "minimum": 0
+              },
+              "force": {
+                "type": "number",
+                "minimum": 0
+              },
+              "azimuth": {
+                "type": "number"
+              },
+              "altitude": {
+                "type": "number"
               }
             },
             "required": [
@@ -51801,6 +51829,20 @@
                 "type": "number",
                 "minimum": 0,
                 "maximum": 1
+              },
+              "timeOffset": {
+                "type": "number",
+                "minimum": 0
+              },
+              "force": {
+                "type": "number",
+                "minimum": 0
+              },
+              "azimuth": {
+                "type": "number"
+              },
+              "altitude": {
+                "type": "number"
               }
             },
             "required": [

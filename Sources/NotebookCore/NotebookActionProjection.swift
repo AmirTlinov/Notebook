@@ -1,12 +1,13 @@
 import Foundation
 
-/// A command envelope, not a page or a render source. Ink and computations are
-/// deliberately absent; only the named elements may be validated and edited.
-struct NotebookPageElementProjection: Codable {
+/// A command envelope containing only named elements and ink actions. Raster
+/// baselines, computations and unrelated measurement bodies retain their owners.
+struct NotebookPageCommandProjection: Codable {
   let format: Int
   let id: UUID
   let size: PageSize
   let drawingStamp: VersionStamp
+  let drawingData: Data?
   let agentStamp: VersionStamp
   let elements: [AgentElement]
   let collaboration: CollaborativeContent
@@ -22,6 +23,7 @@ struct NotebookPageElementProjection: Codable {
           parentID: element.parentID, basis: element.basis).allSatisfy { collaboration.fields[$0] != nil }
       }
       && PageDocument.elementsAreValid(elements, in: size)
+      && (drawingData == nil || (try? PageInkDrawing.decode(drawingData!)) != nil)
   }
 }
 
@@ -50,6 +52,7 @@ extension NotebookStore {
     var stateProgramIDs: [UUID: Set<String>] = [:], sourceFileIDs: [UUID: Set<String>] = [:]
     var sourceDocumentIDs = Set<UUID>(), fullDocumentIDs = Set<UUID>()
     var pageElementIDs: [UUID: Set<String>] = [:], fullPageIDs = Set<UUID>()
+    var pageInkIDs: [UUID: Set<UUID>] = [:]
     var pageGraphicSources: [UUID: [PageInkAction]] = [:]
     func include(_ target: CollaborationTarget) throws {
       switch target.kind {
@@ -73,7 +76,12 @@ extension NotebookStore {
         if operation.target.kind == .page {
           let graphicRemoval = try operation.kind == .removeElement && operation.id != nil
             && (readPageElement(pageID: operation.target.id, elementID: operation.id!))?.graphic != nil
-          if operation.kind == .convertInkToElement {
+          if operation.kind == .appendInkStroke {
+            guard let id = operation.id.flatMap(UUID.init(uuidString:)) else {
+              throw CollaborationError("invalid_operation", "Штрих ручки получает UUID.")
+            }
+            pageInkIDs[operation.target.id, default: []].insert(id)
+          } else if operation.kind == .convertInkToElement {
             let page = operation.target.id, file = pageFile(page)
             pageElementIDs[page, default: []].formUnion(operation.id.map { [collaborationIdentity($0)] } ?? [])
             guard let graphic = try operation.values["graphic"]?.decode(NotebookGraphic.self), graphic.isValid else {
@@ -274,6 +282,8 @@ extension NotebookStore {
     // never let an ordinary inverse edit its invisible source indirectly.
     pageIDs = try Set(pageIDs.filter { try ownerItemID(ofPage: $0) != nil })
     let projectedPageIDs = pageIDs.subtracting(fullPageIDs)
+    for page in pageInkIDs.keys { pageInkIDs[page]!.formUnion((pageGraphicSources[page] ?? []).map(\.id)) }
+    let pageInkFrontiers = try Dictionary(uniqueKeysWithValues: pageInkIDs.keys.map { ($0, try pageInkSequenceFrontier($0)) })
     let pageAddresses = projectedPageIDs.sorted().flatMap { id -> [(String, Bool)] in
       let root = pageFile(id) + "#", ids = (pageElementIDs[id] ?? []).sorted()
       return [(root, false)]
@@ -281,22 +291,31 @@ extension NotebookStore {
         + (["elements/order"] + ids.flatMap { AgentElement.causalFieldKeys(id: $0, allGraphicFields: true) }).map {
           (root + "/collaboration/fields/@" + fieldKey([$0]), false)
         }
+        + (pageInkIDs[id].map { ids in [(root + "/drawingData", false)]
+          + ids.sorted().map { (root + "/drawingData/actions/@" + $0.uuidString.lowercased(), true) } } ?? [])
     }
     let pageRows = Dictionary(grouping: try boundedStoredFragments(pageAddresses,
-      maximumCount: 4_096, maximumBytes: 4 * 1_024 * 1_024, budget: "page_element_command"), by: \.file)
+      maximumCount: 4_096, maximumBytes: (pageInkIDs.isEmpty ? 4 : 32) * 1_024 * 1_024, budget: "page_command"), by: \.file)
     for id in pageIDs {
       let file = pageFile(id)
       if fullPageIDs.contains(id) {
         files[file] = try storedValue(file)
       } else if let stored = pageRows[file], !stored.isEmpty {
         let rows = stored.map { row in
-          row.parent == nil ? row.replacing(value: row.value,
-            collections: row.collections.filter { ![["drawingData"], ["computations"]].contains($0.path) }) : row
+          if row.parent == nil {
+            return row.replacing(value: row.value, collections: row.collections.filter {
+              $0.path != ["computations"] && ($0.path != ["drawingData"] || pageInkIDs[id] != nil)
+            })
+          }
+          if row.address == file + "#/drawingData" {
+            return row.replacing(value: row.value, collections: row.collections.filter { $0.path != ["baselinePNG"] })
+          }
+          return row
         }
         let value = try NotebookRecordCodec.decode(rows, root: file + "#")
-        let projection = try value.decode(NotebookPageElementProjection.self)
+        let projection = try value.decode(NotebookPageCommandProjection.self)
         guard projection.id == id, projection.isValid,
-          value["drawingData"] == nil, value["computations"] == nil else {
+          value["computations"] == nil else {
           throw NotebookStorageError.corruptRecord(file)
         }
         let addressed = Dictionary(uniqueKeysWithValues: rows.map { ($0.address, $0) })
@@ -373,6 +392,7 @@ extension NotebookStore {
       }
     }
     files["spatial-ink.json"] = try NotebookRecordCodec.decode(inkRows, root: "spatial-ink.json#")
-    return CollaborationWorkspace(files: files, projectedPageIDs: projectedPageIDs, pageGraphicSources: pageGraphicSources)
+    return CollaborationWorkspace(files: files, projectedPageIDs: projectedPageIDs,
+      pageGraphicSources: pageGraphicSources, pageInkFrontiers: pageInkFrontiers)
   }
 }

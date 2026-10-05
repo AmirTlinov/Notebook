@@ -244,6 +244,13 @@ public struct SpatialCamera: Codable, Equatable, Hashable, Sendable {
     self.scale = min(scale, Self.maximumScale)
   }
 
+  /// Platform unit conversion can round a limit by one ULP. Admit a finite,
+  /// positive request through the same canonical zoom limits before a gesture.
+  public init?(admitting center: WorldPoint, scale: Double) {
+    guard center.isValid, scale.isFinite, scale > 0 else { return nil }
+    self.init(center: center, scale: max(scale, Self.minimumScale))
+  }
+
   public func worldToScreen(
     _ point: WorldPoint,
     viewport: SpatialPoint
