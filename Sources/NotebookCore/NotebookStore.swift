@@ -251,26 +251,6 @@ public struct NotebookStore: Sendable {
     return journal
   }
 
-  public func loadAvailableDocuments(
-    workspace: WorkspaceIndex
-  ) throws -> (
-    documents: [UUID: DocumentDocument],
-    states: [UUID: DocumentStateJournal]
-  ) {
-    try prepare()
-    var documents: [UUID: DocumentDocument] = [:]
-    var states: [UUID: DocumentStateJournal] = [:]
-    for item in workspace.items where item.kind == .document {
-      if (try hasStoredValue(at: documentURL(item.id))) {
-        documents[item.id] = try loadDocument(item.id)
-      }
-      if (try hasStoredValue(at: documentStateURL(item.id))) {
-        states[item.id] = try loadDocumentState(item.id)
-      }
-    }
-    return (documents, states)
-  }
-
   public func saveIndex(_ index: WorkspaceIndex) throws {
     guard index.isValid else { throw corruptFile(at: indexURL) }
     try prepare()

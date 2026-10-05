@@ -78,11 +78,45 @@ import XCTest
   }
 
   func testTwentyFourBoardProgramsStayInteractiveAfterZoomOutAndBack() throws {
-    try controls(leaf: 0, since: launch(programs: true, board: true))
-    app.pinch(withScale: 0.55, velocity: -1); app.pinch(withScale: 1.25, velocity: 1)
+    let openedImage = try controls(leaf: 0, since: launch(programs: true, board: true))
+    let initial = try visibleControlRects(image: openedImage)
+    let board = app.otherElements["spatial-ink"]
+    XCTAssertTrue(board.waitForExistence(timeout: 2))
+    let target = XCTAttachment(string: "target=spatial-ink frame=\(board.frame) application=\(app.frame)")
+    target.name = "Board pinch public AX target"; target.lifetime = .keepAlways; add(target)
+    // XCTest includes an outward lead-in before its nominal opening scale.
+    // These values keep both real zoom phases inside the viewport; the pixel
+    // checks below verify the actual shrink and growth.
+    board.pinch(withScale: 0.4, velocity: -1)
+    let zoomedOut = try visibleControlRects()
+    for (before, after) in zip(initial, zoomedOut) {
+      XCTAssertLessThan(after.width, before.width * 0.8, "Zoom-out must visibly shrink every program")
+    }
+    // Recover the actual pinch centre from the submitted pixel transform.
+    // Pan a gutter beneath it: a pair starting inside one program belongs to
+    // that program, even when XCTest targets the board's accessibility element.
+    let initialBounds = initial.reduce(CGRect.null) { $0.union($1) }
+    let outBounds = zoomedOut.reduce(CGRect.null) { $0.union($1) }
+    let scale = outBounds.width / initialBounds.width
+    let pinchX = (outBounds.midX - scale * initialBounds.midX) / (1 - scale)
+    let gutterX = (zoomedOut[1].maxX + zoomedOut[2].minX) / 2
+    let panStart = board.coordinate(withNormalizedOffset: .zero)
+      .withOffset(.init(dx: outBounds.midX, dy: outBounds.maxY + 80))
+    panStart.press(forDuration: 0.01,
+      thenDragTo: panStart.withOffset(.init(dx: pinchX - gutterX, dy: 0)),
+      withVelocity: .slow, thenHoldForDuration: 0.1)
+    let aligned = try visibleControlRects()
+    XCTAssertGreaterThan(pinchX - aligned[1].maxX, 3,
+      "The opening pinch must start in the board gutter")
+    XCTAssertGreaterThan(aligned[2].minX - pinchX, 3,
+      "The opening pinch must start in the board gutter")
+    board.pinch(withScale: 1.1, velocity: 1)
     // Real pinches need not have identical centroids. Locate actual submitted
     // pixels, not untransformed WebKit accessibility frames or an assumed pose.
     let rectangles = try visibleControlRects()
+    for (before, after) in zip(zoomedOut, rectangles) {
+      XCTAssertGreaterThan(after.width, before.width * 1.3, "Zoom-in must visibly enlarge every program")
+    }
     for (index, rectangle) in rectangles.enumerated() {
       tapControl(rectangle)
       try changedControl(rectangle, index: index)

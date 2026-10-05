@@ -97,6 +97,19 @@ covers ink, undo, off-window elements and child portals, but excludes the board'
 incoming camera. Ready tiles can be reused through the same bounded resource pool
 without retaining old cohorts or increasing budgets.
 
+Independent panel bodies use `SceneMaterialKey` from their actual paint inputs:
+local geometry, text/style or program source/state, resolved connectors, erasures
+and density. Fingerprinting runs on the source actor. A move or neighboring edit
+keeps the raster and its asset ID; only that body's program receipts can revoke it.
+`NotebookElementPresentation` derives local bounds before world translation so a
+rotated body's pixel basis and dimensions remain stable during movement.
+
+`NotebookScenePublication` owns scene requests, the single preparation driver,
+prepared results and admitted generations. Cold input dispatches immediately;
+warm synchronous changes coalesce. A newer prepared SQL cut supersedes a running
+builder. Input and peer admission stay in the model. Shutdown joins the driver's
+dispatched worker, including cancellation before its first main-actor entry.
+
 ## Interaction work is incremental
 
 `InkElementContact` is the single eraser-contact selector on iPad paper, the

@@ -1,0 +1,38 @@
+{
+  "recordedAt": "2026-10-05T09:46:17.887472+00:00",
+  "version": "0.3.171",
+  "build": "241",
+  "peer": {
+    "cdhash": "6d052ed5b4929b693fe64cbd68d6ca6c7678b700",
+    "dynamicValidityChecked": true,
+    "executable": "/Users/amir/Applications/Notebook.app/Contents/MacOS/Notebook",
+    "identifier": "com.amirtlinov.notebook.mac",
+    "pid": 40595,
+    "team": "M94V58FCVP"
+  },
+  "sourceSHA256": "87f43a9b8a37d2a309f7e07282f1051dcae669a25f33eccf46986ce651d6d763",
+  "verificationSHA256": "33a6e433eb8e1371c875dad668581357fdf4750a4e324aa35347380ae777b803",
+  "scope": "Installed Mac owner, current board projection, two panel material reads; no content edits or native gesture.",
+  "workspaceUnchanged": true,
+  "presenceUnchanged": true,
+  "selectionUnchanged": true,
+  "stableAssetIDs": true,
+  "measurements": [
+    {
+      "milliseconds": 157.76870798435993,
+      "layers": 8,
+      "elementLayers": 0,
+      "encodedLayers": 8,
+      "pngBase64Bytes": 1542876,
+      "diagnostics": []
+    },
+    {
+      "milliseconds": 25.796999980229884,
+      "layers": 8,
+      "elementLayers": 0,
+      "encodedLayers": 0,
+      "pngBase64Bytes": 0,
+      "diagnostics": []
+    }
+  ]
+}

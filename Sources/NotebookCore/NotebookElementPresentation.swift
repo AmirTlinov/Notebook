@@ -7,7 +7,13 @@ public struct NotebookElementPresentation: Equatable, Sendable {
   public let placement: NotebookElementPlacement
   public let localBounds: CGRect
   public var bodySize: CGSize { .init(width:placement.localSize.x,height:max(placement.localSize.y,localBounds.maxY)) }
-  public var bounds: CGRect { localBounds.applying(placement.transform) }
+  private var transformedLocalBounds: CGRect {
+    let t = placement.transform
+    return localBounds.applying(.init(a: t.a, b: t.b, c: t.c, d: t.d, tx: 0, ty: 0))
+  }
+  public var bounds: CGRect {
+    transformedLocalBounds.offsetBy(dx: placement.transform.tx, dy: placement.transform.ty)
+  }
   public var frame: PageRect { .init(x:bounds.minX,y:bounds.minY,width:bounds.width,height:bounds.height) }
   public var requiresRasterTransform: Bool {
     let t=placement.transform
@@ -21,7 +27,10 @@ public struct NotebookElementPresentation: Equatable, Sendable {
     return sqrt((a+b+hypot(a-b,2*c))/2)
   }
   public var transform: CGAffineTransform {
-    placement.transform.concatenating(.init(translationX:-bounds.minX,y:-bounds.minY))
+    let t = placement.transform, local = transformedLocalBounds
+    // Derive the local pixel basis before translation. Subtracting two world
+    // coordinates loses precision and changes otherwise identical moved pixels.
+    return .init(a: t.a, b: t.b, c: t.c, d: t.d, tx: -local.minX, ty: -local.minY)
   }
 
   public init(placement: NotebookElementPlacement, text: String? = nil, style: NativeTextStyle = .standard) {

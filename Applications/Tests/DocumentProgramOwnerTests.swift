@@ -57,8 +57,8 @@ final class DocumentProgramOwnerTests: XCTestCase {
         visibleIDs: ["geometry"], preparationPage: nil, blocked: false, contacts: [], densities: [:])
     }
     try refresh()
-    try await wait(message: { "geometry runtime readiness" }) { owner.runtimes["geometry"]?.ready == true }
-    let runtime = try XCTUnwrap(owner.runtimes["geometry"]), web = try XCTUnwrap(runtime.webView)
+    try await wait(message: { "geometry runtime readiness" }) { owner.runtime(for: "geometry")?.ready == true }
+    let runtime = try XCTUnwrap(owner.runtime(for: "geometry")), web = try XCTUnwrap(runtime.webView)
     let accepted = try await web.evaluateJavaScript("""
       const original=documentProgram;
       window.documentProgram=Object.create(original,{readSnapshot:{value:argument=>{
@@ -81,7 +81,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
     XCTAssertTrue(document.replaceFileSource(id: main.id, source: "% Relayout only\n" + main.source, actor: actor))
     XCTAssertEqual(try DocumentProgramSource(document: document, instanceID: program.id, path: program.path).sourceBasis, program.sourceBasis)
     try refresh()
-    XCTAssertTrue(owner.runtimes[program.id] === runtime && runtime.webView === web)
+    XCTAssertTrue(owner.runtime(for: program.id) === runtime && runtime.webView === web)
     XCTAssertEqual(runtime.viewportSize, CGSize(width: width, height: height))
     XCTAssertEqual(checkpointAttempts, 0, "Layout does not freeze or restart an unchanged program")
     XCTAssertEqual(try store.loadDocumentState(document.id).records, initial.records)
@@ -90,14 +90,14 @@ final class DocumentProgramOwnerTests: XCTestCase {
     XCTAssertEqual(acceptedWrites, [1, 2].map { .object(["acceptedBeforeGeometry": .number(Double($0))]) })
     let saved = await owner.checkpointAll(resume: false)
     XCTAssertFalse(saved); XCTAssertEqual(checkpointAttempts, 1)
-    XCTAssertTrue(owner.runtimes[program.id] === runtime && runtime.webView === web)
+    XCTAssertTrue(owner.runtime(for: program.id) === runtime && runtime.webView === web)
     width += 32; try refresh()
     XCTAssertEqual(checkpointAttempts, 1, "A resize is not a retry of a failed durable boundary")
     refusesCheckpoint = false; owner.retry(program.id)
-    try await wait(message: { "The same frozen writer stage retries" }) { checkpointAttempts == 2 && owner.pauseFailures[program.id] == nil }
+    try await wait(message: { "The same frozen writer stage retries" }) { checkpointAttempts == 2 && owner.pauseFailure(for: program.id) == nil }
     let resumed = await owner.resumeAll(); XCTAssertTrue(resumed)
     try refresh()
-    XCTAssertTrue(owner.runtimes[program.id] === runtime && runtime.webView === web)
+    XCTAssertTrue(owner.runtime(for: program.id) === runtime && runtime.webView === web)
     XCTAssertEqual(runtime.viewportSize, CGSize(width: width, height: height))
     let boots = try await web.evaluateJavaScript("window.boots") as? Int
     XCTAssertEqual(boots, 1)
@@ -137,12 +137,12 @@ final class DocumentProgramOwnerTests: XCTestCase {
     }
     try refresh()
     try await wait(message: { "Author failure completed its accepted-state boundary" }) {
-      owner.runtimes["failed"]?.failure != nil && owner.runtimes["failed"]?.webView == nil
+      owner.runtime(for: "failed")?.failure != nil && owner.runtime(for: "failed")?.webView == nil
     }
-    let failed = try XCTUnwrap(owner.runtimes["failed"])
+    let failed = try XCTUnwrap(owner.runtime(for: "failed"))
     height = 160; try refresh()
     _ = await owner.checkpointAll(resume: true)
-    XCTAssertTrue(owner.runtimes["failed"] === failed)
+    XCTAssertTrue(owner.runtime(for: "failed") === failed)
     XCTAssertNotNil(failed.failure); XCTAssertNil(failed.webView); XCTAssertEqual(mounts, 1)
     owner.retry("failed")
     try await wait(message: { "Only explicit Retry admits another author" }) { mounts > 1 }
@@ -172,6 +172,46 @@ final class DocumentProgramOwnerTests: XCTestCase {
     await DocumentPagePresentationOwner.resumePrograms(resources: fixture.resources)
     let afterForeground = try await web.evaluateJavaScript("resumes") as? Int
     XCTAssertEqual(afterForeground, 1); XCTAssertTrue(web.isUserInteractionEnabled)
+  }
+
+  func testLateCheckpointFailureCannotPoisonTheReplacementProgram() async throws {
+    let document = DocumentTestFiles.document(actor: UUID(), contents: [.program(id: "program", html: "<input aria-label='Value'>",
+      javaScript: "notebook.lifecycle({checkpoint:()=>({value:1})});notebook.ready(Promise.resolve());", height: 100)])
+    let fixture = try ProgramFixture(document: document, showsNeighbour: false)
+    var held: CheckedContinuation<Void, Never>?
+    defer {
+      fixture.acceptsCheckpoints = true; fixture.onCheckpoint = { _ in }
+      held?.resume(); fixture.close()
+    }
+    try await wait(message: { fixture.diagnostics }) { fixture.isPresented && fixture.web(block: "program") != nil }
+    let original = try XCTUnwrap(fixture.web(block: "program"))
+    let runtime = try XCTUnwrap(original.navigationDelegate as? DocumentBlockRuntime)
+    _ = try await original.evaluateJavaScript("document.querySelector('input').focus();true")
+    try await wait(message: { fixture.diagnostics }) { runtime.focused }
+
+    fixture.onCheckpoint = { _ in await withCheckedContinuation { held = $0 } }
+    let checkpoint = Task { @MainActor in
+      await DocumentPagePresentationOwner.checkpointFocusedProgram(documentID: document.id,
+        resources: fixture.resources, resume: true)
+    }
+    defer { checkpoint.cancel() }
+    try await wait(message: { fixture.diagnostics }) { held != nil }
+    fixture.replaceSource(fileID: "program-js", source:
+      "window.replacement=true;notebook.lifecycle({checkpoint:()=>({value:2})});notebook.ready(Promise.resolve());")
+    // The successor slot can replace the old owner immediately. Its WebKit
+    // admission waits for the old writer's physical borrow of this source.
+    try await wait(message: { fixture.diagnostics }) { runtime.webView == nil }
+    fixture.acceptsCheckpoints = false
+    held?.resume(); held = nil
+    let completed = await checkpoint.value
+    XCTAssertTrue(completed, "The departed runtime's writer failure does not fail its successor's navigation")
+    fixture.acceptsCheckpoints = true
+    try await wait(message: { fixture.diagnostics }) {
+      fixture.isPresented && fixture.web(block: "program") != nil && fixture.web(block: "program") !== original
+    }
+    let replacement = try XCTUnwrap(fixture.web(block: "program"))
+    XCTAssertFalse(fixture.hasProgramAction("program"), "An old heap cannot publish Retry over its replacement")
+    XCTAssertTrue(replacement.isUserInteractionEnabled)
   }
 
   func testShippedSoundOpeningReportsPaperNavigationAndProgramReadinessSeparately() async throws {
@@ -416,7 +456,11 @@ final class DocumentProgramOwnerTests: XCTestCase {
       .program(id: "far", html: "<button>Far control</button>", height: 100)])
     let fixture = try ProgramFixture(document: document)
     defer { fixture.close() }
-    try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.ready[1] == true && fixture.web(block: "counter") != nil }
+    // The paper's DOM receipt has its own completion boundary beside the program.
+    try await wait(message: { fixture.diagnostics }) {
+      fixture.ready[0] == true && fixture.ready[1] == true && fixture.web(block: "counter") != nil
+        && fixture.canonicalPaper(in: 0)
+    }
     let paper = try XCTUnwrap(fixture.paper(in: 0)), program = try XCTUnwrap(fixture.web(block: "counter"))
     let coordinator = try XCTUnwrap(paper.navigationDelegate as? DocumentWebCoordinator)
     let old = try await paper.evaluateJavaScript("notebookRenderer.pageReceipt().generation") as? String
@@ -490,7 +534,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
     // The native paper may be mounted before its source receipt authorizes links.
     try await wait(message: { fixture.diagnostics }) { renderer.currentLinkOrigin != nil }
     renderer.resolveLink("#bad", origin: try XCTUnwrap(renderer.currentLinkOrigin)) { _ in }
-    try await wait(message: { fixture.diagnostics }) { source.layout?.isComplete == true }
+    try await wait(message: { fixture.diagnostics }) { source.layout != nil }
     let layout = try XCTUnwrap(source.layout)
     let target = try XCTUnwrap(layout.regions.first { $0.id == "bad" }?.pageIndex)
     XCTAssertGreaterThan(target, 1)
@@ -974,16 +1018,26 @@ final class DocumentProgramOwnerTests: XCTestCase {
   }
 
   func testFailureOfPreviousSourceDoesNotPoisonTheSamePageAfterEditing() async throws {
+    func hasRetry(_ view: UIView) -> Bool {
+      if let button = view as? UIButton,
+        (button.title(for: .normal) ?? button.configuration?.title) == "Повторить" { return !button.isHidden }
+      return view.subviews.contains(where: hasRetry)
+    }
     let document = DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "body", source: "\\section{First source}\\hypertarget{first-source}{}")])
     let fixture = try ProgramFixture(document: document, showsNeighbour: false)
     defer { fixture.close() }
     try await wait(message: { fixture.diagnostics }) { fixture.canonicalPaper(in: 0) }
+    let originalPaper = try XCTUnwrap(fixture.retainedPaper)
     let web = try XCTUnwrap(fixture.paper(in: 0))
     let coordinator = try XCTUnwrap(web.navigationDelegate as? DocumentWebCoordinator)
     coordinator.webView(web, didFail: nil, withError: NSError(domain: "SourceFailureContract", code: 1))
     try await wait(message: { fixture.diagnostics }) { !fixture.preparationErrors.isEmpty }
     let owner = DocumentPagePresentationOwner.shared(documentID: document.id, resources: fixture.resources)
     await owner.observePendingPresentationWork()
+    XCTAssertEqual(fixture.preparationErrors.count, 1)
+    XCTAssertTrue(fixture.retainedPaper === originalPaper, "Interaction failure must retain the readable native paper")
+    XCTAssertTrue(hasRetry(fixture.hosts[0]))
+    XCTAssertFalse(coordinator.nativeInputIsReady(in: fixture.hosts[0]))
     fixture.replaceSource(fileID: "body", source: "\\section{Repaired source}\\hypertarget{repaired-source}{}\n\nThe same page number now has a different version.")
     try await wait(message: { fixture.diagnostics }) { fixture.canonicalPaper(in: 0) }
     try await wait(message: { fixture.diagnostics }) {
@@ -995,6 +1049,8 @@ final class DocumentProgramOwnerTests: XCTestCase {
     let text = PDFDocument(data: installed.page.artifact.pdf)?.page(at: installed.page.pageIndex)?.string
     XCTAssertTrue(text?.contains("Repaired source") == true)
     XCTAssertTrue((replacement.navigationDelegate as? DocumentWebCoordinator)?.nativeInputIsReady(in: fixture.hosts[0]) == true)
+    XCTAssertFalse(hasRetry(fixture.hosts[0]))
+    XCTAssertEqual(fixture.preparationErrors.count, 1, "The repaired source must not inherit its predecessor's failure")
   }
 
   func testProsePagePreparationReusesItsIdleExecutorAcrossDifferentTargets() async throws {
@@ -1002,7 +1058,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
     let fixture = try ProgramFixture(document: DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "body", source: text)]))
     defer { fixture.close() }
     let owner = DocumentPagePresentationOwner.shared(documentID: fixture.document.id, resources: fixture.resources)
-    try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true }
+    try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.paper(in: 0) != nil }
     func allWeb(_ view: UIView) -> [WKWebView] {
       (view as? WKWebView).map { [$0] } ?? view.subviews.flatMap(allWeb)
     }
@@ -1022,6 +1078,11 @@ final class DocumentProgramOwnerTests: XCTestCase {
     XCTAssertTrue(allWeb(fixture.hosts[0]).contains { ObjectIdentifier($0) == identity })
     XCTAssertEqual((preparer.navigationDelegate as? DocumentWebCoordinator)?.payload?.pageIndex, 2)
     let renderer = try XCTUnwrap(preparer.navigationDelegate as? DocumentWebCoordinator)
+    // Reclaiming the preparer must preserve an already admitted input owner.
+    try await wait(message: { fixture.diagnostics }) {
+      fixture.canonicalPaper(in: 0)
+        && (current.navigationDelegate as? DocumentWebCoordinator)?.nativeInputIsReady(in: fixture.hosts[0]) == true
+    }
     renderer.webViewWebContentProcessDidTerminate(preparer)
     try await wait(message: { fixture.diagnostics }) { fixture.resources.activeWebSurfaceCount == 1 }
     XCTAssertTrue(renderer.isInvalidated, "A dead idle executor does not restart without an unsatisfied page demand")
@@ -1211,7 +1272,12 @@ final class DocumentProgramOwnerTests: XCTestCase {
     defer { fixture.close() }
     var admittedCalls = 0, laterCalls = 0
     fixture.replaceLinkNavigation { _ in admittedCalls += 1 }
-    try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.paper(in: 0) != nil }
+    // The contact starts only after this paper owns native hit admission.
+    try await wait(message: { fixture.diagnostics }) {
+      guard let renderer = fixture.paper(in: 0)?.navigationDelegate as? DocumentWebCoordinator else { return false }
+      return fixture.ready[0] == true && fixture.canonicalPaper(in: 0)
+        && renderer.nativeInputIsReady(in: fixture.hosts[0])
+    }
     let web = try XCTUnwrap(fixture.paper(in: 0))
     let coordinator = try XCTUnwrap(web.navigationDelegate as? DocumentWebCoordinator)
     // This is the native contact-observer delivery seam against a real loaded
@@ -1248,7 +1314,9 @@ final class DocumentProgramOwnerTests: XCTestCase {
       """, initialState: .object(["count": .number(0)]), height: 90)])
     let fixture = try ProgramFixture(document: document)
     defer { fixture.close() }
-    try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.web(block: "counter") != nil }
+    try await wait(message: { fixture.diagnostics }) {
+      fixture.ready[0] == true && fixture.web(block: "counter") != nil && fixture.canonicalPaper(in: 0)
+    }
     let web = try XCTUnwrap(fixture.web(block: "counter")), paper = try XCTUnwrap(fixture.paper(in: 0))
     let coordinator = try XCTUnwrap(paper.navigationDelegate as? DocumentWebCoordinator)
     let oldToken = try XCTUnwrap(coordinator.payload?.renderToken)
@@ -1284,7 +1352,9 @@ final class DocumentProgramOwnerTests: XCTestCase {
       let attachment = XCTAttachment(string: "phase=\(phase) \(fixture.diagnostics)\n" + DocumentPagePresentationOwner.presentationDiagnostic(documentID: document.id, resources: fixture.resources))
       attachment.name = "paper-transfer-final-owner"; attachment.lifetime = .keepAlways; add(attachment)
     }
-    try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.hosts[0].isUserInteractionEnabled }
+    try await wait(message: { fixture.diagnostics }) {
+      fixture.ready[0] == true && fixture.hosts[0].isUserInteractionEnabled && fixture.canonicalPaper(in: 0)
+    }
     let source = DocumentRenderRegistry.shared.session(documentID: document.id, resources: fixture.resources).source(document)
     let destination = try XCTUnwrap(source.layout.map { $0.pageCount - 1 })
     XCTAssertGreaterThan(destination, 1)
@@ -1355,7 +1425,9 @@ final class DocumentProgramOwnerTests: XCTestCase {
       proof.name = "delayed-current-gap-boundary"; proof.lifetime = .keepAlways; add(proof)
     }
     do {
-      try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.hosts[0].isUserInteractionEnabled }
+      try await wait(message: { fixture.diagnostics }) {
+        fixture.ready[0] == true && fixture.hosts[0].isUserInteractionEnabled && fixture.canonicalPaper(in: 0)
+      }
       phase = "resolve_measured_target"
       let destination = try XCTUnwrap(DocumentRenderRegistry.shared.session(documentID: document.id,
         resources: fixture.resources).source(document).layout.map { $0.pageCount - 1 })
@@ -1645,6 +1717,57 @@ final class DocumentProgramOwnerTests: XCTestCase {
     try await wait(message: { fixture.diagnostics }) { fixture.isPresented && fixture.web(block: "program") === original }
   }
 
+  func testSupersededReturnRetryDoesNotCarryItsOldFailureIntoTheGlobalBoundary() async throws {
+    let document = DocumentTestFiles.document(actor: UUID(), contents: [.program(id: "program", html: "<output>Model</output>",
+      javaScript: "notebook.lifecycle({checkpoint:()=>({value:1})});notebook.ready(Promise.resolve());",
+      initialState: .object(["value": .number(0)]), height: 100)])
+    let fixture = try ProgramFixture(document: document, showsNeighbour: false)
+    var held: CheckedContinuation<Void, Never>?
+    defer {
+      fixture.acceptsCheckpoints = true; fixture.onCheckpoint = { _ in }
+      held?.resume(); fixture.close()
+    }
+    try await wait(message: { fixture.diagnostics }) { fixture.isPresented && fixture.web(block: "program") != nil }
+    let original = try XCTUnwrap(fixture.web(block: "program"))
+    let runtime = try XCTUnwrap(original.navigationDelegate as? DocumentBlockRuntime)
+    fixture.acceptsCheckpoints = false
+    fixture.setVisible(false)
+    let refused = await DocumentPagePresentationOwner.checkpointPrograms(documentID: document.id,
+      resources: fixture.resources, resume: false)
+    XCTAssertFalse(refused)
+    await DocumentPagePresentationOwner.resumePrograms(resources: fixture.resources)
+
+    fixture.acceptsCheckpoints = true
+    fixture.onCheckpoint = { _ in await withCheckedContinuation { held = $0 } }
+    fixture.setVisible(true)
+    try await wait(message: { fixture.diagnostics }) { held != nil }
+    var result: Bool?
+    let boundary = Task { @MainActor in
+      result = await DocumentPagePresentationOwner.checkpointPrograms(documentID: document.id,
+        resources: fixture.resources, resume: false)
+    }
+    defer { boundary.cancel() }
+    // The global boundary joins the held return writer; it cannot finish from
+    // the failure retained by that same heap's previous attempt.
+    try await Task.sleep(for: .milliseconds(50))
+    XCTAssertNil(result)
+    let successor: JSONValue = .object(["value": .number(2)])
+    fixture.replaceState(blockID: "program", value: successor)
+    held?.resume(); held = nil
+    await boundary.value
+    XCTAssertEqual(result, true, "A superseded heap has left the boundary, including its earlier writer failure")
+    XCTAssertNil(runtime.webView, "The stale retry must retire after the newer accepted state supersedes it")
+    XCTAssertEqual(fixture.value("program"), successor)
+
+    fixture.onCheckpoint = { _ in }
+    await DocumentPagePresentationOwner.resumePrograms(resources: fixture.resources)
+    try await wait(message: { fixture.diagnostics }) {
+      fixture.isPresented && fixture.web(block: "program") != nil && fixture.web(block: "program") !== original
+    }
+    XCTAssertFalse(fixture.hasProgramAction("program"))
+    XCTAssertEqual(fixture.value("program"), successor)
+  }
+
   func testReturnProgramsYieldTheirExistingPoolSlotsAfterCheckpointWhenForegroundNeedsThem() async throws {
     let document = DocumentTestFiles.document(actor: UUID(), contents: [.program(id: "program",
       html: "<button>Retained return program</button>", javaScript: "notebook.commit({count:1});notebook.ready(Promise.resolve());",
@@ -1780,7 +1903,9 @@ final class DocumentProgramOwnerTests: XCTestCase {
       initialCalls += 1
       if case .page(let page) = destination, page >= 0, page < initialPageCount { acceptedPage = page }
     }
-    try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.hosts[0].isUserInteractionEnabled }
+    try await wait(message: { fixture.diagnostics }) {
+      fixture.ready[0] == true && fixture.hosts[0].isUserInteractionEnabled && fixture.canonicalPaper(in: 0)
+    }
     let paper = try XCTUnwrap(fixture.paper(in: 0))
     let before = try await paper.evaluateJavaScript("window.callbackTestDocument=document; JSON.stringify(notebookRenderer.pageReceipt())")
     let source = DocumentRenderRegistry.shared.session(documentID: document.id, resources: fixture.resources).source(document)
@@ -1855,7 +1980,9 @@ final class DocumentProgramOwnerTests: XCTestCase {
       XCTAssertNotNil(phases[stage], stage)
     }
     XCTAssertTrue(phases["shellNavigationFinishedAt"] != nil || phases["shellReadyMessageAt"] != nil)
-    XCTAssertLessThanOrEqual(try XCTUnwrap(phases["admittedAt"]), try XCTUnwrap(phases["preparedPageStartAt"]))
+    // Native PDF preparation starts independently of interaction admission.
+    XCTAssertLessThanOrEqual(try XCTUnwrap(phases["payloadConfiguredAt"]), try XCTUnwrap(phases["preparedPageStartAt"]))
+    XCTAssertLessThanOrEqual(try XCTUnwrap(phases["admittedAt"]), try XCTUnwrap(phases["frameEvaluationStartAt"]))
     XCTAssertLessThanOrEqual(try XCTUnwrap(phases["preparedPageReadyAt"]), try XCTUnwrap(phases["frameEvaluationStartAt"]))
     XCTAssertLessThanOrEqual(try XCTUnwrap(phases["pageReceiptRequestedAt"]), try XCTUnwrap(phases["pageReceiptReturnedAt"]))
     XCTAssertLessThanOrEqual(try XCTUnwrap(phases["pageReceiptReturnedAt"]), try XCTUnwrap(phases["layoutReceiptAcceptedAt"]))
@@ -2050,7 +2177,10 @@ final class DocumentProgramOwnerTests: XCTestCase {
       """, initialState: .object(["count": .number(0)]), height: 2000)])
     let fixture = try ProgramFixture(document: document)
     defer { fixture.close() }
-    try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.ready[1] == true && fixture.hosts[0].isUserInteractionEnabled }
+    try await wait(message: { fixture.diagnostics }) {
+      fixture.ready[0] == true && fixture.ready[1] == true && fixture.hosts[0].isUserInteractionEnabled
+        && fixture.web(in: 0) != nil
+    }
     let original = try XCTUnwrap(fixture.web(in: 0))
     try await fixture.message("focus", in: original)
     try await wait(message: { fixture.diagnostics }) { fixture.value("program")?["focused"] == .bool(true) }
@@ -2135,12 +2265,13 @@ final class DocumentProgramOwnerTests: XCTestCase {
     let liveCapacity = fixture.resources.maximumWebSurfaces - 2
     XCTAssertGreaterThanOrEqual(liveCapacity, 4)
     try await wait(message: { fixture.diagnostics }) {
-      (0..<liveCapacity).allSatisfy { fixture.web(block: "program-\($0)") != nil }
+      (0..<9).filter { fixture.web(block: "program-\($0)") != nil }.count == liveCapacity
         && fixture.resources.pendingWebRequestCount == 9 - liveCapacity
     }
     XCTAssertEqual(fixture.resources.activeWebSurfaceCount, liveCapacity + 1)
-    XCTAssertNil(fixture.web(block: "program-8"))
-    XCTAssertFalse(fixture.hasProgramAction("program-8"), "Waiting is not a fake control or an activation button")
+    // Admission preserves arrival order after each program's state encoding.
+    let pendingID = try XCTUnwrap((0..<9).map { "program-\($0)" }.first { fixture.web(block: $0) == nil })
+    XCTAssertFalse(fixture.hasProgramAction(pendingID), "Waiting is not a fake control or an activation button")
     fixture.reveal(block: "program-8")
     try await wait(message: { fixture.diagnostics }) { fixture.web(block: "program-8")?.isUserInteractionEnabled == true }
     let eighth = try XCTUnwrap(fixture.web(block: "program-8"))
@@ -2153,6 +2284,13 @@ final class DocumentProgramOwnerTests: XCTestCase {
     try await wait(message: { fixture.diagnostics }) {
       fixture.web(block: "program-0") != nil && eighth.superview == nil
         && fixture.checkpointValues["program-8"]?["count"] == .number(1)
+    }
+    // Occupy the ordinary slots before the saved eighth program asks again;
+    // its waiting picture cannot depend on asynchronous encoding order.
+    fixture.reveal(block: "program-0", through: "program-7")
+    try await wait(message: { fixture.diagnostics }) {
+      (0..<liveCapacity).allSatisfy { fixture.web(block: "program-\($0)") != nil }
+        && fixture.resources.pendingWebRequestCount == 0
     }
     fixture.revealAll()
     try await wait(message: { fixture.diagnostics }) {

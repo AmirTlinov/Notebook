@@ -294,7 +294,7 @@ final class DocumentPagePresentationOwner {
 
   static func pauseForAttention(documentID: UUID, blockID: String, resources: SceneRenderResources = .shared) async throws -> NotebookProgramAttentionPause {
     guard let owner = owners[Key(documentID: documentID, resources: ObjectIdentifier(resources))]?.value,
-      let runtime = owner.programOwner.runtimes[blockID], runtime.ready,
+      let runtime = owner.programOwner.runtime(for: blockID), runtime.ready,
       let web = runtime.webView, SceneSourceVisibility.isVisible(web) else {
       throw SceneRenderError.snapshotPending("document_attention_owner")
     }
@@ -306,7 +306,7 @@ final class DocumentPagePresentationOwner {
       let raster = try await runtime.capture(sourceOffset: 0, height: runtime.viewportSize.height,
         pixelWidth: max(1, Int(ceil(runtime.blockWidth * 2))))
       raster.release()
-      guard owner.programOwner.runtimes[blockID] === runtime, runtime.value == value else { throw CancellationError() }
+      guard owner.programOwner.runtime(for: blockID) === runtime, runtime.value == value else { throw CancellationError() }
       runtime.onChange()
     } catch {
       if runtime.attentionPauseID == attentionID { await owner.programOwner.resumeAfterAttention(blockID, runtime: runtime, attentionID: attentionID) }
@@ -314,10 +314,10 @@ final class DocumentPagePresentationOwner {
     }
     return .init(value: value, isCurrent: { [weak owner, weak runtime] in
       guard let runtime else { return false }
-      return owner?.programOwner.runtimes[blockID] === runtime && runtime.value == value
+      return owner?.programOwner.runtime(for: blockID) === runtime && runtime.value == value
         && runtime.attentionPauseID == attentionID && runtime.hasFrozenFrame
     }, resume: { [weak owner, weak runtime] in
-      guard let runtime, owner?.programOwner.runtimes[blockID] === runtime, runtime.value == value,
+      guard let runtime, owner?.programOwner.runtime(for: blockID) === runtime, runtime.value == value,
         runtime.attentionPauseID == attentionID else { return }
       await owner?.programOwner.resumeAfterAttention(blockID, runtime: runtime, attentionID: attentionID)
     })
@@ -362,7 +362,7 @@ final class DocumentPagePresentationOwner {
       let device = AgentPinnedImage.Presentation.Device.iPad
     #endif
     let program: AgentPinnedImage.Presentation.Program?
-    if let blockID, let runtime = owner.programOwner.runtimes[blockID],
+    if let blockID, let runtime = owner.programOwner.runtime(for: blockID),
       runtime.attentionPauseID != nil, runtime.hasFrozenFrame,
       runtime.sourceBasis == owner.source?.program(blockID)?.sourceBasis,
       runtime.value == (entry.input.state.value(for: blockID) ?? runtime.program.initialState),
@@ -883,7 +883,13 @@ final class DocumentPagePresentationOwner {
         catch is CancellationError { }
         catch {
           if !Task.isCancelled, workID == operation, let entry = attemptedEntry,
-            entries[entry.id] === entry, entry.input.token == attemptedToken { show(error, on: entry) }
+            entries[entry.id] === entry, entry.input.token == attemptedToken {
+            // The current paper reports its own failure even when the native
+            // waiter succeeds. Its throwing waiter must not report it twice.
+            let reportedByPaper = current === entry && paper.acquisitionError != nil
+              && paper.payload?.renderToken == entry.input.paperToken
+            if !reportedByPaper { show(error, on: entry) }
+          }
         }
       }
       observe("document_reconcile_finished", reason: workID == operation ? "owner_completed" : "superseded")
@@ -1114,6 +1120,13 @@ final class DocumentPagePresentationOwner {
         self?.entries.values.forEach { $0.input.onPageLayout(layout) }
       },  onStateChange: { _, _ in nil },
       paperPreparationPixelWidth: input.snapshotPixelWidth ?? paperPixelWidth,
+      onPreparationFailure: { [weak self, weak renderer] error in
+        guard let self, !stopped, let renderer, paper === renderer, let current,
+          renderer.payload?.renderToken == current.input.paperToken else { return }
+        // Native paper may already be ready when its interaction surface
+        // fails. Its independent waiter cannot publish that failure for us.
+        show(error, on: current)
+      },
       onLinkActivation: input.onLinkActivation,
       preparationRequestID: input.measurements?.preparationRequestID(documentID: documentID, pageIndex: page, token: input.token))
     if source !== renderer.payload?.source {
@@ -1173,7 +1186,7 @@ final class DocumentPagePresentationOwner {
     if let source {
       // Existing heaps remain publication owners while their new descriptor is
       // being resolved. Absence in a lazy result is not proof of source deletion.
-      let retained = Set(programOwner.runtimes.keys)
+      let retained = programOwner.runtimeIDs
       let required = layout.blockIDs(on: pages, kind: .program).union(retained).intersection(source.programIDs)
       let key = source.message.key + ":" + required.sorted().joined(separator: ",")
       if programDemandKey != key {
@@ -1213,7 +1226,7 @@ final class DocumentPagePresentationOwner {
     refreshMountedInput()
     let currentIDs = layout.blockIDs(on: [entry.input.pageIndex], kind: .program)
     host.installProgramOverlay()
-    for (id, runtime) in programOwner.runtimes where !currentIDs.contains(id) {
+    for runtime in programOwner.activeRuntimes where !currentIDs.contains(runtime.program.id) {
       if let web = runtime.webView { host.programOverlay.park(web, fullSize: web.bounds.size) }
     }
     let placements = placements(on: entry)
@@ -1258,15 +1271,15 @@ final class DocumentPagePresentationOwner {
     guard let layout = source?.layout else { return [] }
     return layout.regions(on: entry.input.pageIndex).compactMap { region in
       guard region.kind == .program, source?.programIDs.contains(region.id) == true else { return nil }
-      let id = region.id, runtime = programOwner.runtimes[id]
+      let id = region.id, runtime = programOwner.runtime(for: id)
       let message: String, actionTitle: String, action: (() -> Void)?
       if let failure = source?.programFailures[id] {
         message = failure; actionTitle = ""; action = nil
       } else if source?.program(id) == nil || (runtime != nil && source?.program(id)?.sourceBasis != runtime?.sourceBasis) {
         message = "Подготовка программы…"; actionTitle = ""; action = nil
-      } else if programOwner.retiringIDs.contains(id) {
+      } else if programOwner.isRetiring(id) {
         message = "Сохраняем состояние программы…"; actionTitle = ""; action = nil
-      } else if runtime?.failure != nil || programOwner.pauseFailures[id] != nil {
+      } else if runtime?.failure != nil || programOwner.pauseFailure(for: id) != nil {
         message = "Не удалось подготовить программу"; actionTitle = "Повторить"
         action = { [weak self] in
           self?.programOwner.retry(id)
@@ -1285,14 +1298,14 @@ final class DocumentPagePresentationOwner {
   private func placements(on entry: Entry) -> [DocumentProgramPlacement] {
     guard let layout = source?.layout else { return [] }
     return layout.regions(on: entry.input.pageIndex).compactMap { region in
-      guard region.kind == .program, let runtime = programOwner.runtimes[region.id], runtime.ready,
+      guard region.kind == .program, let runtime = programOwner.runtime(for: region.id), runtime.ready,
         source?.program(region.id)?.sourceBasis == runtime.sourceBasis,
-        programOwner.liveIDs.contains(region.id) || programOwner.retiringIDs.contains(region.id),
+        programOwner.liveIDs.contains(region.id) || programOwner.isRetiring(region.id),
         let web = runtime.webView else { return nil }
       return .init(blockID: region.id, webView: web,
         rect: .init(x: region.frame.x, y: region.frame.y, width: region.frame.width, height: region.frame.height),
         sourceOffset: region.sourceOffset, fullSize: web.bounds.size,
-        allowsInteraction: !programOwner.retiringIDs.contains(region.id) && programOwner.pauseFailures[region.id] == nil)
+        allowsInteraction: !programOwner.isRetiring(region.id) && programOwner.pauseFailure(for: region.id) == nil)
     }
   }
 
@@ -1300,8 +1313,8 @@ final class DocumentPagePresentationOwner {
     guard let layout = source?.layout else { return [] }
     return layout.regions(on: entry.input.pageIndex).compactMap { region in
       guard region.kind == .program else { return nil }
-      if programOwner.runtimes[region.id]?.ready == true,
-        programOwner.liveIDs.contains(region.id) || programOwner.retiringIDs.contains(region.id) { return nil }
+      if programOwner.runtime(for: region.id)?.ready == true,
+        programOwner.liveIDs.contains(region.id) || programOwner.isRetiring(region.id) { return nil }
       guard let saved = programOwner.paused(region.id) else { return nil }
       return .init(blockID: region.id, raster: saved.raster,
         rect: .init(x: region.frame.x, y: region.frame.y, width: region.frame.width, height: region.frame.height),
@@ -1311,7 +1324,7 @@ final class DocumentPagePresentationOwner {
 
   private func semanticSelection(on entry: Entry, blockID: String?, region: PageRect) -> ProgramSemanticSelection? {
     guard let blockID else { return nil }
-    if let runtime = programOwner.runtimes[blockID],
+    if let runtime = programOwner.runtime(for: blockID),
       let selection = runtime.frozenSemanticSelection,
       let placement = placements(on: entry).first(where: { $0.blockID == blockID }) {
       return selection.mapped(from: .init(x: placement.rect.minX,
@@ -1663,9 +1676,9 @@ final class DocumentPagePresentationOwner {
     // pixels instead of freezing a hidden heap and calling it readiness.
     if let status = pendingPlacements(on: entry).first(where: { $0.blockID == region.id }) {
       if let paused = programOwner.paused(region.id) { appendPaused(paused) }
-      else if let runtime = programOwner.runtimes[region.id], runtime.ready,
+      else if let runtime = programOwner.runtime(for: region.id), runtime.ready,
         source?.program(region.id)?.sourceBasis == runtime.sourceBasis,
-        programOwner.retiringIDs.contains(region.id) || programOwner.liveIDs.contains(region.id) {
+        programOwner.isRetiring(region.id) || programOwner.liveIDs.contains(region.id) {
         try await appendRuntime(runtime)
       }
       let pixelHeight = max(1, Int(ceil(Double(pixelWidth)*rect.height/rect.width)))
@@ -1691,7 +1704,7 @@ final class DocumentPagePresentationOwner {
         let pixels = raster.image.cgImage {
         images.append(.init(image: pixels, frame: rect)); retained.append(raster)
       } else { throw SceneRenderError.resourceLimit }
-    } else if let runtime = programOwner.runtimes[region.id], runtime.ready {
+    } else if let runtime = programOwner.runtime(for: region.id), runtime.ready {
       try await appendRuntime(runtime)
     } else if let paused = programOwner.paused(region.id) { appendPaused(paused) }
     try Task.checkCancellation()
@@ -1746,11 +1759,11 @@ final class DocumentPagePresentationOwner {
     let physical = physicalSize(entry.input)
     let statuses = Set(pendingPlacements(on: entry).map(\.blockID))
     let slots = (source?.layout?.regions(on: entry.input.pageIndex) ?? []).filter { $0.kind == .program }.map { region in
-      let runtime = programOwner.runtimes[region.id]
+      let runtime = programOwner.runtime(for: region.id)
       let hasStatus = statuses.contains(region.id)
       let capturesRuntime = runtime?.ready == true && (!hasStatus || (programOwner.paused(region.id) == nil
         && source?.program(region.id)?.sourceBasis == runtime?.sourceBasis
-        && (programOwner.retiringIDs.contains(region.id) || programOwner.liveIDs.contains(region.id))))
+        && (programOwner.isRetiring(region.id) || programOwner.liveIDs.contains(region.id))))
       return (region: region, count: (hasStatus ? 1 : 0) + (capturesRuntime ? 1 : 0))
     }
     let pageCount = includesPaperBacking ? 2 : 1
@@ -1793,6 +1806,9 @@ final class DocumentPagePresentationOwner {
   }
 
   private func show(_ error: Error, on entry: Entry) {
+    let token = entry.input.token
+    if error as? SceneRenderError == .resourceLimit { failures[token] = resources.rasterAdmission }
+    else { terminalFailures.insert(token) }
     if NotebookNavigationObservation.enabled {
       let native = error as NSError
       let knownCase: String?
@@ -1822,14 +1838,12 @@ final class DocumentPagePresentationOwner {
       token: entry.input.token, message: error.localizedDescription)
     recordInstallation(on: entry)
     entry.input.onPreparationFailure(error)
-    if error as? SceneRenderError == .resourceLimit { failures[entry.input.token] = resources.rasterAdmission }
-    else { terminalFailures.insert(entry.input.token) }
-    let token = entry.input.token
+    guard entries[entry.id] === entry, entry.input.token == token else { return }
     let retry: @MainActor () -> Void = { [weak self, weak entry] in
       guard let self, let entry, entries[entry.id] === entry, entry.input.token == token else { return }
       failures[entry.input.token] = nil; terminalFailures.remove(entry.input.token)
       if current?.id == entry.id, paper.acquisitionError != nil { paper.retryPreparation() }
-      for id in source?.layout?.blockIDs(on: [entry.input.pageIndex]) ?? [] where programOwner.runtimes[id]?.failure != nil {
+      for id in source?.layout?.blockIDs(on: [entry.input.pageIndex]) ?? [] where programOwner.runtime(for: id)?.failure != nil {
         programOwner.retry(id)
       }
       entry.host?.removeFailure(); schedule()
@@ -1861,7 +1875,7 @@ final class DocumentPagePresentationOwner {
   }
   private func stop() {
     guard !stopped, closingPrograms == nil else { return }
-    guard !programOwner.runtimes.isEmpty else { finishStop(); return }
+    guard programOwner.hasRuntimes else { finishStop(); return }
     let key = Key(documentID: documentID, resources: ObjectIdentifier(resources))
     Self.owners[key]?.closingValue = self
     closingPrograms = Task { @MainActor [self] in

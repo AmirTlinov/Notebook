@@ -17,14 +17,14 @@ struct MacDocumentSurface: View {
   @State private var navigation = Navigation()
 
   var body: some View {
-    let source = NotebookAppModel.documentPageSourceRevision(document)
-    let request = model.documentPageSelection.flatMap { $0.documentID == document.id && $0.sourceRevision == source ? $0 : nil }
+    let source = DocumentPageNavigation.sourceRevision(document)
+    let request = model.documentNavigation.request.flatMap { $0.documentID == document.id && $0.sourceRevision == source ? $0 : nil }
     let page = request?.pageIndex ?? model.presence?.documentPageIndex ?? 0
     DocumentWebView(document: document, state: state, isInteractive: true,
       selectedPageIndex: page, capturesSnapshot: true,
       onRenderReady: .init(onFailure: { failure in
         Task { @MainActor in
-          guard model.documentPageSelection?.id == request?.id else { return }
+          guard model.documentNavigation.request?.id == request?.id else { return }
           navigation.revision &+= 1
           model.acceptDocumentPageNavigationStatus(.init(controllerID: navigation.id, documentID: document.id,
             sourceRevision: source, revision: navigation.revision, requestID: request?.id, target: page,
@@ -34,7 +34,7 @@ struct MacDocumentSurface: View {
         Task { @MainActor in
           guard model.documents[document.id]?.contentStamp == document.contentStamp,
             model.presence?.focusedItemID == document.id,
-            model.documentPageSelection?.id == request?.id else { return }
+            model.documentNavigation.request?.id == request?.id else { return }
           guard ready else { return }
           model.bindDocumentPageController(navigation.id, documentID: document.id, source: source)
           navigation.revision &+= 1
@@ -46,13 +46,13 @@ struct MacDocumentSurface: View {
         guard layout.pageCount(for: source) != nil else { return }
         model.acceptDocumentReadingLayout(layout, documentID: document.id)
         onLayout(layout)
-        if layout.isComplete, page >= layout.pageCount { _ = model.selectDocumentPage(layout.pageCount - 1, documentID: document.id) }
+        if page >= layout.pageCount { _ = model.selectDocumentPage(layout.pageCount - 1, documentID: document.id) }
       }, onLinkActivation: model.activateDocumentLink,
       onStateChange: { program, value in try await model.commitDocumentState(documentID: document.id, program: program, value: value) },
       onStateCheckpoint: { try await model.checkpointDocumentState(documentID: document.id, blockID: $0, value: $1, program: $2, stateVersion: $3) },
 
       measurements: model.documentMeasurements)
-      .overlay(alignment: .bottom) { if let failure = model.documentPageNavigationStatus?.failure {
+      .overlay(alignment: .bottom) { if let failure = model.documentNavigation.status?.failure {
         VStack { Text(failure.message); Button("Повторить") { model.retryDocumentPageNavigation() } }.padding().background(.regularMaterial)
       } }
       .onChange(of: source, initial: true) { _, _ in model.bindDocumentPageController(navigation.id, documentID: document.id, source: source) }

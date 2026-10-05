@@ -154,7 +154,7 @@ struct NotebookMacWorkspaceView: View {
   }
   private var pageCount: Int? {
     guard let p = model.presence, let item = p.focusedItemID else { return nil }
-    if p.mode == .document { return model.documents[item].flatMap { documentLayout?.pageCount(for: NotebookAppModel.documentPageSourceRevision($0)) } }
+    if p.mode == .document { return model.documents[item].flatMap { documentLayout?.pageCount(for: DocumentPageNavigation.sourceRevision($0)) } }
     return model.notebookPageCount(item)
   }
   private func turnPage(_ delta: Int) {

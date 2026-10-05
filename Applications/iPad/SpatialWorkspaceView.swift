@@ -501,7 +501,7 @@ struct SpatialWorkspaceView: View {
   private var openingFailure: PageTurnPreparationFailure? { cameraOwner.failure }
 
   private var navigationNeedsAttention: Bool {
-    openingFailure != nil || model.documentPageNavigationStatus?.phase == .failed
+    openingFailure != nil || model.documentNavigation.status?.phase == .failed
       || model.notebookPageNavigation.status?.failure != nil
       || model.documentSavePresentation?.phase == .saved
   }
@@ -512,7 +512,7 @@ struct SpatialWorkspaceView: View {
   ) -> some View {
     NotebookNavigationView(presence: presence,
       documentPageCount: presence.focusedItemID.flatMap { id in
-        model.documents[id].flatMap { documentPageLayouts[id]?.pageCount(for: NotebookAppModel.documentPageSourceRevision($0)) }
+        model.documents[id].flatMap { documentPageLayouts[id]?.pageCount(for: DocumentPageNavigation.sourceRevision($0)) }
       }, openingFailure: openingFailure)
       .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
       .padding(.leading, 18).padding(.top, 18).zIndex(10_000)
@@ -1071,15 +1071,15 @@ struct SpatialWorkspaceView: View {
     documentID: UUID
   ) {
     guard let document = model.documents[documentID],
-      layout.pageCount(for: NotebookAppModel.documentPageSourceRevision(document)) != nil else { return }
+      layout.pageCount(for: DocumentPageNavigation.sourceRevision(document)) != nil else { return }
     model.acceptDocumentReadingLayout(layout, documentID: documentID)
     referencePageResolution.advance()
-    let summary = DocumentPageLayout(pageCount: layout.pageCount, sourceRevision: layout.sourceRevision, isComplete: layout.isComplete)
+    let summary = DocumentPageLayout(pageCount: layout.pageCount, sourceRevision: layout.sourceRevision)
     if documentPageLayouts[documentID] != summary { documentPageLayouts[documentID] = summary }
-    guard layout.isComplete, let presence = model.presence,
+    guard let presence = model.presence,
       presence.mode == .document,
       presence.focusedItemID == documentID,
-      model.documentPageSelection == nil,
+      model.documentNavigation.request == nil,
       presence.documentPageIndex >= layout.pageCount
     else { return }
     _ = model.selectDocumentPage(
@@ -1580,7 +1580,7 @@ private struct WorkspaceSceneItem: View {
   let documentPageLayout: DocumentPageLayout?
   private var documentPageCount: Int {
     guard let document else { return 1 }
-    return documentPageLayout?.pageCount(for: NotebookAppModel.documentPageSourceRevision(document)) ?? 1
+    return documentPageLayout?.pageCount(for: DocumentPageNavigation.sourceRevision(document)) ?? 1
   }
   let camera: SpatialCamera
   let projectedScale: Double
@@ -1739,7 +1739,7 @@ private struct WorkspaceSceneItem: View {
         onTransitioningChange: onPageTurnStateChange,
         onReadinessProbe:onPaperReadiness,
         canonicalDocumentLayout: documentPageLayout,
-        documentSelection: model.documentPageSelection,
+        documentSelection: model.documentNavigation.request,
         documentNavigation: .init(
           bind: { model.bindDocumentPageController($0, documentID: $1, source: $2) },
           unbind: model.unbindDocumentPageController,

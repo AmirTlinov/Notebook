@@ -1,23 +1,8 @@
 import Foundation
-import CryptoKit
 import NotebookCore
 import Observation
 import SwiftUI
 import WebKit
-
-/// A completed local material shares the composition pixel pool. Physical
-/// placement and the requesting camera are absent from its content identity.
-struct SceneMaterialKey: Hashable, Codable, Sendable {
-  let workspaceID: UUID
-  let fingerprint: String
-  init(workspaceID: UUID, target: CollaborationTarget, revision: String, role: String, frame: PageRect, density: Double) throws {
-    self.workspaceID = workspaceID
-    let value = JSONValue.object(["target": try .encode(target), "revision": .string(revision),
-      "role": .string(role), "frame": try .encode(frame), "density": .number(density)])
-    let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
-    fingerprint = SHA256.hash(data: try encoder.encode(value)).map { String(format: "%02x", $0) }.joined()
-  }
-}
 
 enum SceneRasterSource: Equatable, Sendable {
   case agent(AgentElement)
@@ -637,7 +622,6 @@ final class SceneRenderResources {
       passiveReservedBytes: passiveReservedBytes, passiveByteLimit: passiveByteLimit)
   }
   @ObservationIgnored private(set) var lastRasterRefusal: SceneRasterRefusal?
-  @ObservationIgnored private var observedDocumentReservations: [UUID: [String: JSONValue]] = [:]
   @ObservationIgnored private var refusalGeneration: UInt64 = 0
 
   func image(for element: AgentElement, minimumScale: Double = 0) -> AgentSnapshotImage? {
@@ -854,7 +838,7 @@ final class SceneRenderResources {
     reservations[receiver.id]?.bytes += bytes; receiver.byteCount += bytes
     reservations[donor.id]?.bytes -= bytes; donor.byteCount -= bytes
     if donor.byteCount == 0 {
-      reservations[donor.id] = nil; observedDocumentReservations[donor.id] = nil
+      reservations[donor.id] = nil
       donor.release()
     }
     return true
@@ -919,58 +903,6 @@ final class SceneRenderResources {
     reservedBytes += bytes; reservedRasterCount += rasterCount
     peakAccountedBytes = max(peakAccountedBytes, residentBytes + reservedBytes)
     return RasterReservation(id: id, byteCount: bytes, resources: self)
-  }
-
-  /// Private acceptance provenance attaches to the existing allocation. It
-  /// neither adds a retain nor changes admission, eviction or release order.
-  func observeDocumentReservation(_ reservation: RasterReservation, documentID: UUID,
-    sourceKey: String, page: Int?, purpose: String) {
-    guard NotebookNavigationObservation.enabled, reservation.resources === self,
-      reservations[reservation.id] != nil else { return }
-    observedDocumentReservations[reservation.id] = ["documentID": .string(documentID.uuidString),
-      "sourceKey": .string(String(sourceKey.prefix(80))), "purpose": .string(String(purpose.prefix(80))),
-      "page": page.map { .number(Double($0)) } ?? .null]
-  }
-
-  /// Bounded, read-only inventory; totals are exact, individual holders are
-  /// explicitly truncated after 64 entries. Source text and pixels are omitted.
-  func documentAllocationObservation() -> [String: JSONValue] {
-    guard NotebookNavigationObservation.enabled else { return [:] }
-    let admission = rasterAdmission
-    let reservationSample = reservations.prefix(64)
-    let rasterSample = entries.prefix(64)
-    return ["byteLimit": .number(Double(admission.byteLimit)),
-      "passiveByteLimit": .number(Double(admission.passiveByteLimit)),
-      "residentBytes": .number(Double(residentBytes)), "reservedBytes": .number(Double(reservedBytes)),
-      "pinnedBytes": .number(Double(admission.pinnedBytes)),
-      "passiveReservedBytes": .number(Double(admission.passiveReservedBytes)),
-      "reservationCount": .number(Double(reservations.count)), "rasterCount": .number(Double(entries.count)),
-      "activeWebSurfaces": .number(Double(activeWebSurfaceCount)),
-      "pendingWebRequests": .number(Double(pendingWebRequestCount)),
-      "holdersTruncated": .bool(reservations.count > 64 || entries.count > 64),
-      "reservations": .array(reservationSample.map { id, allocation in
-        var value = observedDocumentReservations[id] ?? [:]
-        value["id"] = .string(id.uuidString); value["bytes"] = .number(Double(allocation.bytes))
-        let priority = allocation.physicalOwner.flatMap { physicalOwners[$0]?.priority } ?? allocation.priority
-        value["priority"] = .string(priority == .passive ? "passive" : "input")
-        value["physicalOwner"] = .bool(allocation.physicalOwner != nil)
-        return .object(value)
-      }),
-      "rasters": .array(rasterSample.map { id, entry in
-        let kind: String, documentID: UUID?, renderToken: String?
-        switch entry.source {
-        case .document(let id, let token): kind = "document"; documentID = id; renderToken = token
-        case .agent: kind = "agent"; documentID = nil; renderToken = nil
-        case .agentRegion: kind = "agent_region"; documentID = nil; renderToken = nil
-        case .composition: kind = "composition"; documentID = nil; renderToken = nil
-        case .material: kind = "material"; documentID = nil; renderToken = nil
-        }
-        return .object(["id": .string(id.uuidString), "kind": .string(kind),
-          "documentID": documentID.map { .string($0.uuidString) } ?? .null,
-          "renderToken": renderToken.map { .string(String($0.prefix(160))) } ?? .null,
-          "bytes": .number(Double(entry.cost)), "retains": .number(Double(entry.retains)),
-          "ownsLayout": .bool(entry.documentLayout != nil)])
-      })]
   }
 
   @discardableResult
@@ -1167,7 +1099,6 @@ final class SceneRenderResources {
     if entry.retains == 0 { scheduleAdmissionNotification(previous) }
   }
   fileprivate func releaseReservation(_ id: UUID, notifies: Bool = true) {
-    observedDocumentReservations[id] = nil
     let previous = rasterAdmission
     if let allocation = reservations.removeValue(forKey: id) {
       let priority = allocation.physicalOwner.flatMap { physicalOwners[$0]?.priority } ?? allocation.priority

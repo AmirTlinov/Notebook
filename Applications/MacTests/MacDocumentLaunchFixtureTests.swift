@@ -11,7 +11,7 @@ final class MacDocumentLaunchFixtureTests: XCTestCase {
     retainNotebookUntilTeardown(model, removing: model.store.root)
     await model.start(pageSize: NotebookAppModel.defaultPageSize)
     let document = try XCTUnwrap(model.activeDocument), block = try XCTUnwrap(document.files.first)
-    let source = NotebookAppModel.documentPageSourceRevision(document), controller = UUID()
+    let source = DocumentPageNavigation.sourceRevision(document), controller = UUID()
     let paper = DocumentPaperLayout.uncompiled, geometry = paper.geometry
     let record = try DocumentLayoutRecord(receipt: ["sourceKey": source, "layoutScope": "source", "layoutCanonical": true,
       "pageCount": 1, "width": geometry.width, "height": geometry.height,
@@ -42,15 +42,15 @@ final class MacDocumentLaunchFixtureTests: XCTestCase {
     retainNotebookUntilTeardown(model, removing: model.store.root)
     await model.start(pageSize: NotebookAppModel.defaultPageSize)
     let document = try XCTUnwrap(model.activeDocument)
-    let source = NotebookAppModel.documentPageSourceRevision(document), controller = UUID()
+    let source = DocumentPageNavigation.sourceRevision(document), controller = UUID()
     model.bindDocumentPageController(controller, documentID: document.id, source: source)
-    XCTAssertNil(model.documentPageSelection)
-    XCTAssertNil(model.documentPageNavigationStatus)
+    XCTAssertNil(model.documentNavigation.request)
+    XCTAssertNil(model.documentNavigation.status)
     let invalidation = expectation(description: "A replay of the landed page must not feed back into SwiftUI")
     invalidation.isInverted = true
     withObservationTracking {
-      _ = model.documentPageSelection
-      _ = model.documentPageNavigationStatus
+      _ = model.documentNavigation.request
+      _ = model.documentNavigation.status
     } onChange: { invalidation.fulfill() }
     for revision in 1...10 {
       XCTAssertTrue(model.acceptDocumentPageLanding(.init(controllerID: controller,

@@ -1,0 +1,289 @@
+{
+  "status": "selected-verification-passed-pair-installed",
+  "date": "2026-10-05",
+  "baseCommit": "1ee54dc9e4444fee3aa9fec4a4a435636d11aa03",
+  "scope": "Selected optimized native and physical iPad gesture checks. Separate runs retain their actual source identities and are not combined into a fabricated all-tests receipt.",
+  "owners": [
+    "DocumentReadingSession",
+    "DocumentPageNavigation",
+    "DocumentProgramOwner.Slot",
+    "DocumentLayoutRecord",
+    "NotebookScenePublication",
+    "SceneMaterialKey"
+  ],
+  "initialAttempts": [
+    {
+      "directory": "/Users/amir/Documents/projects/Notebook/artifacts/architecture-documents-20261005/run-1",
+      "sourceSHA256": "85b8feb005b6fc76365010cdfe9a75b54403b159cc26f3dce8804abe73a45c41",
+      "summarySHA256": "485c306b76867f0a51febfad86adc8d630156d84482b65ea9ff012fc6401e933",
+      "passed": 33,
+      "failedOrCanceled": 3,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "correction": "Metadata fixture conflated independent PDF preparation and WebKit admission; real paper failure callback was missing; replacement fixture waited for new heap before releasing old writer borrow."
+    },
+    {
+      "directory": "/Users/amir/Documents/projects/Notebook/artifacts/architecture-documents-20261005/run-2",
+      "sourceSHA256": "6449edaff3744a24fc3b5187cd49a9914bdeb4e3d821da8ee57e6267d51dcb08",
+      "summarySHA256": "112442ed3dfe6e2e6e67842e67809f73ee45c4629bfc10604997b4851ac082b9",
+      "passed": 25,
+      "failedOrCanceled": 1,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "correction": "Canceled after a DOM click before canonical input admission. Seven existing fixture waits now use the exact admitted paper."
+    },
+    {
+      "directory": "/Users/amir/Documents/projects/Notebook/artifacts/architecture-documents-20261005/run-3",
+      "sourceSHA256": "6ef4d32083658b06e5ad817fa3a86785dd7f413482575ee038379e6b07fcfab1",
+      "summarySHA256": "607ecaf88becfd98934c4cd22dd7b5072bf588f1f87746452f4dbc333b729390",
+      "passed": 20,
+      "failedOrCanceled": 1,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "correction": "Fixed-index admission assumption failed: eight programs and one waiter were correctly admitted in asynchronous arrival order. Fixture now explicitly saturates the pool before checking paused pixels."
+    },
+    {
+      "directory": "/Users/amir/Documents/projects/Notebook/artifacts/architecture-documents-20261005/run-4",
+      "sourceSHA256": "38a59874fc4ffe598236186a3d17290d3baec4c5ddf9ba3c5f25612674359c4c",
+      "summarySHA256": "cd241e3d42ca8c4014ea3da4e1f056ae60adc550da5e7c51d2822eada6a0ee2d",
+      "passed": 28,
+      "failedAssertions": 2,
+      "uiInitializationFailed": true,
+      "uiScenariosExecuted": 0,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "correction": "Program recovery initial wait now requires the interactive program web view; bookmark-cancellation fixture now awaits addressed document loading. UI runner timed out enabling automation before any UI test; device was paired, wired, developer-mode enabled and passcodeRequired=false."
+    },
+    {
+      "directory": "/Users/amir/Documents/projects/Notebook/artifacts/architecture-documents-20261005/run-5",
+      "sourceSHA256": "ad4075e7eb13eec630293dbb649a306fbd748d29015b212d7598f5b9843dc9b2",
+      "summarySHA256": "03685dfa1ec5a53d3d8643416a01b1798f244e07ab7004fabca4c6f9f3004be1",
+      "passed": 2,
+      "failedAssertions": 0,
+      "uiInitializationFailed": true,
+      "uiScenariosExecuted": 0,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "correction": "Both fixture corrections passed. A second UI attempt timed out enabling automation before any scenario. Selected Mac verification proceeds independently."
+    }
+  ],
+  "productSourceUnchangedSince": "run-2; later corrections change only test setup/expectations",
+  "programLayoutLookup": {
+    "directory": "/Users/amir/Documents/projects/Notebook/artifacts/architecture-documents-20261005/run-2",
+    "fragments": 100000,
+    "programs": 1000,
+    "lookups": 1024,
+    "statistic": "median of three warm lookup batches",
+    "scanMilliseconds": 3951.4300000000003,
+    "indexedMilliseconds": 0.045625,
+    "scope": "Addressed geometry lookup only, not UI/FPS or cold index construction."
+  },
+  "materialComparison": "../architecture-materials/comparison.json",
+  "fullAcceptance": false,
+  "candidateSourceSHA256": "87f43a9b8a37d2a309f7e07282f1051dcae669a25f33eccf46986ce651d6d763",
+  "sourceChangesAfterProductFreeze": [
+    "Applications/Tests/DocumentProgramOwnerTests.swift",
+    "Applications/Tests/NotebookDocumentReadingTests.swift",
+    "Applications/UITests/NotebookNavigationLoadUITests.swift"
+  ],
+  "mac": {
+    "directory": "/Users/amir/Documents/projects/Notebook/artifacts/architecture-documents-20261005/run-6-mac",
+    "sourceSHA256": "ad4075e7eb13eec630293dbb649a306fbd748d29015b212d7598f5b9843dc9b2",
+    "verificationSHA256": "cd060cf1560b0ca502e00f5172c80061e91f88f730ca468abfd0baff09208f5a",
+    "passed": 24,
+    "failed": 0,
+    "skipped": 0,
+    "runtimeWarnings": 0,
+    "selectors": [
+      "NotebookMacTests/DocumentLayoutIndexTests",
+      "NotebookMacTests/DocumentLinkNavigationTests",
+      "NotebookMacTests/DocumentRenderSessionTests",
+      "NotebookMacTests/MacDocumentLaunchFixtureTests",
+      "NotebookMacTests/MacModelLifecycleTests/testAtomicIncomingCatalogPreservesIndependentLocalBoardAndPortalEdits",
+      "NotebookMacTests/MacShutdownTests/testSceneRegistrationIsWeakAndALateOwnerReceivesTheTerminalBoundary",
+      "NotebookMacTests/NotebookPanelMaterialTests",
+      "NotebookMacTests/NotebookPanelPresentationTests/testCanonicalBoardMaterialsSplitSubjectsBeforeFirstDragAndJoinCachedRequests"
+    ]
+  },
+  "physicalIPadNative": {
+    "passedUnique": 73,
+    "scope": "Every selected native case passed against the unchanged product source; later attempts changed only named fixture setup. Per-case last successful run is retained.",
+    "lastSuccessfulRunByTest": {
+      "NotebookTests/DocumentLayoutIndexTests/testProgramViewportLookupStaysAddressedAcross100000FragmentsAndSourceRebinding": "run-2",
+      "NotebookTests/DocumentLinkActivationTests/testAnActuallyAdmittedWebKitActivationRoutesAfterInputPolicyChanges": "run-2",
+      "NotebookTests/DocumentLinkActivationTests/testSourceReplacementRejectsTheOldActivation": "run-2",
+      "NotebookTests/DocumentLinkActivationTests/testStateCommitBeforeNavigationKeepsTheUserChangeAndTheCurrentDestination": "run-2",
+      "NotebookTests/DocumentLinkActivationTests/testTheStableOwnerUsesTheCanonicalRangeAndRejectsAClosedOrigin": "run-2",
+      "NotebookTests/DocumentPageSelectionTests/testLocalRequestWaitsForNativeLandingAndOldLandingCannotClearNewIntent": "run-2",
+      "NotebookTests/DocumentPageSelectionTests/testRequestForAnotherDocumentCannotMoveTheFocusedDocument": "run-2",
+      "NotebookTests/DocumentProgramOwnerTests/testAcceptedDistantTargetPreemptsARealQueuedNeighbourWithoutRetiringCurrentPaper": "run-2",
+      "NotebookTests/DocumentProgramOwnerTests/testAcceptedOpeningPreparesTheSameSourceBeforeAnyNativeHostExists": "run-2",
+      "NotebookTests/DocumentProgramOwnerTests/testAcceptedProgramStateDoesNotRevokeTheSameSourceInputWhilePaperEchoWaits": "run-3",
+      "NotebookTests/DocumentProgramOwnerTests/testAgentFeedbackBorrowsInstalledPaperInkWithoutRecreatingAProgram": "run-2",
+      "NotebookTests/DocumentProgramOwnerTests/testAnOffscreenProgramReleasesItsExecutorAfterWritingEvenWhenNoRasterCanBeAdmitted": "run-2",
+      "NotebookTests/DocumentProgramOwnerTests/testAttentionCapturesLivePixelsEvenWhenProgramChangesWithoutAStateCommit": "run-2",
+      "NotebookTests/DocumentProgramOwnerTests/testAttentionReleaseCannotResumeAClosedProgramBoundary": "run-2",
+      "NotebookTests/DocumentProgramOwnerTests/testBackgroundCheckpointFreezesTheModelAndForegroundResumesTheSameHeap": "run-2",
+      "NotebookTests/DocumentProgramOwnerTests/testBrokenVisibleProgramReleasesItsSlotWithoutBlockingTextOrAnotherControl": "run-2",
+      "NotebookTests/DocumentProgramOwnerTests/testClosingAnObsoleteProgramDoesNotPinItsSupersededHeap": "run-2",
+      "NotebookTests/DocumentProgramOwnerTests/testClosingDocumentRetainsAnUnacceptedModelUntilExplicitRetry": "run-2",
+      "NotebookTests/DocumentProgramOwnerTests/testClosingDuringPaperTransferRetiresTheRuntimeAndItsAdmission": "run-2",
+      "NotebookTests/DocumentProgramOwnerTests/testClosingFullPresentationRetiresPaperWhileThumbnailKeepsItsPicture": "run-2",
+      "NotebookTests/DocumentProgramOwnerTests/testCodeModeKeepsTheSameFrozenHeapThroughSourceChangesAndDelayedPersistence": "run-2",
+      "NotebookTests/DocumentProgramOwnerTests/testColdLetterPaperWaitsForItsNativeGeometryWithoutBlockingPreparedMaterial": "run-2",
+      "NotebookTests/DocumentProgramOwnerTests/testCurrentCanonicalPaperAdmitsInputWithoutChangingItsRuntimeOrMeasurement": "run-2",
+      "NotebookTests/DocumentProgramOwnerTests/testCurrentPagePreparationMetadataComesFromItsActualWebKitGeneration": "run-2",
+      "NotebookTests/DocumentProgramOwnerTests/testDelayedIncomingCurrentPageKeepsOpenDocumentRuntimeUntilExplicitClose": "run-3",
+      "NotebookTests/DocumentProgramOwnerTests/testDisablingNewNativeInputRejectsProgrammaticClickDuringAContact": "run-3",
+      "NotebookTests/DocumentProgramOwnerTests/testDistantLivePaperTransfersWithoutSnapshotOrASecondRender": "run-3",
+      "NotebookTests/DocumentProgramOwnerTests/testFailedPauseAndCheckpointRetryOnlyTheirUnfinishedStage": "run-3",
+      "NotebookTests/DocumentProgramOwnerTests/testFailedProgramAllowsSnapshotAndLiveLandingsWithAnExplicitStatus": "run-3",
+      "NotebookTests/DocumentProgramOwnerTests/testFailureOfPreviousSourceDoesNotPoisonTheSamePageAfterEditing": "run-3",
+      "NotebookTests/DocumentProgramOwnerTests/testFallbackPixelsDenyNewNativeHitsUntilCanonicalPaperIsInstalled": "run-3",
+      "NotebookTests/DocumentProgramOwnerTests/testFrozenObjectIsBoundToPresentedDocumentPixelsAndNotTheResumedPage": "run-3",
+      "NotebookTests/DocumentProgramOwnerTests/testIndependentLandingDoesNotJoinAnInvisibleProgramsCheckpoint": "run-3",
+      "NotebookTests/DocumentProgramOwnerTests/testInputPolicyChangedDuringSourcePreparationReachesTheSamePaper": "run-3",
+      "NotebookTests/DocumentProgramOwnerTests/testInvalidTeXKeepsLastGoodPaperUntilTheRepairedSourceIsInstalled": "run-3",
+      "NotebookTests/DocumentProgramOwnerTests/testLateCheckpointFailureCannotPoisonTheReplacementProgram": "run-3",
+      "NotebookTests/DocumentProgramOwnerTests/testLeavingTheProgramWindowCheckpointsStateBeforeRetirementAndRestoresItsIdentity": "run-3",
+      "NotebookTests/DocumentProgramOwnerTests/testLiveProgramTurnTakesANewLocalCutWithoutCheckpointOrRuntimeReplacement": "run-3",
+      "NotebookTests/DocumentProgramOwnerTests/testLiveTargetSupersessionAndCloseCancelItsQueuedAdmission": "run-3",
+      "NotebookTests/DocumentProgramOwnerTests/testLoadingCaptionUsesItsTextWidthAndWrapsWithinThePhysicalPage": "run-3",
+      "NotebookTests/DocumentProgramOwnerTests/testMeasuredLayoutUpdatesLinkCallbackWithoutReloadingTheCanonicalPaper": "run-3",
+      "NotebookTests/DocumentProgramOwnerTests/testNativeFailureDuringPaperTransferRetiresOnlyItsParkedRuntimeAndAdmission": "run-3",
+      "NotebookTests/DocumentProgramOwnerTests/testNeverReadyNeighborDoesNotSwitchOrDisableTheCurrentProgram": "run-3",
+      "NotebookTests/DocumentProgramOwnerTests/testNineVisibleProgramsQueueAutomaticallyAndViewportChangesPreserveAcceptedState": "run-4",
+      "NotebookTests/DocumentProgramOwnerTests/testPlainNeighbourUsesItsSingleGrantedRasterSlot": "run-4",
+      "NotebookTests/DocumentProgramOwnerTests/testPressureReclaimsAnUnselectedMountedNeighbourWithoutRevokingCurrentInput": "run-4",
+      "NotebookTests/DocumentProgramOwnerTests/testProgramStateChangesOnlyItsCompositeAndNeverReframesIndependentPaper": "run-4",
+      "NotebookTests/DocumentProgramOwnerTests/testProsePagePreparationReusesItsIdleExecutorAcrossDifferentTargets": "run-4",
+      "NotebookTests/DocumentProgramOwnerTests/testRefusedReturnCheckpointDoesNotBlockReclaimingAnotherIdleSurface": "run-4",
+      "NotebookTests/DocumentProgramOwnerTests/testResumeFailureShowsRetryAndResumesTheSameFrozenHeap": "run-4",
+      "NotebookTests/DocumentProgramOwnerTests/testRetainedOverviewThumbnailCannotConsumeTheLivePageLanding": "run-4",
+      "NotebookTests/DocumentProgramOwnerTests/testRetiredOutgoingPageTransfersItsActualPaperToThePreparedDistantPage": "run-4",
+      "NotebookTests/DocumentProgramOwnerTests/testReturnProgramFreezesItsModelWithoutWaitingForPoolPressure": "run-4",
+      "NotebookTests/DocumentProgramOwnerTests/testReturnProgramsYieldTheirExistingPoolSlotsAfterCheckpointWhenForegroundNeedsThem": "run-4",
+      "NotebookTests/DocumentProgramOwnerTests/testReturnToDocumentReattachesPreparedWorkingPaperWithoutRebuildingIt": "run-4",
+      "NotebookTests/DocumentProgramOwnerTests/testRuntimeRecoveryUsesAcceptedStateWhileInputWasHoldingBackTheEcho": "run-5",
+      "NotebookTests/DocumentProgramOwnerTests/testSameIdentityGeometryDoesNotRetryAnAlreadyFailedAuthor": "run-4",
+      "NotebookTests/DocumentProgramOwnerTests/testSameSourceResizeKeepsTheHeapAndItsAcceptedSnapshotThroughTheWriterBoundary": "run-4",
+      "NotebookTests/DocumentProgramOwnerTests/testSavingIndependentTextKeepsTheProgramContextAndItsUnsavedDOM": "run-4",
+      "NotebookTests/DocumentProgramOwnerTests/testShippedSoundOpeningReportsPaperNavigationAndProgramReadinessSeparately": "run-4",
+      "NotebookTests/DocumentProgramOwnerTests/testSnapshotDensityUsesTheNativeCameraProjectionAndKeepsPhysicalBounds": "run-4",
+      "NotebookTests/DocumentProgramOwnerTests/testSourceReplacementReleasesUnusablePicturesBeforePreparingNewSource": "run-4",
+      "NotebookTests/DocumentProgramOwnerTests/testStaticTurnFramesReuseTheirExactPixelsAcrossLandingAndReplaceEditedSource": "run-4",
+      "NotebookTests/DocumentProgramOwnerTests/testStationaryPassivePageRefinesAfterSharedPressureIsReleased": "run-4",
+      "NotebookTests/DocumentProgramOwnerTests/testSupersededReturnRetryDoesNotCarryItsOldFailureIntoTheGlobalBoundary": "run-4",
+      "NotebookTests/DocumentProgramOwnerTests/testTallProgramHasOneContextAcrossPassivePagesCurlAndIndexReclamation": "run-4",
+      "NotebookTests/NotebookBoardRevisionTests/testLowerClockPlacementChangesTheAcceptedFullRevisionAtTheSameBoardStamp": "run-4",
+      "NotebookTests/NotebookBoardRevisionTests/testOptimisticLocalPlacementCannotReuseThePreviousCompleteRevision": "run-4",
+      "NotebookTests/NotebookDocumentReadingTests/testCancelledBookmarkPreparationReleasesReadingWithoutWaitingForALanding": "run-5",
+      "NotebookTests/NotebookDocumentReadingTests/testMixedPaperReopeningRestoresOnlyTheLandedGeometryAndNeverOverwritesANewCamera": "run-4",
+      "NotebookTests/NotebookDocumentReadingTests/testReflowAndReopeningRequestTheContentAnchorWithoutInventingALanding": "run-4",
+      "NotebookTests/NotebookScenePublicationTests/testNewerPreparedCutSurvivesOldWorkerAndWaitsForInputAdmission": "run-4",
+      "NotebookTests/NotebookScenePublicationTests/testWarmRequestsCoalesceAndCancelBeforeDeliveryJoinsTheDispatchedWorker": "run-4"
+    }
+  },
+  "uiAttempts": [
+    {
+      "directory": "/Users/amir/Documents/projects/Notebook/artifacts/architecture-documents-20261005/run-7-ui",
+      "sourceSHA256": "ad4075e7eb13eec630293dbb649a306fbd748d29015b212d7598f5b9843dc9b2",
+      "summarySHA256": "9374f20f6df59a7c47c0aa93092ca1962239e9bdf073a47e7da6f45e9152306c",
+      "passed": 5,
+      "failed": 2,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "failures": [
+        {
+          "test": "NotebookWorkspaceJourneyUITests/testFirstSelectionMoveDeleteAndColdReopenPreserveTheWholeComposition()",
+          "message": "Test crashed with signal kill."
+        },
+        {
+          "test": "NotebookNavigationLoadUITests/testTwentyFourBoardProgramsStayInteractiveAfterZoomOutAndBack()",
+          "message": "XCTAssertEqual failed: (\"23\") is not equal to (\"24\") - Expected 24 visibly unchanged controls"
+        }
+      ],
+      "findings": "All 24 bodies visible after board pinches; one red control with value 1 indicates unintended tap. Second synthetic pinch has a nominal motion segment of 1.768pt per finger plus a touchdown lead-in; both contacts start inside one program. Journey runner connection lost on cold reopen; no matching crash/Jetsam found; cause unestablished."
+    },
+    {
+      "directory": "/Users/amir/Documents/projects/Notebook/artifacts/architecture-documents-20261005/run-8-journey",
+      "sourceSHA256": "ad4075e7eb13eec630293dbb649a306fbd748d29015b212d7598f5b9843dc9b2",
+      "verificationSHA256": "543ad504b63940f38316b0ecab4160458f7d2321356f222b151004a0b9ef5e8a",
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "scope": "Unchanged isolated NotebookWorkspaceJourneyUITests/testFirstSelectionMoveDeleteAndColdReopenPreserveTheWholeComposition; prior kill did not reproduce, cause remains unknown."
+    },
+    {
+      "directory": "/Users/amir/Documents/projects/Notebook/artifacts/architecture-documents-20261005/run-9-board",
+      "sourceSHA256": "333ffa07ec9d0c65fc885d1af9b12f45904495d169fbfb668f99a11c021c4ee7",
+      "summarySHA256": "94ab877a5215a75ddafee3a3c35f7a1761bf27257bbfc6c4a6144d52a2ad88dc",
+      "passed": 0,
+      "failed": 1,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "failure": "XCTAssertGreaterThan failed: (\"94.0\") is not greater than (\"122.2\") - Zoom-in must visibly enlarge every program",
+      "findings": "Full spatial-ink AX target still synthesizes the same start points inside one program. Reciprocal pinch moves enough, but that program owns both contacts. New pixel guard correctly detects absence of zoom-in; all 24 unchanged controls remained visible."
+    },
+    {
+      "directory": "/Users/amir/Documents/projects/Notebook/artifacts/architecture-documents-20261005/run-10-board",
+      "sourceSHA256": "bba3a8981ded65847ee5fb2908ebdecaaf42218b3b384390bce3a5502321f1c9",
+      "summarySHA256": "b82a4276f6487fd0605182a3a62c99fc579f85a85dfb6ecea9ac1ae749666fcb",
+      "passed": 0,
+      "failed": 1,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "failure": "XCTAssertEqual failed: (\"10\") is not equal to (\"24\") - Expected 24 visibly unchanged controls",
+      "findings": "Ordinary pan placed the board gutter beneath the physical pinch centre; input correctly reached camera. XCTest opening lead-in expanded finger separation before its nominal scale: real magnification about 4x; video shows larger bodies outside viewport, not lost content. Retained all pixel guards; adjusted test gesture range."
+    },
+    {
+      "directory": "/Users/amir/Documents/projects/Notebook/artifacts/architecture-documents-20261005/run-11-board",
+      "sourceSHA256": "87f43a9b8a37d2a309f7e07282f1051dcae669a25f33eccf46986ce651d6d763",
+      "verificationSHA256": "33a6e433eb8e1371c875dad668581357fdf4750a4e324aa35347380ae777b803",
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "scope": "24 board programs: real shrinking, ordinary pan into empty gutter, real magnification, 24 unchanged controls after each gesture, each first tap changes its actual pixels. Only test gesture setup changed; production identical."
+    }
+  ],
+  "visualInspection": {
+    "scope": "Actual physical iPad UI test screenshots and board pinch video frame",
+    "artifacts": [
+      "CE5D16CA-FE5C-4F0E-A147-684ED506A019.png",
+      "94ED3B9C-A4D6-415B-801B-180B35933802.png",
+      "9AE22F02-CA98-4FB3-8CD3-74FB75423004.mp4",
+      "board-11-attachments/362DC072-2432-4600-A03F-2350BF160423.png"
+    ],
+    "observations": [
+      "Compiled document shows parabola, 3²=9, first-tap button and page 1/1.",
+      "Link destination displays the measured distant chapter and return link on page 3/3.",
+      "Initial failed board gesture retains all 24 bodies; one unintended contact changes its program to red with value 1.",
+      "Final run-11 screenshot shows all 24 full red program bodies inside the viewport, each with value 1 after exactly one intentional tap."
+    ]
+  },
+  "productSourceComparison": {
+    "reference": "run-2/source-before.json",
+    "candidate": "run-11-board/source-before.json",
+    "allDifferences": [
+      "Applications/Tests/DocumentProgramOwnerTests.swift",
+      "Applications/Tests/NotebookDocumentReadingTests.swift",
+      "Applications/UITests/NotebookNavigationLoadUITests.swift"
+    ],
+    "productInputsEqual": true
+  },
+  "physicalIPadUI": {
+    "passedUnique": 7,
+    "lastSuccessfulRunByTest": {
+      "DrawingResponsivenessTests/testCompiledTypeScriptPackageFirstTapAndColdReopenOnBoardAndDocument": "run-7-ui",
+      "DrawingResponsivenessTests/testDocumentClosesWithPinchAndReopensByDoubleTap": "run-7-ui",
+      "DrawingResponsivenessTests/testDocumentLinksOpenTheMeasuredDistantPageAndReturnToContents": "run-7-ui",
+      "DrawingResponsivenessTests/testDocumentRuntimeRendersLaTeXAndInteractiveContent": "run-7-ui",
+      "DrawingResponsivenessTests/testProseDocumentTurnsToDifferentTextAndBack": "run-7-ui",
+      "NotebookWorkspaceJourneyUITests/testFirstSelectionMoveDeleteAndColdReopenPreserveTheWholeComposition": "run-8-journey",
+      "NotebookNavigationLoadUITests/testTwentyFourBoardProgramsStayInteractiveAfterZoomOutAndBack": "run-11-board"
+    }
+  },
+  "delivery": "delivery.json"
+}

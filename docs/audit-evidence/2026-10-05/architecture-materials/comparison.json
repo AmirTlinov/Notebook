@@ -1,0 +1,115 @@
+{
+  "date": "2026-10-05",
+  "baseCommit": "1ee54dc9e4444fee3aa9fec4a4a435636d11aa03",
+  "scenario": "16 visible native text bodies; isolated Mac owner, actual panelPresentation IPC, 1000x700 at scale1 and pixelScale1. After initial read: edit neighbor; translate caption.",
+  "scope": "Selected optimized native checks. Counts/bytes cover element layers; latency covers the whole IPC request. Grid assets are not included in knownAssets in either run. One sample per step; no FPS or statistical latency claim.",
+  "baseline": {
+    "directory": "/Users/amir/Documents/projects/Notebook/.build/architecture-20261005/baseline-3",
+    "sourceSHA256": "c8ec12432a2bb0c05c51028aeae5326641b5e62a329d41b76baec8bfccf91f5e",
+    "stdoutSHA256": "4ca0fded93be06b68fbf8b1aa01283635be473eedf769c03dfcda6951468dd05",
+    "measurements": {
+      "cold": {
+        "milliseconds": 126.06125,
+        "subjects": 16,
+        "encodedBodies": 16,
+        "bodyBase64Bytes": 118248
+      },
+      "neighborEdit": {
+        "milliseconds": 125.47175,
+        "subjects": 16,
+        "encodedBodies": 16,
+        "bodyBase64Bytes": 122224
+      },
+      "translation": {
+        "milliseconds": 120.010667,
+        "subjects": 16,
+        "encodedBodies": 16,
+        "bodyBase64Bytes": 122224
+      }
+    }
+  },
+  "candidate": {
+    "directory": "/Users/amir/Documents/projects/Notebook/.build/architecture-20261005/materials-2",
+    "sourceSHA256": "df4e820b5e9cbd486bbe8d2b7261b707dbfd9843d76c37149c6a1079aa780d5b",
+    "stdoutSHA256": "6bd8dae408d12f97e2cd89666524dc2c474e269761e269ba061787146b4948bf",
+    "measurements": {
+      "cold": {
+        "milliseconds": 118.883583,
+        "subjects": 16,
+        "encodedBodies": 16,
+        "bodyBase64Bytes": 118248
+      },
+      "neighborEdit": {
+        "milliseconds": 106.066125,
+        "subjects": 16,
+        "encodedBodies": 1,
+        "bodyBase64Bytes": 11616
+      },
+      "translation": {
+        "milliseconds": 99.905875,
+        "subjects": 16,
+        "encodedBodies": 0,
+        "bodyBase64Bytes": 0
+      }
+    }
+  },
+  "change": "Replace board-wide revision/frame material identity with local paint inputs; retain only each body’s own source receipts.",
+  "result": {
+    "neighborEdit": {
+      "regeneratedBodies": [
+        16,
+        1
+      ],
+      "bodyPayloadReductionPercent": 90.5
+    },
+    "translation": {
+      "regeneratedBodies": [
+        16,
+        0
+      ],
+      "bodyBase64Bytes": [
+        122224,
+        0
+      ]
+    }
+  },
+  "testCorrections": [
+    "Baseline also had an invalid final resize expectation: widening200→260 preserves fitted glyph width199. Compared steps above precede it. Final test uses width80 and passes.",
+    "Complex body cases exercise the native material owner directly because production manipulation eligibility excludes transformed/bound/program/erased subjects. No production eligibility change.",
+    "Eraser Undo fixture explicitly selects the board before recording the contact; verified SQL deactivation and restored pixels."
+  ],
+  "targetedFollowup": {
+    "directory": "/Users/amir/Documents/projects/Notebook/.build/architecture-20261005/materials-3",
+    "sourceSHA256": "351bb309a242e2f4b25b5f3c562c08e0d2f21e480498880af0de9f4c03f31334",
+    "verificationSHA256": "ebd766109280b3505489819cc4002aeed4fe572d12dd39134d894ec74492eeac",
+    "passed": 2,
+    "failed": 0,
+    "skipped": 0,
+    "runtimeWarnings": 0,
+    "scope": "Eraser and Undo actual alpha; program red→blue and independent native neighbor, prepared after the program to exercise source receipt isolation."
+  },
+  "core": {
+    "command": "swift test --filter NotebookElementGroupingTests",
+    "passed": 6,
+    "failed": 0,
+    "log": "/tmp/notebook-element-presentation-20261005.log",
+    "sha256": "1511b0aca08023dfb99755835eeaefd0f6f44d5db99ff35b3ed74c7f9b4be83d"
+  },
+  "fullAcceptance": false,
+  "currentMaterialValidation": {
+    "directory": "/Users/amir/Documents/projects/Notebook/artifacts/architecture-documents-20261005/run-6-mac",
+    "sourceSHA256": "ad4075e7eb13eec630293dbb649a306fbd748d29015b212d7598f5b9843dc9b2",
+    "verificationSHA256": "cd060cf1560b0ca502e00f5172c80061e91f88f730ca468abfd0baff09208f5a",
+    "suite": "NotebookMacTests/NotebookPanelMaterialTests",
+    "passed": 5,
+    "failed": 0,
+    "skipped": 0,
+    "tests": [
+      "NotebookPanelMaterialTests/testLocalEditAndTranslationReuseUnchangedPixelsWhileTextAndSizeRefresh()",
+      "NotebookPanelMaterialTests/testMeasuredErasureAndUndoRefreshOnlyTheAffectedBody()",
+      "NotebookPanelMaterialTests/testMovingBoundEndpointRefreshesConnectorWithoutChangingItsAuthoredSource()",
+      "NotebookPanelMaterialTests/testProgramStateChangesItsPixelsWithoutRepaintingItsNeighbor()",
+      "NotebookPanelMaterialTests/testTranslatedRotatedTextKeepsPixelsAndChangingBasisRefreshesThem()"
+    ]
+  }
+}

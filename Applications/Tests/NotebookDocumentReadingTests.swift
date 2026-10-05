@@ -21,7 +21,7 @@ final class NotebookDocumentReadingTests: XCTestCase {
     open(camera)
     await model.prepareDocumentOpening(id, pageIndex: 0)?.value
     var document = try XCTUnwrap(model.documents[id])
-    var source = NotebookAppModel.documentPageSourceRevision(document)
+    var source = DocumentPageNavigation.sourceRevision(document)
     model.acceptDocumentReadingLayout(try layout(document, target: 2), documentID: id)
     var controller = UUID()
     model.bindDocumentPageController(controller, documentID: id, source: source)
@@ -39,25 +39,25 @@ final class NotebookDocumentReadingTests: XCTestCase {
       baseSource: block.source, baseVersion: document.fileVersion(fileID: block.id),
       source: block.source.replacingOccurrences(of: "\\begin{document}", with: "\\begin{document} Preceding content changes pagination. "), sequence: 1)
     let status = try await model.commitDocumentSource(edit: edit); XCTAssertEqual(status, .committed)
-    document = try XCTUnwrap(model.documents[id]); source = NotebookAppModel.documentPageSourceRevision(document)
+    document = try XCTUnwrap(model.documents[id]); source = DocumentPageNavigation.sourceRevision(document)
     model.acceptDocumentReadingLayout(try layout(document, target: 5), documentID: id)
     XCTAssertEqual(model.presence?.documentPageIndex, 2, "Resolving the anchor does not confirm its display")
-    XCTAssertEqual(model.documentPageSelection?.pageIndex, 5)
-    let obsoleteRestore = try XCTUnwrap(model.documentPageSelection)
+    XCTAssertEqual(model.documentNavigation.request?.pageIndex, 5)
+    let obsoleteRestore = try XCTUnwrap(model.documentNavigation.request)
     let changedFile = try XCTUnwrap(document.files.first)
     let changedEdit = DocumentSourceEdit(sessionID: UUID(), documentID: id, fileID: changedFile.id,
       baseSource: changedFile.source, baseVersion: document.fileVersion(fileID: changedFile.id),
       source: changedFile.source.replacingOccurrences(of: "\\begin{document}", with: "\\begin{document} A newer source. "), sequence: 1)
     let changedStatus = try await model.commitDocumentSource(edit: changedEdit); XCTAssertEqual(changedStatus, .committed)
-    document = try XCTUnwrap(model.documents[id]); source = NotebookAppModel.documentPageSourceRevision(document)
+    document = try XCTUnwrap(model.documents[id]); source = DocumentPageNavigation.sourceRevision(document)
     model.acceptDocumentReadingLayout(try layout(document, target: 5), documentID: id)
-    XCTAssertNotEqual(try XCTUnwrap(model.documentPageSelection).id, obsoleteRestore.id,
+    XCTAssertNotEqual(try XCTUnwrap(model.documentNavigation.request).id, obsoleteRestore.id,
       "A new source must resolve its own restoration instead of waiting for an impossible old-source landing")
     controller = UUID(); model.bindDocumentPageController(controller, documentID: id, source: source)
     XCTAssertTrue(model.acceptDocumentPageLanding(.init(controllerID: controller, documentID: id,
       sourceRevision: source, revision: 1, pageIndex: 2, requestID: nil)))
     XCTAssertEqual(model.documentReadingPosition(id), place, "The interim old-number page cannot destroy the reading anchor")
-    let request = try XCTUnwrap(model.documentPageSelection)
+    let request = try XCTUnwrap(model.documentNavigation.request)
     XCTAssertTrue(model.acceptDocumentPageLanding(.init(controllerID: controller, documentID: id,
       sourceRevision: source, revision: 2, pageIndex: 5, requestID: request.id)))
     XCTAssertEqual(model.presence?.documentPageIndex, 5)
@@ -68,12 +68,12 @@ final class NotebookDocumentReadingTests: XCTestCase {
     await model.prepareDocumentOpening(id, pageIndex: 0)?.value
     open(.init(center: center, scale: geometry.fitScale(viewport: viewport)))
     model.acceptDocumentReadingLayout(try layout(document, target: 5), documentID: id)
-    XCTAssertEqual(model.documentPageSelection?.pageIndex, 5)
+    XCTAssertEqual(model.documentNavigation.request?.pageIndex, 5)
     XCTAssertEqual(model.presence?.documentPageIndex, 0)
     XCTAssertEqual(try XCTUnwrap(model.presence).camera.scale, geometry.fitScale(viewport: viewport), accuracy: 0.001,
       "A bookmark camera belongs to the actual destination landing, not the interim page")
     controller = UUID(); model.bindDocumentPageController(controller, documentID: id, source: source)
-    let reopening = try XCTUnwrap(model.documentPageSelection)
+    let reopening = try XCTUnwrap(model.documentNavigation.request)
     XCTAssertTrue(model.acceptDocumentPageLanding(.init(controllerID: controller, documentID: id,
       sourceRevision: source, revision: 1, pageIndex: 5, requestID: reopening.id)))
     XCTAssertEqual(try XCTUnwrap(model.presence).camera.scale, camera.scale, accuracy: 0.001)
@@ -121,11 +121,11 @@ final class NotebookDocumentReadingTests: XCTestCase {
       let interim = SpatialCamera(center: center, scale: papers[0].geometry.fitScale(viewport: start.viewport))
       open(page: 0, camera: interim)
       model.acceptDocumentReadingLayout(measured, documentID: id)
-      let request = try XCTUnwrap(model.documentPageSelection)
+      let request = try XCTUnwrap(model.documentNavigation.request)
       XCTAssertEqual(request.pageIndex, 2)
       XCTAssertEqual(model.presence?.camera, interim)
       XCTAssertEqual(model.documentReadingPosition(id), bookmark)
-      let controller = UUID(), source = NotebookAppModel.documentPageSourceRevision(document)
+      let controller = UUID(), source = DocumentPageNavigation.sourceRevision(document)
       model.bindDocumentPageController(controller, documentID: id, source: source)
       var expected = targetCamera
       if movesCamera {
@@ -143,19 +143,62 @@ final class NotebookDocumentReadingTests: XCTestCase {
         sourceRevision: source, revision: 1, pageIndex: 0, requestID: request.id)), "A repeated old landing cannot restore the previous page")
       let landedBookmark = model.documentReadingPosition(id)
       _ = model.selectDocumentPage(0, documentID: id)
-      let newer = try XCTUnwrap(model.documentPageSelection)
+      let newer = try XCTUnwrap(model.documentNavigation.request)
       XCTAssertTrue(model.acceptDocumentPageLanding(.init(controllerID: controller, documentID: id,
         sourceRevision: source, revision: 2, pageIndex: 2, requestID: request.id)))
-      XCTAssertEqual(model.documentPageSelection?.id, newer.id)
+      XCTAssertEqual(model.documentNavigation.request?.id, newer.id)
       XCTAssertEqual(model.documentReadingPosition(id), landedBookmark,
         "An interim receipt cannot save over the newer page's pending reading intent")
       withExtendedLifetime(measured) {}
     }
   }
 
+  func testCancelledBookmarkPreparationReleasesReadingWithoutWaitingForALanding() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let id = try XCTUnwrap(model.createDocument(at: .zero))
+    let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
+    let start = try XCTUnwrap(model.presence), center = try XCTUnwrap(model.board?.focusedCenter(of: id))
+    await model.prepareDocumentOpening(id, pageIndex: 2)?.value
+    let document = try XCTUnwrap(model.documents[id]), measured = try layout(document, target: 2)
+    let camera = SpatialCamera(center: center, scale: WorkspaceItemGeometry.uncompiledDocument.fitScale(viewport: start.viewport))
+    func open(page: Int, camera: SpatialCamera) {
+      model.updatePresence(.init(boardID: start.boardID, mode: .document, camera: camera,
+        viewport: start.viewport, focusedItemID: id, openProgress: 1, documentPageIndex: page), settled: true)
+    }
+    open(page: 2, camera: camera)
+    model.acceptDocumentReadingLayout(measured, documentID: id)
+    open(page: 2, camera: camera)
+    let bookmark = try XCTUnwrap(model.documentReadingPosition(id))
+    XCTAssertEqual(bookmark.anchor.nodeID, "2222222222222222")
+
+    await model.prepareDocumentOpening(id, pageIndex: 0)?.value
+    open(page: 0, camera: camera)
+    let cancelled = try XCTUnwrap(model.documentNavigation.request)
+    XCTAssertEqual(cancelled.pageIndex, 2)
+    model.cancelRequestedNavigation()
+    XCTAssertNil(model.documentNavigation.request)
+    let acceptedCamera = SpatialCamera(center: center.offsetBy(x: 0, y: 25), scale: camera.scale * 1.5)
+    open(page: 0, camera: acceptedCamera)
+    XCTAssertEqual(model.documentReadingPosition(id)?.anchor.nodeID, "1111111111111111",
+      "A cancelled preparation has no future landing to release its reading intent")
+    XCTAssertEqual(model.documentReadingPosition(id)?.zoomRatio ?? 0, 1.5, accuracy: 0.0001)
+
+    let controller = UUID(), source = DocumentPageNavigation.sourceRevision(document)
+    model.bindDocumentPageController(controller, documentID: id, source: source)
+    XCTAssertTrue(model.acceptDocumentPageLanding(.init(controllerID: controller, documentID: id,
+      sourceRevision: source, revision: 1, pageIndex: 2, requestID: cancelled.id)))
+    XCTAssertEqual(model.presence?.documentPageIndex, 2,
+      "Cancellation still accepts the physical result of an already admitted native operation")
+    XCTAssertEqual(model.presence?.camera, acceptedCamera)
+    XCTAssertEqual(model.documentReadingPosition(id)?.zoomRatio ?? 0, 1.5, accuracy: 0.0001)
+  }
+
   private func layout(_ document: DocumentDocument, target: Int, papers: [DocumentPaperLayout]? = nil, publishes: Bool = false) throws -> DocumentPageLayout {
     let geometry = WorkspaceItemGeometry.uncompiledDocument, id = try XCTUnwrap(document.files.first?.id)
-    let source = NotebookAppModel.documentPageSourceRevision(document)
+    let source = DocumentPageNavigation.sourceRevision(document)
     let regions: [[String: Any]] = [0, target].map { page in
       ["id": id, "pageIndex": page, "x": 20.0, "y": 30.0, "width": 100.0, "height": 100.0,
        "sourceOffset": Double(page) * 100]

@@ -165,11 +165,11 @@ final class DocumentLinkNavigationTests: XCTestCase {
 
   private func ready(_ coordinator: DocumentWebCoordinator) async throws {
     let deadline = ContinuousClock.now + .seconds(8)
-    while (!coordinator.renderIsReady || coordinator.payload?.source.layout?.isComplete != true),
+    while (!coordinator.renderIsReady || coordinator.payload?.source.layout == nil),
       coordinator.acquisitionError == nil, .now < deadline { try await Task.sleep(for: .milliseconds(10)) }
     if let error = coordinator.acquisitionError { throw error }
     XCTAssertTrue(coordinator.renderIsReady)
-    XCTAssertEqual(coordinator.payload?.source.layout?.isComplete, true)
+    XCTAssertNotNil(coordinator.payload?.source.layout)
   }
 
   private func evaluate(_ script: String, _ web: WKWebView) async throws -> String {

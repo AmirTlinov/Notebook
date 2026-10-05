@@ -44,7 +44,7 @@ struct NotebookNavigationView: View {
         if let save = model.documentSavePresentation, save.documentID == presence.focusedItemID,
           save.phase != .installed {
           HStack(spacing: 8) {
-            if model.documentPageNavigationStatus?.phase != .failed { ProgressView().controlSize(.small) }
+            if model.documentNavigation.status?.phase != .failed { ProgressView().controlSize(.small) }
             Text(save.phase == .saving ? "Сохранение…" : "Сохранено. Обновляем страницу…").font(.caption)
             if save.phase == .saved {
               Button("Сохранённый текст") { savedText = save.source }
@@ -56,7 +56,7 @@ struct NotebookNavigationView: View {
           .frame(maxWidth: .infinity, alignment: .trailing).padding(.trailing, 18)
         }
         if openingFailure == nil, presence.mode == .document,
-          let status = model.documentPageNavigationStatus,
+          let status = model.documentNavigation.status,
           status.documentID == presence.focusedItemID, let target = status.target {
           HStack(spacing: 8) {
             if status.phase == .failed {

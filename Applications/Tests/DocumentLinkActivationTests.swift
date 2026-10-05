@@ -20,9 +20,9 @@ final class DocumentLinkActivationTests: XCTestCase {
     // claim that a scripted click is trusted or replace the real-touch UI test.
     XCTAssertEqual(fixture.model.activateDocumentLink(activation), .page(target))
     XCTAssertEqual(fixture.model.presence?.documentPageIndex, 0)
-    XCTAssertEqual(fixture.model.documentPageSelection?.pageIndex, target)
-    let request = try XCTUnwrap(fixture.model.documentPageSelection)
-    let controller = UUID(), source = NotebookAppModel.documentPageSourceRevision(try XCTUnwrap(fixture.model.documents[activation.origin.documentID]))
+    XCTAssertEqual(fixture.model.documentNavigation.request?.pageIndex, target)
+    let request = try XCTUnwrap(fixture.model.documentNavigation.request)
+    let controller = UUID(), source = DocumentPageNavigation.sourceRevision(try XCTUnwrap(fixture.model.documents[activation.origin.documentID]))
     fixture.model.bindDocumentPageController(controller, documentID: activation.origin.documentID, source: source)
     XCTAssertTrue(fixture.model.acceptDocumentPageLanding(.init(controllerID: controller,
       documentID: activation.origin.documentID, sourceRevision: source, revision: 1, pageIndex: target, requestID: request.id)))
@@ -39,7 +39,7 @@ final class DocumentLinkActivationTests: XCTestCase {
     XCTAssertNotNil(changed)
     XCTAssertEqual(fixture.model.activateDocumentLink(activation), activation.destination)
     if case .page(let target) = activation.destination {
-      XCTAssertEqual(fixture.model.documentPageSelection?.pageIndex, target)
+      XCTAssertEqual(fixture.model.documentNavigation.request?.pageIndex, target)
       XCTAssertEqual(fixture.model.presence?.documentPageIndex, 0)
     }
     XCTAssertEqual(fixture.model.documentStates[activation.origin.documentID]?.records.first { $0.id == "widget" }?.value,

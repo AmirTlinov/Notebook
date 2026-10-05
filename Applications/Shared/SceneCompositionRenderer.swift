@@ -243,9 +243,8 @@ final class SceneCompositionRenderer {
           local.width > 0, local.height > 0, local.width * density <= 2048, local.height * density <= 2048 else { continue }
         let pixels = Int(ceil(local.width * density)) * Int(ceil(local.height * density))
         guard pixels <= available else { continue }; available -= pixels
-        let key = try SceneMaterialKey(workspaceID: projection.workspaceID,
-          target: .init(kind: .board, id: presence.boardID), revision: revision,
-          role: "element:" + id, frame: local, density: density)
+        let key = try await source.elementMaterialKey(read, boardID: presence.boardID,
+          presentation: presentation, density: density)
         let raster: RasterLease
         if let cached = resources.retainMaterial(key) { raster = cached }
         else {
@@ -255,7 +254,8 @@ final class SceneCompositionRenderer {
           try await paintElement(read, boardID: presence.boardID, frame: .init(origin: .zero, size: size),
             canvas: canvas, presentation: presentation)
           raster = try await canvas.finishRaster(for: .material(key))
-          resources.cacheComposition(raster, receipts: receipts(), sources: sourceRasters)
+          let address = SceneSourceAddress(plane: .board(presence.boardID), elementID: id)
+          resources.cacheComposition(raster, receipts: receipts().filter { $0.key == address }, sources: sourceRasters)
         }
         defer { raster.release() }
         separated[position] = [try await .completed(id: "subject-" + id, order: 0, worldOrigin: origin,

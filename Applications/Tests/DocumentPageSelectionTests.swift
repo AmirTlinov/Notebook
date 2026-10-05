@@ -32,17 +32,17 @@ final class DocumentPageSelectionTests: XCTestCase {
     XCTAssertEqual(model.selectDocumentPage(3, documentID: documentID), 3)
 
     XCTAssertEqual(model.presence?.documentPageIndex, 0, "An accepted request is not actual page presence")
-    let first = try XCTUnwrap(model.documentPageSelection)
+    let first = try XCTUnwrap(model.documentNavigation.request)
     XCTAssertEqual(first.pageIndex, 3)
     let controller = UUID(), document = try XCTUnwrap(model.documents[documentID])
-    let source = NotebookAppModel.documentPageSourceRevision(document)
+    let source = DocumentPageNavigation.sourceRevision(document)
     model.bindDocumentPageController(controller, documentID: documentID, source: source)
     XCTAssertEqual(model.selectDocumentPage(5, documentID: documentID), 5)
-    let second = try XCTUnwrap(model.documentPageSelection)
+    let second = try XCTUnwrap(model.documentNavigation.request)
     XCTAssertTrue(model.acceptDocumentPageLanding(.init(controllerID: controller, documentID: documentID,
       sourceRevision: source, revision: 1, pageIndex: 3, requestID: first.id)))
     XCTAssertEqual(model.presence?.documentPageIndex, 3)
-    XCTAssertEqual(model.documentPageSelection?.id, second.id, "Actual A cannot erase pending B")
+    XCTAssertEqual(model.documentNavigation.request?.id, second.id, "Actual A cannot erase pending B")
     XCTAssertFalse(model.acceptDocumentPageLanding(.init(controllerID: UUID(), documentID: documentID,
       sourceRevision: source, revision: 2, pageIndex: 7, requestID: second.id)))
     XCTAssertFalse(model.acceptDocumentPageLanding(.init(controllerID: controller, documentID: documentID,
@@ -50,7 +50,7 @@ final class DocumentPageSelectionTests: XCTestCase {
     XCTAssertTrue(model.acceptDocumentPageLanding(.init(controllerID: controller, documentID: documentID,
       sourceRevision: source, revision: 2, pageIndex: 5, requestID: second.id)))
     XCTAssertEqual(model.presence?.documentPageIndex, 5)
-    XCTAssertNil(model.documentPageSelection)
+    XCTAssertNil(model.documentNavigation.request)
     XCTAssertFalse(model.acceptDocumentPageLanding(.init(controllerID: controller, documentID: documentID,
       sourceRevision: source, revision: 1, pageIndex: 3, requestID: first.id)))
     let actual = try XCTUnwrap(model.presence)

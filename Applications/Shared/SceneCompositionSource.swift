@@ -795,6 +795,14 @@ actor SceneCompositionSource {
     case .values: return String(revision)
     }
   }
+
+  func elementMaterialKey(_ paint: ElementPaint, boardID: UUID,
+    presentation: NotebookElementPresentation?, density: Double) throws -> SceneMaterialKey {
+    try Task.checkCancellation()
+    // Fingerprinting immutable content, including ink, stays off the UI actor.
+    return try .init(workspaceID: workspaceID, boardID: boardID, paint: paint,
+      presentation: presentation, density: density)
+  }
   func readPaintOrder(boardID: UUID, coverID: UUID? = nil, bounds: WorkspaceSpatialBounds,
     after: SceneCompositionReadCursor? = nil) throws -> SceneCompositionReadPage {
     switch origin {

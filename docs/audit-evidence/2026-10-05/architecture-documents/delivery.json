@@ -1,0 +1,83 @@
+{
+  "status": "installed-pair-selected-verification-passed",
+  "recordedAt": "2026-10-05T09:54:12.042068+00:00",
+  "version": "0.3.171",
+  "build": "241",
+  "sourceSHA256": "87f43a9b8a37d2a309f7e07282f1051dcae669a25f33eccf46986ce651d6d763",
+  "buildSHA256": "e77b1ef10f37b9025db6e87546e58b6bd67c9ff9287e0b31ba4ef44c701dcc79",
+  "verificationSHA256": "33a6e433eb8e1371c875dad668581357fdf4750a4e324aa35347380ae777b803",
+  "verificationRoute": "./verify.sh:selected",
+  "apps": {
+    "iPad": {
+      "identifier": "com.amirtlinov.notebook.preview",
+      "cdhash": "195a4b43cc5e70deb55b8f9588b36648f9270606",
+      "manifestSHA256": "d14082534abc2ac3a96ada9012693360e8ebefb03f60b7ccc272c962cd6e4454",
+      "binaryUUIDs": "UUID: 854281A1-6D75-3ED5-90AE-173AF865201B (arm64) /Users/amir/Documents/projects/Notebook/.build/architecture-20261005/pair-241/derived-data/Build/Products/Release-iphoneos/Notebook.app/Notebook"
+    },
+    "mac": {
+      "identifier": "com.amirtlinov.notebook.mac",
+      "cdhash": "6d052ed5b4929b693fe64cbd68d6ca6c7678b700",
+      "manifestSHA256": "d07dee7905e24c36d757012b86b2c019d9201beb77605e9bee6232f03da7bd64",
+      "binaryUUIDs": "UUID: B490DD4D-746A-3670-9D8C-4C0AD89F577A (arm64) /Users/amir/Documents/projects/Notebook/.build/architecture-20261005/pair-241/derived-mac/Build/Products/Release/Notebook.app/Contents/MacOS/Notebook"
+    }
+  },
+  "mac": {
+    "path": "/Users/amir/Applications/Notebook.app",
+    "version": "0.3.171",
+    "build": "241",
+    "servingPID": 40595,
+    "dynamicCodeValidityChecked": true,
+    "servingCDHashMatchesBuild": true,
+    "sameProcessBeforeAndAfterIPadInstall": true,
+    "endpoints": [
+      "workspace",
+      "bridge"
+    ],
+    "installation": "Ordinary app quit, verified staged bundle, atomic rename swap, launch. Old staging bundle removed after installed checks."
+  },
+  "iPad": {
+    "bundleIdentifier": "com.amirtlinov.notebook.preview",
+    "version": "0.3.171",
+    "build": "241",
+    "installOutcome": "success",
+    "launchOutcome": "success",
+    "physicalDevice": true,
+    "containerPathRelocatedByOS": true,
+    "containerResetPerformed": false
+  },
+  "continuity": {
+    "immediatelyAfterMacAndIPadInstall": {
+      "workspaceHeaderUnchanged": true,
+      "observedPresenceUnchanged": true,
+      "deviceIDUnchanged": true,
+      "emptySelectionSemanticsUnchanged": true,
+      "ephemeralIDs": "Process session and empty-selection nonce regenerated on relaunch."
+    },
+    "afterPeerReconnected": {
+      "runtimeStatus": "connected",
+      "workspaceIDUnchanged": true,
+      "itemCountUnchanged": true,
+      "observedContext": "presence and selection now read the authenticated iPad peer, per NotebookSelectionPublication; board revision/ink advance during live work. They are not claimed byte-identical after reconnection."
+    }
+  },
+  "ui": {
+    "Mac": "CUA AX: interactive document page 23/24, zoom 61%, selected F and volume mode retained. Devices sheet shows iPad connected nearby; closing it returns to the same document state.",
+    "physicalIPad": "Device Hub screenshot inspected: installed app displays handwritten notebook page 1/5 with toolbar and readable ink. Screenshot contains private working content and remains outside Git.",
+    "physicalIPadScreenshotSHA256": "b931275fda4862776c199a330a5525f5936bd0db1c55f192d8e894e1c97a0c9e",
+    "scope": "Installed-pair continuity and presentation. Gesture behavior is covered by the separate seven physical UI scenarios; no system FPS/latency acceptance claim."
+  },
+  "materials": "../architecture-materials/installed.json",
+  "evidence": {
+    "before-install.json": "369281cc476b119b9630395a6eb536b4449f38de58b67de68890b0a91557a5ec",
+    "after-mac-install.json": "5528db2bc23a820a517575061fc72a32a6ea84d9b12fbfc5fe0d98df1828f374",
+    "after-ipad-install.json": "10e2cf6e2f26496d0f3bfbf814d93f35cab601075191205013d34aa69367bc3b",
+    "after-pair-settled.json": "16ede2e5512be4a5455c1e80ca20d7a5a1798978aa36eed95adf710dcb9fccbc",
+    "after-ui-check.json": "fbc02e1c649a159caeac9ecad9fcd94f6a89c4c04b73fa5a0cc982b3292531cc",
+    "socket-peers.json": "0126751d0dbe4da3e84129c1e69a79c47d7f0386f1313e374c44b7c4e9132acd",
+    "ipad-before-install.json": "1d11d2d9c1c6749748dbaefac01b17af59c11bede3e78f26e974cc98449d5a06",
+    "ipad-after-install.json": "970f4c02d0faed3b27e3b53d3aec5a947e3720890df6af6e3d64a9931216ee8d",
+    "ipad-install.json": "b34eb907f2dfd8bc43667ae0a1994fa947fd755b8ef9c62b669c3a50d82fa284",
+    "ipad-launch.json": "8d417e14085f3b285a2591bcc3b0d7d2cee023a858675836912b8a37c7065dfb"
+  },
+  "fullAcceptance": "Open in GUI-190: system frame/CPU/GPU/memory, ten scenario repetitions and 30 minutes of joint work."
+}

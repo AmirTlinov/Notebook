@@ -258,7 +258,7 @@ final class WorkspaceAppearanceTests: XCTestCase {
         _ = try await snapshot.printedSource(resources: .shared)
         let layout = try XCTUnwrap(snapshot.layout)
         model.acceptDocumentReadingLayout(.init(pageCount: layout.pageCount,
-          sourceRevision: NotebookAppModel.documentPageSourceRevision(current), record: layout), documentID: item.id)
+          sourceRevision: DocumentPageNavigation.sourceRevision(current), record: layout), documentID: item.id)
         if iteration == 0 {
           model.updatePresence(.init(boardID: index.rootBoardID, mode: .document,
             camera: .init(scale: geometry.fitScale(viewport: portrait)), viewport: portrait,

@@ -104,18 +104,16 @@ final class DocumentSnapshotCache {
 
 struct DocumentPageLayout: Equatable, Sendable {
   let pageCount: Int
-  let isComplete: Bool
   let sourceRevision: String?
   let record: DocumentLayoutRecord?
 
   static func == (lhs: Self, rhs: Self) -> Bool {
-    lhs.pageCount == rhs.pageCount && lhs.isComplete == rhs.isComplete
+    lhs.pageCount == rhs.pageCount
       && lhs.sourceRevision == rhs.sourceRevision && lhs.record === rhs.record
   }
 
-  @MainActor init(pageCount: Int, sourceRevision: String? = nil, record: DocumentLayoutRecord? = nil, isComplete: Bool? = nil) {
+  @MainActor init(pageCount: Int, sourceRevision: String? = nil, record: DocumentLayoutRecord? = nil) {
     self.pageCount = max(1, pageCount)
-    self.isComplete = isComplete ?? record?.isComplete ?? true
     self.sourceRevision = sourceRevision
     self.record = record
   }
