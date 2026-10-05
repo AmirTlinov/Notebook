@@ -233,7 +233,7 @@ final class DocumentPagePreparation {
   private let document: DocumentDocument
   private let resources: SceneRenderResources
   private var preparation: Task<Void, Error>?
-  private var compilerDemand = NotebookTypesetterDemand(priority: .export)
+  private var compilerDemand: NotebookTypesetterDemand?
   private var printSource: DocumentPrintedSource?
   private var reuse: DocumentPrintReuse?
   var printReuse: DocumentPrintReuse? {
@@ -273,6 +273,7 @@ final class DocumentPagePreparation {
     self.document = document; self.sourceKey = sourceKey; self.store = store; self.resources = resources; self.reuse = reuse
   }
   func retainPage(_ index: Int, hostID: UUID) { demand[hostID] = max(0, index); trim() }
+  func promote(to priority: NotebookTypesetter.Priority) { compilerDemand?.promote(to: priority) }
   func releasePage(hostID: UUID, in web: WKWebView?) {
     demand[hostID] = nil; trim()
     cancelUnownedPreparation()
@@ -284,7 +285,7 @@ final class DocumentPagePreparation {
   func retryPage(_ index: Int) { error = nil; if artifact == nil { preparation = nil } }
   func discardIdlePreparation() async {
     guard readers.isEmpty, demand.isEmpty else { return }
-    preparation?.cancel(); preparation = nil; pages.removeAll(); printSource = nil; reuse = nil
+    preparation?.cancel(); preparation = nil; compilerDemand = nil; pages.removeAll(); printSource = nil; reuse = nil
     pageOperations.values.forEach { $0.task.cancel() }; pageOperations.removeAll()
     browserRegions.removeAll()
     programTasks.values.forEach { $0.task.cancel() }; programTasks.removeAll(); programs.removeAll()
@@ -292,12 +293,13 @@ final class DocumentPagePreparation {
   }
   private func prepare(priority: NotebookTypesetter.Priority = .current, onAdmissionWait: @escaping (Bool) -> Void) async throws {
     if artifact != nil { return }
-    compilerDemand.promote(to: priority)
     if let error { throw error }
     if preparation == nil {
+      let compilerDemand = NotebookTypesetterDemand(priority: priority)
+      self.compilerDemand = compilerDemand
       measurementCount += 1
-      preparation = Task { try await loadPrint(priority: priority, onAdmissionWait: onAdmissionWait) }
-    }
+      preparation = Task { try await loadPrint(priority: priority, compilerDemand: compilerDemand, onAdmissionWait: onAdmissionWait) }
+    } else { promote(to: priority) }
     let id = UUID(), task = preparation!
     readers.insert(id)
     onAdmissionWait(true); defer { onAdmissionWait(false); releaseReader(id) }
@@ -312,21 +314,25 @@ final class DocumentPagePreparation {
     readers.remove(id); cancelUnownedPreparation()
   }
   private func cancelUnownedPreparation() {
-    if demand.isEmpty, readers.isEmpty { preparation?.cancel(); preparation = nil }
+    if demand.isEmpty, readers.isEmpty { preparation?.cancel(); preparation = nil; compilerDemand = nil }
     for (index, operation) in pageOperations where operation.readers.isEmpty && !demand.values.contains(index) {
       operation.task.cancel(); pageOperations[index] = nil
     }
   }
-  private func loadPrint(priority: NotebookTypesetter.Priority, onAdmissionWait: @escaping (Bool) -> Void) async throws {
+  private func loadPrint(priority: NotebookTypesetter.Priority, compilerDemand: NotebookTypesetterDemand,
+    onAdmissionWait: @escaping (Bool) -> Void) async throws {
     let start = ContinuousClock.now
     let document = document, store = store
     let value = try await DocumentCanonicalPrint.store.artifact(for: document, priority: priority, demand: compilerDemand, inputFactory: {
-      try await Task.detached(priority: .userInitiated) {
-        try NotebookTypesetterInput(document: document) { file in
+      let worker = Task.detached(priority: .userInitiated) {
+        try Task.checkCancellation()
+        return try NotebookTypesetterInput(document: document) { file in
+          try Task.checkCancellation()
           guard let store else { throw SceneRenderError.snapshotPending("document_resource_store") }
           return try store.readDocumentFileBytes(file)
         }
-      }.value
+      }
+      return try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
     })
     preparationPhasesMS["artifact"] = printPreparationMilliseconds(since: start)
     for (phase, milliseconds) in compilerDemand.preparationPhasesMS {
@@ -518,7 +524,7 @@ final class DocumentPagePreparation {
     }
   }
 
-  func printedSource(priority: NotebookTypesetter.Priority = .export) async throws -> DocumentPrintedSource {
+  func printedSource(priority: NotebookTypesetter.Priority) async throws -> DocumentPrintedSource {
     try await prepare(priority: priority, onAdmissionWait: { _ in })
     guard let printSource else { throw DocumentSessionError.invalidLayout }
     return printSource

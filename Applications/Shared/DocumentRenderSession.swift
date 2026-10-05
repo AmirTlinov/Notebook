@@ -158,10 +158,11 @@ final class DocumentSourceSnapshot {
     _ = try await preparation!.printedSource(priority: .current)
     try acceptPreparedLayout()
   }
-  func printedSource(resources: SceneRenderResources) async throws -> DocumentPrintedSource {
+  func printedSource(resources: SceneRenderResources, priority: NotebookTypesetter.Priority = .current) async throws -> DocumentPrintedSource {
     ensurePreparation(resources: resources)
-    return try await preparation!.printedSource()
+    return try await preparation!.printedSource(priority: priority)
   }
+  func promotePreparation(to priority: NotebookTypesetter.Priority) { preparation?.promote(to: priority) }
   func sourceOffset(fileID: String, pageIndex: Int, x: Double, y: Double) -> Int? {
     preparation?.sourceOffset(fileID: fileID, pageIndex: pageIndex, x: x, y: y)
   }

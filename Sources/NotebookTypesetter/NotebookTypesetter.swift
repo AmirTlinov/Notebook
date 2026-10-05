@@ -66,71 +66,6 @@ public struct NotebookTypesetterError: Error, LocalizedError, Sendable {
   }
 }
 
-/// Shared source readers can promote a queued compile when a speculative
-/// page becomes current. This does not create or preempt a physical engine.
-public final class NotebookTypesetterDemand: @unchecked Sendable {
-  private let lock = NSLock()
-  private var priority: NotebookTypesetter.Priority
-  private weak var shared: NotebookTypesetterDemand?
-  private var phasesMS: [String: Double] = [:]
-  private var sharesMeasurement = false
-  public init(priority: NotebookTypesetter.Priority) { self.priority = priority }
-  var current: NotebookTypesetter.Priority { lock.lock(); defer { lock.unlock() }; return priority }
-  /// Request phases feed the existing document presentation measurement. They
-  /// describe this request, never the compilation that originally filled disk.
-  public var preparationPhasesMS: [String: Double] {
-    lock.lock(); let local = phasesMS, producer = sharesMeasurement ? shared : nil; lock.unlock()
-    return (producer?.preparationPhasesMS ?? [:]).merging(local) { _, reader in reader }
-  }
-  func beginMeasurement() { lock.lock(); phasesMS = [:]; sharesMeasurement = false; lock.unlock() }
-  func finishMeasurement() {
-    let measured = preparationPhasesMS
-    lock.lock(); phasesMS = measured; sharesMeasurement = false; lock.unlock()
-  }
-  func record(_ phase: String, since start: ContinuousClock.Instant) {
-    let elapsed = start.duration(to: .now).components
-    record(phase, milliseconds: Double(elapsed.seconds) * 1_000 + Double(elapsed.attoseconds) / 1e15)
-  }
-  func record(_ phase: String, milliseconds: Double) {
-    lock.lock(); phasesMS[phase] = milliseconds; lock.unlock()
-  }
-  public func promote(to value: NotebookTypesetter.Priority) {
-    lock.lock(); if value.rawValue < priority.rawValue { priority = value }; let shared = shared; lock.unlock()
-    shared?.promote(to: value)
-  }
-  func beginJob() { lock.lock(); shared = nil; sharesMeasurement = false; lock.unlock() }
-  func join(_ shared: NotebookTypesetterDemand) {
-    guard shared !== self else { return }
-    lock.lock(); self.shared = shared; sharesMeasurement = true; let current = priority; lock.unlock()
-    shared.promote(to: current)
-  }
-}
-
-/// Cancellation is the only operation allowed across the serial compiler
-/// queue. The lock fences destruction against the cancellation callback.
-private final class Work: @unchecked Sendable {
-  private let lock = NSLock()
-  private var cancelled = false
-  private var deadline: ContinuousClock.Instant?
-  var isCancelled: Bool { lock.lock(); defer { lock.unlock() }; return cancelled }
-  func begin() throws { lock.lock(); defer { lock.unlock() }; if cancelled { throw CancellationError() }; deadline = .now + .seconds(30) }
-  private var tex: OpaquePointer?
-  func cancel() { lock.lock(); defer { lock.unlock() }; cancelled = true; if let tex { nb_typesetter_cancel(tex) } }
-  func check() throws { lock.lock(); defer { lock.unlock() }; if cancelled { throw CancellationError() }; if let deadline, ContinuousClock.now >= deadline { throw NotebookTypesetterError("typesetter_deadline") } }
-  func remainingMilliseconds() throws -> UInt64 {
-    try check(); lock.lock(); let deadline = deadline!; lock.unlock()
-    let c = ContinuousClock.now.duration(to: deadline).components
-    return max(1, UInt64(max(0, c.seconds * 1000 + c.attoseconds / 1_000_000_000_000_000)))
-  }
-  func withTeX<T>(_ body: (OpaquePointer) throws -> T) throws -> T {
-    try check()
-    guard let ticket = nb_typesetter_cancel_create() else { throw NotebookTypesetterError("typesetter_resource_limit") }
-    lock.lock(); tex = ticket; if cancelled { nb_typesetter_cancel(ticket) }; lock.unlock()
-    defer { lock.lock(); tex = nil; nb_typesetter_cancel_destroy(ticket); lock.unlock() }
-    return try body(ticket)
-  }
-}
-
 /// Both app surfaces and export ask this executor for the same immutable
 /// snapshot. No camera or page navigation is an input to compilation.
 public final class NotebookTypesetter: @unchecked Sendable {
@@ -140,15 +75,7 @@ public final class NotebookTypesetter: @unchecked Sendable {
   private var runtime: OpaquePointer?
   /// One physical engine; queued work has no VM or deadline until admission.
   public enum Priority: Int, Sendable { case current = 0, anticipated = 1, background = 2, export = 3 }
-  private struct Pending: @unchecked Sendable {
-    let id: UUID; let demand: NotebookTypesetterDemand; let order: UInt64
-    let run: @Sendable () -> Void; let cancel: @Sendable () -> Void
-  }
-  private let admission = NSLock()
-  private var pending: [Pending] = []
-  private var running = false
-  private var sequence: UInt64 = 0
-  private var preferredAdmissions = 0
+  private let admission = NotebookTypesetterAdmission()
   private var pressure: DispatchSourceMemoryPressure?
   public init(resources: URL) {
     self.resources = resources
@@ -165,65 +92,40 @@ public final class NotebookTypesetter: @unchecked Sendable {
   }
 
   public func compile(_ document: DocumentDocument, input: NotebookTypesetterInput? = nil, priority: Priority = .current, demand: NotebookTypesetterDemand? = nil) async throws -> NotebookPrintedDocument {
-    let demand = demand ?? .init(priority: priority), inputStart = ContinuousClock.now
-    let input = try input ?? NotebookTypesetterInput(document: document)
-    try input.validate(document: document)
-    demand.record("inputValidation", since: inputStart)
-    let queuedAt = ContinuousClock.now
-    return try await perform(demand: demand) { work in
-      demand.record("queue", since: queuedAt)
-      return try self.compile(document, input: input, work: work, demand: demand)
-    }
+    try await compile(source: .init(document), input: input, priority: priority, demand: demand)
   }
-  /// Same bounded data-only SVG kernel as canonical document images. No TeX,
-  /// layout, JavaScript or second compiler is created for an export overlay.
-  public func convertSVG(_ data: Data, priority: Priority = .current) async throws -> Data {
-    try await perform(demand: .init(priority: priority)) { try self.convertSVG(data, work: $0) }
-  }
-  private func perform<T: Sendable>(demand: NotebookTypesetterDemand, _ operation: @escaping @Sendable (Work) throws -> T) async throws -> T {
-    let work = Work(), id = UUID()
-    return try await withTaskCancellationHandler {
-      try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<T, Error>) in
-        admission.lock()
-        if work.isCancelled { admission.unlock(); continuation.resume(throwing: CancellationError()); return }
-        // The store also bounds shared document requests. This cap includes
-        // direct SVG/export callers and fails before retaining unbounded input.
-        guard pending.count < 32 else { admission.unlock(); continuation.resume(throwing: NotebookTypesetterError("typesetter_queue_full")); return }
-        sequence &+= 1
-        pending.append(.init(id: id, demand: demand, order: sequence, run: {
-          do { try work.begin(); continuation.resume(returning: try autoreleasepool { try operation(work) }) }
-          catch { continuation.resume(throwing: error) }
-        }, cancel: { continuation.resume(throwing: CancellationError()) }))
-        let start = !running
-        if start { running = true }
-        admission.unlock()
-        if start { queue.async { [self] in runNext() } }
+  func compile(source: DocumentPrintDependencies.Source, input: NotebookTypesetterInput? = nil,
+    priority: Priority, demand: NotebookTypesetterDemand?,
+    inputFactory: (@Sendable () async throws -> NotebookTypesetterInput)? = nil) async throws -> NotebookPrintedDocument {
+    let demand = demand ?? .init(priority: priority)
+    return try await admission.perform(demand: demand) { work in
+      let frozen: NotebookTypesetterInput
+      do {
+        let inputStart = ContinuousClock.now
+        defer { demand.record("inputs", since: inputStart, accumulating: true) }
+        if let input { frozen = input }
+        else if let inputFactory { frozen = try await inputFactory() }
+        else { frozen = try NotebookTypesetterInput(document: source.document) }
       }
-    } onCancel: { [self] in
-      work.cancel()
-      admission.lock()
-      let index = pending.firstIndex { $0.id == id }
-      let removed = index.map { pending.remove(at: $0) }
-      admission.unlock()
-      removed?.cancel()
+      try work.check()
+      let validationStart = ContinuousClock.now
+      try frozen.validate(document: source.document)
+      demand.record("inputValidation", since: validationStart, accumulating: true)
+      return try await self.onQueue {
+        try self.compile(source, input: frozen, work: work, demand: demand)
+      }
     }
   }
-  private func runNext() {
-    admission.lock()
-    guard !pending.isEmpty else { running = false; admission.unlock(); return }
-    // A bounded burst of visible work may pass exports, but cannot starve them.
-    let oldest = pending.indices.min { pending[$0].order < pending[$1].order }!
-    let preferred = pending.indices.min {
-      pending[$0].demand.current.rawValue == pending[$1].demand.current.rawValue
-        ? pending[$0].order < pending[$1].order
-        : pending[$0].demand.current.rawValue < pending[$1].demand.current.rawValue
-    }!
-    let index = preferredAdmissions >= 8 ? oldest : preferred
-    preferredAdmissions = index == oldest ? 0 : preferredAdmissions + 1
-    let item = pending.remove(at: index)
-    admission.unlock()
-    item.run()
-    queue.async { [self] in runNext() }
+  /// SVG conversion shares admission and the same physical engine with print.
+  public func convertSVG(_ data: Data, priority: Priority = .current) async throws -> Data {
+    try await admission.perform(demand: .init(priority: priority)) { work in
+      try await self.onQueue { try self.convertSVG(data, work: work) }
+    }
+  }
+  private func onQueue<T: Sendable>(_ operation: @escaping @Sendable () throws -> T) async throws -> T {
+    try await withCheckedThrowingContinuation { continuation in
+      queue.async { continuation.resume(with: Result { try autoreleasepool(invoking: operation) }) }
+    }
   }
 
   private func preparedRuntime() throws -> OpaquePointer {
@@ -234,7 +136,7 @@ public final class NotebookTypesetter: @unchecked Sendable {
     guard let runtime else { throw NotebookTypesetterError("typesetter_resources_unavailable") }
     return runtime
   }
-  private func convertSVG(_ imageSource: Data, work: Work) throws -> Data {
+  private func convertSVG(_ imageSource: Data, work: NotebookTypesetterWork) throws -> Data {
     try work.check()
     guard !imageSource.isEmpty, imageSource.count <= 8*1024*1024 else { throw NotebookTypesetterError("print_image_input_limit") }
     let runtime = try preparedRuntime()
@@ -252,17 +154,19 @@ public final class NotebookTypesetter: @unchecked Sendable {
     }
   }
 
-  private func compile(_ document: DocumentDocument, input: NotebookTypesetterInput, work: Work, demand: NotebookTypesetterDemand) throws -> NotebookPrintedDocument {
+  private func compile(_ source: DocumentPrintDependencies.Source, input: NotebookTypesetterInput, work: NotebookTypesetterWork, demand: NotebookTypesetterDemand) throws -> NotebookPrintedDocument {
+    var indexedSource = source
+    let document = source.document
     try work.check()
     let runtimeStart = ContinuousClock.now
     let runtime = try preparedRuntime()
-    demand.record("runtime", since: runtimeStart)
+    demand.record("runtime", since: runtimeStart, accumulating: true)
     let bridgeStart = ContinuousClock.now
     let names = input.files.map { strdup($0.path)! }; defer { names.forEach { free($0) } }
     let buffers = input.files.map { $0.data as NSData }
     let nativeFiles = input.files.indices.map { NBTypesetterFile(name: UnsafePointer(names[$0]),
       bytes: buffers[$0].bytes.assumingMemoryBound(to: UInt8.self), count: buffers[$0].length) }
-    demand.record("inputBridge", since: bridgeStart)
+    demand.record("inputBridge", since: bridgeStart, accumulating: true)
     return try work.withTeX { ticket in
       let timeout = try work.remainingMilliseconds()
       let nativeStart = ContinuousClock.now
@@ -270,9 +174,9 @@ public final class NotebookTypesetter: @unchecked Sendable {
         nb_typesetter_compile(runtime, input.entrypoint, pointers.baseAddress, pointers.count,
           UInt64(Date().timeIntervalSince1970), timeout, ticket)
       }
-      demand.record("native", since: nativeStart)
+      demand.record("native", since: nativeStart, accumulating: true)
       let outputStart = ContinuousClock.now
-      defer { demand.record("output", since: outputStart) }
+      defer { demand.record("output", since: outputStart, accumulating: true) }
       guard let output else { throw NotebookTypesetterError("typesetter_output_missing") }
       defer { nb_typesetter_output_destroy(output); withExtendedLifetime(buffers) {} }
       func bytes(_ kind: UInt32) -> Data {
@@ -295,7 +199,7 @@ public final class NotebookTypesetter: @unchecked Sendable {
       return .init(document: document, source: source, pdf: pdf, syncTeX: syncTeX,
         sourceMap: sourceMap,
         interactiveMap: map, pages: pages, projection: projection,
-        dependencies: try DocumentPrintDependencies(records: bytes(4), document: document, compilerRevision: revision), diagnostics: diagnostics,
+        dependencies: try DocumentPrintDependencies(records: bytes(4), source: &indexedSource, compilerRevision: revision), diagnostics: diagnostics,
         log: log, guestMemoryBytes: nb_typesetter_output_memory(output))
     }
   }

@@ -1,0 +1,86 @@
+{
+  "recordedAt": "2026-10-05T13:54:40.037146+00:00",
+  "version": "0.3.174",
+  "build": 244,
+  "sourceSHA256": "0a95cd07c3ddd28effa4c39dd278f055ec88e457f84defc5d74df981e901e040",
+  "buildEvidence": {
+    "path": ".build/print-admission-20261005/pair-244/build.json",
+    "sha256": "c32e4a912ce1c8a8b79e9488640b1bcfec3ccbda6bd2b5c5e377d8491372819e"
+  },
+  "Mac": {
+    "path": "/Users/amir/Applications/Notebook.app",
+    "update": "Verified stage, ordinary quit, atomic RENAME_SWAP, launch. Replaced executable stage removed after dynamic signature verification.",
+    "manifestSHA256": "299663476cb45b08cb0f921535e059ff0f658df5bf7380fde862cefaf23787de",
+    "cdhash": "96bb3d884ab472d2e7a1d5f3b69f0f27dfa35480",
+    "servingPeer": {
+      "cdhash": "96bb3d884ab472d2e7a1d5f3b69f0f27dfa35480",
+      "dynamicValidityChecked": true,
+      "executable": "/Users/amir/Applications/Notebook.app/Contents/MacOS/Notebook",
+      "identifier": "com.amirtlinov.notebook.mac",
+      "pid": 33883,
+      "team": "M94V58FCVP"
+    },
+    "signatureCheckedBeforeAndAfterIPadUpdate": true,
+    "visualReview": "Live document reopened on page 23/24, zoom 61%, periodic table F selected and volume mode on.",
+    "evidence": [
+      {
+        "path": ".build/print-admission-20261005/live/mac-stage.json",
+        "sha256": "4ac12cd6180b070a1d099ac304ca6ef33bed28a98fa3a56c03e01291e891d76d"
+      },
+      {
+        "path": ".build/print-admission-20261005/live/mac-exchange.json",
+        "sha256": "6fc68ae0354886f6acf9305939bc334b0dc4a7db8740757057371c77b2b4af77"
+      },
+      {
+        "path": ".build/print-admission-20261005/live/before-install.json",
+        "sha256": "4529738a9eed7940be5cbbdfcf464264e9d8697537b420bc331ac32435d2f385"
+      },
+      {
+        "path": ".build/print-admission-20261005/live/after-mac-install.json",
+        "sha256": "11b958fb8bfbaab4fa41d51eae116037637671cfeecb750bc2f13b712e73dde6"
+      },
+      {
+        "path": ".build/print-admission-20261005/live/after-ipad-install.json",
+        "sha256": "c96ea8d669c27309fcccccabfd15dd7e18c4324916843a152adb14ec37e25c13"
+      }
+    ]
+  },
+  "iPad": {
+    "model": "iPad Pro 11-inch 3rd generation",
+    "bundleIdentifier": "com.amirtlinov.notebook.preview",
+    "version": "0.3.174",
+    "build": "244",
+    "manifestSHA256": "b86100aad1a38c0670e142c04bfefc5113dd2b54830e31633ae527809c79030c",
+    "cdhash": "2c9b20bd125d1ed23f8f3bd453e1f5384b9fb9bc",
+    "installedAndLaunched": true,
+    "visualReview": "Full 1668×2388 Device Hub screenshot shows live handwritten notes, intact ink and page 1/5. Screenshot kept locally with private content.",
+    "evidence": [
+      {
+        "path": ".build/print-admission-20261005/live/ipad-install.json",
+        "sha256": "84becd683b5cbdba4a2f65216878e2b8e6c8f3d78c6be167fa3571fd8bee0c16"
+      },
+      {
+        "path": ".build/print-admission-20261005/live/ipad-after-install.json",
+        "sha256": "56f008677ffa9b1bcb5db900aed6319c2d7a02e58f66d0df29b613eeb5b76e99"
+      },
+      {
+        "path": ".build/print-admission-20261005/live/ipad-launch.json",
+        "sha256": "82f56fa55bf34954866ab7b9b07e8e2522a311c0c2c7abda3d72c19bbc0559af"
+      },
+      {
+        "path": ".build/print-admission-20261005/live/ipad-installed.png",
+        "sha256": "2f506a8a5aa28aa5212ad6c7df6a6f39327bb369cdfcf4e752b230b8d0130881"
+      }
+    ]
+  },
+  "liveReadback": {
+    "equalRawFields": {
+      "workspaceHeader": true,
+      "presence": true,
+      "selection": false
+    },
+    "selection": "Empty before and after on the same surface; new process changed sessionID and selection receipt ID. Device identity unchanged.",
+    "scope": "Read-only header/presence/selection from the admitted installed Mac helper; no historical archive, container, keys or content writes."
+  },
+  "verificationBoundary": "Physical document lifecycle gesture and native admission tests passed on the same source before Release installation. Installed-pair check confirms versions, serving signature and live display. Full system frame/CPU/GPU/memory acceptance remains open."
+}
