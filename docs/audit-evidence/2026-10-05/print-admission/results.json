@@ -143,7 +143,7 @@
   "dependencyBenchmark": {
     "host": "MacBook Pro Apple M5 Max",
     "optimization": "-O -whole-module-optimization",
-    "workload": "64/512/4096 valid source files; 25 receipts × 4000 lookup entries = 100000 checks per source",
+    "workload": "64/512/4096 valid source files; 25 matches of the same 4000-entry receipt against one warm Source = 100000 lookup entries; not one user action",
     "productionMaximumFiles": 4096,
     "beforeTrials": 3,
     "afterTrials": 1,

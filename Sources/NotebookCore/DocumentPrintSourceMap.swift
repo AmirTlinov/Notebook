@@ -32,13 +32,16 @@ public struct DocumentPrintSourceMap: Codable, Equatable, Sendable {
   }
   /// Streaming export binds its separately validated PDF without copying it.
   public init(document: DocumentDocument, source: String, pdfSHA256: String, compilerRevision: String) throws {
+    guard source.utf8.count <= 4*1024*1024, NotebookProgramPackage.validHash(pdfSHA256),
+      NotebookProgramPackage.validHash(compilerRevision),
+      document.files.first(where: { $0.path == document.entrypoint && $0.resource == nil })?.source == source
+    else { throw Self.invalid() }
     format = 2; documentID = document.id; documentRevision = document.contentStamp.revision
     documentSHA256 = try Self.documentDigest(document)
     sourceSHA256 = Self.digest(Data(source.utf8)); self.pdfSHA256 = pdfSHA256
     self.compilerRevision = compilerRevision; entrypoint = document.entrypoint
     files = Self.sourceFiles(document)
     inputSHA256 = try Self.inputDigest(document, compilerRevision: compilerRevision)
-    try validate(document: document, source: source, pdfSHA256: pdfSHA256)
   }
   public func validate(document: DocumentDocument, source: String, pdf: Data) throws {
     try validate(document: document, source: source, pdfSHA256: Self.digest(pdf))
@@ -85,7 +88,7 @@ public struct DocumentPrintSourceMap: Codable, Equatable, Sendable {
     let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
     return try encoder.encode(value)
   }
-  private static func digest(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
+  private static func digest(_ data: Data) -> String { NotebookHexEncoding.encode(SHA256.hash(data: data)) }
   private static func invalid() -> CollaborationError {
     .init("invalid_print_source_map", "Печатные страницы и адреса файлов должны принадлежать одному точному исходнику и компилятору.")
   }

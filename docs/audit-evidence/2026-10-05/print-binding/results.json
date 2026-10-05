@@ -1,0 +1,830 @@
+{
+  "format": 1,
+  "date": "2026-10-05",
+  "build": 246,
+  "status": "verified-and-installed",
+  "change": {
+    "dependencies": "Reuse one lower-bound interval in an immutable sorted namespace. Prove both neighbors for every query; otherwise binary search. No missing-path dictionary or eager directory graph.",
+    "sourceMap": "Validate constructor inputs, derive each field once, use shared hex encoding. Keep full validation for decoded maps.",
+    "measurement": "Record causal bind time separately on memory hits."
+  },
+  "scopeCorrection": {
+    "build244WarmBatchMS": 9.268541,
+    "workload": "25 matches of the same 4000-entry receipt against one already-warm Source = 100000 lookup entries; not one user action or 25 distinct receipts.",
+    "historicalGraphWarmBatchMS": 4.871667,
+    "historicalGraphIndexMS": 2.595041,
+    "finding": "The ranges version regressed warm matching versus the intermediate eager graph. The earlier comparison against the old linear scanner hid this tradeoff.",
+    "comparisonLimit": "Original warm graph source/binary was overwritten by the ranges probe; the historical graph measurement is not a new paired baseline.",
+    "unrelatedEarlierMeasurements": "0.045625 ms was 1024 geometry lookups; 1.605 ms was one disk cache lookup among 100000 unrelated metadata candidates."
+  },
+  "dependencies": {
+    "build": "Release swiftc -O -whole-module-optimization arm64-apple-macos27.0",
+    "method": "Three alternating before/after process pairs after Xcode finished; same request fixture, 64/512/4096 valid files. All six observed/namespace identities match. Earlier five-pair measurements under different system load are preserved separately.",
+    "units": {
+      "indexMS": "One Source construction",
+      "receiptMS": "Build one 4000-entry observed receipt",
+      "matchesMS": "25 warm matches of that same receipt, 100000 lookup entries total",
+      "firstMatchMS": "One match on a fresh Source; Source construction occurs before this timer",
+      "warmOneMatchMS": "One subsequent match on that Source",
+      "fresh25RequestsMS": "25 fresh Source constructions plus one match per Source",
+      "namespaceMS": "Full namespace identity"
+    },
+    "comparison": {
+      "before": {
+        "64": {
+          "indexMS": {
+            "median": 0.016125,
+            "samples": [
+              0.021083,
+              0.015916,
+              0.016125
+            ]
+          },
+          "receiptMS": {
+            "median": 7.570042,
+            "samples": [
+              8.168292,
+              7.570042,
+              7.542916
+            ]
+          },
+          "matchesMS": {
+            "median": 11.618459,
+            "samples": [
+              12.095875,
+              11.618459,
+              11.499792
+            ]
+          },
+          "firstMatchMS": {
+            "median": 0.641208,
+            "samples": [
+              0.641208,
+              0.619416,
+              0.7345
+            ]
+          },
+          "warmOneMatchMS": {
+            "median": 0.476791,
+            "samples": [
+              0.477625,
+              0.472292,
+              0.476791
+            ]
+          },
+          "fresh25RequestsMS": {
+            "median": 15.841875,
+            "samples": [
+              16.212583,
+              15.841875,
+              15.702917
+            ]
+          },
+          "namespaceMS": {
+            "median": 1.21825,
+            "samples": [
+              1.21825,
+              1.105666,
+              1.238584
+            ]
+          }
+        },
+        "512": {
+          "indexMS": {
+            "median": 0.020875,
+            "samples": [
+              0.0235,
+              0.020875,
+              0.019542
+            ]
+          },
+          "receiptMS": {
+            "median": 8.6245,
+            "samples": [
+              8.6385,
+              8.140625,
+              8.6245
+            ]
+          },
+          "matchesMS": {
+            "median": 12.909209,
+            "samples": [
+              12.909209,
+              13.137292,
+              12.542958
+            ]
+          },
+          "firstMatchMS": {
+            "median": 1.353875,
+            "samples": [
+              1.328334,
+              1.353875,
+              1.386417
+            ]
+          },
+          "warmOneMatchMS": {
+            "median": 0.503,
+            "samples": [
+              0.49625,
+              0.503,
+              0.592208
+            ]
+          },
+          "fresh25RequestsMS": {
+            "median": 33.346833,
+            "samples": [
+              34.652583,
+              32.993375,
+              33.346833
+            ]
+          },
+          "namespaceMS": {
+            "median": 0.61175,
+            "samples": [
+              0.726792,
+              0.585209,
+              0.61175
+            ]
+          }
+        },
+        "4096": {
+          "indexMS": {
+            "median": 0.126042,
+            "samples": [
+              0.164167,
+              0.126042,
+              0.118
+            ]
+          },
+          "receiptMS": {
+            "median": 12.714791,
+            "samples": [
+              13.65925,
+              12.714791,
+              12.622208
+            ]
+          },
+          "matchesMS": {
+            "median": 9.735709,
+            "samples": [
+              10.287667,
+              9.659125,
+              9.735709
+            ]
+          },
+          "firstMatchMS": {
+            "median": 5.608125,
+            "samples": [
+              5.773042,
+              5.153458,
+              5.608125
+            ]
+          },
+          "warmOneMatchMS": {
+            "median": 0.398333,
+            "samples": [
+              0.396667,
+              0.402084,
+              0.398333
+            ]
+          },
+          "fresh25RequestsMS": {
+            "median": 139.966167,
+            "samples": [
+              144.559375,
+              139.966167,
+              137.577417
+            ]
+          },
+          "namespaceMS": {
+            "median": 6.369167,
+            "samples": [
+              6.494458,
+              6.216583,
+              6.369167
+            ]
+          }
+        }
+      },
+      "after": {
+        "64": {
+          "indexMS": {
+            "median": 0.019167,
+            "samples": [
+              0.019,
+              0.060583,
+              0.019167
+            ]
+          },
+          "receiptMS": {
+            "median": 7.461458,
+            "samples": [
+              7.1225,
+              8.442291,
+              7.461458
+            ]
+          },
+          "matchesMS": {
+            "median": 9.3135,
+            "samples": [
+              9.025292,
+              9.768583,
+              9.3135
+            ]
+          },
+          "firstMatchMS": {
+            "median": 0.554375,
+            "samples": [
+              0.521916,
+              0.554375,
+              0.557375
+            ]
+          },
+          "warmOneMatchMS": {
+            "median": 0.365458,
+            "samples": [
+              0.358,
+              0.365458,
+              0.375333
+            ]
+          },
+          "fresh25RequestsMS": {
+            "median": 12.9765,
+            "samples": [
+              12.760292,
+              14.272333,
+              12.9765
+            ]
+          },
+          "namespaceMS": {
+            "median": 1.105083,
+            "samples": [
+              1.105083,
+              1.395458,
+              1.062625
+            ]
+          }
+        },
+        "512": {
+          "indexMS": {
+            "median": 0.019125,
+            "samples": [
+              0.020959,
+              0.019125,
+              0.015917
+            ]
+          },
+          "receiptMS": {
+            "median": 7.767833,
+            "samples": [
+              7.767833,
+              8.5345,
+              7.487708
+            ]
+          },
+          "matchesMS": {
+            "median": 8.24525,
+            "samples": [
+              8.24525,
+              8.544292,
+              8.022917
+            ]
+          },
+          "firstMatchMS": {
+            "median": 1.26425,
+            "samples": [
+              1.26425,
+              1.375208,
+              1.119
+            ]
+          },
+          "warmOneMatchMS": {
+            "median": 0.349792,
+            "samples": [
+              0.349792,
+              0.357583,
+              0.338666
+            ]
+          },
+          "fresh25RequestsMS": {
+            "median": 28.594708,
+            "samples": [
+              28.13875,
+              30.587334,
+              28.594708
+            ]
+          },
+          "namespaceMS": {
+            "median": 0.784083,
+            "samples": [
+              0.652916,
+              0.819291,
+              0.784083
+            ]
+          }
+        },
+        "4096": {
+          "indexMS": {
+            "median": 0.131166,
+            "samples": [
+              0.139542,
+              0.122334,
+              0.131166
+            ]
+          },
+          "receiptMS": {
+            "median": 12.705625,
+            "samples": [
+              12.704458,
+              13.630292,
+              12.705625
+            ]
+          },
+          "matchesMS": {
+            "median": 5.624542,
+            "samples": [
+              5.624542,
+              6.253667,
+              5.591292
+            ]
+          },
+          "firstMatchMS": {
+            "median": 5.228041,
+            "samples": [
+              5.695375,
+              5.228041,
+              5.10775
+            ]
+          },
+          "warmOneMatchMS": {
+            "median": 0.236958,
+            "samples": [
+              0.2735,
+              0.225084,
+              0.236958
+            ]
+          },
+          "fresh25RequestsMS": {
+            "median": 134.6515,
+            "samples": [
+              154.406625,
+              134.6515,
+              132.718416
+            ]
+          },
+          "namespaceMS": {
+            "median": 6.123041,
+            "samples": [
+              7.234708,
+              6.123041,
+              6.034708
+            ]
+          }
+        }
+      }
+    },
+    "correctnessAndMemory": {
+      "deep": {
+        "before": {
+          "afterObservedAndNamespacePeakBytes": 44728320,
+          "beforeIndexPeakBytes": 16236544,
+          "files": 4096,
+          "identity": "79a2858ce10f73cf55b6c46503b8be8adf2fd7afd78a58d8b39001bafe79743f",
+          "indexMS": 3.119333,
+          "indexPeakGrowthBytes": 0,
+          "maximumPathBytes": 998,
+          "namespaceIdentity": "69cb311ea34c2855210798aabc659deb30d3a179550a0b1819e7fbfc45b5940c",
+          "pathDepth": 32,
+          "withIndexPeakBytes": 16236544
+        },
+        "after": {
+          "afterObservedAndNamespacePeakBytes": 41172992,
+          "beforeIndexPeakBytes": 16252928,
+          "files": 4096,
+          "identity": "79a2858ce10f73cf55b6c46503b8be8adf2fd7afd78a58d8b39001bafe79743f",
+          "indexMS": 2.261667,
+          "indexPeakGrowthBytes": 0,
+          "maximumPathBytes": 998,
+          "namespaceIdentity": "69cb311ea34c2855210798aabc659deb30d3a179550a0b1819e7fbfc45b5940c",
+          "pathDepth": 32,
+          "withIndexPeakBytes": 16252928
+        }
+      },
+      "interior": {
+        "before": {
+          "directChecks": 100002,
+          "files": 4096,
+          "identity": "ec5cacc9553dbfab909ab2c15052267a49b09298272b75b43d7df20078964436",
+          "lookups": 3001,
+          "unsortedDirectoryChecks": 1000
+        },
+        "after": {
+          "directChecks": 100002,
+          "files": 4096,
+          "identity": "ec5cacc9553dbfab909ab2c15052267a49b09298272b75b43d7df20078964436",
+          "lookups": 3001,
+          "unsortedDirectoryChecks": 1000
+        }
+      },
+      "negative-short": {
+        "before": {
+          "firstIdentity": "ae6ddf2cf72a0a6d97dc1b088116a536c49c52331245ffe83d8a963aa9e4386e",
+          "heapAfter10k": 1492880,
+          "heapAfter100k": 1492112,
+          "heapBaseline": 1477232,
+          "lastIdentity": "9331feeb7d810d6f14e9d9cd2f352b680639aecedcd1e86db650a2f5842599fd",
+          "memo": {
+            "directoryDigests": 0,
+            "pathDigests": 1
+          },
+          "mode": "short paths",
+          "negativeEntries": 100000,
+          "steadyHeapDelta": -768
+        },
+        "after": {
+          "firstIdentity": "ae6ddf2cf72a0a6d97dc1b088116a536c49c52331245ffe83d8a963aa9e4386e",
+          "heapAfter10k": 1492880,
+          "heapAfter100k": 1492112,
+          "heapBaseline": 1477232,
+          "lastIdentity": "9331feeb7d810d6f14e9d9cd2f352b680639aecedcd1e86db650a2f5842599fd",
+          "memo": {
+            "directoryDigests": 0,
+            "pathDigests": 1
+          },
+          "mode": "short paths",
+          "negativeEntries": 100000,
+          "steadyHeapDelta": -768
+        }
+      },
+      "negative-long": {
+        "before": {
+          "firstIdentity": "04723e1154bb3e41a8b7fc634e1f73c0eaa1d5fd11b53eb24c271faa95caab97",
+          "heapAfter10k": 2595104,
+          "heapAfter100k": 2596384,
+          "heapBaseline": 1477232,
+          "lastIdentity": "65b14c01cacb69659972b6b5738d63adb35021433392e1d17510852853bfbef9",
+          "memo": {
+            "directoryDigests": 0,
+            "pathDigests": 1
+          },
+          "mode": "1024-byte paths",
+          "negativeEntries": 100000,
+          "steadyHeapDelta": 1280
+        },
+        "after": {
+          "firstIdentity": "04723e1154bb3e41a8b7fc634e1f73c0eaa1d5fd11b53eb24c271faa95caab97",
+          "heapAfter10k": 2595104,
+          "heapAfter100k": 2596384,
+          "heapBaseline": 1477232,
+          "lastIdentity": "65b14c01cacb69659972b6b5738d63adb35021433392e1d17510852853bfbef9",
+          "memo": {
+            "directoryDigests": 0,
+            "pathDigests": 1
+          },
+          "mode": "1024-byte paths",
+          "negativeEntries": 100000,
+          "steadyHeapDelta": 1280
+        }
+      }
+    },
+    "memoryScope": "malloc retained heap after 10000 versus100000 negative probes, separate short/1024-byte path processes. Deep namespace peak bytes are process high-water, not retained heap.",
+    "artifacts": [
+      {
+        "path": ".build/print-comparison-20261005/cursor-review/Before.swift",
+        "sha256": "e59c60371a1e87984c86899e9586bebd85882f3cb4e118da62ed85c988490ec5"
+      },
+      {
+        "path": ".build/print-comparison-20261005/cursor-review/After.swift",
+        "sha256": "e7fc4f7d031d169ff3c70e100db96b1e302187ea06bd289f0ab1d5ede15c5d52"
+      },
+      {
+        "path": ".build/print-comparison-20261005/cursor-review/final-comparison.json",
+        "sha256": "869c308c7ecbc5f503c18367ecdd2bcaf9425c29ed636835fe4f0102e240a495"
+      },
+      {
+        "path": ".build/print-comparison-20261005/cursor-review/comparison.json",
+        "sha256": "969363cf9cb86f54271d49a97c7f4cd05388dbb5753453f07774ca1314a9fe08"
+      },
+      {
+        "path": ".build/print-comparison-20261005/cursor-review/InteriorProbe.swift",
+        "sha256": "2d3895a9a86efdf0d1c4a197dfa06bbeab0dde91081e1799a5bd4134b81af346"
+      },
+      {
+        "path": ".build/print-comparison-20261005/cursor-review/NegativeProbe.swift",
+        "sha256": "079136b93fd4d3d011b3962d16791224b5394c10b428d6c5164599b03f833649"
+      },
+      {
+        "path": ".build/print-comparison-20261005/cursor-review/correctness-memory.json",
+        "sha256": "cfc0899356f1b1e872c757c65beaafbd1313b7cdfa13205d3e7af580c832438b"
+      }
+    ],
+    "rejectedPrototype": {
+      "reason": "Negative memo reduced warm time but added allocations and slowed first/fresh requests, especially small namespaces. Removed completely from product sources.",
+      "evidence": {
+        "path": ".build/print-comparison-20261005/negative-memo-review/comparison.json",
+        "sha256": "6b8dc8f5d6e839602d39871bf07147bae170023d7193fcc057282018f701f3c6"
+      }
+    },
+    "sourceEquivalence": "Before/After Swift exactly match HEAD15c24b63/current product Source, with only MeasuredDependencies rename and NotebookCore import."
+  },
+  "sourceMap": {
+    "build": "swiftc -O -whole-module-optimization arm64-apple-macos27.0",
+    "scope": "SourceMap construction only, 256-byte source body plus index/newline per file, separately supplied PDF hash; 3 alternating processes x 15 timed constructions after warmup per file count; document creation, encoding and output equality outside timing",
+    "percentile": "nearest-rank",
+    "samples": [
+      {
+        "files": 1,
+        "before": {
+          "medianMS": 0.202708,
+          "p95MS": 0.346042,
+          "minMS": 0.154625,
+          "maxMS": 0.371625,
+          "count": 45
+        },
+        "after": {
+          "medianMS": 0.014041,
+          "p95MS": 0.030709,
+          "minMS": 0.010083,
+          "maxMS": 0.048667,
+          "count": 45
+        },
+        "goldenSHA256": "f71d01e03ba950f8324af61f3866de1115d8844e4e26aeea3734c40417a49b8e",
+        "speedup": 14.43686347126273
+      },
+      {
+        "files": 64,
+        "before": {
+          "medianMS": 3.49525,
+          "p95MS": 4.044917,
+          "minMS": 2.661833,
+          "maxMS": 4.558291,
+          "count": 45
+        },
+        "after": {
+          "medianMS": 0.232125,
+          "p95MS": 0.479708,
+          "minMS": 0.210125,
+          "maxMS": 0.72825,
+          "count": 45
+        },
+        "goldenSHA256": "fabc73a2eda0f330e5fbec81cfb29c66b6d1c44bd0724eeb5413e6159294b5b4",
+        "speedup": 15.057619816908993
+      },
+      {
+        "files": 512,
+        "before": {
+          "medianMS": 26.271416,
+          "p95MS": 31.384583,
+          "minMS": 22.231709,
+          "maxMS": 32.081583,
+          "count": 45
+        },
+        "after": {
+          "medianMS": 1.849083,
+          "p95MS": 2.595416,
+          "minMS": 1.637375,
+          "maxMS": 2.663792,
+          "count": 45
+        },
+        "goldenSHA256": "bc777ac58a59f0154c7e444c17feee7ddca155057aa363a5bd43791fac78ad35",
+        "speedup": 14.207807870171322
+      },
+      {
+        "files": 4096,
+        "before": {
+          "medianMS": 194.106917,
+          "p95MS": 221.156209,
+          "minMS": 182.941584,
+          "maxMS": 230.405791,
+          "count": 45
+        },
+        "after": {
+          "medianMS": 14.827333,
+          "p95MS": 21.430917,
+          "minMS": 14.058083,
+          "maxMS": 22.369125,
+          "count": 45
+        },
+        "goldenSHA256": "d707db7ff1594c97f0744d76ce3a31cf2ace05a7eae26e2d7b61b6f9be48f057",
+        "speedup": 13.091155165935776
+      }
+    ],
+    "goldenSHA256": "120c638ff6ab523c3f6d4cb68ed6d55daa496066835b10d9c81c9fe374e46736",
+    "probeSHA256": "4cff000268669060a18a0a93d758b9f34a48eded9176056bfcad5891bd5fb5d5",
+    "beforeSourceSHA256": "2cd47b66380c368b3ea743cc92e08184641fa66e7f2b92039fd9a31a4628ac84",
+    "afterSourceSHA256": "12a6b5e3bafea7e4701fc57a9443873c9dbeb4716ab2c8a47956ddd05f95ff9c"
+  },
+  "sourceMapArtifacts": [
+    {
+      "path": ".build/print-performance-20261005/source-map-review/Before.swift",
+      "sha256": "2cd47b66380c368b3ea743cc92e08184641fa66e7f2b92039fd9a31a4628ac84"
+    },
+    {
+      "path": ".build/print-performance-20261005/source-map-review/After.swift",
+      "sha256": "12a6b5e3bafea7e4701fc57a9443873c9dbeb4716ab2c8a47956ddd05f95ff9c"
+    },
+    {
+      "path": ".build/print-performance-20261005/source-map-review/Probe.swift",
+      "sha256": "4cff000268669060a18a0a93d758b9f34a48eded9176056bfcad5891bd5fb5d5"
+    },
+    {
+      "path": ".build/print-performance-20261005/source-map-review/comparison.json",
+      "sha256": "e107dd4b25e4c9848659906958a6426350d80f163245df17ef1e646fa6d7cee3"
+    }
+  ],
+  "core": {
+    "command": "swift test --filter DocumentPrint(Dependencies|SourceMap)Tests",
+    "passed": 10,
+    "failed": 0,
+    "testExecutionSeconds": 0.237,
+    "log": {
+      "path": ".build/print-comparison-20261005/core-tests.log",
+      "sha256": "e2686be758e3e6ec581966108685b824101a9e311afd98ddfec12f4b40095a8f"
+    }
+  },
+  "review": "Root reviewed SourceMap and interval changes; independent interval review found no blocker. Missed interval adds at most two string comparisons before binary fallback; comparison cost still depends on common-prefix bytes.",
+  "limitations": [
+    "Algorithm timings are not UI latency or end-to-end percentiles.",
+    "Current cold native TeX cost remains a separate GUI-200/GUI-456 investigation.",
+    "Full physical/system acceptance GUI-190 remains open."
+  ],
+  "recordedAt": "2026-10-05T14:31:46.741587+00:00",
+  "version": "0.3.176",
+  "sourceSHA256": "5df737e9d528281896343e370de04f92c1a3db46493cbc475fdb1f61a755af13",
+  "verificationReceipt": {
+    "path": ".build/print-comparison-20261005/verify-1/verification.json",
+    "sha256": "501aefedfa912ef8d237e1baa22771c4f2215f4ae3cc07a63da491f681592da8"
+  },
+  "native": {
+    "ipad": {
+      "passed": 8,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "tests": {
+        "NotebookTests": {
+          "seconds": 7.907052993774414,
+          "tests": 7
+        },
+        "NotebookUITests": {
+          "seconds": 24.827685952186584,
+          "tests": 1
+        }
+      },
+      "device": {
+        "architecture": "arm64e",
+        "deviceId": "00008103-001E059934D9001E",
+        "deviceName": "iPad (Елизавета)",
+        "modelName": "iPad Pro (11-inch) (3rd generation)",
+        "osBuildNumber": "24A435",
+        "osVersion": "27.0",
+        "platform": "iOS"
+      },
+      "summary": {
+        "path": ".build/print-comparison-20261005/verify-1/ipad-summary.json",
+        "sha256": "336cbc61278543773297a1dcbcb44e9c5c13be9f8e3c78e66e0b0c095ff373e3"
+      },
+      "selectors": {
+        "path": ".build/print-comparison-20261005/verify-1/ipad-tests.json",
+        "sha256": "13fb7b89223ef7cd0f3b93c11976a7a3bef15553d6c887a91a6ad5ecf5659191"
+      }
+    },
+    "mac": {
+      "passed": 7,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "tests": {
+        "NotebookMacTests": {
+          "seconds": 2.896250009536743,
+          "tests": 7
+        }
+      },
+      "device": {
+        "architecture": "arm64",
+        "deviceId": "00006050-001650DA01F9401C",
+        "deviceName": "My Mac",
+        "modelName": "MacBook Pro",
+        "osBuildNumber": "26A434",
+        "osVersion": "27.0.1",
+        "platform": "macOS"
+      },
+      "summary": {
+        "path": ".build/print-comparison-20261005/verify-1/mac-summary.json",
+        "sha256": "e98861604dad8ba62d085a349656dba16ede5135c3bab22fe5fa574bc4cb7a84"
+      },
+      "selectors": {
+        "path": ".build/print-comparison-20261005/verify-1/mac-tests.json",
+        "sha256": "58f5f8b41c7c8c4a8baf7b926dec9ee2f057e1cb69532e67c40d295fd8724b3e"
+      }
+    }
+  },
+  "lifecycle": {
+    "scope": "Physical iPad, first slider input, immediate page change, return, close/reopen, then new app process. Gesture passed; both full-resolution screenshots reviewed.",
+    "visibleResult": "x=7 and x²=49, intact page content, page1/4",
+    "images": [
+      {
+        "path": ".build/print-comparison-20261005/attachments-ipad/27429B3E-5E92-4513-836E-B87C818CA11B.png",
+        "sha256": "7e65f7073d69ee781cc44f4172420a53fb765a23ae55e7829add6d6e8496c58c"
+      },
+      {
+        "path": ".build/print-comparison-20261005/attachments-ipad/FA2BE1AC-3B1F-4901-9CEA-C376F01EB3C0.png",
+        "sha256": "7e65f7073d69ee781cc44f4172420a53fb765a23ae55e7829add6d6e8496c58c"
+      }
+    ]
+  },
+  "soundOpening": {
+    "observations": [
+      {
+        "attempt": 0,
+        "nativeMS": {
+          "installed": 1283.588125021197,
+          "navigationFinished": 1184.9565000156872,
+          "paper": 1101.5369166852906,
+          "programAttached": 1101.5369166852906,
+          "programReady": 1283.588125021197
+        },
+        "observationIntervalMS": 5,
+        "scope": "native window; second open has cached paper, not a cold app process",
+        "evidence": {
+          "path": ".build/print-comparison-20261005/attachments-ipad/FABA9971-D248-4B9C-AFEC-7D4C37DD25D5.json",
+          "sha256": "3220ed7ecf8ec76fac44b82a298bbe32f9d348432f150af472c8c2b428a4966b"
+        }
+      },
+      {
+        "attempt": 1,
+        "nativeMS": {
+          "installed": 167.68395830877125,
+          "navigationFinished": 142.57199998246506,
+          "paper": 118.50833334028721,
+          "programAttached": 60.590791632421315,
+          "programReady": 167.68395830877125
+        },
+        "observationIntervalMS": 5,
+        "scope": "native window; second open has cached paper, not a cold app process",
+        "evidence": {
+          "path": ".build/print-comparison-20261005/attachments-ipad/1F520FEF-BAA8-4EE3-BF8F-C51252451221.json",
+          "sha256": "e7d23de96f422f8978dd46dcec8593f272c896999aacad2c74f610c52ce0215e"
+        }
+      }
+    ],
+    "sourcePhases": [
+      {
+        "phasesMS": {
+          "layout": 0.089,
+          "artifact": 987.766042,
+          "pdfNavigation": 0.235292,
+          "artifact.namespace": 0.057375,
+          "artifact.wait": 985.332208,
+          "artifact.save": 1.672625,
+          "artifact.inputValidation": 0.002833,
+          "admission": 0.009375,
+          "canonicalPrint": 988.201167,
+          "artifact.runtime": 0.000208,
+          "artifact.inputs": 0.045625,
+          "locations": 0.000209,
+          "artifact.output": 3.600834,
+          "artifact.bind": 0.002208,
+          "artifact.native": 981.616291,
+          "artifact.queue": 0.001333,
+          "artifact.inputBridge": 0.004916,
+          "artifact.lookup": 0.658625
+        },
+        "evidence": {
+          "path": ".build/print-comparison-20261005/attachments-ipad/0599BEB8-0C47-45D0-97AB-18EF5703B298.json",
+          "sha256": "d6faa55f9d6f1bf4de0339a0c65bf064787678e3b3bf9d598281573b43497e67"
+        }
+      },
+      {
+        "phasesMS": {
+          "pdfNavigation": 0.126375,
+          "artifact": 3.785458,
+          "canonicalPrint": 4.115125,
+          "artifact.diskLookup": 3.1625,
+          "layout": 0.093458,
+          "locations": 0.00025,
+          "admission": 0.006792,
+          "artifact.lookup": 3.15925
+        },
+        "evidence": {
+          "path": ".build/print-comparison-20261005/attachments-ipad/5DF94296-8438-4262-B9A1-751029C57AC2.json",
+          "sha256": "5c3c019f0deb7ba076e8576a210ea8ee7a758eecf424ec288c6734cc2d54f9da"
+        }
+      }
+    ],
+    "scope": "One native-window observation per state, second open cached paper. Not a cold app process or p95/p99.",
+    "conclusion": "Native TeX remains981.616291ms; compiler kernel is unchanged. Algorithm gains do not establish faster end-to-end first opening."
+  },
+  "delivery": "delivery.json",
+  "benchmarkFixtures": [
+    {
+      "path": "docs/audit-evidence/2026-10-05/print-binding/DependencyProbe.swift",
+      "sha256": "6810108253c04e0918eb9c0b6670a3c39c933d896d89deb5df2ba5dfbf7edc65"
+    },
+    {
+      "path": "docs/audit-evidence/2026-10-05/print-binding/SourceMapProbe.swift",
+      "sha256": "4cff000268669060a18a0a93d758b9f34a48eded9176056bfcad5891bd5fb5d5"
+    }
+  ],
+  "reproduce": "Before sources: git15c24b63; after sources: this change. Prepend import NotebookCore to the owning Core file and rename DocumentPrintDependencies to MeasuredDependencies or both DocumentPrintSourceMap to MeasuredSourceMap and DocumentPrintSourceFile to MeasuredSourceFile. Compile with NotebookHexEncoding.swift and the archived probe using swiftc -O -whole-module-optimization -parse-as-library -target arm64-apple-macos27.0; link Release NotebookCore.o, sqlite3 and z; include Release module, Sources/CSQLite and Sources/CZlib. Run before/after alternately; compare golden identities before timings. Product sources remain in Git; exact fixtures are preserved here."
+}

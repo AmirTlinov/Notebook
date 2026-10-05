@@ -14,6 +14,7 @@ public struct DocumentPrintDependencies: Codable, Equatable, Sendable {
     private var pathDigests: [String: String] = [:]
     private var directoryDigests: [String: String] = [:]
     private var emptyDirectoryDigest: String?
+    private var lastPrefixIndex: Int?
     private var namespace: String?
     private var paths: [String]?
 
@@ -36,7 +37,7 @@ public struct DocumentPrintDependencies: Codable, Equatable, Sendable {
       if let digest = pathDigests[path] { return digest }
       guard let file = file(at: path) else {
         let prefix = path + "/", paths = orderedPaths()
-        let start = Self.lowerBound(prefix, in: paths)
+        let start = lowerBound(prefix, in: paths)
         guard start < paths.count, paths[start].hasPrefix(prefix) else { return "missing" }
         pathDigests[path] = "directory"
         return "directory"
@@ -54,7 +55,7 @@ public struct DocumentPrintDependencies: Codable, Equatable, Sendable {
       if kind == .path { return try digest(at: path) }
       if let digest = directoryDigests[path] { return digest }
       let prefix = path.isEmpty ? "" : path + "/", paths = orderedPaths()
-      var index = Self.lowerBound(prefix, in: paths)
+      var index = lowerBound(prefix, in: paths)
       guard index < paths.count, paths[index].hasPrefix(prefix) else {
         if let digest = emptyDirectoryDigest { return digest }
         let digest = try DocumentPrintDependencies.hash([String: String]())
@@ -80,12 +81,18 @@ public struct DocumentPrintDependencies: Codable, Equatable, Sendable {
       return digest
     }
 
-    private static func lowerBound(_ prefix: String, in paths: [String]) -> Int {
+    private mutating func lowerBound(_ prefix: String, in paths: [String]) -> Int {
+      // Repeated probes often share the same gap in this immutable namespace.
+      // Both neighbors prove the lower bound even when requests arrive unsorted.
+      if let index = lastPrefixIndex,
+        (index == 0 || paths[index - 1] < prefix),
+        (index == paths.count || prefix <= paths[index]) { return index }
       var lower = 0, upper = paths.count
       while lower < upper {
         let middle = lower + (upper - lower) / 2
         if paths[middle] < prefix { lower = middle + 1 } else { upper = middle }
       }
+      lastPrefixIndex = lower
       return lower
     }
 
