@@ -4,7 +4,7 @@
   "issue": "GUI-479",
   "build": 248,
   "version": "0.3.178",
-  "status": "verified-installation-pending",
+  "status": "verified-and-installed",
   "sourceSHA256": "b2e60fb711192b1832045569f1882f7a242c6018af80b444dfeffe10baa2a12a",
   "baseCommit": "838977ed",
   "changes": [
@@ -142,7 +142,7 @@
     "failed": 0,
     "skipped": 0,
     "runtimeWarnings": 0,
-    "scope": "After setting the existing Swift6.4 executable, completed the Mac clipboard regression and repeated the affected iPad palette journey required by the explicit UI verification route. No product or test source changed.",
+    "scope": "After setting the existing Swift 6.4 executable, completed the Mac clipboard regression and repeated the affected iPad palette journey required by the explicit UI verification route. No product or test source changed.",
     "macSummary": {
       "path": ".build/object-interaction-ux-20261005/run-10/mac-summary.json",
       "sha256": "9d502005f274773e7a295ba1c0a900622157f4d9cfdfb1652f5be8beba58b1ed"
@@ -180,5 +180,7 @@
         "sha256": "1d2c6bc9a1dbd318da3199bd80b4c7530881a92ab5a6f66a2b180ecc6243e5ee"
       }
     ]
-  }
+  },
+  "delivery": "delivery.json",
+  "sourceCommit": "94bcccf12f961b6bf012ec45e88d76e0ac05a08e"
 }

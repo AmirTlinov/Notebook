@@ -1,0 +1,85 @@
+{
+  "format": 1,
+  "recordedAt": "2026-10-05T17:35:28.513073+00:00",
+  "version": "0.3.178",
+  "build": 248,
+  "status": "installed-and-observed",
+  "sourceCommit": "94bcccf12f961b6bf012ec45e88d76e0ac05a08e",
+  "sourceSHA256": "b2e60fb711192b1832045569f1882f7a242c6018af80b444dfeffe10baa2a12a",
+  "buildReceipt": {
+    "path": ".build/object-interaction-ux-20261005/pair-248/build.json",
+    "sha256": "d80b2378456bae3fab8b414757402490ebc276990587fc01e51c5458d083d7ca"
+  },
+  "verificationReceipt": {
+    "path": ".build/object-interaction-ux-20261005/run-10/verification.json",
+    "sha256": "bfcf01b1df7b0c8943b1409c324f58ec46b6aa568e38585f8f4468f4db295a14"
+  },
+  "iPad": {
+    "identifier": "com.amirtlinov.notebook.preview",
+    "installedVersion": "0.3.178",
+    "installedBuild": "248",
+    "oneNotebookApplication": true,
+    "install": {
+      "path": ".build/object-interaction-ux-20261005/live/ipad-install.json",
+      "sha256": "3c57388b49f0f3b204a0dbe20486c91039fbf979ab9407fb6137167650efeeeb"
+    },
+    "apps": {
+      "path": ".build/object-interaction-ux-20261005/live/ipad-after-apps.json",
+      "sha256": "2162b4e0aec318f0c9452d00c0fe1d9995ef4eac49ea001353127b94bcfaec02"
+    },
+    "launch": {
+      "path": ".build/object-interaction-ux-20261005/live/ipad-launch.json",
+      "sha256": "2beeae3f3dfd4f52c2d0c94ffb92c83f17558f1419cf9e7bf256350d1909117f"
+    },
+    "visual": {
+      "reviewed": true,
+      "source": "Device Hub Screenshot button on the physical iPad after ordinary launch of the installed app.",
+      "observed": "Saved handwritten page2/5, selected ink fragment with aligned geometry grips, full native object menu with clipboard/duplicate/multiple-selection/transform/layer/destructive actions.",
+      "image": {
+        "path": ".build/object-interaction-ux-20261005/live/ipad-installed-248.png",
+        "sha256": "d2abf803b02f81c82614b96907dedef7c9c20c92b64e5958ef403de04dc478ce"
+      }
+    }
+  },
+  "mac": {
+    "identifier": "com.amirtlinov.notebook.mac",
+    "installedVersion": "0.3.178",
+    "installedBuild": "248",
+    "atomicBundleExchange": {
+      "path": ".build/object-interaction-ux-20261005/live/mac-exchange.json",
+      "sha256": "2a0cee656e3e2911c8906c752bd984a8e59bd084659cc4b3dae3bf52a984f0dd"
+    },
+    "stagedAndInstalledManifestMatchedBuild": true,
+    "ordinaryQuit": "The original owner exited normally; a launcher reopened247 before exchange. After exchange that process was ordinarily quit and the new248 owner launched.",
+    "servingPeerBeforeIPad": {
+      "cdhash": "d8475bc2799a965207002e49cd2a239d96ff32d0",
+      "dynamicValidityChecked": true,
+      "executable": "/Users/amir/Applications/Notebook.app/Contents/MacOS/Notebook",
+      "identifier": "com.amirtlinov.notebook.mac",
+      "pid": 72655,
+      "team": "M94V58FCVP"
+    },
+    "servingPeerAfterIPad": {
+      "cdhash": "d8475bc2799a965207002e49cd2a239d96ff32d0",
+      "dynamicValidityChecked": true,
+      "executable": "/Users/amir/Applications/Notebook.app/Contents/MacOS/Notebook",
+      "identifier": "com.amirtlinov.notebook.mac",
+      "pid": 72655,
+      "team": "M94V58FCVP"
+    },
+    "oldExchangeBundleRemoved": true
+  },
+  "preservation": {
+    "sameWorkspace": true,
+    "before": {
+      "path": ".build/object-interaction-ux-20261005/live/before-observe.json",
+      "sha256": "1964798ad4b3059589a740858e1744da0fdb5ead0cfb3e893965a4c109cc3d76"
+    },
+    "after": {
+      "path": ".build/object-interaction-ux-20261005/live/after-observe.json",
+      "sha256": "5c4e7ffc679033dd2665af4b9566bd70cdb97c262a732a6ba27dfb5d81ebe188"
+    },
+    "scope": "Ordinary in-place app update. Containers and keys were not removed or recreated. The admitted owner again receives iPad page/selection presence. Before observation followed Mac; after followed iPad, so camera equality is not claimed."
+  },
+  "acceptance": "Targeted native/system gesture checks and installed-pair observation. Full system frame/CPU/GPU/memory acceptance remains open; GUI480 Undo performance is tracked separately."
+}
