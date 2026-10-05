@@ -72,6 +72,10 @@ match verification and remain unchanged.
 The source snapshot reuses the selected checkout’s prepared Codex/Node runtime.
 The same preparer still checks its pinned version marker and official signatures;
 Mac build phases receive that exact stage, not a fresh network-only copy.
+`NOTEBOOK_TYPESETTER_RUNTIME` selects the print compiler stage for verification
+and pair builds. Both platforms use that same resolved path; without an override
+the checkout's `.build/notebook-typesetter-runtime` remains the default. The
+preparer verifies source identity and resources before reusing a stage.
 
 Both apps require genuine Apple Development signatures from team `M94V58FCVP`,
 matching pair versions and exact bundle identities:

@@ -703,7 +703,8 @@ def build_verified_pair(source, verification, evidence, runner=None):
         device = validate_device(successful_json(device_json, "devicectl.device.info.details"))
         command("dependencies", [shutil.which("npm"), "ci", "--ignore-scripts"], cwd=snapshot / "MCP", timeout=600)
         command("generate-project", [shutil.which("xcodegen"), "generate", "--spec", "project.yml"], cwd=snapshot / "Applications")
-        runtime = prepare_typesetter_runtime(snapshot, command, "iphoneos", stage=source / ".build/notebook-typesetter-runtime")
+        runtime_stage = os.environ.get("NOTEBOOK_TYPESETTER_RUNTIME") or source / ".build/notebook-typesetter-runtime"
+        runtime = prepare_typesetter_runtime(snapshot, command, "iphoneos", stage=runtime_stage)
         prepare_typesetter_runtime(snapshot, command, "macosx", stage=runtime)
         ipad = build_ipad(snapshot, evidence, command, runtime)
         ipad_info, ipad_signature, ipad_uuids, ipad_manifest = inspect_ipad(ipad, device, evidence, command)

@@ -303,30 +303,42 @@ class ReleaseTests(unittest.TestCase):
         self.refused("TypeScript child must inherit only")
 
     def test_builds_both_signed_apps_from_one_snapshot_without_install_or_archive_access(self):
-        self.cli.existing_preview = True
-        receipt = self.build()
-        self.assertEqual(receipt["status"], "verified-build")
-        self.assertFalse(receipt["installationAttempted"])
-        self.assertEqual(set(receipt["apps"]), {"iPad", "mac"})
-        self.assertEqual(release.source_inputs(self.evidence / "source"), self.before)
-        self.assertEqual(release.source_inputs(self.source), self.before)
-        builds = [call for call in self.cli.calls if "xcodebuild" in call and "build" == call[-1]]
-        self.assertEqual(len(builds), 2)
-        preparation = [call for call in self.cli.calls if any(str(arg).endswith("/prepare_notebook_codex.py") for arg in call)]
-        self.assertEqual(len(preparation), 1)
-        self.assertLess(self.cli.calls.index(preparation[0]), self.cli.calls.index(builds[1]))
-        self.assertIn("PRODUCT_BUNDLE_IDENTIFIER=" + release.BUNDLE, builds[0])
-        self.assertFalse(any(arg.startswith("PRODUCT_BUNDLE_IDENTIFIER=") for arg in builds[1]))
-        self.assertFalse(any(arg.startswith("CODE_SIGN_ENTITLEMENTS=") for arg in builds[1]))
-        self.assertTrue(any(arg.startswith("NOTEBOOK_MAC_ENTITLEMENTS=") for arg in builds[1]))
-        self.assertTrue(any(arg.startswith("NOTEBOOK_TYPESETTER_RUNTIME=") for arg in builds[1]))
-        for argv in builds:
-            self.assertIn("CODE_SIGN_IDENTITY=Apple Development", argv)
-            self.assertIn("SWIFT_OPTIMIZATION_LEVEL=-O", argv)
-            self.assertIn(str(self.evidence / "source/Applications/Notebook.xcodeproj"), argv)
-        device_calls = [call for call in self.cli.calls if "devicectl" in call]
-        self.assertEqual(len(device_calls), 1)
-        self.assertEqual(device_calls[0][1:5], ["devicectl", "device", "info", "details"])
+        for override in (None, self.root / "private runtime"):
+            with self.subTest(runtime=override), patch.dict(os.environ):
+                os.environ.pop("NOTEBOOK_TYPESETTER_RUNTIME", None)
+                if override is not None:
+                    os.environ["NOTEBOOK_TYPESETTER_RUNTIME"] = str(override)
+                expected_stage = str(override or self.source / ".build/notebook-typesetter-runtime")
+                self.evidence = self.root / ("build-private" if override else "build-default")
+                self.cli = PairCLI(self.source, self.verification)
+                self.cli.existing_preview = True
+                receipt = self.build()
+                self.assertEqual(receipt["status"], "verified-build")
+                self.assertFalse(receipt["installationAttempted"])
+                self.assertEqual(set(receipt["apps"]), {"iPad", "mac"})
+                self.assertEqual(release.source_inputs(self.evidence / "source"), self.before)
+                self.assertEqual(release.source_inputs(self.source), self.before)
+                builds = [call for call in self.cli.calls if "xcodebuild" in call and "build" == call[-1]]
+                self.assertEqual(len(builds), 2)
+                typesetter = [call for call in self.cli.calls if any(str(arg).endswith("/prepare_notebook_typesetter.py") for arg in call)]
+                self.assertEqual([(argv[argv.index("--platform") + 1], argv[argv.index("--stage") + 1]) for argv in typesetter],
+                                 [("iphoneos", expected_stage), ("macosx", expected_stage)])
+                preparation = [call for call in self.cli.calls if any(str(arg).endswith("/prepare_notebook_codex.py") for arg in call)]
+                self.assertEqual(len(preparation), 1)
+                self.assertLess(self.cli.calls.index(preparation[0]), self.cli.calls.index(builds[1]))
+                self.assertIn("PRODUCT_BUNDLE_IDENTIFIER=" + release.BUNDLE, builds[0])
+                self.assertFalse(any(arg.startswith("PRODUCT_BUNDLE_IDENTIFIER=") for arg in builds[1]))
+                self.assertFalse(any(arg.startswith("CODE_SIGN_ENTITLEMENTS=") for arg in builds[1]))
+                self.assertTrue(any(arg.startswith("NOTEBOOK_MAC_ENTITLEMENTS=") for arg in builds[1]))
+                for argv in builds:
+                    self.assertEqual([arg for arg in argv if arg.startswith("NOTEBOOK_TYPESETTER_RUNTIME=")],
+                                     ["NOTEBOOK_TYPESETTER_RUNTIME=" + expected_stage])
+                    self.assertIn("CODE_SIGN_IDENTITY=Apple Development", argv)
+                    self.assertIn("SWIFT_OPTIMIZATION_LEVEL=-O", argv)
+                    self.assertIn(str(self.evidence / "source/Applications/Notebook.xcodeproj"), argv)
+                device_calls = [call for call in self.cli.calls if "devicectl" in call]
+                self.assertEqual(len(device_calls), 1)
+                self.assertEqual(device_calls[0][1:5], ["devicectl", "device", "info", "details"])
 
     def test_failed_codex_preparation_stops_before_mac_build_or_verified_pair(self):
         self.cli.codex_prepare_fail = True
