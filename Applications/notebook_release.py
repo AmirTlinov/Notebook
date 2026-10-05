@@ -271,13 +271,20 @@ def release_commands(evidence, runner=None):
     commands = json.loads(log.read_bytes()) if log.exists() else []
     require(isinstance(commands, list) and all(isinstance(entry, dict) for entry in commands),
             "Журнал команд повреждён.")
-    def command(label, arguments, cwd=None, timeout=60, read_output=False):
+    def command(label, arguments, cwd=None, timeout=60, read_output=False, pipe_stdout=False):
         require(not any(entry.get("label") == label for entry in commands), "Команда с этой меткой уже записана: " + label)
         entry = {"label": label, "argv": [str(value) for value in arguments], "cwd": str(cwd) if cwd else None}
+        if pipe_stdout:
+            entry["stdoutMode"] = "pipe"
         commands.append(entry)
         write_json(evidence / "commands.json", commands)
         with (evidence / (label + ".stdout.log")).open("wb") as out, (evidence / (label + ".stderr.log")).open("wb") as err:
-            result = command_runner(entry["argv"], cwd=cwd, stdout=out, stderr=err, timeout=timeout)
+            result = command_runner(entry["argv"], cwd=cwd, stdout=subprocess.PIPE if pipe_stdout else out,
+                                    stderr=err, timeout=timeout)
+            if pipe_stdout:
+                require(isinstance(result.stdout, bytes) and len(result.stdout) <= 64 * 1024 * 1024,
+                        "Машинный поток runner отсутствует или превысил бюджет.")
+                out.write(result.stdout)
         entry["exitCode"] = result.returncode
         write_json(evidence / "commands.json", commands)
         require(result.returncode == 0, "Команда " + label + " завершилась ошибкой; см. каталог доказательств.")
@@ -345,14 +352,7 @@ def inspect_ipad(app, device, evidence, command):
     return info, signature, uuids, bundle
 
 
-VERIFICATION_FILES = {
-    "source-before.json", "source-after.json", "toolchain.json", "toolchain-after.json", "core.log",
-    "load-fixture.log", "release-tools.log", "mcp-check.log",
-    "mcp-tests.log", "mcp-smoke.log", "computation-queue.json",
-    "computation-dependencies.json", "computation-dependencies.log",
-    "recognition-preparation.log",
-    "ipad-release-build.log", "mac.log", "ipad.log", "mac-summary.json", "ipad-summary.json",
-}
+from notebook_check_registry import BASE_EVIDENCE
 
 
 def read_json(path, limit=16 * 1024 * 1024):
@@ -374,7 +374,7 @@ def file_digest(path):
 def verification_artifacts(evidence, *, full=True):
     """Hash the complete evidence, including xcresult payloads, not only counts."""
     require(evidence.is_dir() and not evidence.is_symlink(), "Нет каталога полного verify.sh.")
-    require(not full or all((evidence / name).is_file() for name in VERIFICATION_FILES),
+    require(not full or all((evidence / name).is_file() for name in BASE_EVIDENCE),
             "Полный verify.sh не оставил все обязательные свидетельства.")
     require(not full or all((evidence / (platform + ".xcresult")).is_dir() for platform in ("mac", "ipad")),
             "Нужны оба настоящих xcresult, не только сводки тестов.")
@@ -388,17 +388,11 @@ def verification_artifacts(evidence, *, full=True):
     return files
 
 
-def validate_test_summaries(evidence):
-    for platform in ("mac", "ipad"):
-        summary = read_json(evidence / (platform + "-summary.json"))
-        require(type(summary.get("passedTests")) is int and summary["passedTests"] > 0
-                and summary.get("failedTests") == 0 and summary.get("skippedTests") == 0
-                and summary.get("runtimeWarnings") == [],
-                "Полный маршрут не допускает ошибок, пропусков или runtime warnings: " + platform)
 
 
 def read_toolchain(command, prefix="toolchain-"):
     commands = {
+        "python": [sys.executable, "--version"],
         "xcode": ["/usr/bin/xcrun", "xcodebuild", "-version"],
         "swift": ["/usr/bin/xcrun", "swift", "--version"],
         "iphoneosSDK": ["/usr/bin/xcrun", "--sdk", "iphoneos", "--show-sdk-build-version"],
@@ -418,33 +412,26 @@ def read_toolchain(command, prefix="toolchain-"):
 
 
 def finish_verification(source, evidence):
-    require(not (evidence / "verification.json").exists(), "Этот полный проход уже завершён.")
+    from notebook_verification import validate_selected
+    require(not (evidence / "verification.json").exists(), "Этот проход уже завершён.")
     before = read_json(evidence / "source-before.json")
     after = source_inputs(source)
     write_json(evidence / "source-after.json", after)
-    require(before == after, "Исходники изменились во время полного verify.sh.")
-    validate_test_summaries(evidence)
+    require(before == after, "Исходники изменились во время проверки.")
     require(read_json(evidence / "toolchain.json") == read_json(evidence / "toolchain-after.json"),
-            "Инструменты изменились во время полного verify.sh.")
-    receipt = {"format": 1, "route": "./verify.sh", "status": "passed",
-               "source": before, "artifacts": verification_artifacts(evidence)}
+            "Инструменты изменились во время проверки.")
+    plan = read_json(evidence / "selection.json")
+    receipt = {"format": 2, "route": "./verify.sh" if plan.get("selectionMode") == "full-registry" else "./verify.sh:selected",
+               "scope": "registry-contracts", "physicalAcceptance": False, "status": "passed",
+               "source": before, "artifacts": verification_artifacts(evidence, full=False)}
+    validate_selected(source, evidence, receipt)
     write_json(evidence / "verification.json", receipt)
+    return receipt
 
 
 def checked_verification(source, evidence):
-    receipt = read_json(evidence / "verification.json")
-    if receipt.get("route") == "./verify.sh:selected":
-        from notebook_verification import validate_selected
-        return validate_selected(source, evidence, receipt)
-    require(receipt.get("format") == 1 and receipt.get("route") == "./verify.sh"
-            and receipt.get("status") == "passed", "Нет завершённого полного verify.sh.")
-    require(receipt.get("source") == source_inputs(source)
-            == read_json(evidence / "source-before.json") == read_json(evidence / "source-after.json"),
-            "Полный verify.sh проверял другой набор исходников.")
-    validate_test_summaries(evidence)
-    require(receipt.get("artifacts") == verification_artifacts(evidence),
-            "Свидетельства полного verify.sh изменились после завершения.")
-    return receipt
+    from notebook_verification import validate_selected
+    return validate_selected(source, evidence, read_json(evidence / "verification.json"))
 
 
 def inspect_typesetter_resources(resources):
@@ -698,7 +685,9 @@ def build_verified_pair(source, verification, evidence, runner=None):
     write_json(evidence / "build.json", receipt)
     try:
         toolchain = read_toolchain(command)
-        require(toolchain == read_json(verification / "toolchain.json"), "Инструменты сборки отличаются от полного verify.sh.")
+        verified_tools = read_json(verification / "toolchain.json")
+        require(all(toolchain.get(name) == value for name, value in verified_tools.items()),
+                "Инструменты сборки отличаются от verify.sh.")
         write_json(evidence / "toolchain.json", toolchain)
         snapshot = evidence / "source"
         copy_source(source, snapshot, before)
@@ -944,7 +933,7 @@ def install_verified_pair(source, build, evidence, runner=None):
 def main():
     parser = argparse.ArgumentParser(description="Проверка, сборка и установка пары Notebook iPad + Codex plugin без переноса содержания.")
     actions = parser.add_subparsers(dest="action", required=True)
-    for name in ("fingerprint", "verification-start", "verification-finish", "build-pair", "install-pair"):
+    for name in ("fingerprint", "build-pair", "install-pair"):
         action = actions.add_parser(name)
         action.add_argument("--source-root", type=Path, required=True)
         action.add_argument("--evidence-dir", type=Path, required=True)
@@ -955,13 +944,6 @@ def main():
     args = parser.parse_args()
     if args.action == "fingerprint":
         write_json(args.evidence_dir, source_inputs(args.source_root))
-    elif args.action == "verification-start":
-        write_json(args.evidence_dir / "source-before.json", source_inputs(args.source_root))
-        write_json(args.evidence_dir / "toolchain.json", read_toolchain(release_commands(args.evidence_dir)))
-    elif args.action == "verification-finish":
-        write_json(args.evidence_dir / "toolchain-after.json",
-                   read_toolchain(release_commands(args.evidence_dir), prefix="toolchain-after-"))
-        finish_verification(args.source_root, args.evidence_dir)
     elif args.action == "build-pair":
         build_verified_pair(args.source_root, args.verification_dir, args.evidence_dir)
         print("Подписанная пара собрана из проверенного среза. Приложения НЕ установлены, архивы НЕ изменены.")

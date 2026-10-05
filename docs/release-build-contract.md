@@ -21,6 +21,9 @@ Use `--base HEAD^`, for example, to describe the last committed slice.
 - `--test target/suite/method` and `--profile name` add to automatic selection.
 - `--only --test … --profile …` runs only the explicit scope and records
   `selectionMode: explicit-only`. A single regression may need only one selector.
+- `--profile compiler` prepares the pinned TypeScript runtime before discovering
+  and executing the CLI, process and memory contracts. Swift selectors resolve
+  against the toolchain's discovered function IDs, including parameterized tests.
 - `--optimized` compiles selected native Debug checks with Swift `-O` and C `-Os`,
   preserving isolated fixtures without charging an unoptimized QuickJS interpreter
   to the production CPU budget. The selection and receipt
@@ -42,12 +45,29 @@ native unit checks do not substitute for it. A 100,000-item load is relevant whe
 the corresponding algorithm changes. `--full` is separate broad verification,
 not the default for every edit and not physical acceptance by itself.
 
+[The check registry](../Applications/notebook_check_registry.py) owns each check's
+ID, contract, owner, platform, prerequisites, command, parser and evidence files.
+Profiles and `--full` use that same execution path. Pure Python and Node contracts
+read only their own toolchains; they do not require an Xcode build. Native Mac
+checks use the headless `NotebookRuntime` host; iPad checks use the physical
+release device. The full route preserves distribution, eraser, Core IPC and
+computation proofs without starting a simulator or standalone Mac workspace.
+Routes serialize mutable preparation in one checkout; native routes also claim
+the host's Xcode slot. Physical iPad checks verify lock state before preparation,
+enumeration and execution, stopping when the device requires a passcode.
+
 `verification.json` is written only after success and binds immutable sources to
-the complete evidence directory. The full route includes both xcresults and logs.
+the complete evidence directory. Both routes record actual discovered, planned
+and executed IDs, exact argv and source roots, toolchains, and prerequisite
+commands. Native checks retain their xcresults; Swift inventories all products
+through a captured stdout pipe and executes each selected product with its own
+event file. Parameterized case counts accompany function IDs in the receipt;
+Python and Node retain per-test outcomes. An unmatched selector, incomplete or
+malformed report, selected skip, changed argv/source or missing prerequisite
+refuses the receipt. `./verify.sh:selected` names the selected scope; `./verify.sh`
+names all registry contracts. Neither receipt certifies physical acceptance.
 Runtime admission and document publication are native checks; the real Codex panel
-has separate host acceptance. `./verify.sh:selected` includes `selection.json`,
-executed commands and the affected platforms' xcresults. Every requested XCTest
-must actually run. Historical reports cannot become receipts retroactively.
+has separate host acceptance. Historical reports cannot become receipts retroactively.
 
 Selected iPad verification installs signed Debug `.native-test` on the physical
 release device. The selector removes that exact test identity before and after the

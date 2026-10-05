@@ -20,29 +20,52 @@ sys.path.insert(0, str(ROOT / "Applications"))
 import notebook_release as release
 import notebook_verification as verify
 import notebook_acceptance as acceptance
+import notebook_check_reports as reports
+from notebook_check_registry import full_checks
+from test_registry import RegistryReportTests
+
+
+def device_receipt():
+    return {"info": {"outcome": "success", "commandType": "devicectl.device.info.details"},
+            "result": {"identifier": release.DEVICE, "properties": {
+                "hardware": {"udid": release.UDID, "reality": "physical", "platform": "iOS", "deviceType": "iPad", "productType": release.PRODUCT_TYPE},
+                "connection": {"state": "connected", "pairingState": "paired"},
+                "state": {"bootState": "booted", "developerModeStatus": {"enabled": {}}},
+                "software": {"osVersionNumber": {"stringValue": "27.0"}, "osBuildVersions": {"buildVersion": {"name": "fixture"}}}}}}
+
+
+def native_inventory_fixture(label, argv):
+    if label == "physical-ipad":
+        release.write_json(Path(argv[argv.index("--json-output") + 1]), device_receipt())
+    elif label.startswith("unlocked-ipad"):
+        release.write_json(Path(argv[argv.index("--json-output") + 1]), {
+            "info": {"outcome": "success", "commandType": "devicectl.device.info.lockState"},
+            "result": {"deviceIdentifier": release.DEVICE, "passcodeRequired": False, "unlockedSinceBoot": True}})
+    elif label.endswith("-inventory"):
+        selectors = [arg.removeprefix("-only-testing:") for arg in argv if arg.startswith("-only-testing:")]
+        identities = [selector if selector.count("/") == 2 else selector + "/testFixture" for selector in selectors]
+        release.write_json(Path(argv[argv.index("-test-enumeration-output-path") + 1]), {"tests": identities})
 
 
 class FullPrerequisiteTests(unittest.TestCase):
-    def test_full_route_prepares_one_pinned_compiler_before_swift_and_reuses_it_for_xcode(self):
-        route = (ROOT / "Tests/NotebookVerification/full.sh").read_text()
-        install = "npm ci --ignore-scripts\n"
-        prepare = 'python3 -B "$ROOT/Applications/prepare_notebook_typescript.py" --prepare'
-        export = "export NOTEBOOK_TYPESCRIPT_RUNTIME\n"
-        core = 'swift test 2>&1 | tee "$EVIDENCE/core.log"'
-        for command in (install, prepare, export, core):
-            self.assertEqual(route.count(command), 1, command)
-        self.assertLess(route.index(install), route.index(prepare))
-        self.assertLess(route.index(prepare), route.index(export))
-        self.assertLess(route.index(export), route.index(core),
-                        "Real compiler tests must not depend on a previous checkout's SDK stage")
-        self.assertLess(route.index(core), route.index("xcodebuild \\\n"))
+    def test_full_and_compiler_routes_use_the_same_runtime_prerequisite(self):
+        broad = verify.full_plan(ROOT)
+        selected = verify.make_plan(ROOT, profiles=["compiler"], only=True)
+        for plan in (broad, selected):
+            self.assertTrue({"mcp-dependencies", "typescript"}.issubset(verify.prerequisites(plan)))
+        self.assertIn("NotebookCompilerMemoryTests", selected["checks"]["core"])
+        shell = (ROOT / "Tests/NotebookVerification/full.sh").read_text()
+        self.assertIn('notebook_verification.py', shell)
+        self.assertNotIn("swift test", shell)
+        self.assertNotIn("simctl", shell)
+        self.assertFalse(any("Simulator" in str(check.command) for check in full_checks()))
 
 
 class NativeIPadUIArtifactTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
-        self.root = Path(temporary.name)
+        self.root = Path(temporary.name).resolve()
         self.products = self.root / "products"; self.products.mkdir()
         self.evidence = self.root / "evidence"; self.evidence.mkdir()
         run = {}
@@ -94,6 +117,7 @@ class NativeIPadUIArtifactTests(unittest.TestCase):
             calls = []
             def command(label, argv, **kwargs):
                 calls.append((label, argv))
+                native_inventory_fixture(label, argv)
                 if label == "ipad": raise release.ReleaseError("runner failed")
                 if label == "ipad-native-test-cleanup-after" and cleanup_fails:
                     raise release.ReleaseError("cleanup failed")
@@ -101,7 +125,10 @@ class NativeIPadUIArtifactTests(unittest.TestCase):
             def install(products, evidence, command):
                 calls.append(("preinstall", []))
                 if install_fails: raise release.ReleaseError("install failed")
-                return evidence / "ipad-installed.xctestrun"
+                configured = products / "Notebook_iphoneos27.0-arm64.xctestrun"
+                configured.parent.mkdir(parents=True, exist_ok=True)
+                configured.write_bytes(b"fixture generated Xcode run")
+                return configured
             selector = "NotebookUITests/NotebookNavigationLoadUITests/testContinuousZoomWithProgramsMeetsSystemHitchBudget"
             plan = {"optimized": True, "checks": {"core": [], "ipad": [selector], "mac": [], "commands": []}}
             evidence = self.root / ("selected-" + str(install_fails) + "-" + str(cleanup_fails))
@@ -125,7 +152,7 @@ class NativeIPadUIArtifactTests(unittest.TestCase):
             else:
                 test = next(argv for label, argv in calls if label == "ipad")
                 self.assertIn("test-without-building", test)
-                self.assertEqual(test[test.index("-xctestrun") + 1], str(evidence / "ipad-installed.xctestrun"))
+                self.assertTrue(test[test.index("-xctestrun") + 1].endswith("/Build/Products/Notebook_iphoneos27.0-arm64.xctestrun"))
                 self.assertIn("-only-testing:" + selector, test)
 
 
@@ -321,10 +348,10 @@ class SelectionTests(unittest.TestCase):
         settings = dict(value.split("=", 1) for value in verify.native_mac_signing_settings())
         self.assertEqual(settings["CODE_SIGN_IDENTITY"], "Apple Development")
         self.assertEqual(settings["DEVELOPMENT_TEAM"], release.TEAM)
-        self.assertEqual(settings["NOTEBOOK_BUNDLE_SUFFIX"], ".acceptance")
+        self.assertEqual(settings["NOTEBOOK_MAC_BUNDLE_SUFFIX"], ".acceptance")
         self.assertEqual(settings["NOTEBOOK_ACCEPTANCE_ENABLED"], "YES")
         self.assertEqual(settings["NOTEBOOK_SCRIPT_BUNDLE_SUFFIX"], ".native-test")
-        self.assertNotEqual(settings["NOTEBOOK_SCRIPT_BUNDLE_SUFFIX"], settings["NOTEBOOK_BUNDLE_SUFFIX"])
+        self.assertNotEqual(settings["NOTEBOOK_SCRIPT_BUNDLE_SUFFIX"], settings["NOTEBOOK_MAC_BUNDLE_SUFFIX"])
 
     def test_simulator_entitlements_come_from_the_executable_and_refuse_wrong_platform_or_bounds(self):
         identifier = acceptance.release.TEAM + "." + acceptance.IPAD_BUNDLE
@@ -402,7 +429,7 @@ class SelectionTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         for path in ("Sources", "Tests", "Applications", "MCP", "docs"):
             (self.root / path).mkdir()
         for path in ("Package.swift", "verify.sh", "Applications/project.yml"):
@@ -502,6 +529,7 @@ class SelectionTests(unittest.TestCase):
         calls = []
         def command(label, argv, **kwargs):
             calls.append((label, argv))
+            native_inventory_fixture(label, argv)
             if label == "ipad": raise RunnerReached()
             return b"", None
         plan = {"checks": {"core": [], "ipad": ["NotebookTests/NotebookGraphicModelTests"],
@@ -647,6 +675,7 @@ class SelectionTests(unittest.TestCase):
     def test_browser_contract_runner_executes_the_shipped_listener_and_refuses_any_failure(self):
         for path in ("Sources/Fixture.swift", "MCP/fixture.ts", "docs/fixture.md"):
             self.change(path, "source inventory fixture\n")
+        self.change("Applications/notebook_node_reporter.mjs", (ROOT / "Applications/notebook_node_reporter.mjs").read_text())
         paths = ["Tests/NotebookDocumentAcceptance/test_link_activation.mjs",
                  "Tests/NotebookDocumentAcceptance/test_page_phase_observation.mjs"]
         plan = {"unclassified": [], "manualSelection": True,
@@ -657,11 +686,12 @@ class SelectionTests(unittest.TestCase):
                     self.change(path, "import test from 'node:test';import assert from 'node:assert/strict';"
                                 + f"test('required-contract-{index}',()=>assert.equal({str(path != failed).lower()},true));")
                 evidence = self.root / ".build" / ("browser-" + str(failed is not None) + (Path(failed).stem if failed else "passed"))
-                with patch.object(release, "read_toolchain", return_value={"fixture": "command routing only"}):
+                with patch.object(verify, "selected_toolchain", return_value={"fixture": "command routing only"}):
                     if failed is None:
                         receipt = verify.run_selected(self.root, plan, evidence)
                         self.assertEqual(receipt["status"], "passed")
-                        self.assertEqual(json.loads((evidence / "completed.json").read_text()), plan["checks"])
+                        completed = json.loads((evidence / "completed.json").read_text())
+                        self.assertEqual(completed["checks"]["document-browser"]["planned"], completed["checks"]["document-browser"]["executed"])
                     else:
                         with self.assertRaises(release.ReleaseError): verify.run_selected(self.root, plan, evidence)
                         self.assertFalse((evidence / "completed.json").exists())
@@ -669,7 +699,7 @@ class SelectionTests(unittest.TestCase):
                 commands = json.loads((evidence / "commands.json").read_text())
                 self.assertEqual(len(commands), 1, "No application, package install, or native runner is part of these CPU contracts")
                 self.assertEqual(commands[0]["label"], "document-browser")
-                self.assertEqual(commands[0]["argv"], ["node", "--test", *(str(self.root / path) for path in paths)])
+                self.assertEqual(commands[0]["argv"], verify.document_browser_arguments(self.root))
                 self.assertEqual(commands[0]["exitCode"] == 0, failed is None)
                 output = (evidence / "document-browser.stdout.log").read_text()
                 for index in range(len(paths)): self.assertIn("required-contract-" + str(index), output)
@@ -732,7 +762,7 @@ class SelectionTests(unittest.TestCase):
         self.assertFalse(plan["unclassified"])
         self.assertEqual(plan["profiles"], ["chat", "chat-touch", "workspace-controls"])
         self.assertIn(verify.UI + "testChatMovesResizesAndOpensSettingsWithoutMovingPaper", plan["checks"]["ipad"])
-        self.assertIn(verify.UI + "testAgentChangesStayQuietAndHistoryKeepsItsActions", plan["checks"]["ipad"])
+        self.assertIn(verify.UI + "testAgentChangesStayQuiet", plan["checks"]["ipad"])
 
     def test_page_turn_owner_requires_visible_load_gestures_and_motion_gates(self):
         self.change("Applications/iPad/IPadPageTurnController.swift")
@@ -830,6 +860,7 @@ class SelectionTests(unittest.TestCase):
                 def command(label, argv, **kwargs):
                     calls.append((label, argv, kwargs))
                     if label == "mac-build-for-testing": raise BuildReached()
+                    if label == "ipc-binpath": return str(self.root / ".build/debug").encode(), b""
                     return b"", None
                 plan = {"checks": {"core": [], "ipad": [], "mac": ["NotebookMacTests/DocumentRenderSessionTests"],
                                     "commands": commands}}
@@ -840,6 +871,9 @@ class SelectionTests(unittest.TestCase):
                      patch.object(release, "read_toolchain", return_value={"toolchain": "fixture"}), \
                      patch.object(release, "prepare_typesetter_runtime", return_value=self.root / "typesetter"), \
                      patch.object(release, "prepare_typescript_runtime", return_value=self.root / "typescript"), \
+                     patch.object(verify, "portable_arguments", return_value=(["node", "--test"], self.root, [])), \
+                     patch.object(reports, "rows", return_value=[]), \
+                     patch.object(reports, "node_execution", return_value={"format": 1, "planned": ["fixture"], "executed": ["fixture"], "skipped": [], "failed": []}), \
                      self.assertRaises(BuildReached):
                     verify.run_selected(self.root, plan, evidence)
                 labels = [item[0] for item in calls]
@@ -850,9 +884,9 @@ class SelectionTests(unittest.TestCase):
                 dependency = next(item for item in calls if item[0] == "mcp-dependencies")
                 self.assertEqual(dependency[1], ["npm", "ci", "--ignore-scripts"])
                 self.assertEqual(dependency[2]["cwd"], self.root / "MCP")
-                self.assertEqual("mcp-test" in labels, bool(commands))
+                self.assertEqual("mcp" in labels, bool(commands))
                 build = next(item[1] for item in calls if item[0] == "mac-build-for-testing")
-                self.assertIn("NOTEBOOK_TYPESETTER_RUNTIME=" + str(self.root / "typesetter"), build)
+                self.assertIn("NOTEBOOK_TYPESETTER_RUNTIME=" + str(self.root / ".build/notebook-typesetter-runtime"), build)
                 self.assertIn("NOTEBOOK_TYPESCRIPT_RUNTIME=" + str(self.root / "typescript"), build)
                 self.assertIn("NOTEBOOK_SURFACE_STAGE=" + str(self.root.resolve() / ".build/surface"), build)
 
@@ -1004,14 +1038,29 @@ class SelectionTests(unittest.TestCase):
 
     def receipt(self):
         self.change("Applications/notebook_verification.py")
+        self.change("Applications/notebook_python_checks.py", (ROOT / "Applications/notebook_python_checks.py").read_text())
+        for name in ("NotebookVerification", "NotebookRelease"):
+            self.change("Tests/" + name + "/run.py", "import unittest\nclass Fixture(unittest.TestCase):\n def test_case(self): pass\n")
         evidence = self.root / ".build/selected"; evidence.mkdir(parents=True)
-        plan = verify.make_plan(self.root)
+        plan = verify.make_plan(self.root, profiles=["verification"], only=True)
         source = release.source_inputs(self.root)
-        for name, value in [("selection.json", plan), ("completed.json", plan["checks"]), ("source-before.json", source),
-                            ("source-after.json", source), ("toolchain.json", {"fixture": "not a native proof"})]:
+        completed = {}
+        commands = []
+        for name in plan["checks"]["commands"]:
+            argv, cwd, scripts = verify.portable_arguments(self.root, evidence, name)
+            commands.append({"label": name, "argv": argv, "cwd": str(cwd), "exitCode": 0})
+            identity = {"script": str(scripts[0]), "sha256": release.file_digest(scripts[0])}
+            inventory = {"format": 1, **identity, "tests": ["notebook_checked_tests.Fixture.test_case"]}
+            execution = {"format": 1, **identity, "tests": {"notebook_checked_tests.Fixture.test_case": "passed"}, "completed": True, "successful": True}
+            release.write_json(evidence / (name + "-inventory.json"), inventory)
+            release.write_json(evidence / (name + "-execution.json"), execution)
+            completed[name] = reports.python_execution(inventory, execution, scripts[0])
+        for name, value in [("selection.json", plan), ("completed.json", {"format": 2, "checks": completed}), ("source-before.json", source),
+                            ("source-after.json", source), ("toolchain.json", {"fixture": "not a native proof"}), ("toolchain-after.json", {"fixture": "not a native proof"}),
+                            ("commands.json", commands)]:
             release.write_json(evidence / name, value)
-        (evidence / "commands.json").write_text(json.dumps([{"label": name, "argv": ["python", name], "exitCode": 0} for name in plan["checks"]["commands"]]))
-        receipt = {"format": 1, "route": "./verify.sh:selected", "status": "passed", "source": source,
+        receipt = {"format": 2, "route": "./verify.sh:selected", "scope": "registry-contracts",
+                   "physicalAcceptance": False, "status": "passed", "source": source,
                    "artifacts": release.verification_artifacts(evidence, full=False)}
         release.write_json(evidence / "verification.json", receipt)
         return evidence, receipt
@@ -1058,7 +1107,7 @@ class UIOnlyBuildTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         self.source = self.root / "source"
         self.swift = self.source / "Applications/AcceptanceUITests/Proof.swift"
         self.swift.parent.mkdir(parents=True); self.swift.write_text("import XCTest\n")

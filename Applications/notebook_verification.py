@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Select checks by the changed owner; full acceptance is an explicit operation."""
 import argparse
+from contextlib import contextmanager, ExitStack
 import fcntl
 import hashlib
 import json
 import math
-import os
+import shutil
 from pathlib import Path
 import plistlib
 import re
@@ -20,212 +21,11 @@ ROOT = Path(__file__).resolve().parents[1]
 UI = "NotebookUITests/DrawingResponsivenessTests/"
 NATIVE_IPAD_BUNDLE = release.CANONICAL + ".native-test"
 NATIVE_IPAD_UI_RUNNER = release.CANONICAL + ".uitests.xctrunner"
-DOCUMENT_BROWSER_CONTRACTS = (
-    "Tests/NotebookDocumentAcceptance/test_link_activation.mjs",
-    "Tests/NotebookDocumentAcceptance/test_page_phase_observation.mjs",
-)
-PROFILES = {
-    "navigation-ux": {
-        "ipad": ["NotebookTests/NotebookUXObservationTests",
-                 "NotebookTests/NotebookNavigationLoadUXTests",
-                 "NotebookTests/PageRasterPreparationTests",
-                 "NotebookTests/PreparedAgentElementViewTests/testZoomReusesAdequateProgramPixelsWithoutSubmittingAnotherCapture",
-                 "NotebookTests/PreparedAgentElementViewTests/testRasterReportsItsFirstLayoutWithoutAnotherSourceUpdate",
-                 "NotebookTests/PreparedAgentElementViewTests/testUnchangedProgramCheckpointDoesNotInvalidateThePageReadWindow",
-                 "NotebookTests/NotebookPageLifecycleUXTests/testPageMountsTheFullSizeErasureMaskOnlyWhileItHasLiveCoverage",
-                 "NotebookTests/NotebookPageMotionUXTests",
-                 "NotebookTests/NotebookSceneSelectionTests/testColdSwipeKeepsIntentUntilLiftAndReversalOrPinchCancelsIt",
-                 "NotebookTests/ZoomOutCoverageTests/testInstalledPinchRevealsPixelsBeforeEitherFingerLifts",
-                 "NotebookTests/ZoomOutCoverageTests/testMixedSceneRefinesPixelsWhileZoomRemainsHeld",
-                 "NotebookTests/SceneCameraPlaneTests/testInstalledPlaneFollowsVisibleChildrenOutsideTheOldAnchorBounds",
-                 "NotebookTests/SceneCompositionTests/testPrefetchedProgramsDoNotEvictPassiveSourcesFromTheirOwnQuota",
-                 "NotebookTests/SceneCompositionTests/testPassivePrefetchDoesNotWaitForOffscreenProgramSnapshots",
-                 "NotebookTests/PageTurnSelectionTests",
-                 "NotebookUITests/NotebookNavigationLoadUITests/testDenseSVGPagesTurnForwardReverseAndRepeatedArrowsWithoutBlankLanding",
-                 "NotebookUITests/NotebookNavigationLoadUITests/testContinuousZoomWithProgramsMeetsSystemHitchBudget",
-                 "NotebookUITests/NotebookNavigationLoadUITests/testDensePageTurnsMeetSystemHitchBudget",
-                 "NotebookUITests/NotebookNavigationLoadUITests/testTwentyFourPageProgramsAcceptFirstTapAfterZoomAndKeepStateAcrossTurns",
-                 "NotebookUITests/NotebookNavigationLoadUITests/testTwentyFourBoardProgramsStayInteractiveAfterZoomOutAndBack"],
-    },
-    "collaboration-ux": {
-        "ipad": ["NotebookTests/NotebookCollaborationLatencyTests", "NotebookTests/NotebookUXObservationTests",
-                 "NotebookTests/NotebookActionDeliveryTests",
-                 "NotebookTests/SharedAttentionTests/testDeliveryAndDisplayRequireDifferentEvidence"],
-        "mac": ["NotebookMacTests/NotebookSelectionPublicationTests"],
-    },
-    "interaction-ux": {
-        "ipad": ["NotebookTests/NotebookUXObservationTests", "NotebookTests/NotebookGestureLatencyTests",
-                 "NotebookTests/NotebookSelectionCompositionTests", "NotebookTests/NotebookInteractionUXTests",
-                 "NotebookTests/NotebookPageLifecycleUXTests",
-                 "NotebookTests/NotebookColdInputUXTests",
-                 "NotebookTests/PagePresentationTests/testColdRootInstallsTheStoredInkPageAtTheActualViewport",
-                 "NotebookTests/NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera",
-                 "NotebookTests/NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOnAnotherBoard",
-                 "NotebookUITests/NotebookWorkspaceJourneyUITests/testColdBoardEntryAndRealSwipesShowEveryLeafAfterEvictionAndReturn",
-                 "NotebookUITests/NotebookWorkspaceJourneyUITests/testFirstSelectionMoveDeleteAndColdReopenPreserveTheWholeComposition",
-                 "NotebookUITests/NotebookWorkspaceJourneyUITests/testNewPageAcceptsFirstTextContactAndKeepsItOnThatPage",
-                 "NotebookUITests/NotebookWorkspaceJourneyUITests/testMenusBackgroundAndRotationKeepFirstContactAndPageNavigation"],
-    },
-    "presentation": {
-        "core": ["NotebookPresentationTests", "CodexDisplayProjectionTests", "wireCannotChooseRootPathsOrUnknownCommands", "stablePagePreservesExplicitViewportScale",
-                 "viewportProjectionIsReversible", "documentCameraUsesItsOwnGeometry", "documentPageSelectionSurvivesViewportProjection"],
-        "commands": ["mcp"],
-        "mac": ["NotebookMacTests/NotebookPresentationRelayTests"],
-        "ipad": ["NotebookTests/NotebookPresentationTests"],
-    },
-    "live-placement": {
-        "core": ["BoardMergeOwnershipTests", "BoardPlacementMigrationTests", "NotebookBoardContentRevisionTests", "BoardHierarchyTests", "CollaborationTests", "PlacementActionOwnershipTests", "CollaborationCreationUndoTests",
-                 "PortalIntegrityTests", "WorkspacePublicationTests", "NotebookReplicationTests",
-                 "NotebookReferenceLiveSceneTests", "NotebookReferenceIndexTests", "NotebookReferenceInkTests",
-                 "CollaborationComparableTests", "AgentInkTests",
-                 "ArchiveConsolidationTests/latentAndConcurrentPlacementHeadsRemainIndependentOwners", "NotebookArchiveUnionTests",
-                 "NotebookPageAppendTests/missingOrHashCorruptOrderDependenciesCannotPublishOrAcknowledgeThePage",
-                 "NotebookArchiveActivationTests/replicaRetainsStoppedRequestAndDropsOnlyForeignLocalExecution"],
-        "ipad": ["NotebookTests/NotebookLiveGesturePresentationTests",
-                 "NotebookTests/NotebookLiveScenePublicationTests", "NotebookTests/NotebookGestureAdmissionTests", "NotebookTests/NotebookBoardRevisionTests",
-                 "NotebookTests/NearbySyncTests", "NotebookTests/NotebookTransportSessionTests"],
-    },
-    "placement-scale": {
-        "core": ["NotebookSQLScaleTests/oneHundredThousandOwnersKeepAnEditAndItsJournalAddressed"],
-    },
-    "computer-enrollment": {
-        "core": ["ArchiveComputerPreparationTests", "NotebookArchiveActivationTests", "NotebookAccountDirectoryTests", "NotebookAccountBootstrapTests"],
-        "mac": ["NotebookMacTests/NotebookArchiveLaunchTests", "NotebookMacTests/NotebookDeviceTrustTests", "NotebookMacTests/NotebookAccountConnectionTests", "NotebookMacTests/NotebookAccountWorkspaceTests"],
-    },
-    "computers": {
-        "core": ["NotebookComputerStoreTests", "NotebookChatStoreTests", "NotebookProjectFileTests"],
-        "ipad": ["NotebookTests/NotebookComputerControllerTests", "NotebookTests/NotebookChatControllerTests", "NotebookTests/NotebookFileControllerTests", "NotebookTests/NotebookRunControllerTests", "NotebookTests/NotebookVoiceControllerTests"],
-    },
-    "dictation": {
-        "core": ["NotebookDictationTests", "NotebookChatStoreTests", "CodexDictationTests", "NotebookWakeAddressTests"],
-        "mac": ["NotebookMacTests/NotebookDictationTests", "NotebookMacTests/NotebookCodexSidecarTests"],
-        "ipad": ["NotebookTests/NotebookDictationControllerTests", "NotebookTests/NotebookDictationAudioTests", "NotebookTests/NotebookChatControllerTests",
-                 "NotebookTests/NotebookVoiceControllerTests", "NotebookTests/NotebookAgentQuestionTests",
-                 UI + "testDictationInputStopsIntoAnEditableExpandedChatAndSendsExactlyOnce",
-                 UI + "testAddressedDictationSendsOnceFromTheCompanionWithoutOpeningOrClearingTheDraft",
-                 UI + "testDictationControlBesideVoiceInvokesItsOwnerWithoutLosingTheDraftOrPaper"],
-    },
-    "voice": {
-        "commands": ["voice-audio"],
-        "core": ["NotebookChatStoreTests", "NotebookCodexTests", "NotebookWakeAddressTests", "NotebookChatReadPositionTests"],
-        "mac": ["NotebookMacTests/NotebookVoiceTests", "NotebookMacTests/NotebookCodexSidecarTests"],
-        "ipad": ["NotebookTests/NotebookVoiceControllerTests", "NotebookTests/NotebookChatPanelTests", "NotebookTests/NotebookChatControllerTests"],
-    },
-    "project-runs": {
-        "core": ["NotebookRunStoreTests", "NotebookChatStoreTests"],
-        "mac": ["NotebookMacTests/NotebookProjectRunsTests", "NotebookMacTests/NotebookCodexSidecarTests"],
-        "ipad": ["NotebookTests/NotebookRunControllerTests", "NotebookTests/NotebookChatControllerTests"],
-    },
-    "code-discussion": {
-        "core": ["NotebookCodeDiscussionTests", "NotebookCodeStoreTests", "AgentInkTests"],
-        "ipad": ["NotebookTests/NotebookCodeDiscussionTests", "NotebookTests/NotebookCodeAnnotationsTests", "NotebookTests/NotebookFileControllerTests"],
-        "commands": ["mcp"],
-    },
-    "code-notes": {
-        "core": ["NotebookCodeFragmentTests", "NotebookCodeStoreTests", "AgentInkTests"],
-        "mac": ["NotebookMacTests/NotebookProjectFilesTests"],
-        "ipad": ["NotebookTests/NotebookCodeAnnotationsTests", "NotebookTests/NotebookFileControllerTests"],
-        "commands": ["mcp"],
-    },
-    "project-files": {
-        "core": ["NotebookProjectFileTests", "NotebookChatStoreTests"],
-        "mac": ["NotebookMacTests/NotebookProjectFilesTests", "NotebookMacTests/NotebookCodexSidecarTests"],
-        "ipad": ["NotebookTests/NotebookFileControllerTests", "NotebookTests/NotebookChatControllerTests"],
-    },
-    "chat-transport": {"core": ["NotebookChatStoreTests"], "ipad": ["NotebookTests/NotebookTransportSessionTests/testCodexEnvelopeUsesTheSameAuthenticatedPeerAndReceiptID"]},
-    "codex": {"core": ["NotebookCodexTests"]},
-    "chat": {
-        "core": ["NotebookChatStoreTests", "NotebookChatReadPositionTests"],
-        "mac": ["NotebookMacTests/NotebookChatRenderingTests", "NotebookMacTests/NotebookCodexSidecarTests"],
-        "ipad": ["NotebookTests/NotebookChatPanelTests", "NotebookTests/NotebookChatControllerTests", "NotebookTests/NotebookVoiceControllerTests"],
-    },
-    "chat-touch": {"ipad": [UI + "testCodexPanelCanCollapseFromTheWholeButtonAfterCreatingAChat",
-                              UI + "testCodexPanelKeepsDraftWithoutMovingPaperOnCollapseAndRotation"]},
-    "workspace-controls": {"ipad": ["NotebookTests/NotebookChatWindowTests",
-                                      UI + "testChatMovesResizesAndOpensSettingsWithoutMovingPaper",
-                                      UI + "testAgentChangesStayQuietAndHistoryKeepsItsActions"]},
-    "document-web": {
-        "commands": ["document-browser"],
-        "mac": ["NotebookMacTests/DocumentRuntimeTests"],
-        "ipad": ["NotebookTests/DocumentShellPreparationTests", "NotebookTests/DocumentPrintImageTests",
-                 "NotebookTests/DocumentLinkActivationTests"],
-    },
-    "documents": {
-        "commands": ["document-browser"],
-        "core": ["DocumentRenderRecipeTests", "DocumentDocumentTests", "DocumentFilesTests",
-                 "DocumentFormatMigrationTests", "NotebookPortableDocumentTests"],
-        "mac": ["NotebookMacTests/DocumentLargeSourceTests", "NotebookMacTests/DocumentRenderSessionTests",
-                "NotebookMacTests/DocumentLinkNavigationTests",
-                "NotebookMacTests/DocumentSnapshotTests", "NotebookMacTests/AddressedTargetRenderTests",
-                "NotebookMacTests/DocumentNativeSourceSessionTests", "NotebookMacTests/DocumentProgramIdentityTests",
-                "NotebookMacTests/DocumentRuntimeTests"],
-        "ipad": ["NotebookTests/DocumentLargeSourceTests", "NotebookTests/DocumentResourceLeaseTests",
-                 "NotebookTests/DocumentShellPreparationTests", "NotebookTests/DocumentPrintImageTests",
-                 "NotebookTests/PhysicalWebViewportTests", "NotebookTests/NotebookDocumentOpeningTests",
-                 "NotebookTests/DocumentLinkActivationTests",
-                 "NotebookTests/DocumentProgramOwnerTests", "NotebookTests/DocumentProgramOverlayHostTests",
-                 "NotebookTests/DocumentBlockRuntimeTests", "NotebookTests/DocumentPresentationRecorderTests",
-                 "NotebookTests/NotebookDocumentStatePersistenceTests",
-                 "NotebookTests/DocumentLinkNavigationTests",
-                 "NotebookTests/DocumentPageSelectionTests", "NotebookTests/DocumentCutOriginTests"],
-    },
-    "submitted-pixels": {
-        "ipad": ["NotebookTests/NotebookSubmittedPixelsTests", "NotebookTests/NotebookPinnedImageTests",
-                 "NotebookTests/SharedAttentionTests", "NotebookTests/DocumentProgramOwnerTests",
-                 "NotebookTests/NotebookCoverPresentationTests", "NotebookTests/PagePresentationTests"],
-    },
-    "page-turn": {"ipad": [UI + "testProseDocumentTurnsToDifferentTextAndBack",
-                            UI + "testDocumentPageTurnShowsTheCommittedPhysicalPage"]},
-    "scene-touch": {"ipad": [UI + "testDoubleTapOpensAWholePageImmediately",
-                                UI + "testDocumentCoverUsesTheSamePhysicalCurl"]},
-    "scene-composition": {
-        "mac": ["NotebookMacTests/SceneRasterCompositionTests/" + name for name in (
-            "testPainterOrderAlphaClippingAndTopLeftCoordinates",
-            "testBoardCompositionStreamsMoreSourcePixelsThanItsBudget",
-            "testInputInterruptionCannotPublishPartialComposition")],
-        "ipad": ["NotebookTests/SceneCompositionTests/" + name for name in (
-            "testMixedPaperCoversPublishInLandscapeWithoutDroppingTheirInputOwners",
-            "testEmptyTileProofKeepsCoverageAndUnknownPagesKeepTheirPainter",
-            "testEmptyTileProofRetainsACoverWhoseShadowCrossesTheBoundary",
-            "testSmallStackKeepsBothPhysicalCoversUnderTheSharedBudget",
-            "testNativePressureRemovesOnlyOptionalCarriersWithoutCoarseningTheirBacking",
-            "testBytePressureCoarsensWholeBoundsWithoutChangingPinsOrPainterSources",
-            "testByteReductionKeepsTheAlreadyAdmittedForwardPortalAndItsRealChildPixels",
-            "testColdCacheMissDoesNotRequireDecodeScratchBeforeRenderingAStaticTile",
-            "testTransparentRangesAndLiveMiddleProduceTheSamePixelsAsWholePainterOrder",
-            "testForeignRevisionIsRejectedBeforeAnyRasterAllocation",
-            "testCancellationAfterTheFirstCandidateTileKeepsTheWholePreviousCohortAndLeases",
-            "testStopReleasesEveryRasterAfterTheLastShownCohortReferenceEnds",
-            "testStopDrainsSupersededPreparationAndRejectsNewWork")],
-    },
-    "paper-resources": {
-        "mac": ["NotebookMacTests/DocumentLargeSourceTests/testLargeIllustratedBookKeepsOnePrintArtifactAndRastersOnlyRequestedPages",
-                "NotebookMacTests/DocumentRenderSessionTests",
-                "NotebookMacTests/DocumentTypesetterBoundaryTests"],
-        "ipad": ["NotebookTests/DocumentCanonicalPrintTests",
-                 "NotebookTests/DocumentLargeSourceTests/testLargeIllustratedBookKeepsOnePrintArtifactAndRastersOnlyRequestedPages",
-                 "NotebookTests/SceneCompositionTests/testMixedPaperCoversPublishInLandscapeWithoutDroppingTheirInputOwners",
-                 "NotebookTests/SceneRenderResourcesTests/testInputCanBorrowUnusedPassiveSpaceButPassiveCannotBorrowTheProtectedHalf",
-                 "NotebookTests/SceneRenderResourcesTests/testPhysicalHandoffChangesRolesAtomicallyAndSubmittedBytesOutliveTheOwnerLease",
-                 "NotebookTests/SpatialInkHandoffTests/testMountedInputReaffirmationDoesNotInvalidateItsOwnObservedResourceGraph",
-                 "NotebookTests/SpatialInkHandoffTests/testFullPortraitRetinaBudgetReadiesNonemptyParentAndChildWithoutLoweringInkDensity"],
-    },
-    "mcp": {"commands": ["mcp"]},
-    "script-runtime": {
-        "core": ["NotebookScriptAdmissionTests", "NotebookScriptCancellationTests", "NotebookScriptEffectOutcomeTests",
-                 "NotebookScriptEffectRecoveryTests", "NotebookScriptHelpTests", "CodexRuntimeScopeTests",
-                 "NotebookPublicProtocolTests", "NotebookScriptDeadlineTests", "NotebookQuickJSCancellationTests"],
-        "mac": ["NotebookMacTests/NotebookScriptServiceTests"],
-        "commands": ["mcp"],
-    },
-    "acceptance-bootstrap": {
-        "core": ["CodexRuntimeScopeTests"],
-        "mac": ["NotebookMacTests/NotebookAcceptanceLaunchTests"],
-        "ipad": ["NotebookTests/NotebookAcceptanceLaunchTests"],
-        "commands": ["verification", "release", "trace-harness"],
-    },
-    "verification": {"commands": ["verification", "release"]},
-}
+from notebook_check_registry import CHECKS, COMMANDS, PROFILES, full_checks, native, selected_checks
+import notebook_check_reports as reports
+
+DOCUMENT_BROWSER_CONTRACTS = tuple(value for value in COMMANDS["document-browser"].command if value.endswith(".mjs"))
+
 
 
 def git(root, *args):
@@ -233,7 +33,7 @@ def git(root, *args):
 
 
 def document_browser_arguments(root):
-    return ["node", "--test", *(str(root / path) for path in DOCUMENT_BROWSER_CONTRACTS)]
+    return portable_arguments(root, Path("/unused"), "document-browser")[0]
 
 
 def changed_files(root, base):
@@ -247,7 +47,7 @@ def owners(path):
     """An unclassified implementation never silently falls back to all tests."""
     if path == "AGENTS.md" or path.startswith("docs/") or path == "README.md":
         return []
-    if path in ("verify.sh", "Applications/notebook_verification.py", "Applications/notebook_release.py") or path.startswith(("Tests/NotebookVerification/", "Tests/NotebookRelease/")):
+    if path in ("verify.sh", "Applications/notebook_verification.py", "Applications/notebook_release.py", "Applications/notebook_check_registry.py", "Applications/notebook_check_reports.py", "Applications/notebook_python_checks.py", "Applications/notebook_node_reporter.mjs") or path.startswith(("Tests/NotebookVerification/", "Tests/NotebookRelease/")):
         return ["verification"]
     if path.startswith("MCP/"):
         return ["mcp"]
@@ -407,29 +207,201 @@ def make_plan(root, base="HEAD", profiles=(), tests=(), only=False):
         elif not only:
             selected.update(found)
     checks = {key: set() for key in ("core", "mac", "ipad", "commands")}
-    for profile in sorted(selected):
-        for key, values in PROFILES[profile].items():
-            checks[key].update(values)
+    release.require(not selected - set(PROFILES), "Неизвестный профиль: " + ", ".join(sorted(selected - set(PROFILES))))
+    for check in selected_checks(selected):
+        checks[check.platform].update((check.id,) if check.platform == "commands" else check.selectors)
     for key, value in direct:
         checks[key].add(value)
     for test in tests:
         target = test.split("/", 1)[0]
+        if target in ("NotebookCoreTests", "NotebookCodexTests", "NotebookScriptHostTests", "NotebookScriptWorkerTests", "NotebookArchiveTransferTests"):
+            release.require(re.fullmatch(r"[A-Za-z0-9_/]+", test) and "/" in test,
+                            "Укажите точный Swift target/suite[/function].")
+            checks["core"].add(test.replace("/", ".", 1))
+            continue
         if target not in ("NotebookMacTests", "NotebookTests", "NotebookUITests") or not re.fullmatch(r"[A-Za-z0-9_/]+", test) or "/" not in test:
             raise release.ReleaseError("Укажите точный XCTest target/suite[/method], не весь target.")
         if target == "NotebookUITests" and test.count("/") < 2:
             raise release.ReleaseError("UI запускается по сценарию, не всем 44 тестам сразу.")
         checks["mac" if target == "NotebookMacTests" else "ipad"].add(test)
-    return {"format": 1, "baseCommit": commit, "changedFiles": paths, "profiles": sorted(selected),
+    return {"format": 2, "sourceRoot": str(root.resolve()), "baseCommit": commit, "changedFiles": paths, "profiles": sorted(selected),
             "unclassified": unknown, "manualSelection": bool(profiles or tests),
             "selectionMode": "explicit-only" if only else "changed-owners",
             "checks": {key: sorted(values) for key, values in checks.items()}}
 
 
+def full_plan(root):
+    checks = {key: set() for key in ("core", "mac", "ipad", "commands")}
+    for check in full_checks():
+        checks[check.platform].update((check.id,) if check.platform == "commands" else check.selectors)
+    return {"format": 2, "sourceRoot": str(root.resolve()), "selectionMode": "full-registry",
+            "profiles": [], "unclassified": [], "manualSelection": True,
+            "checks": {key: sorted(values) for key, values in checks.items()},
+            "notice": "Все контракты реестра; физическая и системная приёмка фиксируется отдельно."}
+
+
+def validate_plan(plan):
+    release.require(isinstance(plan, dict) and plan.get("format") == 2
+                    and isinstance(plan.get("sourceRoot"), str) and Path(plan["sourceRoot"]).is_absolute(),
+                    "Нет текущего плана проверки с владельцем исходников.")
+    checks = plan.get("checks")
+    release.require(isinstance(checks, dict) and set(checks) == {"core", "mac", "ipad", "commands"}
+                    and all(isinstance(values, list) and all(isinstance(value, str) and value for value in values)
+                            and values == sorted(set(values)) for values in checks.values()), "Malformed check plan")
+    release.require(not set(checks["commands"]) - set(COMMANDS), "Неизвестный маршрут проверки.")
+    if plan.get("selectionMode") == "full-registry":
+        release.require(checks == full_plan(Path(plan["sourceRoot"]))["checks"], "Полный маршрут не совпадает с реестром.")
+    return checks
+
+
+def prerequisites(plan):
+    checks = plan["checks"]
+    required = set()
+    declared = full_checks() if plan.get("selectionMode") == "full-registry" else selected_checks(plan.get("profiles", []))
+    for check in declared:
+        required.update(check.prerequisites)
+    for name in checks["commands"]:
+        required.update(COMMANDS[name].prerequisites)
+    for platform in ("mac", "ipad"):
+        if checks[platform]:
+            required.update(native("explicit/" + platform, "", platform, checks[platform]).prerequisites)
+    for check in CHECKS:
+        if check.platform != "core" or not check.prerequisites:
+            continue
+        for selector in checks["core"]:
+            components = selector.replace(".", "/").split("/")
+            if any(value in components or value == selector for value in check.selectors):
+                required.update(check.prerequisites)
+    return required
+
+
+def selected_toolchain(command, plan, prefix="toolchain-"):
+    checks = plan["checks"]
+    if checks["mac"] or checks["ipad"] or "darwin" in prerequisites(plan):
+        return release.read_toolchain(command, prefix=prefix)
+    executables = {"python": [sys.executable, "--version"]}
+    if checks["core"] or prerequisites(plan) & {"ipc-host", "typescript"} or any(
+            COMMANDS[name].parser in ("exit-contract", "json-contract") for name in checks["commands"]):
+        executables["swift"] = ["swift", "--version"]
+    if any(COMMANDS[name].parser == "node-events" for name in checks["commands"]) or "mcp-dependencies" in prerequisites(plan):
+        executables["node"] = ["node", "--version"]
+    if prerequisites(plan) & {"mcp-dependencies", "recognition-dependencies"}:
+        executables["npm"] = ["npm", "--version"]
+    result = {}
+    for name, argv in executables.items():
+        release.require(shutil.which(argv[0]) is not None, "Не найден prerequisite: " + argv[0])
+        output = command(prefix + name, argv, read_output=True)
+        value = b"\n".join(output).decode().strip()
+        release.require(bool(value), "Инструмент не назвал версию: " + name)
+        result[name] = value
+    return result
+
+
+def portable_arguments(root, evidence, name):
+    check = COMMANDS[name]
+    if check.parser == "python-unittest":
+        return ([sys.executable, "-B", str(root / "Applications/notebook_python_checks.py"),
+                 "--script", str(root / check.command[0]), "--evidence", str(evidence), "--check", name], root, [root / check.command[0]])
+    if check.parser == "node-events":
+        scripts = []
+        argv = []
+        for value in check.command:
+            if "*" in value:
+                files = sorted(root.glob(value))
+                release.require(files, "Не найден prerequisite: " + value)
+                scripts.extend(files)
+                argv.extend(str(path) for path in files)
+            elif value.endswith((".mjs", ".ts", ".js")):
+                scripts.append(root / value)
+                argv.append(str(root / value))
+            else:
+                argv.append(value)
+        argv.insert(argv.index("--test") + 1, "--test-reporter=" + str(root / "Applications/notebook_node_reporter.mjs"))
+        return argv, root / "MCP" if name == "mcp" else root, scripts
+    argv = [str(root / value) if "/" in value else value for value in check.command]
+    scripts = [root / value for value in check.command if value.endswith((".sh", ".py", ".mjs", ".ts", ".js"))]
+    if check.command[0].endswith(".py"):
+        argv = [sys.executable, "-B", *argv]
+    return argv, root / "MCP" if name == "mcp-smoke" else root, scripts
+
+
+def core_arguments(evidence, expected=None, typescript=None, product=None):
+    argv = list(next(check.command for check in CHECKS if check.platform == "core"))
+    if expected is None:
+        argv.extend(("list", "--disable-xctest"))
+        report = "/dev/stdout"
+    else:
+        release.require(isinstance(product, str) and re.fullmatch(r"[A-Za-z0-9_]+", product)
+                        and all(identity.startswith(product + ".") for identity in expected), "Неверный Swift test product.")
+        argv.extend(("--disable-xctest", "--skip-build", "--test-product", product,
+                     "--filter", "^(?:" + "|".join(re.escape(identity) for identity in expected) + ")$"))
+        report = str(evidence / ("core-" + product + "-events.jsonl"))
+    argv.extend(("--event-stream-output-path", report, "--event-stream-version", "6.4"))
+    if typescript:
+        argv = ["/usr/bin/env", "NOTEBOOK_TYPESCRIPT_RUNTIME=" + str(typescript), *argv]
+    return argv
+
+
+def check_command(commands, label, argv, cwd):
+    entry = next((entry for entry in commands if entry.get("label") == label), None)
+    release.require(entry is not None and entry.get("argv") == [str(value) for value in argv]
+                    and entry.get("cwd") == str(cwd),
+                    "Команда " + label + " исполняла другой набор, argv или источник.")
+    return entry
+
+
+def core_inventory_stream(evidence):
+    records = reports.swift_stdout(evidence / "core-inventory.stdout.log")
+    destination = evidence / "core-inventory.jsonl"
+    destination.write_text("".join(json.dumps(record, sort_keys=True) + "\n" for record in records))
+    return records
+
+
+def core_products(expected):
+    products = {}
+    for identity in expected:
+        product = identity.split(".", 1)[0]
+        release.require(re.fullmatch(r"[A-Za-z0-9_]+", product), "Malformed Swift product ID.")
+        products.setdefault(product, []).append(identity)
+    return products
+
+
+def core_execution(evidence, expected, origin):
+    executions = {}
+    for product, identities in core_products(expected).items():
+        report = reports.swift_execution(reports.rows(evidence / ("core-" + product + "-events.jsonl")), identities, origin)
+        executions.update(report["executions"])
+    return {"format": 1, "planned": sorted(expected), "executed": sorted(executions),
+            "executions": executions, "skipped": [], "failed": []}
+
+
+def read_commands(evidence):
+    path = evidence / "commands.json"
+    release.require(path.is_file() and not path.is_symlink() and path.stat().st_size <= 4 * 1024 * 1024,
+                    "Отсутствует ограниченный журнал команд.")
+    commands = json.loads(path.read_bytes())
+    release.require(isinstance(commands, list) and commands
+                    and all(isinstance(entry, dict) and type(entry.get("exitCode")) is int and entry["exitCode"] == 0
+                            and isinstance(entry.get("argv"), list) and all(isinstance(arg, str) for arg in entry["argv"])
+                            and isinstance(entry.get("label"), str) for entry in commands)
+                    and len({entry["label"] for entry in commands}) == len(commands),
+                    "Команда не завершилась успешно или её отчёт повреждён.")
+    return commands
+
+
+def prepared_typescript(evidence, origin):
+    output = release.read_json(evidence / "typescript-resources.stdout.log")
+    stage = output.get("stage")
+    release.require(output.get("status") == "ready" and isinstance(stage, str) and Path(stage).is_absolute()
+                    and Path(stage).is_relative_to(origin / ".build/notebook-typescript-runtime"),
+                    "Нет exact TypeScript prerequisite текущего источника.")
+    return Path(stage)
+
+
 def native_test_bundle(node, inherited=""):
     if node.get("nodeType") in ("Unit test bundle", "UI test bundle"):
         name = node.get("name", "")
-        return name if name in ("NotebookTests", "NotebookUITests", "NotebookMacTests",
-                               "NotebookAcceptanceUITests") else ""
+        return name if name in reports.NATIVE_BUNDLES else ""
     return inherited
 
 
@@ -451,24 +423,11 @@ def timing_report(tree):
 
 
 def validate_summary(summary):
-    release.require(summary.get("passedTests", 0) > 0 and summary.get("failedTests", 0) == 0
-                    and summary.get("skippedTests", 0) == 0 and summary.get("runtimeWarnings") == [],
-                    "Нужны исполненные тесты без ошибок, пропусков и runtime warnings.")
+    reports.validate_summary(summary)
 
 
-def validate_executed_tests(tree, selectors):
-    executed = set()
-    def walk(node, target=""):
-        target = native_test_bundle(node, target)
-        if target and node.get("nodeType") == "Test Case" and node.get("result") == "Passed":
-            executed.add(target + "/" + node.get("nodeIdentifier", "").removesuffix("()"))
-        for child in node.get("children", []):
-            walk(child, target)
-    for node in tree.get("testNodes", []):
-        walk(node)
-    for selector in selectors:
-        release.require(any(case == selector or case.startswith(selector + "/") for case in executed),
-                        "Выбранный тест не исполнился: " + selector)
+def validate_executed_tests(tree, selectors, inventory=None):
+    return reports.native_execution(tree, selectors, inventory)
 
 
 NAVIGATION_HITCH_TESTS = (
@@ -518,43 +477,192 @@ def validate_hitch_metrics(metrics, selectors):
             release.require(len(ratios) == len(durations), "Неполные пары системных измерений: " + case)
 
 
-def validate_selected(source, evidence, receipt):
-    release.require(receipt.get("format") == 1 and receipt.get("status") == "passed", "Выбранный маршрут не завершён.")
-    plan = release.read_json(evidence / "selection.json")
-    release.require(not plan["unclassified"] or plan["manualSelection"],
-                    "Для этих исходников явно выберите достаточные --profile/--test.")
-    release.require(not set(plan["unclassified"]) & {"Applications/iPad/NotebookDrawingFixture.swift", "Applications/UITests/DrawingResponsivenessTests.swift"},
-                    "Изменённая UI-фикстура требует названного жестового сценария.")
-    release.require(receipt["source"] == release.source_inputs(source)
-                    == release.read_json(evidence / "source-before.json") == release.read_json(evidence / "source-after.json"),
-                    "Выбранные проверки выполнялись на других исходниках.")
-    completed = release.read_json(evidence / "completed.json")
-    release.require(completed == plan["checks"] and any(completed.values()), "Не все выбранные проверки исполнены.")
-    commands = json.loads((evidence / "commands.json").read_text())
-    release.require(commands and all(c.get("exitCode") == 0 for c in commands), "Команда не завершилась успешно.")
-    expected = set(completed["commands"]) - {"mcp"}
-    if "mcp" in completed["commands"]:
-        expected.update(("mcp-check", "mcp-test"))
-    if completed["core"]:
-        expected.add("core")
-    release.require(expected.issubset({c["label"] for c in commands}), "Отсутствует команда выбранной проверки.")
-    if "document-browser" in completed["commands"]:
-        browser = next(c for c in commands if c["label"] == "document-browser")
-        cwd = browser.get("cwd")
-        release.require(isinstance(cwd, str) and Path(cwd).is_absolute()
-                        and browser["argv"] == document_browser_arguments(Path(cwd)),
-                        "Браузерные контракты документов исполняли другой набор или источник.")
+def ipad_lock_arguments(evidence, phase=""):
+    release.require(phase in ("", "inventory", "execution"), "Неизвестный этап проверки iPad lock state.")
+    name = "physical-ipad-lock-state" + ("-" + phase if phase else "") + ".json"
+    return ["xcrun", "devicectl", "device", "info", "lockState", "--device", release.UDID,
+            "--timeout", "30", "--json-output", str(evidence / name)]
+
+
+def validate_ipad_lock_state(state):
+    release.require(isinstance(state, dict) and state.get("deviceIdentifier") == release.DEVICE
+                    and type(state.get("passcodeRequired")) is bool and type(state.get("unlockedSinceBoot")) is bool,
+                    "Malformed physical iPad lock-state report.")
+    release.require(state["unlockedSinceBoot"] and not state["passcodeRequired"],
+                    "Физический iPad требует ввода кода. Разблокируйте устройство перед native-проверкой.")
+
+
+def check_ipad_lock(root, evidence, command, phase=""):
+    argv = ipad_lock_arguments(evidence, phase)
+    command("unlocked-ipad" + ("-" + phase if phase else ""), argv, cwd=root)
+    validate_ipad_lock_state(release.successful_json(Path(argv[-1]), "devicectl.device.info.lockState"))
+
+
+def validate_prerequisites(plan, evidence, commands):
+    origin = Path(plan["sourceRoot"])
+    required = prerequisites(plan)
+    definitions = {
+        "darwin": (["xcrun", "--sdk", "macosx", "--show-sdk-build-version"], origin),
+        "icon-renderer": (["rsvg-convert", "--version"], origin),
+        "mcp-dependencies": (["npm", "ci", "--ignore-scripts"], origin / "MCP"),
+        "recognition-dependencies": (["npm", "ci", "--ignore-scripts", "--prefix", str(origin / "Tests/NotebookRecognitionHarness")], origin),
+        "project": (["xcodegen", "generate", "--spec", "project.yml"], origin / "Applications"),
+        "typescript": ([sys.executable, "-B", str(origin / "Applications/prepare_notebook_typescript.py"),
+                        "--prepare", "--stage-root", str(origin / ".build/notebook-typescript-runtime")], origin),
+        "codex": ([sys.executable, "-B", str(origin / "Applications/prepare_notebook_codex.py"),
+                   "--stage", str(origin / ".build/notebook-codex-runtime")], origin),
+        "surface": (["node", str(origin / "MCP/build-surface.mjs"), "--stage", str(origin / ".build/surface")], origin),
+        "ipc-host": (["swift", "build", "--product", "notebook-ipc-test-host"], origin),
+        "physical-ipad": (["xcrun", "devicectl", "device", "info", "details", "--device", release.DEVICE,
+                            "--timeout", "30", "--json-output", str(evidence / "physical-ipad.json"),
+                            "--omit-deprecated-fields-in-json"], origin),
+        "unlocked-ipad": (ipad_lock_arguments(evidence), origin),
+    }
+    labels = {"project": "generate-project", "typescript": "typescript-resources", "codex": "codex-resources", "surface": "surface-resources"}
+    for prerequisite in required - {"typesetter"}:
+        release.require(prerequisite in definitions, "Неизвестный prerequisite: " + prerequisite)
+        argv, cwd = definitions[prerequisite]
+        check_command(commands, labels.get(prerequisite, prerequisite), argv, cwd)
+    if "typescript" in required:
+        prepared_typescript(evidence, origin)
+    for platform, sdk in (("mac", "macosx"), ("ipad", "iphoneos")):
+        if plan["checks"][platform]:
+            check_command(commands, "typesetter-resources-" + sdk,
+                          [sys.executable, "-B", str(origin / "Applications/prepare_notebook_typesetter.py"),
+                           "--prepare", "--platform", sdk, "--stage", str(origin / ".build/notebook-typesetter-runtime")], origin)
+    if "physical-ipad" in required:
+        release.validate_device(release.successful_json(evidence / "physical-ipad.json", "devicectl.device.info.details"))
+    if "unlocked-ipad" in required:
+        validate_ipad_lock_state(release.successful_json(evidence / "physical-ipad-lock-state.json", "devicectl.device.info.lockState"))
+
+
+def native_arguments(root, evidence, plan, platform, selectors, action, typescript=None, configured=None):
+    destination = "platform=macOS" if platform == "mac" else "platform=iOS,id=" + release.UDID
+    derived = Path(tempfile.gettempdir()) / "notebook-selected-builds" / hashlib.sha256(str(root).encode()).hexdigest()[:16]
+    if configured:
+        release.require(platform == "ipad" and configured.parent == derived / "ipad/Build/Products"
+                        and re.fullmatch(r"Notebook_iphoneos[^/]*\.xctestrun", configured.name), "Неверный источник xctestrun.")
+        argv = [*native("explicit/" + platform, "", platform, selectors).command,
+                "-quiet", "-xctestrun", str(configured), "-destination", destination,
+                "-resultBundlePath", str(evidence / "ipad.xcresult"), "-parallel-testing-enabled", "NO",
+                "-collect-test-diagnostics", "never", action]
+    else:
+        argv = [*native("explicit/" + platform, "", platform, selectors).command,
+                "-quiet", "-project", "Notebook.xcodeproj", "-scheme",
+                "NotebookRuntime" if platform == "mac" else "Notebook", "-configuration", "Debug",
+                "-destination", destination, "-derivedDataPath", str(derived / platform),
+                "-parallel-testing-enabled", "NO", "-collect-test-diagnostics", "never", action]
+        if action == "test-without-building":
+            argv.extend(("-resultBundlePath", str(evidence / (platform + ".xcresult"))))
+        if plan.get("optimized", False):
+            argv.extend(("SWIFT_OPTIMIZATION_LEVEL=-O", "GCC_OPTIMIZATION_LEVEL=s"))
+        argv.extend(native_mac_signing_settings() if platform == "mac" else native_ipad_signing_settings())
+        argv.append("NOTEBOOK_TYPESETTER_RUNTIME=" + str(root / ".build/notebook-typesetter-runtime"))
+        if platform == "mac":
+            argv.extend(("NOTEBOOK_SURFACE_STAGE=" + str(root / ".build/surface"), "NOTEBOOK_TYPESCRIPT_RUNTIME=" + str(typescript)))
+    argv.extend("-only-testing:" + selector for selector in selectors)
+    return argv
+
+
+def validate_check_evidence(source, plan, evidence, commands):
+    origin = Path(plan["sourceRoot"])
+    checks = plan["checks"]
+    validate_prerequisites(plan, evidence, commands)
+    actual = {}
+    typescript = prepared_typescript(evidence, origin) if "typescript" in prerequisites(plan) else None
+    if checks["core"]:
+        inventory_records = reports.swift_stdout(evidence / "core-inventory.stdout.log")
+        release.require(inventory_records == reports.rows(evidence / "core-inventory.jsonl"), "Swift inventory stream изменился.")
+        inventory = reports.swift_inventory(inventory_records, origin)
+        expected = reports.resolve(checks["core"], list(inventory), core=True)
+        release.require(check_command(commands, "core-inventory", core_arguments(evidence, typescript=typescript), origin).get("stdoutMode") == "pipe",
+                        "Swift inventory product writers не использовали общий PIPE.")
+        for product, identities in core_products(expected).items():
+            check_command(commands, "core-" + product, core_arguments(evidence, identities, typescript, product), origin)
+        actual["core"] = core_execution(evidence, expected, origin)
+        release.require(actual["core"] == release.read_json(evidence / "core-execution.json"), "Swift execution witness изменился.")
+    for name in checks["commands"]:
+        check = COMMANDS[name]
+        argv, cwd, scripts = portable_arguments(origin, evidence, name)
+        if name in ("mcp", "mcp-smoke"):
+            if name == "mcp":
+                check_command(commands, "mcp-check", ["npm", "run", "check"], origin / "MCP")
+            check_command(commands, "ipc-binpath", ["swift", "build", "--show-bin-path"], origin)
+            binpath = (evidence / "ipc-binpath.stdout.log").read_text().strip()
+            release.require(Path(binpath).is_absolute() and Path(binpath).is_relative_to(origin / ".build"), "Неверный IPC host prerequisite.")
+            argv = ["/usr/bin/env", "NOTEBOOK_IPC_TEST_HOST=" + str(Path(binpath) / "notebook-ipc-test-host"), *argv]
+        check_command(commands, name, argv, cwd)
+        if check.parser == "python-unittest":
+            current = source / Path(check.command[0])
+            actual[name] = reports.python_execution(release.read_json(evidence / (name + "-inventory.json")),
+                        release.read_json(evidence / (name + "-execution.json")), current, reported_script=scripts[0])
+        elif check.parser == "node-events":
+            actual[name] = reports.node_execution(reports.rows(evidence / (name + ".stdout.log")), scripts, origin)
+            release.require(release.read_json(evidence / (name + "-inventory.json")) == {"format": 1, "tests": actual[name]["planned"]}
+                            and release.read_json(evidence / (name + "-execution.json")) == actual[name], "Node execution witness изменился.")
+        else:
+            expected = {"format": 1, "planned": [name], "executed": [name], "skipped": [], "failed": []}
+            release.require(release.read_json(evidence / (name + "-inventory.json")) == {"format": 1, "tests": [name]}
+                            and release.read_json(evidence / (name + "-execution.json")) == expected,
+                            "Неполный отчёт исполняемого контракта: " + name)
+            if check.parser == "json-contract":
+                report = release.read_json(evidence / (name + ".stdout.log"))
+                release.require(report.get("status") == check.success, "JSON contract не завершён: " + name)
+            actual[name] = expected
     for platform in ("mac", "ipad"):
-        if completed[platform]:
-            release.require((evidence / (platform + ".xcresult")).is_dir(), "Отсутствует xcresult выбранной платформы.")
-            validate_summary(release.read_json(evidence / (platform + "-summary.json")))
-            validate_executed_tests(release.read_json(evidence / (platform + "-tests.json")), completed[platform])
-            if selected_hitch_tests(completed[platform]):
-                validate_hitch_metrics(release.read_json(evidence / (platform + "-metrics.json")), completed[platform])
-            command = next((c for c in commands if c["label"] == platform), None)
-            release.require(command is not None and sorted(arg.removeprefix("-only-testing:") for arg in command["argv"]
-                            if arg.startswith("-only-testing:")) == completed[platform], "Xcode исполнял другой набор тестов.")
-    release.require(receipt["artifacts"] == release.verification_artifacts(evidence, full=False), "Свидетельства выбранного маршрута изменились.")
+        if not checks[platform]:
+            continue
+        release.require((evidence / (platform + ".xcresult")).is_dir(), "Отсутствует xcresult выбранной платформы.")
+        inventory = reports.native_inventory(release.read_json(evidence / (platform + "-inventory.json")))
+        expected = reports.resolve(checks[platform], inventory)
+        tree = release.read_json(evidence / (platform + "-tests.json"))
+        actual[platform] = reports.native_execution(tree, checks[platform], inventory)
+        reports.validate_summary(release.read_json(evidence / (platform + "-summary.json")), reports.native_outcomes(tree))
+        release.require(actual[platform] == release.read_json(evidence / (platform + "-execution.json")), "Native execution witness изменился.")
+        if platform == "ipad":
+            for phase in ("inventory", "execution"):
+                argv = ipad_lock_arguments(evidence, phase)
+                check_command(commands, "unlocked-ipad-" + phase, argv, origin)
+                validate_ipad_lock_state(release.successful_json(Path(argv[-1]), "devicectl.device.info.lockState"))
+        configured = None
+        if platform == "ipad" and any(selector.startswith("NotebookUITests/") for selector in expected):
+            config = release.read_json(evidence / "ipad-configured-run.json")
+            release.require(isinstance(config.get("path"), str), "Нет пути xctestrun текущего runner.")
+            configured = Path(config["path"])
+        args = native_arguments(origin, evidence, plan, platform, expected, "test-without-building", typescript, configured)
+        check_command(commands, platform, args, origin / "Applications")
+        enumerate_args = native_arguments(origin, evidence, plan, platform, checks[platform], "test-without-building", typescript, configured)
+        enumerate_args = [value for value in enumerate_args if value not in ("-resultBundlePath", str(evidence / (platform + ".xcresult")))]
+        enumerate_args.extend(("-enumerate-tests", "-test-enumeration-style", "flat", "-test-enumeration-format", "json",
+                               "-test-enumeration-output-path", str(evidence / (platform + "-inventory.json"))))
+        check_command(commands, platform + "-inventory", enumerate_args, origin / "Applications")
+        check_command(commands, platform + "-build-for-testing",
+                      native_arguments(origin, evidence, plan, platform, checks[platform], "build-for-testing", typescript), origin / "Applications")
+        if selected_hitch_tests(checks[platform]):
+            validate_hitch_metrics(release.read_json(evidence / (platform + "-metrics.json")), checks[platform])
+    return actual
+
+
+def validate_selected(source, evidence, receipt):
+    source, evidence = source.resolve(), evidence.resolve()
+    release.require(receipt.get("format") == 2 and receipt.get("status") == "passed"
+                    and receipt.get("route") in ("./verify.sh:selected", "./verify.sh")
+                    and receipt.get("scope") == "registry-contracts" and receipt.get("physicalAcceptance") is False,
+                    "Маршрут не завершён текущим проверяющим владельцем или заявляет другую область приёмки.")
+    plan = release.read_json(evidence / "selection.json")
+    checks = validate_plan(plan)
+    release.require((receipt["route"] == "./verify.sh") == (plan.get("selectionMode") == "full-registry"), "Scope receipt не соответствует маршруту.")
+    release.require(not plan.get("unclassified") or plan.get("manualSelection"), "Для этих исходников явно выберите достаточные --profile/--test.")
+    release.require(not set(plan.get("unclassified", [])) & {"Applications/iPad/NotebookDrawingFixture.swift", "Applications/UITests/DrawingResponsivenessTests.swift"},
+                    "Изменённая UI-фикстура требует названного жестового сценария.")
+    release.require(receipt.get("source") == release.source_inputs(source)
+                    == release.read_json(evidence / "source-before.json") == release.read_json(evidence / "source-after.json"),
+                    "Маршрут проверял другой набор исходников.")
+    release.require(any(checks.values()), "Пустой план не выдаёт PASS.")
+    actual = validate_check_evidence(source, plan, evidence, read_commands(evidence))
+    release.require(release.read_json(evidence / "completed.json") == {"format": 2, "checks": actual}, "Не все выбранные проверки исполнены.")
+    release.require(release.read_json(evidence / "toolchain.json") == release.read_json(evidence / "toolchain-after.json"), "Инструменты изменились во время проверки.")
+    release.require(receipt.get("artifacts") == release.verification_artifacts(evidence, full=False), "Свидетельства выбранного маршрута изменились.")
     return receipt
 
 
@@ -641,110 +749,137 @@ def native_mac_signing_settings():
     # signed identity separate from both the paired stand and the installed app.
     return ["CODE_SIGN_IDENTITY=Apple Development", "CODE_SIGN_STYLE=Automatic",
             "CODE_SIGNING_ALLOWED=YES", "DEVELOPMENT_TEAM=" + release.TEAM,
-            "NOTEBOOK_BUNDLE_SUFFIX=.acceptance", "NOTEBOOK_ACCEPTANCE_ENABLED=YES",
+            "NOTEBOOK_MAC_BUNDLE_SUFFIX=.acceptance", "NOTEBOOK_ACCEPTANCE_ENABLED=YES",
             "NOTEBOOK_SCRIPT_BUNDLE_SUFFIX=.native-test"]
 
 
 def run_selected(root, plan, evidence):
+    root, evidence = root.resolve(), evidence.resolve()
+    plan = {**plan, "format": 2, "sourceRoot": str(root)}
+    checks = validate_plan(plan)
     release.require(not evidence.exists(), "Для проверки нужен новый каталог свидетельств.")
     evidence.mkdir(parents=True)
     before = release.source_inputs(root)
     release.write_json(evidence / "source-before.json", before)
     release.write_json(evidence / "selection.json", plan)
     command = release.release_commands(evidence)
-    toolchain = release.read_toolchain(command)
+    toolchain = selected_toolchain(command, plan)
     release.write_json(evidence / "toolchain.json", toolchain)
-    checks = plan["checks"]
+    required = prerequisites(plan)
+    if "physical-ipad" in required:
+        device = evidence / "physical-ipad.json"
+        command("physical-ipad", ["xcrun", "devicectl", "device", "info", "details", "--device", release.DEVICE,
+                "--timeout", "30", "--json-output", str(device), "--omit-deprecated-fields-in-json"], cwd=root)
+        release.validate_device(release.successful_json(device, "devicectl.device.info.details"))
+    if "unlocked-ipad" in required:
+        check_ipad_lock(root, evidence, command)
+    for prerequisite, argv in (("darwin", ["xcrun", "--sdk", "macosx", "--show-sdk-build-version"]),
+                               ("icon-renderer", ["rsvg-convert", "--version"])):
+        if prerequisite in required:
+            command(prerequisite, argv, cwd=root)
+    if "mcp-dependencies" in required:
+        command("mcp-dependencies", ["npm", "ci", "--ignore-scripts"], cwd=root / "MCP")
+    typescript = None
+    if "typescript" in required:
+        typescript = release.prepare_typescript_runtime(root, command)
+    if "recognition-dependencies" in required:
+        command("recognition-dependencies", ["npm", "ci", "--ignore-scripts", "--prefix",
+                str(root / "Tests/NotebookRecognitionHarness")], cwd=root)
+    ipc_host = None
+    if "ipc-host" in required:
+        command("ipc-host", ["swift", "build", "--product", "notebook-ipc-test-host"], cwd=root, timeout=600)
+        output = command("ipc-binpath", ["swift", "build", "--show-bin-path"], cwd=root, read_output=True)[0]
+        binpath = Path(output.decode().strip())
+        release.require(binpath.is_absolute() and binpath.is_relative_to(root / ".build"), "Неверный IPC host prerequisite.")
+        ipc_host = binpath / "notebook-ipc-test-host"
+    if checks["core"]:
+        command("core-inventory", core_arguments(evidence, typescript=typescript), cwd=root, timeout=600, pipe_stdout=True)
+        inventory = reports.swift_inventory(core_inventory_stream(evidence), root)
+        expected = reports.resolve(checks["core"], list(inventory), core=True)
+        for product, identities in core_products(expected).items():
+            command("core-" + product, core_arguments(evidence, identities, typescript, product), cwd=root, timeout=600)
+        release.write_json(evidence / "core-execution.json", core_execution(evidence, expected, root))
+    for name in checks["commands"]:
+        check = COMMANDS[name]
+        argv, cwd, scripts = portable_arguments(root, evidence, name)
+        release.require(all(script.is_file() and not script.is_symlink() for script in scripts), "Отсутствует prerequisite источника: " + name)
+        if name in ("mcp", "mcp-smoke"):
+            if name == "mcp":
+                command("mcp-check", ["npm", "run", "check"], cwd=root / "MCP", timeout=300)
+            argv = ["/usr/bin/env", "NOTEBOOK_IPC_TEST_HOST=" + str(ipc_host), *argv]
+        command(name, argv, cwd=cwd, timeout=600)
+        if check.parser == "python-unittest":
+            reports.python_execution(release.read_json(evidence / (name + "-inventory.json")),
+                                     release.read_json(evidence / (name + "-execution.json")), scripts[0])
+        else:
+            if check.parser == "node-events":
+                execution = reports.node_execution(reports.rows(evidence / (name + ".stdout.log")), scripts, root)
+            else:
+                if check.parser == "json-contract":
+                    release.require(release.read_json(evidence / (name + ".stdout.log")).get("status") == check.success,
+                                    "JSON contract не завершён: " + name)
+                execution = {"format": 1, "planned": [name], "executed": [name], "skipped": [], "failed": []}
+            release.write_json(evidence / (name + "-inventory.json"), {"format": 1, "tests": execution["planned"]})
+            release.write_json(evidence / (name + "-execution.json"), execution)
     ipad_ui = any(selector.split("/")[0] == "NotebookUITests" for selector in checks["ipad"])
     if checks["ipad"]:
         command("ipad-native-test-cleanup-before", native_ipad_cleanup_arguments(), timeout=120)
         if ipad_ui:
             command("ipad-ui-runner-cleanup-before", native_ipad_cleanup_arguments(NATIVE_IPAD_UI_RUNNER), timeout=120)
-    # Every Mac host bundles the MCP sidecar, even a document-only XCTest
-    # selection from a clean immutable source copy. Prepare its locked build
-    # dependencies independently of whether MCP behavioral tests are selected.
-    if checks["mac"] or "mcp" in checks["commands"]:
-        command("mcp-dependencies", ["npm", "ci", "--ignore-scripts"], cwd=root / "MCP")
-    if checks["core"]:
-        output, _ = command("core", ["swift", "test", "--filter", "|".join(checks["core"])], cwd=root, timeout=600, read_output=True)
-        release.require(re.search(rb"Test run with [1-9][0-9]* tests? .*passed", output), "Core не исполнил выбранные тесты.")
-    for name in checks["commands"]:
-        if name == "document-browser":
-            command(name, document_browser_arguments(root), cwd=root)
-        elif name == "voice-audio":
-            command(name, ["node", "--test", str(root / "Tests/NotebookVoiceHarness/audio.test.mjs")], cwd=root)
-        elif name == "mcp":
-            command("mcp-check", ["npm", "run", "check"], cwd=root / "MCP")
-            command("mcp-test", ["npm", "test"], cwd=root / "MCP", timeout=300)
-        elif name == "trace-harness":
-            command(name, [sys.executable, "-B", str(root / "Tests/NotebookDocumentAcceptance/test_system_trace.py")], cwd=root)
-        else:
-            script = "NotebookVerification" if name == "verification" else "NotebookRelease"
-            command(name, [sys.executable, "-B", str(root / "Tests" / script / "run.py")], cwd=root)
     if checks["mac"] or checks["ipad"]:
         command("generate-project", ["xcodegen", "generate", "--spec", "project.yml"], cwd=root / "Applications")
-    # Xcode still builds changed dependencies. Only its derived products are reused;
-    # fixtures, test execution, source hashes and result bundles are always fresh.
     derived = Path(tempfile.gettempdir()) / "notebook-selected-builds" / hashlib.sha256(str(root).encode()).hexdigest()[:16]
-    for platform, scheme in (("ipad", "Notebook"), ("mac", "NotebookRuntime")):
+    for platform in ("ipad", "mac"):
         if not checks[platform]:
             continue
-        destination = "platform=macOS"
-        if platform == "ipad":
-            destination = "platform=iOS,id=" + release.UDID
-        result = evidence / (platform + ".xcresult")
-        args = ["xcrun", "xcodebuild", "-quiet", "-project", "Notebook.xcodeproj", "-scheme", scheme,
-                "-configuration", "Debug", "-destination", destination, "-derivedDataPath", str(derived / platform),
-                "-resultBundlePath", str(result), "-parallel-testing-enabled", "NO", "-collect-test-diagnostics", "never",
-                "test"] + ["-only-testing:" + selector for selector in checks[platform]]
-        if plan.get("optimized", False):
-            # Keep the isolated DEBUG fixtures; measure compiled application
-            # code and the C interpreter with Release optimization, not debug
-            # bookkeeping charged to the same CPU budget. Record the selection.
-            args.extend(["SWIFT_OPTIMIZATION_LEVEL=-O", "GCC_OPTIMIZATION_LEVEL=s"])
-        if platform == "ipad":
-            args.extend(native_ipad_signing_settings())
-        runtime = release.prepare_typesetter_runtime(root, command, "macosx" if platform == "mac" else "iphoneos")
-        args.append("NOTEBOOK_TYPESETTER_RUNTIME=" + str(runtime))
+        sdk = "macosx" if platform == "mac" else "iphoneos"
+        release.prepare_typesetter_runtime(root, command, sdk, stage=root / ".build/notebook-typesetter-runtime")
         if platform == "mac":
             release.prepare_codex_runtime(root, command)
-            surface_stage = release.prepare_surface_stage(root, command)
-            args.append("NOTEBOOK_SURFACE_STAGE=" + str(surface_stage))
-            typescript_runtime = release.prepare_typescript_runtime(root, command)
-            args.append("NOTEBOOK_TYPESCRIPT_RUNTIME=" + str(typescript_runtime))
-            args.extend(native_mac_signing_settings())
-            build_args = [value for value in args if value not in ("-resultBundlePath", str(result), "test")]
-            command("mac-build-for-testing", build_args + ["build-for-testing"], cwd=root / "Applications", timeout=1800)
-            app = derived / "mac/Build/Products/Debug/NotebookRuntime.app"
-            display = command("mac-native-signer", ["/usr/bin/codesign", "--display", "--verbose=4", app], read_output=True)
-            signer, identity = release.development_signer(b"\n".join(display).decode(), release.MAC_BUNDLE + ".acceptance")
-            release.restrict_test_script_services(app, root, command, bundle_identifier=release.MAC_BUNDLE + ".acceptance", signing_identity=signer)
-            release.write_json(evidence / "mac-native-signature.json", {"identity": identity,
-                "workerBundleSuffix": ".native-test", "scope": "isolated stateless native-test workers"})
-            args[args.index("test")] = "test-without-building"
+            release.prepare_surface_stage(root, command)
         try:
-            if platform == "ipad" and ipad_ui:
-                build_args = [value for value in args if value not in ("-resultBundlePath", str(result), "test")]
-                command("ipad-build-for-testing", build_args + ["build-for-testing"], cwd=root / "Applications", timeout=1800)
+            command(platform + "-build-for-testing", native_arguments(root, evidence, plan, platform,
+                    checks[platform], "build-for-testing", typescript), cwd=root / "Applications", timeout=1800)
+            configured = None
+            if platform == "mac":
+                app = derived / "mac/Build/Products/Debug/NotebookRuntime.app"
+                display = command("mac-native-signer", ["/usr/bin/codesign", "--display", "--verbose=4", app], read_output=True)
+                signer, identity = release.development_signer(b"\n".join(display).decode(), release.MAC_BUNDLE + ".acceptance")
+                release.restrict_test_script_services(app, root, command, bundle_identifier=release.MAC_BUNDLE + ".acceptance", signing_identity=signer)
+                release.write_json(evidence / "mac-native-signature.json", {"identity": identity,
+                    "workerBundleSuffix": ".native-test", "scope": "isolated stateless native-test workers"})
+            elif ipad_ui:
                 configured = install_native_ipad_ui_artifacts(derived / "ipad/Build/Products", evidence, command)
-                args = ["xcrun", "xcodebuild", "-quiet", "-xctestrun", str(configured),
-                        "-destination", destination, "-resultBundlePath", str(result),
-                        "-parallel-testing-enabled", "NO", "-collect-test-diagnostics", "never",
-                        "test-without-building"] + ["-only-testing:" + selector for selector in checks[platform]]
+                release.write_json(evidence / "ipad-configured-run.json", {"path": str(configured), "sha256": release.file_digest(configured)})
+                (evidence / "ipad-configured-run.plist").write_bytes(configured.read_bytes())
+            enumeration = native_arguments(root, evidence, plan, platform, checks[platform], "test-without-building", typescript, configured)
+            enumeration = [value for value in enumeration if value not in ("-resultBundlePath", str(evidence / (platform + ".xcresult")))]
+            enumeration.extend(("-enumerate-tests", "-test-enumeration-style", "flat", "-test-enumeration-format", "json",
+                                "-test-enumeration-output-path", str(evidence / (platform + "-inventory.json"))))
+            if platform == "ipad":
+                check_ipad_lock(root, evidence, command, "inventory")
+            command(platform + "-inventory", enumeration, cwd=root / "Applications", timeout=300)
+            inventory = reports.native_inventory(release.read_json(evidence / (platform + "-inventory.json")))
+            expected = reports.resolve(checks[platform], inventory)
+            args = native_arguments(root, evidence, plan, platform, expected, "test-without-building", typescript, configured)
+            if platform == "ipad":
+                check_ipad_lock(root, evidence, command, "execution")
             command(platform, args, cwd=root / "Applications", timeout=1800)
-            summary, _ = command(platform + "-summary", ["xcrun", "xcresulttool", "get", "test-results", "summary", "--path", str(result), "--compact"], read_output=True)
-            summary = json.loads(summary); validate_summary(summary)
-            release.write_json(evidence / (platform + "-summary.json"), summary)
-            tests, _ = command(platform + "-tests", ["xcrun", "xcresulttool", "get", "test-results", "tests", "--path", str(result), "--compact"], read_output=True)
-            tests = json.loads(tests)
-            validate_executed_tests(tests, checks[platform])
-            release.write_json(evidence / (platform + "-tests.json"), tests)
-            release.write_json(evidence / (platform + "-timings.json"), timing_report(tests))
+            result = evidence / (platform + ".xcresult")
+            for report in ("summary", "tests"):
+                output = command(platform + "-" + report, ["xcrun", "xcresulttool", "get", "test-results", report,
+                                 "--path", str(result), "--compact"], read_output=True)[0]
+                release.write_json(evidence / (platform + "-" + report + ".json"), json.loads(output))
+            tree = release.read_json(evidence / (platform + "-tests.json"))
+            execution = reports.native_execution(tree, checks[platform], inventory)
+            reports.validate_summary(release.read_json(evidence / (platform + "-summary.json")), reports.native_outcomes(tree))
+            release.write_json(evidence / (platform + "-execution.json"), execution)
+            release.write_json(evidence / (platform + "-timings.json"), timing_report(tree))
             if selected_hitch_tests(checks[platform]):
-                metrics, _ = command(platform + "-metrics", ["xcrun", "xcresulttool", "get", "test-results", "metrics", "--path", str(result), "--compact"], read_output=True)
-                metrics = json.loads(metrics)
-                release.write_json(evidence / (platform + "-metrics.json"), metrics)
-                validate_hitch_metrics(metrics, checks[platform])
+                metrics = command(platform + "-metrics", ["xcrun", "xcresulttool", "get", "test-results", "metrics",
+                                  "--path", str(result), "--compact"], read_output=True)[0]
+                release.write_json(evidence / (platform + "-metrics.json"), json.loads(metrics))
+                validate_hitch_metrics(json.loads(metrics), checks[platform])
         finally:
             if platform == "ipad":
                 try:
@@ -752,15 +887,34 @@ def run_selected(root, plan, evidence):
                 finally:
                     if ipad_ui:
                         command("ipad-ui-runner-cleanup-after", native_ipad_cleanup_arguments(NATIVE_IPAD_UI_RUNNER), timeout=120)
-    release.write_json(evidence / "completed.json", checks)
     after = release.source_inputs(root)
     release.write_json(evidence / "source-after.json", after)
     release.require(before == after, "Исходники изменились во время выбранных проверок.")
-    release.require(release.read_toolchain(command, prefix="toolchain-after-") == toolchain, "Сменился инструмент проверки.")
-    receipt = {"format": 1, "route": "./verify.sh:selected", "status": "passed", "source": before,
-               "artifacts": release.verification_artifacts(evidence, full=False)}
-    release.write_json(evidence / "verification.json", receipt)
-    return receipt
+    observed_toolchain = selected_toolchain(command, plan, prefix="toolchain-after-")
+    release.write_json(evidence / "toolchain-after.json", observed_toolchain)
+    release.require(observed_toolchain == toolchain, "Сменился инструмент проверки.")
+    actual = validate_check_evidence(root, plan, evidence, read_commands(evidence))
+    release.write_json(evidence / "completed.json", {"format": 2, "checks": actual})
+    return release.finish_verification(root, evidence)
+
+
+@contextmanager
+def verification_slot(root, plan):
+    # Dependency preparation and SwiftPM share mutable build state only inside
+    # one checkout. Xcode and the physical iPad additionally share a host slot.
+    directory = Path(tempfile.gettempdir())
+    checkout = hashlib.sha256(str(root.resolve()).encode()).hexdigest()[:16]
+    paths = [directory / ("notebook-verification-" + checkout + ".lock")]
+    if plan["checks"]["mac"] or plan["checks"]["ipad"]:
+        paths.insert(0, directory / "notebook-verification.lock")
+    with ExitStack() as locks:
+        for path in paths:
+            lock = locks.enter_context(path.open("w"))
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as error:
+                raise release.ReleaseError("Другой маршрут использует этот checkout или native runner; второй не запущен.") from error
+        yield
 
 
 def main(argv=None):
@@ -771,7 +925,7 @@ def main(argv=None):
     parser.add_argument("--plan", action="store_true", help="показать выбор, ничего не запускать")
     parser.add_argument("--base", default="HEAD", help="Git ref начала правки; по умолчанию незакоммиченные изменения")
     parser.add_argument("--profile", action="append", choices=sorted(PROFILES), default=[])
-    parser.add_argument("--test", action="append", default=[], help="точный XCTest target/suite/method")
+    parser.add_argument("--test", action="append", default=[], help="точный Swift/XCTest target/suite[/method]")
     parser.add_argument("--evidence-dir", type=Path)
     parser.add_argument("--timings", type=Path, help="прочитать времена из существующего xcresult без запуска тестов")
     args = parser.parse_args(argv)
@@ -780,7 +934,7 @@ def main(argv=None):
     if args.timings:
         tree = json.loads(subprocess.check_output(["xcrun", "xcresulttool", "get", "test-results", "tests", "--path", str(args.timings), "--compact"]))
         print(json.dumps(timing_report(tree), ensure_ascii=False, indent=2)); return
-    plan = {"route": "full", "notice": "Все нагрузки, native и UI; не обычная итерация."} if args.full else make_plan(ROOT, args.base, args.profile, args.test, only=args.only)
+    plan = full_plan(ROOT) if args.full else make_plan(ROOT, args.base, args.profile, args.test, only=args.only)
     if not args.full:
         plan["optimized"] = args.optimized
     print(json.dumps(plan, ensure_ascii=False, indent=2), flush=True)
@@ -790,24 +944,15 @@ def main(argv=None):
         release.require(not plan["unclassified"] or plan["manualSelection"], "Неизвестен владелец части правок: выберите --profile/--test. Полный прогон сам не запустится.")
         if not any(plan["checks"].values()):
             print("Исполняемые изменения не выбраны. Для уже созданного коммита укажите --base HEAD^."); return
-    lock_path = Path(tempfile.gettempdir()) / "notebook-verification.lock"
-    with lock_path.open("w") as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            raise release.ReleaseError("Другой маршрут уже выполняется; второй не запущен.")
+    with verification_slot(ROOT, plan):
         # Existing runners from before this selector also own the native slot.
-        running = subprocess.run(["pgrep", "-x", "xcodebuild"], capture_output=True).returncode == 0
-        release.require(not running, "Xcode уже занят другим владельцем; второй runner не запущен.")
-        if args.full:
-            env = os.environ.copy()
-            if args.evidence_dir:
-                env["NOTEBOOK_VERIFY_EVIDENCE_DIR"] = str(args.evidence_dir.resolve())
-            subprocess.run(["/bin/bash", str(ROOT / "Tests/NotebookVerification/full.sh")], cwd=ROOT, env=env, check=True)
-        else:
-            evidence = args.evidence_dir or ROOT / ".build" / ("selected-" + time.strftime("%Y%m%d-%H%M%S"))
-            run_selected(ROOT, plan, evidence.resolve())
-            print("Выбранные проверки прошли; это не полный прогон. Свидетельства:", evidence)
+        if plan["checks"]["mac"] or plan["checks"]["ipad"]:
+            running = subprocess.run(["pgrep", "-x", "xcodebuild"], capture_output=True).returncode == 0
+            release.require(not running, "Xcode уже занят другим владельцем; второй runner не запущен.")
+        evidence = args.evidence_dir or ROOT / ".build" / (("full-" if args.full else "selected-") + time.strftime("%Y%m%d-%H%M%S"))
+        run_selected(ROOT, plan, evidence.resolve())
+        print("Контракты реестра прошли. Свидетельства:", evidence)
+
 
 
 if __name__ == "__main__":

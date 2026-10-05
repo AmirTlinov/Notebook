@@ -18,13 +18,14 @@ sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "Applications"))
 import notebook_release as release
+import notebook_verification as verify
 import typesetter_fixture
 import typescript_fixture
 from cli_fixture import FakeCLI
 from test_typesetter import TypesetterPackagingTests
 
 TOOLCHAIN = {name: "fixture " + name + " version" for name in
-             ("xcode", "swift", "iphoneosSDK", "macosSDK", "xcodegen", "node", "npm")}
+             ("python", "xcode", "swift", "iphoneosSDK", "macosSDK", "xcodegen", "node", "npm")}
 
 
 class PairCLI(FakeCLI):
@@ -284,13 +285,22 @@ class ReleaseTests(unittest.TestCase):
             type_patch.start(); self.addCleanup(type_patch.stop)
         self.verification = self.root / "verification"
         self.verification.mkdir()
-        for file in release.VERIFICATION_FILES:
-            (self.verification / file).write_bytes(b"fabricated unit-test evidence; NOT a verify.sh PASS\n")
-        for platform in ("mac", "ipad"):
-            (self.verification / (platform + ".xcresult")).mkdir()
-            (self.verification / (platform + ".xcresult") / "Data").write_bytes(b"fabricated test result")
-            release.write_json(self.verification / (platform + "-summary.json"), {
-                "passedTests": 1, "failedTests": 0, "skippedTests": 0, "runtimeWarnings": []})
+        # This is a selected, fabricated contract for release guard tests.
+        # Router tests separately exercise real discovery and runner parsing.
+        script = self.source / "Applications/test-load-fixture.sh"
+        script.write_text("#!/bin/sh\nexit 0\n")
+        plan = {"format": 2, "sourceRoot": str(self.source), "selectionMode": "explicit-only", "profiles": [],
+                "unclassified": [], "manualSelection": True,
+                "checks": {"core": [], "mac": [], "ipad": [], "commands": ["load-fixture"]}}
+        execution = {"format": 1, "planned": ["load-fixture"], "executed": ["load-fixture"], "skipped": [], "failed": []}
+        release.write_json(self.verification / "selection.json", plan)
+        release.write_json(self.verification / "completed.json", {"format": 2, "checks": {"load-fixture": execution}})
+        release.write_json(self.verification / "load-fixture-inventory.json", {"format": 1, "tests": ["load-fixture"]})
+        release.write_json(self.verification / "load-fixture-execution.json", execution)
+        release.write_json(self.verification / "commands.json", [{"label": "load-fixture", "argv": [str(script)], "cwd": str(self.source), "exitCode": 0}])
+        nested = self.verification / "runner-payload"; nested.mkdir()
+        (nested / "Data").write_bytes(b"fabricated nested test result")
+        (self.verification / "core.log").write_bytes(b"fabricated unit-test evidence; NOT a verify.sh PASS\n")
         self.before = release.source_inputs(self.source)
         release.write_json(self.verification / "source-before.json", self.before)
         release.write_json(self.verification / "toolchain.json", TOOLCHAIN)
@@ -499,7 +509,7 @@ class ReleaseTests(unittest.TestCase):
         self.refused("обычный файл", before_commands=True)
 
     def test_changed_result_payload_invalidates_evidence(self):
-        (self.verification / "ipad.xcresult/Data").write_bytes(b"different xcresult")
+        (self.verification / "runner-payload/Data").write_bytes(b"different xcresult")
         self.refused("Свидетельства", before_commands=True)
 
     def test_changed_log_invalidates_evidence(self):
@@ -507,20 +517,19 @@ class ReleaseTests(unittest.TestCase):
         self.refused("Свидетельства", before_commands=True)
 
     def test_missing_required_log_invalidates_evidence(self):
-        (self.verification / "mcp-smoke.log").unlink()
-        self.refused("обязательные свидетельства", before_commands=True)
+        (self.verification / "load-fixture-execution.json").unlink()
+        self.refused("JSON-файла", before_commands=True)
 
     def test_symlink_result_is_rejected(self):
         (self.verification / "external-result").symlink_to(self.source / "Package.swift")
         self.refused("ссылаться", before_commands=True)
 
-    def test_failed_skipped_warning_or_empty_native_run_cannot_finish(self):
-        for field, value in (("failedTests", 1), ("skippedTests", 1), ("runtimeWarnings", [{}]), ("passedTests", 0)):
+    def test_incomplete_failed_or_skipped_execution_cannot_finish(self):
+        for field, value in (("failed", ["load-fixture"]), ("skipped", ["load-fixture"]), ("executed", []), ("format", 0)):
             with self.subTest(field=field):
-                path = self.verification / "mac-summary.json"
-                summary = {"passedTests": 1, "failedTests": 0, "skippedTests": 0, "runtimeWarnings": []}
-                summary[field] = value
-                release.write_json(path, summary)
+                report = {"format": 1, "planned": ["load-fixture"], "executed": ["load-fixture"], "skipped": [], "failed": []}
+                report[field] = value
+                release.write_json(self.verification / "load-fixture-execution.json", report)
                 (self.verification / "verification.json").unlink(missing_ok=True)
                 with self.assertRaises(release.ReleaseError):
                     release.finish_verification(self.source, self.verification)
