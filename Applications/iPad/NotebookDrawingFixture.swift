@@ -356,7 +356,12 @@
           } else {
             files += [.init(id: "square-html", path: "programs/square/index.html", source: "<label for='x'>x = <output id='value'>3</output></label><input id='x' type='range' min='0' max='10' value='3'><p>x² = <strong id='square'>9</strong></p>"),
               .init(id: "square-css", path: "programs/square/style.css", source: "body{font:22px -apple-system;padding:18px}input{width:100%}"),
-              .init(id: "square-js", path: "programs/square/main.js", source: "const x=document.querySelector('#x');const value=document.querySelector('#value');const square=document.querySelector('#square');x.addEventListener('input',()=>{value.textContent=x.value;square.textContent=Number(x.value)**2;notebook.commit({x:Number(x.value)})});notebook.ready(Promise.resolve())"),
+              .init(id: "square-js", path: "programs/square/main.js", source: """
+                const x=document.querySelector('#x'),value=document.querySelector('#value'),square=document.querySelector('#square');
+                function draw(){x.value=notebook.state.x;value.textContent=x.value;square.textContent=Number(x.value)**2}
+                x.addEventListener('input',()=>{notebook.commit({x:Number(x.value)});draw()});
+                addEventListener('notebookstate',draw);draw();notebook.ready(Promise.resolve());
+                """),
               .init(id: "square-config", path: "programs/square/program.json", source: #"{"initialState":{"x":3}}"#)]
             body = #"\section{Живая математика}"# + "\nДокумент соединяет текст, формулы и управление.\n"
               + #"\[f(x)=x^2,\quad f'(x)=2x\]"# + "\n"

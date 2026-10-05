@@ -195,11 +195,22 @@ final class NotebookProgramStateTransfer {
       self.acknowledge = acknowledge; self.accept = accept; self.onFailure = onFailure
     }
   }
+  /// A frozen read owns both its queued admission and its admitted windows.
+  /// Revocation cancels waiting; an in-flight browser reply retains its bytes.
+  private final class CheckpointPreparation {
+    let state: StateRead
+    let admission: Task<RasterReservation, Error>?
+    init(_ descriptor: Snapshot, additionalBytes: Int, resources: SceneRenderResources) {
+      state = StateRead(descriptor)
+      admission = additionalBytes > 0
+        ? Task { @MainActor in try await resources.acquirePassiveDerivedBytes(additionalBytes) } : nil
+    }
+    func revoke() { state.revoked = true; admission?.cancel() }
+  }
   private var head: Pending?
   private var last: Pending?
   private var tail: Task<Void, Never>?
-  private var checkpointRead: StateRead?
-  private var checkpointReservation: RasterReservation?
+  private var checkpointRead: CheckpointPreparation?
   var hasPendingCheckpoint: Bool { checkpointRead != nil }
   private var pendingCost = 0
   private var lastRevision: UInt64 = 0
@@ -301,8 +312,7 @@ final class NotebookProgramStateTransfer {
     head?.state.revoked = true
     requestedCredit = nil
     if let capacityObserver { NotificationCenter.default.removeObserver(capacityObserver); self.capacityObserver = nil }
-    checkpointRead?.revoked = true
-    checkpointRead = nil; checkpointReservation = nil
+    checkpointRead?.revoke(); checkpointRead = nil
     if tail == nil { releasePending() }
   }
 
@@ -356,21 +366,36 @@ final class NotebookProgramStateTransfer {
 
   func checkpoint(_ descriptor: Snapshot, read: @escaping Read) async throws -> Checkpoint {
     try await drain()
+    try Task.checkCancellation()
     guard !revoked else { throw NotebookProgramCheckpointError.superseded }
     guard descriptor.isValid else { throw SceneRenderError.snapshotPending("program_state_descriptor") }
-    if let checkpointRead {
-      guard checkpointRead.descriptor == descriptor else { throw SceneRenderError.snapshotPending("program_checkpoint_changed") }
+    let preparation: CheckpointPreparation
+    if let current = checkpointRead {
+      guard current.state.descriptor == descriptor else { throw SceneRenderError.snapshotPending("program_checkpoint_changed") }
+      preparation = current
     } else {
       let additional = descriptor.cost - credit.reduce(0, { $0 + $1.byteCount })
-      checkpointReservation = additional > 0 ? try await resources.acquirePassiveDerivedBytes(additional) : nil
-      checkpointRead = StateRead(descriptor)
+      preparation = CheckpointPreparation(descriptor, additionalBytes: additional, resources: resources)
+      checkpointRead = preparation
     }
-    let reservation = checkpointReservation
+    let admission = preparation.admission
+    let reservation: RasterReservation?
+    do {
+      reservation = try await withTaskCancellationHandler {
+        try await admission?.value
+      } onCancel: { admission?.cancel() }
+    } catch {
+      if checkpointRead === preparation { checkpointRead = nil }
+      if revoked { throw NotebookProgramCheckpointError.superseded }
+      throw error
+    }
     defer { withExtendedLifetime(reservation) {} }
-    let value = try await Self.pull(checkpointRead!, read: read)
-    guard !revoked else { throw NotebookProgramCheckpointError.superseded }
+    try Task.checkCancellation()
+    guard !revoked, checkpointRead === preparation else { throw NotebookProgramCheckpointError.superseded }
+    let value = try await Self.pull(preparation.state, read: read)
+    guard !revoked, checkpointRead === preparation else { throw NotebookProgramCheckpointError.superseded }
     let snapshot = Checkpoint(value: value, admittedBytes: descriptor.cost, owner: self, reservation: reservation)
-    checkpointRead = nil; checkpointReservation = nil
+    checkpointRead = nil
     return snapshot
   }
 
@@ -400,7 +425,7 @@ final class NotebookProgramStateTransfer {
   }
 
   isolated deinit {
-    checkpointReservation?.release()
+    checkpointRead?.revoke()
     if let capacityObserver { NotificationCenter.default.removeObserver(capacityObserver) }
     for reservation in credit { reservation.release() }
   }

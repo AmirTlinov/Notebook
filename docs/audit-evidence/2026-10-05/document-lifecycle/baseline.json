@@ -1,0 +1,104 @@
+{
+  "recordedAt": "2026-10-05T10:25:41.156168+00:00",
+  "baselineCommit": "7f7aa362df9de14f111ff247d1feb2f0580c272d",
+  "baselineSourceSHA256": "87f43a9b8a37d2a309f7e07282f1051dcae669a25f33eccf46986ce651d6d763",
+  "scope": "Physical iPad, optimized Debug, isolated native windows. Installation timestamps are not hardware contact-to-display or OS FPS. Single samples; cold24 and cold1 run sequentially after the document test, not independent cold app processes.",
+  "document": [
+    {
+      "attempt": 0,
+      "nativeMS": {
+        "installed": 1645.799125020858,
+        "navigationFinished": 1535.093999991659,
+        "paper": 1451.3116666930728,
+        "programAttached": 1439.9019166594371,
+        "programReady": 1645.799125020858
+      },
+      "observationIntervalMS": 5,
+      "scope": "native window; second open has cached paper, not a cold app process"
+    },
+    {
+      "attempt": 1,
+      "nativeMS": {
+        "installed": 179.156249971129,
+        "navigationFinished": 148.52258330211043,
+        "paper": 121.44145829370245,
+        "programAttached": 69.98945830855519,
+        "programReady": 179.156249971129
+      },
+      "observationIntervalMS": 5,
+      "scope": "native window; second open has cached paper, not a cold app process"
+    }
+  ],
+  "scene": [
+    {
+      "scenario": "cold24",
+      "droppedEvents": 0,
+      "native_preparation_accepted": {
+        "firstMS": 80.708,
+        "lastMS": 589.998,
+        "count": 5
+      },
+      "page_preparation_accepted": {
+        "firstMS": 81.021,
+        "lastMS": 81.021,
+        "count": 1
+      },
+      "first_native_installed": {
+        "firstMS": 329.823,
+        "lastMS": 329.823,
+        "count": 1
+      },
+      "source_native_installed": {
+        "firstMS": 329.823,
+        "lastMS": 988.01,
+        "count": 24
+      },
+      "native_init_started": {
+        "firstMS": 149.302,
+        "lastMS": 880.49,
+        "count": 26
+      }
+    },
+    {
+      "scenario": "cold1",
+      "droppedEvents": 0,
+      "native_preparation_accepted": {
+        "firstMS": 83.949,
+        "lastMS": 158.342,
+        "count": 4
+      },
+      "page_preparation_accepted": {
+        "firstMS": 84.008,
+        "lastMS": 84.008,
+        "count": 1
+      },
+      "first_native_installed": {
+        "firstMS": 189.025,
+        "lastMS": 189.025,
+        "count": 1
+      },
+      "source_native_installed": {
+        "firstMS": 189.025,
+        "lastMS": 189.025,
+        "count": 1
+      },
+      "native_init_started": {
+        "firstMS": 101.242,
+        "lastMS": 101.242,
+        "count": 1
+      }
+    }
+  ],
+  "printPhases": [
+    {
+      "canonicalPrintMS": 1302.168041,
+      "nativeMS": 1286.654083,
+      "source": "3686166A-C7AA-4EBE-BA79-56C4C3477115.json"
+    },
+    {
+      "canonicalPrintMS": 3.908583,
+      "nativeMS": null,
+      "source": "4B6D4A41-D709-431C-B801-D03B4F91E7B8.json"
+    }
+  ]
+}

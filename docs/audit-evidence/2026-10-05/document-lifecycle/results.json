@@ -1,0 +1,80 @@
+{
+  "scope": "Revoked checkpoint resource ownership and first document input across page change, close and a fresh process. Selected verification; not full latency/system acceptance.",
+  "regressionBefore": {
+    "sourceSHA256": "afd11b1ad0f4c00df92cd04dea7d91ed8284917916254aad9d0f6d6969c1b59d",
+    "physicalIPad": {
+      "result": "Failed",
+      "totalTestCount": 1,
+      "passedTests": 0,
+      "failedTests": 1,
+      "skippedTests": 0,
+      "testFailures": [
+        {
+          "failureText": "XCTAssertTrue failed - A retired source cannot wait for unrelated memory to become free",
+          "targetName": "NotebookTests",
+          "testIdentifier": 1,
+          "testIdentifierString": "ProgramStateTransferTests/testRevokedCheckpointLeavesTheMemoryQueueWithoutWaitingForCapacity()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/ProgramStateTransferTests/testRevokedCheckpointLeavesTheMemoryQueueWithoutWaitingForCapacity",
+          "testName": "testRevokedCheckpointLeavesTheMemoryQueueWithoutWaitingForCapacity()"
+        }
+      ],
+      "runtimeWarnings": []
+    },
+    "evidenceDirectory": "artifacts/document-lifecycle-20261005/revocation-before"
+  },
+  "implementation": {
+    "owner": "NotebookProgramStateTransfer.CheckpointPreparation",
+    "behavior": "Queued admission is cancelled when its source is revoked. A pending browser read keeps its reservation until the callback returns. Entered accepted writes still drain independently. Prior separate checkpoint reservation ownership is removed."
+  },
+  "after": {
+    "sourceSHA256": "8b9707f120392d13931539797a29c52ae6357ef623e054a22f880147989f2955",
+    "physicalIPad": {
+      "result": "Passed",
+      "totalTestCount": 19,
+      "passedTests": 19,
+      "failedTests": 0,
+      "skippedTests": 0,
+      "testFailures": [],
+      "runtimeWarnings": []
+    },
+    "Mac": {
+      "result": "Passed",
+      "totalTestCount": 15,
+      "passedTests": 15,
+      "failedTests": 0,
+      "skippedTests": 0,
+      "testFailures": [],
+      "runtimeWarnings": []
+    },
+    "evidenceDirectory": "artifacts/document-lifecycle-20261005/after-2",
+    "ui": "First real slider drag, immediate page change, return, close, reopen, fresh process using the same SQLite fixture; x=7 / x²=49 confirmed in the exported screenshot.",
+    "counts": "18 native iPad + 1 physical UI + 15 Mac; no skips or runtime warnings."
+  },
+  "attempts": [
+    {
+      "directory": "artifacts/document-lifecycle-20261005/after-1",
+      "result": "compile failure",
+      "cause": "Removed checkpointReservation remained in deinit; fixed to revoke the new preparation owner before after-2."
+    }
+  ],
+  "baseline": "baseline.json",
+  "open": "GUI-456 cold/warm24 actual presentation/first accepted action percentiles; GUI-190 system frame/CPU/GPU/memory and full shared work acceptance.",
+  "final": {
+    "version": "0.3.172",
+    "build": "242",
+    "sourceSHA256": "7ca0ad60f7af22c6ca1e310faedfd3f1276f23e8083a23013e756c39f9350992",
+    "verificationSHA256": "2517d2c916d5d39d7e144bc66148287631a815c6a95bcf2772ab4e88f526bb1c",
+    "changesSinceAfter2": [
+      "Applications/project.yml"
+    ],
+    "physicalIPad": {
+      "result": "Passed",
+      "passedTests": 2,
+      "failedTests": 0,
+      "skippedTests": 0,
+      "runtimeWarnings": []
+    },
+    "evidenceDirectory": "artifacts/document-lifecycle-20261005/final-242"
+  },
+  "independentReview": "Accepted after deinit cleanup; cancellation, memory lifetime, retry, all shared callers and cold UI persistence fixture reviewed. No blocking findings."
+}

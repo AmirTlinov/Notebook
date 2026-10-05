@@ -429,6 +429,40 @@ final class ProgramStateTransferTests: XCTestCase {
     snapshot.release(); XCTAssertEqual(resources.rasterAdmission.heldBytes, before)
   }
 
+  func testRevokedCheckpointLeavesTheMemoryQueueWithoutWaitingForCapacity() async throws {
+    let resources = SceneRenderResources(), owner = NotebookProgramStateTransfer(resources: resources)
+    let admission = resources.rasterAdmission
+    let pressure = try XCTUnwrap(resources.reserveDerivedBytes(
+      admission.passiveByteLimit - admission.pinnedBytes - admission.passiveReservedBytes, priority: .passive))
+    defer { pressure.release() }
+    let before = resources.rasterAdmission.heldBytes
+    var completed = false, reads = 0
+    let request = Task { @MainActor in
+      defer { completed = true }
+      do {
+        _ = try await owner.checkpoint(.init(revision: "frozen", units: 1, cost: owner.initialCredit + 64)) { _, _ in
+          reads += 1; return "1"
+        }
+        XCTFail("Revocation must end the queued checkpoint")
+      } catch { XCTAssertTrue(error is NotebookProgramCheckpointError || error is CancellationError) }
+    }
+    let queued = ContinuousClock.now + .seconds(2)
+    while resources.pendingDerivedRequestCount == 0, ContinuousClock.now < queued { await Task.yield() }
+    XCTAssertEqual(resources.pendingDerivedRequestCount, 1)
+    owner.revoke()
+    let revoked = ContinuousClock.now + .milliseconds(200)
+    while !completed, ContinuousClock.now < revoked { try await Task.sleep(for: .milliseconds(1)) }
+    XCTAssertTrue(completed, "A retired source cannot wait for unrelated memory to become free")
+    XCTAssertEqual(resources.pendingDerivedRequestCount, 0)
+    XCTAssertFalse(owner.hasPendingCheckpoint)
+    XCTAssertEqual(resources.rasterAdmission.heldBytes, before)
+    // Release only after observing the revoked queue, so the old behavior
+    // fails promptly without leaving this isolated allocator blocked.
+    pressure.release()
+    await request.value
+    XCTAssertEqual(reads, 0, "No browser read may start after the source was revoked")
+  }
+
   func testCheckpointRevocationRetainsReadAdmissionUntilTheLateWindowReturns() async throws {
     let resources = SceneRenderResources(), owner = NotebookProgramStateTransfer(resources: resources)
     let json = "\"" + String(repeating: "x", count: 300_000) + "\""

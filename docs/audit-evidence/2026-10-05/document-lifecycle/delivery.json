@@ -1,0 +1,79 @@
+{
+  "status": "installed-pair-selected-verification-passed",
+  "recordedAt": "2026-10-05T10:50:06.095178+00:00",
+  "version": "0.3.172",
+  "build": "242",
+  "sourceSHA256": "7ca0ad60f7af22c6ca1e310faedfd3f1276f23e8083a23013e756c39f9350992",
+  "buildSHA256": "d15ab9d39d8b16c86119abb3870c343a271a3574e1eafb1922c0caeefc128543",
+  "verificationSHA256": "2517d2c916d5d39d7e144bc66148287631a815c6a95bcf2772ab4e88f526bb1c",
+  "verificationRoute": "./verify.sh:selected",
+  "apps": {
+    "iPad": {
+      "identifier": "com.amirtlinov.notebook.preview",
+      "cdhash": "a639e09d0ff0125da626af8f39915446725618b0",
+      "manifestSHA256": "ec1ac93d2142e0820a0fc4e93a5cf43af0f378a08042031a39566a7a46f7a47a",
+      "binaryUUID": "22677DFC-3E72-3E79-B7BB-E04AF6850425"
+    },
+    "mac": {
+      "identifier": "com.amirtlinov.notebook.mac",
+      "cdhash": "26c5ff6f1acc96de836771cbcebabeaad91ec777",
+      "manifestSHA256": "511d66dac4e7185e45a82c62cecae4775dace113ec5a938edcda90576d9f8ce1",
+      "binaryUUID": "52D90A01-8B04-3596-ACE4-70B96170E940"
+    }
+  },
+  "mac": {
+    "path": "/Users/amir/Applications/Notebook.app",
+    "servingPID": 74702,
+    "dynamicCodeValidityChecked": true,
+    "servingCDHashMatchesBuild": true,
+    "sameProcessAfterBothInstalls": true,
+    "readEndpoint": "bridge",
+    "installation": "Ordinary app quit, signature and manifest verified staged bundle, atomic rename swap, launch. Old 241 staging bundle removed after installed checks."
+  },
+  "iPad": {
+    "bundleIdentifier": "com.amirtlinov.notebook.preview",
+    "version": "0.3.172",
+    "build": "242",
+    "installOutcome": "success",
+    "launchOutcome": "success",
+    "physicalDevice": true,
+    "containerResetPerformed": false
+  },
+  "continuity": {
+    "immediate": {
+      "afterMacInstall": {
+        "workspaceHeaderUnchanged": true,
+        "observedPresenceUnchanged": true,
+        "selectionDeviceUnchanged": true,
+        "emptySelectionSemanticsUnchanged": true,
+        "ephemeralIDs": "Process session and empty-selection nonce regenerated on relaunch."
+      },
+      "afterIPadInstall": {
+        "workspaceHeaderUnchanged": true,
+        "observedPresenceUnchanged": true,
+        "selectionDeviceUnchanged": true,
+        "emptySelectionSemanticsUnchanged": true,
+        "ephemeralIDs": "Process session and empty-selection nonce regenerated on relaunch."
+      }
+    },
+    "finalWorkspaceHeaderUnchanged": true,
+    "laterObservedContext": "Presence and selection changed after device launch; their byte equality is only recorded for the immediate snapshots. Local Mac page, zoom and program state remained unchanged."
+  },
+  "ui": {
+    "Mac": "CUA AX: document page 23/24, zoom 61%, selected F and 3D mode retained.",
+    "physicalIPad": "The first-input/page-change/close/fresh-process UI scenario passed on physical iPad for the final source before the signed Release pair was installed. Its x=7 / x²=49 screenshot was inspected.",
+    "installedIPadVisual": "Unavailable: Device Hub live view timed out with system audio capture error (GKVoiceChatServiceErrorDomain 32005 / DeviceKit 4002); no valid post-install static screenshot obtained. Installation, version and launch verified with devicectl.",
+    "scope": "Functional physical input and persistence, signed delivery and Mac continuity. No installed iPad screenshot or quantitative latency acceptance claim."
+  },
+  "evidence": {
+    "after-ipad-install.json": "0d6c69d04c7f87dfd9109727acc691053473091a684a8920f6061bd7f91d72c1",
+    "after-mac-install.json": "2ac6df08bb3b6cd16cfdc08beafc8eb796fe605dfed056edfce3b4b4c1075dca",
+    "before-install.json": "2a29fd6f17164109a3807451e67c6a5710d2d974c86e02fe2c7dd7354fd5c4d1",
+    "final-installed.json": "ff9edee6a36bfd85f536348d30ee2011bc45ea663fa109443307f2035244733a",
+    "ipad-after-install.json": "70080f73002fd4fec3e0009c2fab3904eada63d6024599662675b355638afe9a",
+    "ipad-before-install.json": "d5d38263e7839431427edafb19237b62e13c4253d1e90de3ebb69b7d41b72255",
+    "ipad-install.json": "87fbd3d1b8c1ab4ab134645578d214143a11cea4938fef4a6d221c76416d2ec3",
+    "ipad-launch.json": "20ea5064ab0512153f377fb202fb375d4d2d08e858b26144e60b4435de04811f"
+  },
+  "fullAcceptance": "Open in GUI-190: system frame/CPU/GPU/memory, ten repetitions and 30 minutes of joint work. Cold/warm24 actual presentation and first-action percentiles remain in GUI-456."
+}
