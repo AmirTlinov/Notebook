@@ -1068,21 +1068,6 @@ func heldEnvelopesKeepOneCausalCut() throws {
   #expect(try JSONDecoder().decode(NotebookTransportTransient.self, from: JSONEncoder().encode(wire)) == wire)
 }
 
-@Test("Диагностика кадров ограничивает память и отличает частоту от задержки")
-func inputFrameWindowIsBounded() {
-  var frames = InputFrameStatistics()
-  for index in 0...10_000 { frames.record(timestamp: Double(index) / 120, expectedInterval: 1.0 / 120) }
-  #expect(frames.summary.totalIntervals == 10_000)
-  #expect(frames.summary.retainedIntervals == InputFrameStatistics.capacity)
-  #expect(abs(frames.summary.recentIntervalP95MS - 1000.0 / 120) < 0.001)
-  #expect(frames.summary.estimatedUnservicedIntervals == 0)
-  frames.record(timestamp: 10_000.0 / 120 + 0.1, expectedInterval: 1.0 / 120)
-  #expect(abs(frames.summary.maximumIntervalMS - 100) < 0.001)
-  #expect(frames.summary.estimatedUnservicedIntervals == 11)
-  frames.record(timestamp: .nan, expectedInterval: 0)
-  #expect(frames.summary.totalIntervals == 10_001)
-}
-
 @Test("Версия изменения относится к названному физическому владельцу")
 func collaborationContentPreconditionNamesItsActualOwner() throws {
   let f = try CollaborationFixture(); defer { f.clean() }

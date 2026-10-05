@@ -10,7 +10,7 @@ import AppKit
 
 /// Optional, fixed-size evidence for the existing contact receipt. All stamps
 /// share CACurrentMediaTime's clock; target times are predictions, not receipts.
-struct InkContactFrameTiming: Sendable {
+struct InkContactFrameTiming: Codable, Sendable {
   let renderBegan: TimeInterval
   let targetDeadline: TimeInterval?
   let targetPresentation: TimeInterval?
@@ -673,7 +673,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
   /// Optional observation only. GPU completion above is not a presentation ACK.
   /// A receipt identifies the measured contact encoded into this exact drawable;
   /// predictions and unrelated/older frames cannot acknowledge a newer sample.
-  struct ContactFrame: Equatable, Sendable {
+  struct ContactFrame: Codable, Equatable, Sendable {
     let sourceID: UUID
     let revision: UInt64
   }

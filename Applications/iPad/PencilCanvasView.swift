@@ -59,6 +59,7 @@ struct PencilCanvasView: UIViewRepresentable {
     context.coordinator.onRenderReady = onRenderReady
     paper.setInputEnabled(isInputEnabled)
     context.coordinator.attach(to: paper)
+    context.coordinator.bindInputFrameMonitor(model?.inputFrameMonitor, pageID: pageID, on: paper)
     context.coordinator.setPageFinisherCurrent(isInputEnabled)
     context.coordinator.apply(
       penStyle,
@@ -100,6 +101,7 @@ struct PencilCanvasView: UIViewRepresentable {
     )
     context.coordinator.applyOrdered(orderedInput,source:source,on:paper)
     context.coordinator.apply(source, pageID: pageID, to: paper, suppressedIDs: suppressedInkIDs)
+    context.coordinator.bindInputFrameMonitor(model?.inputFrameMonitor, pageID: pageID, on: paper)
     context.coordinator.publishReadiness()
   }
 
@@ -138,6 +140,8 @@ struct PencilCanvasView: UIViewRepresentable {
     private var decodeTask: Task<Void, Never>?
     private var decodeGeneration: UInt64 = 0
     private weak var attachedPaper: PaperCanvasContainerView?
+    private weak var inputFrameMonitor: InputFrameMonitor?
+    private var inputFrameSurface: InputFrameMonitor.Surface?
     private var pageFinisherIsCurrent = false
     var currentSelectionCanvas:InkCanvasView? {
       guard pageFinisherIsCurrent,!pencilActionIsActive,decodeTask == nil,
@@ -184,6 +188,22 @@ struct PencilCanvasView: UIViewRepresentable {
         commit(mutation, on: paper, fit: paper.touchView.completedQuickShape)
       }
       registerPageFinisher(on: paper)
+    }
+
+    func bindInputFrameMonitor(_ monitor: InputFrameMonitor?, pageID: UUID, on paper: PaperCanvasContainerView) {
+      guard monitor !== inputFrameMonitor || (monitor != nil && inputFrameSurface?.pageID != pageID)
+        || (monitor == nil && inputFrameSurface != nil) else { return }
+      if let inputFrameSurface { inputFrameMonitor?.detach(inputFrameSurface) }
+      if inputFrameSurface != nil { paper.inkView.onContactFrameResolved = nil }
+      inputFrameMonitor = monitor
+      inputFrameSurface = monitor.map { _ in .init(id: UUID(), pageID: pageID) }
+      paper.touchView.inputFrameMonitor = monitor
+      paper.touchView.inputFrameSurface = inputFrameSurface
+      paper.touchView.inputFrameContact = nil
+      guard let monitor, let surface = inputFrameSurface else { return }
+      precondition(paper.inkView.onContactFrameResolved == nil, "Do not replace another contact observer")
+      paper.inkView.onContactFrameResolved = { [weak monitor] in monitor?.record($0, on: surface) }
+      paper.touchView.inputFrameContact = { [weak paper] in paper?.inkView.activeContactFrame }
     }
 
     func publishReadiness() {
@@ -349,6 +369,12 @@ struct PencilCanvasView: UIViewRepresentable {
       paper.touchView.finishCurrentAction {}
       releaseMeasuredAction()
       paper.retireInput()
+      if let inputFrameSurface { inputFrameMonitor?.detach(inputFrameSurface) }
+      if inputFrameSurface != nil { paper.inkView.onContactFrameResolved = nil }
+      paper.touchView.inputFrameMonitor = nil
+      paper.touchView.inputFrameSurface = nil
+      paper.touchView.inputFrameContact = nil
+      inputFrameMonitor = nil; inputFrameSurface = nil
       paper.touchView.canBeginAction = { false }
       paper.touchView.onActionWillBegin = nil
       paper.touchView.onActionCancelled = nil
@@ -649,6 +675,11 @@ final class PaperInputView: UIView {
   var presentActiveEraser: ((ActiveEraserStroke) -> Void)?
   var commitActiveEraser: ((PageInkAction) -> Void)?
   var clearActiveAction: (() -> Void)?
+  weak var inputFrameMonitor: InputFrameMonitor?
+  var inputFrameSurface: InputFrameMonitor.Surface?
+  var inputFrameContact: (() -> InkCanvasView.ContactFrame?)?
+  private var inputFrameBatch: InputFrameMonitor.Input?
+  private var profiledSourceID: UUID?
   var resolveQuickShape: (NotebookQuickShapeFit, Double) -> NotebookQuickShapeFit = { fit, _ in fit }
   var onWorkingGraphic: (NotebookWorkingGraphic?, UUID) -> Void = { _, _ in }
   var pageEraserSource: () -> NotebookPageEraserSource? = { nil }
@@ -776,11 +807,15 @@ final class PaperInputView: UIView {
   override func buildMenu(with builder: any UIMenuBuilder) {}
 
   override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+    beginInputFrameBatch(touches, phase: .began)
+    defer { finishInputFrameBatch() }
     guard let touch = drawingTouch(in: touches) else { return }
     beginAction(with: touch, event: event)
   }
 
   override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+    beginInputFrameBatch(touches, phase: .moved)
+    defer { finishInputFrameBatch() }
     guard let touch = drawingTouch(in: touches), touch === activeTouch else {
       return
     }
@@ -788,6 +823,8 @@ final class PaperInputView: UIView {
   }
 
   override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+    beginInputFrameBatch(touches, phase: .ended)
+    defer { finishInputFrameBatch() }
     guard let touch = drawingTouch(in: touches), touch === activeTouch else {
       return
     }
@@ -811,6 +848,8 @@ final class PaperInputView: UIView {
   }
 
   override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+    beginInputFrameBatch(touches, phase: .cancelled)
+    defer { finishInputFrameBatch() }
     guard let touch = drawingTouch(in: touches), touch === activeTouch else {
       return
     }
@@ -825,6 +864,8 @@ final class PaperInputView: UIView {
   }
 
   override func touchesEstimatedPropertiesUpdated(_ touches: Set<UITouch>) {
+    beginInputFrameBatch(touches, phase: .estimated)
+    defer { finishInputFrameBatch() }
     guard actionTool != nil else { return }
 
     var firstChangedIndex: Int?
@@ -838,6 +879,7 @@ final class PaperInputView: UIView {
       let updated = makeSample(from: touch, timestamp: timestamp)
       if samples[sampleIndex].point.location != updated.point.location { quickShape.cancel() }
       samples[sampleIndex] = updated
+      recordInputFrameSample(touch, index: sampleIndex, kind: .estimatedCorrection, replacesSample: true)
       firstChangedIndex = min(firstChangedIndex ?? sampleIndex, sampleIndex)
 
       if !touch.estimatedPropertiesExpectingUpdates.contains(.force) {
@@ -858,6 +900,30 @@ final class PaperInputView: UIView {
       return pencil
     }
     return touches.first(where: acceptsDrawingTouch)
+  }
+
+  private func beginInputFrameBatch(_ touches: Set<UITouch>, phase: InputFrameMonitor.Phase) {
+    guard let inputFrameMonitor, let inputFrameSurface, !simulatesPencilContacts,
+      touches.contains(where: { $0.type == .pencil }) else { return }
+    inputFrameBatch = inputFrameMonitor.beginInput(on: inputFrameSurface, phase: phase)
+  }
+  private func finishInputFrameBatch() {
+    guard var batch = inputFrameBatch else { return }
+    inputFrameBatch = nil
+    batch.returned = CACurrentMediaTime()
+    inputFrameMonitor?.record(batch)
+  }
+  private func recordInputFrameSample(_ touch: UITouch, index: Int,
+    kind: InputFrameMonitor.SampleKind, replacesSample: Bool) {
+    guard inputFrameBatch != nil, touch.type == .pencil, let actionTool else { return }
+    profiledSourceID = actionStrokeID
+    inputFrameBatch?.accept(.init(timestamp: touch.timestamp, index: index, kind: kind,
+      replacesSample: replacesSample), sourceID: actionStrokeID, tool: actionTool)
+  }
+  private func recordInputFrameProjection() {
+    guard inputFrameBatch != nil, let contact = inputFrameContact?(),
+      contact.sourceID == inputFrameBatch?.sourceID else { return }
+    inputFrameBatch?.contact = contact
   }
 
   private var elementContact = InkElementContact([])
@@ -951,7 +1017,9 @@ final class PaperInputView: UIView {
     let coalesced = event?.coalescedTouches(for: touch) ?? [touch]
     var firstChangedIndex: Int?
     for sampleTouch in coalesced where acceptsDrawingTouch(sampleTouch) {
-      guard let changedIndex = appendActualSample(from: sampleTouch) else {
+      let profileKind: InputFrameMonitor.SampleKind? = inputFrameBatch == nil ? nil
+        : sampleTouch.timestamp == touch.timestamp ? .actual : .coalesced
+      guard let changedIndex = appendActualSample(from: sampleTouch, profileKind: profileKind) else {
         continue
       }
       firstChangedIndex = min(firstChangedIndex ?? changedIndex, changedIndex)
@@ -966,7 +1034,7 @@ final class PaperInputView: UIView {
   }
 
   @discardableResult
-  private func appendActualSample(from touch: UITouch) -> Int? {
+  private func appendActualSample(from touch: UITouch, profileKind: InputFrameMonitor.SampleKind?) -> Int? {
     let timestamp = max(0, touch.timestamp - actionStartTimestamp)
     let sample = makeSample(from: touch, timestamp: timestamp)
 
@@ -978,6 +1046,7 @@ final class PaperInputView: UIView {
         $0.value != lastIndex
       }
       registerForceEstimate(for: touch, at: lastIndex)
+      if let profileKind { recordInputFrameSample(touch, index: lastIndex, kind: profileKind, replacesSample: true) }
       return lastIndex
     }
 
@@ -987,6 +1056,7 @@ final class PaperInputView: UIView {
     samples.append(sample)
     let sampleIndex = samples.count - 1
     registerForceEstimate(for: touch, at: sampleIndex)
+    if let profileKind { recordInputFrameSample(touch, index: sampleIndex, kind: profileKind, replacesSample: false) }
     return sampleIndex
   }
 
@@ -1232,6 +1302,7 @@ final class PaperInputView: UIView {
 
   private func showMeasuredActionWithoutPredictions() {
     guard quickShape.fit == nil else { return }
+    defer { recordInputFrameProjection() }
     if actionTool == .eraser, let activeEraserStroke {
       presentMeasuredErasure(activeEraserStroke)
     } else if let activePenStroke {
@@ -1242,6 +1313,7 @@ final class PaperInputView: UIView {
 
   private func refreshAction() {
     guard actionTool != nil, !samples.isEmpty, quickShape.fit == nil else { return }
+    defer { recordInputFrameProjection() }
     predictedSamples = predictedSamples.filter {
       $0.timestamp > (samples.last?.timestamp ?? 0)
     }
@@ -1325,6 +1397,11 @@ final class PaperInputView: UIView {
   }
 
   private func clearAction(preservingShapeHistory: Bool = false) -> Bool {
+    if let profiledSourceID {
+      inputFrameMonitor?.contactEnded(profiledSourceID,
+        reason: actionEndedNormally ? .lift : inputFrameBatch?.phase == .cancelled ? .cancelled : .retired)
+      self.profiledSourceID = nil
+    }
     if preservingShapeHistory { quickShape.endContact() } else { quickShape.cancel() }
     let reportedPencilActivity = reportsPencilActivity
     clearActiveAction?()

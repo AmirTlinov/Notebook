@@ -84,6 +84,7 @@ struct NotebookApp: App {
         Task {
           _ = await model.finishProgramBoundary()
           await model.finishPendingInteraction()
+          await model.inputFrameMonitor?.checkpoint()
           if task != .invalid { UIApplication.shared.endBackgroundTask(task) }
         }
       }

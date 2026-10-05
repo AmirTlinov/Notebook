@@ -1129,7 +1129,7 @@ final class NotebookAppModel {
   private(set) var pairedPeers: [NotebookTransportIdentity] = []
   @ObservationIgnored private var peerGenerations: [UUID: UUID] = [:]
   #if os(iOS)
-    @ObservationIgnored private let inputFrameMonitor: InputFrameMonitor?
+    @ObservationIgnored let inputFrameMonitor: InputFrameMonitor?
   #endif
   @ObservationIgnored private var diskRefreshTask: Task<Void, Never>?
   @ObservationIgnored private var arrivalDrainTask: Task<Void, Never>?
@@ -6460,6 +6460,9 @@ final class NotebookAppModel {
         let owners = scenePresentationOwners.values.compactMap(\.value)
         scenePresentationOwners.removeAll()
         for owner in owners { owner.uninstall() }
+        #if os(iOS)
+          await inputFrameMonitor?.finish()
+        #endif
       }
       return saved
     }

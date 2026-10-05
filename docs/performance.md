@@ -714,10 +714,29 @@ Historical September 6 measurements, source hashes and negative controls are kep
 They are not current-device performance claims.
 
 Some UIKit/AppKit snapshots and final composition/crops still run on main.
-Off-main preparation still consumes CPU/memory. Display-callback timing in
-`runtime/input-frames.json` is written only by an iOS process launched with
-`--notebook-profile-input`; ordinary Pencil input does not install its display callback
-or rewrite a diagnostic file. That scheduling log and history timing in
-`runtime/collaboration-ui.json` do not prove actual presented GPU frames or 120 FPS. Physical gestures, system frame/
-CPU/GPU/memory traces, repeated scenarios and long-session acceptance are recorded
-separately in [verification](verification.md).
+Off-main preparation still consumes CPU/memory.
+
+Launch iPad Notebook with `--notebook-profile-input` to record real Pencil on a
+page in the selected workspace's `runtime/pencil-input.json`. Draw, lift, erase,
+then background the app to flush through its existing input-saving boundary.
+The model-owned `InputFrameMonitor` installs no clock. It records admitted actual
+and coalesced `UITouch.timestamp`, handler entry/return, the projected contact
+revision, and the existing Metal receipt's render/defer/late-dispatch/deadline,
+GPU and actual OS presentation times. Predictions are excluded. Estimated
+corrections retain the old touch timestamp and their separate handler arrival;
+their correction latency starts at that arrival. The trace covers page Pencil,
+not board input or simulated finger contacts; test-process captures are marked.
+
+Typed input and receipt buffers are bounded to 32,768 sample/event units each,
+with at most 64 measurements per callback. Overflow counts and terminal boundaries
+remain explicit. The utility writer formats, matches and writes after lift or a
+terminal boundary, with at most two additional late-receipt flushes per activity;
+background/checkpoint flushes the retained remainder. Complete matching OS tile
+groups can resolve earlier revisions of the same surface/contact. Lift, detach,
+OS discard and missing receipts never create a presentation acknowledgment.
+Every captured input batch has an outcome, including an explicit unresolved one.
+The profile adds bounded callback work and the existing renderer's optional
+timing observer; its overhead has not been calibrated out of the measurements.
+It neither reports FPS nor establishes the 20 ms gate when samples are unresolved
+or lost. Physical gestures, system frame/CPU/GPU/memory traces and long-session
+acceptance are recorded separately in [verification](verification.md).

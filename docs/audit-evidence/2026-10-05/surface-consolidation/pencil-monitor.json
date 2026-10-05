@@ -1,0 +1,120 @@
+{
+  "recordedAt": "2026-10-05T15:34:33.314791+00:00",
+  "version": "0.3.177",
+  "build": "247",
+  "sourceSHA256": "93af0e377e64e846ee7d0e261f7dafdbaed2ae081286f08161f0fdeef250378f",
+  "baseCommit": "4eb7f34cd7c83f2b51e4abe02723f0a89a45e3f6",
+  "status": "passed",
+  "scope": "Selected optimized native verification of the opt-in real Pencil monitor and affected input/composition lifecycle; not a physical Pencil latency measurement or full C1 acceptance.",
+  "verification": {
+    "path": ".build/surface-input-247/verification.json",
+    "sha256": "204dba76ab406e1ca25b00e95319024ef727ec30764e4ac0ea9a11295e50945e"
+  },
+  "selection": {
+    "commands": [],
+    "core": [],
+    "ipad": [
+      "NotebookTests/ArtifactInputTests/testPaperContactKeepsFingerAndControlOwnershipAndFinishesOnlyItsAcceptedPencil",
+      "NotebookTests/InkCanvasLifecycleTests/testPageLiftKeepsThePendingFirstRevealUntilItsOwnResolution",
+      "NotebookTests/InputFrameMonitorTests",
+      "NotebookUITests/NotebookWorkspaceJourneyUITests/testFirstSelectionMoveDeleteAndColdReopenPreserveTheWholeComposition"
+    ],
+    "mac": [
+      "NotebookMacTests/MacInkInputTests/testNativeMouseContactPersistsItsExactSourceAndEraserUndoKeepsThePen"
+    ]
+  },
+  "platforms": {
+    "ipad": {
+      "passedTests": 7,
+      "failedTests": 0,
+      "skippedTests": 0,
+      "runtimeWarnings": [],
+      "devicesAndConfigurations": [
+        {
+          "device": {
+            "architecture": "arm64e",
+            "deviceId": "00008103-001E059934D9001E",
+            "deviceName": "iPad (Елизавета)",
+            "modelName": "iPad Pro (11-inch) (3rd generation)",
+            "osBuildNumber": "24A435",
+            "osVersion": "27.0",
+            "platform": "iOS"
+          },
+          "expectedFailures": 0,
+          "failedTests": 0,
+          "passedTests": 7,
+          "skippedTests": 0,
+          "testPlanConfiguration": {
+            "configurationId": "1",
+            "configurationName": "Test Scheme Action"
+          }
+        }
+      ],
+      "summary": {
+        "path": ".build/surface-input-247/ipad-summary.json",
+        "sha256": "8a9d109c91c0cca2f3b42d0b54f06b694ef1b3a1f9fdb5d94d252f4df7af2ecc"
+      }
+    },
+    "mac": {
+      "passedTests": 1,
+      "failedTests": 0,
+      "skippedTests": 0,
+      "runtimeWarnings": [],
+      "devicesAndConfigurations": [
+        {
+          "device": {
+            "architecture": "arm64",
+            "deviceId": "00006050-001650DA01F9401C",
+            "deviceName": "My Mac",
+            "modelName": "MacBook Pro",
+            "osBuildNumber": "26A434",
+            "osVersion": "27.0.1",
+            "platform": "macOS"
+          },
+          "expectedFailures": 0,
+          "failedTests": 0,
+          "passedTests": 1,
+          "skippedTests": 0,
+          "testPlanConfiguration": {
+            "configurationId": "1",
+            "configurationName": "Test Scheme Action"
+          }
+        }
+      ],
+      "summary": {
+        "path": ".build/surface-input-247/mac-summary.json",
+        "sha256": "ece0d89e761cad87b9774414432681de886d0341287aa55a7392df8c116c027d"
+      }
+    }
+  },
+  "independentReview": {
+    "agent": "surface_review",
+    "status": "passed",
+    "findingResolved": "Queued utility writer defers again if another contact begins before its actor turn; regression exercises real PaperInputView and Coordinator."
+  },
+  "visualReview": [
+    {
+      "path": ".build/surface-input-247-attachments/images/0EB6CCBF-B616-47B9-9D04-BDF5A0AD045C.png",
+      "sha256": "b4a5a8ddaf80ecd5c25c62be089007ac6785d0c000b332663d7acf81e3893717",
+      "reviewed": true,
+      "observation": "Moved red body remains selected; neighboring blue objects and black ink preserved."
+    },
+    {
+      "path": ".build/surface-input-247-attachments/images/73CF2418-7641-4022-8FF4-808FABE79F35.png",
+      "sha256": "a26a712e427bc6d3a3bf523d24600b66a76c4b69c5f7c627970488bc15b69bb5",
+      "reviewed": true,
+      "observation": "Undo restores the red body to its original location; other composition unchanged."
+    },
+    {
+      "path": ".build/surface-input-247-attachments/images/12AD85DE-99AF-4E5D-A26F-4C3ADBAF5600.png",
+      "sha256": "6ba7de4e388e0ca46a93affea65f7da3f174f8e841f6b677b57bccd937d75cac",
+      "reviewed": true,
+      "observation": "Cold reopen after redo-delete keeps the red body absent and preserves the remaining objects and ink."
+    }
+  ],
+  "open": [
+    "Real Pencil capture on installed production pair",
+    "Instrument overhead calibration and unresolved/lost sample handling before a 20ms claim",
+    "Full Codex editing scenario, IME and offline acceptance"
+  ]
+}
