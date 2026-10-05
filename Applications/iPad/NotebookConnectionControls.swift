@@ -83,7 +83,10 @@ final class NotebookConnectionController: UIViewController {
     }
     refresh()
   }
-  func configure(_ connection: NotebookGraphicConnection) { self.connection = connection; if isViewLoaded { refresh() } }
+  func configure(_ connection: NotebookGraphicConnection) {
+    guard self.connection != connection else { return }
+    self.connection = connection; if isViewLoaded { refresh() }
+  }
   private func refresh() {
     for (i,button) in routes.enumerated() {
       let selected = NotebookGraphicConnection.Routing.allCases[i] == connection.resolvedRouting

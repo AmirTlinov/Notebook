@@ -198,6 +198,7 @@ import XCTest
     let gate=NotebookInputGate(),menus=NotebookContextMenus(),selection=UUID()
     let view=NotebookSelectionControlsView(gate:gate,contextMenus:menus)
     view.configure(selectionID:selection,frame:.init(x:100,y:100,width:200,height:200),subject:.elements(4),transformsSelection:true)
+    view.setActions(primary:[],secondary:[],destructive:[UIAction(title:"Удалить выбранные фигуры",attributes:.destructive) { _ in }])
     let scene=try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
     let previous=scene.windows.first(where: \.isKeyWindow)
     let existingWindows=Set(scene.windows.map(ObjectIdentifier.init))
@@ -208,8 +209,7 @@ import XCTest
     window.makeKeyAndVisible();view.setNeedsLayout();view.layoutIfNeeded();menus.view.layoutIfNeeded()
     defer { view.uninstall();menus.uninstall();window.isHidden=true;previous?.makeKey() }
     XCTAssertFalse(menus.hasPresentedMenu,"Selection alone installs controls, not a confirmation toolbar")
-    // The registered buttons are deliberately not mounted inline. Inspect the
-    // real native menu requested by a quiet hold, not those hidden source views.
+    // Selection actions are presented only after an explicit request.
     menus.requestSelectionMenu(selection,at:.init(x:200,y:200))
     XCTAssertTrue(menus.hasPresentedMenu)
     func titles(_ root:UIView)->[String] {

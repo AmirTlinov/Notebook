@@ -34,6 +34,7 @@ struct NotebookElementControls: UIViewRepresentable {
 
   func makeUIView(context: Context) -> NotebookSelectionControlsView { .init(gate: model.inputGate,contextMenus:contextMenus) }
   func updateUIView(_ view: NotebookSelectionControlsView, context: Context) {
+    let model = self.model, reference = self.reference, selectionID = self.selectionID
     view.beginActionsUpdate()
     defer { view.finishActionsUpdate() }
     let suppressActions = model.selectionSession.manipulation != nil
@@ -64,72 +65,116 @@ struct NotebookElementControls: UIViewRepresentable {
     // Cancelling a pickup into a pinch does not finish the physical contact.
     // Keep its context actions out of that navigation until all fingers lift.
     guard !suppressActions else { return }
-    view.deleteElement = {
-      guard model.selectionSession.id == selectionID else { return }
-      model.deleteElement(reference)
+    let menus = contextMenus
+    var materialIdentity = isRegion ? nil : selectionMaterialIdentity(model:model,reference:reference)
+    let tracksMaterial = graphic != nil || materialIdentity != nil
+    let acceptsFirstPublication = tracksMaterial && materialIdentity == nil
+      && model.acceptedWorkingGraphic(reference) != nil && model.elementCommandSources[reference] != nil
+    func isCurrent() -> Bool {
+      guard model.selectionSession.id == selectionID, model.selectionSession.editingElement == reference,
+        model.elementGeometry(reference) != nil, model.graphicElement(reference)?.visible != false else { return false }
+      guard tracksMaterial else { return true }
+      let current = selectionMaterialIdentity(model:model,reference:reference)
+      if let materialIdentity { return current == materialIdentity }
+      guard acceptsFirstPublication else { return false }
+      // A freshly accepted shape already belongs to the existing creation
+      // command. Bind its first durable identity once; later same-ID material
+      // cannot inherit either the visible menu or the open palette's actions.
+      if let current { materialIdentity=current;return true }
+      return model.acceptedWorkingGraphic(reference) != nil && model.elementCommandSources[reference] != nil
     }
-    view.updateStyle = { update in
-      guard model.selectionSession.id == selectionID else { return }
-      model.setGraphicStyle(reference: reference, update: update)
-    }
-    view.editElement = {
-      guard model.selectionSession.id == selectionID else { return }
-      model.editSelectedElement(reference)
-    }
-    view.changeGeometryMode = { mode in
-      guard model.selectionSession.id == selectionID else { return }
-      model.setElementGeometryMode(mode,reference:reference)
-    }
-    var menus: [UIMenuElement] = []
-    if graphic != nil || isRegion {
-      menus.append(UIMenu(options:.displayInline,children:[
-        UIAction(title:model.selectionSession.addingElements ? "Не добавлять касанием" : "Выбрать несколько",image:UIImage(systemName:"plus.circle"),attributes:isRegion ? .disabled : []) { _ in
-          guard model.selectionSession.id == selectionID else { return }
-          if model.selectionSession.addingElements { model.setMultipleSelectionAdding(false) } else { model.beginMultipleSelection() }
+    var primary: [UIMenuElement] = [], secondary: [UIMenuElement] = []
+    if let graphic, graphic.freehand == nil {
+      primary.append(UIAction(title:"Оформление фигуры",image:UIImage(systemName:"paintbrush.pointed"),
+        identifier:.init("graphic-style-menu")) { [weak menus] _ in
+        guard isCurrent(), let menus, let graphic = model.graphicElement(reference),
+          graphic.freehand == nil, graphic.visible != false, model.elementGeometry(reference) != nil else { return }
+        let controller = NotebookElementStyleController(graphic:graphic)
+        controller.updateStyle = { update in
+          guard isCurrent() else { return }
+          model.setGraphicStyle(reference:reference,update:update)
         }
-      ]))
+        menus.presentSelectionPopover(controller,selection:selectionID,reference:reference,isCurrent:isCurrent)
+      })
     }
-    if graphic != nil || isRegion || isGroup { menus.append(selectionTransformMenu(model:model,selectionID:selectionID)) }
+    let text = model.nativeTextTarget(reference)
+    if !isGroup && !isRegion {
+      primary.append(UIAction(title:graphic != nil ? "Подпись фигуры" : text != nil ? "Редактировать текст" : "Редактировать элемент",
+        image:UIImage(systemName:"character.cursor.ibeam"),identifier:.init("edit-agent-element")) { _ in
+        guard isCurrent() else { return }
+        model.editSelectedElement(reference)
+      })
+    }
+    if graphic?.connection != nil {
+      for (mode,title,symbol,id) in [(NotebookConnectionController.Mode.routing,"Стиль соединения","line.diagonal","graphic-routing-menu"),
+        (.ends,"Концы линии","line.diagonal.arrow","graphic-ends-menu")] {
+        primary.append(UIAction(title:title,image:UIImage(systemName:symbol),identifier:.init(id)) { [weak menus] _ in
+          guard isCurrent(), let menus, let connection = model.graphicElement(reference)?.connection,
+            model.elementGeometry(reference) != nil else { return }
+          let controller = NotebookConnectionController(mode:mode,connection:connection)
+          controller.setRouting = { routing in
+            guard isCurrent() else { return }
+            model.setGraphicRouting(routing,reference:reference)
+          }
+          controller.setHead = { head,terminal in
+            guard isCurrent() else { return }
+            model.setGraphicArrowhead(head,terminal:terminal,reference:reference)
+          }
+          menus.presentSelectionPopover(controller,selection:selectionID,reference:reference,isCurrent:isCurrent)
+        })
+      }
+    }
+    if let text {
+      let format = text.style.runs?.first?.format ?? text.style.format ?? .init()
+      let formatting = NotebookTextFormattingMenu.make(format,apply:{ change in
+        guard isCurrent() else { return }
+        model.formatNativeText(reference,change:change)
+      },link:{ [weak menus] in
+        guard isCurrent(), let menus else { return }
+        menus.performAfterSelectionMenuDismiss(selection:selectionID) { [weak menus] in
+          guard isCurrent(), let menus else { return }
+          NotebookTextFormattingMenu.editLink(format.link,from:menus.view,apply:{ link in
+            guard isCurrent() else { return }
+            model.formatNativeText(reference) { $0.link = link }
+          })
+        }
+      })
+      secondary.append(UIMenu(title:"Формат текста",image:UIImage(systemName:"textformat"),children:formatting.children))
+    }
+    if let graphic, graphic.transform == nil, NotebookGraphicGeometry.polygon(graphic) != nil {
+      secondary.append(UIMenu(title:"Режим геометрии",image:UIImage(systemName:model.selectionSession.geometryMode.controlSymbol),
+        children:NotebookSelectionSession.GeometryMode.allCases.map { mode in
+          UIAction(title:mode.controlTitle,image:UIImage(systemName:mode.controlSymbol),identifier:.init("graphic-geometry-"+mode.rawValue),
+            state:model.selectionSession.geometryMode == mode ? .on : .off) { _ in
+            guard isCurrent() else { return }
+            model.setElementGeometryMode(mode,reference:reference)
+          }
+        }))
+    }
+    if graphic != nil || isRegion {
+      secondary.append(UIAction(title:model.selectionSession.addingElements ? "Не добавлять касанием" : "Выбрать несколько",
+        image:UIImage(systemName:"plus.circle"),attributes:isRegion ? .disabled : [],state:model.selectionSession.addingElements ? .on : .off) { _ in
+        guard isCurrent() else { return }
+        if model.selectionSession.addingElements { model.setMultipleSelectionAdding(false) } else { model.beginMultipleSelection() }
+      })
+    }
+    if graphic != nil || isRegion || isGroup { secondary.append(selectionTransformMenu(model:model,selectionID:selectionID,isCurrent:isCurrent)) }
+    if !isGroup && !isRegion { secondary.append(selectionLayerMenu(model:model,selectionID:selectionID,isCurrent:isCurrent)) }
     if let parent=model.parentGroup(reference) {
-      menus.append(UIAction(title:"Выбрать группу",image:UIImage(systemName:"square.on.square")) { _ in
-        guard model.selectionSession.id == selectionID else { return };model.selectElement(parent)
+      secondary.append(UIAction(title:"Выбрать группу",image:UIImage(systemName:"square.on.square")) { _ in
+        guard isCurrent() else { return };model.selectElement(parent)
       })
     }
     if isGroup {
-      menus.append(UIAction(title:"Выбрать участника",image:UIImage(systemName:"cursorarrow")) { _ in
-        guard model.selectionSession.id == selectionID else { return };model.clearSelection()
+      primary.append(UIAction(title:"Выбрать участника",image:UIImage(systemName:"cursorarrow")) { _ in
+        guard isCurrent() else { return };model.clearSelection()
       })
     }
-    if !isGroup {
-      view.setLayerActions(available:model.availableLayerMoves) { move in
-        guard model.selectionSession.id == selectionID else { return }
-        model.arrangeSelection(move)
-      }
+    let remove = UIAction(title:"Удалить элемент",image:UIImage(systemName:"trash"),identifier:.init("delete-agent-element"),attributes:.destructive) { _ in
+      guard isCurrent() else { return }
+      model.deleteElement(reference)
     }
-    view.changeRouting = { routing in
-      guard model.selectionSession.id == selectionID else { return }
-      model.setGraphicRouting(routing,reference:reference)
-    }
-    view.changeArrowhead = { head,terminal in
-      guard model.selectionSession.id == selectionID else { return }
-      model.setGraphicArrowhead(head,terminal:terminal,reference:reference)
-    }
-    if let text = model.nativeTextTarget(reference) {
-      let format = text.style.runs?.first?.format ?? text.style.format ?? .init()
-      view.setTextActions(NotebookTextFormattingMenu.make(format,apply:{ change in
-        guard model.selectionSession.id == selectionID else { return }
-        model.formatNativeText(reference,change:change)
-      },link:{ [weak view] in
-        guard let view, model.selectionSession.id == selectionID else { return }
-        NotebookTextFormattingMenu.editLink(format.link,from:view,apply:{ link in
-          guard model.selectionSession.id == selectionID else { return }
-          model.formatNativeText(reference) { $0.link = link }
-        })
-      }).children)
-    } else { view.setTextActions(nil) }
-    if isGroup { view.setLayerActions();view.setGroupActions() }
-    if isRegion { view.setRegionActions() }
-    view.setActionsMenu(menus)
+    view.setActions(primary:primary,secondary:secondary,destructive:[remove])
   }
 
   static func dismantleUIView(_ view: NotebookSelectionControlsView, coordinator: ()) { view.uninstall() }
@@ -171,35 +216,38 @@ struct NotebookMultipleElementControls: UIViewRepresentable {
       },cancel:{ model.cancelElementManipulation(contact) })
     }
     guard !suppressActions else { return }
-    view.editElement = nil
-    view.deleteElement=model.canDeleteSelection ? { if model.selectionSession.id == selectionID { model.deleteGraphicSelection() } } : nil
-    if model.selectionSession.items.isEmpty {
-      view.setLayerActions(available:model.availableLayerMoves) { move in
+    var primary: [UIMenuElement] = [], secondary: [UIMenuElement] = [], destructive: [UIMenuElement] = []
+    if model.canDeleteSelection {
+      destructive.append(UIAction(title:model.selectionSession.items.isEmpty ? "Удалить выбранные фигуры" : "Удалить выбранное",
+        image:UIImage(systemName:"trash"),identifier:.init("delete-graphic-selection"),attributes:.destructive) { _ in
         guard model.selectionSession.id == selectionID else { return }
-        model.arrangeSelection(move)
-      }
+        model.deleteSelectedContent()
+      })
     }
+    if model.selectionSession.items.isEmpty { secondary.append(selectionLayerMenu(model:model,selectionID:selectionID)) }
     guard transforms else {
-      view.setActionsMenu([UIAction(title:"Снять выделение",image:UIImage(systemName:"xmark")) { _ in
+      secondary.append(UIAction(title:"Снять выделение",image:UIImage(systemName:"xmark")) { _ in
         guard model.selectionSession.id == selectionID else { return }; model.clearSelection()
-      }])
-      view.deleteElement=model.canDeleteSelection ? { if model.selectionSession.id == selectionID { model.deleteSelectedContent() } } : nil
+      })
+      view.setActions(primary:primary,secondary:secondary,destructive:destructive)
       return
     }
     let alignments: [(NotebookGraphicSelection.Alignment,String)] = [(.left,"По левому краю"),(.center,"По центру горизонтально"),
       (.right,"По правому краю"),(.top,"По верхнему краю"),(.middle,"По центру вертикально"),(.bottom,"По нижнему краю")]
-    view.setActionsMenu([
-      UIAction(title:"Сгруппировать",image:UIImage(systemName:"square.on.square"),attributes:model.canGroupSelectedElements ? [] : .disabled) { _ in
+    primary.append(UIAction(title:"Сгруппировать",image:UIImage(systemName:"square.on.square"),attributes:model.canGroupSelectedElements ? [] : .disabled) { _ in
         guard model.selectionSession.id == selectionID else { return };model.groupSelectedElements()
-      },
+      })
+    secondary += [
       selectionTransformMenu(model:model,selectionID:selectionID),
-      UIAction(title:model.selectionSession.addingElements ? "Не добавлять касанием" : "Добавлять касанием",image:UIImage(systemName:"plus.circle")) { _ in
+      UIAction(title:model.selectionSession.addingElements ? "Не добавлять касанием" : "Добавлять касанием",image:UIImage(systemName:"plus.circle"),
+        state:model.selectionSession.addingElements ? .on : .off) { _ in
         guard model.selectionSession.id == selectionID else { return }; model.setMultipleSelectionAdding(!model.selectionSession.addingElements)
       },
       UIMenu(title:"Выровнять",image:UIImage(systemName:"align.horizontal.left"),children:alignments.map { alignment,title in
         UIAction(title:title) { _ in guard model.selectionSession.id == selectionID else { return }; model.alignGraphicSelection(alignment) }
       })
-    ])
+    ]
+    view.setActions(primary:primary,secondary:secondary,destructive:destructive)
   }
   static func dismantleUIView(_ view: NotebookSelectionControlsView, coordinator: ()) { view.uninstall() }
 }
@@ -225,7 +273,10 @@ struct NotebookItemControls: UIViewRepresentable {
     view.configure(selectionID:selectionID,frame:frame,scale:camera.camera.scale,subject:.item(item.kind),
       camera:camera,cameraProjection:model.nativeCameraProjection,cornerRadius:cornerRadius * camera.camera.scale)
     view.isEnabled = !model.isItemBeingDeleted(item.id)
-    view.editElement = {
+    let title = switch item.kind {
+      case .notebook: "Открыть тетрадь"; case .document: "Открыть документ"; case .board: "Открыть доску"
+    }
+    let openAction = UIAction(title:title,image:UIImage(systemName:"arrow.up.forward.app"),identifier:.init("open-workspace-item")) { _ in
       guard model.selectionSession.id == selectionID,
         model.selectionSession.itemID(on:boardID) == item.id,
         !model.isItemBeingDeleted(item.id) else { return }
@@ -233,7 +284,7 @@ struct NotebookItemControls: UIViewRepresentable {
       model.endSurfaceEditing()
       open()
     }
-    view.deleteElement = {
+    let remove = UIAction(title:"Удалить",image:UIImage(systemName:"trash"),identifier:.init("delete-workspace-item"),attributes:.destructive) { _ in
       guard model.selectionSession.id == selectionID,
         model.selectionSession.itemID(on:boardID) == item.id else { return }
       Task {
@@ -241,6 +292,7 @@ struct NotebookItemControls: UIViewRepresentable {
         model.clearSelection()
       }
     }
+    view.setActions(primary:[openAction],secondary:[],destructive:[remove])
   }
   static func dismantleUIView(_ view: NotebookSelectionControlsView, coordinator: ()) { view.uninstall() }
 }
@@ -280,74 +332,24 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
   private var manipulating = false
   private let gate: NotebookInputGate
   private let source = UUID()
-  private let pan = ElementHandlePan()
+  private let gesture = SceneSelectionRecognizer()
   private weak var installedWindow: UIWindow?
   private var selectionID: UUID?
   private var frameRect = CGRect.zero
   private var textWidth:NotebookTextWidthControls?
-  private var contact: SceneSelectionLift?
-  private var pointingHandle: ElementHandle?
-  private var pencilRevision: UInt64?
-  private var contactOrigin = CGPoint.zero
-  private let deleteButton = UIButton(type: .system)
-  private let styleButton = UIButton(type: .system)
-  private let editButton = UIButton(type: .system)
-  private let modeButton = UIButton(type: .system)
-  private let routingButton = UIButton(type: .system)
-  private let endsButton = UIButton(type: .system)
-  private let textFormatButton = NotebookContextMenuButton(type:.system)
-  private let layerButton = NotebookContextMenuButton(type:.system)
-  private let moreButton = NotebookContextMenuButton(type: .system)
-  private var toolbarButtons: [UIButton] { [textFormatButton,styleButton,editButton,modeButton,routingButton,endsButton,layerButton,deleteButton,moreButton] }
-  private var palette: NotebookElementStyleController? { contextMenus.presentedPopover(for:source) as? NotebookElementStyleController }
-  private var connectionPalette: NotebookConnectionController? { contextMenus.presentedPopover(for:source) as? NotebookConnectionController }
-  var changeRouting: ((NotebookGraphicConnection.Routing) -> Void)?
-  var changeArrowhead: ((NotebookGraphicConnection.Arrowhead,NotebookGraphicConnection.Terminal) -> Void)?
+  private(set) var primaryActions: [UIMenuElement] = []
+  private(set) var secondaryActions: [UIMenuElement] = []
+  private(set) var destructiveActions: [UIMenuElement] = []
   var graphic: NotebookGraphic? {
     didSet {
-      styleButton.isHidden = graphic == nil || graphic?.freehand != nil
-      modeButton.isHidden = graphic?.transform != nil || graphic.flatMap(NotebookGraphicGeometry.polygon) == nil
-      routingButton.isHidden = graphic?.connection == nil; endsButton.isHidden = graphic?.connection == nil
-      if let connection = graphic?.connection {
-        routingButton.setImage(NotebookConnectionGlyph.image(routing:connection.resolvedRouting),for:.normal)
-        endsButton.setImage(NotebookConnectionGlyph.image(start:connection.startArrowhead,end:connection.endArrowhead),for:.normal)
-        routingButton.accessibilityValue = connection.resolvedRouting.controlTitle
-        endsButton.accessibilityValue = connection.startArrowhead.controlTitle + ", " + connection.endArrowhead.controlTitle
-        connectionPalette?.configure(connection)
-      }
-      editButton.accessibilityLabel = graphic == nil ? "Редактировать элемент" : "Подпись фигуры"
-      if let graphic { palette?.configure(style: graphic.style) }
       updateAccessibilityElements()
       setNeedsLayout()
     }
   }
-  func setTextActions(_ menu: [UIMenuElement]?) {
-    textFormatButton.isHidden = menu == nil
-    if case .element = subject { editButton.isHidden = menu != nil }
-    textFormatButton.contents = menu ?? []
+  func setActions(primary: [UIMenuElement], secondary: [UIMenuElement], destructive: [UIMenuElement]) {
+    primaryActions = primary; secondaryActions = secondary; destructiveActions = destructive
     setNeedsLayout()
   }
-  func setLayerActions(available: Set<NotebookElementLayerMove> = [], move: ((NotebookElementLayerMove) -> Void)? = nil) {
-    layerButton.isHidden = move == nil
-    layerButton.contents = NotebookElementLayerMove.allCases.map { direction in
-      UIAction(title:direction.title,attributes:available.contains(direction) ? [] : .disabled) { _ in move?(direction) }
-    }
-    setNeedsLayout()
-  }
-  func setRegionActions() {
-    editButton.isHidden=true;setLayerActions();setNeedsLayout()
-  }
-  func setGroupActions() {
-    editButton.isHidden=true;deleteButton.isHidden=true
-    setNeedsLayout()
-  }
-  func setActionsMenu(_ children: [UIMenuElement]) {
-    moreButton.contents = children; moreButton.isHidden = children.isEmpty
-    setNeedsLayout()
-  }
-  var changeGeometryMode: ((NotebookSelectionSession.GeometryMode) -> Void)?
-  var updateStyle: ((inout NotebookGraphic.Style) -> Void) -> Void = { _ in }
-  var editElement: (() -> Void)?
   private var handleAccessibility: [ElementHandleAccessibility] = []
   private var handles = NotebookElementResizeHandle.allCases.map(ElementHandle.corner)
   private var connectionLayout: NotebookGraphicLayout?
@@ -363,7 +365,6 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
   private var hasLabel = false
   private var geometryMode: NotebookSelectionSession.GeometryMode = .transform
   var beginManipulation: ((NotebookElementManipulation.Kind) -> SceneSelectionLift?)?
-  var deleteElement: (() -> Void)?
 
   init(gate: NotebookInputGate, contextMenus: NotebookContextMenus) {
     self.gate = gate; self.contextMenus = contextMenus
@@ -375,34 +376,20 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
     itemOutline.layer.borderWidth = 2
     itemOutline.isHidden = true
     addSubview(itemOutline)
-    let buttons: [(UIButton,String,String,String)] = [
-      (textFormatButton,"textformat","Формат текста","native-text-format"),
-      (layerButton,"square.3.layers.3d","Порядок слоёв","element-layer-menu"),
-      (styleButton,"paintbrush.pointed","Оформление фигуры","graphic-style-menu"),
-      (editButton,"character.cursor.ibeam","Подпись фигуры","edit-agent-element"),
-      (modeButton,"arrow.up.left.and.arrow.down.right","Режим геометрии","graphic-geometry-mode"),
-      (routingButton,"line.diagonal","Стиль соединения","graphic-routing-menu"),
-      (endsButton,"line.diagonal.arrow","Концы линии","graphic-ends-menu"),
-      (deleteButton,"trash","Удалить элемент","delete-agent-element"),
-      (moreButton,"ellipsis","Действия с элементом","element-actions-menu")]
-    for (button, symbol, label, identifier) in buttons {
-      NotebookContextMenus.configure(button,symbol:symbol,title:label,id:identifier,destructive:button === deleteButton)
-    }
-    setTextActions(nil)
-    setLayerActions()
-    styleButton.isHidden = true
-    modeButton.isHidden = true; routingButton.isHidden = true; endsButton.isHidden = true
-    routingButton.addTarget(self,action:#selector(showRouting),for:.touchUpInside)
-    endsButton.addTarget(self,action:#selector(showEnds),for:.touchUpInside)
-    deleteButton.addTarget(self,action:#selector(removeElement),for:.touchUpInside)
-    editButton.addTarget(self,action:#selector(edit),for:.touchUpInside)
-    styleButton.addTarget(self,action:#selector(showStyle),for:.touchUpInside)
-    modeButton.addTarget(self,action:#selector(cycleGeometryMode),for:.touchUpInside)
     rebuildAccessibility()
-    pan.minimumNumberOfTouches = 1; pan.maximumNumberOfTouches = 1
-    pan.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
-    pan.delegate = self; pan.addTarget(self, action: #selector(resizeChanged))
-    pan.onReset = { [weak self] in self?.cancel() }
+    gesture.coordinateView = self; gesture.gate = gate; gesture.delegate = self
+    gesture.onLift = { [weak self] point in
+      guard let self,let handle=handle(at:point),let selectionID else { return nil }
+      var contact:SceneSelectionLift?
+      return .init(begin: { [weak self] in
+        guard let self,self.selectionID == selectionID else { return }
+        contact=beginManipulation?(handle.kind)
+      },change: { contact?.change($0) },end: { contact?.end($0);contact=nil },cancel: { contact?.cancel();contact=nil })
+    }
+    gesture.onHold = { [weak self] point in
+      guard let self,let selectionID else { return }
+      contextMenus.requestSelectionMenu(selectionID,at:convert(point,to:contextMenus.view))
+    }
   }
   private func rebuildAccessibility() {
     handleAccessibility = handles.map { handle in
@@ -431,48 +418,11 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
   func configure(selectionID: UUID, frame: CGRect, textWidth:NotebookTextWidthControls? = nil, layout: NotebookGraphicLayout? = nil, scale: Double = 1, hasLabel: Bool = false, mode: NotebookSelectionSession.GeometryMode = .transform, manipulating: Bool = false, subject: Subject = .element, transformsSelection:Bool = false, memberFrames:[CGRect] = [], camera:SessionPresence? = nil, cameraProjection:SceneNativeCameraProjection? = nil, cornerRadius:Double = 0) {
-    if self.selectionID != selectionID { cancel(); contextMenus.hide(source:source); self.selectionID = selectionID }
+    if self.selectionID != selectionID { gesture.cancelSelection(); contextMenus.hide(source:source); self.selectionID = selectionID }
     self.subject = subject
     self.textWidth=textWidth
-    editButton.isHidden = false; deleteButton.isHidden = false; setTextActions(nil); setLayerActions()
-    var primary = editButton.configuration!
-    switch subject {
-    case .element, .group:
-      primary.image = UIImage(systemName:"character.cursor.ibeam")
-      editButton.accessibilityLabel = graphic == nil ? "Редактировать элемент" : "Подпись фигуры"
-      editButton.accessibilityIdentifier = "edit-agent-element"
-      deleteButton.accessibilityLabel = "Удалить элемент"
-      deleteButton.accessibilityIdentifier = "delete-agent-element"
-      moreButton.isHidden = false
-    case .elements:
-      // Selection is focus, never an uncommitted transaction to confirm.
-      editButton.isHidden = true
-      deleteButton.accessibilityLabel = "Удалить выбранные фигуры"
-      deleteButton.accessibilityIdentifier = "delete-graphic-selection"
-      moreButton.isHidden = false
-    case .item(let kind):
-      primary.image = UIImage(systemName:"arrow.up.forward.app")
-      editButton.accessibilityLabel = switch kind {
-        case .notebook: "Открыть тетрадь"; case .document: "Открыть документ"; case .board: "Открыть доску"
-      }
-      editButton.accessibilityIdentifier = "open-workspace-item"
-      deleteButton.accessibilityLabel = "Удалить"
-      deleteButton.accessibilityIdentifier = "delete-workspace-item"
-      moreButton.isHidden = true
-    }
-    editButton.configuration = primary
     let vertices = graphic.flatMap({ $0.transform == nil ? NotebookGraphicGeometry.polygon($0) : nil })
     geometryMode = vertices == nil ? .transform : mode
-    var modeConfiguration = modeButton.configuration!
-    modeConfiguration.image = UIImage(systemName:geometryMode.controlSymbol)
-    modeConfiguration.baseForegroundColor = geometryMode == .transform ? .label : tintColor
-    modeConfiguration.background.backgroundColor = geometryMode == .transform ? .clear : UIColor(NotebookChrome.selectionSurface)
-    modeConfiguration.background.cornerRadius = 8
-    modeConfiguration.background.backgroundInsets = .init(top:6,leading:6,bottom:6,trailing:6)
-    modeButton.configuration = modeConfiguration
-    modeButton.accessibilityValue = geometryMode.controlTitle
-    modeButton.accessibilityHint = "Переключить: " + geometryMode.next.controlTitle
-    modeButton.toolTip = geometryMode.controlTitle
     let next: [ElementHandle]
     if case .item = subject { next = [] }
     else if case .elements = subject { next = transformsSelection ? NotebookElementResizeHandle.visible(in:frame.size).map(ElementHandle.corner) : [] }
@@ -502,7 +452,7 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
   override func didMoveToWindow() {
     super.didMoveToWindow(); uninstall()
     guard let window else { return }
-    installedWindow = window; window.addGestureRecognizer(pan)
+    installedWindow = window; window.addGestureRecognizer(gesture)
     cameraProjection?.register(self)
     gate.registerControlRegion(source: source) { [weak self] point, kind in
       guard let self, let window = installedWindow, !isHidden else { return false }
@@ -510,12 +460,12 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
       return kind == .finger && handle(at:local) != nil
     }
     gate.registerFingerCancellation(source: source) { [weak self] in
-      self?.cancel(); self?.pan.isEnabled = false; self?.pan.isEnabled = true
+      self?.gesture.cancelSelection()
     }
   }
   func uninstall() {
     cameraProjection?.remove(self)
-    cancel(); contextMenus.hide(source:source); installedWindow?.removeGestureRecognizer(pan); installedWindow = nil
+    gesture.cancelSelection(); contextMenus.detachSelectionActions(source:source); installedWindow?.removeGestureRecognizer(gesture); installedWindow = nil
     gate.unregisterControlRegion(source: source); gate.unregisterFingerCancellation(source: source)
   }
   /// Project the original geometry, never a previously rounded screen frame.
@@ -549,7 +499,7 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
     super.layoutSubviews()
     if manipulating { contextMenus.hide(source:source) }
     else if !updatingActions { contextMenus.registerSelectionActions(source:source,selection:selectionID ?? source,anchor:frameRect,in:self,
-      buttons:toolbarButtons.filter { !$0.isHidden },enabled:isEnabled) }
+      primary:primaryActions,secondary:secondaryActions,destructive:destructiveActions,enabled:isEnabled) }
     for (index, handle) in handles.enumerated() {
       handleAccessibility[index].accessibilityFrameInContainerSpace = handleAccessibilityFrame(handle)
     }
@@ -657,63 +607,24 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
   }
   func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
     guard touch.type == .direct else { return false }
-    if pointingHandle != nil { return true }
+    // A second finger belongs to the accepted sequence even outside the grip;
+    // its existing owner must see it immediately and cancel into navigation.
+    if gesture.numberOfTouches > 0 { return true }
     // SwiftUI can report its hosting view as touch.view even over this drawn
     // handle. The window-space control registry owns admission, not that
     // implementation-specific hit-view identity; other chrome still wins.
     guard let window = installedWindow, touch.view?.window === window, !isHidden, isEnabled, gate.permitsObjectPickup,
       !contextMenus.hasPresentedMenu,
       gate.permitsSceneContact(at:touch.location(in:window),kind:.finger,excludingControl:source),
-      let revision = gate.beginFingerSequence(),
-      let handle = handle(at: touch.location(in: self)) else { return false }
-    pencilRevision = revision
-    contactOrigin = touch.location(in: installedWindow)
-    pointingHandle = handle
+      handle(at: touch.location(in: self)) != nil else { return false }
     return true
   }
-  func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
-  @objc private func resizeChanged() {
-    guard let revision = pencilRevision, gate.acceptsFingerSequence(revision), gate.permitsObjectPickup else { cancel(); return }
-    if pan.state == .began, let handle = pointingHandle { contact = beginManipulation?(handle.kind) }
-    guard let contact else { if pan.state != .possible { cancel() }; return }
-    let point = pan.location(in: installedWindow)
-    let delta = CGPoint(x: point.x - contactOrigin.x, y: point.y - contactOrigin.y)
-    switch pan.state {
-    case .began, .changed: contact.change(.init(x: delta.x, y: delta.y))
-    case .ended:
-      self.contact = nil; pencilRevision = nil; pointingHandle = nil
-      contact.end(.init(x: delta.x, y: delta.y))
-    case .cancelled, .failed: cancel()
-    default: break
-    }
-  }
-  private func cancel() { let old = contact; contact = nil; pencilRevision = nil; pointingHandle = nil; old?.cancel() }
-  @objc private func removeElement() { dismissPalette(); deleteElement?() }
-  @objc private func edit() { dismissPalette(); editElement?() }
-  @objc private func cycleGeometryMode() { dismissPalette(); changeGeometryMode?(geometryMode.next) }
-  private func dismissPalette() { contextMenus.dismissPopover(source:source) }
-  @objc private func showRouting() { showConnection(.routing,anchor:routingButton) }
-  @objc private func showEnds() { showConnection(.ends,anchor:endsButton) }
-  private func showConnection(_ mode: NotebookConnectionController.Mode, anchor: UIView) {
-    guard let connection = graphic?.connection, palette == nil, connectionPalette == nil else { return }
-    let controller = NotebookConnectionController(mode:mode,connection:connection)
-    controller.setRouting = { [weak self] in self?.changeRouting?($0) }
-    controller.setHead = { [weak self] in self?.changeArrowhead?($0,$1) }
-    contextMenus.presentPopover(controller,source:source,from:anchor)
-  }
-
-  @objc private func showStyle() {
-    guard let graphic, palette == nil, connectionPalette == nil else { return }
-    let controller = NotebookElementStyleController(graphic:graphic)
-    controller.updateStyle = { [weak self] update in self?.updateStyle(update) }
-    // Keep the edited geometry visible, not just the small button.
-    contextMenus.presentPopover(controller,source:source,from:self,
-      rect:frameRect.union(contextMenus.frame(for:source,in:self)))
+  func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+    !gesture.canPrevent(other)
   }
 }
 
 private extension NotebookSelectionSession.GeometryMode {
-  var next: Self { switch self { case .transform: .vertices; case .vertices: .rounding; case .rounding: .transform } }
   var controlTitle: String {
     switch self { case .transform: "Размер и положение"; case .vertices: "Изменить вершины"; case .rounding: "Скруглить углы" }
   }
@@ -731,30 +642,48 @@ extension NotebookGraphicConnection.Arrowhead {
   }
 }
 
-private final class ElementHandlePan: UIPanGestureRecognizer {
-  var onReset: (() -> Void)?
-  override func reset() { super.reset(); onReset?() }
-}
-
 private final class ElementHandleAccessibility: UIAccessibilityElement {
   var adjust: ((Bool) -> Void)?
   override func accessibilityIncrement() { adjust?(true) }
   override func accessibilityDecrement() { adjust?(false) }
 }
 
-@MainActor private func selectionTransformMenu(model: NotebookAppModel, selectionID: UUID) -> UIMenu {
-  UIMenu(title:"Поворот и масштаб",image:UIImage(systemName:"rotate.right"),children:[
-    UIMenu(title:"Повернуть",children:[-90.0,-15,15,90].map { angle in
-      UIAction(title:"\(angle > 0 ? "+" : "")\(Int(angle))°") { _ in
-        guard model.selectionSession.id == selectionID else { return }
-        model.transformGraphicSelection(radians:angle * .pi/180)
-      }
-    }),
+@MainActor private func selectionMaterialIdentity(model:NotebookAppModel,reference:EditableElementReference) -> VersionStamp? {
+  // Working geometry deliberately has no persisted stamp. Read the existing
+  // authored identity directly, independently of an accepted style preview.
+  switch reference {
+  case .page(let page,let id): model.pages[page]?.elementIdentityStamp(id)
+  case .spatial(let board,let id): model.boardHierarchy?.board(board)?.elementIdentityStamp(id)
+  }
+}
+
+@MainActor private func selectionTransformMenu(model: NotebookAppModel, selectionID: UUID, isCurrent:(()->Bool)? = nil) -> UIMenu {
+  let turns: [UIMenuElement] = [-90.0,-15,15,90].map { angle in
+    UIAction(title:"На \(abs(Int(angle)))° \(angle < 0 ? "влево" : "вправо")",image:UIImage(systemName:angle < 0 ? "rotate.left" : "rotate.right")) { _ in
+      guard model.selectionSession.id == selectionID, model.selectionSession.count > 0,
+        !model.selectionSession.isInteractive, isCurrent?() ?? true else { return }
+      model.transformGraphicSelection(radians:angle * .pi/180)
+    }
+  }
+  return UIMenu(title:"Поворот и масштаб",image:UIImage(systemName:"rotate.right"),children:turns + [UIMenu(options:.displayInline,children:[
     UIAction(title:"Увеличить на 25%",image:UIImage(systemName:"plus.magnifyingglass")) { _ in
-      guard model.selectionSession.id == selectionID else { return }; model.transformGraphicSelection(scale:1.25)
+      guard model.selectionSession.id == selectionID, model.selectionSession.count > 0,
+        !model.selectionSession.isInteractive, isCurrent?() ?? true else { return }; model.transformGraphicSelection(scale:1.25)
     },
     UIAction(title:"Уменьшить на 20%",image:UIImage(systemName:"minus.magnifyingglass")) { _ in
-      guard model.selectionSession.id == selectionID else { return }; model.transformGraphicSelection(scale:0.8)
+      guard model.selectionSession.id == selectionID, model.selectionSession.count > 0,
+        !model.selectionSession.isInteractive, isCurrent?() ?? true else { return }; model.transformGraphicSelection(scale:0.8)
     }
-  ])
+  ])])
+}
+
+@MainActor private func selectionLayerMenu(model: NotebookAppModel, selectionID: UUID, isCurrent:(()->Bool)? = nil) -> UIMenu {
+  let available = model.availableLayerMoves
+  return UIMenu(title:"Порядок слоёв",image:UIImage(systemName:"square.3.layers.3d"),children:NotebookElementLayerMove.allCases.map { direction in
+    UIAction(title:direction.title,attributes:available.contains(direction) ? [] : .disabled) { _ in
+      guard model.selectionSession.id == selectionID, model.selectionSession.count > 0,
+        !model.selectionSession.isInteractive, isCurrent?() ?? true else { return }
+      model.arrangeSelection(direction)
+    }
+  })
 }

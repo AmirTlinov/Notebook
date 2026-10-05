@@ -1,0 +1,184 @@
+{
+  "format": 1,
+  "date": "2026-10-05",
+  "issue": "GUI-479",
+  "build": 248,
+  "version": "0.3.178",
+  "status": "verified-installation-pending",
+  "sourceSHA256": "b2e60fb711192b1832045569f1882f7a242c6018af80b444dfeffe10baa2a12a",
+  "baseCommit": "838977ed",
+  "changes": [
+    "Full native object menu with primary actions, explicit geometry modes and destructive deletion; old horizontal menu and hidden action buttons removed.",
+    "One selected-material owner keeps parameter palettes open across accepted edits and view repaint, and rejects callbacks after selection or material replacement.",
+    "Geometry grips share the object selection recognizer. The window contact observer retires fingers that started in controls or UIKit presentations.",
+    "Identity checks reuse retained page/board indexes; deferred Cut rejects an ended selection."
+  ],
+  "ipad": {
+    "passed": 14,
+    "failed": 0,
+    "skipped": 0,
+    "runtimeWarnings": 0,
+    "nativeTests": 10,
+    "systemGestureTests": 4,
+    "selection": [
+      "NotebookTests/AgentSceneFingerRoutingTests/testWindowObserverRetiresControlAndPopupContactsBeforeTheNextPickup",
+      "NotebookTests/NotebookElementManipulationTests/testContextMenuReplacementRetiresOnlyItsOwnSource",
+      "NotebookTests/NotebookElementManipulationTests/testDeferredMenuCannotReturnAfterItsContactOrSelectionEnds",
+      "NotebookTests/NotebookElementManipulationTests/testGeometryHandlesDoNotMountWholeObjectActions",
+      "NotebookTests/NotebookElementManipulationTests/testProgrammaticallyDismissedPopoverReleasesCanvasInput",
+      "NotebookTests/NotebookElementManipulationTests/testStylePaletteKeepsAcceptedEditsAcrossRepaintAndRetiresWithSelection",
+      "NotebookTests/NotebookElementManipulationTests/testWorkspaceCardsKeepBodyInputWithoutFloatingActionsOrResizeHandles",
+      "NotebookTests/NotebookLassoMotionTests/testMultipleSelectionControlsHaveNoConfirmationAction",
+      "NotebookTests/NotebookPageLifecycleUXTests/testLassoFragmentKeepsBothSidesThroughSecondMoveResizeAndColdReopen",
+      "NotebookTests/NotebookSelectionClipboardTests/testNativeFragmentAtPaperEdgeStaysOnItsCapturedPageAfterCut",
+      "NotebookUITests/DrawingResponsivenessTests/testContextMenuOpensSelectedNotebook",
+      "NotebookUITests/DrawingResponsivenessTests/testLineEndpointControlsOnPage",
+      "NotebookUITests/DrawingResponsivenessTests/testSelectionPaletteAndContextMenuStayAnchoredAndKeepThePaper",
+      "NotebookUITests/DrawingResponsivenessTests/testVertexRoundingAndFreeBendModesOnPage"
+    ],
+    "summary": {
+      "path": ".build/object-interaction-ux-20261005/run-9/ipad-summary.json",
+      "sha256": "56961f8e3de7d47de6575e3b7972f5d68d9dbd6e494fb1e95e2dcdf836333074"
+    },
+    "executedTests": {
+      "path": ".build/object-interaction-ux-20261005/run-9/ipad-tests.json",
+      "sha256": "ad80cb9b5d1e6f29719ad2e2e0a3b4158ac12b83cb677fa9358156acd0cd5852"
+    },
+    "sourceBefore": {
+      "path": ".build/object-interaction-ux-20261005/run-9/source-before.json",
+      "sha256": "966b35c7379b2bcf2ab068a2536f80760c5f1e7bbcd67de880f61da2536d7302"
+    },
+    "sourceStillMatchesAfterTests": {
+      "path": ".build/object-interaction-ux-20261005/run-9-source-unchanged.json",
+      "sha256": "1d668f6b1e6fd633abdb7531507d343e26f25a274ff6211b31a66b178256dc8e"
+    },
+    "scope": "Physical iPad Pro 11 M1, iPadOS 27.0, optimized native and UI tests. Repeated palette edits, dismissal/reopen/delete, explicit vertices/rounding/free bend, endpoint menu after cold reopen, notebook open and lasso persistence.",
+    "runnerCompletion": "All 14 iPad tests passed. The combined wrapper then stopped before Mac compilation because NOTEBOOK_SWIFT selected Xcode rather than the installed Swift 6.4 release. Completion and a repeated palette journey passed separately on identical source; failed commands are preserved."
+  },
+  "identityLookup": {
+    "command": "swift test --filter NotebookElementIdentityLookupTests",
+    "beforePassed": 1,
+    "afterPassed": 1,
+    "mode": "Debug macOS arm64, retained element indexes warmed before timer. Three samples of 16 exact-ID queries among 100000 elements. Index construction excluded. Not UI latency or Release performance.",
+    "page": {
+      "before": {
+        "samplesMS": [
+          336.24525,
+          335.522583,
+          344.729834
+        ],
+        "medianBatchMS": 336.24525,
+        "meanQueryFromMedianUS": 21015.328125
+      },
+      "after": {
+        "samplesMS": [
+          0.111416,
+          0.044625,
+          0.052917
+        ],
+        "medianBatchMS": 0.052917,
+        "meanQueryFromMedianUS": 3.3073125
+      }
+    },
+    "board": {
+      "before": {
+        "samplesMS": [
+          374.002959,
+          368.543125,
+          364.732
+        ],
+        "medianBatchMS": 368.543125,
+        "meanQueryFromMedianUS": 23033.9453125
+      },
+      "after": {
+        "samplesMS": [
+          0.056292,
+          0.046792,
+          0.040208
+        ],
+        "medianBatchMS": 0.046792,
+        "meanQueryFromMedianUS": 2.9245
+      }
+    },
+    "semantics": "UUID case aliases, removed identities with retained clocks, missing IDs and nonUUID case sensitivity pass. Board UUID alias misses retain canonical linear fallback.",
+    "beforeLog": {
+      "path": ".build/gui479-identity-before.log",
+      "sha256": "b9fdc23a3bf7f23cf9b38af5e586ae018de140fa02644bb51e9f86f060b8c666"
+    },
+    "afterLog": {
+      "path": ".build/gui479-identity-after.log",
+      "sha256": "dc7671710d33d9b9f9df5a4ba54d6f9576e8b6f2eee9534dabf8a0fc22dc64e8"
+    },
+    "fixture": {
+      "path": "Tests/NotebookCoreTests/NotebookElementIdentityLookupTests.swift",
+      "sha256": "76dd39725b93f205b74b6587818989bd5fdd546cb3d315b9032433f76e95e068"
+    }
+  },
+  "review": "Independent review of selection admission, material lifetime, menu teardown, contact retirement and final endpoint gesture found no remaining blocker.",
+  "open": [
+    {
+      "issue": "GUI-480",
+      "scope": "Cover restoration performance in the common native surface owner, delegated to surface consolidation.",
+      "reproducer": "NotebookTests/NotebookItemDropUXTests/testInstalledDeleteControlAndRepeatedHistoryPreserveActualCoverInk",
+      "evidence": ".build/object-interaction-ux-20261005/run-6/ipad.xcresult",
+      "observation": "First Undo missed 100 ms (observed 114 ms); second 96 ms. Timing begins at command and observes native CA commit/mounted ownership, with one independent pixel capture afterward. This test is not included in GUI-479 final passing set.",
+      "cause": "834x1194 covers at camera.scale0.25 prepare @2 native backings without frame.pixelScales. Two covers use about 127.8 MB and trigger allocation-denial retry near 128 MiB passive limit. Physical density/zoom remedy belongs to GUI-480."
+    },
+    {
+      "issue": "GUI-190",
+      "scope": "System frame/CPU/GPU/memory, 10 repetitions and 30 minutes of joint work remain full acceptance."
+    }
+  ],
+  "verificationReceipt": {
+    "path": ".build/object-interaction-ux-20261005/run-10/verification.json",
+    "sha256": "bfcf01b1df7b0c8943b1409c324f58ec46b6aa568e38585f8f4468f4db295a14"
+  },
+  "completion": {
+    "sourceMatchesAll14EarlierIPadChecks": true,
+    "passed": {
+      "iPadPaletteRepeat": 1,
+      "MacClipboardAndUndo": 1
+    },
+    "failed": 0,
+    "skipped": 0,
+    "runtimeWarnings": 0,
+    "scope": "After setting the existing Swift6.4 executable, completed the Mac clipboard regression and repeated the affected iPad palette journey required by the explicit UI verification route. No product or test source changed.",
+    "macSummary": {
+      "path": ".build/object-interaction-ux-20261005/run-10/mac-summary.json",
+      "sha256": "9d502005f274773e7a295ba1c0a900622157f4d9cfdfb1652f5be8beba58b1ed"
+    },
+    "macExecutedTests": {
+      "path": ".build/object-interaction-ux-20261005/run-10/mac-tests.json",
+      "sha256": "88587fa194848dff918b2ece3179253d8c134f3126b17251aba7282fb172ebb0"
+    },
+    "iPadSummary": {
+      "path": ".build/object-interaction-ux-20261005/run-10/ipad-summary.json",
+      "sha256": "837a51c39ca4b5bd1a7c0eb565ff00a74af0499a9cc1e12a643cacff6606b089"
+    }
+  },
+  "visualReview": {
+    "reviewed": true,
+    "images": [
+      {
+        "scenario": "native object menu",
+        "path": ".build/object-interaction-ux-20261005/run-9/attachments-ipad/AE5D18FB-DAFC-4874-8ACA-24D59BD9DAAB.png",
+        "sha256": "c007e5974ed696299023b859bccf44ca10cd3e07dffd63aebb203c7b058f08ae"
+      },
+      {
+        "scenario": "persistent palette",
+        "path": ".build/object-interaction-ux-20261005/run-9/attachments-ipad/183D60EA-32DE-4BBF-9F0E-81C5C5FD10C8.png",
+        "sha256": "57fe4745bd04a207c1778dba18f3eaa23b1519bdd58b925262b970fd919f0d06"
+      },
+      {
+        "scenario": "line endpoints",
+        "path": ".build/object-interaction-ux-20261005/run-9/attachments-ipad/E833D6F3-51AB-4566-8B2C-BD0F490B3FA2.png",
+        "sha256": "fe1fafdfbc38431b1dcaebf57cd78ba35d0f374aa4ef54bd8fc5e0763820ecb0"
+      },
+      {
+        "scenario": "rounded vertices and free bend",
+        "path": ".build/object-interaction-ux-20261005/run-9/attachments-ipad/ED1479D9-3240-440D-A986-27756E859D29.png",
+        "sha256": "1d2c6bc9a1dbd318da3199bd80b4c7530881a92ab5a6f66a2b180ecc6243e5ee"
+      }
+    ]
+  }
+}

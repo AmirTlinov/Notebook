@@ -533,7 +533,13 @@ final class DrawingResponsivenessTests: XCTestCase {
     launchPortraitFixture(app)
     let line = app.images["Стрелка"]
     XCTAssertTrue(line.waitForExistence(timeout:10)); line.tap()
-    func ends() { notebookContextAction("Концы линии",on:line,in:app) }
+    func ends() {
+      // The selected endpoint stays on the line after its route changes; the
+      // centre of an elbow's bounding box can be empty paper.
+      let handle = app.descendants(matching:.any).matching(identifier:"graphic-start-handle").firstMatch
+      XCTAssertTrue(handle.waitForExistence(timeout:3))
+      notebookContextAction("Концы линии",on:handle,in:app)
+    }
     func routing() { notebookContextAction("Стиль соединения",on:line,in:app) }
     let neighbour = app.webViews.containing(.button,identifier:"Graphic scene counter").firstMatch, neighbourFrame = neighbour.frame
     func outside() { app.coordinate(withNormalizedOffset:.init(dx:0.75,dy:0.18)).tap() }
@@ -592,6 +598,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     var geometryTarget = triangle
     func mode(_ title: String) {
       notebookContextAction("Режим геометрии",on:geometryTarget,in:app)
+      notebookMenuAction(title,in:app)
       let expected = title == "Изменить вершины" ? "graphic-vertex-0"
         : title == "Скруглить углы" ? "graphic-corner-radius-handle" : "resize-agent-element-bottomTrailing"
       XCTAssertTrue(handle(expected).waitForExistence(timeout:3))
@@ -679,7 +686,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     style()
     let blue = app.buttons["element-color-11"]
     XCTAssertTrue(blue.waitForExistence(timeout:5)); blue.tap()
-    XCTAssertFalse(app.popovers.firstMatch.frame.intersects(triangle.frame), "The palette leaves the edited shape visible")
+    XCTAssertFalse(app.otherElements["element-style-palette"].frame.intersects(triangle.frame), "The palette leaves the edited shape visible")
     XCTAssertTrue(blue.isSelected)
     let width = app.sliders["element-width"], originalWidth = app.sliders["element-width"].value as? String
     width.adjust(toNormalizedSliderPosition:0.4)

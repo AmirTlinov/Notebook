@@ -61,7 +61,7 @@ extension NotebookAppModel {
   }
 
   func selectionStillMatches(_ snapshot:NotebookSelectionExport) -> Bool {
-    guard selectionSession.id == snapshot.selectionID,
+    guard selectionSession.id == snapshot.selectionID,selectionSession.count > 0,!selectionSession.isInteractive,
       selectionInkRevision(snapshot.surface) == snapshot.inkRevision else { return false }
     if let region=selectionSession.region { return regionIsCurrent(region) }
     return snapshot.sourceChecks.allSatisfy { nativeElementSource($0.key) == $0.value && elementCommandDrafts[$0.key] == nil }

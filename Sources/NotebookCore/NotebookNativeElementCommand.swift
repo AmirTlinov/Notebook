@@ -33,7 +33,7 @@ extension PageDocument {
   }
 
   public func elementIdentityStamp(_ id: String) -> VersionStamp? {
-    guard elements.contains(where: { collaborationIdentity($0.id) == collaborationIdentity(id) }) else { return nil }
+    guard element(id: id) != nil else { return nil }
     return collaboration?.fields[fieldKey(["elements", collaborationIdentity(id), "id"])]?.stamp ?? agentStamp
   }
 }
@@ -45,8 +45,12 @@ extension BoardDocument {
   }
 
   public func elementIdentityStamp(_ id: String) -> VersionStamp? {
-    guard elements.contains(where: { collaborationIdentity($0.id) == collaborationIdentity(id) }) else { return nil }
-    return collaboration?.fields[fieldKey(["elements", collaborationIdentity(id), "id"])]?.stamp ?? stamp
+    let identity = collaborationIdentity(id)
+    // The board index retains exact runtime IDs. Only a UUID alias that
+    // misses it needs the canonical fallback; live UI references hit directly.
+    guard element(id: id) != nil || (UUID(uuidString: id) != nil
+      && elements.contains(where: { collaborationIdentity($0.id) == identity })) else { return nil }
+    return collaboration?.fields[fieldKey(["elements", identity, "id"])]?.stamp ?? stamp
   }
 }
 

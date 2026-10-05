@@ -93,19 +93,13 @@ import XCTest
       "The physical application window must complete the requested rotation before the next contact")
   }
   func notebookMenuItem(_ title:String,in app:XCUIApplication) -> XCUIElement {
-    // UIKit presents the compact edit menu as MenuItem and its expanded native
-    // list as Button. Both are the same system menu, not app fallback controls.
+    // UIKit exposes native menu commands as MenuItem or Button.
     app.descendants(matching:.any).matching(NSPredicate(format:"(elementType == %d OR elementType == %d) AND label == %@",
       XCUIElement.ElementType.menuItem.rawValue,XCUIElement.ElementType.button.rawValue,title)).firstMatch
   }
   func notebookMenuAction(_ title:String,in app:XCUIApplication) {
     let action=notebookMenuItem(title,in:app)
-    for _ in 0..<12 {
-      if action.exists && action.isHittable { action.tap();return }
-      let next=app.buttons["Next Page"]
-      guard next.exists && next.isHittable else { break }
-      next.tap()
-    }
+    if action.waitForExistence(timeout:3) && action.isHittable { action.tap();return }
     XCTFail("Context action unavailable: \(title)\n\(app.debugDescription)")
   }
   func notebookContextAction(_ title:String,on element:XCUIElement,in app:XCUIApplication) {
@@ -117,6 +111,10 @@ import XCTest
   }
   func openNotebookSelectionMenu(at coordinate:XCUICoordinate,in app:XCUIApplication) {
     coordinate.press(forDuration:0.5)
-    XCTAssertTrue(notebookMenuItem("Копировать",in:app).waitForExistence(timeout:3))
+    let menu = app.descendants(matching:.any).matching(NSPredicate(
+      format:"(elementType == %d OR elementType == %d) AND label IN %@",
+      XCUIElement.ElementType.menuItem.rawValue,XCUIElement.ElementType.button.rawValue,
+      ["Копировать","Открыть тетрадь","Открыть документ","Открыть доску","Удалить выбранные фигуры","Удалить выбранное"])).firstMatch
+    XCTAssertTrue(menu.waitForExistence(timeout:3))
   }
 }

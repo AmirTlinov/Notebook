@@ -150,8 +150,16 @@ import XCTest
     await model.reloadExternalChanges()?.value
     model.selectElement(.page(pageID:page.id,elementID:element.id))
     XCTAssertTrue(model.canExportSelection)
-    let snapshot=try model.clipboardSelectionSnapshot()
+    var snapshot=try model.clipboardSelectionSnapshot()
     XCTAssertTrue(model.selectionStillMatches(snapshot))
+    model.endSurfaceEditing()
+    XCTAssertEqual(model.selectionSession.id,snapshot.selectionID)
+    XCTAssertFalse(model.selectionStillMatches(snapshot),"Ending editing revokes Cut even when context keeps the UUID")
+    model.selectElement(.page(pageID:page.id,elementID:element.id))
+    snapshot=try model.clipboardSelectionSnapshot()
+    model.interactiveElementFocus = .page(pageID:page.id,elementID:element.id)
+    XCTAssertFalse(model.selectionStillMatches(snapshot),"An active editor owns its own text commands")
+    model.interactiveElementFocus=nil
     let fragment=try snapshot.prepare().fragment.reidentified()
     model.deleteSelectedContent()
     XCTAssertFalse(model.selectionStillMatches(snapshot),"A late Cut cannot delete a replacement selection/source")

@@ -316,6 +316,10 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
       shouldReceive touch: UITouch
     ) -> Bool {
       guard touch.type == .direct, let sceneView else { return false }
+      // Physical lifetime spans the whole window, including grips and UIKit
+      // presentations. Admission of a scene gesture must not hide the end of
+      // a contact whose owner another recognizer has already registered.
+      if gestureRecognizer === contactObserver { return true }
       guard sceneReceives(touch, inside: sceneView) else { return false }
       let history = NotebookSceneFingerRouting.historyTarget(of: touch.view) != nil
       guard history
@@ -327,7 +331,7 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
       let observesWebPair: Bool
       if gestureRecognizer === recognizer, case .webInput = owner { observesWebPair = true }
       else { observesWebPair = false }
-      return gestureRecognizer === contactObserver || history || owner.permitsSceneNavigation || observesWebPair
+      return history || owner.permitsSceneNavigation || observesWebPair
     }
 
     func gestureRecognizer(
