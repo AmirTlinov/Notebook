@@ -8,6 +8,33 @@ private func readSetStroke(_ sequence:UInt64,_ y:Double,tool:SpatialInkTool = .p
   },sequence:sequence)
 }
 
+@Test func selectedContactProofDoesNotPinTheWholePageJournal() throws {
+  let actor = UUID(), selected = readSetStroke(1, 40)
+  let pageID = UUID()
+  weak var oldRoot: PageInkDrawingCache.Source?
+  var proof: NotebookInkReadSet?
+  do {
+    let page = PageDocument(id: pageID, size: .init(width: 834, height: 1194), actor: actor,
+      drawingData: try PageInkDrawing(actions: [selected, readSetStroke(2, 500)]).dataRepresentation())
+    try page.prepareInkForPresentation()
+    oldRoot = page.inkSource.source
+    proof = page.inkSource.readSet(for: selected.id, on: .page(pageID))
+    #expect(proof!.matches(page.inkSource))
+  }
+  #expect(oldRoot == nil, "An identity cache must not keep unrelated historical contacts alive")
+  let retained = try #require(proof)
+  #expect(retained.retainedPayloadBytes >= selected.samples.payloadBytes)
+  var same = PageDocument(id: pageID, size: .init(width: 834, height: 1194), actor: actor,
+    drawingData: try PageInkDrawing(actions: [selected]).dataRepresentation())
+  try same.prepareInkForPresentation()
+  #expect(retained.matches(same.inkSource), "The exact selected support survives retirement of its old journal")
+  let cut = readSetStroke(3, 40, tool: .eraser)
+  let change = try same.prepareLiveInkChange(.append(cut), stamp: .init(counter: 1, actor: actor))
+  let published = same.publishInkChange(change)
+  #expect(published)
+  #expect(!retained.matches(same.inkSource), "A later cut still invalidates the selected witness")
+}
+
 @Test func livePageAdmissionRequiresPreparedRootAndSharesAcceptedSource() throws {
   let actor=UUID(),first=readSetStroke(1,40)
   var page=PageDocument(size:.init(width:834,height:1194),actor:actor,

@@ -9,6 +9,19 @@ public struct ContentFieldVersion: Codable, Equatable, Sendable {
   public let observed: [String: UInt64]
   private var heads: [ContentFieldHead]?
 
+  /// Concurrent authored alternatives remain owned even when another value is
+  /// displayed. Admission must include their bodies without exposing or copying
+  /// the private causal frontier.
+  public var retainedHeadsBytes:Int {
+    guard let heads else { return 0 }
+    return heads.capacity * MemoryLayout<ContentFieldHead>.stride
+      + heads.reduce(0) { $0 + ($1.value?.retainedPayloadBytes ?? 0) }
+  }
+  public var retainedPayloadBytes:Int {
+    MemoryLayout<Self>.stride + observed.capacity * (MemoryLayout<String>.stride + MemoryLayout<UInt64>.stride + 32)
+      + observed.keys.reduce(0) { $0 + $1.utf8.count * 2 } + retainedHeadsBytes
+  }
+
   init(stamp: VersionStamp, human: Bool, previous: ContentFieldVersion? = nil) {
     var observed = previous?.observed ?? [:]
     observed[stamp.actor.uuidString.lowercased()] = stamp.counter

@@ -45,6 +45,38 @@ public struct NotebookGraphic: Codable, Equatable, Sendable {
   /// Ordered vector set operations in the element's normalized basis.
   public var mask: NotebookGraphicMask?
 
+  /// Owned immutable content buffers. Graph sources cache this cost when they
+  /// capture the body; obtaining it never builds render geometry or paths.
+  public var retainedPayloadBytes: Int {
+    var bytes = MemoryLayout<Self>.stride + label.utf8.count * 2
+      + sourceInkIDs.capacity * MemoryLayout<UUID>.stride
+      + (vertices?.capacity ?? 0) * MemoryLayout<SpatialPoint>.stride
+    for binding in connection?.bindings ?? [] { bytes += binding.elementID.utf8.count * 2 }
+    if let path {
+      bytes += path.commands.capacity * MemoryLayout<NotebookVectorPath.Command>.stride
+      for command in path.commands { bytes += command.points.capacity * MemoryLayout<SpatialPoint>.stride }
+    }
+    if let freehand {
+      bytes += freehand.layers.capacity * MemoryLayout<NotebookFreehand.Layer>.stride
+      for layer in freehand.layers {
+        bytes += layer.vertices.capacity * MemoryLayout<NotebookFreehand.Vertex>.stride
+          + (layer.eraser?.samples.capacity ?? 0) * MemoryLayout<NotebookFreehand.Eraser.Sample>.stride
+          + (layer.measured?.measurements.payloadBytes ?? 0)
+      }
+    }
+    if let mask {
+      bytes += mask.operations.capacity * MemoryLayout<NotebookGraphicMask.Operation>.stride
+      for operation in mask.operations {
+        bytes += operation.polygon.capacity * MemoryLayout<SpatialPoint>.stride
+          + (operation.erasures?.capacity ?? 0) * MemoryLayout<InkElementErasure>.stride
+        for erasure in operation.erasures ?? [] {
+          bytes += erasure.target.elementID.utf8.count * 2 + erasure.samples.payloadBytes
+        }
+      }
+    }
+    return bytes
+  }
+
   public init(shape: Shape = .ellipse, style: Style = .init(), label: String = "",
     representation: Representation = .geometry, visible: Bool = true, sourceInkIDs: [UUID] = [],
     connection: NotebookGraphicConnection? = nil, vertices: [SpatialPoint]? = nil, cornerRadius: Double? = nil, freehand: NotebookFreehand? = nil, transform: NotebookGraphicTransform? = nil, path: NotebookVectorPath? = nil,

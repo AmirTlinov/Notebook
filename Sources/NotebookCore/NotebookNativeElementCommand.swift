@@ -5,6 +5,11 @@ import Foundation
 public struct NotebookProgramStateBasis: Equatable, Sendable {
   let fields: [String: ContentFieldVersion]
   private let stateKey: String
+  public var retainedPayloadBytes:Int {
+    MemoryLayout<Self>.stride + stateKey.utf8.count * 2
+      + fields.capacity * (MemoryLayout<String>.stride + MemoryLayout<ContentFieldVersion>.stride + 32)
+      + fields.reduce(0) { $0 + $1.key.utf8.count * 2 + $1.value.retainedPayloadBytes }
+  }
 
   init(elementID: String, metadata: CollaborativeContent?, fallback: VersionStamp) {
     let id = collaborationIdentity(elementID)
@@ -64,6 +69,12 @@ public struct NotebookPageProgramStateCommand: Sendable {
   let stamp: VersionStamp
   let versions: [String: ContentFieldVersion]
   public let expectedBasis: NotebookProgramStateBasis
+  public var retainedPayloadBytes:Int {
+    MemoryLayout<Self>.stride + elementID.utf8.count * 2 + state.retainedPayloadBytes
+      + basis.retainedPayloadBytes + expectedBasis.retainedPayloadBytes
+      + versions.capacity * (MemoryLayout<String>.stride + MemoryLayout<ContentFieldVersion>.stride + 32)
+      + versions.reduce(0) { $0 + $1.key.utf8.count * 2 + $1.value.retainedPayloadBytes }
+  }
 
   public init?(before: PageDocument, after: PageDocument, elementID: String) {
     guard before.id == after.id, let basis = before.programStateBasis(elementID),

@@ -414,8 +414,10 @@ extension NotebookStore {
       for id in pinnedIDs { mandatory.append(try placement(id)) }
       for id in pinnedElementIDs {
         let elementAddress = address + "/board/elements/@" + fieldKey([collaborationIdentity(id)])
-        guard let fragment = try storedFragments(address: elementAddress, descendants: false).first,
-          let surface = try fragment.value["surface"]?.decode(SurfaceID.self) else { throw CocoaError(.fileNoSuchFile) }
+        // Absence is an addressed observation too. Its field clocks are read
+        // below so a removed pin travels with this frozen board projection.
+        guard let fragment = try storedFragments(address: elementAddress, descendants: false).first else { continue }
+        guard let surface = try fragment.value["surface"]?.decode(SurfaceID.self) else { throw NotebookStorageError.corruptRecord(elementAddress) }
         if surface.kind == .cover, let owner = surface.ownerID { mandatory.append(try placement(owner)) }
         mandatory.append(elementAddress)
       }
@@ -445,7 +447,7 @@ extension NotebookStore {
         for row in content.prefix(remaining) { try include(row[0].text!, required: false) }
       }
       try appendGraphicDependencies(to: &rows, boardAddress: address)
-      try appendBoardCausalFragments(to: &rows, address: address)
+      try appendBoardCausalFragments(to: &rows, address: address, additionalElementIDs: Set(pinnedElementIDs))
       let board = try NotebookRecordCodec.decode(rows, root: address).decode(BoardNode.self)
       var items: [WorkspaceItem] = [], paper: [UUID: WorkspaceItemGeometry] = [:], counts: [UUID: Int] = [:]
       for id in board.board.itemIDs {

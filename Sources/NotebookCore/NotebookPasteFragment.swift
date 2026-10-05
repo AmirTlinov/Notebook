@@ -43,28 +43,27 @@ public struct NotebookPasteFragment: Codable, Sendable {
   /// an imported fragment cannot claim measurements already in the workspace.
   public func reidentified(namespace: UUID = UUID()) throws -> Self {
     try validateTransfer()
-    let ids=Dictionary(uniqueKeysWithValues:elements.map { ($0.id,NotebookStore.submissionID(namespace,suffix:$0.id).uuidString.lowercased()) })
-    let copies=try elements.map { element -> AgentElement in
-      var values=try JSONValue.encode(element).object
-      values["id"] = .string(ids[element.id]!)
-      if let parent=element.parentID {
-        values["parentID"] = .string(ids[parent]!)
-      }
+    let ids=Dictionary(uniqueKeysWithValues:elements.map { (collaborationIdentity($0.id),NotebookStore.submissionID(namespace,suffix:$0.id).uuidString.lowercased()) })
+    let copies=elements.map { element -> AgentElement in
+      var copiedGraphic:NotebookGraphic?
       if let graphic=element.graphic {
-        var content=try JSONValue.encode(graphic).object
-        content["sourceInkIDs"] = .array([])
         var connection=graphic.connection
         for terminal in NotebookGraphicConnection.Terminal.allCases {
           guard var endpoint=terminal == .start ? connection?.start : connection?.end,
             var binding=endpoint.binding else { continue }
-          if let replacement=ids[binding.elementID] { binding.elementID=replacement;endpoint.binding=binding }
+          if let replacement=ids[collaborationIdentity(binding.elementID)] { binding.elementID=replacement;endpoint.binding=binding }
           else { endpoint.binding=nil }
           if terminal == .start { connection?.start=endpoint } else { connection?.end=endpoint }
         }
-        content["connection"]=try connection.map(JSONValue.encode)
-        values["graphic"] = .object(content)
+        copiedGraphic = .init(shape:graphic.shape,style:graphic.style,label:graphic.label,
+          representation:graphic.representation,visible:graphic.visible,sourceInkIDs:[],
+          connection:connection,vertices:graphic.vertices,cornerRadius:graphic.cornerRadius,
+          freehand:graphic.freehand,transform:graphic.transform,path:graphic.path,mask:graphic.mask)
       }
-      return try JSONValue.object(values).decode(AgentElement.self)
+      return .init(id:ids[collaborationIdentity(element.id)]!,kind:element.kind,frame:element.frame,
+        source:element.source,html:element.html,css:element.css,javaScript:element.javaScript,
+        programPackage:element.programPackage,state:element.state,graphic:copiedGraphic,
+        textStyle:element.textStyle,parentID:element.parentID.map { ids[collaborationIdentity($0)]! },basis:element.basis)
     }
     return .init(elements:copies,size:size)
   }
@@ -75,7 +74,7 @@ public struct NotebookPasteFragment: Codable, Sendable {
       size.x.isFinite,size.y.isFinite,size.x > 0,size.y > 0,size.x <= 1_000_000,size.y <= 1_000_000 else {
       throw CollaborationError("invalid_fragment","Неполный или слишком большой фрагмент буфера.")
     }
-    let byID=Dictionary(uniqueKeysWithValues:elements.map { ($0.id,$0) })
+    let byID=Dictionary(uniqueKeysWithValues:elements.map { (collaborationIdentity($0.id),$0) })
     for element in elements {
       try Task.checkCancellation()
       guard element.id.utf16.count <= 120,element.hasValidSource,
@@ -87,9 +86,9 @@ public struct NotebookPasteFragment: Codable, Sendable {
       guard element.programPackage == nil else {
         throw CollaborationError("incomplete_fragment","Для переноса программы нужны все её ресурсы.")
       }
-      var visited:Set<String>=[element.id],parentID=element.parentID
+      var visited:Set<String>=[collaborationIdentity(element.id)],parentID=element.parentID
       while let id=parentID {
-        guard visited.insert(id).inserted,let parent=byID[id],parent.kind == .group else {
+        guard visited.insert(collaborationIdentity(id)).inserted,let parent=byID[collaborationIdentity(id)],parent.kind == .group else {
           throw CollaborationError("invalid_fragment","Неполная или циклическая группа в буфере.")
         }
         parentID=parent.parentID

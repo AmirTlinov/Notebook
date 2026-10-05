@@ -2,6 +2,42 @@ import Foundation
 import Testing
 @testable import NotebookCore
 
+@Test("Одинаковое тело после A→B→A сохраняет новый причинный исходник для native CAS")
+func nativeGraphicSourceRejectsSameValuedSuccessor() throws {
+  let root = FileManager.default.temporaryDirectory.appendingPathComponent("graphic-source-\(UUID())")
+  defer { try? FileManager.default.removeItem(at: root) }
+  let actor = UUID(), pageID = UUID(), store = NotebookStore(root: root)
+  _ = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194), initialPageID: pageID)
+  let target = CollaborationTarget(kind: .page, id: pageID)
+  let original = PageRect(x: 20, y: 30, width: 100, height: 80)
+  func mutate(_ kind: CollaborationOperation.Kind, _ values: [String: JSONValue]) throws {
+    let revision = try store.targetContentRevision(target: target)
+    _ = try store.applyNativeAction(.init(summary: "Изменить фигуру",
+      references: [.init(target: target, elementID: "source", revision: revision)],
+      expected: [.init(target: target, revision: revision)],
+      operations: [.init(kind: kind, target: target, id: "source", values: values)]), actor: actor)
+  }
+  try mutate(.insertElement, ["kind": .string("graphic"), "source": .string(""),
+    "frame": .encode(original), "graphic": .encode(NotebookGraphic(shape: .rectangle))])
+  let before = try store.readNativeElementSource(target: target, id: "source")
+  try mutate(.updateElement, ["frame": .encode(PageRect(x: 60, y: 30, width: 100, height: 80))])
+  try mutate(.updateElement, ["frame": .encode(original)])
+  let current = try store.readNativeElementSource(target: target, id: "source")
+  #expect(before.page == current.page)
+  #expect(before.versions != current.versions)
+  let operation = CollaborationOperation(kind: .updateElement, target: target, id: "source",
+    values: ["frame": try .encode(PageRect(x: 120, y: 30, width: 100, height: 80))])
+  do {
+    _ = try store.applyNativeElementEdits([operation], summary: "Старый исходник", sources: [before], actor: actor)
+    Issue.record("Старый причинный исходник не должен применяться к одинаковому новому телу")
+  } catch let error as CollaborationError {
+    #expect(error.code == "revision_conflict")
+  }
+  #expect(try store.readNativeElementSource(target: target, id: "source") == current)
+  let accepted = try store.applyNativeElementEdits([operation], summary: "Текущий исходник", sources: [current], actor: actor)
+  #expect(accepted.sources.first?.page?.frame.x == 120)
+}
+
 @Test("Фигуры на листе и доске: все исходные штрихи, преобразование, удаление и две отмены с перезапуском", arguments: [false, true], [NotebookGraphic.Shape.ellipse, .rectangle, .triangle, .diamond, .plus])
 func graphicConversionDeletionUndo(onBoard: Bool, shape: NotebookGraphic.Shape) throws {
   let root = FileManager.default.temporaryDirectory.appendingPathComponent("graphic-command-\(UUID())")

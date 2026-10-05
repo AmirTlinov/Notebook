@@ -235,6 +235,8 @@ struct NotebookGraphicVisibilityTests {
       return .init(id:"n\(i)",graphic:.init(shape:.rectangle,style:.init(strokeWidth:0.1)),frame:frame,surface:.page(pageID),shown:true,placement:placement)
     }
     let graph=NotebookGraphicGraph(nodes,groupSources:["whole":.init(source:source,surface:.page(pageID))],resolvers:[.page(pageID):resolver])
+    let retainedSourceBytes=graph.retainedSourceBytes
+    #expect(retainedSourceBytes >= nodes.capacity * MemoryLayout<NotebookGraphicGraph.Node>.stride)
     let area=CGRect(x:400.25,y:140.25,width:1.1,height:1.1),expected:Set<String>=["n40300","n40301","n41300","n41301"]
     let clock=ContinuousClock(),start=clock.now,cold=graph.visiblePageGraphics(pageID,in:area),prepared=clock.now
     #expect(Set(cold.layouts.keys) == expected)
@@ -250,6 +252,11 @@ struct NotebookGraphicVisibilityTests {
       maximumVisits=max(maximumVisits,result.visitedIndexNodes);maximumResolved=max(maximumResolved,result.resolvedGraphics)
       #expect(Set(result.layouts.keys) == expected)
       #expect(next.sharesSource(with:graph))
+      let reads=next.projectedPlacementReadCount
+      #expect(next.retainedSourceBytes == retainedSourceBytes)
+      #expect(next.retainedProjectionBytes > 0)
+      #expect(next.retainedPayloadBytes == retainedSourceBytes + next.retainedProjectionBytes)
+      #expect(next.projectedPlacementReadCount == reads,"Measuring a projection cannot resolve its 100000 retained descendants")
     }
     #expect(maximumVisits<200);#expect(maximumResolved == 4)
     let fullStart=clock.now

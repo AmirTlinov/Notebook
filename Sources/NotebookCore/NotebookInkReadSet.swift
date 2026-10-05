@@ -31,11 +31,11 @@ public struct NotebookInkContactWitness:Equatable,Sendable {
   }
 }
 
-/// One immutable source proof per retained read set. Strong ownership avoids
-/// ObjectIdentifier reuse; a new root replaces this slot after exact validation.
+/// A weak identity witness avoids address reuse without retaining an obsolete
+/// whole journal. The selected support keeps its own exact measured bodies.
 private final class NotebookInkReadValidation:@unchecked Sendable {
   private let lock=NSLock()
-  private var owner:AnyObject
+  private weak var owner:AnyObject?
   private var value=true
   init(_ owner:AnyObject) {self.owner=owner}
   func cached(_ owner:AnyObject)->Bool? {lock.withLock {self.owner === owner ? value:nil}}
@@ -77,6 +77,15 @@ public struct NotebookInkReadSet:Equatable,Sendable {
   public let erasers:[NotebookInkContactWitness]
   private let validation:NotebookInkReadValidation
   fileprivate let support:NotebookInkPaintSupport
+  public var retainedPayloadBytes:Int {
+    func bytes(_ witness:NotebookInkContactWitness)->Int {
+      MemoryLayout<NotebookInkContactWitness>.stride + witness.actor.utf8.count
+        + witness.measurements.capacity * MemoryLayout<UUID>.stride
+    }
+    return MemoryLayout<Self>.stride + support.geometry.retainedPayloadBytes + bytes(contact)
+      + erasers.capacity * MemoryLayout<NotebookInkContactWitness>.stride
+      + erasers.reduce(0) { $0 + bytes($1) }
+  }
   public static func ==(lhs:Self,rhs:Self)->Bool {
     lhs.surface == rhs.surface && lhs.bounds == rhs.bounds && lhs.contact == rhs.contact && lhs.erasers == rhs.erasers
   }

@@ -37,7 +37,7 @@ extension NotebookStore {
     }
     return try readTransaction { _ in
       try currentSQL!.limitReads(.init(rows: 8_192, bytes: 32 * 1_024 * 1_024,
-        valueBytes: 16 * 1_024 * 1_024, reason: "selection_transfer_read"))
+        valueBytes: 16 * 1_024 * 1_024, reason: "selection_transfer_read",jsonDecodeBytes:80 * 1_024 * 1_024))
       if let expectedInkRevision, try inkRevision(on:target) != expectedInkRevision {
         throw CollaborationError("revision_conflict", "Рукописное содержимое изменилось. Повторите действие.")
       }

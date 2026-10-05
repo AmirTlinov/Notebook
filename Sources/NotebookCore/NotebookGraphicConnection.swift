@@ -294,9 +294,40 @@ public struct NotebookGraphicGraph: Sendable {
     let nodes:[String:Node]
     let groups:[String:ElementSource]
     let elements:[String:ElementSource]
+    let retainedPayloadBytes:Int
     init(_ nodes:[Node],groups:[String:ElementSource],elements:[String:ElementSource]) {
       self.nodes=Dictionary(nodes.map { (collaborationIdentity($0.id),$0) },uniquingKeysWith:{ first,_ in first })
       self.groups=groups;self.elements=elements
+      retainedPayloadBytes = Self.nodeBytes(self.nodes)
+        + Self.elementBytes(groups) + Self.elementBytes(elements)
+    }
+    static func stringBytes(_ value:String?) -> Int { (value?.utf8.count ?? 0) * 2 }
+    static func sourceBytes(_ source:NotebookElementPlacement.Source) -> Int {
+      stringBytes(source.parentID)
+    }
+    static func nodeBytes(_ nodes:[String:Node]) -> Int {
+      var bytes=128 + nodes.capacity * (MemoryLayout<String>.stride + MemoryLayout<Node>.stride + 32)
+      for (key,node) in nodes {
+        bytes += stringBytes(key) + stringBytes(node.id) + stringBytes(node.placement.rootID)
+          + node.graphic.retainedPayloadBytes
+      }
+      return bytes
+    }
+    static func elementBytes(_ elements:[String:ElementSource]) -> Int {
+      var bytes=elements.capacity * (MemoryLayout<String>.stride + MemoryLayout<ElementSource>.stride + 32)
+      for (key,element) in elements {
+        bytes += stringBytes(key) + sourceBytes(element.source) + stringBytes(element.text)
+        // Each retained group can own one resolved parent frame.
+        if element.source.isGroup { bytes += MemoryLayout<NotebookElementPlacement.Frame>.stride + 64 }
+        if let format=element.textStyle.format {
+          bytes += stringBytes(format.fontName) + stringBytes(format.link)
+        }
+        if let runs=element.textStyle.runs {
+          bytes += runs.capacity * MemoryLayout<NativeTextRun>.stride
+          for run in runs { bytes += stringBytes(run.format.fontName) + stringBytes(run.format.link) }
+        }
+      }
+      return bytes
     }
   }
   /// Only the small edit dictionaries belong to a new projection. The retained
@@ -306,11 +337,18 @@ public struct NotebookGraphicGraph: Sendable {
     let graphics:[String:NotebookGraphic]
     let additions:[String:Node]
     let rebuildParents:Bool
+    let retainedPayloadBytes:Int
     private var placementsRead=0
     private let lock=NSLock()
     private var resolvers:[SurfaceID:NotebookElementPlacement.Resolver]=[:]
     init(sources:[String:NotebookElementPlacement.Source],graphics:[String:NotebookGraphic],additions:[String:Node],rebuildParents:Bool = false,resolvers:[SurfaceID:NotebookElementPlacement.Resolver] = [:]) {
       self.sources=sources;self.graphics=graphics;self.additions=additions;self.rebuildParents=rebuildParents;self.resolvers=resolvers
+      var bytes=128 + Source.nodeBytes(additions)
+        + sources.capacity * (MemoryLayout<String>.stride + MemoryLayout<NotebookElementPlacement.Source>.stride + 32)
+        + graphics.capacity * (MemoryLayout<String>.stride + MemoryLayout<NotebookGraphic>.stride + 32)
+      for (key,source) in sources { bytes += Source.stringBytes(key) + Source.sourceBytes(source) }
+      for (key,graphic) in graphics { bytes += Source.stringBytes(key) + graphic.retainedPayloadBytes }
+      retainedPayloadBytes=bytes
     }
     var placementReadCount:Int { lock.lock();defer { lock.unlock() };return placementsRead }
     func placement(_ id:String,source:NotebookElementPlacement.Source,surface:SurfaceID,base:Source) -> NotebookElementPlacement? {
@@ -363,6 +401,11 @@ public struct NotebookGraphicGraph: Sendable {
   private var placementResolver:Projection { projection.flatMap { $0.rebuildParents ? $0 : nil } ?? baseResolver }
   public var nodes:Nodes { .init(graph:self) }
   public var groups:Groups { .init(graph:self) }
+  /// Content/dictionary/parent-frame allocations cached at their immutable
+  /// owners. A small projection never traverses the retained base to measure it.
+  public var retainedSourceBytes:Int { base.retainedPayloadBytes + baseResolver.retainedPayloadBytes }
+  public var retainedProjectionBytes:Int { projection?.retainedPayloadBytes ?? 0 }
+  public var retainedPayloadBytes:Int { retainedSourceBytes + retainedProjectionBytes }
   public init(_ nodes:[Node]) { self.init(nodes,groupSources:[:]) }
   init(_ nodes:[Node],groupSources:[String:ElementSource],elementSources:[String:ElementSource] = [:],resolvers:[SurfaceID:NotebookElementPlacement.Resolver] = [:]) {
     base=Source(nodes,groups:groupSources,elements:elementSources);projection=nil

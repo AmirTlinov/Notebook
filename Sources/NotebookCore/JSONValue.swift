@@ -16,6 +16,20 @@ public enum JSONValue: Codable, Equatable, Sendable {
   public var objectFields: [String: JSONValue] { if case .object(let value) = self { value } else { [:] } }
   public var arrayValues: [JSONValue] { if case .array(let value) = self { value } else { [] } }
   public var stringValue: String? { if case .string(let value) = self { value } else { nil } }
+  /// Retained semantic allocation, including collection capacity. Counting a
+  /// value does not encode another tree; small wire tokens can own large arrays.
+  public var retainedPayloadBytes:Int { MemoryLayout<Self>.stride + retainedBufferBytes }
+  private var retainedBufferBytes:Int {
+    switch self {
+    case .null,.bool,.number:return 0
+    case .string(let value):return value.utf8.count * 2
+    case .array(let values):
+      return values.capacity * MemoryLayout<Self>.stride + values.reduce(0) { $0 + $1.retainedBufferBytes }
+    case .object(let values):
+      return values.capacity * (MemoryLayout<String>.stride + MemoryLayout<Self>.stride + 32)
+        + values.reduce(0) { $0 + $1.key.utf8.count * 2 + $1.value.retainedBufferBytes }
+    }
+  }
   var object: [String: JSONValue] { objectFields }
   var array: [JSONValue] { arrayValues }
   var string: String? { stringValue }

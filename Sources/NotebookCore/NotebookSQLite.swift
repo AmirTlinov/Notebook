@@ -18,6 +18,7 @@ struct NotebookSQLReadAllowance {
   let bytes: Int
   let valueBytes: Int
   let reason: String
+  var jsonDecodeBytes:Int? = nil
 
   static let agentCommand = Self(rows: 65_536, bytes: 32 * 1_024 * 1_024,
     valueBytes: 8 * 1_024 * 1_024, reason: "agent_command_read")
@@ -56,6 +57,10 @@ final class NotebookSQLConnection {
     // Accepted commands keep their independent durable lifetime.
     if !writable { try Task.checkCancellation() }
     if !writable, let decoded = decodedFragments[data] { return decoded }
+    if let remaining=remainingJSONDecodeBytes {
+      do { remainingJSONDecodeBytes=remaining-(try NotebookJSONAdmission.allocationCost(data,maximumBytes:remaining)) }
+      catch { readRefusal=readAllowance?.reason ?? "json_decode_memory";throw error }
+    }
     let decoded = try JSONDecoder().decode(NotebookStoredFragment.self, from: data)
     if !writable, decodedFragments.count < 128, data.count <= 524_288 - decodedFragmentBytes {
       decodedFragments[data] = decoded
@@ -72,10 +77,14 @@ final class NotebookSQLConnection {
   private var remainingReadRows = 0
   private var remainingReadBytes = 0
   private var readRefusal: String?
+  private var remainingJSONDecodeBytes:Int?
 
   func limitReads(_ allowance: NotebookSQLReadAllowance) throws {
     precondition(allowance.rows >= 0 && allowance.bytes >= 0 && allowance.valueBytes >= 0)
     try checkReadAllowance()
+    if let limit=allowance.jsonDecodeBytes {
+      remainingJSONDecodeBytes=min(remainingJSONDecodeBytes ?? limit,limit)
+    }
     if let current = readAllowance {
       remainingReadRows = min(remainingReadRows, allowance.rows)
       remainingReadBytes = min(remainingReadBytes, allowance.bytes)
@@ -94,6 +103,7 @@ final class NotebookSQLConnection {
   fileprivate func endReadSnapshot() {
     readAllowance = nil; readRefusal = nil
     remainingReadRows = 0; remainingReadBytes = 0
+    remainingJSONDecodeBytes=nil
     decodedInk = nil
     decodedFragments.removeAll(keepingCapacity: false); decodedFragmentBytes = 0
   }

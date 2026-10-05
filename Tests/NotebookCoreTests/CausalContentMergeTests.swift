@@ -3,6 +3,19 @@ import Testing
 @testable import NotebookCore
 
 @Suite struct CausalContentMergeTests {
+  @Test func retainedFootprintIncludesTheNonwinningAuthoredValue() throws {
+    let shown=ContentFieldVersion(stamp:.init(counter:1,actor:UUID()),human:true)
+    let hidden=ContentFieldVersion(stamp:.init(counter:1,actor:UUID()),human:false)
+    let body=JSONValue.array(Array(repeating:.number(0),count:10_000))
+    let merged=try shown.resolving(value:.string("shown"),with:hidden,incomingValue:body)
+    #expect(merged.value == .string("shown"))
+    #expect(merged.version.retainedHeadsBytes >= body.retainedPayloadBytes)
+    #expect(merged.version.retainedPayloadBytes > shown.retainedPayloadBytes + body.retainedPayloadBytes)
+    let restored=try JSONValue.encode(merged.version).decode(ContentFieldVersion.self)
+    #expect(restored == merged.version)
+    #expect(restored.retainedHeadsBytes >= body.retainedPayloadBytes)
+  }
+
   @Test func streamedBoardClocksMatchTheCanonicalFieldsAndPreserveExistingAuthors() throws {
     let actor=UUID(),other=UUID(),board=UUID(),stamp=VersionStamp(counter:3,actor:actor)
     let basis=NotebookElementBasis(size:.init(x:200,y:100))

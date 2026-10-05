@@ -33,17 +33,26 @@ extension NotebookStore {
       throw CollaborationError("invalid_reference", "Нужен адрес элемента листа, доски или обложки.")
     }
     return try readTransaction { _ in
-      let root = target.kind == .page ? pageFile(target.id) + "#"
-        : "board.json#/boards/@" + (target.boardID ?? target.id).uuidString.lowercased() + "/board"
-      let keys = CollaborativeContent.elementVersionKeys(id: id)
-      let rows = try boundedStoredFragments(keys.map { (root + "/collaboration/fields/@" + fieldKey([$0]), false) },
-        maximumCount: keys.count, maximumBytes: 1_048_576, budget: "native_element_versions")
-      let versions = try Dictionary(uniqueKeysWithValues: rows.map { ($0.member, try $0.value.decode(ContentFieldVersion.self)) })
-      return try .init(target: target, id: id,
-        page: target.kind == .page ? readPageElement(pageID: target.id, elementID: id) : nil,
-        spatial: target.kind == .page ? nil : readSpatialElement(boardID: target.boardID ?? target.id, elementID: id),
-        versions: versions)
+      let versions = try readNativeElementVersions(target: target, id: id)
+      return try readNativeElementBody(target: target, id: id, versions: versions)
     }
+  }
+
+  private func readNativeElementBody(target: CollaborationTarget, id: String,
+    versions: [String: ContentFieldVersion]) throws -> NotebookNativeElementSource {
+    try .init(target: target, id: id,
+      page: target.kind == .page ? readPageElement(pageID: target.id, elementID: id) : nil,
+      spatial: target.kind == .page ? nil : readSpatialElement(boardID: target.boardID ?? target.id, elementID: id),
+      versions: versions)
+  }
+
+  private func readNativeElementVersions(target: CollaborationTarget, id: String) throws -> [String: ContentFieldVersion] {
+    let root = target.kind == .page ? pageFile(target.id) + "#"
+      : "board.json#/boards/@" + (target.boardID ?? target.id).uuidString.lowercased() + "/board"
+    let keys = CollaborativeContent.elementVersionKeys(id: id)
+    let rows = try boundedStoredFragments(keys.map { (root + "/collaboration/fields/@" + fieldKey([$0]), false) },
+      maximumCount: keys.count, maximumBytes: 1_048_576, budget: "native_element_versions")
+    return try Dictionary(uniqueKeysWithValues: rows.map { ($0.member, try $0.value.decode(ContentFieldVersion.self)) })
   }
 }
 
@@ -126,7 +135,13 @@ extension NotebookStore {
         throw CollaborationError("invalid_operation", "Одна поверхность: не более 32 правок и 64 проверяемых исходников.")
       }
       for source in sources {
-        let current = try readNativeElementSource(target: target, id: source.id)
+        // Refuse a changed causal source before materializing its replacement.
+        // The peer's new body is outside this command's accepted payload credit.
+        let versions = try readNativeElementVersions(target: target, id: source.id)
+        if let expected = source.versions, expected != versions {
+          throw CollaborationError("revision_conflict", "Выбранный элемент \(source.id) изменился до завершения действия.")
+        }
+        let current = try readNativeElementBody(target: target, id: source.id, versions: versions)
         guard current.page == source.page, current.spatial == source.spatial,
           source.versions.map({ $0 == current.versions }) ?? true else {
           throw CollaborationError("revision_conflict", "Выбранный элемент \(source.id) изменился до завершения действия.")

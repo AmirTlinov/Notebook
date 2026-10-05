@@ -39,6 +39,27 @@ public final class NotebookFreehandGeometry: Sendable {
   private let starts: [Int]
   private let layerIndex: InkBoundsIndex
 
+  /// Immutable source buffers plus this geometry's auxiliary buffers. A virtual
+  /// measured range contributes its relation allocation, never its event count.
+  public var retainedPayloadBytes: Int {
+    var bytes = 128 + layerIndex.byteCount + starts.capacity * MemoryLayout<Int>.stride
+      + layers.capacity * MemoryLayout<NotebookFreehand.Layer>.stride
+      + bodies.capacity * MemoryLayout<Body>.stride + erasers.capacity * MemoryLayout<[InkStrokeGeometry.RenderPoint]>.stride
+    for layer in layers {
+      bytes += layer.vertices.capacity * MemoryLayout<NotebookFreehand.Vertex>.stride
+        + (layer.measured?.measurements.payloadBytes ?? 0)
+        + (layer.eraser?.samples.capacity ?? 0) * MemoryLayout<NotebookFreehand.Eraser.Sample>.stride
+    }
+    for points in erasers { bytes += points.capacity * MemoryLayout<InkStrokeGeometry.RenderPoint>.stride }
+    for body in bodies {
+      switch body {
+      case .primitives(let chunks, let index): bytes += chunks.capacity * MemoryLayout<Chunk>.stride + index.byteCount
+      case .measured(let source, _): bytes += source.auxiliaryBytes
+      }
+    }
+    return bytes
+  }
+
   init(_ layers: [NotebookFreehand.Layer]) {
     self.layers=layers
     var bodies:[Body]=[],erasers:[[InkStrokeGeometry.RenderPoint]]=[],starts:[Int]=[]
