@@ -1,0 +1,302 @@
+{
+  "status": "selected-verification-passed-and-pair-installed",
+  "sourceSHA256": "c75d4cd0623bd325e488cc5b3375b6db135c7815c02bbdc51d28c85f8236252a",
+  "baselineCommit": "f0de64bf7df3c091bfd9799c4a550153c9cdba25",
+  "version": "0.3.173",
+  "build": "243",
+  "scope": "Native TeX execution and derivative print-cache lookup/save. Device presentation and delivery are recorded separately; no full system latency acceptance claim.",
+  "implementation": [
+    "One SQLite owner for indexed print lookup, payloads, atomic save, exact byte ledger and LRU eviction. Replaced filesystem reader and global sweep removed.",
+    "Cache candidates selected by rendering recipe, compiler revision, entrypoint path and bytes; observed reads including negative probes still validate reuse.",
+    "AOT function entries and back-edge loop targets retain cancellation/stack supervision. Forward-only label gates removed; unknown control flow rejected.",
+    "Ordered virtual-file prefix lookup; ZIP CRC and declared uncompressed length checked before bytes enter resource cache.",
+    "Cancellation does not remove valid cached print; damaged cache is repairable without resetting live content."
+  ],
+  "kernel": {
+    "method": "alternating 2x5 fixed-epoch native compilations; exact shipped baseline archive vs final prepared archive",
+    "milliseconds": {
+      "probe-before": {
+        "count": 10,
+        "min": 704.498,
+        "median": 714.942,
+        "max": 800.377,
+        "values": [
+          800.377,
+          714.384,
+          727.837,
+          725.281,
+          711.009,
+          733.586,
+          712.793,
+          709.231,
+          704.498,
+          715.5
+        ]
+      },
+      "probe-final": {
+        "count": 10,
+        "min": 622.084,
+        "median": 640.662,
+        "max": 677.056,
+        "values": [
+          664.581,
+          628.028,
+          624.365,
+          622.084,
+          639.349,
+          655.231,
+          641.975,
+          677.056,
+          653.734,
+          625.894
+        ]
+      }
+    },
+    "byteEquivalence": {
+      "pdf": {
+        "sha256": "ecd592e3bbdc7b400d686d156b33200ab785c33d32846664bfbe43ae09753eea",
+        "bytes": 2113,
+        "byteIdentical": true
+      },
+      "synctex": {
+        "sha256": "4ff3340c06de81b62052c9cf15ae86267d6825f314cc81ae89b32d31fc2bd6bc",
+        "bytes": 832,
+        "byteIdentical": true
+      },
+      "observedReads": {
+        "sha256": "85d31cd05a4e87ebb97211f36ecd84449295c3545a06ab1c6075e9b4ddb8b2c1",
+        "bytes": 3354,
+        "byteIdentical": true
+      }
+    },
+    "medianReductionPercent": 10.389653985917736
+  },
+  "cache": {
+    "method": "100000 unrelated metadata-only candidates plus one real compiled artifact; each of 10 requests creates a fresh Store and rejects compiler use on cache hit. Mac optimized Swift, unchanged baseline NotebookCore and final runtime. This is a synthetic candidate-count stress, not 100000 complete PDFs or system frame timing.",
+    "beforeDiskLookupMS": {
+      "count": 10,
+      "min": 13409.002625,
+      "median": 19499.896125,
+      "max": 26946.967834,
+      "values": [
+        13409.002625,
+        17361.473667,
+        26946.967834,
+        22842.080667,
+        23435.295458,
+        13631.111791,
+        13487.537833,
+        25540.242917,
+        21638.318583,
+        13696.802208
+      ]
+    },
+    "afterDiskLookupMS": {
+      "count": 10,
+      "min": 1.381583,
+      "median": 1.605083,
+      "max": 2.551542,
+      "values": [
+        2.551542,
+        1.497875,
+        1.568,
+        1.948167,
+        1.838542,
+        1.547959,
+        1.381583,
+        1.845875,
+        1.642166,
+        1.456625
+      ]
+    },
+    "afterNewEntrypointMS": {
+      "bind": 0.002917,
+      "inputBridge": 0.001917,
+      "inputs": 0.010375,
+      "inputValidation": 0.000375,
+      "lookup": 0.427667,
+      "namespace": 0.06825,
+      "native": 214.468459,
+      "output": 0.820917,
+      "queue": 0.008541,
+      "runtime": 0.018917,
+      "save": 1.461042,
+      "total": 221.26525,
+      "wait": 215.368167
+    },
+    "rejectedIntermediate": {
+      "layout": "Entry buckets with the old global eviction sweep still present",
+      "newEntrypointMS": {
+        "bind": 0.008917,
+        "inputBridge": 0.001541,
+        "inputs": 0.0075,
+        "inputValidation": 0.00025,
+        "lookup": 0.106667,
+        "namespace": 0.061167,
+        "native": 182.408333,
+        "output": 0.869042,
+        "queue": 0.007,
+        "runtime": 0.228042,
+        "save": 15290.85875,
+        "total": 15479.3775,
+        "wait": 183.555333
+      }
+    },
+    "contentBudgetBytes": 134217728,
+    "databasePageLimitBytes": 268435456,
+    "sqlitePageCacheBytes": 2097152
+  },
+  "independentReview": {
+    "result": "accepted",
+    "checks": [
+      "13 Rust file/budget/namespace/archive checks passed",
+      "Pinned WAT to wasm2c to Clang execution: forward branches, cycles, br_table, indirect recursion, cancellation, stack/OOB traps and fresh recovery passed",
+      "SQLite smoke: exact 128MiB, LRU, touch, rollback, four payload limits, invalid candidates, repair, root/database/journal links and BUSY ownership passed",
+      "EXPLAIN: indexed bucket SEARCH and payload primary-key SEARCH; no global scan or sort"
+    ]
+  },
+  "localEvidenceDirectory": ".build/print-performance-20261005",
+  "proofFiles": {
+    "cache-before.json": "c8aadf0459cfd77fdff245a2b4be755c662beea84ed3ab8fc51b6d9b66e5ba49",
+    "cache-after.json": "7cbd608c9b169ede42305f11c2db24abdd89f7a83a55025a6918f53b06ae9d89",
+    "cache-final.json": "aaef264237aacdae46ec4a06f89b7382e1d1ab7bf49230b6b757a2e0f9d5d1b5",
+    "final-kernel-comparison.json": "7d0006b50786df558d6d4cc8a7d91ee05cbecf3c9472c96b95729782b1e4bff3",
+    "material-equivalence.json": "848124ee3e99a4e594af2436c3d0a459a8f27e05a629fda2e084266827f92e0f",
+    "cache-sqlite-probe.swift": "bdc9efba30b1d7e2312232de407125616959fb7b8f32603a48454ad93efcefe7",
+    "build-cache-probe.py": "dc8f873e71f98b6f102c78efe6713716ae0a1a372e7eb67e7c5a9011b2ac48b3",
+    "compile-probe.c": "b3b1fe77c5c3562961f3523ddd5a6ae6339ac19833892c72e440966868525b7e",
+    "material-probe.c": "3de9ad830778d1d66491bf1c0330346940325086ee999eaae74f310125d957a3",
+    "cache-review/Smoke.swift": "a3575a29da323bd769c8bc44b7aadd3351a327ddd78ad651c06975027d2158de",
+    "ipad-attachments/7EA6C8AA-949C-41D3-9A45-301363F4CE9E.png": "7e65f7073d69ee781cc44f4172420a53fb765a23ae55e7829add6d6e8496c58c",
+    "ipad-attachments/D762BBC7-9491-44BE-8FDB-2E264625A4B0.json": "5d9a602e3a448dba449be008f8c4afc8427a99f9f751f7921b4948191752e092",
+    "ipad-attachments/E2A22750-E01C-4B60-AC45-1C1CECF67529.txt": "77a0fbe623c594e6c21fa687eba4de960de91ea80ad66873249f11be76b55c69",
+    "ipad-attachments/D53478F0-C7AB-4C47-8D79-F433D5E70B9B.json": "9d2beb368f1f00c616743856aacbfc8c6128cfa9efe74093e74f0943b0febabf",
+    "ipad-attachments/manifest.json": "9cc2749e7b0c50f1270eebd590f7702231b226c3b5772493cf6398bdd785ce78",
+    "ipad-attachments/9A3DD0F4-97E1-4E68-A7AE-2B8622F2698B.json": "b31fdb24426900bca6c8e853639f52c85d84825faa9994ff84fb42e54c494671",
+    "ipad-attachments/725465C4-CC92-42CA-86D9-F2FC4F03BA77.png": "7e65f7073d69ee781cc44f4172420a53fb765a23ae55e7829add6d6e8496c58c",
+    "ipad-attachments/58B19B30-F989-4939-95A7-87B0AA910F28.json": "78678c60d22d39fe62959a75da33930b89b238dc11d0196eec9c3d9feb7b5e9d",
+    "mac-attachments/426FBF37-9166-4736-B0D7-4F13EF0A9EDE.txt": "bcca5d154c252fb55ad0706c5617d0f3fa44db0b4dadb08e50db985e1fea34e5",
+    "mac-attachments/manifest.json": "2387093f39411318751f4ba7fece37dbf05b787e6d3cd2a5c68172599f600835"
+  },
+  "verification": {
+    "route": "./verify.sh:selected",
+    "evidenceDirectory": ".build/print-performance-20261005/verify-1",
+    "receiptSHA256": "aa9bbb706f58f0243d8748715d010a66b8ae87b3b9ee42de198a3038aa8bca84",
+    "ipad": {
+      "result": "Passed",
+      "passedTests": 20,
+      "failedTests": 0,
+      "skippedTests": 0,
+      "runtimeWarnings": [],
+      "testFailures": []
+    },
+    "mac": {
+      "result": "Passed",
+      "passedTests": 18,
+      "failedTests": 0,
+      "skippedTests": 0,
+      "runtimeWarnings": [],
+      "testFailures": []
+    },
+    "counts": "19 native physical iPad + 1 physical UI + 18 Mac; no failures, skips or runtime warnings."
+  },
+  "physicalIPad": {
+    "scope": "One native window opening plus one repeat with cached paper, 5ms observation interval. Not a cold app process, p95/p99 or contact-to-display measurement.",
+    "open": {
+      "attempt": 0,
+      "nativeMS": {
+        "installed": 1320.1985416817479,
+        "navigationFinished": 1206.0764166526496,
+        "paper": 1123.8211250165477,
+        "programAttached": 1117.683999997098,
+        "programReady": 1320.1985416817479
+      },
+      "observationIntervalMS": 5,
+      "scope": "native window; second open has cached paper, not a cold app process"
+    },
+    "repeat": {
+      "attempt": 1,
+      "nativeMS": {
+        "installed": 166.015625,
+        "navigationFinished": 139.34020837768912,
+        "paper": 115.55416666669771,
+        "programAttached": 60.41541666490957,
+        "programReady": 166.015625
+      },
+      "observationIntervalMS": 5,
+      "scope": "native window; second open has cached paper, not a cold app process"
+    },
+    "printPhasesMS": {
+      "locations": 4.2e-05,
+      "artifact.lookup": 0.540959,
+      "canonicalPrint": 1004.063083,
+      "artifact.wait": 1000.863709,
+      "artifact.save": 1.916125,
+      "artifact.output": 4.098958,
+      "layout": 0.084167,
+      "artifact.bind": 0.002458,
+      "artifact.inputBridge": 0.005125,
+      "artifact": 1003.619208,
+      "artifact.namespace": 0.252625,
+      "artifact.inputs": 0.047917,
+      "admission": 0.010166,
+      "artifact.queue": 0.010125,
+      "artifact.inputValidation": 0.002667,
+      "artifact.native": 996.666625,
+      "artifact.runtime": 4.1e-05,
+      "pdfNavigation": 0.238167
+    },
+    "repeatPrintPhasesMS": {
+      "artifact.diskLookup": 5.476083,
+      "admission": 0.011125,
+      "canonicalPrint": 11.899375,
+      "pdfNavigation": 0.129542,
+      "layout": 0.117084,
+      "locations": 0.000417,
+      "artifact": 11.554791,
+      "artifact.lookup": 5.47425
+    },
+    "baseline": "../document-lifecycle/baseline.json",
+    "gesture": "Real first slider drag, immediate page change, return, close, fresh app process in the same isolated SQLite workspace: x=7 / x²=49 confirmed by assertions and visual inspection of both screenshots."
+  },
+  "cancellationJoinMS": {
+    "ipad": {
+      "count": 10,
+      "min": 1.668625,
+      "max": 2.1195,
+      "median": 2.056958,
+      "values": [
+        2.088666,
+        2.076916,
+        1.7495,
+        1.668625,
+        2.061583,
+        2.021375,
+        2.1195,
+        2.042958,
+        2.084,
+        2.052333
+      ]
+    },
+    "mac": {
+      "count": 10,
+      "min": 1.922625,
+      "max": 2.435917,
+      "median": 2.0193335,
+      "values": [
+        2.095834,
+        1.996209,
+        2.003292,
+        1.922792,
+        2.06875,
+        2.035375,
+        2.220708,
+        1.922625,
+        1.923791,
+        2.435917
+      ]
+    }
+  },
+  "open": "Full system frame/CPU/GPU/memory, cold/warm24 actual first-action percentiles and 30-minute joint work acceptance remain open in GUI-190/GUI-456.",
+  "delivery": "delivery.json"
+}

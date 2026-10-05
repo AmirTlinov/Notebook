@@ -136,6 +136,12 @@ and outputs retain their digest semantics; TeX convergence still compares
 actual auxiliary bytes. Resource validation, bounded memory and cancellation
 remain owned by the same capability runtime.
 
+The pinned AOT generator polls cancellation at guest function entries and loop
+back-edge targets; forward-only labels carry no gate. It rejects unknown control
+flow. `build/test-supervisor.py` executes generated loops, indirect recursion and
+trap recovery; native checks join ten cancelled compilations. Resource reads
+validate the ZIP entry's CRC and declared length before admitting cached bytes.
+
 `bundle_notebook_typesetter.py` copies only declared, hash-checked resources.
 Release validates the inventory in both apps. `--check` neither downloads nor
 builds. TypeScript uses its separate signed child of the markup XPC service and

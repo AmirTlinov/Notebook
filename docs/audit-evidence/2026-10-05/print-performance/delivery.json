@@ -1,0 +1,75 @@
+{
+  "status": "installed-pair-selected-verification-passed",
+  "recordedAt": "2026-10-05T12:40:47.813093+00:00",
+  "version": "0.3.173",
+  "build": "243",
+  "sourceSHA256": "c75d4cd0623bd325e488cc5b3375b6db135c7815c02bbdc51d28c85f8236252a",
+  "buildSHA256": "293ad38624876375949102eefa873a0655895c5820b961a5bf7bbcc402672a00",
+  "verificationSHA256": "aa9bbb706f58f0243d8748715d010a66b8ae87b3b9ee42de198a3038aa8bca84",
+  "verificationRoute": "./verify.sh:selected",
+  "apps": {
+    "iPad": {
+      "identifier": "com.amirtlinov.notebook.preview",
+      "cdhash": "8d29b789a08c17738b4690fee3cbdb1ffa732f18",
+      "manifestSHA256": "ed0f6f22684d7163f5491f0992e279106518fe4141ef8dfd7b2fad69df043ebb",
+      "binaryUUID": "72A239D2-0E29-30BD-8F50-C5BF3883B71A"
+    },
+    "mac": {
+      "identifier": "com.amirtlinov.notebook.mac",
+      "cdhash": "a179b53e13afeaa4c998cb71d1702a73900ac120",
+      "manifestSHA256": "7b1375f75df27d2cf32be369e9e1ad8a8133f13d14fb2db49cc4550dfdad33e0",
+      "binaryUUID": "76B16228-F1AE-3EF5-B0E4-EC57EA8840FD"
+    }
+  },
+  "Mac": {
+    "path": "/Users/amir/Applications/Notebook.app",
+    "servingPID": 89696,
+    "dynamicCodeValidityChecked": true,
+    "servingCDHashMatchesBuild": true,
+    "sameProcessAfterBothInstalls": true,
+    "installation": "Ordinary quit, complete manifest and signature check of staged bundle, rename replacement and fresh launch. Superseded242 bundle removed after its exact manifest and serving243 signature were checked."
+  },
+  "iPad": {
+    "bundleIdentifier": "com.amirtlinov.notebook.preview",
+    "version": "0.3.173",
+    "build": "243",
+    "physicalDevice": true,
+    "installOutcome": "success",
+    "launchOutcome": "success",
+    "containerResetPerformed": false
+  },
+  "continuity": {
+    "afterMacInstall": {
+      "workspaceHeaderUnchanged": true,
+      "presenceUnchanged": true
+    },
+    "afterIPadInstall": {
+      "workspaceHeaderUnchanged": true,
+      "presenceUnchanged": true
+    },
+    "selection": "The process session and selection generation restarted. Before restart an element was selected; after restart selection is empty. No claim of selection preservation."
+  },
+  "ui": {
+    "Mac": "AX verified the same page23/24, zoom61%, selected fluorine F in the program and3D mode after relaunch. Workspace element selection cleared as recorded above.",
+    "installedIPad": "Device Hub Screenshot captured the live physical iPad after243 install/launch. Full-resolution1668x2388 image inspected: handwritten notes, grid, native toolbar and page1/5 are visibly rendered. Live-view thumbnails were too small; the actual saved device screenshot was used.",
+    "affectedGesture": "Before release installation, the final app source passed the physical first-slider-action, immediate page change, close and fresh-process reopening with x7/x²49. Both fixture screenshots inspected.",
+    "scope": "Functional physical input/persistence, signed installation and current-surface visual readback. Not full system latency acceptance."
+  },
+  "evidenceDirectory": ".build/print-performance-20261005/live",
+  "evidence": {
+    "mac-stage.json": "525b7f24c338a63b52429939748476fd7f345635f32ca871c83d166930021ccb",
+    "ipad-after-install.log": "daa3932229d1db83b33d63e6ff43b416d4d74b8b4592423f3d0ee555183c286b",
+    "after-ipad-install.json": "e9140f72a298a7dba7f19bbfe092ad868d3e677e9c945e1e3643dfcee0d649b8",
+    "after-mac-install.json": "d8b7f5425d9b172059c5c5575c0b08735636a9ad84609a4369d8355ae2553bfa",
+    "ipad-installed.png": "2f506a8a5aa28aa5212ad6c7df6a6f39327bb369cdfcf4e752b230b8d0130881",
+    "ipad-launch.json": "368cbc09b097ca2fd12968772ff6a305a1c5cfddaf0483b307622c4da85d1a06",
+    "before-install.json": "efb3b2d228708905b98e270a6d6f46d99f20e50237f0be0fb68f6d952a4cd692",
+    "ipad-before-install.json": "459600c47f7ef12f90c06fc48e6367c9f81045b36df8ccbcaa2a25e2f55804e0",
+    "ipad-install.log": "29b7f6e15a9882b72ccebb15e51c0605fbfa86e398373595f81dc29e57ea3047",
+    "ipad-launch.log": "629bb735cfcee02e02b7f5f6ed6b0dbad9a51fd734bcc8f09d011d710e1b7b5e",
+    "ipad-before-install.log": "8a20e5077064cf9bb853e0c5e1b8b7b6aae55174148b00ef1077fa4fb2d7c229",
+    "ipad-install.json": "d963c45c123dafd518c26481938730c6bb0555486662ecda494188474e517140",
+    "ipad-after-install.json": "7121268683231c1e092a925f4b6bf6192d1469c59a88b94031628551c450186c"
+  },
+  "fullAcceptance": "GUI-190/GUI-456 remain open: actual first-action percentiles, system frame/CPU/GPU/memory, ten scene repetitions and30minutes joint work."
+}

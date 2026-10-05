@@ -78,18 +78,28 @@ final class DocumentTypesetterBoundaryTests: XCTestCase {
     let compiler = NotebookTypesetter(resources: resources)
     let valid = document("\\section{Восстановление}\nТекст и $x^2$ остаются векторными.")
     let initial = try await compiler.compile(valid)
-    for _ in 0..<10 {
-      let task = Task { try await compiler.compile(document("\\loop\\iftrue\\repeat")) }
+    var cancellationsMS: [Double] = []
+    for attempt in 0..<10 {
+      // Enter computation without spending the cancellation window loading
+      // fontspec. Exercise both short loops and loops with a long straight body.
+      let body = attempt.isMultiple(of: 2) ? "" : String(repeating: "\\advance\\count255 by1 ", count: 512)
+      let looping = DocumentDocument(actor: UUID(), files: [.init(id: "main", path: "main.tex",
+        source: "\\count255=0\\relax\\loop " + body + "\\count255=0\\relax\\iftrue\\repeat")])
+      let task = Task { try await compiler.compile(looping) }
       try await Task.sleep(for: .milliseconds(250))
       let start = ContinuousClock.now
       task.cancel()
       do { _ = try await task.value; XCTFail("An infinite TeX loop completed") }
       catch { XCTAssertTrue(error is CancellationError || error.localizedDescription.contains("cancelled"), error.localizedDescription) }
-      XCTAssertLessThan(start.duration(to: .now), .seconds(2), "Cancellation must join the actual VM, not just hide its result")
+      let elapsed = start.duration(to: .now)
+      XCTAssertLessThan(elapsed, .seconds(2), "Cancellation must join the actual VM, not just hide its result")
+      cancellationsMS.append(Double(elapsed.components.seconds)*1000 + Double(elapsed.components.attoseconds)/1e15)
       let next = try await compiler.compile(valid)
       try assertSamePrintedPage(next, initial)
       XCTAssertLessThanOrEqual(next.guestMemoryBytes, 320*1024*1024)
     }
+    let measurement = XCTAttachment(string: "Native compiler cancellation and join, alternating short/512-operation loop, milliseconds: \(cancellationsMS)")
+    measurement.name = "Ten cancellation joins"; measurement.lifetime = .keepAlways; add(measurement)
     await compiler.trimIdle()
     let cold = try await compiler.compile(valid)
     try assertSamePrintedPage(cold, initial)
@@ -189,13 +199,22 @@ final class DocumentTypesetterBoundaryTests: XCTestCase {
     let store = NotebookPrintedDocumentStore(resources: resources, directory: directory)
     let source = document("\\section{Кеш}\nАдреса принадлежат точной версии.")
     let original = try await store.artifact(for: source)
-    let folder = try XCTUnwrap(FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil).first)
-    let map = folder.appendingPathComponent("document.synctex.gz")
-    try Data("foreign mapping".utf8).write(to: map)
+    let identity = try original.dependencies.identity
+    try DocumentPrintCacheFixture.execute(directory, "UPDATE payloads SET synctex=X'666f726569676e206d617070696e67' WHERE identity='\(identity)'")
     let repaired = try await NotebookPrintedDocumentStore(resources: resources, directory: directory).artifact(for: source)
     try assertSamePrintedPage(repaired, original)
     XCTAssertEqual(repaired.syncTeX, original.syncTeX)
-    XCTAssertEqual(try Data(contentsOf: map), original.syncTeX)
+    XCTAssertEqual(try DocumentPrintCacheFixture.bytes(directory, "SELECT synctex FROM payloads WHERE identity='\(identity)'"), original.syncTeX)
+
+    let broken = directory.appendingPathComponent("broken-database", isDirectory: true)
+    try FileManager.default.createDirectory(at: broken, withIntermediateDirectories: true)
+    try Data("Interrupted derived database".utf8).write(to: broken.appendingPathComponent("artifacts.sqlite3"))
+    let recovered = try await NotebookPrintedDocumentStore(resources: resources, directory: broken).artifact(for: source)
+    try assertSamePrintedPage(recovered, original)
+    let reopened = try await NotebookPrintedDocumentStore(resources: resources, directory: broken).artifact(for: source, inputFactory: {
+      throw NotebookTypesetterError("A damaged cache must repair itself rather than compile on every reopen")
+    })
+    XCTAssertEqual(reopened.pdf, recovered.pdf)
   }
 
   func testQuartzPDFSinkRefusesWritesBeyondItsAdmittedBudget() throws {
