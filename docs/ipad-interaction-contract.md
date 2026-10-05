@@ -22,12 +22,19 @@ formats are unchanged. Tool styles remain independent device preferences.
   Material units do not change with camera scale; angle display is 0.1 degrees.
 - `NotebookSelectionGesture` resolves and freezes callbacks on finger-down.
   Quiet hold-up opens actions; hold then motion moves the original material.
+  Geometry grips use the same recognizer: motion edits their captured geometry,
+  while a quiet hold opens the selected object's menu.
   Another finger or Pencil cancels that ownership. There is no competing hold
   recognizer or zero-motion edit. Selection frames and grips remain visible;
   whole-object actions live only in the contextual menu. Native inline text
   selection retains its system editing controls.
 - `NotebookContextMenus` owns menu/popover presentation. Existing model operations
   revalidate captured selection identity and their addressed source when invoked.
+  Its native menu exposes relevant primary actions before clipboard and secondary
+  commands. Geometry modes are explicit checked choices. The selected material,
+  rather than its temporary geometry frame, owns an open parameter palette;
+  repaint refreshes it, while an ended target or replaced material closes it.
+  Deferred presentation cannot outlive its selection or become a later contact's menu.
   Menu eligibility reads bounded selection metadata without serializing bodies.
   Explicit Copy captures typed material once and encodes the fragment off the UI
   actor. Copy publishes that immutable snapshot even if selection changes; a newer

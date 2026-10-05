@@ -697,12 +697,12 @@ struct SpatialWorkspaceView: View {
     var actions=NotebookContextMenus.clipboardActions(cut:canCopy ? { copy(cut:true) } : nil,
       copy:canCopy ? { copy(cut:false) } : nil,paste:destination.map { captured in {
         guard model.selectionSession.id == selection else { return };pasteContext(at:captured,point:point)
-      } })
-    actions.append(UIAction(title:"Дублировать",image:UIImage(systemName:"plus.square.on.square"),attributes:canCopy ? [] : .disabled) { _ in
+      } }).filter { ($0 as? UIAction)?.attributes.contains(.disabled) != true }
+    if canCopy { actions.append(UIAction(title:"Дублировать",image:UIImage(systemName:"plus.square.on.square")) { _ in
       guard model.selectionSession.id == selection else { return }
       model.duplicateSelectedContent()
-    })
-    return [UIMenu(options:.displayInline,children:actions)]
+    }) }
+    return actions.isEmpty ? [] : [UIMenu(options:.displayInline,children:actions)]
   }
 
   private func pasteContext(at destination:NotebookPasteDestination,point:CGPoint) {

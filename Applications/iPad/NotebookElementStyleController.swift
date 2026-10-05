@@ -30,6 +30,7 @@ final class NotebookElementStyleController: UIViewController, UIColorPickerViewC
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
   override func loadView() {
     view = UIView(); view.backgroundColor = UIColor(NotebookChrome.surface)
+    view.accessibilityIdentifier = "element-style-palette"
     popoverPresentationController?.backgroundColor = UIColor(NotebookChrome.surface)
     let stack = UIStackView(); stack.axis = .vertical; stack.spacing = 10
     stack.translatesAutoresizingMaskIntoConstraints = false; view.addSubview(stack)
@@ -77,11 +78,15 @@ final class NotebookElementStyleController: UIViewController, UIColorPickerViewC
     }
     stack.addArrangedSubview(dashes); refresh()
   }
-  func configure(style: NotebookGraphic.Style) { self.style = style; if isViewLoaded { refresh() } }
+  func configure(style: NotebookGraphic.Style) {
+    guard self.style != style else { return }
+    self.style = style; if isViewLoaded { refresh() }
+  }
   private func refresh() {
     let selected = channel.selectedSegmentIndex == 1 ? style.fill : style.stroke
     for (index, button) in swatches.enumerated() {
       let color = Self.colors[index].1, active = selected == color
+      guard button.image(for:.normal) == nil || button.accessibilityTraits.contains(.selected) != active else { continue }
       let renderer = UIGraphicsImageRenderer(size:.init(width:36,height:36))
       button.setImage(renderer.image { context in
         Self.color(color).setFill(); UIBezierPath(ovalIn:.init(x:4,y:4,width:28,height:28)).fill()

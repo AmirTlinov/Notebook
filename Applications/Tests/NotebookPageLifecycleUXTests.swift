@@ -1215,7 +1215,7 @@ import XCTest
     XCTAssertEqual(installed.compactMap { $0 as? NotebookSelectionControlsView }.count, 1,
       "One installed control owner for the selected region")
     let menuOwners = installed.compactMap { $0 as? NotebookContextMenus.HostView }
-      .flatMap { $0.interactions.compactMap { ($0 as? UIEditMenuInteraction)?.delegate as? NotebookContextMenus } }
+      .compactMap(\.owner)
     XCTAssertEqual(menuOwners.count, 1)
     let menus = try XCTUnwrap(menuOwners.first), selectionID = model.selectionSession.id
     let selectionActions = try XCTUnwrap(menus.selectionActions)

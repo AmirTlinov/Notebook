@@ -32,19 +32,62 @@ final class NotebookItemDropUXTests: XCTestCase {
       try NotebookUXObservation.Pixels(window: window).matches([(left, .blue), (right, .red)])
     }
     model.selectWorkspaceItem(a, boardID: board)
-    try await assertUX("item-delete-installed-control", since: .now, window: window) { self.findControls(in: window)?.deleteElement != nil }
-    let controls = try XCTUnwrap(findControls(in: window)), remove = try XCTUnwrap(controls.deleteElement)
-    remove() // The installed control's real callback, not a second deletion implementation.
+    try await assertUX("item-delete-installed-control", since: .now, window: window) {
+      self.findControls(in: window)?.destructiveActions.first is UIAction
+    }
+    let controls = try XCTUnwrap(findControls(in: window))
+    let remove = try XCTUnwrap(controls.destructiveActions.first as? UIAction)
+    UIButton().sendAction(remove) // Execute the installed native menu's real command.
     try await assertUX("item-delete-no-old-pixels", since: .now, budget: .seconds(2), window: window) {
       try model.workspace?.item(id: a) == nil && NotebookUXObservation.Pixels(window: window).matches([(left, .paper), (right, .red)])
     }
     for _ in 0..<2 {
+      let previousRevision = try XCTUnwrap(model.compositionTiles.published).plan.revision
+      let start = ContinuousClock.now
+      var committed: Duration?
+      var phases: [String] = []
+      model.compositionTiles.onPreparationPhase = { _, phase in
+        phases.append("\(start.duration(to: .now)): \(phase)")
+      }
+      // Observe the restored native owners after their CA commit. Repeated
+      // window readback here would compete with the very mount being timed.
+      let link = UIUpdateLink(view: window)
+      link.addAction(to: .afterCATransactionCommit) { _, _ in
+        guard committed == nil, let cohort = model.compositionTiles.published,
+          let revision = model.workspaceHeader?.cursor,
+          cohort.plan.rootBoardID == board, cohort.plan.revision > previousRevision,
+          cohort.validatedSpatialRevision >= revision, cohort.isPaintInstalled,
+          [a, b].allSatisfy({ id in
+            guard model.workspace?.item(id: id) != nil, !model.isItemBeingDeleted(id),
+              cohort.frame.index.item(id: id) != nil,
+              let pose = model.compositionTiles.surfaceRegistry.pose(for: .cover(id)) else { return false }
+            return pose.boardID == board && pose.cohortID == cohort.id
+              && pose.cohortRevision == cohort.plan.revision && pose.retiredAtRevision == nil
+              && !pose.isContentReleased && pose.contentView.window === window
+          }) else { return }
+        committed = start.duration(to: .now)
+      }
+      link.isEnabled = true
+      defer { link.isEnabled = false; model.compositionTiles.onPreparationPhase = nil }
       model.undoLastSurfaceAction()
       let undone = await model.finishPendingPersistence(); XCTAssertTrue(undone)
-      try await assertUX("item-delete-undo-keeps-material", since: .now, window: window) {
-        try NotebookUXObservation.Pixels(window: window).matches([(left, .blue), (right, .red)])
-      }
-      let shot = XCTAttachment(image: try NotebookUXObservation.Pixels(window: window).image)
+      let readiness = try await NotebookUXObservation.observe(since: start,
+        budget: NotebookUXObservation.correctnessTimeout) { committed != nil }
+      link.isEnabled = false; model.compositionTiles.onPreparationPhase = nil
+      let cohort = model.compositionTiles.published
+      let report = "Undo native restoration: committed=\(String(describing: committed)); observed=\(readiness.elapsed); ceiling=\(readiness.budget); SQL=\(String(describing: model.workspaceHeader?.cursor)); cohort=\(String(describing: cohort?.plan.revision)); paintInstalled=\(cohort?.isPaintInstalled == true). CA commit and mounted owners, not physical scanout.\n" + phases.joined(separator: "\n")
+      let readinessEvidence = XCTAttachment(string: report)
+      readinessEvidence.name = "item-delete-undo-native-readiness"; readinessEvidence.lifetime = .keepAlways; add(readinessEvidence)
+      XCTAssertTrue(committed.map { $0 <= readiness.budget } == true, report)
+      // One independent picture checks material after the native observation;
+      // its capture cost does not become an application latency measurement.
+      let captureStart = ContinuousClock.now
+      let pixels = try NotebookUXObservation.Pixels(window: window)
+      let correct = try pixels.matches([(left, .blue), (right, .red)])
+      let captureEvidence = XCTAttachment(string: "correct=\(correct); capture+check=\(captureStart.duration(to: .now)); one post-readiness window capture")
+      captureEvidence.name = "item-delete-undo-keeps-material"; captureEvidence.lifetime = .keepAlways; add(captureEvidence)
+      XCTAssertTrue(correct, "The first post-readiness picture must restore both covers and their ink")
+      let shot = XCTAttachment(image: pixels.image)
       shot.name = "item-delete-undo-actual-window"; shot.lifetime = .keepAlways; add(shot)
       model.redoLastSurfaceAction()
       let repeated = await model.finishPendingPersistence(); XCTAssertTrue(repeated)

@@ -277,7 +277,7 @@ import XCTest
     let controls=NotebookSelectionControlsView(gate:gate,contextMenus:mountContextMenus(in:controller.view,gate:gate))
     controls.frame=controller.view.bounds
     controls.configure(selectionID:UUID(),frame:.init(x:100,y:150,width:240,height:180),subject:.group)
-    controls.setGroupActions();controller.view.addSubview(controls);controls.layoutIfNeeded()
+    controller.view.addSubview(controls);controls.layoutIfNeeded()
     let center=controls.convert(.init(x:220,y:240),to:window)
     XCTAssertTrue(window.hitTest(center,with:nil) === controls)
     XCTAssertFalse(gate.permitsSceneContact(at:center,kind:.finger));XCTAssertTrue(gate.permitsSceneContact(at:center,kind:.pencil))
@@ -435,14 +435,15 @@ import XCTest
     menus.show(source:text,anchor:.init(x:140,y:400,width:180,height:44),in:controller.view,buttons:[button])
     menus.view.layoutIfNeeded()
     menus.hide(source:object) // A late dismantle must not hide the new text selection.
-    XCTAssertEqual(menuButtons(menus),[button]); XCTAssertEqual(menus.view.subviews.count,1)
-    XCTAssertFalse(menus.frame(for:text,in:controller.view).isNull)
+    XCTAssertEqual(menuButtons(menus),[button])
+    let surface=try XCTUnwrap(menus.view.subviews.first { $0.accessibilityIdentifier == "notebook-context-menu" })
+    XCTAssertFalse(surface.isHidden)
     let point = button.convert(.init(x:22,y:22),to:window)
     XCTAssertFalse(gate.permitsSceneContact(at:point,kind:.finger))
     XCTAssertFalse(gate.permitsSceneContact(at:point,kind:.pencil))
     XCTAssertTrue(gate.permitsSceneContact(at:.init(x:30,y:600),kind:.finger))
     menus.hide(source:text)
-    XCTAssertTrue(menus.frame(for:text,in:controller.view).isNull)
+    XCTAssertTrue(surface.isHidden)
     XCTAssertTrue(gate.permitsSceneContact(at:point,kind:.pencil))
   }
 
@@ -475,6 +476,111 @@ import XCTest
     menus.presentContent(Text("Next context"),at:.init(x:100,y:200))
     XCTAssertTrue(menus.hasPresentedMenu)
     menus.dismissPresentedContent()
+  }
+
+  func testDeferredMenuCannotReturnAfterItsContactOrSelectionEnds() async throws {
+    try await fixture { model,reference in
+      let window=UIWindow(windowScene:try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
+      let controller=UIViewController();window.rootViewController=controller;window.makeKeyAndVisible()
+      defer { window.isHidden=true;window.rootViewController=nil }
+      let menus=mountContextMenus(in:controller.view,gate:model.inputGate),source=UUID()
+      model.selectElement(reference);menus.updateSelection(model)
+      let selection=model.selectionSession.id
+      var requests=0
+      menus.selectionActions = { _,_ in requests += 1;return [] }
+      @MainActor func register(enabled:Bool) {
+        menus.registerSelectionActions(source:source,selection:selection,anchor:.init(x:100,y:200,width:100,height:100),
+          in:controller.view,primary:[UIAction(title:"Редактировать") { _ in }],secondary:[],destructive:[],enabled:enabled)
+      }
+      register(enabled:false);menus.requestSelectionMenu(selection,at:.init(x:150,y:250))
+      let contact=try XCTUnwrap(model.beginElementManipulation(reference,kind:.move))
+      menus.updateSelection(model);model.cancelElementManipulation(contact)
+      register(enabled:true)
+      XCTAssertEqual(requests,0,"A deferred menu must not reopen after its contact became a drag")
+      XCTAssertFalse(menus.hasPresentedMenu)
+      register(enabled:false);menus.requestSelectionMenu(selection,at:.init(x:150,y:250))
+      model.endSurfaceEditing();menus.updateSelection(model)
+      register(enabled:true)
+      XCTAssertEqual(requests,0,"Late geometry cannot reinstall actions for an ended editing target")
+      XCTAssertFalse(menus.hasPresentedMenu)
+      menus.uninstall()
+    }
+  }
+
+  func testStylePaletteKeepsAcceptedEditsAcrossRepaintAndRetiresWithSelection() async throws {
+    try await fixture { model, reference in
+      var page = try XCTUnwrap(model.activePage)
+      page.replaceElements([.init(id:reference.elementID,kind:.graphic,
+        frame:.init(x:100,y:100,width:180,height:140),source:"",html:"",graphic:NotebookGraphic())],actor:model.actorID)
+      try model.store.savePage(page);await model.reloadExternalChanges()?.value
+      let window = try await mountNotebookScene(model)
+      model.selectElement(reference)
+      func descendants(_ view:UIView)->[UIView] { [view]+view.subviews.flatMap(descendants) }
+      func controls()->NotebookSelectionControlsView? {
+        descendants(window).compactMap { $0 as? NotebookSelectionControlsView }.first
+      }
+      try await assertUX("style-actions-installed",since:.now,budget:.seconds(2),window:window) {
+        controls()?.primaryActions.contains { $0.title == "Оформление фигуры" } == true
+      }
+      let menu = try XCTUnwrap(descendants(window).compactMap { ($0 as? NotebookContextMenus.HostView)?.owner }.first)
+      let action = try XCTUnwrap(controls()?.primaryActions.first { $0.title == "Оформление фигуры" } as? UIAction)
+      UIButton().sendAction(action)
+      let palette = try XCTUnwrap(window.rootViewController?.presentedViewController as? NotebookElementStyleController)
+      if let transition=palette.transitionCoordinator {
+        await withCheckedContinuation { continuation in
+          if !transition.animate(alongsideTransition:nil,completion:{ _ in continuation.resume() }) { continuation.resume() }
+        }
+      }
+      let blue = try XCTUnwrap(descendants(palette.view).first { $0.accessibilityIdentifier == "element-color-11" } as? UIButton)
+      blue.sendActions(for:.touchUpInside)
+      try await assertUX("palette-keeps-first-edit",since:.now,budget:.seconds(2),window:window) {
+        let current=try XCTUnwrap(model.activePage)
+        return blue.accessibilityTraits.contains(.selected) && model.pagePresentations.isPresented(current)
+      }
+      XCTAssertTrue(window.rootViewController?.presentedViewController === palette)
+      XCTAssertTrue(menu.hasPresentedMenu)
+      let width = try XCTUnwrap(descendants(palette.view).first { $0.accessibilityIdentifier == "element-width" } as? UISlider)
+      width.value=2; width.sendActions(for:.valueChanged)
+      let dash = try XCTUnwrap(descendants(palette.view).first { $0.accessibilityIdentifier == "element-dash-1" } as? UIButton)
+      dash.sendActions(for:.touchUpInside)
+      let saved = await model.finishPendingPersistence();XCTAssertTrue(saved)
+      XCTAssertTrue(window.rootViewController?.presentedViewController === palette)
+      let accepted = try XCTUnwrap(model.graphicElement(reference)?.style)
+      XCTAssertEqual(accepted.strokeWidth,4)
+      XCTAssertEqual(accepted.stroke,.init(red:0.22,green:0.40,blue:0.89))
+      XCTAssertNotEqual(accepted.dash,.solid)
+      let selection=model.selectionSession.id
+      model.endSurfaceEditing()
+      XCTAssertEqual(model.selectionSession.id,selection,"A context transition can retain the selection identifier")
+      try await assertUX("palette-retires-with-editing-target",since:.now,budget:.seconds(2),window:window) {
+        palette.presentingViewController == nil && !menu.hasPresentedMenu
+      }
+      palette.updateStyle { $0.strokeWidth=19 }
+      XCTAssertEqual(model.graphicElement(reference)?.style,accepted,"A retained editor cannot write through its ended selection")
+      XCTAssertEqual(try model.store.loadPage(page.id).element(id:reference.elementID)?.graphic?.style,accepted)
+      model.selectElement(reference)
+      try await assertUX("palette-next-selection-ready",since:.now,budget:.seconds(2),window:window) {
+        controls()?.primaryActions.contains { $0.title == "Оформление фигуры" } == true
+      }
+      let reopen = try XCTUnwrap(controls()?.primaryActions.first { $0.title == "Оформление фигуры" } as? UIAction)
+      UIButton().sendAction(reopen)
+      let replacementPalette = try XCTUnwrap(window.rootViewController?.presentedViewController as? NotebookElementStyleController)
+      if let transition=replacementPalette.transitionCoordinator {
+        await withCheckedContinuation { continuation in
+          if !transition.animate(alongsideTransition:nil,completion:{ _ in continuation.resume() }) { continuation.resume() }
+        }
+      }
+      var changed = try model.store.loadPage(page.id)
+      let material = try XCTUnwrap(changed.element(id:reference.elementID)),peer=UUID()
+      changed.replaceElements([],actor:peer);try model.store.savePage(changed)
+      changed.replaceElements([material],actor:peer);try model.store.savePage(changed)
+      await model.reloadExternalChanges()?.value
+      try await assertUX("palette-retires-with-material-identity",since:.now,budget:.seconds(2),window:window) {
+        replacementPalette.presentingViewController == nil
+      }
+      replacementPalette.updateStyle { $0.strokeWidth=23 }
+      XCTAssertEqual(model.graphicElement(reference)?.style,accepted,"A recreated ID cannot adopt the previous material's editor")
+    }
   }
 
   private func mountContextMenus(in host: UIView, gate: NotebookInputGate) -> NotebookContextMenus {

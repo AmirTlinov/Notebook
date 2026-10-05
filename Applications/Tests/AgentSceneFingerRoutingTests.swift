@@ -6,6 +6,59 @@ import XCTest
 
 @MainActor
 final class AgentSceneFingerRoutingTests: XCTestCase {
+  func testWindowObserverRetiresControlAndPopupContactsBeforeTheNextPickup() throws {
+    let gate=NotebookInputGate(),scene=try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous=scene.windows.first(where:\.isKeyWindow)
+    let window=UIWindow(windowScene:scene),host=UIViewController(),paper=UIViewController()
+    window.rootViewController=host;window.makeKeyAndVisible()
+    host.addChild(paper);host.view.addSubview(paper.view);paper.view.frame=host.view.bounds;paper.didMove(toParent:host)
+    let grip=UIButton(frame:.init(x:100,y:200,width:44,height:44))
+    paper.view.addSubview(grip)
+    // A UIKit presentation is outside the scene controller's view subtree.
+    let popup=UIButton(frame:.init(x:300,y:200,width:80,height:44))
+    host.view.addSubview(popup)
+    let region=UUID()
+    gate.registerControlRegion(source:region) { point,_ in grip.bounds.contains(grip.convert(point,from:window)) }
+    let owner=WorkspaceGestureLayer.Coordinator(defersHorizontalMotionToPageTurn:false,isEnabled:true,inputGate:gate,
+      onCamera:{ _ in XCTFail("Native controls retain their gestures") },onUndo:{},onRedo:{})
+    owner.install(on:window,inside:paper.view)
+    defer {
+      owner.uninstall();gate.unregisterControlRegion(source:region)
+      window.isHidden=true;window.rootViewController=nil;previous?.makeKey()
+    }
+    let observer=try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? NotebookContactObserver }.first)
+    let camera=try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? TwoFingerPaperGestureRecognizer }.first)
+    for (control,cancelled) in [(grip,false),(popup,true)] {
+      let point=control.convert(CGPoint(x:control.bounds.midX,y:control.bounds.midY),to:window)
+      let finger=SVGInputTouch(window:window,view:control,point:point),event=UIEvent()
+      if control === grip { XCTAssertFalse(gate.permitsSceneContact(at:point,kind:.finger)) }
+      else { XCTAssertFalse(sceneReceives(finger,inside:paper.view)) }
+      // A grip resolves its own input owner before the independent window
+      // observer receives the same physical contact. Only that observer ends it.
+      XCTAssertEqual(NotebookSceneFingerRouting.owner(of:finger,gate:gate),.nativeInput(ObjectIdentifier(control)))
+      let admitted=owner.gestureRecognizer(observer,shouldReceive:finger)
+      XCTAssertTrue(admitted,"A scene exclusion must not hide a physical contact's lifetime")
+      XCTAssertFalse(owner.gestureRecognizer(camera,shouldReceive:finger))
+      if admitted {
+        observer.touchesBegan([finger],with:event)
+        XCTAssertEqual(gate.admittedFingerContactCount,1)
+        if cancelled { observer.touchesCancelled([finger],with:event) }
+        else { observer.touchesEnded([finger],with:event) }
+      }
+      XCTAssertEqual(gate.admittedFingerContactCount,0,"Released controls cannot poison the next scene pickup")
+      XCTAssertTrue(gate.permitsObjectPickup)
+      observer.reset() // UIKit resets between physical sequences; these callbacks are synthetic.
+    }
+    let next=SVGInputTouch(window:window,view:paper.view,point:paper.view.convert(.init(x:120,y:400),to:window))
+    XCTAssertTrue(owner.gestureRecognizer(observer,shouldReceive:next))
+    observer.touchesBegan([next],with:UIEvent())
+    XCTAssertEqual(gate.admittedFingerContactCount,1)
+    XCTAssertTrue(gate.permitsObjectPickup,"The next finger is a fresh sequence, not a leaked second contact")
+    owner.uninstall()
+    XCTAssertEqual(gate.admittedFingerContactCount,0,"Closing retires even a contact still physically down")
+    XCTAssertTrue(gate.permitsObjectPickup)
+  }
+
   func testReadyMapRoutesControlsAndAuthoredHandlersAtTheActualContact() async throws {
     let resources = SceneRenderResources(), gate = NotebookInputGate()
     let lease = try await resources.acquireWebSurface(priority: .liveProgram)
@@ -291,6 +344,7 @@ private final class SVGInputTouch: UITouch {
     sourceWindow = window; sourceView = view; self.point = point; super.init()
   }
   override var type: UITouch.TouchType { .direct }
+  override var window: UIWindow? { sourceWindow }
   override var view: UIView? { sourceView }
   override func location(in view: UIView?) -> CGPoint { view?.convert(point, from: sourceWindow) ?? point }
 }
