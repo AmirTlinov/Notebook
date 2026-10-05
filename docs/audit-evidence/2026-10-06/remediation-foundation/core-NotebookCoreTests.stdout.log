@@ -1,0 +1,59 @@
+◇ Test run started.
+↳ Testing Library Version: 2084
+↳ Target Platform: arm64e-apple-macos14.0
+◇ Suite "JSON decoding is admitted before value allocation" started.
+◇ Test selectedContactProofDoesNotPinTheWholePageJournal() started.
+◇ Suite "Complete addressed selection transfer" started.
+◇ Suite "Portable paste admission" started.
+◇ Suite "Accepted native outcomes belong to their transaction" started.
+◇ Test "Одинаковое тело после A→B→A сохраняет новый причинный исходник для native CAS" started.
+◇ Suite CausalContentMergeTests started.
+◇ Test aCaughtDecodeRefusalStillVetoesTheSourceCut() started.
+◇ Suite "Graphic local-frame visibility" started.
+◇ Suite "SQLite owns atomic addressed publication" started.
+◇ Test smallWireCanExceedItsDecodedAllowance() started.
+◇ Test maskAdmissionSurvivesWireRoundTripAtTheCurrentFormatBoundary() started.
+◇ Test missingNonGroupAndCyclicParentsAreRejectedBeforeInsertion() started.
+◇ Test packageIdentityWithoutItsResourceClosureIsNotPortable() started.
+◇ Test hundredThousandLeavesAreSkippedAfterOneLocalIndexAdmission() started.
+◇ Test aStorageProtocolBridgeDoesNotBecomeATerminalDomainRefusal() started.
+◇ Test anErrorNamedAsADomainLimitAfterCommitStillHasAnUnresolvedOutcome() started.
+◇ Test nonpublishingNestedChatCommandsKeepTheirLocalReadFence() started.
+◇ Test diskFailureKeepsItsStorageOutcomeAfterSuccessfulRollback(phase:) started.
+◇ Test nestedSourceWritesShareOneCommitAndPublication() started.
+◇ Test retainedFootprintIncludesTheNonwinningAuthoredValue() started.
+◇ Test textBindingAndRowsPreserveEmbeddedNULAndUnicode() started.
+◇ Test refusalAfterNestedWritesRollsBackTheWholeAcceptedCommand() started.
+◇ Test aLateChildRejectsTheEntireCutBeforeRemovingAnyOriginal() started.
+◇ Test oversizedGroupRefusesWholeTransferWithoutReturningAPrefix() started.
+◇ Test fullGroupReadIncludesChildrenOutsideAOneItemSceneWindow() started.
+◇ Test case passing 1 argument phase → .afterRecordWrites to diskFailureKeepsItsStorageOutcomeAfterSuccessfulRollback(phase:) started.
+◇ Test case passing 1 argument phase → .beforeCommit to diskFailureKeepsItsStorageOutcomeAfterSuccessfulRollback(phase:) started.
+✔ Test smallWireCanExceedItsDecodedAllowance() passed after 0.001 seconds.
+✔ Test packageIdentityWithoutItsResourceClosureIsNotPortable() passed after 0.001 seconds.
+✔ Test missingNonGroupAndCyclicParentsAreRejectedBeforeInsertion() passed after 0.001 seconds.
+✔ Test selectedContactProofDoesNotPinTheWholePageJournal() passed after 0.003 seconds.
+✔ Test retainedFootprintIncludesTheNonwinningAuthoredValue() passed after 0.022 seconds.
+✔ Suite CausalContentMergeTests passed after 0.022 seconds.
+✔ Test maskAdmissionSurvivesWireRoundTripAtTheCurrentFormatBoundary() passed after 0.026 seconds.
+✔ Suite "Portable paste admission" passed after 0.026 seconds.
+✔ Test aStorageProtocolBridgeDoesNotBecomeATerminalDomainRefusal() passed after 0.129 seconds.
+✔ Test aCaughtDecodeRefusalStillVetoesTheSourceCut() passed after 0.130 seconds.
+✔ Suite "JSON decoding is admitted before value allocation" passed after 0.130 seconds.
+✔ Test textBindingAndRowsPreserveEmbeddedNULAndUnicode() passed after 0.138 seconds.
+✔ Suite "SQLite owns atomic addressed publication" passed after 0.138 seconds.
+✔ Test diskFailureKeepsItsStorageOutcomeAfterSuccessfulRollback(phase:) with 2 test cases passed after 0.138 seconds.
+✔ Test anErrorNamedAsADomainLimitAfterCommitStillHasAnUnresolvedOutcome() passed after 0.138 seconds.
+✔ Test refusalAfterNestedWritesRollsBackTheWholeAcceptedCommand() passed after 0.140 seconds.
+✔ Test nonpublishingNestedChatCommandsKeepTheirLocalReadFence() passed after 0.143 seconds.
+✔ Test nestedSourceWritesShareOneCommitAndPublication() passed after 0.145 seconds.
+✔ Suite "Accepted native outcomes belong to their transaction" passed after 0.146 seconds.
+✔ Test "Одинаковое тело после A→B→A сохраняет новый причинный исходник для native CAS" passed after 0.276 seconds.
+✔ Test aLateChildRejectsTheEntireCutBeforeRemovingAnyOriginal() passed after 0.287 seconds.
+✔ Test fullGroupReadIncludesChildrenOutsideAOneItemSceneWindow() passed after 0.466 seconds.
+✔ Test oversizedGroupRefusesWholeTransferWithoutReturningAPrefix() passed after 0.595 seconds.
+✔ Suite "Complete addressed selection transfer" passed after 0.595 seconds.
+GUI291 visible 100000: coldLocalIndexQuery=1337.006458 ms; 100 whole-pose+query p50=0.041458 p95=0.104625 ms; fullSourceScan=105.69375 ms; maximumIndexVisits=58, resolvedLeaves=4, boundsTreeBytes=11200000; source admission and painting excluded
+✔ Test hundredThousandLeavesAreSkippedAfterOneLocalIndexAdmission() passed after 1.885 seconds.
+✔ Suite "Graphic local-frame visibility" passed after 1.885 seconds.
+✔ Test run with 19 tests in 7 suites passed after 1.885 seconds.

@@ -1,0 +1,73 @@
+{
+  "checks": {
+    "core": {
+      "executed": [
+        "NotebookCoreTests.CausalContentMergeTests/retainedFootprintIncludesTheNonwinningAuthoredValue()/CausalContentMergeTests.swift:6:4",
+        "NotebookCoreTests.NotebookAcceptedWriteTests/aStorageProtocolBridgeDoesNotBecomeATerminalDomainRefusal()/NotebookAcceptedWriteTests.swift:89:4",
+        "NotebookCoreTests.NotebookAcceptedWriteTests/anErrorNamedAsADomainLimitAfterCommitStillHasAnUnresolvedOutcome()/NotebookAcceptedWriteTests.swift:52:4",
+        "NotebookCoreTests.NotebookAcceptedWriteTests/diskFailureKeepsItsStorageOutcomeAfterSuccessfulRollback(phase:)/NotebookAcceptedWriteTests.swift:70:4",
+        "NotebookCoreTests.NotebookAcceptedWriteTests/nestedSourceWritesShareOneCommitAndPublication()/NotebookAcceptedWriteTests.swift:38:4",
+        "NotebookCoreTests.NotebookAcceptedWriteTests/nonpublishingNestedChatCommandsKeepTheirLocalReadFence()/NotebookAcceptedWriteTests.swift:100:4",
+        "NotebookCoreTests.NotebookAcceptedWriteTests/refusalAfterNestedWritesRollsBackTheWholeAcceptedCommand()/NotebookAcceptedWriteTests.swift:17:4",
+        "NotebookCoreTests.NotebookElementTransferTests/aLateChildRejectsTheEntireCutBeforeRemovingAnyOriginal()/NotebookElementTransferTests.swift:44:4",
+        "NotebookCoreTests.NotebookElementTransferTests/fullGroupReadIncludesChildrenOutsideAOneItemSceneWindow()/NotebookElementTransferTests.swift:28:4",
+        "NotebookCoreTests.NotebookElementTransferTests/oversizedGroupRefusesWholeTransferWithoutReturningAPrefix()/NotebookElementTransferTests.swift:62:4",
+        "NotebookCoreTests.NotebookGraphicVisibilityTests/hundredThousandLeavesAreSkippedAfterOneLocalIndexAdmission()/NotebookGraphicVisibilityTests.swift:229:4",
+        "NotebookCoreTests.NotebookJSONAdmissionTests/aCaughtDecodeRefusalStillVetoesTheSourceCut()/NotebookJSONAdmissionTests.swift:16:4",
+        "NotebookCoreTests.NotebookJSONAdmissionTests/smallWireCanExceedItsDecodedAllowance()/NotebookJSONAdmissionTests.swift:7:4",
+        "NotebookCoreTests.NotebookPasteTransferTests/maskAdmissionSurvivesWireRoundTripAtTheCurrentFormatBoundary()/NotebookPasteTransferTests.swift:16:4",
+        "NotebookCoreTests.NotebookPasteTransferTests/missingNonGroupAndCyclicParentsAreRejectedBeforeInsertion()/NotebookPasteTransferTests.swift:29:4",
+        "NotebookCoreTests.NotebookPasteTransferTests/packageIdentityWithoutItsResourceClosureIsNotPortable()/NotebookPasteTransferTests.swift:44:4",
+        "NotebookCoreTests.NotebookSQLiteTests/textBindingAndRowsPreserveEmbeddedNULAndUnicode()/NotebookSQLiteTests.swift:10:4",
+        "NotebookCoreTests.nativeGraphicSourceRejectsSameValuedSuccessor()/NotebookGraphicCommandTests.swift:5:2",
+        "NotebookCoreTests.selectedContactProofDoesNotPinTheWholePageJournal()/NotebookInkReadSetTests.swift:11:2"
+      ],
+      "executions": {
+        "NotebookCoreTests.CausalContentMergeTests/retainedFootprintIncludesTheNonwinningAuthoredValue()/CausalContentMergeTests.swift:6:4": 1,
+        "NotebookCoreTests.NotebookAcceptedWriteTests/aStorageProtocolBridgeDoesNotBecomeATerminalDomainRefusal()/NotebookAcceptedWriteTests.swift:89:4": 1,
+        "NotebookCoreTests.NotebookAcceptedWriteTests/anErrorNamedAsADomainLimitAfterCommitStillHasAnUnresolvedOutcome()/NotebookAcceptedWriteTests.swift:52:4": 1,
+        "NotebookCoreTests.NotebookAcceptedWriteTests/diskFailureKeepsItsStorageOutcomeAfterSuccessfulRollback(phase:)/NotebookAcceptedWriteTests.swift:70:4": 2,
+        "NotebookCoreTests.NotebookAcceptedWriteTests/nestedSourceWritesShareOneCommitAndPublication()/NotebookAcceptedWriteTests.swift:38:4": 1,
+        "NotebookCoreTests.NotebookAcceptedWriteTests/nonpublishingNestedChatCommandsKeepTheirLocalReadFence()/NotebookAcceptedWriteTests.swift:100:4": 1,
+        "NotebookCoreTests.NotebookAcceptedWriteTests/refusalAfterNestedWritesRollsBackTheWholeAcceptedCommand()/NotebookAcceptedWriteTests.swift:17:4": 1,
+        "NotebookCoreTests.NotebookElementTransferTests/aLateChildRejectsTheEntireCutBeforeRemovingAnyOriginal()/NotebookElementTransferTests.swift:44:4": 1,
+        "NotebookCoreTests.NotebookElementTransferTests/fullGroupReadIncludesChildrenOutsideAOneItemSceneWindow()/NotebookElementTransferTests.swift:28:4": 1,
+        "NotebookCoreTests.NotebookElementTransferTests/oversizedGroupRefusesWholeTransferWithoutReturningAPrefix()/NotebookElementTransferTests.swift:62:4": 1,
+        "NotebookCoreTests.NotebookGraphicVisibilityTests/hundredThousandLeavesAreSkippedAfterOneLocalIndexAdmission()/NotebookGraphicVisibilityTests.swift:229:4": 1,
+        "NotebookCoreTests.NotebookJSONAdmissionTests/aCaughtDecodeRefusalStillVetoesTheSourceCut()/NotebookJSONAdmissionTests.swift:16:4": 1,
+        "NotebookCoreTests.NotebookJSONAdmissionTests/smallWireCanExceedItsDecodedAllowance()/NotebookJSONAdmissionTests.swift:7:4": 1,
+        "NotebookCoreTests.NotebookPasteTransferTests/maskAdmissionSurvivesWireRoundTripAtTheCurrentFormatBoundary()/NotebookPasteTransferTests.swift:16:4": 1,
+        "NotebookCoreTests.NotebookPasteTransferTests/missingNonGroupAndCyclicParentsAreRejectedBeforeInsertion()/NotebookPasteTransferTests.swift:29:4": 1,
+        "NotebookCoreTests.NotebookPasteTransferTests/packageIdentityWithoutItsResourceClosureIsNotPortable()/NotebookPasteTransferTests.swift:44:4": 1,
+        "NotebookCoreTests.NotebookSQLiteTests/textBindingAndRowsPreserveEmbeddedNULAndUnicode()/NotebookSQLiteTests.swift:10:4": 1,
+        "NotebookCoreTests.nativeGraphicSourceRejectsSameValuedSuccessor()/NotebookGraphicCommandTests.swift:5:2": 1,
+        "NotebookCoreTests.selectedContactProofDoesNotPinTheWholePageJournal()/NotebookInkReadSetTests.swift:11:2": 1
+      },
+      "failed": [],
+      "format": 1,
+      "planned": [
+        "NotebookCoreTests.CausalContentMergeTests/retainedFootprintIncludesTheNonwinningAuthoredValue()/CausalContentMergeTests.swift:6:4",
+        "NotebookCoreTests.NotebookAcceptedWriteTests/aStorageProtocolBridgeDoesNotBecomeATerminalDomainRefusal()/NotebookAcceptedWriteTests.swift:89:4",
+        "NotebookCoreTests.NotebookAcceptedWriteTests/anErrorNamedAsADomainLimitAfterCommitStillHasAnUnresolvedOutcome()/NotebookAcceptedWriteTests.swift:52:4",
+        "NotebookCoreTests.NotebookAcceptedWriteTests/diskFailureKeepsItsStorageOutcomeAfterSuccessfulRollback(phase:)/NotebookAcceptedWriteTests.swift:70:4",
+        "NotebookCoreTests.NotebookAcceptedWriteTests/nestedSourceWritesShareOneCommitAndPublication()/NotebookAcceptedWriteTests.swift:38:4",
+        "NotebookCoreTests.NotebookAcceptedWriteTests/nonpublishingNestedChatCommandsKeepTheirLocalReadFence()/NotebookAcceptedWriteTests.swift:100:4",
+        "NotebookCoreTests.NotebookAcceptedWriteTests/refusalAfterNestedWritesRollsBackTheWholeAcceptedCommand()/NotebookAcceptedWriteTests.swift:17:4",
+        "NotebookCoreTests.NotebookElementTransferTests/aLateChildRejectsTheEntireCutBeforeRemovingAnyOriginal()/NotebookElementTransferTests.swift:44:4",
+        "NotebookCoreTests.NotebookElementTransferTests/fullGroupReadIncludesChildrenOutsideAOneItemSceneWindow()/NotebookElementTransferTests.swift:28:4",
+        "NotebookCoreTests.NotebookElementTransferTests/oversizedGroupRefusesWholeTransferWithoutReturningAPrefix()/NotebookElementTransferTests.swift:62:4",
+        "NotebookCoreTests.NotebookGraphicVisibilityTests/hundredThousandLeavesAreSkippedAfterOneLocalIndexAdmission()/NotebookGraphicVisibilityTests.swift:229:4",
+        "NotebookCoreTests.NotebookJSONAdmissionTests/aCaughtDecodeRefusalStillVetoesTheSourceCut()/NotebookJSONAdmissionTests.swift:16:4",
+        "NotebookCoreTests.NotebookJSONAdmissionTests/smallWireCanExceedItsDecodedAllowance()/NotebookJSONAdmissionTests.swift:7:4",
+        "NotebookCoreTests.NotebookPasteTransferTests/maskAdmissionSurvivesWireRoundTripAtTheCurrentFormatBoundary()/NotebookPasteTransferTests.swift:16:4",
+        "NotebookCoreTests.NotebookPasteTransferTests/missingNonGroupAndCyclicParentsAreRejectedBeforeInsertion()/NotebookPasteTransferTests.swift:29:4",
+        "NotebookCoreTests.NotebookPasteTransferTests/packageIdentityWithoutItsResourceClosureIsNotPortable()/NotebookPasteTransferTests.swift:44:4",
+        "NotebookCoreTests.NotebookSQLiteTests/textBindingAndRowsPreserveEmbeddedNULAndUnicode()/NotebookSQLiteTests.swift:10:4",
+        "NotebookCoreTests.nativeGraphicSourceRejectsSameValuedSuccessor()/NotebookGraphicCommandTests.swift:5:2",
+        "NotebookCoreTests.selectedContactProofDoesNotPinTheWholePageJournal()/NotebookInkReadSetTests.swift:11:2"
+      ],
+      "skipped": []
+    }
+  },
+  "format": 2
+}

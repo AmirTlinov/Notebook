@@ -1,0 +1,216 @@
+{
+  "boundaries": {
+    "all104RemediationItems": "pending",
+    "compactEvidence": "A durable extract, not a complete revalidatable verification directory. Full source inventories, inventory stdout and compiled products are not copied; original artifact hashes are preserved.",
+    "nativeSurfaceChecks": "pending for this remediation slice",
+    "physicalAcceptance": "pending",
+    "systemFrameCPUAndGPUMemoryMeasurements": "pending",
+    "tenScenarioRepetitionsAndThirtyMinutesJointWork": "pending",
+    "typedAcceptedWitnessFollowup": "not part of this snapshot"
+  },
+  "commands": [
+    {
+      "argv": [
+        "/opt/homebrew/opt/python@3.14/bin/python3.14",
+        "--version"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "label": "toolchain-python"
+    },
+    {
+      "argv": [
+        "swift",
+        "--version"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "label": "toolchain-swift"
+    },
+    {
+      "argv": [
+        "swift",
+        "test",
+        "list",
+        "--disable-xctest",
+        "--event-stream-output-path",
+        "/dev/stdout",
+        "--event-stream-version",
+        "6.4"
+      ],
+      "cwd": "/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook",
+      "exitCode": 0,
+      "label": "core-inventory",
+      "stdoutMode": "pipe"
+    },
+    {
+      "argv": [
+        "swift",
+        "test",
+        "--disable-xctest",
+        "--skip-build",
+        "--test-product",
+        "NotebookCoreTests",
+        "--filter",
+        "^(?:NotebookCoreTests\\.CausalContentMergeTests/retainedFootprintIncludesTheNonwinningAuthoredValue\\(\\)/CausalContentMergeTests\\.swift:6:4|NotebookCoreTests\\.NotebookAcceptedWriteTests/aStorageProtocolBridgeDoesNotBecomeATerminalDomainRefusal\\(\\)/NotebookAcceptedWriteTests\\.swift:89:4|NotebookCoreTests\\.NotebookAcceptedWriteTests/anErrorNamedAsADomainLimitAfterCommitStillHasAnUnresolvedOutcome\\(\\)/NotebookAcceptedWriteTests\\.swift:52:4|NotebookCoreTests\\.NotebookAcceptedWriteTests/diskFailureKeepsItsStorageOutcomeAfterSuccessfulRollback\\(phase:\\)/NotebookAcceptedWriteTests\\.swift:70:4|NotebookCoreTests\\.NotebookAcceptedWriteTests/nestedSourceWritesShareOneCommitAndPublication\\(\\)/NotebookAcceptedWriteTests\\.swift:38:4|NotebookCoreTests\\.NotebookAcceptedWriteTests/nonpublishingNestedChatCommandsKeepTheirLocalReadFence\\(\\)/NotebookAcceptedWriteTests\\.swift:100:4|NotebookCoreTests\\.NotebookAcceptedWriteTests/refusalAfterNestedWritesRollsBackTheWholeAcceptedCommand\\(\\)/NotebookAcceptedWriteTests\\.swift:17:4|NotebookCoreTests\\.NotebookElementTransferTests/aLateChildRejectsTheEntireCutBeforeRemovingAnyOriginal\\(\\)/NotebookElementTransferTests\\.swift:44:4|NotebookCoreTests\\.NotebookElementTransferTests/fullGroupReadIncludesChildrenOutsideAOneItemSceneWindow\\(\\)/NotebookElementTransferTests\\.swift:28:4|NotebookCoreTests\\.NotebookElementTransferTests/oversizedGroupRefusesWholeTransferWithoutReturningAPrefix\\(\\)/NotebookElementTransferTests\\.swift:62:4|NotebookCoreTests\\.NotebookGraphicVisibilityTests/hundredThousandLeavesAreSkippedAfterOneLocalIndexAdmission\\(\\)/NotebookGraphicVisibilityTests\\.swift:229:4|NotebookCoreTests\\.NotebookJSONAdmissionTests/aCaughtDecodeRefusalStillVetoesTheSourceCut\\(\\)/NotebookJSONAdmissionTests\\.swift:16:4|NotebookCoreTests\\.NotebookJSONAdmissionTests/smallWireCanExceedItsDecodedAllowance\\(\\)/NotebookJSONAdmissionTests\\.swift:7:4|NotebookCoreTests\\.NotebookPasteTransferTests/maskAdmissionSurvivesWireRoundTripAtTheCurrentFormatBoundary\\(\\)/NotebookPasteTransferTests\\.swift:16:4|NotebookCoreTests\\.NotebookPasteTransferTests/missingNonGroupAndCyclicParentsAreRejectedBeforeInsertion\\(\\)/NotebookPasteTransferTests\\.swift:29:4|NotebookCoreTests\\.NotebookPasteTransferTests/packageIdentityWithoutItsResourceClosureIsNotPortable\\(\\)/NotebookPasteTransferTests\\.swift:44:4|NotebookCoreTests\\.NotebookSQLiteTests/textBindingAndRowsPreserveEmbeddedNULAndUnicode\\(\\)/NotebookSQLiteTests\\.swift:10:4|NotebookCoreTests\\.nativeGraphicSourceRejectsSameValuedSuccessor\\(\\)/NotebookGraphicCommandTests\\.swift:5:2|NotebookCoreTests\\.selectedContactProofDoesNotPinTheWholePageJournal\\(\\)/NotebookInkReadSetTests\\.swift:11:2)$",
+        "--event-stream-output-path",
+        "/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook/.build/remediation-stage0-core-final-20261006-v4/core-NotebookCoreTests-events.jsonl",
+        "--event-stream-version",
+        "6.4"
+      ],
+      "cwd": "/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook",
+      "exitCode": 0,
+      "label": "core-NotebookCoreTests"
+    },
+    {
+      "argv": [
+        "/opt/homebrew/opt/python@3.14/bin/python3.14",
+        "--version"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "label": "toolchain-after-python"
+    },
+    {
+      "argv": [
+        "swift",
+        "--version"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "label": "toolchain-after-swift"
+    }
+  ],
+  "core": {
+    "discoveredInventory": {
+      "functions": 1472,
+      "products": {
+        "NotebookArchiveTransferTests": 29,
+        "NotebookCodexTests": 62,
+        "NotebookCoreTests": 1323,
+        "NotebookScriptHostTests": 38,
+        "NotebookScriptWorkerTests": 20
+      }
+    },
+    "eventCounts": {
+      "runEnded": 1,
+      "runStarted": 1,
+      "testCaseEnded": 2,
+      "testCaseStarted": 2,
+      "testEnded": 26,
+      "testStarted": 26
+    },
+    "executedFunctions": 19,
+    "executionCount": 20,
+    "executions": {
+      "NotebookCoreTests.CausalContentMergeTests/retainedFootprintIncludesTheNonwinningAuthoredValue()/CausalContentMergeTests.swift:6:4": 1,
+      "NotebookCoreTests.NotebookAcceptedWriteTests/aStorageProtocolBridgeDoesNotBecomeATerminalDomainRefusal()/NotebookAcceptedWriteTests.swift:89:4": 1,
+      "NotebookCoreTests.NotebookAcceptedWriteTests/anErrorNamedAsADomainLimitAfterCommitStillHasAnUnresolvedOutcome()/NotebookAcceptedWriteTests.swift:52:4": 1,
+      "NotebookCoreTests.NotebookAcceptedWriteTests/diskFailureKeepsItsStorageOutcomeAfterSuccessfulRollback(phase:)/NotebookAcceptedWriteTests.swift:70:4": 2,
+      "NotebookCoreTests.NotebookAcceptedWriteTests/nestedSourceWritesShareOneCommitAndPublication()/NotebookAcceptedWriteTests.swift:38:4": 1,
+      "NotebookCoreTests.NotebookAcceptedWriteTests/nonpublishingNestedChatCommandsKeepTheirLocalReadFence()/NotebookAcceptedWriteTests.swift:100:4": 1,
+      "NotebookCoreTests.NotebookAcceptedWriteTests/refusalAfterNestedWritesRollsBackTheWholeAcceptedCommand()/NotebookAcceptedWriteTests.swift:17:4": 1,
+      "NotebookCoreTests.NotebookElementTransferTests/aLateChildRejectsTheEntireCutBeforeRemovingAnyOriginal()/NotebookElementTransferTests.swift:44:4": 1,
+      "NotebookCoreTests.NotebookElementTransferTests/fullGroupReadIncludesChildrenOutsideAOneItemSceneWindow()/NotebookElementTransferTests.swift:28:4": 1,
+      "NotebookCoreTests.NotebookElementTransferTests/oversizedGroupRefusesWholeTransferWithoutReturningAPrefix()/NotebookElementTransferTests.swift:62:4": 1,
+      "NotebookCoreTests.NotebookGraphicVisibilityTests/hundredThousandLeavesAreSkippedAfterOneLocalIndexAdmission()/NotebookGraphicVisibilityTests.swift:229:4": 1,
+      "NotebookCoreTests.NotebookJSONAdmissionTests/aCaughtDecodeRefusalStillVetoesTheSourceCut()/NotebookJSONAdmissionTests.swift:16:4": 1,
+      "NotebookCoreTests.NotebookJSONAdmissionTests/smallWireCanExceedItsDecodedAllowance()/NotebookJSONAdmissionTests.swift:7:4": 1,
+      "NotebookCoreTests.NotebookPasteTransferTests/maskAdmissionSurvivesWireRoundTripAtTheCurrentFormatBoundary()/NotebookPasteTransferTests.swift:16:4": 1,
+      "NotebookCoreTests.NotebookPasteTransferTests/missingNonGroupAndCyclicParentsAreRejectedBeforeInsertion()/NotebookPasteTransferTests.swift:29:4": 1,
+      "NotebookCoreTests.NotebookPasteTransferTests/packageIdentityWithoutItsResourceClosureIsNotPortable()/NotebookPasteTransferTests.swift:44:4": 1,
+      "NotebookCoreTests.NotebookSQLiteTests/textBindingAndRowsPreserveEmbeddedNULAndUnicode()/NotebookSQLiteTests.swift:10:4": 1,
+      "NotebookCoreTests.nativeGraphicSourceRejectsSameValuedSuccessor()/NotebookGraphicCommandTests.swift:5:2": 1,
+      "NotebookCoreTests.selectedContactProofDoesNotPinTheWholePageJournal()/NotebookInkReadSetTests.swift:11:2": 1
+    },
+    "failed": [],
+    "plannedFunctions": 19,
+    "skipped": []
+  },
+  "date": "2026-10-06",
+  "format": 1,
+  "indexed100k": {
+    "boundary": "One Debug CPU algorithm run. Cold timing includes local index creation; source admission and painting are excluded. This is not frame, GPU, RSS or physical interaction acceptance.",
+    "boundsTreeBytes": 11200000,
+    "coldLocalIndexQueryMilliseconds": 1337.006458,
+    "fullSourceScanMilliseconds": 105.69375,
+    "leafCount": 100000,
+    "maximumIndexVisits": 58,
+    "resolvedLeaves": 4,
+    "testID": "NotebookCoreTests.NotebookGraphicVisibilityTests/hundredThousandLeavesAreSkippedAfterOneLocalIndexAdmission()/NotebookGraphicVisibilityTests.swift:229:4",
+    "wholePoseQueryP50Milliseconds": 0.041458,
+    "wholePoseQueryP95Milliseconds": 0.104625,
+    "wholePoseQueryRepetitions": 100
+  },
+  "receipt": {
+    "bytes": 331966,
+    "format": 2,
+    "originalPath": ".build/remediation-stage0-core-final-20261006-v4/verification.json",
+    "physicalAcceptance": false,
+    "route": "./verify.sh:selected",
+    "scope": "registry-contracts",
+    "sha256": "6f9b4c01ff566887b65bcf7b253930ffc7c858885849c9828e837ed14ded67d6",
+    "validation": "Original receipt passed strict checked_verification after the selected run while its sources were unchanged."
+  },
+  "scope": "Stage 0 registry contracts and selected Core regressions",
+  "selection": {
+    "executor": "SwiftPM on Mac; NotebookCoreTests product only",
+    "mode": "explicit-only",
+    "optimized": false,
+    "selectors": [
+      "NotebookCoreTests.CausalContentMergeTests/retainedFootprintIncludesTheNonwinningAuthoredValue",
+      "NotebookCoreTests.NotebookAcceptedWriteTests",
+      "NotebookCoreTests.NotebookElementTransferTests",
+      "NotebookCoreTests.NotebookGraphicVisibilityTests/hundredThousandLeavesAreSkippedAfterOneLocalIndexAdmission",
+      "NotebookCoreTests.NotebookJSONAdmissionTests",
+      "NotebookCoreTests.NotebookPasteTransferTests",
+      "NotebookCoreTests.NotebookSQLiteTests/textBindingAndRowsPreserveEmbeddedNULAndUnicode",
+      "NotebookCoreTests.nativeGraphicSourceRejectsSameValuedSuccessor",
+      "NotebookCoreTests.selectedContactProofDoesNotPinTheWholePageJournal"
+    ],
+    "timesEuropeMoscow": {
+      "runEnded": "2026-10-06T01:01:24.508005+03:00",
+      "runStarted": "2026-10-06T01:01:22.622122+03:00"
+    }
+  },
+  "selfTests": {
+    "provenance": "Counts come from focused terminal runs before the final Core fixture corrections; verification owner code is unchanged in ad09303c. These runs have no separately sealed source receipt.",
+    "releaseAndInstall": {
+      "durationSeconds": 4.923,
+      "passed": 82
+    },
+    "scope": "Router/parser and pair build/install guards with fabricated executors, plus real Python/Node reporter controls. No native runner was started.",
+    "verification": {
+      "durationSeconds": 9.767,
+      "passed": 110
+    }
+  },
+  "source": {
+    "beforeAfterEqual": true,
+    "commitBoundary": "The commits seal Core and verification owners. The captured hash also includes pending Shared/iPad edits; it is not the complete committed tree.",
+    "commits": {
+      "core": {
+        "sha": "0732ea856cdcad4038348c4e86d87f711a27e86c",
+        "title": "fix(core): bound decoding and retain exact causal source proofs"
+      },
+      "verification": {
+        "sha": "ad09303c6e6d9adea8ffd95114e6cfea1a0f021a",
+        "title": "fix(verification): require exact executed checks and scoped receipts"
+      }
+    },
+    "fileCount": 1638,
+    "format": 2,
+    "sha256": "ea09f59301f29cc635a7a44ad4a9cd52b1c234e014614aec7c773dd7ef35bbaa"
+  },
+  "status": "passed",
+  "toolchains": {
+    "after": {
+      "python": "Python 3.14.6",
+      "swift": "Apple Swift version 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1)\nTarget: arm64-apple-macosx27.0.0\n\nswift-driver version: 1.168.6"
+    },
+    "before": {
+      "python": "Python 3.14.6",
+      "swift": "Apple Swift version 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1)\nTarget: arm64-apple-macosx27.0.0\n\nswift-driver version: 1.168.6"
+    }
+  }
+}
