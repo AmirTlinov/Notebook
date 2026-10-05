@@ -1,0 +1,308 @@
+{
+  "recordedAt": "2026-10-05T13:47:52.717431+00:00",
+  "issue": "GUI-478",
+  "version": "0.3.174",
+  "build": 244,
+  "sourceSHA256": "0a95cd07c3ddd28effa4c39dd278f055ec88e457f84defc5d74df981e901e040",
+  "verificationReceipt": {
+    "path": ".build/print-admission-20261005/verify-1/verification.json",
+    "sha256": "ef6e21a2ec9036cfedb2f1ea9234c4d26c3c73bd4b8466d4cfa07e1752f29ddf"
+  },
+  "scope": "Indexed print dependencies and one bounded priority admission covering materialization and the physical engine. No runtime/kernel change.",
+  "core": {
+    "command": "swift test --jobs 4 --filter DocumentPrintDependenciesTests",
+    "passed": 6,
+    "failures": 0,
+    "seconds": 0.019,
+    "evidence": {
+      "path": ".build/print-admission-20261005/core-test-ranges.log",
+      "sha256": "e682999c5b518d6e891e59cf097e117d5e5e8e883e48f6203b52049d8e0b4eaf"
+    }
+  },
+  "native": {
+    "ipad": {
+      "tests": {
+        "NotebookTests": {
+          "seconds": 22.985242009162903,
+          "tests": 13
+        },
+        "NotebookUITests": {
+          "seconds": 24.31018102169037,
+          "tests": 1
+        }
+      },
+      "passed": 14,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "device": {
+        "architecture": "arm64e",
+        "deviceId": "00008103-001E059934D9001E",
+        "deviceName": "iPad (Елизавета)",
+        "modelName": "iPad Pro (11-inch) (3rd generation)",
+        "osBuildNumber": "24A435",
+        "osVersion": "27.0",
+        "platform": "iOS"
+      },
+      "testsEvidence": {
+        "path": ".build/print-admission-20261005/verify-1/ipad-tests.json",
+        "sha256": "0ea7ed959856ecc9bd457f248d352beefb71916899643b957ea5fae201535aaa"
+      },
+      "summaryEvidence": {
+        "path": ".build/print-admission-20261005/verify-1/ipad-summary.json",
+        "sha256": "2cece761f827055207bf8015db3e7cdc83d45bb86aff3578ddb8b9eed2a6a9df"
+      },
+      "currentPrintThroughActualVMYieldMS": 201.96375,
+      "currentYieldEvidence": {
+        "path": ".build/print-admission-20261005/attachments-ipad/959F4ED3-1A6A-4FF7-8C52-8D15F0955A99.txt",
+        "sha256": "a8f38274c3fd23ea3a5b1ec513c9d2516805b6318a5e05324683fef72360b120"
+      },
+      "cancellationJoinMS": [
+        2.699375,
+        1.897708,
+        1.983042,
+        1.771791,
+        2.026666,
+        1.838333,
+        1.795084,
+        1.919167,
+        1.845542,
+        1.872041
+      ],
+      "cancellationEvidence": {
+        "path": ".build/print-admission-20261005/attachments-ipad/6336E703-E2AB-4D09-B091-5AAD44CDE20C.txt",
+        "sha256": "3b5bf38dae2be2a1b1042b6a0f91a6b0ee0771b502969decbef7edd792a579db"
+      }
+    },
+    "mac": {
+      "tests": {
+        "NotebookMacTests": {
+          "seconds": 13.99564814567566,
+          "tests": 11
+        }
+      },
+      "passed": 11,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "device": {
+        "architecture": "arm64",
+        "deviceId": "00006050-001650DA01F9401C",
+        "deviceName": "My Mac",
+        "modelName": "MacBook Pro",
+        "osBuildNumber": "26A434",
+        "osVersion": "27.0.1",
+        "platform": "macOS"
+      },
+      "testsEvidence": {
+        "path": ".build/print-admission-20261005/verify-1/mac-tests.json",
+        "sha256": "85677e2b16d8b3670d17a38069e9a171db22026e2f86f8328745426e5407ad85"
+      },
+      "summaryEvidence": {
+        "path": ".build/print-admission-20261005/verify-1/mac-summary.json",
+        "sha256": "de9260e37f04518de7ed3b5f0b1a37555e2fcccefabe643c2a8d053cb197dc74"
+      },
+      "currentPrintThroughActualVMYieldMS": 158.807583,
+      "currentYieldEvidence": {
+        "path": ".build/print-admission-20261005/attachments-mac/62BD580D-C3F4-4098-BC5B-358870CC575B.txt",
+        "sha256": "1209299c0343fac88bf15dc0b6c23751bd490c65561b5716e7772ba817b2c7ce"
+      },
+      "cancellationJoinMS": [
+        2.325792,
+        1.9755,
+        2.062875,
+        2.486167,
+        2.153042,
+        2.113083,
+        2.099209,
+        2.11875,
+        2.255042,
+        2.194875
+      ],
+      "cancellationEvidence": {
+        "path": ".build/print-admission-20261005/attachments-mac/0762FAE5-93A8-45EA-A89C-8154EE41AF6A.txt",
+        "sha256": "8513ad96d55f06b4d292c8b75bd4ec3fcf453a7002acf0f36ecd0244519d9690"
+      }
+    }
+  },
+  "lifecycle": {
+    "device": "physical iPad",
+    "scenario": "First slider input, immediate page change, return, close and reopen, then cold process reopen",
+    "visualReview": "Both full-resolution attachments show x=7, x²=49, intact printed content and page 1/4. Screenshots reviewed after the passing gesture scenario.",
+    "images": [
+      {
+        "path": ".build/print-admission-20261005/attachments-ipad/23D95395-4438-47E7-A3E4-689642E6830C.png",
+        "sha256": "7e65f7073d69ee781cc44f4172420a53fb765a23ae55e7829add6d6e8496c58c"
+      },
+      {
+        "path": ".build/print-admission-20261005/attachments-ipad/34DBD02F-6419-4B94-8606-1AE5EB6A1401.png",
+        "sha256": "7e65f7073d69ee781cc44f4172420a53fb765a23ae55e7829add6d6e8496c58c"
+      }
+    ]
+  },
+  "dependencyBenchmark": {
+    "host": "MacBook Pro Apple M5 Max",
+    "optimization": "-O -whole-module-optimization",
+    "workload": "64/512/4096 valid source files; 25 receipts × 4000 lookup entries = 100000 checks per source",
+    "productionMaximumFiles": 4096,
+    "beforeTrials": 3,
+    "afterTrials": 1,
+    "samples": [
+      {
+        "files": 64,
+        "lookupEntries": 100000,
+        "beforeMedianMS": {
+          "matchesMS": 547.585334,
+          "namespaceMS": 2.359584,
+          "receiptMS": 28.48125
+        },
+        "afterMS": {
+          "indexMS": 0.017292,
+          "matchesMS": 11.856917,
+          "namespaceMS": 1.284667,
+          "receiptMS": 7.71275
+        },
+        "identity": "fdb4e0bfb33f36d9a07e14600c6beb98485fa5aa84d42555977fc3a0ac60aab9",
+        "identitiesEqual": true
+      },
+      {
+        "files": 512,
+        "lookupEntries": 100000,
+        "beforeMedianMS": {
+          "matchesMS": 1277.888625,
+          "namespaceMS": 10.077125,
+          "receiptMS": 58.505792
+        },
+        "afterMS": {
+          "indexMS": 0.017875,
+          "matchesMS": 11.514875,
+          "namespaceMS": 0.5695,
+          "receiptMS": 7.603291
+        },
+        "identity": "1745eb61d1dae4059f9bff2086b75db45e7b6cd5d24d2a834ae58795d08c4f12",
+        "identitiesEqual": true
+      },
+      {
+        "files": 4096,
+        "lookupEntries": 100000,
+        "beforeMedianMS": {
+          "matchesMS": 3886.428458,
+          "namespaceMS": 103.471667,
+          "receiptMS": 165.167584
+        },
+        "afterMS": {
+          "indexMS": 0.120375,
+          "matchesMS": 9.268541,
+          "namespaceMS": 6.33425,
+          "receiptMS": 12.4825
+        },
+        "identity": "bf30b3ddc6e32f0bdbccbe6b1b60b896427cf6c7830418e8ff76841d13a1ae51",
+        "identitiesEqual": true
+      }
+    ],
+    "goldensEqual": true,
+    "deep": {
+      "afterObservedAndNamespacePeakBytes": 40910848,
+      "beforeIndexPeakBytes": 16171008,
+      "files": 4096,
+      "identity": "79a2858ce10f73cf55b6c46503b8be8adf2fd7afd78a58d8b39001bafe79743f",
+      "indexMS": 2.040417,
+      "indexPeakGrowthBytes": 0,
+      "maximumPathBytes": 998,
+      "namespaceIdentity": "69cb311ea34c2855210798aabc659deb30d3a179550a0b1819e7fbfc45b5940c",
+      "pathDepth": 32,
+      "withIndexPeakBytes": 16171008
+    },
+    "deepIdentitiesEqual": true,
+    "memoryScope": "Process high-water, not retained heap. No increase in already reached high-water does not mean zero allocation. Eager directory graph was rejected before final tests.",
+    "evidence": [
+      {
+        "path": ".build/print-performance-20261005/dependencies-review/ranges-comparison.json",
+        "sha256": "10bcb800152c42ab467be3694c9f548d84f7b5e94cbeef48c80581f8152f08ff"
+      },
+      {
+        "path": ".build/print-performance-20261005/dependencies-review/final-before-1.json",
+        "sha256": "23e20b9c9b177d40d6740fb6ff6bf8233180a629656a1924ebd31a03c57576e6"
+      },
+      {
+        "path": ".build/print-performance-20261005/dependencies-review/final-before-2.json",
+        "sha256": "0a0095ead6da12625c4c9f8b74f74f8bcc5f66c2201567454604610e52ca3c6b"
+      },
+      {
+        "path": ".build/print-performance-20261005/dependencies-review/final-before-3.json",
+        "sha256": "8f5c0d321e94bb2a6971758028a893f8fc775d7a51d858ca50e50195d33b7cd1"
+      },
+      {
+        "path": ".build/print-performance-20261005/dependencies-review/After.swift",
+        "sha256": "e59c60371a1e87984c86899e9586bebd85882f3cb4e118da62ed85c988490ec5"
+      },
+      {
+        "path": ".build/print-performance-20261005/dependencies-review/AfterProbe.swift",
+        "sha256": "d2d8472eda4b090459267a96a576d8337e9339b3d824689110d070fcc6a89d71"
+      },
+      {
+        "path": ".build/print-performance-20261005/dependencies-review/DeepProbe.swift",
+        "sha256": "d7c1cf6436fbb74a3699842d3a2b30ea1ed1dd0b3be635c84a11e461013918c1"
+      }
+    ]
+  },
+  "soundOpening": {
+    "observations": [
+      {
+        "attempt": 0,
+        "nativeMS": {
+          "installed": 1246.9289166620001,
+          "navigationFinished": 1144.5236249710433,
+          "paper": 1039.220916631166,
+          "programAttached": 1039.220916631166,
+          "programReady": 1246.9289166620001
+        },
+        "observationIntervalMS": 5,
+        "scope": "native window; second open has cached paper, not a cold app process",
+        "evidence": {
+          "path": ".build/print-admission-20261005/attachments-ipad/47D6EB1B-28B6-4546-999C-B67816C207F3.json",
+          "sha256": "011dc89ba30bc754e06c2c816f2fe6db84c0d565a9328a26fde2b048d55cd70e"
+        }
+      },
+      {
+        "attempt": 1,
+        "nativeMS": {
+          "installed": 158.77541666850448,
+          "navigationFinished": 134.6488749841228,
+          "paper": 115.79145834548399,
+          "programAttached": 54.311583342496306,
+          "programReady": 158.77541666850448
+        },
+        "observationIntervalMS": 5,
+        "scope": "native window; second open has cached paper, not a cold app process",
+        "evidence": {
+          "path": ".build/print-admission-20261005/attachments-ipad/B5EEEC0C-2BE9-4A28-A4DF-CD37B217427D.json",
+          "sha256": "d8bcc3fcc8c5637b183163ec52a3d9a13038272cea94539da62e9ec19b233308"
+        }
+      }
+    ],
+    "firstNativePrintMS": 980.165334,
+    "scope": "One native-window observation per state, second open uses cached paper; no cold-process or p95/p99 claim."
+  },
+  "profiling": {
+    "status": "No usable CPU profile",
+    "attempts": [
+      {
+        "path": ".build/print-admission-20261005/native-profile.json",
+        "sha256": "c1ad2772a2dad0da3ec7b0c615475e9a7b7ea38d18ad50e2cc35b1cd25567e53"
+      },
+      {
+        "path": ".build/print-admission-20261005/native-xctrace.json",
+        "sha256": "81c7625abdd23ea463546c0fdba3ef2a7394b52b00fde52a1a6cd7ea97b2d34f"
+      },
+      {
+        "path": ".build/print-admission-20261005/native-warm-profile.json",
+        "sha256": "a2d723ab39e6a0c41f4a87e7150d0bbb0630ee5010406f12b1ee0e9f9c1ce1cc"
+      }
+    ],
+    "observation": "sample stalled the standalone probe; xctrace failed to finalize in 90 seconds. A bounded delayed sample again stalled the probe through its deadline. Unprofiled control completed in 757.67 ms. No hotspot attribution accepted.",
+    "remaining": "Residual native print ~980 ms, cold-process distributions and system frame/CPU/GPU/memory acceptance remain GUI-200/GUI-456/GUI-190."
+  },
+  "review": "Independent dependency and admission/caller reviews completed; identified memory graph, admission-cap, queue accounting and promotion defects fixed before frozen verification.",
+  "delivery": "delivery.json records installation separately."
+}

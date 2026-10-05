@@ -41,7 +41,14 @@ import PDFKit
       let printed: NotebookPrintedDocument?
       do {
         printed = try await DocumentCanonicalPrint.store.artifact(for: document, priority: .export, inputFactory: {
-          try await Task.detached { try NotebookTypesetterInput(document: document) { try store.readDocumentFileBytes($0) } }.value
+          let worker = Task.detached {
+            try Task.checkCancellation()
+            return try NotebookTypesetterInput(document: document) { file in
+              try Task.checkCancellation()
+              return try store.readDocumentFileBytes(file)
+            }
+          }
+          return try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
         })
       } catch is CancellationError { throw CancellationError() }
       catch { printed = nil } // A broken TeX entrypoint must not prevent carrying the authored files.
@@ -59,7 +66,7 @@ import PDFKit
     // immutable source and its serial PDF owner through the final publication.
     let printSession = DocumentRenderSession(documentID: document.id)
     let printSource = printSession.source(document, store: store)
-    let printed = try await printSource.printedSource(resources: .shared)
+    let printed = try await printSource.printedSource(resources: .shared, priority: .export)
     defer { withExtendedLifetime((printSession, printSource, printed)) {} }
     let artifact = printed.artifact
     if [.pdf, .mp4].contains(options.format) { try validatePresentedPrograms(cut, artifact: artifact) }

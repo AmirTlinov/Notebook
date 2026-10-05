@@ -53,7 +53,8 @@ final class DocumentSnapshotCache {
       renderSession: DocumentRenderSession? = nil, operation: (DocumentWebCoordinator) async throws -> T) async throws -> T {
       let geometry = DocumentRenderRegistry.shared.geometry(document: document, pageIndex: pageIndex)
       let ready = PageTurnReadiness { _ in }
-      let coordinator = DocumentWebCoordinator(resources: resources, renderSession: renderSession, onRenderReady: ready, onPageLayout: { _ in }, onStateChange: { _, _ in nil })
+      let coordinator = DocumentWebCoordinator(resources: resources, renderSession: renderSession, printPriority: .export,
+        onRenderReady: ready, onPageLayout: { _ in }, onStateChange: { _, _ in nil })
       coordinator.programStore = programStore; coordinator.exportSnapshotID = isolationID
       let host = DocumentWebHost()
       let window = NSWindow(contentRect: .init(x: -20_000, y: -20_000, width: geometry.width, height: geometry.height),
@@ -317,6 +318,13 @@ final class DocumentWebCoordinator: NSObject,
   private(set) var commonRuntimeReady = false
   var onCommonRuntimeReady: () -> Void = { }
   private var requestedPriority: WebPriority?
+  // Accepted headless snapshots keep export intent while their WebKit surface
+  // waits in the background pool. Ordinary mounted pages follow their host.
+  private let fixedPrintPriority: NotebookTypesetter.Priority?
+  private func printPriority(for priority: WebPriority?) -> NotebookTypesetter.Priority {
+    if let fixedPrintPriority { return fixedPrintPriority }
+    return priority == .currentPage || priority == .input || priority == .liveProgram ? .current : .anticipated
+  }
   private weak var host: DocumentWebHost?
   private(set) var isInvalidated = false
   private(set) var acquisitionError: Error?
@@ -692,6 +700,9 @@ final class DocumentWebCoordinator: NSObject,
 
   func mount(in host: DocumentWebHost, physicalSize: CGSize, isInteractive: Bool, priority: WebPriority) {
     guard !isInvalidated else { return }
+    // A mounted neighbour may already be waiting for its shared source. Its
+    // new current demand reaches that operation even when no host is rebuilt.
+    payload?.source.promotePreparation(to: printPriority(for: priority))
     beginPreparationObservation(configuredAt: ProcessInfo.processInfo.systemUptime)
     recordPreparation(.mountAt)
     let previousHost = self.host
@@ -1370,11 +1381,12 @@ final class DocumentWebCoordinator: NSObject,
   init(
     resources: SceneRenderResources = .shared,
     renderSession: DocumentRenderSession? = nil,
+    printPriority: NotebookTypesetter.Priority? = nil,
     onRenderReady: PageTurnReadiness,
     onPageLayout: @escaping (DocumentPageLayout) -> Void,
     onStateChange: @escaping (DocumentProgramSource, JSONValue) async throws -> ContentFieldVersion?
   ) {
-    self.resources = resources; self.renderSession = renderSession
+    self.resources = resources; self.renderSession = renderSession; self.fixedPrintPriority = printPriority
     self.onRenderReady = onRenderReady
     self.onPageLayout = onPageLayout
     self.onStateChange = onStateChange
@@ -1871,7 +1883,7 @@ final class DocumentWebCoordinator: NSObject,
         }
         admissionChanged(true)
         let prepared = try await request.source.preparedPage(request.pageIndex, hostID: hostID,
-          resources: resources, priority: requestedPriority == .currentPage ? .current : .anticipated,
+          resources: resources, priority: printPriority(for: requestedPriority),
           onAdmissionWait: admissionChanged, onLayoutChanged: { [weak self, weak source = request.source] layout in
             guard let self, let source, payload?.source === source, hasCanonicalPixels else { return }
             pageCount = layout.pageCount

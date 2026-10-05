@@ -307,7 +307,7 @@ struct DocumentSourceWorkspace<Paper: View>: View {
       do {
         let owner = DocumentRenderRegistry.shared.session(documentID: document.id, resources: SceneRenderResources.shared)
         let source = owner.source(document, store: model.store)
-        let printed = try await source.printedSource(resources: SceneRenderResources.shared)
+        let printed = try await source.printedSource(resources: SceneRenderResources.shared, priority: .current)
         try Task.checkCancellation(); printedSource = printed; diagnostics = printed.artifact.diagnostics; printStatus = ""
       } catch is CancellationError { } catch {
         guard !Task.isCancelled else { return }

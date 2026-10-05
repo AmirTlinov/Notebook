@@ -35,15 +35,16 @@ public actor NotebookPrintedDocumentStore {
     demand.beginMeasurement()
     defer { demand.finishMeasurement() }
     let lookupStart = ContinuousClock.now
+    var source = DocumentPrintDependencies.Source(document)
     if let input { try input.validate(document: document) }
     let revision = try compilerRevision()
     mounted = mounted.filter { $0.value != nil }
-    for value in mounted.reversed().compactMap(\.value) where try value.dependencies.matches(document, compilerRevision: revision) {
+    for value in mounted.reversed().compactMap(\.value) where try value.dependencies.matches(&source, compilerRevision: revision) {
       demand.record("lookup", since: lookupStart)
       demand.record("memoryLookup", since: lookupStart)
-      return remember(try value.bound(to: document))
+      return remember(try value.bound(to: &source))
     }
-    if let artifact = try cached(document, compilerRevision: revision) {
+    if let artifact = try cached(&source, compilerRevision: revision) {
       demand.record("lookup", since: lookupStart)
       demand.record("diskLookup", since: lookupStart)
       return remember(artifact)
@@ -51,7 +52,7 @@ public actor NotebookPrintedDocumentStore {
     demand.record("lookup", since: lookupStart)
     try Task.checkCancellation()
     let keyStart = ContinuousClock.now
-    let key = try DocumentPrintDependencies.namespaceIdentity(document, compilerRevision: revision)
+    let key = try DocumentPrintDependencies.namespaceIdentity(&source, compilerRevision: revision)
     demand.record("namespace", since: keyStart)
     let reader = UUID(), job: Job, coalesced: Bool
     if var existing = jobs[key], !existing.task.isCancelled {
@@ -60,18 +61,11 @@ public actor NotebookPrintedDocumentStore {
       existing.readers.insert(reader); jobs[key] = existing; job = existing
     } else {
       coalesced = false
-      guard jobs.count < 4 else { throw NotebookTypesetterError("typesetter_busy") }
-      let compiler = compiler
+      let compiler = compiler, preparedSource = source
       demand.beginJob()
       job = Job(task: Task {
-        let inputStart = ContinuousClock.now
-        let frozen: NotebookTypesetterInput
-        if let input { frozen = input }
-        else if let inputFactory { frozen = try await inputFactory() }
-        else { frozen = try NotebookTypesetterInput(document: document) }
-        demand.record("inputs", since: inputStart)
-        try Task.checkCancellation()
-        return try await compiler.compile(document, input: frozen, priority: priority, demand: demand)
+        try await compiler.compile(source: preparedSource, input: input, priority: priority,
+          demand: demand, inputFactory: inputFactory)
       }, demand: demand, readers: [reader])
       jobs[key] = job
     }
@@ -84,14 +78,14 @@ public actor NotebookPrintedDocumentStore {
       try Task.checkCancellation()
       if var current = jobs[key], current.id == job.id, !current.saved {
         let saveStart = ContinuousClock.now
-        try? save(value)
+        try? save(value, source: &source)
         demand.record("save", since: saveStart)
         current.saved = true; jobs[key] = current
       }
       try Task.checkCancellation()
       let bindStart = ContinuousClock.now
       defer { demand.record("bind", since: bindStart) }
-      return remember(try value.bound(to: document))
+      return remember(try value.bound(to: &source))
     } onCancel: { Task { await self.release(key: key, jobID: job.id, reader: reader) } }
   }
   public func compilerRevision() throws -> String {
@@ -104,12 +98,13 @@ public actor NotebookPrintedDocumentStore {
     let pages = try NotebookTypesetter.pages(derived.pdf)
     let projection = try NotebookPrintedDocument.projection(syncTeX: derived.syncTeX, files: derived.sourceMap.files, pages: pages)
     guard try NotebookPrintedDocument.regionMap(projection.interactiveRegions) == derived.interactiveMap else { throw NotebookTypesetterError("print_cache_invalid") }
-    let source = document.files.first { $0.path == document.entrypoint && $0.resource == nil }!.source
+    var indexedSource = DocumentPrintDependencies.Source(document)
+    let source = indexedSource.file(at: document.entrypoint)!.source
     let value = NotebookPrintedDocument(document: document, source: source, pdf: derived.pdf, syncTeX: derived.syncTeX,
       sourceMap: derived.sourceMap, interactiveMap: derived.interactiveMap, pages: pages, projection: projection,
-      dependencies: try .init(namespace: document, compilerRevision: compilerRevision()), diagnostics: [],
+      dependencies: try .init(namespace: &indexedSource, compilerRevision: compilerRevision()), diagnostics: [],
       log: "portable_document_precompiled", guestMemoryBytes: 0)
-    try save(value)
+    try save(value, source: &indexedSource)
   }
   private func release(key: String, jobID: UUID, reader: UUID) {
     guard var job = jobs[key], job.id == jobID else { return }
@@ -126,12 +121,12 @@ public actor NotebookPrintedDocumentStore {
   }
   /// Every successful print reads its entrypoint. It selects the input group;
   /// the observed read set still decides which version inside that group fits.
-  private func bucket(_ document: DocumentDocument, compilerRevision: String) throws -> String {
-    guard let source = document.files.first(where: { $0.path == document.entrypoint && $0.resource == nil })?.source else {
+  private func bucket(_ source: inout DocumentPrintDependencies.Source, compilerRevision: String) throws -> String {
+    guard let file = source.file(at: source.entrypoint), file.resource == nil else {
       throw NotebookTypesetterError("typesetter_entrypoint_missing_encoding_or_limit")
     }
     let key = Self.hash(try JSONEncoder().encode([DocumentPrintSourceMap.renderingRecipe,
-      compilerRevision, document.entrypoint, Self.hash(Data(source.utf8))]))
+      compilerRevision, source.entrypoint, String(try source.digest(at: source.entrypoint).dropFirst("text:".count))]))
     return key
   }
   private func diskCache() throws -> NotebookPrintedArtifactCache {
@@ -140,20 +135,20 @@ public actor NotebookPrintedDocumentStore {
     disk = cache
     return cache
   }
-  private func cached(_ document: DocumentDocument, compilerRevision: String) throws -> NotebookPrintedDocument? {
-    let bucket = try bucket(document, compilerRevision: compilerRevision)
+  private func cached(_ source: inout DocumentPrintDependencies.Source, compilerRevision: String) throws -> NotebookPrintedDocument? {
+    let bucket = try bucket(&source, compilerRevision: compilerRevision)
     guard let cache = try? diskCache() else { return nil }
     var metadata: Metadata?
     while let record = try? cache.find(in: bucket, matching: { identity, bytes in
       try Task.checkCancellation()
       guard let meta = try? JSONDecoder().decode(Metadata.self, from: bytes),
         (try? meta.dependencies.identity) == identity,
-        (try? meta.dependencies.matches(document, compilerRevision: compilerRevision)) == true else { return false }
+        (try? meta.dependencies.matches(&source, compilerRevision: compilerRevision)) == true else { return false }
       metadata = meta
       return true
     }) {
       if let metadata {
-        do { return try load(document, record: record, metadata: metadata) }
+        do { return try load(source.document, record: record, metadata: metadata) }
         catch is CancellationError { throw CancellationError() }
         catch { }
       }
@@ -193,25 +188,27 @@ public actor NotebookPrintedDocumentStore {
     guard data.count == count else { throw NotebookTypesetterError("print_cache_invalid") }
     return data
   }
-  private func save(_ value: NotebookPrintedDocument) throws {
+  private func save(_ value: NotebookPrintedDocument, source: inout DocumentPrintDependencies.Source) throws {
     let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
     let metadata = Metadata(dependencies: value.dependencies, pdfSHA256: value.sourceMap.pdfSHA256,
       hashes: ["document.synctex.gz": Self.hash(value.syncTeX), "document.nbmap": Self.hash(value.interactiveMap)],
       log: value.log, diagnostics: value.diagnostics, guestMemoryBytes: value.guestMemoryBytes)
     try diskCache().save(.init(identity: value.dependencies.identity, metadata: encoder.encode(metadata),
       pdf: value.pdf, syncTeX: value.syncTeX, interactiveMap: value.interactiveMap),
-      in: bucket(value.document, compilerRevision: value.dependencies.compilerRevision))
+      in: bucket(&source, compilerRevision: value.dependencies.compilerRevision))
   }
 
 }
 
 extension NotebookPrintedDocument {
-  func bound(to document: DocumentDocument) throws -> NotebookPrintedDocument {
+  func bound(to indexed: inout DocumentPrintDependencies.Source) throws -> NotebookPrintedDocument {
+    let document = indexed.document
     if self.document == document { return self }
-    guard try dependencies.matches(document, compilerRevision: sourceMap.compilerRevision),
-      let source = document.files.first(where: { $0.path == document.entrypoint && $0.resource == nil })?.source else {
+    guard try dependencies.matches(&indexed, compilerRevision: sourceMap.compilerRevision),
+      let file = indexed.file(at: document.entrypoint), file.resource == nil else {
       throw NotebookTypesetterError("print_cache_invalid")
     }
+    let source = file.source
     let map = try DocumentPrintSourceMap(document: document, source: source, pdfSHA256: sourceMap.pdfSHA256,
       compilerRevision: sourceMap.compilerRevision)
     return .init(document: document, source: source, pdf: pdf, syncTeX: syncTeX, sourceMap: map,
