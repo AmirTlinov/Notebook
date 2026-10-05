@@ -1,5 +1,13 @@
-import Foundation
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(WASILibc)
+import WASILibc
+#else
+import Glibc
+#endif
+#if canImport(simd)
 import simd
+#endif
 
 /// One measured stroke tessellator for Metal, erasure paint and semantic picking.
 public enum InkStrokeGeometry {

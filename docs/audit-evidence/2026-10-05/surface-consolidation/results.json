@@ -1,0 +1,136 @@
+{
+  "scope": "C1 preparation: extract the existing coordinates, camera and ink algorithms into one Swift module; prove native/WASM parity and check affected native behavior. C1 and the full consolidation are not accepted.",
+  "baselineCommit": "f0de64bf7df3c091bfd9799c4a550153c9cdba25",
+  "baselineSourceSHA256": "7ca0ad60f7af22c6ca1e310faedfd3f1276f23e8083a23013e756c39f9350992",
+  "extractedSourceSHA256": "54fceb766f026c4f604797ab989813d652fde5c7b9475a82ae5913775b896866",
+  "unchangedVerifiedSourceFiles": 1616,
+  "toolchain": {
+    "iphoneosSDK": "24A430",
+    "macosSDK": "26A425",
+    "node": "v24.8.0",
+    "npm": "11.18.0",
+    "swift": "Apple Swift version 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1)\nTarget: arm64-apple-macosx27.0.0",
+    "xcode": "Xcode 27.0\nBuild version 27A266a",
+    "xcodegen": "Version: 2.46.0"
+  },
+  "wasmBuild": {
+    "compiler": "Apple Swift version 6.4 (swift-6.4-RELEASE)\nTarget: arm64-apple-macosx27.0.0",
+    "sdk": "swift-6.4.0-RELEASE_wasm",
+    "path": ".build/surface-wasm/out/Products/Release-webassembly-wasm32/notebook-surface.wasm",
+    "bytes": 6031527,
+    "sha256": "9e463cfef7f3098c38ec12ef6a10f47241980478334463950aacdededfe52110",
+    "exports": [
+      "notebook_surface_alloc",
+      "notebook_surface_free",
+      "notebook_surface_camera",
+      "notebook_surface_offset",
+      "notebook_surface_delta",
+      "notebook_surface_stroke_capacity",
+      "notebook_surface_stroke"
+    ]
+  },
+  "parity": {
+    "result": "PASS",
+    "wasm": "9e463cfef7f3098c38ec12ef6a10f47241980478334463950aacdededfe52110",
+    "cameras": 6,
+    "offsets": 5,
+    "deltas": 3,
+    "strokes": 5,
+    "maximumPositionError": 1.9073486328125e-06,
+    "maximumStrokePoints": 65536
+  },
+  "core": {
+    "result": "PASS",
+    "tests": 30,
+    "suites": 6,
+    "selection": "InkRenderGeometryTests|WorldPointCodingTests|WorldAddressTransitionTests|WorldProjectionBoundsTests|CameraWorldAddressTests|PhysicalWorldAddressTests|cameraRoundTrip|pinchKeepsItsWorldAnchorUnderTheFingers|pinchAnchorFollowsTheCurrentFingerCentroid|pinchIsReversible|clampedPinchStillKeepsItsAnchor",
+    "rawLog": ".build/surface-core-tests.log"
+  },
+  "typescript": {
+    "command": "npm --prefix MCP run check",
+    "result": "PASS"
+  },
+  "device": {
+    "architecture": "arm64e",
+    "deviceId": "00008103-001E059934D9001E",
+    "deviceName": "iPad (Елизавета)",
+    "modelName": "iPad Pro (11-inch) (3rd generation)",
+    "osBuildNumber": "24A435",
+    "osVersion": "27.0",
+    "platform": "iOS"
+  },
+  "nativeFunctional": {
+    "result": "Passed",
+    "totalTestCount": 3,
+    "passedTests": 3,
+    "failedTests": 0,
+    "skippedTests": 0,
+    "runtimeWarnings": [],
+    "startTime": 1791200154.038,
+    "finishTime": 1791200184.834,
+    "tests": [
+      "NotebookTests/CompactInkRenderingTests/testGPUContourPressureCapsEraserAndAffineMatchCanonicalPixels",
+      "NotebookTests/CompactInkRenderingTests/testMeasureOneHundredThousandNodesOnActualDevice",
+      "NotebookUITests/DrawingResponsivenessTests/testPaperSelectionAndZoomOutReturnToBoardAndReopenSameSheet"
+    ],
+    "wrapperResult": "REJECTED: fourth requested selector used NotebookInteractionLatencyTests instead of the actual NotebookInteractionUXTests class. The three tests above executed and passed; the missing test was then run separately and failed.",
+    "rawResult": ".build/surface-ipad-verification-final/ipad.xcresult",
+    "visualReview": "paper-zoom.png reviewed: selected paper zooms out to the notebook cover on the board. The UI test then asserts reopening the same sheet."
+  },
+  "gpu100k": {
+    "evidence": "gpu-100k.json",
+    "scope": "100,000 ink nodes, 15 measured samples per mode. GPU and submit/wait timings only; not system FPS or whole input-to-display latency."
+  },
+  "latency": {
+    "test": "NotebookTests/NotebookInteractionUXTests/testInkEraserMeetsTwentyMillisecondPresentationBudget",
+    "criterion": "Every sample <= 20 ms using OS Metal presentation receipts. Neither handler nor UIKit completion is a presentation ACK; this is not physical Pencil contact-to-photon measurement.",
+    "conditions": "Optimized, physical iPad, fixed 120 Hz replay, thermal=0, lowPower=false, screenMax=120. Same read-only staged typesetter runtime. One run per revision.",
+    "baseline": {
+      "result": "Failed",
+      "totalTestCount": 1,
+      "passedTests": 0,
+      "failedTests": 1,
+      "skippedTests": 0,
+      "runtimeWarnings": [],
+      "startTime": 1791200391.578,
+      "finishTime": 1791200544.385,
+      "summary": "XCTAssertTrue failed - ink-eraser-20ms, thermal=0, lowPower=false, screenMax=120, fixed 120 Hz input, EVERY sample <= 20.0 ms; input to handler return: n=121 p50=0.7910000276751816 p95=1.51516665937379 p99=2.3235833505168557 max=5.80554164480418 ms; UIKit update completion: n=121 p50=7.951208332087845 p95=8.603791706264019 p99=15.66745835589245 max=15.73695836123079 ms; OS Metal presentation: n=120 p50=24.099541653413326 p95=24.280583311337978 p99=40.561624977272004 max=40.56500003207475 ms; failed samples=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]. UIKit is not a presentation ACK. Neither lane measures physical Pencil sensing/photons.",
+      "samples": "baseline-latency.csv",
+      "rawResult": ".build/surface-baseline-latency/ipad.xcresult"
+    },
+    "extracted": {
+      "result": "Failed",
+      "totalTestCount": 1,
+      "passedTests": 0,
+      "failedTests": 1,
+      "skippedTests": 0,
+      "runtimeWarnings": [],
+      "startTime": 1791200233.306,
+      "finishTime": 1791200285.345,
+      "summary": "XCTAssertTrue failed - ink-eraser-20ms, thermal=0, lowPower=false, screenMax=120, fixed 120 Hz input, EVERY sample <= 20.0 ms; input to handler return: n=121 p50=1.5140833565965295 p95=2.026208327151835 p99=2.721791621297598 max=4.844874958507717 ms; UIKit update completion: n=121 p50=3.990125027485192 p95=4.624249995686114 p99=8.707416651304811 max=11.891124944668263 ms; OS Metal presentation: n=120 p50=20.165416644886136 p95=20.346083329059184 p99=36.6210833308287 max=36.63116664392874 ms; failed samples=[0, 1, 2, 3, 4, 5, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]. UIKit is not a presentation ACK. Neither lane measures physical Pencil sensing/photons.",
+      "samples": "extracted-latency.csv",
+      "rawResult": ".build/surface-ipad-latency/ipad.xcresult"
+    },
+    "conclusion": "The strict 20 ms criterion also fails on clean f0de64bf. One pair of runs does not establish a performance improvement or close the latency requirement."
+  },
+  "attempts": [
+    {
+      "path": ".build/surface-ipad-verification",
+      "result": "Interrupted before tests for final source whitespace cleanup; no PASS claimed."
+    }
+  ],
+  "hostGate": {
+    "result": "PENDING",
+    "plugin": "surface-host@notebook-surface-verification",
+    "tool": "notebook_verify_surface_host",
+    "transport": "Bundled tool/resource admitted by MCP client; installed and enabled. The active Codex run has not exposed the new tool.",
+    "scope": "Actual Codex WASM, WebGPU, isolated program, IME/focus and offline startup remain unverified. No bulk panel migration yet."
+  },
+  "independentReview": "Accepted one independent reviewer: native extraction equivalence, ABI overflow/refusal, memory growth and disposal; whole staged diff reviewed. No blocking code findings.",
+  "delivery": "Only isolated native-test applications installed and removed. Production applications, content containers, identities, keys and queues were not migrated by this slice. Mac retirement has not begun.",
+  "open": [
+    "GUI-475: real Codex host and complete shared stroke/select/move/zoom/undo scenario",
+    "GUI-190: strict latency, ten repetitions, 30 minutes shared work, system frames/CPU/GPU/memory",
+    "GUI-388/389/476/477: later consolidation slices"
+  ]
+}

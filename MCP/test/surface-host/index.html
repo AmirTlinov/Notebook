@@ -1,0 +1,8 @@
+<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>Notebook — проверка среды</title>
+<style>body{font:15px system-ui;margin:24px;color:#20242b;background:#faf9f6}h1{font-size:22px}li{margin:12px 0}canvas{width:100%;height:180px;border:1px solid #bbb}iframe{width:100%;height:130px;border:1px solid #bbb}textarea{font:inherit;width:100%;height:70px}pre{font:12px ui-monospace;white-space:pre-wrap;overflow-wrap:anywhere}button{padding:8px 12px}small{display:block;margin:8px 0}</style></head>
+<body><h1>Notebook — проверка среды Codex</h1><p>Общий Swift-модуль, WebGPU, изоляция программы и ввод текста. Содержимое Notebook не используется.</p>
+<button id="run">Проверить среду</button><ul id="results" aria-live="polite"></ul>
+<canvas id="gpu" width="600" height="180" aria-label="Штрих общего Swift-модуля"></canvas>
+<label for="text">Текст и композиция IME</label><textarea id="text" placeholder="Введите текст с клавиатуры"></textarea><small id="input-status">Ввод ещё не проверен</small>
+<div id="program"></div><details><summary>Результаты проверки</summary><pre id="evidence"></pre></details>
+<script type="module">/* SCRIPT */</script></body></html>

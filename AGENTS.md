@@ -3,6 +3,8 @@
 ```text
 Notebook/
 |-- Sources/NotebookCore/            # Content, SQLite, causal actions, and delivery.
+|-- Sources/NotebookSurface/         # Portable camera, coordinates, and ink geometry.
+|-- Sources/NotebookSurfaceWasm/     # Numeric browser ABI; no content or persistence.
 |-- Sources/NotebookCodex/           # Codex adapter; does not own model execution.
 |-- Sources/NotebookArchiveTransfer/ # External copy converter, separate from apps.
 |-- Applications/Shared/             # App model, write queue, camera, ink, documents.
@@ -33,6 +35,7 @@ installed, admitted helper.
   [replication owner window](docs/replication-owner-window.md),
   [transport](docs/transport-contract.md).
 - Ink, camera, composition, memory: `Applications/Shared/`,
+  [portable surface](docs/surface-consolidation.md),
   [performance](docs/performance.md),
   [page ink](docs/page-ink-conflict-contract.md),
   [scene allocation](docs/scene-allocation-contract.md).

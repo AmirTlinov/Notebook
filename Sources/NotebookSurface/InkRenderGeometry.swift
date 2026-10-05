@@ -1,6 +1,6 @@
-import CoreGraphics
-import Foundation
+#if canImport(simd)
 import simd
+#endif
 
 /// Display-only records. Measured samples remain the authoritative durable data.
 /// One stroke color is supplied separately; topology is implicit in array order.
@@ -45,7 +45,7 @@ public enum InkRenderGeometry {
     return (nodes - 1) * 6 + (flags & 1 != 0 ? 36 : 0) + (flags & 2 != 0 ? 36 : 0)
   }
   /// Bounds enclose strip edges AND round disks/caps, not just sample centers.
-  public static func bounds(_ nodes: ArraySlice<Node>) -> CGRect {
+  public static func extent(_ nodes: ArraySlice<Node>) -> (minimum: SIMD2<Float>, maximum: SIMD2<Float>)? {
     var lo = SIMD2<Float>(repeating: .infinity)
     var hi = SIMD2<Float>(repeating: -.infinity)
     for n in nodes {
@@ -53,9 +53,8 @@ public enum InkRenderGeometry {
       lo = simd_min(lo, n.position - d)
       hi = simd_max(hi, n.position + d)
     }
-    guard lo.x.isFinite else { return .null }
-    return .init(
-      x: Double(lo.x), y: Double(lo.y), width: Double(hi.x - lo.x), height: Double(hi.y - lo.y))
+    guard lo.x.isFinite else { return nil }
+    return (lo, hi)
   }
   /// Simplify the two actual contour rails, not just the center line. Reversal,
   /// shape/orientation changes and non-linear alpha force retained samples.
