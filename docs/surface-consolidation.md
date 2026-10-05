@@ -62,5 +62,9 @@ The parity check compares the actual native and WASM camera and ink outputs,
 including address limits, memory growth and refusal without partial writes.
 Bulk migration waits for this gate and the physical iPad scenario in
 [GUI-475](https://linear.app/main-cluster/issue/GUI-475).
-This first slice extends the existing panel. Native raster coverage, polling and
-the Mac runtime remain until their respective accepted C2 and C4 replacements.
+This first slice extends the existing panel. Native raster coverage and polling
+remain until their C2 replacements. The runtime is now packaged inside the plugin;
+`NotebookRuntimeLifecycle` owns its process, while `NotebookApplicationLaunch`
+owns admission, the workspace catalog and persistence recovery. The panel opens,
+creates and selects spaces through `runtimeStatus` / `runtimeWorkspace`; those
+bootstrap commands never fall through to a store command dispatcher.

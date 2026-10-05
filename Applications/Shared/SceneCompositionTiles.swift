@@ -842,6 +842,7 @@ final class SceneCompositionTiles {
   @ObservationIgnored private var preparingRequest: Request?
   @ObservationIgnored private var pendingRequest: Request?
   @ObservationIgnored private var lastRequest: Request?
+  @ObservationIgnored private var nativeProjectionWakeupPending = false
   @ObservationIgnored private var dirtySources: Set<SceneSourceAddress> = []
   @ObservationIgnored private var sourceFailures: [SceneSourceAddress: (SceneSourceDemand, String)] = [:]
   private struct RuntimeSource {
@@ -949,6 +950,9 @@ final class SceneCompositionTiles {
   init(resources: SceneRenderResources = .shared,
     surfaceRegistry: SpatialInkSurfaceRegistry = .init()) {
     self.resources = resources; self.surfaceRegistry = surfaceRegistry
+    #if os(iOS)
+      surfaceRegistry.onCoverProjectionChanged = { [weak self] in self?.requestNativeProjection() }
+    #endif
     resourceObserver = NotificationCenter.default.addObserver(forName: SceneRenderResources.didChange,
       object: nil, queue: .main) { [weak self] note in
       guard let elementID = note.object as? String else { return }
@@ -1076,10 +1080,11 @@ final class SceneCompositionTiles {
             let nativeInk = try await surfaceRegistry.prepareSceneInk(plan: reusablePaint.plan, frame: frame,
               liveData: reusablePaint.liveData, resources: resources, displayScale: displayScale,
               refinesDetails: request.refinesDetails)
+            self?.onPreparationPhase?(id, "native_projection_prepared")
             try await source.validate(); try Task.checkCancellation()
             guard self?.requestID == id, self?.published === reusablePaint, permitsPreparation()
             else { throw CancellationError() }
-            try nativeInk.install()
+            try nativeInk.install(projecting: self?.lastRequest?.frame)
             self?.onPreparationPhase?(id, "native_projection_installed")
             return
           }
@@ -1203,7 +1208,7 @@ final class SceneCompositionTiles {
             // actual owners until the old view, not just this field, lets go.
             #if os(iOS)
               guard let nativeInk else { throw SceneRenderError.snapshotPending("native_ink_preparation") }
-              try nativeInk.install()
+              try nativeInk.install(projecting: self?.lastRequest?.frame)
               tilePresenters.install(rasters)
               self?.published = .init(plan: plan, frame: frame, requestedSources: sources,
                 liveData: liveData, rasters: rasters, liveRasters: liveRasters, nativeInk: nativeInk,
@@ -1429,10 +1434,28 @@ final class SceneCompositionTiles {
     #if os(iOS)
       guard let published else { return false }
       return published.nativeInk.containsProjectionWindows(presence: request.presence,
-        frame: request.frame, refinesDetails: request.refinesDetails)
+        frame: request.frame, displayScale: request.displayScale, refinesDetails: request.refinesDetails)
     #else
       return true
     #endif
+  }
+
+  private func requestNativeProjection() {
+    guard !stopped, let request = lastRequest, request.permitsPreparation() else { return }
+    // A return into the installed window must still replace pending demand:
+    // the already preparing candidate can install a different window next.
+    if preparingRequest != nil { prepare(request); return }
+    guard !nativeProjectionWakeupPending else { return }
+    nativeProjectionWakeupPending = true
+    // A native pose update only wakes the existing scene producer. Multiple
+    // finger samples share its current preparation and one pending request.
+    Task { @MainActor [weak self] in
+      guard let self else { return }
+      nativeProjectionWakeupPending = false
+      guard !stopped, let request = lastRequest, request.permitsPreparation(),
+        preparingRequest != nil || !containsNativeProjection(for: request) else { return }
+      prepare(request)
+    }
   }
 
   private func refreshSources() {

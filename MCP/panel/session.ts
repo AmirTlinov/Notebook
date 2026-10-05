@@ -3,7 +3,10 @@ import type { SceneBounds } from "../src/spatial.js";
 import type { PanelSnapshot, PanelAddress, PanelMutation, PanelSelection, PanelTarget, PanelView } from "./model.js";
 
 type ToolResult={structuredContent?:Record<string,unknown>;content?:{type:string;text?:string}[];isError?:boolean};
-class PanelError extends Error {
+export type RuntimeStatus={kind:"notebookRuntime";ready:boolean;pid:number;state:"opening"|"ready"|"workspaceRequired"|"failed";workspaceID?:string;socketKey?:string;message?:string};
+export type WorkspaceRequest={action:"list"|"create"|"select"|"rename"|"retry";id?:string;name?:string};
+export type WorkspaceResult={status:RuntimeStatus;workspaces:{id:string;name:string;local:boolean;remote:boolean;deleting:boolean}[];error?:string;catalogError?:string;snapshot?:PanelSnapshot};
+export class PanelError extends Error {
   constructor(readonly code:string,message:string){super(message);}
 }
 function body(result:ToolResult):Record<string,unknown> {
@@ -38,6 +41,7 @@ export class NotebookSession {
   onClose:()=>void=()=>{};
   onStatus:(text:string)=>void=()=>{};
   onError:(message:string,retry:(()=>Promise<void>)|null)=>void=()=>{};
+  onRuntime:(status:RuntimeStatus)=>void=()=>{};
   bounds:()=>SceneBounds|undefined=()=>undefined;
   view:(navigation:boolean,camera?:PanelView["camera"])=>PanelView=()=>({viewport:{x:834,y:1194},pixelScale:1});
   knownAssets:()=>string[]=()=>[];
@@ -66,7 +70,7 @@ export class NotebookSession {
       if(this.closed||this.initialClaimed)return;
       try { const value=body(result as ToolResult);if(isSnapshot(value)){
         this.initialClaimed=true;this.snapshot=value;this.onStatus("Подготовка поверхности…");void this.refresh(true);
-      } }
+      }else if(value.runtime){this.onRuntime(value.runtime as RuntimeStatus);} }
       catch(error){this.report(error,null);}
     };
     this.app.onteardown=async()=>{
@@ -85,6 +89,45 @@ export class NotebookSession {
   address():PanelAddress {
     if(!this.snapshot)throw new Error("Notebook ещё подключается.");
     const {workspaceID,target,socketKey}=this.snapshot;return {workspaceID,target,socketKey};
+  }
+  async workspace(request:WorkspaceRequest):Promise<WorkspaceResult|undefined>{
+    if(this.closed||this.busy||(this.pending&&request.action!=="list"&&request.action!=="retry"))return;
+    this.busy=true;this.onStatus("Открытие пространства…");
+    const recovering=request.action==="retry"&&this.snapshot!==undefined;
+    const command=recovering?{...request,id:this.snapshot!.workspaceID}:request;
+    let repaired=false;
+    try{
+      const value=body(await this.app.callServerTool({name:"notebook_panel_workspace",arguments:command}) as ToolResult) as WorkspaceResult;
+      if(this.closed)return;
+      if(value.snapshot&&isSnapshot(value.snapshot)){
+        if(value.snapshot.workspaceID.toLowerCase()!==value.status.workspaceID?.toLowerCase()||value.snapshot.socketKey!==value.status.socketKey){
+          throw new Error("Notebook вернул другое пространство.");
+        }
+        if(recovering){
+          if(value.snapshot.workspaceID.toLowerCase()!==this.snapshot!.workspaceID.toLowerCase()||value.snapshot.socketKey!==this.snapshot!.socketKey){
+            throw new Error("Восстановление вернуло другое пространство.");
+          }
+          repaired=!value.error&&value.status.state==="ready";
+          // Recovery keeps this panel's page, camera, selection and accepted
+          // action. The runtime's current focus belongs to another surface.
+          if(repaired)this.failedWrite=false;
+        }else{
+          ++this.generation;++this.navigation;
+          this.initialClaimed=true;this.presented=false;this.snapshot=value.snapshot;
+          this.presentedView=undefined;this.boundsDirty=true;this.failedWrite=false;
+          this.contextSelection=null;this.contextDirty=false;
+          clearTimeout(this.contextTimer);this.contextTimer=undefined;
+        }
+      }
+      return value;
+    }finally{
+      this.busy=false;
+      if(!this.closed){
+        if(repaired&&this.pending)void this.sendPending();
+        else if(this.snapshot&&(!this.presented||repaired))void this.refresh(true);
+        else this.onStatus(this.presented?"Подключено":"Выберите пространство");
+      }
+    }
   }
   viewportChanged(){
     if(this.closed)return;
@@ -202,15 +245,24 @@ export class NotebookSession {
       this.pending=undefined;this.synchronizing=true;this.onError("",null);pending.resolve();
     }catch(error) {
       if(this.closed||this.pending!==pending)return;
-      const uncertain=!(error instanceof PanelError)||["ipc_timeout","ipc_unavailable","ipc_protocol"].includes(error.code);
-      if(!uncertain){this.pending=undefined;this.failedWrite=true;pending.reject(error);}
-      this.report(error,uncertain?()=>this.sendPending():null);
+      const retryable=!(error instanceof PanelError)||["ipc_timeout","ipc_unavailable","ipc_protocol","operation_failed"].includes(error.code);
+      if(!retryable){this.pending=undefined;this.failedWrite=true;pending.reject(error);}
+      this.report(error,retryable?()=>this.retryPending():null);
     }finally {
       this.busy=false;
       // The accepted command retires any pre-contact read. Its replacement
       // must survive that reader's slot, even when camera coverage is current.
       if(!this.closed&&!this.pending){await this.refresh(true);}
     }
+  }
+  private async retryPending(){
+    if(this.closed||!this.pending||this.busy)return;
+    try{
+      const result=await this.workspace({action:"retry"});
+      if(result&&(result.error||result.status.state!=="ready")){
+        throw new Error(result.error??result.status.message??"Сохранение ещё не восстановлено.");
+      }
+    }catch(error){this.report(error,()=>this.retryPending());}
   }
   context(selection:PanelSelection|null) {
     if(this.closed)return;

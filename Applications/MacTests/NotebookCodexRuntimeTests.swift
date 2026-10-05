@@ -1,13 +1,12 @@
 import XCTest
-import SwiftUI
 import NotebookCore
 import NotebookCodex
 @testable import Notebook
 
 /// Explicit, isolated live acceptance. This never changes installed Notebook
 /// data or global MCP configuration; it creates one clearly named native task.
-@MainActor final class NotebookCodexStandaloneTests: XCTestCase {
-  func testLocalMacPresentationUsesHostJournalForRealCodeCheckAndNotebookMaterial() async throws {
+@MainActor final class NotebookCodexRuntimeTests: XCTestCase {
+  func testLocalRuntimeUsesHostJournalForRealCodeCheckAndNotebookMaterial() async throws {
     guard ProcessInfo.processInfo.environment["NOTEBOOK_TEST_NATIVE_CODEX"] == "1" else { throw XCTSkip("Explicit live Codex acceptance required") }
     let run = UUID(), actor = UUID()
     let root = URL(fileURLWithPath: "/tmp/nb183/" + run.uuidString.lowercased())
@@ -23,19 +22,15 @@ import NotebookCodex
     let model = NotebookAppModel(store: store, startsNearbySync: false, commandSocketURL: URL(fileURLWithPath: config.socket!),
       preferences: preferences, acceptance: config)
     await model.start(pageSize: .init(width: 834, height: 1194))
-    let chat = NotebookMacCodexPresentation(model: model)
-    let presentation = Task { await chat.run() }
     do {
       if case .account(let state) = try await model.localCodexQuery(.account(.read)), state.account == nil {
         throw XCTSkip("Existing official account required; this test never logs the user in or out")
       }
-      await chat.submit(.create(title: "GUI-183 isolated Mac presentation proof"))
-      try await wait(seconds: 30) { chat.threadID != nil }
-      let thread = try XCTUnwrap(chat.threadID)
-      await chat.submit(.setAccess(threadID: thread, mode: .workspace))
-      let setting = try XCTUnwrap(chat.jobs.first?.id)
-      try await wait(seconds: 20) { chat.jobs.first(where: { $0.id == setting })?.isTerminal == true }
-      XCTAssertEqual(chat.jobs.first(where: { $0.id == setting })?.state, .accepted)
+      let created = try await submit(.create(title: "GUI-183 isolated runtime proof"), model: model)
+      guard case .created(let task) = created.result else { throw CodexBridgeError.invalidResponse }
+      let thread = task.id
+      let setting = try await submit(.setAccess(threadID: thread, mode: .workspace), model: model)
+      XCTAssertEqual(setting.state, .accepted)
       let text = """
       This is an isolated acceptance project and an isolated empty Notebook workspace. Do not access any other project.
       Create proof.txt containing exactly GUI-183 plus a newline in the current directory.
@@ -44,10 +39,7 @@ import NotebookCodex
       Read nb.help('operation/createDocument') and use the returned public API example with fresh nb.board({}) basis.
       Do not create any other material. Finish with the actual check result and document title.
       """
-      chat.draft = text
-      await chat.submit(.send(threadID: thread, text: text, context: ""))
-      let submission = try XCTUnwrap(chat.jobs.first?.input)
-      XCTAssertEqual(chat.draft, "")
+      let submission = try await submit(.send(threadID: thread, text: text, context: ""), model: model).input
       let deadline = ContinuousClock.now + .seconds(150)
       var state: CodexConversation?
       var answered = Set<String>()
@@ -79,38 +71,34 @@ import NotebookCodex
       XCTAssertEqual(final.turnStatuses[turn], "completed")
       XCTAssertEqual(try String(contentsOf: project.appendingPathComponent("proof.txt"), encoding: .utf8), "GUI-183\n")
       let material = try XCTUnwrap(try store.loadIndex().items.first { $0.kind == .document && $0.title == "GUI-183 remote proof" })
-      // Same journal identity is shared by the local window and remote sidecar.
+      // The local runtime and remote sidecar share one durable command identity.
       let duplicate = try await model.localCodexQuery(.job(submission))
       guard case .job(let job) = duplicate else { throw CodexBridgeError.invalidResponse }
       XCTAssertEqual(job.id, submission.id)
       XCTAssertEqual(job.result, .turn(turn))
       let evidence = XCTAttachment(string: "thread=\(thread)\nturn=\(turn)\ncommand=\(submission.id)\ndocument=\(material.id)\nproject=\(project.path)\n")
       evidence.name = "gui183-local-native-proof"; evidence.lifetime = .keepAlways; add(evidence)
-      let view = NSHostingView(rootView: NotebookMacCodexView(model: model))
-      let window = NSWindow(contentRect: .init(x: 0, y: 0, width: 980, height: 720), styleMask: [.titled], backing: .buffered, defer: false)
-      window.contentView = view; window.orderBack(nil)
-      defer { window.orderOut(nil) }
-      try await Task.sleep(for: .seconds(2))
-      view.layoutSubtreeIfNeeded()
-      let bitmap = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
-      view.cacheDisplay(in: view.bounds, to: bitmap)
-      let visual = XCTAttachment(image: NSImage(cgImage: try XCTUnwrap(bitmap.cgImage), size: view.bounds.size))
-      visual.name = "gui183-mac-task-window"; visual.lifetime = .keepAlways; add(visual)
-      presentation.cancel(); await presentation.value
       _ = await model.shutdown(); await model.codexHost?.shutdown()
       preferences.removePersistentDomain(forName: config.defaultsSuite)
       // Retain only this opt-in run's isolated artifacts for inspectable evidence.
     } catch {
-      presentation.cancel(); await presentation.value
       _ = await model.shutdown(); await model.codexHost?.shutdown()
       preferences.removePersistentDomain(forName: config.defaultsSuite)
       throw error
     }
   }
 
-  private func wait(seconds: Int, _ condition: () -> Bool) async throws {
-    let deadline = ContinuousClock.now + .seconds(seconds)
-    while !condition(), .now < deadline { try await Task.sleep(for: .milliseconds(50)) }
-    guard condition() else { throw CodexBridgeError.timeout }
+  private func submit(_ action: NotebookChatAction, model: NotebookAppModel) async throws -> NotebookChatJob {
+    let input = NotebookChatInput(id: action.controlID(author: model.actorID) ?? UUID(), author: model.actorID, action: action)
+    guard case .job(var job) = try await model.localCodexQuery(.job(input)) else { throw CodexBridgeError.invalidResponse }
+    let deadline = ContinuousClock.now + .seconds(30)
+    while !job.isTerminal, .now < deadline {
+      try await Task.sleep(for: .milliseconds(50))
+      guard case .job(let current) = try await model.localCodexQuery(.job(input)) else { throw CodexBridgeError.invalidResponse }
+      job = current
+    }
+    guard job.isTerminal else { throw CodexBridgeError.timeout }
+    XCTAssertEqual(job.state, .accepted, job.error ?? "")
+    return job
   }
 }

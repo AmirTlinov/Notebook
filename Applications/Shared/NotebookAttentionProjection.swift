@@ -303,6 +303,15 @@ enum NotebookAttentionProjection {
     #endif
   }
 
+  #if os(macOS)
+  static func readingPaperFrame(model:NotebookAppModel,presence:SessionPresence) -> CGRect? {
+    guard presence.mode == .page || presence.mode == .document, let id = presence.focusedItemID,
+      let center = model.boardHierarchy?.board(presence.boardID)?.focusedCenter(of:id) else { return nil }
+    let box = model.itemGeometry(id).screenFrame(center:center,camera:presence.camera,viewport:presence.viewport)
+    return .init(x:box.x,y:box.y,width:box.width,height:box.height)
+  }
+  #endif
+
   static func laserScale(_ address: NotebookLaserAddress, model: NotebookAppModel,
     presence: SessionPresence) -> Double? {
     if case .material(let address) = address, address.surface.kind == .page {

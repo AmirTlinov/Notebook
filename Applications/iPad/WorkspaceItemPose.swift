@@ -286,7 +286,18 @@ final class WorkspaceItemPoseController: UIViewController, NotebookScenePresenta
   }
 
   func screenSurface(in coordinateView: UIView) -> SpatialScreenSurface? {
-    guard installed, let rendered, let host, let pose = presentationPose,
+    guard let pose = presentationPose else { return nil }
+    return screenSurface(in: coordinateView, pose: pose)
+  }
+
+  /// Preparation anticipates the accepted native destination. Pencil still
+  /// captures the actually presented pose through screenSurface above.
+  func backingSurface(in coordinateView: UIView) -> SpatialScreenSurface? {
+    screenSurface(in: coordinateView, pose: targetPose)
+  }
+
+  private func screenSurface(in coordinateView: UIView, pose: Pose) -> SpatialScreenSurface? {
+    guard installed, let rendered, let host,
       view.window != nil, view.window === coordinateView.window else { return nil }
     func convert(_ p: CGPoint) -> CGPoint {
       let local = CGPoint(x: p.x - host.view.bounds.midX, y: p.y - host.view.bounds.midY).applying(pose.transform)
@@ -428,6 +439,7 @@ final class WorkspaceItemPoseController: UIViewController, NotebookScenePresenta
     CATransaction.begin(); CATransaction.setDisableActions(true)
     host.view.center = pose.center; host.view.transform = pose.transform
     CATransaction.commit()
+    registry?.coverProjectionChanged(surfaceID)
   }
 
   private func stopAtPresentation() {
@@ -461,6 +473,7 @@ final class WorkspaceItemPoseController: UIViewController, NotebookScenePresenta
       finishEngagementIfPossible(deferred: false)
     }
     animator.startAnimation()
+    registry?.coverProjectionChanged(surfaceID)
   }
 
   private func finishEngagementIfPossible(deferred: Bool) {

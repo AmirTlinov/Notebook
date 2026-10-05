@@ -19,7 +19,31 @@ final class SpatialInkSurfaceRegistry {
     #endif
   }
   private var canvases:[SurfaceID:WeakCanvas]=[:]
+  var hasMovingCover: Bool {
+    #if os(iOS)
+      canvases.values.contains { $0.pose?.isEngaged == true }
+    #else
+      false
+    #endif
+  }
   #if os(iOS)
+    var onCoverProjectionChanged: (() -> Void)?
+
+    func coverProjection(itemID: UUID, frame: WorkspaceSceneFrame, displayScale: Double) -> SpatialInkCoverProjection? {
+      movingCoverProjection(on: .cover(itemID)) ?? .init(itemID: itemID, frame: frame, displayScale: displayScale)
+    }
+
+    func movingCoverProjection(on surface: SurfaceID) -> SpatialInkCoverProjection? {
+      guard let pose = canvases[surface]?.pose, pose.isEngaged,
+        let window = pose.viewIfLoaded?.window, let projected = pose.backingSurface(in: window) else { return nil }
+      return .init(surface: projected, viewport: window.bounds, displayScale: window.screen.scale)
+    }
+
+    func coverProjectionChanged(_ surface: SurfaceID?) {
+      guard let surface, !sceneInkIsStopped, installedSceneSurfaces.contains(surface) else { return }
+      onCoverProjectionChanged?()
+    }
+
     private var retainedCanvases: [SurfaceID: (view: InkCanvasView, count: Int)] = [:]
     private var activeSurfaces: Set<SurfaceID> = []
     private struct PreparedSource {
@@ -117,22 +141,30 @@ final class SpatialInkSurfaceRegistry {
       // not make contact admission forgive an actually smaller native extent.
       let boardSize = InkCanvasView.sceneBackingSize(viewport: .init(
         x: max(root.viewport.x, projected.x), y: max(root.viewport.y, projected.y)), displayScale: displayScale)
-      var requested: [(SurfaceID, SpatialPoint, SpatialCamera, SpatialPoint)] = []
+      var requested: [(surface: SurfaceID, size: SpatialPoint, camera: SpatialCamera,
+        viewport: SpatialPoint, density: Double, region: CGRect?, visible: CGRect?)] = []
       for id in plan.inkBoardIDs.sorted() {
         guard let presence = frame.presences[id] else { throw SceneRenderError.snapshotPending("native_ink_source") }
-        requested.append((.board(id), boardSize, presence.camera, presence.viewport))
+        requested.append((.board(id), boardSize, presence.camera, presence.viewport, displayScale, nil, nil))
       }
       for live in plan.liveOwners {
         guard case .item(let id) = live.id,
-          let item = frame.workset(boardID: live.plane.boardID).items.first(where: { $0.id == id }) else { continue }
-        let size = SpatialPoint(x: item.geometry.width, y: item.geometry.height)
-        requested.append((.cover(id), size, .init(), size))
+          frame.workset(boardID: live.plane.boardID).items.contains(where: { $0.id == id }) else { continue }
+        guard let canonical = SpatialInkCoverProjection(itemID: id, frame: frame, displayScale: displayScale) else {
+          throw SceneRenderError.snapshotPending("native_ink_projection")
+        }
+        let projection = movingCoverProjection(on: .cover(id)) ?? canonical
+        // Covers keep their paper coordinates. Only their Metal backing follows
+        // the on-screen projection; a small card cannot reserve a full-screen
+        // Retina paper. Board canvases above already use screen coordinates.
+        requested.append((.cover(id), projection.size, .init(), projection.size,
+          projection.density, projection.backingRegion, canonical.visible))
       }
       var owners: [SurfaceID: SpatialInkPhysicalOwner] = [:]
       var updates: [SpatialInkSceneLease.Update] = []
       var created: [SpatialInkPhysicalOwner] = []
       do {
-        for (surface, size, camera, viewport) in requested {
+        for (surface, size, camera, viewport, density, region, visible) in requested {
           try Task.checkCancellation()
           let previous = physicalInkOwners[surface]?.owner
           let installed = previous?.canvas.installedSpatialSource
@@ -167,20 +199,20 @@ final class SpatialInkSurfaceRegistry {
             let priority: SceneAllocationPriority = surface == .board(plan.rootBoardID) || focused ? .input : .passive
             let admission = resources.reservePhysicalOwners([identity], priority: priority)
             owner = .init(surface: surface, size: size, camera: camera,
-              registry: self, resources: resources, displayScale: displayScale, physical: admission)
+              registry: self, resources: resources, displayScale: density, physical: admission)
             created.append(owner)
             physicalInkOwners[surface] = WeakOwner(owner)
           }
           owners[surface] = owner
           let staged: InkCanvasView.PreparedFrame?
-          if previous == nil || prepared.1 != nil || owner.canvas.orderedInkPlan != ordered || owner.canvas.needsSpatialTarget(size: size, displayScale: displayScale)
+          if previous == nil || prepared.1 != nil || owner.canvas.orderedInkPlan != ordered || owner.canvas.needsSpatialTarget(size: size, displayScale: density, region: region)
             || (surface.kind == .board && owner.needsProjection(camera: camera,
               viewport: viewport, refinesDetails: refinesDetails)) {
-            staged = try await owner.canvas.prepareFrame(.spatial(prepared.1,size:size,displayScale:displayScale,camera:surface.kind == .board ? camera : nil,ordered:ordered))
+            staged = try await owner.canvas.prepareFrame(.spatial(prepared.1,size:size,displayScale:density,camera:surface.kind == .board ? camera : nil,ordered:ordered,region:region))
           }
           else { staged = nil }
           updates.append(.init(owner: owner, generation: owner.canvas.spatialSourceGeneration,
-            frame: staged, journal: prepared.0, suppressedInkIDs: suppressed))
+            frame: staged, journal: prepared.0, suppressedInkIDs: suppressed, coverVisibleRegion: visible))
         }
         try Task.checkCancellation()
         return .init(registry: self, rootBoardID: plan.rootBoardID, focusedCoverID: focusedCoverID,
@@ -231,6 +263,7 @@ final class SpatialInkSurfaceRegistry {
 
     func stopSceneInk() async {
       sceneInkIsStopped = true
+      onCoverProjectionChanged = nil
       sceneInkWaiter?.continuation.resume(returning: false); sceneInkWaiter = nil
       activeBoardInkID = nil; activeBoardInkMount = nil
       let owners = physicalInkOwners.values.compactMap(\.owner)

@@ -8,10 +8,10 @@ external API references are not a promise of compatibility with an arbitrary ver
 
 ## Host and task ownership
 
-`NotebookCodexHost` owns one App Server per Mac app. Workspace
+`NotebookCodexHost` owns one App Server per plugin runtime. Workspace
 `NotebookCodexSidecar` instances route delivery, not separate model processes.
-Mac calls the route directly; iPad uses authenticated Notebook transport.
-Up to eight workspace owners retain distinct IPC addresses, so switching windows
+The Codex panel calls the runtime; iPad uses authenticated Notebook transport.
+Up to eight workspace owners retain distinct IPC addresses, so switching spaces
 does not redirect an active agent's tools.
 
 `thread/resume` acquires Codex's own exclusive writer. “Already has an active

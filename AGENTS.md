@@ -9,9 +9,9 @@ Notebook/
 |-- Sources/NotebookArchiveTransfer/ # External copy converter, separate from apps.
 |-- Applications/Shared/             # App model, write queue, camera, ink, documents.
 |-- Applications/iPad/               # iPad workspace and system input.
-|-- Applications/Mac/                # Mac window, input, IPC, and trusted connection.
+|-- Applications/Mac/                # Plugin runtime, IPC, trusted connection, system adapters.
 |-- Applications/WebResources/       # WebKit document and program presentation.
-|-- MCP/                            # Shared-workspace tools through the Mac owner.
+|-- MCP/                            # Codex panel, plugin package, tools through the runtime owner.
 |-- Tests/                          # Core, MCP, Codex, and verification contracts.
 |-- Applications/*Tests/             # Native checks and gesture scenarios.
 `-- verify.sh                       # Change-scoped checks; --full is full acceptance.

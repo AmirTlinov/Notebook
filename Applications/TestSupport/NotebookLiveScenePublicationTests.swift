@@ -585,7 +585,7 @@ private struct RetainedLiveScene: View {
               spatialInkSurfaces: ink,
               elements: model.presentedCoverElements(cohort: cohort, boardID: presence.boardID, itemID: item.id),
               editingTextID: nil, portalOpenProgress: 0, portalViewport: anchor.viewport,
-              onTap: { _, _ in }, onTextEditingEnded: { _ in })
+              onTap: { _, _ in })
               .frame(width: item.geometry.width, height: item.geometry.height)
               .scaleEffect(anchor.camera.scale).position(x: point.x, y: point.y)
           }

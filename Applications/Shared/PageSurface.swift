@@ -1,7 +1,8 @@
+#if os(iOS)
 import NotebookCore
 import SwiftUI
 
-/// Both native readers demand the same addressed material. A directory slot
+/// The native reader demands addressed material. A directory slot
 /// is not a blank sheet; only the deliberate trailing creation slot is blank.
 private struct BlankFrameDemand: Hashable {
   let owner: ObjectIdentifier
@@ -23,9 +24,7 @@ struct NotebookPageView: View {
   let refinesDetails: Bool
   var initialVisibleRegion: CGRect? = nil
   @State private var blankRetry: UInt64 = 0
-  #if os(iOS)
   @State private var blankFrame: PageTurnFrame?
-  #endif
 
   var body: some View {
     if index < 0 || index >= model.notebookPageCount(notebookID) {
@@ -37,7 +36,6 @@ struct NotebookPageView: View {
         BlankPageSurface(fallbackSize: size)
         .task(id: BlankFrameDemand(owner: ObjectIdentifier(onRenderReady), width: size.width,
           height: size.height, scale: scale, demanded: demanded, retry: blankRetry)) {
-          #if os(iOS)
           do {
             let logicalSize = CGSize(width: size.width, height: size.height)
             if let blankFrame, blankFrame.logicalSize != logicalSize
@@ -55,16 +53,11 @@ struct NotebookPageView: View {
           } catch is CancellationError { }
           catch { onRenderReady.failed(.init(kind: error as? SceneRenderError == .resourceLimit ? .resourceLimit : .preparationFailed,
             message: "Не удалось подготовить чистый лист", retry: { blankRetry &+= 1 })) }
-          #else
-          onRenderReady(index == model.notebookPageCount(notebookID))
-          #endif
         }
       }
     } else if let page = model.notebookPage(at: index, in: notebookID) {
       acceptedPage(page)
-        #if os(iOS)
         .onAppear { blankFrame = nil }
-        #endif
     } else {
       BlankPageSurface(fallbackSize: model.notebookPageSize)
         .overlay { ProgressView().allowsHitTesting(false) }
@@ -112,17 +105,13 @@ struct PageSurface: View {
   var sourceVersion: NotebookPagePreparationWindow.SourceVersion? = nil
 
   @State private var visibleRegion: CGRect?
-  #if os(iOS)
   @State private var graphicCoverageOwner=UUID()
   @State private var materialOwner = PageTurnMaterialOwner()
   @State private var materialScale = 2.0
   @State private var orderedMaterialIDs: Set<String> = []
-  #endif
   @State private var readiness=PageSurfaceReadiness()
   @State private var rasterPreparation = PageRasterPreparation()
-  #if os(iOS)
   @State private var liveElementEraser = NotebookLiveElementEraserPresentation()
-  #endif
 
 
   var body: some View {
@@ -141,7 +130,6 @@ struct PageSurface: View {
         GridPaperView()
         if scale > 0 {
           Group {
-            #if os(iOS)
             agentOverlay(renderingScale:scale * displayProjection,display:graphicDisplay)
               .mask {
                 if liveElementEraser.isActive {
@@ -149,14 +137,10 @@ struct PageSurface: View {
                     .allowsHitTesting(false)
                 } else { Color.white }
               }
-            #else
-            agentOverlay(renderingScale:scale * displayProjection,display:graphicDisplay)
-            #endif
           }
           .opacity(isVisible ? 1 : 0)
           .allowsHitTesting(isVisible && isInteractive)
         }
-        #if os(iOS)
           PencilCanvasView(
             pageID: page.id,
             source: page.inkSource,
@@ -191,13 +175,6 @@ struct PageSurface: View {
             onLiveElementErasing: liveElementEraser.display,
             onElementErasing: model.updateElementErasing
           )
-        #else
-          MacPageInkView(page: page, isInteractive: isVisible && isInteractive, isVisible:isVisible,
-            isCurrent:isCurrent,pageReadiness:onRenderReady,refinesDetails:refinesDetails) { receipt in
-            model.canonicalPageInkInstalled(receipt,elementSource:page.elementSourceIdentity,input:orderedInput)
-            readiness.recordInk(receipt);publishReadiness()
-          }.id(page.id)
-        #endif
 
       }
       .frame(width: page.size.width, height: page.size.height)
@@ -226,7 +203,6 @@ struct PageSurface: View {
         alignment: .center
       )
       .clipped()
-      #if os(iOS)
       .onChange(of: max(0.1, scale * displayProjection * displayScale), initial: true) { _, density in
         materialScale = density; publishReadiness()
       }
@@ -239,15 +215,12 @@ struct PageSurface: View {
       .onChange(of:isCurrent && isInteractive && isVisible,initial:true) { _,_ in
         publishGraphicCoverage(Set(graphicDisplay.elements.map(\.id)))
       }
-      #endif
     }
-    #if os(iOS)
     .onAppear { publishReadiness() }
     .onDisappear {
       model.selectedGraphicHosts.removePageCoverage(page.id,owner:graphicCoverageOwner)
       materialOwner.retire()
     }
-    #endif
     .onChange(of:ObjectIdentifier(onRenderReady),initial:true) { _, _ in
       publishReadiness()
     }
@@ -261,7 +234,7 @@ struct PageSurface: View {
   }
 
   private func publishReadiness() {
-    #if DEBUG && os(iOS)
+    #if DEBUG
     if NotebookNavigationObservation.pageTurnDiagnosticsEnabled {
       onRenderReady.presentationDiagnostic = { [weak readiness, weak receipt = onRenderReady, page] in
         let sources = page.elements.filter { $0.graphic == nil && $0.kind != .nativeText && $0.kind != .group }
@@ -273,7 +246,6 @@ struct PageSurface: View {
       }
     }
     #endif
-    #if os(iOS)
     materialOwner.prepare(page: page, erasures: model.pagePresentationErasures(page),
       ordered: orderedMaterialIDs, scale: materialScale, onReady: {
         publishReadiness()
@@ -288,12 +260,8 @@ struct PageSurface: View {
     onRenderReady(readiness.isReady(page),
       capturable: materialOwner.isCaptureReady(readiness: onRenderReady) && onRenderReady.inkFrameIsReady?() == true,
       paperReady: readiness.paperIsReady(page))
-    #else
-    onRenderReady(readiness.isReady(page))
-    #endif
   }
 
-  #if os(iOS)
   private func publishGraphicCoverage(_ visible:Set<String>) {
     guard isCurrent,isInteractive,isVisible,model.presence?.notebookPageID == page.id else {
       model.selectedGraphicHosts.removePageCoverage(page.id,owner:graphicCoverageOwner)
@@ -301,7 +269,6 @@ struct PageSurface: View {
     }
     model.selectedGraphicHosts.publishPageCoverage(page.id,owner:graphicCoverageOwner,visible:visible)
   }
-  #endif
 
   private func agentOverlay(renderingScale:Double,display:NotebookPageGraphicDisplay) -> some View {
     let overlay = AgentOverlayView(page:page,sourceIdentity:page.elementSourceIdentity,renderingScale:renderingScale,preparedDisplay:display,
@@ -309,9 +276,7 @@ struct PageSurface: View {
       onRenderReady:{ ready in
         readiness.recordGraphics(ready,page:page);publishReadiness()
       },onErasurePresentation: { receipt in
-        #if os(iOS)
         liveElementEraser.presented(receipt)
-        #endif
       },onState:{ elementID,state,completion in
         // Admission belongs to the live program; a turn cannot cancel a
         // snapshot already accepted before this page lost presentation.
@@ -372,3 +337,4 @@ struct BlankPageSurface: View {
     .accessibilityHidden(true)
   }
 }
+#endif

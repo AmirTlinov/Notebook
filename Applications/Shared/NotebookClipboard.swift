@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 import NotebookCore
 
 /// Clipboard representations are input, never a second document or storage owner.
-/// Only an explicit system paste (or the Mac menu command) calls this reader.
+/// Explicit system paste and addressed imports call this reader.
 enum NotebookClipboard {
   static let fragmentType = UTType(exportedAs:"com.amirtlinov.notebook.fragment",conformingTo:.json)
   static let types: [UTType] = [fragmentType, .html, .json, .image, .url, .plainText]

@@ -1,11 +1,11 @@
 # Notebook
 
-A shared space for handwriting, documents, and interactive models on iPad and Mac.
+A shared space for handwriting, documents, and interactive models on iPad and in Codex.
 Notebooks and documents live on an infinite board; portals connect nested boards.
 
 - **Notebooks** — Apple Pencil writing, drawings, and diagrams.
 - **Documents** — Markdown, LaTeX, formulas, and interactive programs.
-- **Collaboration** — shared materials across Mac and iPad, with Codex discussions and edits.
+- **Collaboration** — shared materials across the Codex panel and iPad, with agent discussions and edits.
   Each device keeps its own page, camera, and selection.
 
 Read the [Notebook philosophy](PHILOSOPHY.md) for the product principles.
@@ -13,7 +13,8 @@ Read the [Notebook philosophy](PHILOSOPHY.md) for the product principles.
 ## Development
 
 Requires Xcode 27, XcodeGen 2.46+, and Node.js 20+. Application targets are
-macOS 27 and iPadOS 27.
+macOS 27 and iPadOS 27. The Mac product is a signed runtime bundled in the
+Codex plugin; the working surface opens inside Codex.
 
 Start with the [project map](AGENTS.md) for code ownership and task-specific checks.
 From the repository root, inspect the proposed verification scope:

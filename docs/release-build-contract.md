@@ -1,8 +1,8 @@
 # Verified pair builds
 
 `Applications/notebook_release.py` owns build-input inventories, evidence
-validation and signature checks. `verify.sh`, the first-Lab installer and the
-pair builder share this implementation.
+validation, signature checks and pair installation. `verify.sh` and the pair
+builder share this implementation.
 
 Inventory format 2 covers `Package.swift`, optional `Package.resolved`,
 `verify.sh`, `Sources`, `Tests`, `Applications` and `MCP`. File additions,
@@ -43,8 +43,9 @@ the corresponding algorithm changes. `--full` is separate broad verification,
 not the default for every edit and not physical acceptance by itself.
 
 `verification.json` is written only after success and binds immutable sources to
-the complete evidence directory. The full route includes both xcresults, logs and
-the Mac workspace image. `./verify.sh:selected` includes `selection.json`,
+the complete evidence directory. The full route includes both xcresults and logs.
+Runtime admission and document publication are native checks; the real Codex panel
+has separate host acceptance. `./verify.sh:selected` includes `selection.json`,
 executed commands and the affected platforms' xcresults. Every requested XCTest
 must actually run. Historical reports cannot become receipts retroactively.
 
@@ -66,7 +67,10 @@ Applications/build-verified-pair.sh \
 The builder verifies current inputs, its own executable code and all evidence,
 retaining the selected/full distinction in `verificationRoute`. It creates an
 independent source copy, installs locked MCP dependencies without install scripts
-and builds Release iPad, then Mac. Xcode, Swift, SDK, XcodeGen, Node and npm must
+and builds Release iPad, then `NotebookRuntime`. It packages the signed runtime
+with the plugin metadata under `plugin/notebook/runtime/NotebookRuntime.app`;
+`build.json` identifies that payload and both native products. Packaging preserves
+the signed bytes. Xcode, Swift, SDK, XcodeGen, Node and npm must
 match verification and remain unchanged.
 
 The source snapshot reuses the selected checkout’s prepared Codex/Node runtime.
@@ -86,9 +90,10 @@ matching pair versions and exact bundle identities:
 
 - iPad: `com.amirtlinov.notebook.preview`, its existing Keychain group and a profile
   admitting the certificate and designated physical device.
-- Mac: `com.amirtlinov.notebook.mac`, arm64 and the bundled MCP server.
-  It is a normal Dock/window application; closing the window leaves storage,
-  transport and MCP alive.
+- Plugin runtime: `com.amirtlinov.notebook.mac`, arm64, `LSUIElement` and
+  `NotebookPluginRuntime`. It bundles the MCP server and runs AppKit for system
+  document adapters without a Dock icon or workspace window. Closing a panel
+  leaves storage, transport and active agent work alive.
 
 Both signatures require `iCloud.com.amirtlinov.notebook`, CloudKit and Production;
 Push remains development for Apple Development signing. Mac also requires an
@@ -159,9 +164,28 @@ inherits its sandbox. The current print route has no native TeX/image helper.
 
 A `build.json` with `verified-build` records signatures, binary UUIDs and bundle
 inventories. It proves the build, not permission or completion of installation.
-The builder does not copy user archives, launch, install, delete, force a failed
-check or reuse an old attempt. The first-Lab installer still rejects an existing
-Lab, including with `--build`.
+The builder does not launch or install either product. Install its verified pair
+through the same release owner:
+
+```sh
+python3 -B Applications/notebook_release.py install-pair \
+  --source-root "$PWD" \
+  --build-dir /absolute/verified-pair \
+  --evidence-dir /absolute/new-installation-directory
+```
+
+Before installation, finish the serving runtime through ordinary quit and wait
+for its process to exit. On the first plugin transition, unregister the former
+Notebook login item. The installer refuses a live owner, stale plugin metadata,
+downgrades and changed signed bytes. It packages the runtime into the primary
+checkout's plugin source, installs the plugin, checks its actual cached payload,
+then updates iPad in place and reads back the installed identity. Unknown outcomes
+remain `incomplete`; it never restores data or retries an uncertain installation.
+
+Bump the plugin manifest version together with each native pair release: Codex
+caches plugin payloads by that version. Commit the matching static plugin files
+and installation scripts into the primary checkout before installing a worktree
+build. Verify the live IPC peer and current data/trust separately after delivery.
 
 Ordinary in-place updates preserve containers, identities and keys.
 Historical archive conversion is a separate explicitly authorized operation, not
@@ -170,13 +194,12 @@ readback; see [verification](verification.md) for the last installed pair.
 
 ## Isolated acceptance
 
-`Applications/notebook_acceptance.py` builds separate Release
-`NotebookAcceptance` and `NotebookMacAcceptance` targets. The iPad acceptance app
+`Applications/notebook_acceptance.py` builds the Release schemes
+`NotebookAcceptance` and `NotebookRuntime`. The iPad acceptance app
 uses `.acceptance` in the selected Simulator; Mac uses
 `.acceptance.<12-hex SHA-256 of canonical checkout path>`. Each checkout has its
-own app/UI-runner identity. The driver locks a particular Mac bundle or Simulator
-UDID; independent destinations/derived data can run separately. It has no physical
-device install command.
+own runtime identity. The driver locks a particular Mac bundle or Simulator
+UDID; run one Xcode runner at a time. It has no physical device install command.
 
 `prepare` creates a new shared checkpoint with separate roots, manifests, settings
 and Keychain services. It does not inject trust. Acceptance without iCloud cannot

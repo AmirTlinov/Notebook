@@ -8,4 +8,6 @@ Applications/Mac/Info.plist
 MCP/node_modules/
 MCP/.notebook-test/
 MCP/.notebook/program-builds/
+MCP/plugin/notebook/runtime/
+MCP/plugin/notebook/.runtime-stage-*/
 *.xcresult

@@ -282,8 +282,7 @@ final class WorkspaceAppearanceTests: XCTestCase {
       spatialInkSurfaces: SpatialInkSurfaceRegistry(), elements: [],
       editingTextID: nil,
       portalOpenProgress: 0, portalViewport: geometry.size,
-      onTap: { _, _ in },
-       onTextEditingEnded: { _ in })
+      onTap: { _, _ in })
       .environment(model)
   }
 

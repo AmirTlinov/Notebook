@@ -143,16 +143,24 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
   fileprivate struct SpatialTargetLayout: Equatable {
     let size: CGSize
     let displayScale: Double
+    let region: CGRect
+    init(size: CGSize, displayScale: Double, region: CGRect? = nil) {
+      self.size = size; self.displayScale = displayScale
+      self.region = region ?? CGRect(origin: .zero, size: size)
+    }
     var pixelSize: CGSize {
-      .init(width: ceil(size.width * displayScale), height: ceil(size.height * displayScale))
+      .init(width: ceil((region.width * displayScale).nextDown), height: ceil((region.height * displayScale).nextDown))
     }
     func tileGrid() throws -> (columns: Int, rows: Int) {
       let pixels = pixelSize
       guard size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0,
         displayScale.isFinite, displayScale > 0, pixels.width.isFinite, pixels.height.isFinite,
-        (1...16_384).contains(pixels.width), (1...16_384).contains(pixels.height) else {
+        region.origin.x.isFinite, region.origin.y.isFinite,
+        (region.isEmpty || CGRect(origin: .zero, size: size).contains(region)),
+        (0...16_384).contains(pixels.width), (0...16_384).contains(pixels.height) else {
         throw SceneRenderError.resourceLimit
       }
+      if region.isEmpty { return (0, 0) }
       let columns = (Int(pixels.width) + SpatialTile.side - 1) / SpatialTile.side
       let rows = (Int(pixels.height) + SpatialTile.side - 1) / SpatialTile.side
       guard columns * rows <= 256 else { throw SceneRenderError.resourceLimit }
@@ -202,8 +210,8 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     }
     func logicalRect(_ index: Int) -> CGRect {
       let origin = pixelOrigin(index), pixels = layout.pixelSize
-      let scaleX = layout.size.width / pixels.width, scaleY = layout.size.height / pixels.height
-      return .init(x: origin.x * scaleX, y: origin.y * scaleY,
+      let scaleX = layout.region.width / pixels.width, scaleY = layout.region.height / pixels.height
+      return .init(x: layout.region.minX + origin.x * scaleX, y: layout.region.minY + origin.y * scaleY,
         width: CGFloat(SpatialTile.side) * scaleX, height: CGFloat(SpatialTile.side) * scaleY)
     }
   }
@@ -383,6 +391,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
   private(set) var spatialSourceGeneration: UInt64 = 0
   private var spatialHandoffRetains = 0
   private var spatialDrawableScale: Double?
+  private(set) var spatialBackingRegion: CGRect?
   private var spatialTarget: SpatialTarget?
   var spatialMultisampleStorageMode: MTLStorageMode? { spatialTarget?.tiles.first?.multisample?.storageMode }
   var spatialMultisampleAllocatedBytes: Int { spatialTarget?.tiles.reduce(0) { $0 + ($1.multisample?.allocatedSize ?? 0) } ?? 0 }
@@ -1284,6 +1293,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     visibleCommittedVertexCount = 0; visibleCommittedChunkCount = 0
     drawnTiles = nil
     spatialTarget?.detach(); spatialTarget = nil
+    spatialBackingRegion = nil
     pendingTransaction = nil
     hasRevealedFirstFrame = false
     presentedStableContentRevision = nil
@@ -1308,7 +1318,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
 
   private func admitSpatialDrawable(samples: Int) -> Bool {
     guard let spatialDrawableScale else { return true }
-    let layout = SpatialTargetLayout(size:bounds.size,displayScale:spatialDrawableScale)
+    let layout = SpatialTargetLayout(size:bounds.size,displayScale:spatialDrawableScale,region:spatialBackingRegion)
     if spatialTarget?.layout == layout { return true }
     do {
       let target = try makeSpatialTarget(layout: layout, samples: samples)
@@ -1317,8 +1327,25 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     } catch { renderFailure = .resourceLimit; return false }
   }
 
-  func needsSpatialTarget(size: SpatialPoint, displayScale: Double) -> Bool {
+  func needsSpatialTarget(size: SpatialPoint, displayScale: Double, region: CGRect? = nil) -> Bool {
     bounds.size != CGSize(width: size.x, height: size.y) || spatialDrawableScale != displayScale
+      || spatialBackingRegion != (region ?? CGRect(x: 0, y: 0, width: size.x, height: size.y))
+  }
+
+  func needsSpatialDensity(_ density: Double, refinesDetails: Bool) -> Bool {
+    guard let installed = spatialDrawableScale else { return true }
+    // Camera samples reuse adequate pixels. Settlement restores exact detail
+    // and releases substantially oversized backing after zooming out.
+    return density > installed * (refinesDetails ? 1 + 1e-9 : sqrt(2.0))
+      || (refinesDetails && density < installed / sqrt(2.0))
+  }
+
+  func containsSpatialRegion(_ visible: CGRect) -> Bool {
+    guard !visible.isEmpty else { return true }
+    guard let region = spatialBackingRegion, let density = spatialDrawableScale else { return false }
+    let marginX = min(64 / density, max(0, region.width - visible.width) / 4)
+    let marginY = min(64 / density, max(0, region.height - visible.height) / 4)
+    return region.contains(visible.insetBy(dx: -marginX, dy: -marginY).intersection(bounds))
   }
 
   private func makeSpatialTarget(layout: SpatialTargetLayout, samples: Int) throws -> SpatialTarget {
@@ -2500,10 +2527,13 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
 
   private func encodeSpatial(batches: [CommittedBatch], visible: [(Int, Range<Int>)],
     active: (buffer: any MTLBuffer, operation: RenderOperation)?, camera: SpatialCamera?,
-    viewport: SpatialPoint, size: CGSize, clip: CGRect? = nil, suppressedInkIDs:Set<UUID> = [], encoder: any MTLRenderCommandEncoder) {
+    viewport: SpatialPoint, size: CGSize, clip: CGRect? = nil, suppressedInkIDs:Set<UUID> = [],
+    spatialRegion: CGRect? = nil, encoder: any MTLRenderCommandEncoder) {
     guard inkPipelineState != nil, eraserPipelineState != nil else { return }
     encoder.label = "Notebook Ink"
-    var viewportSize = SIMD2<Float>(Float(max(size.width, 1)), Float(max(size.height, 1)))
+    let region = spatialRegion ?? spatialBackingRegion
+    let renderSize = region?.size ?? size
+    var viewportSize = SIMD2<Float>(Float(max(renderSize.width, 1)), Float(max(renderSize.height, 1)))
     encoder.setVertexBytes(&viewportSize, length: MemoryLayout<SIMD2<Float>>.stride, index: 1)
     for (batchIndex, chunkIndex) in visible {
       acceptedPaintBatchVisits += 1
@@ -2519,6 +2549,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       guard let prepared=batch.buffers[chunkIndex] else { continue }
       let chunk=prepared.geometry.chunk.descriptor
       if let clip, !chunk.intersects(viewport:clip,transform:transform) { continue }
+      if let region { transform.z -= Float(region.minX); transform.w -= Float(region.minY) }
       var affine = InkAffine(transform)
       encoder.setVertexBytes(&affine, length: MemoryLayout<InkAffine>.stride, index: 2)
       draw(
@@ -2529,9 +2560,11 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     if let active {
       var identity = InkAffine()
       if camera == nil, let crop = pageRenderRegion { identity.x.z = -Float(crop.minX); identity.y.z = -Float(crop.minY) }
+      let sourceTransform = SIMD4<Float>(1, 1, identity.x.z, identity.y.z)
+      if let region { identity.x.z -= Float(region.minX); identity.y.z -= Float(region.minY) }
       encoder.setVertexBytes(&identity, length: MemoryLayout<InkAffine>.stride, index: 2)
       for chunk in activeMesh.chunks {
-        if let clip, !chunk.intersects(viewport:clip,transform:.init(1,1,identity.x.z,identity.y.z)) { continue }
+        if let clip, !chunk.intersects(viewport:clip,transform:sourceTransform) { continue }
         draw(
           buffer: active.buffer, nodeCount: chunk.nodes.count, flags: chunk.flags,
           color: chunk.color,
@@ -2547,7 +2580,8 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     active:(buffer:any MTLBuffer,operation:RenderOperation)?,geometry:InkOrderedGeometry,
     camera:SpatialCamera?,viewport:SpatialPoint,size:CGSize,clip:CGRect?,
     descriptor:MTLRenderPassDescriptor,metalViewport:MTLViewport?,command:any MTLCommandBuffer,
-    includesLiveCuts:Bool = true,accepted:(any MTLTexture)? = nil,damage:CGRect? = nil,scratchSlot:Int? = nil) throws -> [RasterReservation] {
+    includesLiveCuts:Bool = true,accepted:(any MTLTexture)? = nil,damage:CGRect? = nil,scratchSlot:Int? = nil,
+    spatialRegion:CGRect? = nil,spatialPixels:CGSize? = nil) throws -> [RasterReservation] {
     guard let device,let output=descriptor.colorAttachments[0],let texture=output.texture else {throw SceneRenderError.resourceLimit}
     let renderer=InkRasterRenderer.shared
     let scratch:InkRasterRenderer.OrderedAttachments
@@ -2556,8 +2590,14 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       scratch=try InkRasterRenderer.OrderedAttachments(device:device,width:texture.width,height:texture.height,samples:texture.sampleCount)
       if let scratchSlot {orderedScratch[scratchSlot]=scratch}
     }
-    let crop=camera == nil ? pageRenderRegion?.origin ?? .zero:.zero
-    let region=CGRect(origin:crop,size:size)
+    let spatialRegion = spatialRegion ?? spatialBackingRegion
+    let renderSize = spatialRegion?.size ?? size
+    let pageCrop = camera == nil ? pageRenderRegion?.origin ?? .zero : .zero
+    let spatialCrop = spatialRegion?.origin ?? .zero
+    let crop = CGPoint(x: pageCrop.x + spatialCrop.x, y: pageCrop.y + spatialCrop.y)
+    let localClip = clip?.offsetBy(dx: -spatialCrop.x, dy: -spatialCrop.y)
+    let localDamage = damage?.offsetBy(dx: -spatialCrop.x, dy: -spatialCrop.y)
+    let region=CGRect(origin:crop,size:renderSize)
     var raw:[(NotebookInkPaintKey,InkRasterRenderer.Draw)]=[]
     for (index,range) in visible {
       acceptedPaintBatchVisits += 1
@@ -2569,22 +2609,22 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       var transform=batch.mesh.projection.transform(camera:camera,viewport:viewport)
       transform.z -= Float(crop.x);transform.w -= Float(crop.y)
       let chunk=prepared.geometry.chunk.descriptor
-      if let clip,!chunk.intersects(viewport:clip,transform:transform) {continue}
+      if let localClip,!chunk.intersects(viewport:localClip,transform:transform) {continue}
       raw.append((key,.init(buffer:prepared.buffer,offset:0,count:prepared.nodeCount,flags:chunk.flags,color:chunk.color,
-        affine:.init(transform),viewport:.init(Float(size.width),Float(size.height)),tool:batch.mesh.tool)))
+        affine:.init(transform),viewport:.init(Float(renderSize.width),Float(renderSize.height)),tool:batch.mesh.tool)))
     }
-    let prepared=try geometry.events(raw:raw,camera:camera,viewport:viewport,region:region,pixels:drawableSize,
+    let prepared=try geometry.events(raw:raw,camera:camera,viewport:viewport,region:region,pixels:spatialPixels ?? drawableSize,
       device:device,resources:resources,owner:physicalAdmission,liveCuts:includesLiveCuts ? liveOrderedErasures.values.reduce(into:[:]){result,cuts in
         for (id,values) in cuts {result[id,default:[]] += values}
-      }:[:],damage:(damage ?? clip).map{$0.offsetBy(dx:crop.x,dy:crop.y)})
+      }:[:],damage:(localDamage ?? localClip).map{$0.offsetBy(dx:crop.x,dy:crop.y)})
     var events=prepared.events
     if let active {
       let affine=InkAffine(x:.init(1,0,-Float(crop.x),0),y:.init(0,1,-Float(crop.y),0))
       for chunk in activeMesh.chunks {
-        if let clip,!chunk.intersects(viewport:clip,transform:.init(1,1,affine.x.z,affine.y.z)) {continue}
+        if let localClip,!chunk.intersects(viewport:localClip,transform:.init(1,1,affine.x.z,affine.y.z)) {continue}
         events.append(.raw(.init(buffer:active.buffer,offset:chunk.nodes.lowerBound*MemoryLayout<Node>.stride,
           count:chunk.nodes.count,flags:chunk.flags,color:chunk.color,affine:affine,
-          viewport:.init(Float(size.width),Float(size.height)),tool:active.operation == .erase ? .eraser:.pen)))
+          viewport:.init(Float(renderSize.width),Float(renderSize.height)),tool:active.operation == .erase ? .eraser:.pen)))
       }
     }
     guard let encoder=command.makeRenderCommandEncoder(descriptor:scratch.descriptor(output:output)) else {throw SceneRenderError.resourceLimit}
@@ -2593,8 +2633,8 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     if let crop=pageRenderRegion,pageSourceSize.width>0,pageSourceSize.height>0 {
       textureRect = .init(Float(crop.minX/pageSourceSize.width),Float(crop.minY/pageSourceSize.height),Float(crop.width/pageSourceSize.width),Float(crop.height/pageSourceSize.height))
     }
-    let cut=damage.map{ rect in
-      rect.isNull || rect.isEmpty ? MTLScissorRect(x:0,y:0,width:0,height:0):scissor(rect,size:size,texture:texture,viewport:metalViewport)
+    let cut=localDamage.map{ rect in
+      rect.isNull || rect.isEmpty ? MTLScissorRect(x:0,y:0,width:0,height:0):scissor(rect,size:renderSize,texture:texture,viewport:metalViewport)
     }
     try renderer.encodeOrdered(events,baseline:baselineTexture,textureRect:textureRect,accepted:accepted,
       damage:cut,acceptedViewport:metalViewport.map{_ in .init(originX:0,originY:0,width:Double(texture.width),height:Double(texture.height),znear:0,zfar:1)},
@@ -2757,7 +2797,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
   }
 
   enum FramePreparation {
-    case spatial(SpatialInkMesh?, size:SpatialPoint, displayScale:Double, camera:SpatialCamera?, ordered:NotebookOrderedInkPlan = .init())
+    case spatial(SpatialInkMesh?, size:SpatialPoint, displayScale:Double, camera:SpatialCamera?, ordered:NotebookOrderedInkPlan = .init(), region:CGRect? = nil)
   }
 
   @MainActor
@@ -2830,6 +2870,9 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       // Source/generation admission above, not a former window, owns validity.
       return true
     }
+    func containsSpatialRegion(_ visible: CGRect) -> Bool {
+      visible.isEmpty || layout.region.contains(visible)
+    }
     func cancel() { canvas?.cancelSpatialStaging(id:id) }
     isolated deinit { if !installed { canvas?.cancelSpatialStaging(id: id) } }
   }
@@ -2870,9 +2913,9 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     var batches:[CommittedBatch],replacesMesh=false
     let candidatePlan:NotebookOrderedInkPlan
     switch request {
-    case .spatial(let mesh,let size,let scale,let requestedCamera,let plan):
+    case .spatial(let mesh,let size,let scale,let requestedCamera,let plan,let region):
       candidatePlan=plan
-      layout = .init(size:.init(width:size.x,height:size.y),displayScale:scale)
+      layout = .init(size:.init(width:size.x,height:size.y),displayScale:scale,region:region)
       _=try layout.tileGrid();viewport=size;camera=requestedCamera ?? spatialCamera
       batches=mesh?.batches.map(CommittedBatch.init) ?? committedBatches;replacesMesh=mesh != nil
     }
@@ -2884,11 +2927,11 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     }
     let visible:[(Int,Range<Int>)]
     visible=try prepareBuffers(in:&batches,camera:camera,viewport:viewport,size:layout.size,
-      pixelScale:Float(layout.displayScale),rasterSize:layout.pixelSize)
+      pixelScale:Float(layout.displayScale),rasterSize:layout.pixelSize,region:layout.region)
     let samples=device?.supportsTextureSampleCount(4) == true ? 4 : 1
     let target:SpatialTarget?
     var passes:[(MTLRenderPassDescriptor,any CAMetalDrawable,MTLViewport?,CGRect?)]=[]
-    if visible.isEmpty && candidatePlan.isEmpty {target=nil}
+    if layout.region.isEmpty || (visible.isEmpty && candidatePlan.isEmpty) {target=nil}
     else {
       if let installed=spatialTarget,installed.layout == layout {target=installed}
       else {target=try makeSpatialTarget(layout:layout,samples:samples)}
@@ -2899,7 +2942,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     }
     let result=PreparedFrame(id:id,canvas:self,batches:batches,visible:visible,replacesMesh:replacesMesh,
       layout:layout,viewport:viewport,camera:camera,target:target,drawables:passes.map { $0.1 })
-    if case .spatial(let mesh,_,_,_,_)=request { result.actionRanges=mesh?.actionRanges }
+    if case .spatial(let mesh,_,_,_,_,_)=request { result.actionRanges=mesh?.actionRanges }
     result.ordered=geometry;result.orderedPlan=candidatePlan
     result.physical=physicalAdmission
     var renderingBatches: [CommittedBatch]
@@ -2915,13 +2958,13 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       if let geometry {
         result.reservations += try encodeOrderedFrame(batches:renderingBatches,visible:visible,active:nil,
           geometry:geometry,camera:camera,viewport:result.viewport,size:layout.size,clip:clip,
-          descriptor:descriptor,metalViewport:viewport,command:command)
+          descriptor:descriptor,metalViewport:viewport,command:command,spatialRegion:layout.region,spatialPixels:layout.pixelSize)
       } else {
         guard let encoder=command.makeRenderCommandEncoder(descriptor:descriptor) else {throw SceneRenderError.resourceLimit}
         if let viewport {encoder.setViewport(viewport)}
         if spatialDrawableScale == nil {encodeTexture(baselineTexture,croppedTo:pageRenderRegion,label:"Notebook Page Handoff",with:encoder)}
         encodeSpatial(batches:renderingBatches,visible:visible,active:nil,camera:camera,viewport:result.viewport,
-          size:layout.size,clip:clip,suppressedInkIDs:candidatePlan.suppressedInkIDs,encoder:encoder)
+          size:layout.size,clip:clip,suppressedInkIDs:candidatePlan.suppressedInkIDs,spatialRegion:layout.region,encoder:encoder)
         encoder.endEncoding()
       }
     }
@@ -2954,7 +2997,6 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       spatialActionBase == nil,activeInkStroke == nil,activeEraserStroke == nil else { throw CancellationError() }
     result.ready=true;succeeded=true;return result
   }
-
   /// Called only after every source/projection in the candidate validated in
   /// this main-actor turn. GPU work is scheduled; this is not an observed-frame
   /// receipt. The caller publishes its matching static cohort in the same turn.
@@ -3013,6 +3055,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     }
     bounds.size=frame.layout.size
     spatialCamera=frame.camera;spatialViewport=frame.viewport;spatialDrawableScale=frame.layout.displayScale
+    spatialBackingRegion=frame.layout.region
     installSpatialTarget(frame.target)
     committedViewport=(committedViewportKey,frame.visible)
     preparePaintDirectory(frame.visible)
@@ -3625,7 +3668,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
 
   private var committedViewportKey:CommittedViewport {
     .init(camera:spatialCamera,viewport:spatialViewport,size:bounds.size,
-      crop:pageRenderRegion,pixels:spatialTarget?.layout.pixelSize ?? drawableSize,scale:spatialDrawableScale)
+      crop:spatialBackingRegion ?? pageRenderRegion,pixels:spatialTarget?.layout.pixelSize ?? drawableSize,scale:spatialDrawableScale)
   }
 
   private func prepareCommittedBuffers() -> [(Int, Range<Int>)]? {
@@ -3648,13 +3691,15 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
 
   private func prepareBuffers(in batches: inout [CommittedBatch], camera: SpatialCamera?,
     viewport: SpatialPoint, size: CGSize, pixelScale: Float? = nil, rasterSize: CGSize? = nil,
+    region: CGRect? = nil,
     only indices:Set<Int>? = nil, includingInactive:Bool = false
   ) throws -> [(Int, Range<Int>)] {
     var visible: [(Int, Range<Int>)] = []
-    let viewportRect = camera == nil ? (pageRenderRegion ?? CGRect(origin: .zero, size: size)) : CGRect(origin: .zero, size: size)
+    let region = region ?? spatialBackingRegion
+    let viewportRect = region ?? (camera == nil ? (pageRenderRegion ?? CGRect(origin: .zero, size: size)) : CGRect(origin: .zero, size: size))
     let pixelsPerPoint =
       pixelScale ?? Float(spatialDrawableScale ?? Double(drawableSize.width / max(bounds.width, 1)))
-    let grid=InkRasterRenderer.shared.sampleGrid(viewport:size,
+    let grid=InkRasterRenderer.shared.sampleGrid(viewport:region?.size ?? size,
       pixels:rasterSize ?? spatialTarget?.layout.pixelSize ?? drawableSize)
     func select(_ batchIndex:Int) {
       committedBatchQueryVisitCount += 1
@@ -3665,6 +3710,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       if camera == nil,let crop=pageRenderRegion {
         rasterTransform.z -= Float(crop.minX);rasterTransform.w -= Float(crop.minY)
       }
+      if let region { rasterTransform.z -= Float(region.minX); rasterTransform.w -= Float(region.minY) }
       let affine=InkAffine(rasterTransform)
       let query=mesh.query(viewport:viewportRect.insetBy(dx:-1,dy:-1),affine:.init(transform),
         detail:.init(pixelsPerUnit:affine.maximumStretch*pixelsPerPoint,minimumPixelsPerUnit:affine.minimumStretch*pixelsPerPoint),

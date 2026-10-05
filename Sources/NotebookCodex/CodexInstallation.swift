@@ -49,4 +49,30 @@ public struct CodexRuntimeInstallation: Sendable {
       throw CodexBridgeError.unsafeEndpoint
     }
   }
+
+  static func configuration(binary: URL, arguments: [String]) async throws -> (status: Int32, data: Data) {
+    try await Task.detached(priority: .utility) {
+      let directory = FileManager.default.temporaryDirectory.appendingPathComponent("notebook-codex-config-" + UUID().uuidString)
+      try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+      defer { try? FileManager.default.removeItem(at: directory) }
+      let url = directory.appendingPathComponent("output")
+      FileManager.default.createFile(atPath: url.path, contents: nil, attributes: [.posixPermissions: 0o600])
+      let output = try FileHandle(forWritingTo: url); defer { try? output.close() }
+      let process = Process(); process.executableURL = binary; process.arguments = arguments
+      process.standardInput = FileHandle.nullDevice; process.standardOutput = output; process.standardError = FileHandle.nullDevice
+      try process.run()
+      let deadline = ContinuousClock.now + .seconds(10)
+      while process.isRunning {
+        if Task.isCancelled || ContinuousClock.now >= deadline {
+          process.terminate(); throw CodexBridgeError.timeout
+        }
+        let size = try FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int ?? 0
+        if size > 65536 { process.terminate(); throw CodexBridgeError.historyLimit }
+        try await Task.sleep(for: .milliseconds(50))
+      }
+      let data = try Data(contentsOf: url)
+      guard data.count <= 65536 else { throw CodexBridgeError.historyLimit }
+      return (process.terminationStatus, data)
+    }.value
+  }
 }

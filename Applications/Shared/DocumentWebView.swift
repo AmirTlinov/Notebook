@@ -3,6 +3,18 @@ import NotebookTypesetter
 import SwiftUI
 import WebKit
 
+#if os(macOS)
+private struct MacDocumentDisplayScaleKey: EnvironmentKey {
+  static let defaultValue = 1.0
+}
+extension EnvironmentValues {
+  var macDocumentDisplayScale: Double {
+    get { self[MacDocumentDisplayScaleKey.self] }
+    set { self[MacDocumentDisplayScaleKey.self] = newValue }
+  }
+}
+#endif
+
 @MainActor
 final class DocumentSnapshotCache {
     static let shared = DocumentSnapshotCache()

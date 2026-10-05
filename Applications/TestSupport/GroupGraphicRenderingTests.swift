@@ -86,12 +86,12 @@ import AppKit
       }
       controls.uninstall()
       #endif
+      #if os(iOS)
       if handle == .trailingCenter {
         let projected=CGRect(x:shown.bounds.minX*0.75,y:shown.bounds.minY*0.75,width:shown.bounds.width*0.75,height:shown.bounds.height*0.75)
         let material=AgentOverlayView(page:page,sourceIdentity:page.elementSourceIdentity,renderingScale:0.75,allowsInteraction:false,inputEnabled:false,
           onRenderReady:{ _ in },onState: { _, _, _ in false }).frame(width:834,height:1194)
           .scaleEffect(0.75,anchor:.topLeading).frame(width:760,height:760,alignment:.topLeading)
-        #if os(iOS)
         let menus=NotebookContextMenus()
         let content=ZStack(alignment:.topLeading) {
           Color.white;material
@@ -106,23 +106,10 @@ import AppKit
           host.view.drawHierarchy(in:host.view.bounds,afterScreenUpdates:true)
         }.pngData())
         window.isHidden=true;window.rootViewController=nil;previous?.makeKey()
-        #else
-        let content=ZStack(alignment:.topLeading) {
-          Color.white;material
-          MacElementControls(reference:ref,frame:projected,scale:0.75)
-        }.frame(width:760,height:760).environment(model)
-        let window=NSWindow(contentRect:.init(x:0,y:0,width:760,height:760),styleMask:[.titled],backing:.buffered,defer:false)
-        window.isReleasedWhenClosed=false
-        let host=NSHostingView(rootView:content);window.contentView=host;window.orderFront(nil)
-        try await Task.sleep(for:.milliseconds(150));host.layoutSubtreeIfNeeded();host.displayIfNeeded()
-        let bitmap=try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in:host.bounds))
-        host.cacheDisplay(in:host.bounds,to:bitmap)
-        let data=try XCTUnwrap(bitmap.representation(using:.png,properties:[:]))
-        window.orderOut(nil);window.contentView=nil;window.close()
-        #endif
         let proof=XCTAttachment(data:data,uniformTypeIdentifier:"public.png")
         proof.name="placed-text-width-controls";proof.lifetime = .keepAlways;add(proof)
       }
+      #endif
       XCTAssertEqual(try model.store.loadPage(page.id).element(id:text.id),text,"Pointer samples never persist")
       model.updateElementManipulation(contact,translation:.zero)
       XCTAssertEqual(model.elementPresentation(ref)?.placement,original,"Returning to the grip restores the exact descriptor")
@@ -191,13 +178,13 @@ import AppKit
     XCTAssertNil(model.beginToolText(at:.init(x:point.x,y:point.y),address:address,screenScale:1))
     XCTAssertEqual(model.selectionSession.element,ref,"The text tool uses the same inverse placement as ordinary picking")
     model.interactiveElementFocus = .page(pageID:page.id,elementID:text.id)
+    #if os(iOS)
     let inputTarget=try XCTUnwrap(model.selectionSession.nativeText)
     let inputPlacement=try XCTUnwrap(model.nativeTextEditingPresentation(inputTarget))
     func content(_ placement:NotebookElementPresentation) -> AnyView { AnyView(NotebookPlacedElement(presentation:placement) {
       NotebookNativeTextView(source:inputTarget.source,style:inputTarget.style,reference:ref,isEditing:true,
-        onEditingEnded:{},retainedPage:written,ownsEditor:true,draftTarget:inputTarget)
+        retainedPage:written,ownsEditor:true,draftTarget:inputTarget)
     }.frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading).background(.white).environment(model)) }
-    #if os(iOS)
     let scene=try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let previous=scene.windows.first { $0.isKeyWindow },window=UIWindow(windowScene:scene)
     let host=UIHostingController(rootView:content(inputPlacement))
@@ -220,29 +207,6 @@ import AppKit
     let pa=CGPoint(x:a.midX,y:a.midY),pb=CGPoint(x:b.midX,y:b.midY)
     let screenA=input.convert(pa,to:window),screenB=input.convert(pb,to:window)
     input.selectedRange = .init(location:2,length:0);input.insertText("!")
-    #else
-    let previous=NSApp.keyWindow
-    let window=NSWindow(contentRect:.init(x:0,y:0,width:800,height:1000),styleMask:[.titled],backing:.buffered,defer:false)
-    let host=NSHostingView(rootView:content(inputPlacement))
-    window.contentView=host;window.makeKeyAndOrderFront(nil)
-    defer { window.orderOut(nil);window.contentView=nil;previous?.makeKey() }
-    func find(_ view:NSView) -> NSTextView? {
-      if let input=view as? NSTextView { return input }
-      for child in view.subviews {
-        if let found = find(child) { return found }
-      }
-      return nil
-    }
-    var found:NSTextView?
-    for _ in 0..<50 { host.layoutSubtreeIfNeeded();found=find(host);if found != nil { break };try await Task.sleep(for:.milliseconds(20)) }
-    let input=try XCTUnwrap(found)
-    XCTAssertEqual(input.bounds.width,inputTarget.localFrame.width,accuracy:0.01)
-    let layout=try XCTUnwrap(input.layoutManager),container=try XCTUnwrap(input.textContainer)
-    layout.ensureLayout(for:container)
-    let pa=layout.location(forGlyphAt:0),pb=layout.location(forGlyphAt:2)
-    let screenA=input.convert(pa,to:nil),screenB=input.convert(pb,to:nil)
-    input.setSelectedRange(.init(location:2,length:0));input.insertText("!",replacementRange:input.selectedRange())
-    #endif
     XCTAssertGreaterThan(hypot(pb.x-pa.x,pb.y-pa.y),1,"Two distinct caret positions make the coordinate proof nonempty")
     let expectedA=pa.applying(inputPlacement.placement.transform),expectedB=pb.applying(inputPlacement.placement.transform)
     XCTAssertEqual(abs(screenB.x-screenA.x),abs(expectedB.x-expectedA.x),accuracy:0.5)
@@ -262,17 +226,10 @@ import AppKit
     // Capture after the native input/keyboard and accepted edit have settled,
     // in the actual host bounds rather than an oversized offscreen fixture.
     try await Task.sleep(for:.milliseconds(150))
-    #if os(iOS)
     host.view.layoutIfNeeded()
     let snapshot=UIGraphicsImageRenderer(size:host.view.bounds.size).pngData { _ in
       host.view.drawHierarchy(in:host.view.bounds,afterScreenUpdates:true)
     }
-    #else
-    host.layoutSubtreeIfNeeded()
-    let image=try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in:host.bounds))
-    host.cacheDisplay(in:host.bounds,to:image)
-    let snapshot=try XCTUnwrap(image.representation(using:.png,properties:[:]))
-    #endif
     let proof=XCTAttachment(data:snapshot,uniformTypeIdentifier:"public.png")
     proof.name="placed-native-text-editor";proof.lifetime = .keepAlways;add(proof)
     // A parent-only change keeps the physical editor and its local selection.
@@ -283,15 +240,11 @@ import AppKit
     let movedInput=try XCTUnwrap(model.nativeTextEditingPresentation(try XCTUnwrap(model.selectionSession.nativeText)))
     host.rootView=content(movedInput)
     try await Task.sleep(for:.milliseconds(60))
-    #if os(iOS)
     host.view.layoutIfNeeded()
     XCTAssertTrue(find(host.view) === input);XCTAssertEqual(input.selectedRange,.init(location:3,length:0))
-    #else
-    host.layoutSubtreeIfNeeded()
-    XCTAssertTrue(find(host) === input);XCTAssertEqual(input.selectedRange(),.init(location:3,length:0))
-    #endif
     XCTAssertEqual(input.bounds.width,240,accuracy:0.01)
     XCTAssertEqual(try model.store.loadPage(page.id).element(id:text.id),afterInput.element(id:text.id))
+    #endif
     var rootTarget=NotebookNativeTextTarget(reference:ref,address:.init(surface:.page(page.id),boardID:nil,worldOrigin:nil,
       bounds:.init(x:0,y:0,width:500,height:500)),frame:.init(x:100,y:100,width:120,height:300),source:"root",style:.standard,
       basis:.init(size:.init(x:100,y:60),transform:.init(a:0,b:1,c:-1,d:0,tx:1,ty:0)))

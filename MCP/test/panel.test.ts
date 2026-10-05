@@ -191,30 +191,60 @@ test('a confirmed pen contact replaces an in-flight old scene before the next po
   await close();
 });
 
-test('an open session retries an uncertain write with the original action and captured sources', async t => {
+for(const code of ['ipc_timeout','operation_failed'])test(`error Retry repairs ${code} before repeating the same text action`, async t => {
   t.mock.timers.enable({apis: ['setTimeout', 'setInterval']});
   const {session, calls, close, mutation, retry} = await controlledSession();
   const saved = session.save(mutation);
   calls[1]!.resolve({content: [], isError: true,
-    structuredContent: {status: 'error', code: 'ipc_timeout', message: 'Unknown write result'}});
+    structuredContent: {status: 'error', code, message: 'The text write needs recovery'}});
   await new Promise<void>(resolve => setImmediate(resolve));
   assert.equal(session.hasPending, true);
   assert.equal(session.mutationReady, false);
   assert.equal(session.busy, false);
   const retryWrite = retry();assert.ok(retryWrite);
   const retried = retryWrite();
-  assert.equal(calls[2]!.name, calls[1]!.name);
-  assert.deepEqual(calls[2]!.arguments, calls[1]!.arguments);
-  assert.equal(calls[2]!.arguments.actionID, mutation.actionID);
-  calls[2]!.resolve({content: [], structuredContent: {status: 'saved', actionID: mutation.actionID}});
+  assert.equal(calls[2]!.name,'notebook_panel_workspace');
+  assert.deepEqual(calls[2]!.arguments,{action:'retry',id:mutation.workspaceID});
+  calls[2]!.resolve({content:[],structuredContent:{status:{kind:'notebookRuntime',ready:true,pid:1,state:'ready',workspaceID,socketKey},workspaces:[],snapshot:sessionSnapshot()}});
+  await retried;
+  assert.equal(calls[3]!.name, calls[1]!.name);
+  assert.deepEqual(calls[3]!.arguments, calls[1]!.arguments);
+  assert.equal(calls[3]!.arguments.actionID, mutation.actionID);
+  calls[3]!.resolve({content: [], structuredContent: {status: 'saved', actionID: mutation.actionID}});
   await saved;
   assert.equal(session.hasPending, false);
   assert.equal(session.mutationReady, false, 'A confirmed write still waits for its presented content');
-  assert.equal(calls[3]!.name, 'notebook_panel_presentation');
-  calls[3]!.resolve({content: [], structuredContent: sessionSnapshot('2')});
-  await retried;
+  assert.equal(calls[4]!.name, 'notebook_panel_presentation');
+  calls[4]!.resolve({content: [], structuredContent: sessionSnapshot('2')});
+  await new Promise<void>(resolve=>setImmediate(resolve));
   assert.equal(session.mutationReady, true);
   assert.equal(session.snapshot?.cursor, '2');
+  await close();
+});
+
+test('workspace recovery preserves an uncertain action and its panel address', async t => {
+  t.mock.timers.enable({apis: ['setTimeout', 'setInterval']});
+  const {session,calls,close,mutation}=await controlledSession();
+  const original=session.address(),saved=session.save(mutation);
+  calls[1]!.resolve({content:[],isError:true,structuredContent:{status:'error',code:'ipc_timeout',message:'Unknown write result'}});
+  await new Promise<void>(resolve=>setImmediate(resolve));
+  const status={kind:'notebookRuntime',ready:true,pid:1,state:'failed',workspaceID,socketKey};
+  const listing=session.workspace({action:'list'});
+  calls[2]!.resolve({content:[],structuredContent:{status,workspaces:[]}});await listing;
+  assert.equal(await session.workspace({action:'select',id:randomUUID()}),undefined);
+  const recovery=session.workspace({action:'retry'});
+  assert.deepEqual(calls[3]!.arguments,{action:'retry',id:original.workspaceID});
+  const ownerFocus={...sessionSnapshot(),target:{kind:'page',id:randomUUID()}};
+  calls[3]!.resolve({content:[],structuredContent:{status:{...status,state:'ready'},workspaces:[],snapshot:ownerFocus}});
+  await recovery;
+  assert.deepEqual(session.address(),original,'Recovery retains this panel’s page instead of adopting the runtime focus');
+  assert.equal(calls[4]!.name,'notebook_panel_edit');
+  assert.deepEqual(calls[4]!.arguments,mutation,'Retry keeps the exact accepted action and captured sources');
+  calls[4]!.resolve({content:[],structuredContent:{status:'saved',actionID:mutation.actionID}});await saved;
+  assert.deepEqual(calls[5]!.arguments.target,original.target);
+  calls[5]!.resolve({content:[],structuredContent:sessionSnapshot('2')});
+  await new Promise<void>(resolve=>setImmediate(resolve));
+  assert.equal(session.hasPending,false);assert.equal(session.mutationReady,true);
   await close();
 });
 
@@ -291,7 +321,7 @@ test('Notebook exposes one HTML app resource, a model opener and app-only gestur
   try {
     const {tools} = await panel.client.listTools();
     assert.deepEqual(tools.map(tool => tool.name).sort(),
-      ['notebook_open', 'notebook_panel_edit', 'notebook_panel_presentation', 'notebook_panel_undo']);
+      ['notebook_open', 'notebook_panel_edit', 'notebook_panel_presentation', 'notebook_panel_undo', 'notebook_panel_workspace']);
     const opener = tools.find(tool => tool.name === 'notebook_open')!;
     assert.deepEqual(opener._meta?.ui, {resourceUri: panelResourceURI});
     assert.deepEqual(opener._meta?.['openai/ui'], {entrypoints: [{type: 'thread'}, {type: 'global'}]});
@@ -357,8 +387,9 @@ test('panel gestures keep the admitted endpoint and exact native sources', async
     rawInkPresent: true, unsupportedElements: [{id: 'ink-1', kind: 'graphic', reason: 'native_graphic'}]};
   const saved = {status: 'saved', actionID, cursor: '43', human: true};
   const undone = {status: 'undone', actionID, cursor: '44'};
-  const panel = await nativeFixture((endpoint, request) => {
-    if (endpoint === 'default') return {result: readValue};
+  const panel = await nativeFixture((_endpoint, request) => {
+    if(request.command==='runtimeStatus')return {result:{kind:'notebookRuntime',ready:true,pid:1,state:'ready',workspaceID,socketKey}};
+    if (request.command === 'panelRead') return {result: readValue};
     if (request.command === 'panelEdit') return {result: saved};
     return {result: undone};
   });
@@ -366,7 +397,8 @@ test('panel gestures keep the admitted endpoint and exact native sources', async
     const opened = await panel.client.callTool({name: 'notebook_open', arguments: {}});
     assert.notEqual(opened.isError, true);
     assert.deepEqual(opened.structuredContent, readValue);
-    assert.deepEqual(panel.requests, [{endpoint: 'default', request: {command: 'panelRead', panelRead: {}}}]);
+    assert.deepEqual(panel.requests, [{endpoint:'default',request:{command:'runtimeStatus'}},
+      {endpoint: 'pinned', request: {command: 'panelRead', panelRead: {workspaceID}}}]);
 
     const edit = {workspaceID, target, actionID, summary: 'Move text',
       operations: [{kind: 'updateElement', target, id: source.id,
@@ -419,4 +451,50 @@ test('panel rejects caller routing/authorship fields and preserves the native co
     assert.deepEqual(JSON.parse((result.content[0] as {text: string}).text), result.structuredContent);
     assert.equal(panel.requests[0]?.endpoint, 'pinned');
   } finally {await panel.close();}
+});
+
+test('workspace bootstrap opens in the same panel without a content owner or desktop window',async()=>{
+  let ready=false;
+  const id=randomUUID(),status=()=>({kind:'notebookRuntime',ready:true,pid:42,state:ready?'ready':'workspaceRequired',...(ready?{workspaceID,socketKey}:{})});
+  const snapshot=sessionSnapshot();
+  const panel=await nativeFixture((endpoint,request)=>{
+    assert.equal(endpoint,request.command==='panelRead'?'pinned':'default');
+    if(request.command==='runtimeStatus')return {result:status()};
+    if(request.command==='runtimeWorkspace'){
+      assert.deepEqual(request.runtimeWorkspace,{action:'create',id,name:'Личное пространство'});
+      ready=true;return {result:{status:status(),workspaces:[{id,name:'Личное пространство',local:true,remote:false,deleting:false}]}};
+    }
+    assert.equal(ready,true,'An empty library must not cause a content read');
+    assert.equal(request.command,'panelRead');return {result:snapshot};
+  });
+  try{
+    const opened=await panel.client.callTool({name:'notebook_open',arguments:{}});
+    assert.notEqual(opened.isError,true);
+    assert.deepEqual(opened.structuredContent,{runtime:status()});
+    assert.equal(panel.requests.length,1);
+    const created=await panel.client.callTool({name:'notebook_panel_workspace',arguments:{action:'create',id,name:'Личное пространство'}});
+    assert.deepEqual((created.structuredContent as Value).snapshot,snapshot);
+    assert.equal(panel.requests.length,3);
+  }finally{await panel.close();}
+});
+
+test('workspace switching retires an old in-flight read and preserves accepted edit ownership',async t=>{
+  t.mock.timers.enable({apis:['setTimeout','setInterval']});
+  const {session,calls,events,close,mutation}=await controlledSession();
+  const read=session.refresh(true);
+  const next={...sessionSnapshot('2'),workspaceID:randomUUID(),socketKey:'abcdef0123456789abcdef01'};
+  const switching=session.workspace({action:'select',id:next.workspaceID});
+  assert.equal(calls[2]!.name,'notebook_panel_workspace');
+  calls[2]!.resolve({content:[],structuredContent:{status:{kind:'notebookRuntime',ready:true,pid:1,state:'ready',workspaceID:next.workspaceID,socketKey:next.socketKey},workspaces:[],snapshot:next}});
+  await switching;
+  calls[1]!.resolve({content:[],structuredContent:sessionSnapshot('old')});await read;
+  await new Promise<void>(resolve=>setImmediate(resolve));
+  assert.equal(events.filter(value=>value==='snapshot').length,1,'The retiring workspace cannot paint over its successor');
+  assert.equal(calls[3]!.arguments.workspaceID,next.workspaceID);
+  calls[3]!.resolve({content:[],structuredContent:next});
+  await new Promise<void>(resolve=>setImmediate(resolve));
+  const write=session.save({...mutation,...session.address()});
+  assert.equal(await session.workspace({action:'select',id:workspaceID}),undefined,'An accepted edit owns the session until its result is known');
+  assert.equal(calls.at(-1)!.arguments.workspaceID,next.workspaceID);
+  await close();await assert.rejects(write,/Панель закрыта/);
 });

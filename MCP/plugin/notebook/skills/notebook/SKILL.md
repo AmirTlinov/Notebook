@@ -22,4 +22,4 @@ Panel-only save and undo tools are called by the panel itself.
 
 Tool results describe saved material and delivery. Check a resulting view when
 legibility or composition remains uncertain. A reopened panel uses the same saved
-workspace. The installed Mac runtime handles persistence and iPad delivery.
+workspace. The runtime bundled with the plugin handles persistence and iPad delivery.

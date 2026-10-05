@@ -9,6 +9,7 @@ public struct NotebookCommand: Codable, Sendable {
     case referenceStatus, referenceStatuses, actionDetails, reference, placement, render, pageVision, read, artifact, presentation
     case script, scriptContext, scriptArtifact, importProgram, importDocument, importDocumentResource
     case panelRead, panelEdit, panelUndo, panelPresentation
+    case runtimeStatus, runtimeWorkspace
   }
   public var command: Kind
   public var query: String?
@@ -46,11 +47,13 @@ public struct NotebookCommand: Codable, Sendable {
   public var panelEdit: NotebookPanelEditRequest?
   public var panelUndo: NotebookPanelUndoRequest?
   public var panelPresentation: NotebookPanelPresentationRequest?
+  public var runtimeWorkspace: NotebookRuntimeWorkspaceRequest?
 
   enum CodingKeys: String, CodingKey, CaseIterable {
     case command, query, filters, next, limit, action, actionID, target, elementID, reference
     case expectedRevision, region, worldOrigin, pageIndex, placement, contextID
     case replyTo, references, queries, expectedCursor, artifact, presentation, cancel, fingerprint, script, scriptContext, actionPage, scriptEffect, readSnapshots, programImport, documentImport, documentResourceImport, panelRead, panelEdit, panelUndo, panelPresentation
+    case runtimeWorkspace
   }
 
   public init(command: Kind) { self.command = command }
@@ -59,6 +62,7 @@ public struct NotebookCommand: Codable, Sendable {
   public var changesStore: Bool {
     switch command {
     case .apply, .admitAction, .commitAction, .undo, .point, .placement, .render, .pageVision, .panelEdit, .panelUndo, .panelPresentation: true
+    case .runtimeWorkspace: runtimeWorkspace?.action != .list
     default: false
     }
   }
@@ -131,6 +135,9 @@ public struct NotebookCommandDispatcher: Sendable {
   public init(store: NotebookStore, nativeActor: UUID? = nil) { self.store = store; self.nativeActor = nativeActor }
 
   public func handle(_ request: NotebookCommand) throws -> JSONValue {
+    if request.command == .runtimeStatus || request.command == .runtimeWorkspace {
+      throw invalid("runtime_owner_required", "Запуском и пространствами управляет владелец Notebook runtime.")
+    }
     do {
       if request.changesStore {
         return try store.commandTransaction(readAllowance: .agentCommand) { try execute(request) }
@@ -156,6 +163,8 @@ public struct NotebookCommandDispatcher: Sendable {
 
   private func execute(_ request: NotebookCommand) throws -> JSONValue {
     switch request.command {
+    case .runtimeStatus, .runtimeWorkspace:
+      throw invalid("runtime_owner_required", "Запуском и пространствами управляет владелец Notebook runtime.")
     case .panelRead:
       guard let nativeActor, let panel = request.panelRead else { throw invalid("panel_owner_unavailable", "Панель обслуживает владелец установленного Notebook.") }
       return try store.readPanel(panel, actor: nativeActor)

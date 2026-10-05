@@ -1,0 +1,142 @@
+{
+  "scope": "C4 plugin runtime and GUI-480 cover density; release and full acceptance remain open",
+  "sourceSHA256": "cab2ab734da5d17c6c1889eb658771632280f2a7f6b4b7d6d9e6965dc22738ce",
+  "baseCommit": "acec4356d43270c8cb998aff836acd02c8fb80ee",
+  "mac": {
+    "summary": {
+      "devicesAndConfigurations": [
+        {
+          "device": {
+            "architecture": "arm64",
+            "deviceId": "00006050-001650DA01F9401C",
+            "deviceName": "My Mac",
+            "modelName": "MacBook Pro",
+            "osBuildNumber": "26A434",
+            "osVersion": "27.0.1",
+            "platform": "macOS"
+          },
+          "expectedFailures": 0,
+          "failedTests": 0,
+          "passedTests": 8,
+          "skippedTests": 0,
+          "testPlanConfiguration": {
+            "configurationId": "1",
+            "configurationName": "Test Scheme Action"
+          }
+        }
+      ],
+      "environmentDescription": "NotebookRuntime · Built with macOS 27.0.1",
+      "expectedFailures": 0,
+      "failedTests": 0,
+      "finishTime": 1791232938.689,
+      "passedTests": 8,
+      "result": "Passed",
+      "runtimeWarnings": [],
+      "skippedTests": 0,
+      "startTime": 1791232936.593,
+      "statistics": [],
+      "testFailures": [],
+      "title": "Test - NotebookRuntime",
+      "topInsights": [],
+      "totalTestCount": 8
+    },
+    "completed": {
+      "commands": [],
+      "core": [],
+      "ipad": [],
+      "mac": [
+        "NotebookMacTests/DocumentReadingPublicationTests",
+        "NotebookMacTests/NotebookArchiveLaunchTests/testRuntimeAdmissionRefusesLegacySocketAndConcurrentLauncherBeforeWorkspaceAccess",
+        "NotebookMacTests/NotebookArchiveLaunchTests/testRuntimeCommandsCreateAndSelectThroughTheOwnerWithoutADesktopWindow",
+        "NotebookMacTests/NotebookArchiveLaunchTests/testRuntimeRetriesRetainedAcceptedWritesWithoutQuitOrWorkspaceSwitch",
+        "NotebookMacTests/NotebookArchiveLaunchTests/testRuntimeRetryDrainsRetainedAcceptedWritesBeforeReplacingWorkspaceOwners",
+        "NotebookMacTests/NotebookArchiveLaunchTests/testRuntimeStatusRemainsAvailableAfterArchiveFailureAndWorkspaceCommandsStayClosed",
+        "NotebookMacTests/NotebookClipboardWriterTests/testClipboardFragmentUsesNativeBoardWriterAndOneUndo"
+      ]
+    },
+    "verification": {
+      "path": ".build/runtime-249-mac-final/verification.json",
+      "sha256": "47b0823be03d75999705b333972e0f1983db1435e2985ff2964f21801c8bd826"
+    }
+  },
+  "mcp": {
+    "passed": 28,
+    "failed": 0,
+    "skipped": 0,
+    "typecheck": {
+      "path": ".build/runtime-recovery-check.log",
+      "sha256": "4ac7455681a2cf3e032df98845dc335f63193508f24dcc1264b5843fd33ae4c3"
+    },
+    "tests": {
+      "path": ".build/runtime-recovery-tests.log",
+      "sha256": "0cf90efa10839b0a6a485f676fded29049a7c619b1d88b2477a2edcb8fcac7cd"
+    }
+  },
+  "earlierPhysicalCandidate": {
+    "sourceSHA256": "00200f6d19235ed5a532fd48e4afa178c360e2f2907cbca95489204553c1ed95",
+    "undoCommandToCACommitMilliseconds": [
+      92.719083,
+      87.184166
+    ],
+    "windowPixelsCorrect": [
+      true,
+      true
+    ],
+    "captureAndCheckMilliseconds": [
+      17.814875,
+      17.674125
+    ],
+    "latencyBoundary": "native CA commit and mounted owners; hardware scanout not measured; capture cost is separate",
+    "attachments": {
+      "path": ".build/runtime-surface-249-verification/gui480-undo-attachments/manifest.json",
+      "sha256": "285d46dd075a0472ce30eb78a20064832fdca4365a64de6f558f31862cfcfdda"
+    },
+    "hundredThousandSceneObjects": "passed; 20.812 seconds",
+    "overallRun": "not passed: lasso assertion and interrupted density scenario"
+  },
+  "diagnosticPhysicalCandidate": {
+    "sourceSHA256": "84f46123c2cb95e1b563e1ee6660992cfb20e3bdcc7e6f1cf69c918d6376c226",
+    "correctedEarlyMoveDeleteUndo": "passed",
+    "orderedCoverPreparation": "failed with resource_limit",
+    "cause": "input allocation priority did not match passive cover owner",
+    "repair": "reserveDerivedBytes uses owner allocationPriority; final physical repeat pending"
+  },
+  "gui481": {
+    "commit": "971d1ee3",
+    "integrationCommit": "acec4356d43270c8cb998aff836acd02c8fb80ee",
+    "integratedPhysicalRepeat": "pending"
+  },
+  "independentReview": "completed; no outstanding findings in final fixes",
+  "release": {
+    "version": "0.3.179",
+    "build": 249,
+    "status": "verified-build",
+    "installationAttempted": false,
+    "installedBuild": 248,
+    "buildReceipt": {
+      "path": ".build/runtime-pair-249/build.json",
+      "sha256": "f72baeb4b9c2fa837f416f63dba188e6229930600a1319c9169aa5919d5bf393"
+    },
+    "plugin": {
+      "path": "plugin",
+      "version": "0.2.0"
+    },
+    "signatures": {
+      "iPad": {
+        "cdhash": "8c1b3ffa97201acd69f9d2c373cdb3cc3f9b7f16",
+        "team": "M94V58FCVP"
+      },
+      "mac": {
+        "cdhash": "1f79b237cbac6ddaa6e96d41cf666054db99e4b8",
+        "team": "M94V58FCVP"
+      }
+    }
+  },
+  "pending": [
+    "physical iPad repeat after allocation priority repair and GUI-481 merge",
+    "install plugin and iPad pair in place",
+    "verify saved workspace and pair trust",
+    "verify actual Codex panel and remove old installed Mac app",
+    "C1 latency and remaining host scenarios; C2, C3, C5 and full acceptance"
+  ]
+}

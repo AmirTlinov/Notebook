@@ -67,11 +67,29 @@ struct NotebookRegionSelection: Equatable, Sendable {
   nonisolated static func == (lhs:NotebookRegionPreparation,rhs:NotebookRegionPreparation)->Bool { lhs === rhs }
 }
 
-/// Immutable command payload prepared away from the UI actor. The region
-/// already owns the next contact; its edit waits for this payload rather than
-/// expanding retained vector sources under the user's finger.
+/// Immutable visible material and typed edit intent. Selecting and placing a
+/// cut never encode its measured bodies; the accepted command does that once.
 struct NotebookRegionMaterialization: Equatable, Sendable {
-  let edits:[NotebookElementEdit]
+  enum Edit: Equatable, Sendable {
+    case create(EditableElementReference, convertsInk: Bool)
+    case remainder(EditableElementReference, NotebookGraphicMask)
+    case placement(EditableElementReference)
+    case remove(EditableElementReference)
+
+    var reference: EditableElementReference {
+      switch self {
+      case .create(let reference,_), .remainder(let reference,_), .placement(let reference), .remove(let reference): reference
+      }
+    }
+    var kind: CollaborationOperation.Kind {
+      switch self {
+      case .create(_,let converts): converts ? .convertInkToElement : .insertElement
+      case .remainder, .placement: .updateElement
+      case .remove: .removeElement
+      }
+    }
+  }
+  let edits:[Edit]
   let working:[NotebookWorkingGraphic]
   let selected:[EditableElementReference]
   let sources:[EditableElementReference:NotebookNativeElementSource]

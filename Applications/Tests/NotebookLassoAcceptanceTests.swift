@@ -74,6 +74,96 @@ import XCTest
     }
   }
 
+  func testDeleteBeforePreparationSurvivesNewFocusAndInkAndKeepsUndoOrder() async throws {
+    try await fixture { model,page,shape,address,ready in
+      let gate=Gate();defer { Task { await gate.release() } }
+      delayed(ready,gate:gate,model:model)
+      model.deleteSelectedContent()
+      XCTAssertNil(model.selectionSession.target)
+      XCTAssertNotNil(model.graphicCommandTask,"Delete must enter the writer before its material finishes")
+      model.selectElement(address.reference(shape.id));model.selectDrawingTool(.pen)
+      let later=PageInkAction(tool:.pen,samples:[.init(point:.init(x:500,y:500),timeOffset:0,
+        width:4,opacity:0.6,force:0.7,azimuth:1,altitude:1)])
+      let stamp=try XCTUnwrap(model.reserveDrawingAction(pageID:page.id))
+      XCTAssertNotNil(model.acceptDrawingAction(later,pageID:page.id,stamp:stamp))
+      await Task.yield()
+      XCTAssertEqual(try model.store.loadPage(page.id).elements,[shape])
+      XCTAssertTrue(try model.store.loadPage(page.id).inkDrawing().actions.isEmpty)
+      await gate.release()
+      let finished=await model.finishPendingPersistence();XCTAssertTrue(finished,model.actionCue ?? "")
+      let saved=try model.store.loadPage(page.id)
+      XCTAssertEqual(saved.elements.map(\.id),[shape.id])
+      XCTAssertEqual(saved.element(id:shape.id)?.graphic?.mask?.operations.count,1)
+      XCTAssertEqual(try saved.inkDrawing().activeActions.map(\.id),[later.id])
+      XCTAssertEqual(model.collaborationActions.filter { $0.action.summary == "Удалить область лассо" }.count,1)
+      XCTAssertNil(model.selectionSession.target,"Completing Delete must not restore the old contour")
+      model.undoLastSurfaceAction();let penUndone=await model.finishPendingPersistence();XCTAssertTrue(penUndone)
+      XCTAssertTrue(try model.store.loadPage(page.id).inkDrawing().activeActions.isEmpty)
+      XCTAssertNotNil(try model.store.loadPage(page.id).element(id:shape.id)?.graphic?.mask)
+      model.undoLastSurfaceAction();let deleteUndone=await model.finishPendingPersistence();XCTAssertTrue(deleteUndone)
+      XCTAssertEqual(try model.store.loadPage(page.id).elements,[shape])
+    }
+  }
+
+  func testDeleteAfterEarlyMoveAddressesTheAcceptedFragmentBeforeEitherPreparationFinishes() async throws {
+    try await fixture { model,page,shape,address,ready in
+      let gate=Gate();defer { Task { await gate.release() } }
+      delayed(ready,gate:gate,model:model)
+      let contact=try XCTUnwrap(model.beginElementManipulation(ready.reference,kind:.move))
+      XCTAssertTrue(model.finishElementManipulation(contact,translation:.init(x:40,y:20)))
+      XCTAssertNotNil(model.selectionSession.region?.preparation)
+      model.deleteSelectedContent();model.selectDrawingTool(.pen)
+      await gate.release()
+      let finished=await model.finishPendingPersistence();XCTAssertTrue(finished,model.actionCue ?? "")
+      let saved=try model.store.loadPage(page.id)
+      let moves=model.collaborationActions.filter { $0.action.summary == "Переместить область лассо" }
+      let deletions=model.collaborationActions.filter { $0.action.summary == "Удалить область лассо" }
+      XCTAssertEqual(moves.count,1);XCTAssertEqual(deletions.count,1)
+      let created=try XCTUnwrap(moves.first).action.operations.filter { $0.kind == .insertElement }
+      XCTAssertEqual(created.count,1)
+      let fragmentID=try XCTUnwrap(created.first?.id),deleted=try XCTUnwrap(deletions.first)
+      let hidden=try XCTUnwrap(saved.element(id:fragmentID))
+      // Graphic deletion retains its causal identity and changes visibility.
+      // The accepted Delete must name the preceding Move's exact fragment.
+      XCTAssertEqual(deleted.action.operations.map(\.kind),[.removeElement])
+      XCTAssertEqual(deleted.action.operations.map(\.id),[fragmentID])
+      XCTAssertEqual(deleted.action.operations.first?.target,address.target)
+      XCTAssertEqual(saved.elements.map(\.id),[shape.id,fragmentID])
+      XCTAssertEqual(saved.graphicPresentation.geometryIDs,[shape.id])
+      XCTAssertEqual(hidden.graphic?.visible,false)
+      XCTAssertEqual(saved.element(id:shape.id)?.graphic?.visible,true)
+      XCTAssertEqual(saved.element(id:shape.id)?.graphic?.mask?.operations.count,1)
+      model.undoLastSurfaceAction();let deleteUndone=await model.finishPendingPersistence();XCTAssertTrue(deleteUndone)
+      let restored=try model.store.loadPage(page.id)
+      let fragment=try XCTUnwrap(restored.element(id:fragmentID))
+      XCTAssertEqual(restored.elements.map(\.id),[shape.id,fragmentID])
+      XCTAssertEqual(restored.graphicPresentation.geometryIDs,[shape.id,fragmentID])
+      var shownGraphic=try XCTUnwrap(hidden.graphic);shownGraphic.visible=true
+      XCTAssertEqual(fragment.graphic,shownGraphic,"Undo restores that same fragment's visibility without replacing its geometry")
+      XCTAssertEqual(fragment.frame.x,shape.frame.x+40,accuracy:1e-8)
+      XCTAssertEqual(fragment.frame.y,shape.frame.y+20,accuracy:1e-8)
+      model.undoLastSurfaceAction();let moveUndone=await model.finishPendingPersistence();XCTAssertTrue(moveUndone)
+      XCTAssertEqual(try model.store.loadPage(page.id).elements,[shape])
+    }
+  }
+
+  func testAcceptedPendingDeleteCannotBorrowAForeignReplacement() async throws {
+    try await fixture { model,page,shape,_,ready in
+      let gate=Gate();defer { Task { await gate.release() } }
+      delayed(ready,gate:gate,model:model)
+      model.deleteSelectedContent();model.selectDrawingTool(.pen)
+      var changed=try model.store.loadPage(page.id)
+      let replacement=shape.updating(frame:.init(x:120,y:100,width:200,height:100))
+      XCTAssertTrue(changed.replaceElements([replacement],actor:UUID()));try model.store.savePage(changed)
+      await gate.release();_ = await model.finishPendingPersistence()
+      XCTAssertEqual(try model.store.loadPage(page.id).elements,[replacement])
+      XCTAssertFalse(model.collaborationActions.contains { $0.action.summary == "Удалить область лассо" })
+      XCTAssertFalse(model.workingGraphics.contains { $0.surface == ready.address.surface })
+      XCTAssertNil(model.selectionSession.target)
+      XCTAssertNotNil(model.actionCue)
+    }
+  }
+
   func testTwoEarlyLiftsAndNextLassoChainAcceptedMaterialWithoutWaitingForSave() async throws {
     try await fixture { model,page,shape,address,ready in
       let gate=Gate();defer { Task { await gate.release() } }

@@ -83,6 +83,7 @@ public final class NotebookIPCServer: @unchecked Sendable {
   private var drainedAt: ContinuousClock.Instant?
   private var drainWaiters: [DrainWaiter] = []
   private var listener: Int32 = -1
+  private var socketIdentity: SocketIO.Identity?
   private var stopped = false
   private var jobs: [UUID: IPCJob] = [:]
   private let acceptQueue = DispatchQueue(label: "Notebook.IPC.accept", qos: .userInitiated)
@@ -105,18 +106,29 @@ public final class NotebookIPCServer: @unchecked Sendable {
   var acceptedHandlerCount: Int { lock.withLock { jobs.values.filter(\.hasPendingHandler).count } }
 
   public func start() throws {
+    try start(afterAddressCheck: nil)
+  }
+
+  func start(afterAddressCheck: (() throws -> Void)?) throws {
     try lock.withLock {
       guard listener < 0, !stopped else { throw CollaborationError("ipc_lifecycle", "Этот сервер уже запущен или завершён.") }
       try SocketIO.validateDirectory(socketURL.deletingLastPathComponent(), create: true)
       try SocketIO.removeStaleSocket(socketURL)
+      try afterAddressCheck?()
       let fd = try SocketIO.makeSocket()
+      var boundIdentity: SocketIO.Identity?
       do {
         try SocketIO.bind(fd, url: socketURL)
+        boundIdentity = try SocketIO.Identity(socketURL)
         guard chmod(socketURL.path, 0o600) == 0, listen(fd, Int32(NotebookIPC.maximumConnections)) == 0 else {
           throw SocketIO.failure("Не удалось защитить локальный сокет.")
         }
-        listener = fd
-      } catch { close(fd); try? FileManager.default.removeItem(at: socketURL); throw error }
+        listener = fd; socketIdentity = boundIdentity
+      } catch {
+        close(fd)
+        boundIdentity?.removeSocket(at: socketURL)
+        throw error
+      }
       accepting = true
       acceptQueue.async { [self] in
         defer { finishAccepting() }
@@ -131,7 +143,10 @@ public final class NotebookIPCServer: @unchecked Sendable {
       let fd = listener; listener = -1
       for job in jobs.values { job.shutdown() }
       jobs = jobs.filter { !$0.value.finished }
-      if fd >= 0 { shutdown(fd, SHUT_RDWR); close(fd); try? FileManager.default.removeItem(at: socketURL) }
+      if fd >= 0 {
+        shutdown(fd, SHUT_RDWR); close(fd)
+        socketIdentity?.removeSocket(at: socketURL); socketIdentity = nil
+      }
       return drainCompletionLocked()
     }
     resumeDrain(completion)
@@ -307,7 +322,27 @@ private final class IPCJob: @unchecked Sendable {
 }
 
 enum SocketIO {
+  struct Identity {
+    let device: dev_t
+    let inode: ino_t
+    init(_ url: URL) throws {
+      var info = stat()
+      guard lstat(url.path, &info) == 0, info.st_mode & S_IFMT == S_IFSOCK, info.st_uid == geteuid() else {
+        throw failure("Не удалось проверить созданный IPC сокет.")
+      }
+      device = info.st_dev; inode = info.st_ino
+    }
+    func removeSocket(at url: URL) {
+      var info = stat()
+      guard lstat(url.path, &info) == 0, info.st_mode & S_IFMT == S_IFSOCK,
+        info.st_uid == geteuid(), info.st_dev == device, info.st_ino == inode else { return }
+      _ = unlink(url.path)
+    }
+  }
   static func failure(_ message: String) -> CollaborationError { .init("ipc_unavailable", message) }
+  static func ownerRunning() -> CollaborationError {
+    .init("ipc_owner_running", "Notebook уже запущен; подключитесь к действующему владельцу.")
+  }
   static func makeSocket() throws -> Int32 {
     let fd = socket(AF_UNIX, SOCK_STREAM, 0)
     guard fd >= 0 else { throw failure("Не удалось открыть локальный IPC.") }
@@ -357,7 +392,7 @@ enum SocketIO {
     let result = withUnsafePointer(to: &address) {
       $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.connect(probe, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
     }
-    guard result < 0 && errno == ECONNREFUSED else { throw failure("Этим IPC адресом уже владеет запущенный Notebook helper.") }
+    guard result < 0 && errno == ECONNREFUSED else { throw ownerRunning() }
     var current = stat()
     guard lstat(url.path, &current) == 0, current.st_dev == info.st_dev, current.st_ino == info.st_ino,
       unlink(url.path) == 0 else { throw failure("Владелец адреса IPC изменился.") }
@@ -393,7 +428,10 @@ enum SocketIO {
     let result = withUnsafePointer(to: &address) {
       $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.bind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
     }
-    guard result == 0 else { throw failure("Не удалось занять локальный IPC адрес.") }
+    guard result == 0 else {
+      if errno == EADDRINUSE { throw ownerRunning() }
+      throw failure("Не удалось занять локальный IPC адрес.")
+    }
   }
   static func readFrame(fd: Int32) throws -> Data {
     let prefix = try readExactly(4, fd: fd)

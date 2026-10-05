@@ -96,6 +96,274 @@ final class SpatialInkHandoffTests: XCTestCase {
     XCTAssertEqual(fixture.actions.count, 1, "The first full-size post-exit contact remains admitted")
   }
 
+  func testTwoSmallCoversReserveProjectedPixelsAndRefineTheSameOwnersAfterZoom() async {
+    var phase = "Foreground window"
+    do {
+      try await assertProjectedCovers { name in
+        phase = name
+        XCTContext.runActivity(named: name) { _ in }
+      }
+    } catch {
+      XCTFail("Projected cover phase '\(phase)' threw \(error)")
+    }
+  }
+
+  private func assertProjectedCovers(onPhase: @escaping (String) -> Void) async throws {
+    onPhase("Foreground window")
+    try await WorkspaceInkFixture.waitForForegroundWindow()
+    let actor = UUID(), stamp = VersionStamp(counter: 0, actor: actor)
+    let items = ["Left", "Right"].map { WorkspaceItem.notebook(title: $0, pageIDs: [UUID()]) }
+    let workspace = WorkspaceIndex(items: items, selectedItemID: items[0].id,
+      selectedPageID: items[0].pageIDs[0], stamp: stamp)
+    let board = BoardDocument(freeItems: items.enumerated().map { offset, item in
+      .init(itemID: item.id, center: .init(x: Double(offset) * 960 - 480, y: 0),
+        zIndex: offset, stamp: stamp)
+    }, stamp: stamp)
+    let hierarchy = BoardHierarchy(rootBoardID: workspace.rootBoardID,
+      boards: [.init(id: workspace.rootBoardID, board: board)], stamp: stamp)
+    let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: [:])
+    var journal = SpatialInkJournal(stamp: stamp)
+    for item in items {
+      _ = journal.append(tool: .pen, spans: [.init(surface: .cover(item.id), samples: [217.0, 617].enumerated().map { offset, x in
+        .init(point: .init(x: x, y: 597), timeOffset: Double(offset) / 10,
+          width: 14, opacity: 1, force: 1, azimuth: 0, altitude: 1)
+      })], actor: actor)
+    }
+    let source = SceneCompositionSource(index: index, hierarchy: hierarchy, journal: journal)
+    let resources = SceneRenderResources(), registry = SpatialInkSurfaceRegistry()
+    let tiles = SceneCompositionTiles(resources: resources, surfaceRegistry: registry)
+    addTeardownBlock { @MainActor in await tiles.stop() }
+    tiles.onPreparationPhase = { _, phase in onPhase("Small cover producer: \(phase)") }
+    defer { tiles.onPreparationPhase = nil }
+    func presence(_ scale: Double) -> SessionPresence {
+      .init(boardID: workspace.rootBoardID, mode: .board,
+        camera: .init(scale: scale), viewport: .init(x: 834, y: 1194))
+    }
+    func frame(_ presence: SessionPresence) -> WorkspaceSceneFrame {
+      .init(index: index, presence: presence, portalCamera: { _ in nil })
+    }
+    let small = presence(0.25)
+    tiles.prepare(source: source, presence: small, frame: frame(small), pinned: [], displayScale: 2)
+    try await Self.waitUntil { !tiles.isPreparing }
+    onPhase("Small cover publication and allocation")
+    let original = try XCTUnwrap(tiles.published, tiles.failure ?? "Both small covers must publish")
+    let canvases = try items.map { try XCTUnwrap(original.nativeInk.owners[.cover($0.id)]?.canvas) }
+    let sources = try canvases.map { try XCTUnwrap($0.installedSpatialSource).referenceInk() }
+    let paperBounds = CGSize(width: 834, height: 1194)
+    for canvas in canvases {
+      XCTAssertEqual(canvas.bounds.size, paperBounds, "Drawing and hit testing retain paper coordinates")
+      XCTAssertEqual(canvas.drawableSize, CGSize(width: 417, height: 597))
+      XCTAssertEqual(canvas.spatialTilePoolIDs.count, 2)
+      XCTAssertGreaterThan(canvas.committedSourceNodeCount, 0)
+    }
+    XCTAssertLessThan(canvases.reduce(0) { $0 + $1.spatialDrawableAccountedBytes }, 16 * 1024 * 1024,
+      "Two 208 × 298-point cards cannot consume the passive 128 MiB budget")
+    let followingEdit = try XCTUnwrap(resources.reserveDerivedBytes(32 * 1024 * 1024, priority: .passive),
+      "The next edit can prepare without repeatedly failing behind oversized cover backing")
+    followingEdit.release()
+
+    let large = presence(0.5), largeFrame = frame(large)
+    XCTAssertFalse(original.nativeInk.containsProjectionWindows(presence: large, frame: largeFrame,
+      displayScale: 2, refinesDetails: true), "Reusing the paint plan must still request sharp cover pixels")
+    onPhase("Larger cover preparation")
+    let candidate = try await registry.prepareSceneInk(plan: original.plan, frame: largeFrame,
+      liveData: original.liveData, resources: resources, displayScale: 2)
+    for canvas in canvases {
+      XCTAssertEqual(canvas.drawableSize, CGSize(width: 417, height: 597),
+        "A private density candidate leaves the installed backing unchanged")
+    }
+    let held = try XCTUnwrap(registry.acquireContact(on: .cover(items[0].id), in: UIView()))
+    onPhase("Larger cover contact refusal")
+    XCTAssertThrowsError(try candidate.install()) { XCTAssertTrue($0 is CancellationError) }
+    held.release()
+    onPhase("Larger cover installation after contact release")
+    try candidate.install()
+    for (offset, canvas) in canvases.enumerated() {
+      XCTAssertTrue(candidate.owners[.cover(items[offset].id)]?.canvas === canvas)
+      XCTAssertEqual(canvas.bounds.size, paperBounds)
+      XCTAssertEqual(canvas.drawableSize, paperBounds)
+      XCTAssertEqual(canvas.spatialTilePoolIDs.count, 6)
+      XCTAssertEqual(try canvas.installedSpatialSource?.referenceInk(), sources[offset])
+    }
+    XCTAssertTrue(candidate.containsProjectionWindows(presence: large, frame: largeFrame,
+      displayScale: 2, refinesDetails: true), "A settled density cannot repeatedly prepare itself")
+    for canvas in canvases {
+      XCTAssertFalse(canvas.needsSpatialDensity(0.5, refinesDetails: false),
+        "An active zoom-out reuses sharper cover pixels")
+      XCTAssertTrue(canvas.needsSpatialDensity(0.5, refinesDetails: true),
+        "Settlement reclaims substantially oversized cover pools")
+    }
+
+    let deep = SessionPresence(boardID: workspace.rootBoardID, mode: .board,
+      camera: .init(center: .init(x: -480, y: 0), scale: SpatialCamera.maximumScale), viewport: small.viewport)
+    // Keep the second physical owner pinned outside the viewport. It retains
+    // its source without reserving invisible tiles or blocking publication.
+    let deepFrame = WorkspaceSceneFrame(index: index, presence: deep, portalCamera: { _ in nil },
+      pinned: Set(items.map { .item($0.id) }))
+    onPhase("Deep cover preparation")
+    let deepCandidate = try await registry.prepareSceneInk(plan: original.plan, frame: deepFrame,
+      liveData: original.liveData, resources: resources, displayScale: 2)
+    onPhase("Deep cover installation")
+    try deepCandidate.install()
+    let visible = canvases[0], hidden = canvases[1]
+    XCTAssertEqual(visible.bounds.size, paperBounds)
+    XCTAssertEqual(visible.drawableSize, CGSize(width: 2048, height: 2560))
+    XCTAssertEqual(visible.spatialTilePoolIDs.count, 20, "Maximum zoom reserves one finite viewport")
+    let region = try XCTUnwrap(visible.spatialBackingRegion)
+    XCTAssertEqual(region, CGRect(x: 289, y: 437, width: 256, height: 320))
+    XCTAssertEqual(visible.drawableSize.width / region.width, 8, accuracy: 0.00001)
+    XCTAssertEqual(hidden.spatialBackingRegion, .zero)
+    XCTAssertEqual(hidden.spatialDrawableAccountedBytes, 0)
+    XCTAssertEqual(try hidden.installedSpatialSource?.referenceInk(), sources[1])
+    XCTAssertTrue(deepCandidate.containsProjectionWindows(presence: deep, frame: deepFrame,
+      displayScale: 2, refinesDetails: true))
+
+    onPhase("Deep cover physical mount")
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previousWindow = scene.keyWindow, window = UIWindow(windowScene: scene)
+    let host = UIViewController(), mount = SpatialInkPhysicalMountView(frame: .zero)
+    window.rootViewController = host
+    host.view.backgroundColor = .white
+    mount.bounds = CGRect(origin: .zero, size: paperBounds)
+    mount.transform = CGAffineTransform(scaleX: 4, y: 4)
+    mount.center = CGPoint(x: small.viewport.x / 2, y: small.viewport.y / 2)
+    host.view.addSubview(mount); window.makeKeyAndVisible()
+    defer { mount.unmount(); window.isHidden = true; window.rootViewController = nil; previousWindow?.makeKey() }
+    mount.update(lease: deepCandidate, surface: .cover(items[0].id), boardID: workspace.rootBoardID,
+      camera: deep.camera, active: true)
+    try await Self.waitUntil { visible.isStableFramePresented }
+    XCTAssertGreaterThan(try Self.inkPixelCount(mount), 100, "Finite backing must show the original paper ink at maximum zoom")
+    let local = CGPoint(x: 417, y: 597)
+    XCTAssertEqual(visible.convert(local, from: mount), local, "A cropped Metal window preserves contact coordinates")
+
+    let surface = SurfaceID.cover(items[0].id)
+    let action = try XCTUnwrap(journal.actions.first { $0.spans.first?.surface == surface })
+    let measurements = try XCTUnwrap(action.spans.first?.samples)
+    let paperFrame = PageRect(x: 0, y: 0, width: 834, height: 1194)
+    let graphic = NotebookGraphic(shape: .freehand, sourceInkIDs: [action.id],
+      freehand: .init(layers: [.init(tool: .pen, color: .black,
+        measured: .init(sourceID: action.id, measurements: measurements, frame: paperFrame))]),
+      transform: .init(a: 1, b: 0, c: 0, d: 1, tx: 0, ty: 40.0 / 1194))
+    let node = NotebookGraphicGraph.Node(id: "moved-cover-ink", graphic: graphic, frame: paperFrame,
+      surface: surface, shown: true)
+    let layout = try XCTUnwrap(NotebookGraphicGraph([node]).resolve(node.id).layout)
+    let ordered = NotebookOrderedInkPlan(bodies: [.init(elementID: node.id,
+      key: .spatial(stamp: action.stamp, id: action.id), graphic: graphic, layout: layout, erasures: [])],
+      suppressedInkIDs: [action.id])
+    let movedData = SceneCompositionLiveData(documents: [:], states: [:], ink: journal,
+      suppressedInkIDs: [action.id], orderedInk: [surface: ordered])
+    onPhase("Ordered cover preparation")
+    let movedCandidate = try await registry.prepareSceneInk(plan: original.plan, frame: deepFrame,
+      liveData: movedData, resources: resources, displayScale: 2)
+    onPhase("Ordered cover installation")
+    try movedCandidate.install()
+    func shown(_ points: [(CGPoint, NotebookUXObservation.Color)]) -> Bool {
+      (try? NotebookUXObservation.Pixels(window: window).matches(points.map { (visible.convert($0.0, to: window), $0.1) })) == true
+    }
+    try await Self.waitUntil {
+      shown([(.init(x: 417, y: 597), .paper), (.init(x: 417, y: 637), .black)])
+    }
+    onPhase("Ordered cover eraser")
+    let eraser = ActiveEraserStroke()
+    eraser.replaceMeasuredTail(from: 0, with: [627.0, 647].enumerated().map { offset, y in
+      .init(point: .init(x: 417, y: y), timeOffset: Double(offset) / 10,
+        width: 20, opacity: 1, force: 1, azimuth: 0, altitude: 1)
+    })
+    let erasure = NotebookElementErasing(id: eraser.measured.sourceID, surface: surface,
+      samples: eraser.measured.frozen().measurements,
+      targets: [.init(elementID: node.id, frame: layout.frame,
+        graphicTransform: graphic.transform, elementTransform: layout.elementTransform)])
+    visible.displayActiveEraser(eraser)
+    visible.updateOrderedErasing([erasure], id: erasure.id)
+    try await Self.waitUntil {
+      shown([(.init(x: 417, y: 637), .paper), (.init(x: 377, y: 637), .black)])
+    }
+    visible.updateOrderedErasing([], id: erasure.id); visible.clearActiveAction()
+    try await Self.waitUntil { shown([(.init(x: 417, y: 637), .black)]) }
+    XCTAssertEqual(visible.spatialBackingRegion, region)
+
+    // Whole-cover dragging changes the native pose before any content command
+    // or camera update. Its existing scene producer must refill exposed paper.
+    onPhase("Raw cover restoration")
+    let restored = try await registry.prepareSceneInk(plan: original.plan, frame: deepFrame,
+      liveData: original.liveData, resources: resources, displayScale: 2)
+    try restored.install()
+    tiles.onPreparationPhase = { _, phase in onPhase("Deep cover producer: \(phase)") }
+    tiles.prepare(source: source, presence: deep, frame: deepFrame,
+      pinned: Set(items.map { .item($0.id) }), displayScale: 2)
+    try await Self.waitUntil { !tiles.isPreparing }
+    let current = try XCTUnwrap(tiles.published, tiles.failure ?? "The same scene must remain installed")
+    mount.unmount(); mount.removeFromSuperview()
+    let boardCanvas = SpatialInkContainerView(frame: host.view.bounds)
+    host.view.addSubview(boardCanvas)
+    let physical = try WorkspaceInkFixture(cohort: current, presence: deep, canvas: boardCanvas,
+      parent: host, registry: registry, gate: .init())
+    defer { physical.close() }
+    let pose = try XCTUnwrap(physical.poses[items[0].id])
+    onPhase("Cover drag and reverse")
+    pose.beginLift(); physical.publish(items[0].id)
+    pose.changeTranslation(.init(width: 120, height: 60))
+    pose.changeTranslation(.init(width: 240, height: 120))
+    try await Self.waitUntil {
+      !tiles.isPreparing && visible.isStableFramePresented
+        && current.nativeInk.containsProjectionWindows(presence: deep, frame: deepFrame,
+          displayScale: 2, refinesDetails: true)
+        && shown([(.init(x: 270, y: 597), .black)])
+    }
+    XCTAssertTrue(tiles.published === current, "Dragging reuses the installed content tree")
+    XCTAssertTrue(physical.inks[items[0].id] === visible)
+    XCTAssertNotEqual(visible.spatialBackingRegion, region)
+    pose.changeTranslation(.init(width: -120, height: -40))
+    pose.changeTranslation(.init(width: -220, height: -80))
+    try await Self.waitUntil {
+      !tiles.isPreparing && visible.isStableFramePresented
+        && current.nativeInk.containsProjectionWindows(presence: deep, frame: deepFrame,
+          displayScale: 2, refinesDetails: true)
+        && shown([(.init(x: 570, y: 597), .black)])
+    }
+    XCTAssertTrue(tiles.published === current)
+    XCTAssertEqual(visible.bounds.size, paperBounds)
+    XCTAssertEqual(try visible.installedSpatialSource?.referenceInk(), sources[0])
+
+    let returns: [(translation: CGSize, keepsInstalled: Bool)] = [
+      (.init(width: -220, height: -80), true), (.init(width: -480, height: -160), false)
+    ]
+    for returned in returns {
+      let beforeReversal = visible.spatialBackingRegion
+      var reversedDuringPreparation = false, installedAfterReversal = 0
+      tiles.onPreparationPhase = { _, phase in
+        onPhase("Overlapping cover reversal: \(phase)")
+        if phase == "native_projection_installed" { installedAfterReversal += 1 }
+        guard phase == "native_projection_prepared", !reversedDuringPreparation else { return }
+        // A has captured and prepared its other crop, but has not installed.
+        // B arrives before validation, once inside and once beyond the old crop.
+        XCTAssertEqual(visible.spatialBackingRegion, beforeReversal)
+        pose.changeTranslation(returned.translation)
+        XCTAssertEqual(current.nativeInk.containsProjectionWindows(presence: deep, frame: deepFrame,
+          displayScale: 2, refinesDetails: true), returned.keepsInstalled)
+        reversedDuringPreparation = true
+      }
+      pose.changeTranslation(.init(width: 240, height: 120))
+      try await Self.waitUntil {
+        reversedDuringPreparation && !tiles.isPreparing && visible.isStableFramePresented
+          && current.nativeInk.containsProjectionWindows(presence: deep, frame: deepFrame,
+            displayScale: 2, refinesDetails: true)
+          && shown([(.init(x: 570, y: 597), .black)])
+      }
+      XCTAssertEqual(installedAfterReversal, returned.keepsInstalled ? 0 : 1,
+        "Reject obsolete A immediately; only B may need a fresh installed crop")
+      if returned.keepsInstalled {
+        XCTAssertEqual(visible.spatialBackingRegion, beforeReversal,
+          "Returning inside the old crop keeps that same usable backing")
+      } else {
+        XCTAssertNotEqual(visible.spatialBackingRegion, beforeReversal,
+          "Releasing A's staging cannot wait for its GPU completion before B prepares")
+      }
+    }
+    tiles.onPreparationPhase = nil
+    pose.cancelManipulation()
+  }
+
   func testIncomingBoardKeepsInputAdmissionWhileTheOldMountStillDisplays() async throws {
     try await assertIncomingInputAdmission(focusedCover: false)
   }

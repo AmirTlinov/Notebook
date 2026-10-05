@@ -4,13 +4,15 @@ import { constants } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { defaultPluginRoot, inspectRuntimeBundle } from './package-plugin-runtime.mjs';
 
-const source = join(dirname(fileURLToPath(import.meta.url)), 'plugin');
-const packageRoot = join(source, 'notebook');
 const codex = process.env.CODEX_BIN || 'codex';
 const action = process.argv[2] || 'check';
 assert(['check', 'install', 'uninstall'].includes(action) && process.argv.length <= 3,
   'Usage: node MCP/install-plugin.mjs [check|install|uninstall]');
+const stableSource = dirname(defaultPluginRoot());
+const source = action === 'check' ? join(dirname(fileURLToPath(import.meta.url)), 'plugin') : stableSource;
+const packageRoot = join(source, 'notebook');
 
 const json = async path => JSON.parse(await readFile(path, 'utf8'));
 function run(args, { optional = false } = {}) {
@@ -22,25 +24,16 @@ async function inspect(path) {
   for (const entry of await readdir(path, { withFileTypes: true })) {
     const child = join(path, entry.name), status = await lstat(child);
     assert(!status.isSymbolicLink() && (status.isFile() || status.isDirectory()), `Plugin contains an unsupported entry: ${child}`);
+    // The signed runtime seals its own nested resources and internal aliases.
+    if (child === join(packageRoot, 'runtime')) continue;
     if (status.isDirectory()) await inspect(child);
   }
 }
-async function installedApp() {
-  const candidates = process.env.NOTEBOOK_APP ? [process.env.NOTEBOOK_APP]
-    : [join(process.env.HOME, 'Applications/Notebook.app'), '/Applications/Notebook.app'];
-  for (const app of candidates) {
-    try {
-      const node = join(app, 'Contents/Resources/CodexRuntime/node');
-      const server = join(app, 'Contents/Resources/NotebookTools/dist/index.mjs');
-      await access(node, constants.X_OK);
-      const body = await readFile(server, 'utf8');
-      return { app, panelReady: body.includes('notebook_open') && body.includes('notebook_panel_presentation')
-        && body.includes('ui://notebook/workspace.html') };
-    } catch (error) {
-      if (!['ENOENT', 'EACCES', 'ENOTDIR'].includes(error.code)) throw error;
-    }
-  }
-  return null;
+async function bundledRuntime() {
+  const app = join(packageRoot, 'runtime/NotebookRuntime.app');
+  try { await access(app, constants.F_OK); }
+  catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+  return inspectRuntimeBundle(app);
 }
 
 await inspect(packageRoot);
@@ -58,11 +51,10 @@ assert.equal(marketplace.name, 'notebook-local');
 assert.equal(marketplace.plugins.length, 1);
 assert.equal(marketplace.plugins[0].source.path, './notebook');
 const startup = mcp.mcpServers.notebook;
-assert.equal(startup.type, 'stdio'); assert.equal(startup.command, '/bin/sh');
-assert.equal(startup.args[0], '-c'); assert.equal(startup.args.length, 2);
-assert(!startup.args[1].includes('${PLUGIN_ROOT}'));
-const syntax = spawnSync('/bin/sh', ['-n'], { input: startup.args[1], encoding: 'utf8' });
-assert.equal(syntax.status, 0, syntax.stderr);
+const resources = '${PLUGIN_ROOT}/runtime/NotebookRuntime.app/Contents/Resources';
+assert.equal(startup.type, 'stdio');
+assert.equal(startup.command, resources + '/CodexRuntime/node');
+assert.deepEqual(startup.args, [resources + '/NotebookTools/dist/launch-runtime.mjs']);
 await access(join(packageRoot, presentation.logo));
 const skill = await readFile(join(packageRoot, 'skills/notebook/SKILL.md'), 'utf8');
 assert(skill.startsWith('---\nname: notebook\n') && skill.includes('notebook_open'));
@@ -70,15 +62,12 @@ assert(skill.startsWith('---\nname: notebook\n') && skill.includes('notebook_ope
 const selector = `${manifest.name}@${marketplace.name}`;
 if (action === 'check') {
   console.log(JSON.stringify({ package: packageRoot, selector, version: manifest.version,
-    runtime: await installedApp(), commands: [
-      ['codex', 'plugin', 'marketplace', 'add', source], ['codex', 'plugin', 'add', selector],
+    runtime: await bundledRuntime(), commands: [
+      ['codex', 'plugin', 'marketplace', 'add', stableSource], ['codex', 'plugin', 'add', selector],
     ] }, null, 2));
 } else if (action === 'install') {
-  assert.equal(process.platform, 'darwin', 'The Notebook plugin uses the installed macOS runtime.');
-  const runtime = await installedApp();
-  assert(runtime?.panelReady, 'Install the signed Notebook update with native panel presentation before installing this plugin.');
-  const signature = spawnSync('/usr/bin/codesign', ['--verify', '--strict', '--deep', runtime.app], { encoding: 'utf8' });
-  assert.equal(signature.status, 0, signature.stderr);
+  assert.equal(process.platform, 'darwin', 'The Notebook plugin includes a macOS runtime.');
+  assert(await bundledRuntime(), 'Package the signed NotebookRuntime.app into the stable plugin source before installation.');
   // The merged MCP view also contains this installed plugin. Inspect global
   // configuration with plugins disabled for this read-only CLI invocation.
   const existing = run(['--disable', 'plugins', 'mcp', 'get', 'notebook', '--json'], { optional: true });

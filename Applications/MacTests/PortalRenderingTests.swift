@@ -186,7 +186,7 @@ final class PortalRenderingTests: XCTestCase {
   }
 
   @MainActor
-  func testMinimumZoomExitAndReentryPersistsTheSameCamera() async throws {
+  func testMinimumZoomPortalReturnPersistsTheSameCamera() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let store = NotebookStore(root: root)
     let model = NotebookAppModel(store: store, startsNearbySync: false)
@@ -198,7 +198,9 @@ final class PortalRenderingTests: XCTestCase {
     let viewport = SpatialPoint(x: 1_366, y: 1_024)
     model.updatePresence(SessionPresence(boardID: childID, mode: .board,
       camera: camera, viewport: viewport), settled: true)
-    XCTAssertTrue(model.leaveBoard())
+    let returning = try XCTUnwrap(model.presence)
+    XCTAssertTrue(model.rememberBoardReturn(returning, portal: BoardPortalProjection.portalCamera(
+      from: returning.camera, viewport: returning.viewport)))
     let workspace = try XCTUnwrap(model.workspace)
     await model.finishPendingPersistence()
     let saved = try store.loadBoard(items: workspace.items)

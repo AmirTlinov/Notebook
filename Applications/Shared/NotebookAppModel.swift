@@ -966,9 +966,6 @@ final class NotebookAppModel {
   private(set) var actionCue: String?
   private(set) var penStyle: PenStyle
   private(set) var eraserStyle: EraserStyle
-  #if os(macOS)
-  var macInputTool = MacNotebookInputTool.pointer
-  #endif
   var drawingToolSettings = NotebookDrawingToolSettings() {
     didSet { if let data = try? JSONEncoder().encode(drawingToolSettings) { preferences.set(data,forKey:"notebook.drawing-tool-settings") } }
   }
@@ -1179,13 +1176,13 @@ final class NotebookAppModel {
     }
   }
 
-  /// Moving the camera must not leave newly visible material waiting for lift.
-  /// It can project a new immutable scene without replacing an accepted Pencil
-  /// contact or the owner of a content manipulation. Other background work
-  /// still waits for settlement through permitsBackgroundPreparation.
+  /// Camera and whole-cover movement prepare newly exposed material through
+  /// the existing owners. Accepted Pencil retains its geometry; unrelated
+  /// background work waits for settlement through permitsBackgroundPreparation.
   var permitsScenePreparation: Bool {
     preparationIsForeground && !isStopped && !inputGate.hasActivePencil
-      && (!inputIsActive || presencePhase == .active || hasSpatialGroupContact || historyContactPermitsPublication)
+      && (!inputIsActive || presencePhase == .active || hasSpatialGroupContact || historyContactPermitsPublication
+        || compositionTiles.surfaceRegistry.hasMovingCover)
       && !workingGraphics.contains { $0.surface.kind == .board && $0.accepted
         && ($0.publicationCursor.map { (workspaceHeader?.cursor ?? 0) < $0 } ?? true) }
   }
@@ -1197,6 +1194,10 @@ final class NotebookAppModel {
     @ObservationIgnored private var commandServer: NotebookIPCServer?
     @ObservationIgnored private var scriptCoordinator: NotebookScriptCoordinator?
     private let commandSocketURL: URL?
+    var runtimeStartupPending: Bool { startupTask != nil }
+    var runtimeSocketKey: String? {
+      commandServer == nil ? nil : commandSocketURL?.deletingPathExtension().lastPathComponent
+    }
     /// Agent vision follows the process-level mirror, not a disposable window.
     private var previewPublisher: MacPreviewPublisher?
   #endif
@@ -3478,9 +3479,8 @@ final class NotebookAppModel {
       }
       _ = applySelectionEdits([],summary:"Удалить выделенное",source:source,deleting:true);return
     }
-    if let region=selectionSession.region,let prepared=region.materialization {
-      do { _ = commitRegion(region,prepared:try prepared.deleting(),summary:"Удалить область лассо") }
-      catch { showCue(error.localizedDescription) };return
+    if let region=selectionSession.region {
+      deleteRegion(region);return
     }
     let elements = selectionSession.elements, items = selectionSession.items, selection = selectionSession.id
     if !elements.isEmpty {
@@ -3744,12 +3744,7 @@ final class NotebookAppModel {
     guard selectionSession.manipulation?.id == id else { return false }
     updateElementManipulation(id, translation: translation)
     guard let contact = selectionSession.manipulation else { return false }
-    if let region=contact.region {
-      if region.materialization == nil,contact.frame != contact.original {
-        return acceptPreparingRegion(contact)
-      }
-      return finishRegionManipulation(contact)
-    }
+    if contact.region != nil { return finishRegionManipulation(contact) }
     if !contact.selectedMembers.isEmpty {
       guard let source=contact.selectionSource,selectionEditSourceIsCurrent(source),
         contact.frame != contact.original,contact.selectedEdits.count == contact.selectedMembers.count else {
@@ -3808,9 +3803,8 @@ final class NotebookAppModel {
   @discardableResult
   private func finishRegionManipulation(_ contact:NotebookElementManipulation)->Bool {
     cancelElementManipulation(contact.id)
-    guard let region=contact.region,contact.frame != contact.original,
-      let prepared=try? region.materialization?.transformed(from:region.frame,to:contact.frame,address:region.address) else { return false }
-    return commitRegion(region,prepared:prepared,
+    guard let region=contact.region,contact.frame != contact.original else { return false }
+    return placeRegion(region,in:contact.frame,
       summary:contact.kind == .move ? "Переместить область лассо" : "Изменить размер области лассо")
   }
 
@@ -4052,8 +4046,7 @@ final class NotebookAppModel {
     layerMove: NotebookElementLayerMove? = nil, readSources: [EditableElementReference] = [], copiedFrom: [String:String] = [:],
     insertionTarget explicitTarget: CollaborationTarget? = nil, expectedInkRevision: String? = nil, inkReadSets:[NotebookInkReadSet] = [], retainedSources: [EditableElementReference:NotebookNativeElementSource] = [:], previews: Bool = true,capture:NotebookGraphicContactSource? = nil,
     frozenSources:[EditableElementReference:NotebookNativeElementSource] = [:],
-    frozenDependencies:[EditableElementReference:NotebookElementCommand] = [:],
-    preparedGraphics:[EditableElementReference:NotebookGraphic] = [:]) -> NotebookElementCommandPlan? {
+    frozenDependencies:[EditableElementReference:NotebookElementCommand] = [:]) -> NotebookElementCommandPlan? {
     guard !edits.isEmpty, edits.count <= 32 else { return nil }
     let references = Array(Set(edits.map(\.reference) + readSources))
     let insertionTarget = explicitTarget ?? readSources.first.flatMap { nativeElementSource($0)?.target }
@@ -4082,8 +4075,7 @@ final class NotebookAppModel {
           let geometry = elementGeometry(edit.reference) else { continue }
         var graphic = graphicElement(edit.reference)
         guard graphic != nil || originals[edit.reference]?.placementSource != nil else { continue }
-        if let prepared=preparedGraphics[edit.reference] { graphic=prepared }
-        else if let patch = edit.values["graphic"] { graphic = try graphic?.applying(patch) }
+        if let patch = edit.values["graphic"] { graphic = try graphic?.applying(patch) }
         if edit.kind == .removeElement { graphic?.visible = false }
         let frame = try edit.values["frame"]?.decode(PageRect.self)
           ?? PageRect(x:geometry.frame.minX,y:geometry.frame.minY,width:geometry.frame.width,height:geometry.frame.height)
@@ -4100,9 +4092,13 @@ final class NotebookAppModel {
       }
     } catch { showCue(error.localizedDescription); return nil }
     for (reference,draft) in drafts { elementCommandDrafts[reference] = draft }
-    if !drafts.isEmpty { collaborationReadEpoch &+= 1;collaborationContentEpoch &+= 1 }
+    if !drafts.isEmpty { didChangeElementCommandProjection() }
     return .init(target:target,references:references,sources:sources,sourceTasks:sourceTasks,
       operations:operations,summary:summary,layerMove:layerMove,copiedFrom:copiedFrom,expectedInkRevision:expectedInkRevision,inkReadSets:inkReadSets)
+  }
+
+  func didChangeElementCommandProjection() {
+    collaborationReadEpoch &+= 1;collaborationContentEpoch &+= 1
   }
 
   /// Lift accepts one action immediately, including when its immutable source
@@ -4111,9 +4107,10 @@ final class NotebookAppModel {
   func enqueueElementCommand(target:CollaborationTarget,ready:NotebookElementCommandPlan? = nil,
     preparing:Task<NotebookElementCommandPlan,Error>? = nil,
     reserving reservedReferences:[EditableElementReference] = [],
-    presentation:NotebookSelectionPresentation? = nil) -> NotebookElementCommandBatch {
+    presentation:NotebookSelectionPresentation? = nil,
+    batch:NotebookElementCommandBatch = .init()) -> NotebookElementCommandBatch {
     readAdmission.changed(target)
-    let batch=NotebookElementCommandBatch(),actor=actorID
+    let actor=actorID
     let commandID=batch.id,generation=batch.generation
     let operation=Task { [weak self] () throws -> @Sendable (NotebookStore) throws -> NotebookElementCommandWriteResult in
       guard let self else { throw CancellationError() }
@@ -4124,7 +4121,7 @@ final class NotebookAppModel {
       } else { throw CollaborationError("invalid_action","Не подготовлено изменение материала.") }
       try Task.checkCancellation()
       guard plan.target == target else { throw CollaborationError("invalid_action","Изменился адрес материала.") }
-      if ready == nil { registerElementCommand(plan,batch:batch,reserved:Set(reservedReferences));batch.resolve(.success(plan)) }
+      if ready == nil { registerElementCommand(plan,batch:batch,reserved:batch.reservedReferences);batch.resolve(.success(plan)) }
       var expected:[NotebookNativeElementSource]=[]
       for reference in plan.references {
         let source=plan.sources[reference]!
@@ -4178,7 +4175,7 @@ final class NotebookAppModel {
         operation.cancel();preparing?.cancel();batch.resolve(.failure(error))
         presentation?.commandFailed()
         pencilUndoHistory.discardCommand(domain:.init(target),actionID:commandID)
-        for reference in Set(reservedReferences).union(batch.admittedPlan?.references ?? []) {
+        for reference in batch.reservedReferences {
           guard elementCommandSources[reference]?.id == generation else { continue }
           elementCommandDrafts[reference]=nil;elementCommandSources[reference]=nil
           let failedPresentation=presentation ?? workingGraphics.first { $0.id == reference.elementID }?.inkPresentation
@@ -4209,7 +4206,8 @@ final class NotebookAppModel {
     }
   }
 
-  private func registerElementCommand(_ reference:EditableElementReference,batch:NotebookElementCommandBatch) {
+  func registerElementCommand(_ reference:EditableElementReference,batch:NotebookElementCommandBatch) {
+    batch.reservedReferences.insert(reference)
     elementCommandSources[reference] = .init(id:batch.generation,task:Task { await batch.result.value?[reference] })
   }
 
@@ -4692,28 +4690,9 @@ final class NotebookAppModel {
       let author = actorID
       return try await persistence.submit { try $0.chatPanel(author: author, computer: author) }
     }
-    func saveLocalCodexPanel(_ state: NotebookChatPanelState) {
-      let author = actorID
-      persistence.enqueueFence(owner: .chatPanel(author)) { try $0.saveChatPanel(state, author: author); return false }
-    }
     func localCodexControl(_ action: NotebookChatAction) async throws -> NotebookChatJob? {
         let author = actorID
         return try await persistence.submit { try $0.savedChatControl(action, author: author, computer: author) }
-    }
-
-    func localCodexJobs() async throws -> [NotebookChatJob] {
-      let author = actorID
-      return try await persistence.submit { try $0.routedChatJobs(author: author, computer: author) }
-    }
-
-    /// Deliberate external integration, never a prerequisite for opening a task.
-    func registerExternalCodexTools() async throws {
-      guard allowsCodexRegistration, acceptance == nil else {
-        throw NotebookPersistenceQueue.Failure(message: "Тестовая или неактивированная сборка не меняет общие инструменты Codex. Откройте установленный Notebook.")
-      }
-      let installation = try await Task.detached { try CodexRuntimeInstallation.discover() }.value
-      guard let entry = Bundle.main.resourceURL?.appendingPathComponent("NotebookTools/dist/index.mjs") else { throw CodexBridgeError.notInstalled }
-      try await installation.registerNotebookTools(entry: entry, socket: NotebookIPC.defaultSocketURL)
     }
 
     private func startCodexSidecar() async {

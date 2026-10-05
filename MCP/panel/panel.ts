@@ -1,8 +1,9 @@
-import { NotebookSession } from "./session.js";
+import { NotebookSession, PanelError } from "./session.js";
 import { Surface, editable } from "./surface.js";
 import { admitPanelCamera, panelCoordinateScale, panelProjection, transformPanelCamera } from "./projection.js";
 import { SwiftSurface, type SurfaceCamera } from "./swift-surface.js";
 import { InkInput } from "./ink-input.js";
+import { WorkspacePicker } from "./workspaces.js";
 import { capturedSource, type Camera, type Frame, type PanelElement, type PanelMutation, type PanelOperation, type PanelCard, type PanelSelection, type Point, type PanelTarget, type PanelView } from "./model.js";
 
 const el=<T extends HTMLElement>(id:string)=>document.getElementById(id) as T;
@@ -38,6 +39,9 @@ session.suspended=true;
 const surface=new Surface(paper,material,selection);
 const lifetime=new AbortController();
 const events={signal:lifetime.signal};
+const workspaces=new WorkspacePicker(session,lifetime.signal);
+session.onRuntime=status=>workspaces.start(status);
+el("workspaces").addEventListener("click",()=>{void workspaces.open();},events);
 // Native projections may change their local origin. Keep one world camera so
 // accepting pixels never changes the exact request center through a round trip.
 let worldCamera:NonNullable<PanelView["camera"]>={center:{tileX:0,tileY:0,localX:0,localY:0},scale:1};
@@ -73,6 +77,7 @@ function neighbor(direction:number):PanelTarget|undefined{
 function buttons(){
   const drawing=ink.pointer!==undefined,waiting=!session.mutationReady||drawing;
   el<HTMLButtonElement>("delete").disabled=!active()||!canEdit(active()!)||waiting;
+  el<HTMLButtonElement>("workspaces").disabled=session.busy||drawing||!!draft||!!gesture;
   el<HTMLButtonElement>("undo").disabled=!session.snapshot?.history.undoActionID||waiting;
   editor.readOnly=waiting;
   document.querySelectorAll<HTMLButtonElement>("[data-tool]").forEach(button=>button.disabled=button.dataset.tool==="hand"?!session.hasAppearance||!!draft||!!gesture||drawing:waiting||!!gesture||drawing||(button.dataset.tool==="pen"&&!ink.ready));
@@ -129,8 +134,10 @@ session.onClose=()=>{
 };
 let first=true;
 let priorTarget:string|undefined;
+let priorWorkspace:string|undefined;
 session.onSnapshot=snapshot=>{
-  const address=`${snapshot.target.kind}:${snapshot.target.id}`;
+  if(priorWorkspace!==snapshot.workspaceID){path.length=0;priorWorkspace=snapshot.workspaceID;}
+  const address=`${snapshot.workspaceID}:${snapshot.target.kind}:${snapshot.target.id}`;
   if(priorTarget!==address){cancelGesture(false);first=true;selected=null;priorTarget=address;}
   surface.render(snapshot);
   ink.presented();
@@ -208,12 +215,12 @@ async function finishEditor(cancel=false):Promise<boolean>{
     draft=null;editor.hidden=true;session.suspended=false;
     await session.refresh();if(closed)return false;
     choose({kind:"element",id:element.source.id});workspace.focus();return true;
-  }catch{
+  }catch(error){
     if(closed)return false;
     session.suspended=false;await session.refresh();
     if(closed)return false;
     const current=session.snapshot?.elements.find(e=>e.source.id===element.source.id);
-    if(current&&!captured.isNew){draft={element:current,isNew:false};session.onError("Элемент изменился. Ваш текст остался в редакторе; проверьте его и сохраните ещё раз.",null);}
+    if(error instanceof PanelError&&error.code==="revision_conflict"&&current&&!captured.isNew){draft={element:current,isNew:false};session.onError("Элемент изменился. Ваш текст остался в редакторе; проверьте его и сохраните ещё раз.",null);}
     editor.focus();return false;
   }
 }

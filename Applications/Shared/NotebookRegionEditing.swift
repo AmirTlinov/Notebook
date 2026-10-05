@@ -70,17 +70,7 @@ extension NotebookRegionMaterialization {
 
   func transformed(by change:CGAffineTransform,address:NotebookToolAddress) throws -> Self {
     let objects=try placedWorking(by:change,address:address)
-    let ids=Set(selected.map(\.elementID))
-    let poses=Dictionary(uniqueKeysWithValues:objects.filter { ids.contains($0.id) }.map { ($0.id,$0) })
-    let changed=try edits.map { edit -> NotebookElementEdit in
-      guard let object=poses[edit.reference.elementID] else { return edit }
-      var values=edit.values
-      values["frame"]=try .encode(object.frame)
-      values["basis"]=try object.basis.map(JSONValue.encode)
-      // Only lift constructs the command; movement never serializes it.
-      return .init(reference:edit.reference,kind:edit.kind,values:values)
-    }
-    return .init(edits:changed,working:objects,selected:selected,sources:sources,outside:outside,dependencies:dependencies)
+    return .init(edits:edits,working:objects,selected:selected,sources:sources,outside:outside,dependencies:dependencies)
   }
 
   func placedWorking(by change:CGAffineTransform,address:NotebookToolAddress) throws -> [NotebookWorkingGraphic] {
@@ -108,14 +98,20 @@ extension NotebookRegionMaterialization {
         frame:.init(x:object.frame.x+offset.x,y:object.frame.y+offset.y,width:object.frame.width,height:object.frame.height),
         worldOrigin:object.worldOrigin,graphic:graphic,basis:object.basis)
     }
-    return .init(edits:try objects.map { .init(reference:address.reference($0.id),kind:.insertElement,values:try $0.authoredValues()) },
+    return .init(edits:objects.map { .create(address.reference($0.id),convertsInk:false) },
       working:objects,selected:selected,sources:sources,dependencies:dependencies)
   }
 
-  func deleting() throws -> Self {
+  func deleting() -> Self {
     let ids=Set(selected.map(\.elementID))
     var objects=working.filter { !ids.contains($0.id) }
-    var operations=edits.filter { !ids.contains($0.reference.elementID) }
+    var operations=edits.compactMap { edit -> Edit? in
+      guard ids.contains(edit.reference.elementID) else { return edit }
+      // A continued cut now names an accepted element. Delete addresses that
+      // element, while an uncreated fragment simply leaves the creation plan.
+      if case .placement(let reference)=edit { return .remove(reference) }
+      return nil
+    }
     if let conversion=edits.first(where:{ $0.kind == .convertInkToElement }),
       let claimant=working.first(where:{ $0.id == conversion.reference.elementID }) {
       // The surviving outside becomes the sole claimant of the raw ink. If
@@ -136,9 +132,39 @@ extension NotebookRegionMaterialization {
       }
       objects.removeAll { $0.id == object.id };objects.append(object)
       operations.removeAll { $0.reference == ref }
-      operations.append(.init(reference:ref,kind:.convertInkToElement,values:try object.authoredValues()))
+      operations.append(.create(ref,convertsInk:true))
     }
     return .init(edits:operations,working:objects,selected:[],sources:sources,outside:outside,dependencies:dependencies)
+  }
+
+  /// The existing command FIFO owns this conversion after acceptance. The
+  /// drawing/selection path carries these same immutable values without JSON.
+  func encodedEdits() throws -> [NotebookElementEdit] {
+    let objects=Dictionary(uniqueKeysWithValues:working.map { ($0.id,$0) })
+    return try edits.map { edit in
+      try Task.checkCancellation()
+      let values:[String:JSONValue]
+      switch edit {
+      case .create:
+        guard let object=objects[edit.reference.elementID] else { throw staleRegion() }
+        values=try object.authoredValues()
+      case .remainder(_,let mask):
+        values=["graphic":.object(["mask":try .encode(mask)])]
+      case .placement:
+        guard let object=objects[edit.reference.elementID] else { throw staleRegion() }
+        values=["frame":try .encode(object.frame),"basis":try object.basis.map(JSONValue.encode) ?? .null]
+      case .remove: values=[:]
+      }
+      return .init(reference:edit.reference,kind:edit.kind,values:values)
+    }
+  }
+
+  func commandSources(at address:NotebookToolAddress) -> [EditableElementReference:NotebookNativeElementSource] {
+    var result=sources
+    for edit in edits where edit.kind == .insertElement || edit.kind == .convertInkToElement {
+      result[edit.reference] = .init(target:address.target,id:edit.reference.elementID)
+    }
+    return result
   }
 
 }
@@ -189,56 +215,125 @@ extension NotebookAppModel {
     }
   }
 
+  private enum RegionChange: Sendable {
+    case prepared(NotebookRegionMaterialization)
+    case placement(CGRect)
+    case deletion
+
+    func applying(to region:NotebookRegionSelection) throws -> NotebookRegionMaterialization {
+      switch self {
+      case .prepared(let material): return material
+      case .placement(let frame):
+        guard let material=region.materialization else { throw staleRegion() }
+        return try material.transformed(from:region.frame,to:frame,address:region.address)
+      case .deletion:
+        guard let material=region.materialization else { throw staleRegion() }
+        return material.deleting()
+      }
+    }
+  }
+
   @discardableResult
   func commitRegion(_ region:NotebookRegionSelection,prepared:NotebookRegionMaterialization,summary:String) -> Bool {
-    guard let plan=prepareRegionCommand(region,prepared:prepared,summary:summary) else { return false }
-    enqueueElementCommand(target:plan.target,ready:plan)
-    selectElements(prepared.selected);return true
+    acceptRegionCommand(region,change:.prepared(prepared),summary:summary)
   }
 
-  private func prepareRegionCommand(_ region:NotebookRegionSelection,prepared:NotebookRegionMaterialization,
-    summary:String,alreadyAccepted:Bool = false)->NotebookElementCommandPlan? {
-    // A finished contact keeps its captured preconditions in the FIFO. New
-    // live input may advance the UI meanwhile, never its frozen storage basis.
-    guard alreadyAccepted || regionIsCurrent(region) else { showCue(staleRegion().localizedDescription);return nil }
-    guard let plan=prepareElementOperations(prepared.edits,summary:summary,readSources:Array(prepared.sources.keys),
-      insertionTarget:region.address.target,expectedInkRevision:region.expectedInkRevision,
-      frozenSources:prepared.sources,frozenDependencies:prepared.dependencies,
-      preparedGraphics:Dictionary(uniqueKeysWithValues:prepared.outside.map { (region.address.reference($0.key),$0.value) })) else { return nil }
-    acceptWorkingGraphics(prepared.working)
-    return plan
+  @discardableResult
+  func placeRegion(_ region:NotebookRegionSelection,in frame:CGRect,summary:String)->Bool {
+    acceptRegionCommand(region,change:.placement(frame),summary:summary)
   }
 
-  /// The finger ended, not the choice. The existing causal queue takes over
-  /// even if preparation, another selection and persistence finish later.
-  func acceptPreparingRegion(_ contact:NotebookElementManipulation)->Bool {
-    guard let region=contact.region,let preparation=region.preparation else { return false }
-    preparation.claimed=true
-    cancelElementManipulation(contact.id)
-    let resolved=Task { () throws -> (NotebookRegionSelection,NotebookRegionMaterialization) in
-      guard let source=try await preparation.task.value,let material=source.materialization else {
-        throw CollaborationError("empty_selection","В обведённой области нет материала для переноса.")
+  func deleteRegion(_ region:NotebookRegionSelection) {
+    _ = acceptRegionCommand(region,change:.deletion,summary:"Удалить область лассо")
+  }
+
+  /// Both ready and still-preparing regions reserve the same causal writer at
+  /// acceptance. The typed material becomes visible before its JSON is built.
+  private func acceptRegionCommand(_ region:NotebookRegionSelection,change:RegionChange,summary:String)->Bool {
+    let ready:NotebookRegionMaterialization?
+    do {
+      if region.materialization != nil {
+        guard regionIsCurrent(region) else { showCue(staleRegion().localizedDescription);return false }
+        ready=try change.applying(to:region)
+      } else {
+        guard region.preparation != nil else { return false }
+        ready=nil
+      }
+    } catch { showCue(error.localizedDescription);return false }
+    region.preparation?.claimed=true
+    let future=region.preparation?.task,batch=NotebookElementCommandBatch()
+    let resolved=Task.detached(priority:.userInitiated) { () throws -> (NotebookRegionSelection,NotebookRegionMaterialization) in
+      if let ready { return (region,ready) }
+      guard let source=try await future?.value,
+        source.id == region.id,source.address == region.address,source.polygon == region.polygon,
+        source.frame == region.frame,source.materialization != nil else {
+        throw CollaborationError("empty_selection","В обведённой области нет материала для изменения.")
       }
       try Task.checkCancellation()
-      return (source,try material.transformed(from:source.frame,to:contact.frame,address:source.address))
+      return (source,try change.applying(to:source))
     }
-    let plan=Task { [weak self] () throws -> NotebookElementCommandPlan in
+    let admitted=Task { [weak self] () throws -> (NotebookRegionSelection,NotebookRegionMaterialization) in
       let (source,material)=try await resolved.value
       try Task.checkCancellation()
-      guard let self,let plan=prepareRegionCommand(source,prepared:material,
-        summary:contact.kind == .move ? "Переместить область лассо" : "Изменить размер области лассо",alreadyAccepted:true) else { throw staleRegion() }
+      guard let self else { throw CancellationError() }
+      if ready == nil { admitRegionMaterial(material,batch:batch) }
+      return (source,material)
+    }
+    let plan=Task { [weak self] () throws -> NotebookElementCommandPlan in
+      let (source,material)=try await admitted.value
+      let encoding=Task.detached(priority:.userInitiated) { try material.encodedEdits() }
+      let edits=try await withTaskCancellationHandler { try await encoding.value } onCancel:{ encoding.cancel() }
+      try Task.checkCancellation()
+      guard let self,let plan=prepareElementOperations(edits,summary:summary,
+        readSources:Array(material.sources.keys),insertionTarget:source.address.target,
+        expectedInkRevision:source.expectedInkRevision,previews:false,
+        frozenSources:material.commandSources(at:source.address),frozenDependencies:material.dependencies) else { throw staleRegion() }
       return plan
     }
-    let batch=enqueueElementCommand(target:region.address.target,preparing:plan)
+    enqueueElementCommand(target:region.address.target,preparing:plan,batch:batch)
+    if let ready { admitRegionMaterial(ready,batch:batch) }
     let admission=Task { [weak self] in
-      _ = try? await batch.prepared()
-      if self?.pendingMaterialAdmissions[region.address.surface]?.id == batch.id { self?.pendingMaterialAdmissions[region.address.surface]=nil }
+      _ = try? await admitted.value
+      if self?.pendingMaterialAdmissions[region.address.surface]?.id == batch.id {
+        self?.pendingMaterialAdmissions[region.address.surface]=nil
+      }
     }
     pendingMaterialAdmissions[region.address.surface]=(batch.id,admission)
+    if case .deletion=change { clearSelection() }
+    else if let ready { selectElements(ready.selected) }
+    else if case .placement(let frame)=change { continueRegion(region,in:frame,after:admitted) }
+    return true
+  }
 
-    // Keep an immediate movable contour. A second lift can chain another
-    // placement while the first is preparing; it does not split the source twice.
-    let f=region.frame,end=contact.frame
+  /// The accepted typed values own immediate scene projection. Encoding a
+  /// large measured source cannot delay its pose or recapture a newer edit.
+  private func admitRegionMaterial(_ material:NotebookRegionMaterialization,
+    batch:NotebookElementCommandBatch) {
+    let objects=Dictionary(uniqueKeysWithValues:material.working.map { ($0.id,$0) })
+    for edit in material.edits {
+      registerElementCommand(edit.reference,batch:batch)
+      guard var pose=material.sources[edit.reference]?.placementSource else { continue }
+      var graphic=material.sources[edit.reference]?.page?.graphic ?? material.sources[edit.reference]?.spatial?.graphic
+      var removed=false
+      switch edit {
+      case .remainder(_,let mask): graphic?.mask=mask
+      case .placement:
+        guard let object=objects[edit.reference.elementID] else { continue }
+        pose.frame=object.frame;pose.basis=object.basis;graphic=object.graphic
+      case .remove: removed=true;graphic?.visible=false
+      case .create: continue
+      }
+      elementCommandDrafts[edit.reference] = .init(source:pose,graphic:graphic,removed:removed)
+    }
+    acceptWorkingGraphics(material.working)
+    didChangeElementCommandProjection()
+  }
+
+  /// A second lift or Delete may address the accepted fragment before either
+  /// material preparation or SQLite finishes, without splitting its source again.
+  private func continueRegion(_ region:NotebookRegionSelection,in end:CGRect,
+    after admitted:Task<(NotebookRegionSelection,NotebookRegionMaterialization),Error>) {
+    let f=region.frame
     let change=CGAffineTransform(translationX:-f.x,y:-f.y)
       .concatenating(.init(scaleX:end.width/f.width,y:end.height/f.height))
       .concatenating(.init(translationX:end.minX,y:end.minY))
@@ -251,18 +346,16 @@ extension NotebookAppModel {
     next.editingExisting=true
     let continuation=next
     next.preparation=NotebookRegionPreparation(Task { [weak self] in
-      _ = try await batch.prepared()
-      let (_,material)=try await resolved.value
+      let (_,material)=try await admitted.value
       guard let self else { throw CancellationError() }
       let ids=Set(material.selected.map(\.elementID)),working=material.working.filter { ids.contains($0.id) }
       var sources:[EditableElementReference:NotebookNativeElementSource]=[:]
       var dependencies:[EditableElementReference:NotebookElementCommand]=[:]
-      let edits=try working.map { object -> NotebookElementEdit in
+      let edits=try working.map { object -> NotebookRegionMaterialization.Edit in
         let ref=region.address.reference(object.id)
         guard let source=acceptedElementSource(ref) else { throw staleRegion() }
         sources[ref]=source;dependencies[ref]=elementCommandSources[ref]
-        return .init(reference:ref,kind:.updateElement,
-          values:["frame":try .encode(object.frame),"basis":try object.basis.map(JSONValue.encode) ?? .null])
+        return .placement(ref)
       }
       var ready=continuation
       ready.materialization = .init(edits:edits,working:working,selected:material.selected,sources:sources,dependencies:dependencies)
@@ -279,7 +372,6 @@ extension NotebookAppModel {
         // The command reports its own failure exactly once.
       }
     }
-    return true
   }
 
   func transformRegion(_ region:NotebookRegionSelection,radians:Double,scale:Double) {

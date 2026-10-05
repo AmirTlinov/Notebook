@@ -9,13 +9,8 @@ mkdir -p "$EVIDENCE"
 EVIDENCE=$(unset CDPATH; cd -- "$EVIDENCE" && pwd)
 SIMULATOR_ID=""
 SHUTDOWN_SIMULATOR=false
-MAC_SMOKE_PID=""
 
 cleanup() {
-  if [[ -n "$MAC_SMOKE_PID" ]]; then
-    kill "$MAC_SMOKE_PID" >/dev/null 2>&1 || true
-    wait "$MAC_SMOKE_PID" >/dev/null 2>&1 || true
-  fi
   if [[ "$SHUTDOWN_SIMULATOR" == true && -n "$SIMULATOR_ID" ]]; then
     xcrun simctl shutdown "$SIMULATOR_ID" >/dev/null 2>&1 || true
   fi
@@ -35,7 +30,6 @@ python3 "$ROOT/Applications/notebook_release.py" verification-start \
   --source-root "$ROOT" --evidence-dir "$EVIDENCE"
 python3 -B "$ROOT/Tests/NotebookVerification/run.py" 2>&1 | tee "$EVIDENCE/verification-tools.log"
 python3 -B "$ROOT/Tests/NotebookDocumentAcceptance/test_system_trace.py" 2>&1 | tee "$EVIDENCE/trace-harness.log"
-python3 "$ROOT/Tests/PreviewInstaller/run.py" 2>&1 | tee "$EVIDENCE/preview-installer.log"
 python3 "$ROOT/Tests/NotebookRelease/run.py" 2>&1 | tee "$EVIDENCE/release-tools.log"
 # Swift worker tests execute the pinned CLI against this checkout's SDK. The
 # same prepared stage is reused below by the signed Mac service build.
@@ -51,18 +45,15 @@ swift test 2>&1 | tee "$EVIDENCE/core.log"
 
 ICON_PROOF="$DERIVED/AppIcon.appiconset"
 "$ROOT/Applications/render-app-icon.sh" "$ICON_PROOF"
-for asset in AppIcon.appiconset NotebookStatusIcon.imageset; do
-  for icon in "$ROOT/Applications/Assets.xcassets/$asset/"*.png; do
-    if ! cmp -s "$icon" "$DERIVED/$asset/$(basename "$icon")"; then
-      printf '%s\n' \
-        'Иконки Mac, iPad и строки меню должны быть свежим результатом одного AppIcon.svg.' >&2
-      exit 1
-    fi
-  done
+for icon in "$ROOT/Applications/Assets.xcassets/AppIcon.appiconset/"*.png; do
+  if ! cmp -s "$icon" "$ICON_PROOF/$(basename "$icon")"; then
+    printf '%s\n' 'Иконки должны быть свежим результатом AppIcon.svg.' >&2
+    exit 1
+  fi
 done
 
-# Canvas continuity is exercised by native/UI tests; the Mac workspace launch
-# below checks actual working windows. Source spelling cannot prove either.
+# Canvas continuity and headless runtime admission use the native/UI suites.
+# The installed Codex panel requires its own physical host acceptance.
 
 ERASER_APP="$DERIVED/NotebookEraserProof.app"
 mkdir -p "$ERASER_APP/Contents/MacOS"
@@ -129,50 +120,6 @@ for platform in macosx iphoneos; do
     2>&1 | tee "$EVIDENCE/typesetter-resources-$platform.log"
 done
 xcodegen generate --spec project.yml
-xcodebuild \
-  -quiet \
-  -project Notebook.xcodeproj \
-  -scheme NotebookMac \
-  -configuration Debug \
-  -destination 'generic/platform=macOS' \
-  -derivedDataPath "$DERIVED/mac" \
-  CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= \
-  "NOTEBOOK_TYPESETTER_RUNTIME=$NOTEBOOK_TYPESETTER_RUNTIME" "NOTEBOOK_TYPESCRIPT_RUNTIME=$NOTEBOOK_TYPESCRIPT_RUNTIME" \
-  build
-# Native Codex wire and delivery checks run in swift test; no second model executor.
-MAC_SMOKE_APP="$DERIVED/mac/Build/Products/Debug/Notebook.app"
-MAC_SMOKE_LOG="$EVIDENCE/mac-helper.log"
-MAC_SMOKE_PROOF="$EVIDENCE/mac-helper-launch.json"
-NOTEBOOK_MAC_LAUNCH_PROOF="$MAC_SMOKE_PROOF" \
-"$MAC_SMOKE_APP/Contents/MacOS/Notebook" \
-  --notebook-mac-document-launch-fixture \
-  >"$MAC_SMOKE_LOG" 2>&1 &
-MAC_SMOKE_PID=$!
-for _ in {1..160}; do
-  [[ -f "$MAC_SMOKE_PROOF" ]] && break
-  kill -0 "$MAC_SMOKE_PID" >/dev/null 2>&1 || break
-  sleep 0.25
-done
-if ! kill -0 "$MAC_SMOKE_PID" >/dev/null 2>&1; then
-  cat "$MAC_SMOKE_LOG" >&2
-  printf '%s\n' \
-    'Фоновый Mac должен пережить запуск с многостраничным документом без рабочего окна.' >&2
-  exit 1
-fi
-python3 - "$MAC_SMOKE_PROOF" <<'PY'
-import hashlib, json, pathlib, sys
-p = pathlib.Path(sys.argv[1])
-assert p.exists(), "Mac не завершил проверку фонового документа"
-proof = json.loads(p.read_text())
-assert proof.get("status") == "ready", proof
-assert proof.get("workingWindows", 0) >= 1 and proof.get("surface") == "document", proof
-assert proof.get("pngBytes", 0) > 0 and len(proof.get("pngSHA256", "")) == 64, proof
-png = p.with_suffix(".png").read_bytes()
-assert len(png) == proof["pngBytes"] and hashlib.sha256(png).hexdigest() == proof["pngSHA256"], proof
-PY
-kill "$MAC_SMOKE_PID" >/dev/null 2>&1 || true
-wait "$MAC_SMOKE_PID" >/dev/null 2>&1 || true
-MAC_SMOKE_PID=""
 python3 -B - "$ROOT" > "$EVIDENCE/mac-native-signing-settings.txt" <<'PY'
 import pathlib, sys
 sys.path.insert(0, str(pathlib.Path(sys.argv[1]) / "Applications"))
@@ -184,12 +131,12 @@ while IFS= read -r setting; do
   MAC_NATIVE_SIGNING+=("$setting")
 done < "$EVIDENCE/mac-native-signing-settings.txt"
 xcodebuild \
-  -quiet -project Notebook.xcodeproj -scheme NotebookMac -configuration Debug \
+  -quiet -project Notebook.xcodeproj -scheme NotebookRuntime -configuration Debug \
   -destination 'platform=macOS' -derivedDataPath "$DERIVED/mac-tests" \
   "${MAC_NATIVE_SIGNING[@]}" \
   "NOTEBOOK_TYPESETTER_RUNTIME=$NOTEBOOK_TYPESETTER_RUNTIME" "NOTEBOOK_TYPESCRIPT_RUNTIME=$NOTEBOOK_TYPESCRIPT_RUNTIME" \
   build-for-testing -only-testing:NotebookMacTests 2>&1 | tee "$EVIDENCE/mac-build.log"
-python3 -B - "$ROOT" "$DERIVED/mac-tests/Build/Products/Debug/Notebook.app" "$EVIDENCE" <<'PY'
+python3 -B - "$ROOT" "$DERIVED/mac-tests/Build/Products/Debug/NotebookRuntime.app" "$EVIDENCE" <<'PY'
 import pathlib, sys
 source, app, evidence = map(pathlib.Path, sys.argv[1:])
 sys.path.insert(0, str(source / "Applications"))
@@ -204,7 +151,7 @@ PY
 xcodebuild \
   -quiet \
   -project Notebook.xcodeproj \
-  -scheme NotebookMac \
+  -scheme NotebookRuntime \
   -configuration Debug \
   -collect-test-diagnostics never \
   -parallel-testing-enabled NO \

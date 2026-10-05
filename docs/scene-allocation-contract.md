@@ -14,6 +14,15 @@ orientation, not a maximum-side square for every possible rotation. Rotation
 privately prepares new dimensions and installs atomically; old bounds/pixels remain
 until then. All simultaneous CPU/GPU allocations are accounted.
 
+Cover ink keeps full paper coordinates for input and geometry. Its native tile
+window follows the visible paper region at camera projection × display scale,
+with the same finite overscan as board ink. Camera and native cover movement wake
+the same scene producer to refine density and atomically refill coverage. Pencil
+keeps the shown pose while preparation anticipates the native destination.
+An obsolete crop cannot replace pixels covering a newer native pose. Offscreen
+retained covers keep their source without drawable backing; a small card never reserves full-paper
+Retina pixels, and deep zoom never allocates the whole enlarged sheet.
+
 The planner bounds the final workset. Retained outgoing identities are not mistaken
 for a second final-owner quota: their real leases remain charged until handoff.
 Roles change only for owners of the installing cohort. Existing mounted updates
@@ -233,8 +242,8 @@ pixels. `storeAndRetain` returns the new capture, not an older higher-resolution
 ## Allocation failure and density
 
 All native/raster work shares `SceneRenderResources`, including protected active
-input capacity. Native cover backing depends on physical page size, not overview
-tile count. Native-allocation failure therefore removes an optional native owner
+input capacity. Native backing follows each physical owner's projected window,
+independently of overview tile count. Native-allocation failure removes an optional native owner
 and must strictly reduce their count on the next attempt. Root, pinned and protected
 portal owners remain; if none can be removed, fail explicitly.
 

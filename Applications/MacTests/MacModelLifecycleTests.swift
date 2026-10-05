@@ -71,7 +71,9 @@ final class MacModelLifecycleTests: XCTestCase {
     let childPresence = SessionPresence(boardID: childID, mode: .board,
       camera: .init(center: movedCenter, scale: 0.51), viewport: .init(x: 834, y: 1_194))
     model.updatePresence(childPresence, settled: true)
-    XCTAssertTrue(model.leaveBoard())
+    let returning = try XCTUnwrap(model.presence)
+    XCTAssertTrue(model.rememberBoardReturn(returning, portal: BoardPortalProjection.portalCamera(
+      from: returning.camera, viewport: returning.viewport)))
     let humanSelection = model.presence?.selectedItemID
     let humanSaved = await model.finishPendingPersistence()
     XCTAssertTrue(humanSaved)
@@ -92,7 +94,7 @@ final class MacModelLifecycleTests: XCTestCase {
   }
 
   @MainActor
-  func testPortalExitPreservesAnIndependentIPCBoardEdit() async throws {
+  func testPortalReturnPreservesAnIndependentIPCBoardEdit() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let fixture = MacCommandFixture(root: root)
     retainNotebookUntilTeardown(fixture.model, removing: root)
@@ -108,7 +110,9 @@ final class MacModelLifecycleTests: XCTestCase {
     try await fixture.move(notebookID, boardID: boardID, to: movedCenter)
     model.updatePresence(.init(boardID: childID, mode: .board,
       camera: .init(center: .init(x: 90, y: 120), scale: 0.7), viewport: .init(x: 834, y: 1_194)), settled: true)
-    XCTAssertTrue(model.leaveBoard())
+    let returning = try XCTUnwrap(model.presence)
+    XCTAssertTrue(model.rememberBoardReturn(returning, portal: BoardPortalProjection.portalCamera(
+      from: returning.camera, viewport: returning.viewport)))
     let exitSaved = await model.finishPendingPersistence()
     XCTAssertTrue(exitSaved, model.persistenceFailure ?? "")
     XCTAssertEqual(try store.readBoardItem(notebookID)?.board.focusedCenter(of: notebookID), movedCenter)

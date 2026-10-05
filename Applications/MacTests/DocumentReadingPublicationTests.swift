@@ -1,15 +1,14 @@
-#if DEBUG
 import NotebookCore
 import Observation
 import XCTest
 @testable import Notebook
 
 @MainActor
-final class MacDocumentLaunchFixtureTests: XCTestCase {
+final class DocumentReadingPublicationTests: XCTestCase {
   func testReplayedLandingDuringScrollDoesNotPublishAnIntermediateReadingPosition() async throws {
-    let model = MacDocumentLaunchFixture.makeModel()
+    let fixture = try makeFixture(), model = fixture.model
     retainNotebookUntilTeardown(model, removing: model.store.root)
-    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    try await fixture.start()
     let document = try XCTUnwrap(model.activeDocument), block = try XCTUnwrap(document.files.first)
     let source = DocumentPageNavigation.sourceRevision(document), controller = UUID()
     let paper = DocumentPaperLayout.uncompiled, geometry = paper.geometry
@@ -38,9 +37,9 @@ final class MacDocumentLaunchFixtureTests: XCTestCase {
   }
 
   func testReplayedDocumentLandingDoesNotInvalidateIdleNavigation() async throws {
-    let model = MacDocumentLaunchFixture.makeModel()
+    let fixture = try makeFixture(), model = fixture.model
     retainNotebookUntilTeardown(model, removing: model.store.root)
-    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    try await fixture.start()
     let document = try XCTUnwrap(model.activeDocument)
     let source = DocumentPageNavigation.sourceRevision(document), controller = UUID()
     model.bindDocumentPageController(controller, documentID: document.id, source: source)
@@ -61,26 +60,22 @@ final class MacDocumentLaunchFixtureTests: XCTestCase {
     model.unbindDocumentPageController(controller)
   }
 
-  func testDocumentFixtureIncludesTheCanonicalEmptyInkOwnerBeforeStartingThePublisher() async throws {
-    let model = MacDocumentLaunchFixture.makeModel()
-    retainNotebookUntilTeardown(model, removing: model.store.root)
-    let header = try model.store.workspaceHeader()
-    let ink = try model.store.loadSpatialInk()
-    XCTAssertNotNil(header.boardRevision)
-    XCTAssertEqual(header.spatialInkStamp, ink.stamp,
-      "An empty spatial ink owner still supplies the current-view receipt's causal revision")
-
-    let presence = try model.store.loadPresence()
-    let documentID = try XCTUnwrap(presence.focusedItemID)
-    XCTAssertEqual(presence.mode, .document)
-    XCTAssertEqual(try model.store.loadDocument(documentID).id, documentID)
-    XCTAssertEqual(try model.store.loadDocumentState(documentID).id, documentID)
-    await model.start(pageSize: NotebookAppModel.defaultPageSize)
-    let saved = await model.finishPendingPersistence()
-    XCTAssertTrue(saved, model.persistenceFailure ?? "The helper fixture did not finish startup")
-    XCTAssertEqual(model.loadState, .ready)
-    XCTAssertEqual(model.workspaceHeader?.spatialInkStamp, ink.stamp)
-    XCTAssertEqual(model.activeDocument?.id, documentID)
+  private func makeFixture() throws -> MacCommandFixture {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("document-reading-" + UUID().uuidString)
+    let fixture = MacCommandFixture(root: root), actor = fixture.model.actorID
+    _ = try fixture.store.initializeWorkspace(actor: actor, pageSize: NotebookAppModel.defaultPageSize)
+    var index = try fixture.store.loadIndex(), hierarchy = try fixture.store.loadBoard(items: index.items)
+    let item = try XCTUnwrap(index.createDocument(title: "Reading publication", actor: actor))
+    XCTAssertTrue(hierarchy.addItem(item.id, to: index.rootBoardID, near: .zero, actor: actor))
+    let center = try XCTUnwrap(hierarchy.board(index.rootBoardID)?.focusedCenter(of: item.id))
+    let document = DocumentDocument(id: item.id, actor: actor,
+      files: [.init(id: "main", path: "main.tex", source: DocumentTemplate.article.files[0].source)])
+    try fixture.store.saveDocumentWorkspaceBundle(index: index, document: document,
+      state: .init(id: item.id, actor: actor), board: hierarchy)
+    let viewport = SpatialPoint(x: 834, y: 1194)
+    try fixture.store.savePresence(.init(boardID: index.rootBoardID, mode: .document,
+      camera: .init(center: center, scale: WorkspaceItemGeometry.uncompiledDocument.fitScale(viewport: viewport)),
+      viewport: viewport, focusedItemID: item.id, openProgress: 1, documentPageIndex: 0))
+    return fixture
   }
 }
-#endif

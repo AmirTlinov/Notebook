@@ -5,6 +5,257 @@ import XCTest
 
 @MainActor
 final class NotebookArchiveLaunchTests: XCTestCase {
+  #if os(macOS)
+    func testRuntimeRetriesRetainedAcceptedWritesWithoutQuitOrWorkspaceSwitch() async throws {
+      enum Failure: Error { case storageUnavailable }
+      let base = URL(fileURLWithPath: "/tmp/nb-runtime-" + UUID().uuidString.lowercased(), isDirectory: true)
+      try FileManager.default.createDirectory(at: base, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+      let root = base.appendingPathComponent("Notebook"), socket = base.appendingPathComponent("bridge.sock")
+      let repaired = base.appendingPathComponent("repaired"), accepted = base.appendingPathComponent("accepted")
+      var writers: [NotebookPersistenceQueue] = []
+      var constructions = 0
+      let launch = NotebookApplicationLaunch(root: root, runtimeSocketURL: socket) { store, _ in
+        constructions += 1
+        let persistence = NotebookPersistenceQueue(store: store); writers.append(persistence)
+        let key = String(UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased().prefix(24))
+        return NotebookAppModel(store: store, startsNearbySync: false,
+          commandSocketURL: base.appendingPathComponent(key + ".sock"), persistenceQueue: persistence)
+      }
+      addTeardownBlock { @MainActor in
+        try Data().write(to: repaired)
+        for writer in writers { writer.retry() }
+        _ = await launch.shutdown()
+        try FileManager.default.removeItem(at: base)
+      }
+      await launch.start()
+      let model = try XCTUnwrap(launch.model), persistence = try XCTUnwrap(writers.first)
+      await model.start(pageSize: NotebookAppModel.defaultPageSize)
+      let firstID = try XCTUnwrap(model.workspaceHeader?.workspaceID)
+      var create = NotebookCommand(command: .runtimeWorkspace)
+      create.runtimeWorkspace = .init(action: .create, id: UUID(), name: "Второе")
+      let second = try await launch.executeRuntimeCommand(create).decode(NotebookRuntimeWorkspaceResponse.self)
+      let selected = try XCTUnwrap(launch.model)
+      XCTAssertEqual(second.status.state, .ready); XCTAssertNil(second.error)
+      XCTAssertNotEqual(second.status.workspaceID, firstID)
+      persistence.enqueue { _ in
+        guard FileManager.default.fileExists(atPath: repaired.path) else { throw Failure.storageUnavailable }
+        try Data("first".utf8).write(to: accepted); return false
+      }
+      persistence.enqueue { _ in
+        try (Data(contentsOf: accepted) + Data(" second".utf8)).write(to: accepted); return false
+      }
+      let saved = await persistence.flush(); XCTAssertFalse(saved)
+      let status = try await launch.executeRuntimeCommand(.init(command: .runtimeStatus)).decode(NotebookRuntimeBootstrapStatus.self)
+      XCTAssertTrue(status.ready); XCTAssertEqual(status.state, .failed)
+      XCTAssertNotNil(status.socketKey); XCTAssertEqual(model.shutdownPhase, .running)
+      try Data().write(to: repaired)
+      var retry = NotebookCommand(command: .runtimeWorkspace); retry.runtimeWorkspace = .init(action: .retry, id: firstID)
+      let recovered = try await Task.detached { [retry] in
+        try NotebookIPCClient(socketURL: socket).send(retry).decode(NotebookRuntimeWorkspaceResponse.self)
+      }.value
+      XCTAssertEqual(recovered.status.state, .ready); XCTAssertNil(recovered.error)
+      XCTAssertEqual(recovered.status.workspaceID, firstID); XCTAssertEqual(recovered.status.socketKey, model.runtimeSocketKey)
+      XCTAssertTrue(launch.model === selected); XCTAssertEqual(constructions, 2)
+      XCTAssertEqual(model.shutdownPhase, .running); XCTAssertEqual(persistence.pendingCount, 0)
+      XCTAssertEqual(try String(contentsOf: accepted, encoding: .utf8), "first second")
+    }
+
+    func testRuntimeRetryDrainsRetainedAcceptedWritesBeforeReplacingWorkspaceOwners() async throws {
+      enum Failure: Error { case storageUnavailable }
+      let base = URL(fileURLWithPath: "/tmp/nb-runtime-" + UUID().uuidString.lowercased(), isDirectory: true)
+      try FileManager.default.createDirectory(at: base, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+      let root = base.appendingPathComponent("Notebook"), socket = base.appendingPathComponent("bridge.sock")
+      let repaired = base.appendingPathComponent("repaired"), accepted = base.appendingPathComponent("accepted")
+      var owners: [(model: NotebookAppModel, writer: NotebookPersistenceQueue)] = []
+      let launch = NotebookApplicationLaunch(root: root, runtimeSocketURL: socket) { store, _ in
+        for previous in owners where previous.model.store.root == store.root {
+          XCTAssertEqual(previous.model.shutdownPhase, .stopped)
+          XCTAssertEqual(previous.writer.pendingCount, 0, "The replacement must wait for its previous writer's accepted tail")
+        }
+        let writer = NotebookPersistenceQueue(store: store)
+        let key = String(UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased().prefix(24))
+        let model = NotebookAppModel(store: store, startsNearbySync: false,
+          commandSocketURL: base.appendingPathComponent(key + ".sock"), persistenceQueue: writer)
+        owners.append((model, writer))
+        return model
+      }
+      addTeardownBlock { @MainActor in
+        try Data().write(to: repaired)
+        for owner in owners { owner.writer.retry() }
+        _ = await launch.shutdown()
+        try FileManager.default.removeItem(at: base)
+      }
+      await launch.start()
+      let first = try XCTUnwrap(launch.model)
+      await first.start(pageSize: NotebookAppModel.defaultPageSize)
+      XCTAssertEqual(first.loadState, .ready)
+      let firstID = try XCTUnwrap(first.workspaceHeader?.workspaceID)
+      func send(_ request: NotebookRuntimeWorkspaceRequest) async throws -> NotebookRuntimeWorkspaceResponse {
+        var command = NotebookCommand(command: .runtimeWorkspace); command.runtimeWorkspace = request
+        return try await Task.detached { [command] in
+          try NotebookIPCClient(socketURL: socket).send(command).decode(NotebookRuntimeWorkspaceResponse.self)
+        }.value
+      }
+      let secondID = UUID()
+      let second = try await send(.init(action: .create, id: secondID, name: "Второе"))
+      XCTAssertEqual(second.status.state, .ready); XCTAssertEqual(owners.count, 2)
+      let firstWriter = try XCTUnwrap(owners.first?.writer)
+      firstWriter.enqueue { _ in
+        guard FileManager.default.fileExists(atPath: repaired.path) else { throw Failure.storageUnavailable }
+        try Data("first".utf8).write(to: accepted)
+        return false
+      }
+      firstWriter.enqueue { _ in
+        try (Data(contentsOf: accepted) + Data(" second".utf8)).write(to: accepted)
+        return false
+      }
+      let refused = await launch.shutdown()
+      XCTAssertFalse(refused); XCTAssertEqual(first.shutdownPhase, .closing)
+      XCTAssertEqual(firstWriter.pendingCount, 2); XCTAssertEqual(owners.count, 2)
+      let recoverable = try await send(.init(action: .list))
+      XCTAssertTrue(recoverable.status.ready); XCTAssertEqual(recoverable.status.state, .failed)
+      XCTAssertEqual(firstWriter.pendingCount, 2, "Reading the recovery state cannot open or retry a writer")
+      try Data().write(to: repaired)
+      let recovered = try await send(.init(action: .retry, id: firstID))
+      XCTAssertTrue(recovered.status.ready); XCTAssertEqual(recovered.status.state, .ready)
+      XCTAssertNil(recovered.error); XCTAssertEqual(recovered.status.workspaceID, firstID)
+      XCTAssertEqual(owners.count, 4); XCTAssertFalse(launch.model === owners[0].model)
+      XCTAssertEqual(first.shutdownPhase, .stopped); XCTAssertEqual(owners[1].model.shutdownPhase, .stopped)
+      XCTAssertEqual(firstWriter.pendingCount, 0)
+      XCTAssertEqual(try String(contentsOf: accepted, encoding: .utf8), "first second")
+    }
+
+    func testRuntimeCommandsCreateAndSelectThroughTheOwnerWithoutADesktopWindow() async {
+      do { try await assertRuntimeWorkspaceCommands() }
+      catch { XCTFail("Runtime workspace commands failed: \(error)") }
+    }
+
+    private func assertRuntimeWorkspaceCommands() async throws {
+      let base = URL(fileURLWithPath: "/tmp/nb-runtime-" + UUID().uuidString.lowercased(), isDirectory: true)
+      try FileManager.default.createDirectory(at: base, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+      let root = base.appendingPathComponent("Notebook"), socket = base.appendingPathComponent("bridge.sock")
+      let empty = NotebookWorkspaceLibrary.Catalog(format: 1, originalID: nil, selectedID: nil,
+        entries: [], deleting: [], pendingCloudDeletion: [:])
+      try JSONEncoder().encode(empty).write(to: root.appendingPathExtension("spaces.json"))
+      let launch = NotebookApplicationLaunch(root: root, runtimeSocketURL: socket) { store, _ in
+        let key = String(UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased().prefix(24))
+        return NotebookAppModel(store: store, startsNearbySync: false, commandSocketURL: base.appendingPathComponent(key + ".sock"))
+      }
+      addTeardownBlock { @MainActor in
+        _ = await launch.shutdown()
+        try FileManager.default.removeItem(at: base)
+      }
+      await launch.start()
+      let status = try await Task.detached {
+        try NotebookIPCClient(socketURL: socket).send(.init(command: .runtimeStatus)).decode(NotebookRuntimeBootstrapStatus.self)
+      }.value
+      XCTAssertTrue(status.ready); XCTAssertEqual(status.kind, "notebookRuntime")
+      XCTAssertEqual(status.pid, Int(ProcessInfo.processInfo.processIdentifier))
+      XCTAssertEqual(status.protocolVersion, 1); XCTAssertFalse(status.build.isEmpty)
+      XCTAssertEqual(status.state, .workspaceRequired); XCTAssertNil(launch.model)
+      func send(_ request: NotebookRuntimeWorkspaceRequest) async throws -> NotebookRuntimeWorkspaceResponse {
+        var command = NotebookCommand(command: .runtimeWorkspace); command.runtimeWorkspace = request
+        return try await launch.executeRuntimeCommand(command).decode(NotebookRuntimeWorkspaceResponse.self)
+      }
+      let creationID = UUID()
+      let first = try await send(.init(action: .create, id: creationID, name: "Первое"))
+      let firstID = try XCTUnwrap(first.status.workspaceID)
+      XCTAssertEqual(firstID, creationID)
+      XCTAssertEqual(first.status.state, .ready); XCTAssertNil(first.error)
+      XCTAssertEqual(launch.model?.loadState, .ready)
+      let firstSocket = base.appendingPathComponent(try XCTUnwrap(first.status.socketKey) + ".sock")
+      let opened = try await launch.executeRuntimeCommand(.init(command: .runtimeStatus)).decode(NotebookRuntimeBootstrapStatus.self)
+      XCTAssertEqual(opened.workspaceID, firstID); XCTAssertEqual(opened.socketKey, first.status.socketKey)
+      let second = try await send(.init(action: .create, id: UUID(), name: "Второе"))
+      XCTAssertNotEqual(second.status.workspaceID, firstID)
+      let firstPanel = try await Task.detached {
+        var command = NotebookCommand(command: .panelRead)
+        command.panelRead = .init(workspaceID: firstID)
+        return try NotebookIPCClient(socketURL: firstSocket).send(command)
+      }.value
+      XCTAssertEqual(firstPanel["workspaceID"]?.stringValue?.lowercased(), firstID.uuidString.lowercased(),
+        "Opening a second workspace keeps the first panel's addressed owner alive")
+      XCTAssertEqual(firstPanel["socketKey"]?.stringValue, first.status.socketKey)
+      let selected = try await send(.init(action: .select, id: firstID))
+      XCTAssertEqual(selected.status.workspaceID, firstID); XCTAssertNil(selected.error)
+      let renamed = try await send(.init(action: .rename, id: firstID, name: "Записи"))
+      XCTAssertEqual(renamed.workspaces.first(where: { $0.id == firstID })?.name, "Записи")
+      // An uncertain create response is retried with the same UUID. It cannot
+      // create a second workspace or undo a later explicit rename.
+      let repeated = try await send(.init(action: .create, id: creationID, name: "Первое"))
+      XCTAssertEqual(repeated.status.workspaceID, firstID)
+      XCTAssertEqual(repeated.workspaces.count, 2)
+      XCTAssertEqual(repeated.workspaces.first(where: { $0.id == firstID })?.name, "Записи")
+      let missing = try await send(.init(action: .select, id: UUID()))
+      XCTAssertNotNil(missing.error); XCTAssertEqual(missing.status.workspaceID, firstID)
+      XCTAssertEqual(missing.workspaces.count, 2)
+    }
+
+    func testRuntimeStatusRemainsAvailableAfterArchiveFailureAndWorkspaceCommandsStayClosed() async throws {
+      let base = URL(fileURLWithPath: "/tmp/nb-runtime-" + UUID().uuidString.lowercased(), isDirectory: true)
+      try FileManager.default.createDirectory(at: base, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+      let root = base.appendingPathComponent("Notebook"), socket = base.appendingPathComponent("bridge.sock")
+      try Data("damaged activation".utf8).write(to: NotebookArchiveActivation.controlURL(for: root))
+      let launch = NotebookApplicationLaunch(root: root,
+        target: .init(role: .mac, bundleID: "fixture.mac", actorID: UUID()), runtimeSocketURL: socket) { _, _ in
+          XCTFail("Refused archive must not construct a model")
+          throw NotebookStorageError.transactionConflict
+        }
+      addTeardownBlock { @MainActor in
+        _ = await launch.shutdown()
+        try FileManager.default.removeItem(at: base)
+      }
+      await launch.start()
+      let status = try await launch.executeRuntimeCommand(.init(command: .runtimeStatus)).decode(NotebookRuntimeBootstrapStatus.self)
+      XCTAssertTrue(status.ready); XCTAssertEqual(status.state, .failed); XCTAssertNotNil(status.message)
+      var list = NotebookCommand(command: .runtimeWorkspace); list.runtimeWorkspace = .init(action: .list)
+      do { _ = try await launch.executeRuntimeCommand(list); XCTFail("Archive admission must precede catalog access") }
+      catch let error as CollaborationError { XCTAssertEqual(error.code, "owner_unavailable") }
+      var retry = NotebookCommand(command: .runtimeWorkspace); retry.runtimeWorkspace = .init(action: .retry)
+      let retried = try await launch.executeRuntimeCommand(retry).decode(NotebookRuntimeWorkspaceResponse.self)
+      XCTAssertTrue(retried.status.ready); XCTAssertEqual(retried.status.state, .failed)
+      XCTAssertTrue(retried.workspaces.isEmpty)
+      XCTAssertFalse(FileManager.default.fileExists(atPath: root.path))
+      XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathExtension("spaces.json").path))
+    }
+
+    func testRuntimeAdmissionRefusesLegacySocketAndConcurrentLauncherBeforeWorkspaceAccess() async throws {
+      for legacy in [true, false] {
+        let base = URL(fileURLWithPath: "/tmp/nb-launch-" + UUID().uuidString.lowercased(), isDirectory: true)
+        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        defer { try? FileManager.default.removeItem(at: base) }
+        let socket = base.appendingPathComponent("bridge.sock"), root = base.appendingPathComponent("Notebook")
+        let server = NotebookIPCServer(socketURL: socket) { _ in .string("legacy-owner") }
+        defer { server.stop() }
+        let lease: NotebookIPCProcessLease?
+        if legacy { lease = nil } else { lease = try NotebookIPCProcessLease(socketURL: socket) }
+        if legacy { try server.start() }
+        let launch = NotebookApplicationLaunch(root: root, runtimeSocketURL: socket) { _, _ in
+          XCTFail("The losing launcher must not construct a store-owning model")
+          throw NotebookStorageError.transactionConflict
+        }
+        await launch.start()
+        XCTAssertEqual(launch.existingRuntimeSocketURL, socket)
+        XCTAssertNotNil(launch.failure); XCTAssertNil(launch.model)
+        await launch.refreshWorkspaces()
+        let created = await launch.createWorkspace(name: "Must not exist")
+        let renamed = await launch.renameWorkspace(UUID(), name: "Must not exist")
+        await launch.removeWorkspace(UUID(), everywhere: false)
+        XCTAssertFalse(created); XCTAssertFalse(renamed)
+        let entries = try FileManager.default.contentsOfDirectory(atPath: base.path)
+        XCTAssertEqual(Set(entries), legacy ? Set(["bridge.sock", "bridge.sock.owner"]) : Set(["bridge.sock.owner"]),
+          "Refused startup and later catalog actions must leave archive/store/catalog untouched")
+        if legacy {
+          // The temporary lease from the rejected attempt is released. The
+          // old runtime remains protected by its live socket until cutover.
+          let released = try NotebookIPCProcessLease(socketURL: socket)
+          withExtendedLifetime(released) { XCTAssertNotNil(launch.existingRuntimeSocketURL) }
+        }
+        withExtendedLifetime(lease) { XCTAssertNil(launch.model) }
+      }
+    }
+  #endif
+
   func testExplicitPeerRetirementIsCheckedBeforeConstructingTheSelectedModel() async throws {
     let base = FileManager.default.temporaryDirectory.appendingPathComponent("launch-retirement-" + UUID().uuidString)
     let root = base.appendingPathComponent("Notebook"), store = NotebookStore(root: root), peer = UUID()

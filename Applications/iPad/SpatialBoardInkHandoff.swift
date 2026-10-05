@@ -13,6 +13,7 @@ final class SpatialInkSceneLease {
     let frame: InkCanvasView.PreparedFrame?
     let journal: SpatialInkJournal
     var suppressedInkIDs: Set<UUID> = []
+    var coverVisibleRegion: CGRect?
   }
   let registry: SpatialInkSurfaceRegistry
   let rootBoardID: UUID
@@ -25,11 +26,32 @@ final class SpatialInkSceneLease {
     self.registry = registry; self.rootBoardID = rootBoardID; self.owners = owners; self.updates = updates
     self.focusedCoverID = focusedCoverID
   }
-  func install() throws {
+  func install(projecting currentFrame: WorkspaceSceneFrame? = nil) throws {
     guard !registry.sceneInkIsStopped,
-      updates.allSatisfy({ $0.owner.canvas.spatialSourceGeneration == $0.generation
-        && !registry.hasActiveAction(on: $0.owner.surface) && !registry.hasContact(on: $0.owner.surface)
-        && ($0.frame?.isValid ?? true) }) else { throw CancellationError() }
+      updates.allSatisfy({ update in
+        update.owner.canvas.spatialSourceGeneration == update.generation
+          && !registry.hasActiveAction(on: update.owner.surface) && !registry.hasContact(on: update.owner.surface)
+          && (update.frame?.isValid ?? true)
+      }) else { throw CancellationError() }
+    guard updates.allSatisfy({ update in
+        // Native motion can reverse while the private GPU candidate prepares.
+        // Keep the shown crop until a candidate covers the current destination;
+        // the same scene producer already holds the latest pending demand.
+        let projection: SpatialInkCoverProjection?
+        if update.owner.surface.kind == .cover, let id = update.owner.surface.ownerID, let currentFrame {
+          // Coverage is in paper coordinates; display density does not change
+          // this witness. The latest scene request also covers camera reversal.
+          projection = registry.coverProjection(itemID: id, frame: currentFrame, displayScale: 1)
+        } else { projection = registry.movingCoverProjection(on: update.owner.surface) }
+        guard let visible = projection?.visible ?? update.coverVisibleRegion else { return true }
+        if let frame = update.frame { return frame.containsSpatialRegion(visible) }
+        return visible.isEmpty || update.owner.canvas.spatialBackingRegion?.contains(visible) == true
+      }) else {
+      // This candidate is obsolete, not waiting for a retained contact. Clear
+      // its staging IDs now; revoke keeps submitted resources until GPU drain.
+      for update in updates { update.frame?.cancel() }
+      throw CancellationError()
+    }
     try registry.installSceneAllocationPriorities(rootBoardID: rootBoardID, focusedCoverID: focusedCoverID,
       surfaces: Set(owners.keys))
     // A new GPU basis and the native projection of those pixels are one
@@ -46,12 +68,21 @@ final class SpatialInkSceneLease {
   }
 
   func containsProjectionWindows(presence: SessionPresence, frame: WorkspaceSceneFrame,
-    refinesDetails: Bool) -> Bool {
-    for (surface, owner) in owners where surface.kind == .board {
-      guard let id = surface.ownerID,
-        let current = id == presence.boardID ? presence : frame.presences[id] else { return false }
-      if owner.needsProjection(camera: current.camera, viewport: current.viewport,
-        refinesDetails: refinesDetails) { return false }
+    displayScale: Double, refinesDetails: Bool) -> Bool {
+    for (surface, owner) in owners {
+      guard let id = surface.ownerID else { return false }
+      let density: Double
+      if surface.kind == .board {
+        guard let current = id == presence.boardID ? presence : frame.presences[id] else { return false }
+        if owner.needsProjection(camera: current.camera, viewport: current.viewport,
+          refinesDetails: refinesDetails) { return false }
+        density = displayScale
+      } else {
+        guard let projection = registry.coverProjection(itemID: id, frame: frame, displayScale: displayScale),
+          owner.canvas.containsSpatialRegion(projection.visible) else { return false }
+        density = projection.density
+      }
+      if owner.canvas.needsSpatialDensity(density, refinesDetails: refinesDetails) { return false }
     }
     return true
   }
@@ -68,6 +99,43 @@ final class SpatialInkSceneLease {
         if remaining == 0 { completion() }
       }
     }
+  }
+}
+
+/// Paper coordinates remain fixed while the existing tile pools cover a finite
+/// projected window. The camera chooses density and coverage together.
+struct SpatialInkCoverProjection {
+  let size: SpatialPoint
+  let density: Double
+  let visible: CGRect
+
+  init(surface: SpatialScreenSurface, viewport: CGRect, displayScale: Double) {
+    size = .init(x: surface.localBounds.width, y: surface.localBounds.height)
+    density = surface.screenScale * displayScale
+    let intersection = viewport.applying(surface.localToScreen.inverted()).intersection(surface.localBounds)
+    visible = intersection.isNull ? .zero : intersection
+  }
+
+  init?(itemID: UUID, frame: WorkspaceSceneFrame, displayScale: Double) {
+    guard let boardID = frame.index.ownerBoard(itemID: itemID),
+      let presence = frame.presences[boardID], let scale = frame.pixelScales[boardID],
+      let item = frame.workset(boardID: boardID).items.first(where: { $0.id == itemID }) else { return nil }
+    size = item.geometry.size
+    density = scale * displayScale
+    let topLeft = presence.camera.screenToWorld(.zero, viewport: presence.viewport)
+    let offset = item.center.delta(to: topLeft)
+    let window = CGRect(x: offset.x + size.x / 2, y: offset.y + size.y / 2,
+      width: presence.viewport.x / presence.camera.scale, height: presence.viewport.y / presence.camera.scale)
+    let intersection = window.intersection(CGRect(x: 0, y: 0, width: size.x, height: size.y))
+    visible = intersection.isNull ? .zero : intersection
+  }
+
+  @MainActor var backingRegion: CGRect {
+    guard !visible.isEmpty else { return .zero }
+    let extent = InkCanvasView.sceneBackingSize(viewport: .init(x: visible.width, y: visible.height), displayScale: density)
+    let width = min(size.x, extent.x), height = min(size.y, extent.y)
+    return .init(x: max(0, min(size.x - width, visible.midX - width / 2)),
+      y: max(0, min(size.y - height, visible.midY - height / 2)), width: width, height: height)
   }
 }
 

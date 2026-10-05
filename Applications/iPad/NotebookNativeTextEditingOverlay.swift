@@ -14,9 +14,7 @@ struct NotebookNativeTextEditingOverlay: View {
       let scale = presence.camera.scale
       NotebookPlacedElement(presentation:presentation) {
       NotebookNativeTextView(source:target.source,style:target.style,reference:target.reference,
-        isEditing:true,onEditingEnded:{ [selectionID = model.selectionSession.id] in
-          model.finishInteractiveElementInput(target.reference,selectionID:selectionID)
-        },retainedPage:target.page,retainedSpatial:target.spatial,ownsEditor:true,draftTarget:target,contextMenus:contextMenus)
+        isEditing:true,retainedPage:target.page,retainedSpatial:target.spatial,ownsEditor:true,draftTarget:target,contextMenus:contextMenus)
         .id(model.selectionSession.id)
       }
         .scaleEffect(scale,anchor:.topLeading)

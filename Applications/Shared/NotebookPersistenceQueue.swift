@@ -27,7 +27,8 @@ final class NotebookPersistenceQueue {
         case .admitAction, .prepareAction, .action, .actions, .continuations, .search, .contexts,
           .delivery, .referenceStatus, .referenceStatuses, .actionDetails, .reference,
           .placement, .render, .pageVision, .read, .artifact, .presentation,
-          .script, .scriptContext, .scriptArtifact, .importProgram, .importDocument, .importDocumentResource, .panelRead, .panelPresentation: false
+          .script, .scriptContext, .scriptArtifact, .importProgram, .importDocument, .importDocumentResource, .panelRead, .panelPresentation,
+          .runtimeStatus, .runtimeWorkspace: false
         }
       }
     }

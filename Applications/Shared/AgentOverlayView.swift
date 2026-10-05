@@ -129,10 +129,14 @@ struct AgentOverlayView: View {
           if let graphic {
             NotebookGraphicElementView(graphic: graphic, reference: reference, layout: layout,erasures:cuts,appearance:appearance,paintsMeasuredBody:!ordered(element.id,graph:graph))
           } else if element.kind == .nativeText {
+            #if os(iOS)
             let target=model.nativeTextTarget(reference)
             NotebookNativeTextView(source:target?.source ?? element.source,style:target?.style ?? element.textStyle ?? .standard,reference:reference,
               isEditing:allowsInteraction && model.interactiveElementFocus == interactiveReference,
-              onEditingEnded:{ if model.interactiveElementFocus == interactiveReference { model.interactiveElementFocus = nil } },retainedPage:element,draftTarget:target)
+              retainedPage:element,draftTarget:target)
+            #else
+            NotebookNativeTextSnapshot(source:element.source,style:element.textStyle ?? .standard)
+            #endif
           } else if let presentation {
           PreparedAgentElementView(
             element: agentElementSnapshotSource(element),

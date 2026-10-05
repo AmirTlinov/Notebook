@@ -135,7 +135,6 @@ struct BoardPortalPreview: View {
               editingTextID: nil,
               portalOpenProgress: 0, portalViewport: transitionViewport,
               onTap: { _, _ in },
-              onTextEditingEnded: { _ in },
               isPortalProjection: true, portalPixelScale: pixelScale * camera.scale / fill,
               remainingPortalPasses: remainingPortalPasses - 1)
               .frame(width: item.geometry.width, height: item.geometry.height)
@@ -177,7 +176,6 @@ struct WorkspaceItemCoverView: View {
   let portalViewport: SpatialPoint
   let onTap: (CGPoint, Int) -> Void
   var onHold: (CGPoint) -> Void = { _ in }
-  let onTextEditingEnded: (String) -> Void
   var isPortalProjection = false
   var portalPixelScale: Double = 1
   var remainingPortalPasses = WorkspaceSceneProjection.portalPasses
@@ -227,8 +225,7 @@ struct WorkspaceItemCoverView: View {
           SpatialElementContent(
             element: element, commitsState: !isPortalProjection,
             boardID: boardID,
-            isTextEditing: retainsTextInput,
-            onTextEditingEnded: { onTextEditingEnded(element.id) }
+            isTextEditing: retainsTextInput
           )
           }
         }
@@ -348,21 +345,18 @@ struct SpatialElementContent: View {
   let commitsState: Bool
   let boardID: UUID?
   let isTextEditing: Bool
-  let onTextEditingEnded: () -> Void
 
   init(
     element: SpatialElement,
     commitsState: Bool = true,
     boardID: UUID? = nil,
-    isTextEditing: Bool = false,
-    onTextEditingEnded: @escaping () -> Void = {}
+    isTextEditing: Bool = false
   ) {
     precondition(element.kind != .graphic, "Native graphics belong to the scene's vector runs")
     self.element = element
     self.commitsState = commitsState
     self.boardID = boardID
     self.isTextEditing = isTextEditing
-    self.onTextEditingEnded = onTextEditingEnded
   }
 
   var body: some View {
@@ -401,10 +395,14 @@ struct SpatialElementContent: View {
     switch element.kind {
     case .graphic, .group: EmptyView()
     case .nativeText:
+      #if os(iOS)
       NotebookNativeTextView(source:element.source,style:element.textStyle,
         reference:.spatial(boardID:sourceBoardID ?? WorkspaceRoot.boardID,elementID:element.id),
-        isEditing:isTextEditing && commitsState && sourceBoardID != nil,onEditingEnded:onTextEditingEnded,retainedSpatial:element,
+        isEditing:isTextEditing && commitsState && sourceBoardID != nil,retainedSpatial:element,
         draftTarget:model.nativeTextTarget(.spatial(boardID:sourceBoardID ?? WorkspaceRoot.boardID,elementID:element.id)))
+      #else
+      NotebookNativeTextSnapshot(source:element.source,style:element.textStyle)
+      #endif
     case .markdown, .web:
       let sourceBoardID = self.sourceBoardID
       PreparedAgentElementView(element: agentElement,

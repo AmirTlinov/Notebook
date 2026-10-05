@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Execute release guards against fabricated tools/evidence, never a real device."""
 import contextlib
-import importlib.util
 import io
 import json
 import os
 from pathlib import Path
 import plistlib
+import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -19,25 +20,24 @@ sys.path.insert(0, str(ROOT / "Applications"))
 import notebook_release as release
 import typesetter_fixture
 import typescript_fixture
+from cli_fixture import FakeCLI
 from test_typesetter import TypesetterPackagingTests
 
-spec = importlib.util.spec_from_file_location("preview_fixture", ROOT / "Tests/PreviewInstaller/run.py")
-preview = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(preview)
 TOOLCHAIN = {name: "fixture " + name + " version" for name in
              ("xcode", "swift", "iphoneosSDK", "macosSDK", "xcodegen", "node", "npm")}
 
 
-class PairCLI(preview.FakeCLI):
+class PairCLI(FakeCLI):
     def __init__(self, source, verification):
         super().__init__(source)
         self.verification = verification
         self.mac = None
-        self.mac_info = {"CFBundleIdentifier": release.MAC_BUNDLE, "LSUIElement": False,
+        self.mac_info = {"CFBundleIdentifier": release.MAC_BUNDLE, "LSUIElement": True,
+            "NotebookPluginRuntime": True, "CFBundleName": "NotebookRuntime",
             "NotebookScriptService": "com.amirtlinov.notebook.script-service",
             "NotebookMarkupService": "com.amirtlinov.notebook.markup-service",
             "NotebookCloudContainer": release.CLOUD_CONTAINER,
-            "CFBundlePackageType": "APPL", "DTPlatformName": "macosx", "CFBundleExecutable": "Notebook",
+            "CFBundlePackageType": "APPL", "DTPlatformName": "macosx", "CFBundleExecutable": "NotebookRuntime",
             "CFBundleShortVersionString": self.info["CFBundleShortVersionString"],
             "CFBundleVersion": self.info["CFBundleVersion"], "LSMinimumSystemVersion": "27.0"}
         self.mac_entitlements = {"com.apple.security.get-task-allow": True, **release.cloud_entitlements(mac=True),
@@ -52,6 +52,8 @@ class PairCLI(preview.FakeCLI):
         self.mac_sidecar = True
         self.mac_adhoc = False
         self.mac_fail = False
+        self.package_fail = False
+        self.mutate_packaged_runtime = False
         self.codex_prepare_fail = False
         self.xpc_rights = {"com.apple.security.app-sandbox": True}
         self.missing_xpc = False
@@ -92,10 +94,11 @@ class PairCLI(preview.FakeCLI):
             if self.mac_fail:
                 exit_code = 1
             else:
-                self.mac = Path(argv[argv.index("-derivedDataPath") + 1]) / "Build/Products/Release/Notebook.app"
+                assert argv[argv.index("-scheme") + 1] == "NotebookRuntime"
+                self.mac = Path(argv[argv.index("-derivedDataPath") + 1]) / "Build/Products/Release/NotebookRuntime.app"
                 (self.mac / "Contents/MacOS").mkdir(parents=True)
                 (self.mac / "Contents/Info.plist").write_bytes(plistlib.dumps(self.mac_info))
-                (self.mac / "Contents/MacOS/Notebook").write_bytes(b"fixture Mac executable")
+                (self.mac / "Contents/MacOS/NotebookRuntime").write_bytes(b"fixture Mac executable")
                 (self.mac / "Contents/embedded.provisionprofile").write_bytes(b"fixture signed Mac profile")
                 if not self.missing_xpc:
                     for name, bundle_id, resource in (
@@ -124,11 +127,29 @@ class PairCLI(preview.FakeCLI):
                     tools = self.mac / "Contents/Resources/NotebookTools"
                     (tools / "dist").mkdir(parents=True)
                     (tools / "dist/index.mjs").write_text("// bundled fixture MCP\n")
+                    (tools / "dist/launch-runtime.mjs").write_text("// bundled fixture launcher\n")
                     (tools / "package.json").write_text('{"type":"module"}\n')
+                    node = self.mac / "Contents/Resources/CodexRuntime/node"
+                    node.parent.mkdir()
+                    node.write_bytes(b"fixture bundled node")
+                    node.chmod(0o755)
                 if self.mutate_proof:
                     (self.verification / "core.log").write_text("changed proof\n")
                 if self.mutate_ipad:
                     (self.app / "Notebook").write_bytes(b"changed iPad after signature")
+        elif label == "package-plugin":
+            snapshot = Path(cwd)
+            plugin = snapshot.parent / "plugin/notebook"
+            assert argv == ["/fixture/node", str(snapshot / "MCP/package-plugin-runtime.mjs"),
+                            str(self.mac), str(plugin)]
+            assert json.loads((plugin / ".codex-plugin/plugin.json").read_text())["name"] == "notebook"
+            if self.package_fail:
+                exit_code = 1
+            else:
+                bundled = plugin / "runtime/NotebookRuntime.app"
+                shutil.copytree(self.mac, bundled, symlinks=True)
+                if self.mutate_packaged_runtime:
+                    (bundled / "Contents/MacOS/NotebookRuntime").write_bytes(b"changed during packaging")
         elif label == "mac-provisioning-profile":
             output = plistlib.dumps(self.mac_profile)
         elif label == "mac-provisioning-device":
@@ -168,7 +189,7 @@ class PairCLI(preview.FakeCLI):
         elif label == "mac-binary-uuids":
             output = b"UUID: 11111111-2222-3333-4444-555555555555 (arm64) fixture\n"
             if self.mutate_mac:
-                (self.mac / "Contents/MacOS/Notebook").write_bytes(b"changed Mac after signature")
+                (self.mac / "Contents/MacOS/NotebookRuntime").write_bytes(b"changed Mac after signature")
         else:
             return super().__call__(argv, cwd=cwd, stdout=stdout, stderr=stderr, timeout=timeout)
         self.calls.append(list(argv))
@@ -247,6 +268,11 @@ class ReleaseTests(unittest.TestCase):
             (self.source / file).write_text("// fixture input " + file + "\n")
         (self.source / "Applications/project.yml").write_text((ROOT / "Applications/project.yml").read_text())
         (self.source / "Applications/notebook_release.py").write_bytes((ROOT / "Applications/notebook_release.py").read_bytes())
+        manifest = self.source / "MCP/plugin/notebook/.codex-plugin/plugin.json"
+        manifest.parent.mkdir(parents=True)
+        manifest.write_text(json.dumps({"name": "notebook", "version": "0.2.0"}))
+        (self.source / "MCP/package-plugin-runtime.mjs").write_text("// fixture runtime packager\n")
+        (self.source / "MCP/install-plugin.mjs").write_text("// fixture plugin installer\n")
         def pin(data):
             import hashlib
             return {"bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()}
@@ -306,7 +332,7 @@ class ReleaseTests(unittest.TestCase):
         self.cli.typescript_rights["com.apple.security.network.client"] = True
         self.refused("TypeScript child must inherit only")
 
-    def test_builds_both_signed_apps_from_one_snapshot_without_install_or_archive_access(self):
+    def test_builds_signed_ipad_and_plugin_runtime_from_one_snapshot_without_install_or_archive_access(self):
         for override in (None, self.root / "private runtime"):
             with self.subTest(runtime=override), patch.dict(os.environ):
                 os.environ.pop("NOTEBOOK_TYPESETTER_RUNTIME", None)
@@ -320,6 +346,10 @@ class ReleaseTests(unittest.TestCase):
                 self.assertEqual(receipt["status"], "verified-build")
                 self.assertFalse(receipt["installationAttempted"])
                 self.assertEqual(set(receipt["apps"]), {"iPad", "mac"})
+                self.assertEqual(receipt["plugin"], {"path": "plugin", "version": "0.2.0"})
+                self.assertEqual(receipt["apps"]["mac"]["path"], "plugin/notebook/runtime/NotebookRuntime.app")
+                self.assertEqual(release.app_manifest(self.evidence / receipt["apps"]["mac"]["path"]),
+                                 release.app_manifest(self.cli.mac))
                 self.assertEqual(release.source_inputs(self.evidence / "source"), self.before)
                 self.assertEqual(release.source_inputs(self.source), self.before)
                 builds = [call for call in self.cli.calls if "xcodebuild" in call and "build" == call[-1]]
@@ -330,6 +360,9 @@ class ReleaseTests(unittest.TestCase):
                 preparation = [call for call in self.cli.calls if any(str(arg).endswith("/prepare_notebook_codex.py") for arg in call)]
                 self.assertEqual(len(preparation), 1)
                 self.assertLess(self.cli.calls.index(preparation[0]), self.cli.calls.index(builds[1]))
+                packaging = [call for call in self.cli.calls if any(str(arg).endswith("/package-plugin-runtime.mjs") for arg in call)]
+                self.assertEqual(len(packaging), 1)
+                self.assertLess(self.cli.calls.index(builds[1]), self.cli.calls.index(packaging[0]))
                 self.assertIn("PRODUCT_BUNDLE_IDENTIFIER=" + release.BUNDLE, builds[0])
                 self.assertFalse(any(arg.startswith("PRODUCT_BUNDLE_IDENTIFIER=") for arg in builds[1]))
                 self.assertFalse(any(arg.startswith("CODE_SIGN_ENTITLEMENTS=") for arg in builds[1]))
@@ -438,7 +471,9 @@ class ReleaseTests(unittest.TestCase):
         for file in ("Applications/Notebook.xcodeproj/project.pbxproj", "Applications/iPad/Info.plist",
                      "Applications/Mac/Info.plist", "Applications/DerivedDataRelease/output", "MCP/node_modules/lib.js",
                      "Tests/Harness/node_modules/lib.js", "Applications/__pycache__/cache.pyc",
-                     "MCP/.notebook/program-builds/immutable/main.js"):
+                     "MCP/.notebook/program-builds/immutable/main.js",
+                     "MCP/plugin/notebook/runtime/NotebookRuntime.app/Contents/MacOS/NotebookRuntime",
+                     "MCP/plugin/notebook/.runtime-stage-fixture/retired/Contents/Info.plist"):
             path = self.source / file
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("generated output\n")
@@ -511,7 +546,7 @@ class ReleaseTests(unittest.TestCase):
         self.assertFalse((self.verification / "verification.json").exists())
 
     def test_input_change_during_build_is_refused(self):
-        # Existing first-install fixture changes this exact file during xcodebuild.
+        # The build fixture changes this exact source during xcodebuild.
         path = self.source / "Sources/NotebookCore/Test.swift"
         path.parent.mkdir()
         path.write_text("initial input\n")
@@ -533,9 +568,22 @@ class ReleaseTests(unittest.TestCase):
         self.cli.mutate_mac = True
         self.refused("Mac bundle изменился")
 
-    def test_background_only_mac_is_refused(self):
-        self.cli.mac_info["LSUIElement"] = True
-        self.refused("обычное приложение")
+    def test_standalone_mac_app_is_refused(self):
+        self.cli.mac_info["LSUIElement"] = False
+        self.refused("без самостоятельного интерфейса")
+
+    def test_runtime_without_plugin_entrypoint_is_refused(self):
+        del self.cli.mac_info["NotebookPluginRuntime"]
+        self.refused("без самостоятельного интерфейса")
+
+    def test_failed_packaging_does_not_publish_a_verified_pair(self):
+        self.cli.package_fail = True
+        self.refused("Команда package-plugin")
+        self.assertNotIn("apps", release.read_json(self.evidence / "build.json"))
+
+    def test_packaging_cannot_change_the_verified_runtime(self):
+        self.cli.mutate_packaged_runtime = True
+        self.refused("Подписанная пара изменилась")
 
     def test_mac_without_bundled_mcp_is_refused(self):
         self.cli.mac_sidecar = False
@@ -606,6 +654,165 @@ class ReleaseTests(unittest.TestCase):
                 with self.assertRaises(SystemExit):
                     release.main()
         self.assertEqual(self.cli.calls, [])
+
+
+class InstallationCLI(PairCLI):
+    def __init__(self, built, build):
+        self.__dict__.update(built.__dict__)
+        self.calls = []
+        self.mac = build / "plugin/notebook/runtime/NotebookRuntime.app"
+        self.cache = build.parent / "codex-cache/notebook/0.2.0/runtime/NotebookRuntime.app"
+        self.preview = {**self.preview, "bundleVersion": "16", "version": "0.3.13", "dataContainerURL": "file:///Data/Existing"}
+        self.existing_preview = True
+        self.plugin_fail = False
+        self.stale_cache = False
+        self.previous_runtime = None
+
+    def __call__(self, argv, cwd=None, stdout=None, stderr=None, timeout=None):
+        label = Path(stdout.name).name.removesuffix(".stdout.log")
+        output, exit_code = b"", 0
+        if label == "primary-checkout":
+            output = ("worktree " + str(self.source) + "\0\0").encode()
+        elif label == "plugins-before":
+            output = json.dumps({"installed": [{"pluginId": "notebook@notebook-local", "version": "0.1.6"}]}).encode()
+        elif label == "connected-before":
+            previous = str(self.previous_runtime / "Contents/Resources/CodexRuntime/node") if self.previous_runtime else "/bin/sh"
+            output = json.dumps({"enabled": True, "transport": {"type": "stdio", "command": previous, "args": []}}).encode()
+        elif label == "owners-before-install":
+            pass
+        elif label == "package-plugin":
+            assert Path(argv[2]) == self.mac
+            assert Path(argv[3]) == self.source / "MCP/plugin/notebook"
+            shutil.copytree(self.mac, Path(argv[3]) / "runtime/NotebookRuntime.app", symlinks=True)
+        elif label == "install-plugin":
+            assert argv == ["/fixture/node", str(self.source / "MCP/install-plugin.mjs"), "install"]
+            if self.plugin_fail:
+                exit_code = 1
+            else:
+                shutil.copytree(self.mac, self.cache, symlinks=True)
+                if self.stale_cache:
+                    (self.cache / "Contents/MacOS/NotebookRuntime").write_bytes(b"old cached runtime")
+        elif label == "installed-plugin":
+            output = json.dumps({"enabled": True, "transport": {"type": "stdio",
+                "command": str(self.cache / "Contents/Resources/CodexRuntime/node"),
+                "args": [str(self.cache / "Contents/Resources/NotebookTools/dist/launch-runtime.mjs")]}}).encode()
+        else:
+            return super().__call__(argv, cwd=cwd, stdout=stdout, stderr=stderr, timeout=timeout)
+        self.calls.append(list(argv))
+        stdout.write(output)
+        return subprocess.CompletedProcess(argv, exit_code)
+
+
+class InstallationTests(unittest.TestCase):
+    tearDown = ReleaseTests.tearDown
+    build = ReleaseTests.build
+
+    def setUp(self):
+        ReleaseTests.setUp(self)
+        self.build_receipt = self.build()
+        self.build_dir = self.evidence
+        self.evidence = self.root / "installation"
+        self.cli = InstallationCLI(self.cli, self.build_dir)
+        ipc = tempfile.TemporaryDirectory(prefix="nb-install-", dir="/tmp")
+        self.addCleanup(ipc.cleanup)
+        self.ipc = Path(ipc.name) / "ipc"
+
+    def install(self):
+        stopped = release.stopped_runtime
+        with patch.object(release.shutil, "which", side_effect=lambda name: "/fixture/" + name), \
+             patch.object(release, "CANONICAL_MAC", self.root / "legacy/Notebook.app"), \
+             patch.object(release, "stopped_runtime", side_effect=lambda command: stopped(command, self.ipc)):
+            return release.install_verified_pair(self.source, self.build_dir, self.evidence, self.cli)
+
+    def test_installs_plugin_and_ipad_in_place_and_reads_exact_cached_runtime(self):
+        before = dict(self.cli.preview)
+        receipt = self.install()
+        self.assertEqual(receipt["status"], "installed")
+        self.assertEqual(receipt["runtime"], str(self.cli.cache))
+        self.assertEqual(receipt["ipadAfter"][0]["dataContainerURL"], before["dataContainerURL"])
+        self.assertEqual(receipt["ipadAfter"][0]["bundleVersion"], self.build_receipt["build"])
+        self.assertEqual(len(self.cli.install_calls), 1)
+        self.assertFalse(any({"kill", "terminate", "uninstall", "--remove-existing-content"}.intersection(call) for call in self.cli.calls))
+
+    def test_newer_ipad_refuses_before_plugin_or_device_mutation(self):
+        self.cli.preview["bundleVersion"] = "999"
+        with self.assertRaisesRegex(release.ReleaseError, "downgrade"):
+            self.install()
+        self.assertEqual(self.cli.install_calls, [])
+        self.assertFalse((self.source / "MCP/plugin/notebook/runtime").exists())
+
+    def test_changed_primary_metadata_refuses_before_install(self):
+        (self.source / "MCP/plugin/notebook/.codex-plugin/plugin.json").write_text('{"name":"notebook","version":"9.0.0"}')
+        with self.assertRaisesRegex(release.ReleaseError, "metadata"):
+            self.install()
+        self.assertEqual(self.cli.install_calls, [])
+        self.assertFalse((self.source / "MCP/plugin/notebook/runtime").exists())
+
+    def test_newer_cached_runtime_refuses_before_plugin_or_device_mutation(self):
+        self.cli.previous_runtime = self.root / "newer/NotebookRuntime.app"
+        info = self.cli.previous_runtime / "Contents/Info.plist"
+        info.parent.mkdir(parents=True)
+        info.write_bytes(plistlib.dumps({"CFBundleIdentifier": release.MAC_BUNDLE, "CFBundleVersion": "999"}))
+        with self.assertRaisesRegex(release.ReleaseError, "downgrade"):
+            self.install()
+        self.assertEqual(self.cli.install_calls, [])
+        self.assertFalse((self.source / "MCP/plugin/notebook/runtime").exists())
+
+    def test_stale_codex_cache_is_incomplete_and_does_not_install_ipad(self):
+        self.cli.stale_cache = True
+        with self.assertRaisesRegex(release.ReleaseError, "другую сборку runtime"):
+            self.install()
+        self.assertEqual(self.cli.install_calls, [])
+        receipt = release.read_json(self.evidence / "installation.json")
+        self.assertEqual((receipt["status"], receipt["step"]), ("incomplete", "install-plugin"))
+
+    def test_plugin_install_failure_preserves_staged_runtime_and_does_not_install_ipad(self):
+        self.cli.plugin_fail = True
+        with self.assertRaisesRegex(release.ReleaseError, "install-plugin"):
+            self.install()
+        self.assertEqual(self.cli.install_calls, [])
+        self.assertEqual(release.read_json(self.evidence / "installation.json")["status"], "incomplete")
+        self.assertTrue((self.source / "MCP/plugin/notebook/runtime/NotebookRuntime.app").is_dir())
+
+    def test_uncertain_ipad_install_is_not_retried_or_claimed_installed(self):
+        self.cli.missing_installation_url = True
+        with self.assertRaisesRegex(release.ReleaseError, "bundle URL"):
+            self.install()
+        self.assertEqual(len(self.cli.install_calls), 1)
+        receipt = release.read_json(self.evidence / "installation.json")
+        self.assertEqual((receipt["status"], receipt["step"]), ("incomplete", "install-ipad"))
+
+
+class RuntimeInstallationOwnershipTests(unittest.TestCase):
+    def test_active_runtime_lease_refuses_packaging_until_process_releases_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "ipc"
+            command = lambda *args, **kwargs: (b"", b"")
+            with release.stopped_runtime(command, root):
+                with self.assertRaisesRegex(release.ReleaseError, "runtime ещё работает"):
+                    with release.stopped_runtime(command, root):
+                        self.fail("Second owner cannot replace its runtime")
+            with release.stopped_runtime(command, root):
+                self.assertTrue((root / "bridge.sock.owner").is_file())
+
+    def test_serving_legacy_socket_refuses_install_without_unlinking_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "ipc"
+            root.mkdir(mode=0o700)
+            endpoint = root / "bridge.sock"
+            with socket.socket(socket.AF_UNIX) as server:
+                server.bind(str(endpoint)); server.listen()
+                with self.assertRaisesRegex(release.ReleaseError, "обслуживает рабочее пространство"):
+                    with release.stopped_runtime(lambda *args, **kwargs: (b"", b""), root):
+                        self.fail("Legacy writer must stop first")
+                self.assertTrue(endpoint.is_socket())
+
+    def test_draining_legacy_process_without_socket_still_refuses_install(self):
+        with tempfile.TemporaryDirectory() as directory:
+            command = lambda *args, **kwargs: (("42 " + str(release.CANONICAL_MAC / "Contents/MacOS/Notebook") + "\n").encode(), b"")
+            with self.assertRaisesRegex(release.ReleaseError, "дождитесь выхода процесса"):
+                with release.stopped_runtime(command, Path(directory) / "ipc"):
+                    self.fail("A closed socket is not process exit")
 
 
 if __name__ == "__main__":

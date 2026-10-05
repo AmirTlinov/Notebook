@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and drive an isolated production Mac/Simulator pair; never install a device build."""
+"""Build an isolated iPad Simulator and headless Mac runtime pair; drive iPad UI only."""
 import argparse
 from contextlib import ExitStack
 import fcntl
@@ -236,7 +236,7 @@ def build(args):
     surface_stage = release.prepare_surface_stage(ROOT, release.release_commands(evidence))
     run(["xcodegen", "generate", "--spec", "project.yml"], cwd=snapshot / "Applications", output=evidence / "project.log")
     for platform, scheme, destination in (("ipad", "NotebookAcceptance", "platform=iOS Simulator,id=" + args.simulator),
-                                           ("mac", "NotebookMacAcceptance", "platform=macOS,arch=arm64")):
+                                           ("mac", "NotebookRuntime", "platform=macOS,arch=arm64")):
         command = ["xcrun", "xcodebuild", "-quiet", "-project", snapshot / "Applications/Notebook.xcodeproj",
                    "-scheme", scheme, "-configuration", "Release", "-destination", destination,
                    "-derivedDataPath", evidence / "derived" / platform, "-parallel-testing-enabled", "NO",
@@ -258,9 +258,9 @@ def build(args):
         if platform == "mac":
             command.append("NOTEBOOK_TYPESCRIPT_RUNTIME=" + str(typescript_runtime))
             command.append("NOTEBOOK_SURFACE_STAGE=" + str(surface_stage))
-        run(command + ["build-for-testing"], output=evidence / (platform + "-build.log"))
+        run(command + ["build-for-testing" if platform == "ipad" else "build"], output=evidence / (platform + "-build.log"))
         if platform == "mac":
-            mac_app = evidence / "derived/mac/Build/Products/Release/Notebook.app"
+            mac_app = evidence / "derived/mac/Build/Products/Release/NotebookRuntime.app"
             signing = release.release_commands(evidence)
             display = signing("acceptance-mac-signer", ["/usr/bin/codesign", "--display", "--verbose=4", mac_app], read_output=True)
             signer, _ = mac_acceptance_signer(b"\n".join(display).decode())
@@ -271,7 +271,7 @@ def build(args):
     unchanged = release.source_inputs(ROOT) == before
     release.require(args.development or unchanged, "Рабочий срез изменился во время окончательной сборки стенда.")
     ipad = evidence / "derived/ipad/Build/Products/Release-iphonesimulator/Notebook.app"
-    mac = evidence / "derived/mac/Build/Products/Release/Notebook.app"
+    mac = evidence / "derived/mac/Build/Products/Release/NotebookRuntime.app"
     release.require(info(ipad)["CFBundleIdentifier"] == IPAD_BUNDLE and info(mac, True)["CFBundleIdentifier"] == MAC_BUNDLE,
                     "Стенд обязан использовать отдельные bundle IDs.")
     simulator_entitlements = verify_simulator_signature(ipad)
@@ -554,7 +554,8 @@ def upgrade(args):
     mac_root = Path(manifests["macManifest"]["root"]).resolve()
     release.require(mac_root.is_relative_to(runtime) and mac_root != runtime,
                     "Хранилище Mac должно оставаться внутри private runtime.")
-    expected_executable = str(Path(old_built["macApp"]) / "Contents/MacOS/Notebook")
+    previous_app = Path(old_built["macApp"])
+    expected_executable = str(previous_app / "Contents/MacOS" / info(previous_app, True)["CFBundleExecutable"])
     actual_executable = run(["ps", "-p", str(args.mac_pid), "-o", "args="]).decode().strip()
     release.require(actual_executable == expected_executable,
                     "PID не принадлежит предыдущему private helper; процесс не остановлен.")
@@ -605,16 +606,11 @@ def upgrade(args):
 def document_ui_request(platform, test, document_id, document_title):
     """Validate the public fixture address before loading or touching a stand."""
     suite = "NotebookDocumentAcceptanceUITests/"
-    mac_document = test in {
-        "NotebookAcceptanceMacUITests/testPublicScientificDocumentRetainsARealControlEditAfterReopening",
-        "NotebookAcceptanceMacUITests/testSourceUnavailableUsesTheWholePaneInBesideAndCodeModes",
-    }
-    if not test.startswith(suite) and not mac_document:
+    if not test.startswith(suite):
         release.require(document_id is None and document_title is None,
                         "Адрес документа допускается только в документном UI-сценарии.")
         return None
-    release.require(platform == ("mac" if mac_document else "ipad"),
-                    "Документный сценарий требует свою платформу Mac или iPad Simulator.")
+    release.require(platform == "ipad", "Документный UI-сценарий выполняется на iPad Simulator.")
     release.require(isinstance(document_id, str) and re.fullmatch(
         r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", document_id),
         "Нужен --document-id: UUID из результата публичного create-control.js.")
@@ -776,6 +772,7 @@ def finalize_ui_attempt(*, evidence, scenario, primary_error, trace, trace_finis
 
 
 def ui(args):
+    release.require(args.platform == "ipad", "UI-приёмка выполняется на iPad; Mac runtime работает без окна.")
     driver_sha = release.file_digest(Path(__file__))
     release.require(re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*/test[A-Za-z0-9_]+", args.test),
                     "Нужен точный Suite/testMethod из изолированного UI target.")
@@ -812,21 +809,16 @@ def ui(args):
         originals = [p for p in products.glob("*.xctestrun") if not p.name.startswith("acceptance-")]
     release.require(len(originals) == 1, "Нужен единственный исходный xctestrun выбранной платформы.")
     spec = plistlib.loads(originals[0].read_bytes())
-    target_name = "NotebookAcceptanceUITests" if args.platform == "ipad" else "NotebookMacAcceptanceUITests"
+    target_name = "NotebookAcceptanceUITests"
     ipad_container, stored_ipad_manifest, ipad_manifest = installed_ipad_manifest(value, built["simulator"]["udid"])
-    manifest = ipad_manifest if args.platform == "ipad" else read(value["macManifest"])
+    manifest = ipad_manifest
     interaction = interaction_acceptance.prepare(value, built, manifest, ipad_container, interaction_request) if interaction_request else None
-    peer = read(value["macManifest"]) if args.platform == "ipad" else ipad_manifest
-    launch_manifest = str(stored_ipad_manifest)
-    if args.platform == "ipad":
-        ui_manifest = stored_ipad_manifest.with_name("ipad-ui-" + str(uuid.uuid4()) + ".json")
-        write(ui_manifest, manifest)
-        launch_manifest = str(ui_manifest)
-    environment = {"NOTEBOOK_ACCEPTANCE_MANIFEST": launch_manifest if args.platform == "ipad" else value["macManifest"],
+    peer = read(value["macManifest"])
+    ui_manifest = stored_ipad_manifest.with_name("ipad-ui-" + str(uuid.uuid4()) + ".json")
+    write(ui_manifest, manifest)
+    environment = {"NOTEBOOK_ACCEPTANCE_MANIFEST": str(ui_manifest),
                    "NOTEBOOK_ACCEPTANCE_PEER_ID": peer["actorID"], "NOTEBOOK_ACCEPTANCE_WORKSPACE_ID": value["workspaceID"],
                    "NOTEBOOK_ACCEPTANCE_REPLY_MARKER": "ACCEPTANCE_REPLY_" + value["runID"]}
-    if args.platform == "mac":
-        environment["NOTEBOOK_ACCEPTANCE_MAC_APPLICATION"] = built["macApp"]
     if interaction:
         environment.update(interaction["environment"])
     if document:
@@ -855,17 +847,15 @@ def ui(args):
     targets = ui_targets(spec)
     chosen = [t for t in targets if t.get("BlueprintName") == target_name or t.get("TestBundlePath", "").endswith(target_name + ".xctest")]
     release.require(len(chosen) == 1, "Не найден ровно один изолированный UI target.")
-    if args.platform == "ipad":
-        # The stand was installed and its identities verified by prepare/upgrade.
-        # XCTest must drive that instance, not reinstall its dependent product
-        # and invalidate the selected container before XCUIApplication.launch.
-        use_installed_ui_application(chosen[0])
+    # The stand was installed and its identities verified by prepare/upgrade.
+    # XCTest drives that instance without reinstalling its dependent product.
+    use_installed_ui_application(chosen[0])
     chosen[0].setdefault("EnvironmentVariables", {}).update(environment)
     chosen[0].setdefault("UITargetAppEnvironmentVariables", {}).update({"NOTEBOOK_ACCEPTANCE_MANIFEST": environment["NOTEBOOK_ACCEPTANCE_MANIFEST"]})
     configured = products / ("acceptance-" + value["runID"] + "-" + attempt + ".xctestrun")
     configured.write_bytes(plistlib.dumps(spec)); configured.chmod(0o600)
     evidence.mkdir(mode=0o700)
-    destination = "platform=macOS,arch=arm64" if args.platform == "mac" else "platform=iOS Simulator,id=" + built["simulator"]["udid"]
+    destination = "platform=iOS Simulator,id=" + built["simulator"]["udid"]
     command = ["xcrun", "xcodebuild", "-xctestrun", configured, "-destination", destination,
                "-resultBundlePath", evidence / "result.xcresult", "-parallel-testing-enabled", "NO",
                "-collect-test-diagnostics", "never",
@@ -898,14 +888,14 @@ def ui(args):
         nonlocal runner_exit
         runner_exit = returncode
     try:
-        installed_before = installed_ipad_state(built["simulator"]["udid"]) if args.platform == "ipad" else None
+        installed_before = installed_ipad_state(built["simulator"]["udid"])
         if installed_before:
             write(evidence / "installed-application-before.json", installed_before)
             release.require(installed_before["bundleSHA256"] == release.app_manifest(Path(built["ipadApp"]))["sha256"],
                             "Установленный iPad bundle отличается от выбранной сборки; сценарий не начат.")
         recording = SimulatorRecording(built["simulator"]["udid"], evidence,
             None if attached_trace else args.trace, timeout,
-            allow_host_processes=allow_host_processes) if args.platform == "ipad" else None
+            allow_host_processes=allow_host_processes)
         if attached_trace:
             module = system_trace_module()
             bundle = Path(installed_before["bundlePath"])
@@ -938,6 +928,8 @@ def lock_names(args):
     # and distinct Mac/Simulator stands need no machine-wide Xcode queue.
     if args.command in ("build", "ui-build"):
         return ["build-" + MAC_BUNDLE]
+    if args.command == "ui":
+        release.require(args.platform == "ipad", "UI-приёмка выполняется на iPad; Mac runtime работает без окна.")
     if args.command in ("prepare", "upgrade"):
         built = read(args.build / "build.json")
     else:
@@ -947,7 +939,7 @@ def lock_names(args):
     mac = info(Path(built["macApp"]), True)["CFBundleIdentifier"]
     release.require(mac == MAC_BUNDLE, "Стенд другого checkout не может получить этот runner.")
     if args.command == "ui":
-        return [mac if args.platform == "mac" else simulator]
+        return [simulator]
     return sorted([mac, simulator])
 
 
@@ -961,7 +953,7 @@ def main():
     command = commands.add_parser("prepare"); command.add_argument("--build", type=Path, required=True); command.add_argument("--run-id")
     command = commands.add_parser("upgrade"); command.add_argument("--build", type=Path, required=True)
     command.add_argument("--from-run", type=Path, required=True); command.add_argument("--mac-pid", type=int, required=True)
-    command = commands.add_parser("ui"); command.add_argument("--run", type=Path, required=True); command.add_argument("--platform", choices=["mac", "ipad"], required=True); command.add_argument("--test", required=True)
+    command = commands.add_parser("ui"); command.add_argument("--run", type=Path, required=True); command.add_argument("--platform", choices=["ipad"], required=True); command.add_argument("--test", required=True)
     command.add_argument("--test-build", type=Path, help="Отдельный diagnostic UI runner; не финальная приёмка единого среза")
     command.add_argument("--trace", choices=["Animation Hitches", "Time Profiler", "Metal System Trace", "Allocations"])
     command.add_argument("--allow-host-processes", action="store_true",

@@ -987,8 +987,7 @@ struct SpatialWorkspaceView: View {
             EditableElementContainer(reference: reference) {
               NotebookPlacedElement(presentation:presentation) {
                 SpatialElementContent(element: element, boardID: presence.boardID,
-                  isTextEditing: editingSpatialText == reference,
-                  onTextEditingEnded: { [selectionID = model.selectionSession.id] in model.finishInteractiveElementInput(reference, selectionID: selectionID) })
+                  isTextEditing: editingSpatialText == reference)
               }
             }
           }
@@ -1878,7 +1877,6 @@ private struct WorkspaceSceneItem: View {
       portalViewport: viewport,
       onTap:handleTap,
       onHold:showItemActions,
-      onTextEditingEnded: onTextEditingEnded,
       portalPixelScale: projectedScale
     )
   }

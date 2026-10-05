@@ -145,16 +145,15 @@ class SelectionTests(unittest.TestCase):
             acceptance.notebook_ui_request("ipad", "NotebookAcceptanceUITests/testOther", identifier, "Title")
         self.assertEqual(acceptance.ui_timeout("ipad", "NotebookAcceptanceUITests/testOther"), 240)
 
-    def test_mac_scientific_ui_requires_its_exact_private_document_and_platform(self):
-        identifier = "adb44de5-5b67-44f8-8371-9d03883e55ec"
-        for method in ("testPublicScientificDocumentRetainsARealControlEditAfterReopening",
-                       "testSourceUnavailableUsesTheWholePaneInBesideAndCodeModes"):
-            method = "NotebookAcceptanceMacUITests/" + method
-            self.assertEqual(acceptance.document_ui_request("mac", method, identifier, "Beats")["documentID"], identifier)
-            for platform, test, identity in (("ipad", method, identifier), ("mac", method + "Other", identifier),
-                                            ("mac", method, None)):
-                with self.assertRaises(release.ReleaseError):
-                    acceptance.document_ui_request(platform, test, identity, "Beats")
+    def test_mac_ui_is_rejected_before_loading_or_launching_a_stand(self):
+        args = SimpleNamespace(command="ui", platform="mac")
+        with patch.object(acceptance, "read") as read, patch.object(acceptance, "run") as run:
+            with self.assertRaisesRegex(release.ReleaseError, "без окна"):
+                acceptance.ui(args)
+            with self.assertRaisesRegex(release.ReleaseError, "без окна"):
+                acceptance.lock_names(args)
+            read.assert_not_called()
+            run.assert_not_called()
 
     def test_document_ui_requires_a_real_address_and_ipad_before_touching_the_stand(self):
         method = "NotebookDocumentAcceptanceUITests/testRealPageControlsLinksAndTouchSourceEditingSurviveColdReopening"
@@ -255,13 +254,11 @@ class SelectionTests(unittest.TestCase):
 
     def test_acceptance_locks_actual_devices_not_all_xcode_runners(self):
         simulator = str(uuid.uuid4())
-        built = {"simulator": {"udid": simulator}, "macApp": "/private/Notebook.app"}
+        built = {"simulator": {"udid": simulator}, "macApp": "/private/NotebookRuntime.app"}
         value = {"build": "/private/build"}
-        args = SimpleNamespace(command="ui", run=Path("/private/run"), platform="mac")
-        with patch.object(acceptance, "read", side_effect=[value, built] * 2 + [built]) as read, \
+        args = SimpleNamespace(command="ui", run=Path("/private/run"), platform="ipad")
+        with patch.object(acceptance, "read", side_effect=[value, built, built]) as read, \
              patch.object(acceptance, "info", return_value={"CFBundleIdentifier": acceptance.MAC_BUNDLE}):
-            self.assertEqual(acceptance.lock_names(args), [acceptance.MAC_BUNDLE])
-            args.platform = "ipad"
             self.assertEqual(acceptance.lock_names(args), ["simulator-" + simulator])
             args = SimpleNamespace(command="upgrade", from_run=Path("/private/run"), build=Path("/private/new-build"))
             self.assertEqual(acceptance.lock_names(args), sorted([acceptance.MAC_BUNDLE, "simulator-" + simulator]))
@@ -279,7 +276,7 @@ class SelectionTests(unittest.TestCase):
             self.assertNotEqual(bundle, acceptance.mac_bundle_for(root / "second"))
         project = (ROOT / "Applications/project.yml").read_text()
         self.assertIn("com.amirtlinov.notebook.mac$(NOTEBOOK_MAC_BUNDLE_SUFFIX)", project)
-        self.assertIn("com.amirtlinov.notebook.mac$(NOTEBOOK_MAC_BUNDLE_SUFFIX).uitests", project)
+        self.assertNotIn("NotebookMacAcceptanceUITests", project)
         self.assertEqual(acceptance.MAC_BUNDLE, acceptance.mac_bundle_for(ROOT))
 
     def test_ui_acceptance_build_uses_deployed_release_symbols_not_testability(self):
@@ -457,7 +454,7 @@ class SelectionTests(unittest.TestCase):
             verify.validate_executed_tests(tree, ["NotebookTests/Suite/testCase", "NotebookTests/Suite/missing"])
 
     def test_acceptance_selector_uses_actual_bundle_owner_not_the_project_name(self):
-        for bundle in ("NotebookAcceptanceUITests", "NotebookMacAcceptanceUITests"):
+        for bundle in ("NotebookAcceptanceUITests",):
             case = {"name": "testPair()", "nodeType": "Test Case", "result": "Passed",
                     "nodeIdentifier": bundle + "/testPair()", "durationInSeconds": 2}
             tree = {"testNodes": [{"name": "NotebookAcceptanceUIHarness", "nodeType": "Test Plan", "children": [

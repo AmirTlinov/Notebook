@@ -132,10 +132,10 @@ durably saves `admission.json` before model, sync or agent starts. Subsequent
 launches read small receipts and the marker; later SQL writes are not compared to
 or replaced by the old prepared snapshot. Corrupt admission fails without rollback.
 
-Production MCP registration belongs only to the admitted installed Mac at
-`~/Applications/Notebook.app`; test models do not register production tools.
-`Applications/install-preview.sh` remains a first-Lab installer and rejects an
-existing installation. Transfer itself neither builds nor installs applications.
+Production MCP tools use the admitted signed runtime bundled with the Codex
+plugin. Test models do not register production tools. The verified pair installer
+updates that plugin and iPad in place; archive transfer neither builds nor
+installs applications. See [release](release-build-contract.md).
 
 ## Verification and historical limits
 

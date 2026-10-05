@@ -429,7 +429,7 @@ def native_test_bundle(node, inherited=""):
     if node.get("nodeType") in ("Unit test bundle", "UI test bundle"):
         name = node.get("name", "")
         return name if name in ("NotebookTests", "NotebookUITests", "NotebookMacTests",
-                               "NotebookAcceptanceUITests", "NotebookMacAcceptanceUITests") else ""
+                               "NotebookAcceptanceUITests") else ""
     return inherited
 
 
@@ -686,7 +686,7 @@ def run_selected(root, plan, evidence):
     # Xcode still builds changed dependencies. Only its derived products are reused;
     # fixtures, test execution, source hashes and result bundles are always fresh.
     derived = Path(tempfile.gettempdir()) / "notebook-selected-builds" / hashlib.sha256(str(root).encode()).hexdigest()[:16]
-    for platform, scheme in (("ipad", "Notebook"), ("mac", "NotebookMac")):
+    for platform, scheme in (("ipad", "Notebook"), ("mac", "NotebookRuntime")):
         if not checks[platform]:
             continue
         destination = "platform=macOS"
@@ -715,7 +715,7 @@ def run_selected(root, plan, evidence):
             args.extend(native_mac_signing_settings())
             build_args = [value for value in args if value not in ("-resultBundlePath", str(result), "test")]
             command("mac-build-for-testing", build_args + ["build-for-testing"], cwd=root / "Applications", timeout=1800)
-            app = derived / "mac/Build/Products/Debug/Notebook.app"
+            app = derived / "mac/Build/Products/Debug/NotebookRuntime.app"
             display = command("mac-native-signer", ["/usr/bin/codesign", "--display", "--verbose=4", app], read_output=True)
             signer, identity = release.development_signer(b"\n".join(display).decode(), release.MAC_BUNDLE + ".acceptance")
             release.restrict_test_script_services(app, root, command, bundle_identifier=release.MAC_BUNDLE + ".acceptance", signing_identity=signer)

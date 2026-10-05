@@ -2,10 +2,9 @@ import NotebookCore
 import SwiftUI
 #if os(iOS)
 import UIKit
-#else
-import AppKit
 #endif
 
+#if os(iOS)
 /// One native draft writes text and its character formatting atomically through
 /// the addressed command queue. The canvas itself only paints immutable text.
 struct NotebookNativeTextView: View {
@@ -14,14 +13,11 @@ struct NotebookNativeTextView: View {
   let style: NativeTextStyle
   let reference: EditableElementReference
   let isEditing: Bool
-  let onEditingEnded: () -> Void
   var retainedPage: AgentElement? = nil
   var retainedSpatial: SpatialElement? = nil
   var ownsEditor = false
   var draftTarget: NotebookNativeTextTarget?
-  #if os(iOS)
   var contextMenus: NotebookContextMenus?
-  #endif
   @State private var draft = ""
   @State private var draftStyle = NativeTextStyle.standard
   @State private var submitted = ""
@@ -30,11 +26,7 @@ struct NotebookNativeTextView: View {
   @State private var hasDraft = false
   @State private var pending: Task<Void,Never>?
   private var editsHere: Bool {
-    #if os(iOS)
     isEditing && ownsEditor
-    #else
-    isEditing
-    #endif
   }
 
   var body: some View {
@@ -57,14 +49,9 @@ struct NotebookNativeTextView: View {
       }
     }
   }
-  @ViewBuilder private var editor: some View {
-    #if os(iOS)
+  private var editor: some View {
     NotebookInlineTextInput(text:$draft,style:$draftStyle,contextMenus:contextMenus,
       onHeight:{ measuredHeight = $0; model.measureNativeText(reference,height:$0) })
-    #else
-    NotebookMacInlineTextInput(text:$draft,style:$draftStyle,
-      onHeight:{ measuredHeight = $0; model.measureNativeText(reference,height:$0) },onFinish:{ commit(finishing:true); onEditingEnded() })
-    #endif
   }
   private func scheduleCommit() {
     pending?.cancel()
@@ -83,6 +70,7 @@ struct NotebookNativeTextView: View {
     submitted = draft; submittedStyle = draftStyle
   }
 }
+#endif
 
 struct NotebookNativeTextSnapshot: View {
   let source: String
@@ -242,65 +230,6 @@ private struct NotebookInlineTextInput: UIViewRepresentable {
         self?.updateContextMenu()
       })
     }
-  }
-}
-#endif
-
-#if os(macOS)
-private struct NotebookMacInlineTextInput: NSViewRepresentable {
-  @Binding var text: String
-  @Binding var style: NativeTextStyle
-  let onHeight: (Double) -> Void
-  let onFinish: () -> Void
-  func makeCoordinator() -> Coordinator { Coordinator(self) }
-  func makeNSView(context: Context) -> Input {
-    let view = Input()
-    view.drawsBackground = false; view.isRichText = true; view.allowsUndo = true
-    view.textContainerInset = .zero; view.textContainer?.lineFragmentPadding = 0
-    view.textContainer?.widthTracksTextView = true
-    view.isVerticallyResizable = true; view.isHorizontallyResizable = false
-    view.delegate = context.coordinator
-    view.setAccessibilityIdentifier("native-text-editor")
-    return view
-  }
-  func sizeThatFits(_ proposal:ProposedViewSize,nsView:Input,context:Context) -> CGSize? {
-    guard let width=proposal.width,let height=proposal.height else { return nil }
-    return .init(width:width,height:height)
-  }
-  func updateNSView(_ view: Input, context: Context) {
-    let coordinator = context.coordinator; coordinator.owner = self
-    guard !view.hasMarkedText(), coordinator.presentedText != text || coordinator.presentedStyle != style else { return }
-    let selection = coordinator.presentedText == text ? view.selectedRange() : NSRange(location:text.utf16.count,length:0)
-    view.textStorage?.setAttributedString(NotebookTextTypography.attributed(text,style:style))
-    view.setSelectedRange(.init(location:min(selection.location,text.utf16.count),length:min(selection.length,max(0,text.utf16.count-selection.location))))
-    if text.isEmpty { view.typingAttributes = NotebookTextTypography.attributes(style:style,format:style.format ?? .init()) }
-    coordinator.presentedText = text; coordinator.presentedStyle = style
-  }
-  static func dismantleNSView(_ view: Input, coordinator: Coordinator) { view.delegate = nil }
-  final class Input: NSTextView {
-    private var requestedFocus = false
-    override func viewDidMoveToWindow() {
-      super.viewDidMoveToWindow()
-      if let window, !requestedFocus { requestedFocus = true; window.makeFirstResponder(self) }
-    }
-    override func paste(_ sender: Any?) { pasteAsPlainText(sender) }
-  }
-  final class Coordinator: NSObject, NSTextViewDelegate {
-    var owner: NotebookMacInlineTextInput
-    var presentedText: String?
-    var presentedStyle: NativeTextStyle?
-    init(_ owner: NotebookMacInlineTextInput) { self.owner = owner }
-    func textDidChange(_ notification: Notification) {
-      guard let view = notification.object as? NSTextView else { return }
-      let style = NotebookTextTypography.style(from:view.attributedString(),base:owner.style)
-      presentedText = view.string; presentedStyle = style
-      owner.text = view.string; owner.style = style
-      if let container=view.textContainer,let layout=view.layoutManager {
-        layout.ensureLayout(for:container)
-        owner.onHeight(ceil(layout.usedRect(for:container).height))
-      }
-    }
-    func textDidEndEditing(_ notification: Notification) { owner.onFinish() }
   }
 }
 #endif

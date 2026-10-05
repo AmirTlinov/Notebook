@@ -260,7 +260,7 @@ final class InkMaterialRenderer {
         if sources[i].buffers[id]?.level != level {
           let nodes=prepared.geometry.selected(level:level)
           guard !nodes.isEmpty,
-            let bytes=resources.reserveDerivedBytes(prepared.geometry.byteCount+nodes.count*MemoryLayout<InkRenderGeometry.Node>.stride,priority:.input,owner:owner),
+            let bytes=resources.reserveDerivedBytes(prepared.geometry.byteCount+nodes.count*MemoryLayout<InkRenderGeometry.Node>.stride,priority:owner?.allocationPriority ?? .input,owner:owner),
             let buffer=nodes.withUnsafeBytes({ device.makeBuffer(bytes:$0.baseAddress!,length:$0.count,options:.storageModeShared) }) else { throw SceneRenderError.resourceLimit }
           sources[i].buffers[id] = .init(prepared:prepared,nodes:buffer,count:nodes.count,level:level,bytes:bytes)
           uploadedNodes += nodes.count

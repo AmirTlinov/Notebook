@@ -1340,7 +1340,7 @@ final class SceneCompositionTests: XCTestCase {
       XCTAssertEqual(frame(presence).sourceIdentity, original.requestedSources)
       XCTAssertTrue(coverage.contains(NotebookSceneState.bounds(for: presence, margin: 0)))
       XCTAssertTrue(original.nativeInk.containsProjectionWindows(presence: presence,
-        frame: frame(presence), refinesDetails: false), "Native input backing must also cover this camera")
+        frame: frame(presence), displayScale: 1, refinesDetails: false), "Native input backing must also cover this camera")
       prepare(presence)
       XCTAssertFalse(coordinator.isPreparing, "Covered zoom-out at \(scale) cannot rebuild live hosts")
       XCTAssertTrue(coordinator.published === original)

@@ -42,6 +42,55 @@ struct NotebookIPCTests {
     #expect(result == .string("first"))
   }
 
+  @Test func failedBindAfterAnEmptyAddressCheckPreservesTheWinningSocket() async throws {
+    let endpoint = try IPCEndpoint(); defer { endpoint.remove() }
+    let winner = NotebookIPCServer(socketURL: endpoint.socket) { _ in .string("winner") }
+    let loser = NotebookIPCServer(socketURL: endpoint.socket) { _ in .string("loser") }
+    defer { loser.stop(); winner.stop() }
+    // Both launches observed an empty address. The second completes its real
+    // Unix bind before the first resumes; its EADDRINUSE cleanup owns no inode.
+    #expect(throws: CollaborationError.self) {
+      try loser.start(afterAddressCheck: { try winner.start() })
+    }
+    loser.stop()
+    let response = try await blockingIPC { try NotebookIPCClient(socketURL: endpoint.socket).send(.init(command: .read)) }
+    #expect(response == .string("winner"))
+    try await drainIPC(winner)
+  }
+
+  @Test func stoppingARetiredServerDoesNotUnlinkTheReplacementSocket() async throws {
+    let endpoint = try IPCEndpoint(); defer { endpoint.remove() }
+    let first = NotebookIPCServer(socketURL: endpoint.socket) { _ in .string("first") }
+    let replacement = NotebookIPCServer(socketURL: endpoint.socket) { _ in .string("replacement") }
+    try first.start(); defer { first.stop(); replacement.stop() }
+    try FileManager.default.moveItem(at: endpoint.socket, to: endpoint.directory.appendingPathComponent("retired.sock"))
+    try replacement.start()
+    try await drainIPC(first)
+    let response = try await blockingIPC { try NotebookIPCClient(socketURL: endpoint.socket).send(.init(command: .read)) }
+    #expect(response == .string("replacement"))
+    try await drainIPC(replacement)
+  }
+
+  @Test func processLeaseKeepsOneOwnerUntilReleaseAndIsNotInheritedByChildren() throws {
+    let endpoint = try IPCEndpoint(); defer { endpoint.remove() }
+    var owner: NotebookIPCProcessLease? = try .init(socketURL: endpoint.socket)
+    let descriptor = try #require(owner?.descriptor)
+    #expect(fcntl(descriptor, F_GETFD) & FD_CLOEXEC != 0)
+    do {
+      _ = try NotebookIPCProcessLease(socketURL: endpoint.socket)
+      Issue.record("A second launcher cannot open its store before the first owner releases its lease")
+    } catch let error as CollaborationError { #expect(error.code == "ipc_owner_running") }
+    let path = endpoint.socket.appendingPathExtension("owner").path
+    var before = stat(), after = stat()
+    #expect(lstat(path, &before) == 0)
+    owner = nil
+    #expect(lstat(path, &after) == 0 && before.st_ino == after.st_ino)
+    let replacement = try NotebookIPCProcessLease(socketURL: endpoint.socket)
+    withExtendedLifetime(replacement) { () -> Void in
+      #expect(throws: CollaborationError.self) { _ = try NotebookIPCProcessLease(socketURL: endpoint.socket) }
+    }
+  }
+
   @Test func acceptedHandlerKeepsItsServerExecutorAcrossSuspensionAndActorHops() async throws {
     let endpoint = try IPCEndpoint(); defer { endpoint.remove() }
     let execution = IPCQueueIdentity()
@@ -128,6 +177,43 @@ struct NotebookIPCTests {
       #"{"command":"read","path":"workspace.json"}"#, #"{"command":"snapshot"}"#, #"{"command":"run","query":"rm"}"#] {
       #expect(throws: CollaborationError.self) { try NotebookIPC.decodeCommand(Data(text.utf8)) }
     }
+  }
+
+  @Test func runtimeCommandsDecodeWithoutOpeningAWorkspaceAndRejectTheStoreDispatcher() throws {
+    let endpoint = try IPCEndpoint(); defer { endpoint.remove() }
+    let store = NotebookStore(root: endpoint.directory.appendingPathComponent("must-not-open"))
+    let id = UUID()
+    let requests = [
+      JSONValue.object(["command": .string("runtimeStatus")]),
+      .object(["command": .string("runtimeWorkspace"), "runtimeWorkspace": .object([
+        "action": .string("create"), "id": .string(id.uuidString), "name": .string("Мои записи")])]),
+      .object(["command": .string("runtimeWorkspace"), "runtimeWorkspace": .object([
+        "action": .string("rename"), "id": .string(id.uuidString), "name": .string("Мои записи")])]),
+    ]
+    for wire in requests {
+      let command = try NotebookIPC.decodeCommand(JSONEncoder().encode(wire))
+      if command.command == .runtimeWorkspace {
+        #expect(command.runtimeWorkspace?.id == id && command.runtimeWorkspace?.name == "Мои записи")
+        try command.runtimeWorkspace?.validate()
+      }
+      do {
+        _ = try NotebookCommandDispatcher(store: store).handle(command)
+        Issue.record("The store cannot execute a runtime lifecycle command")
+      } catch let error as CollaborationError { #expect(error.code == "runtime_owner_required") }
+    }
+    #expect(!FileManager.default.fileExists(atPath: store.root.path))
+    for invalid in [NotebookRuntimeWorkspaceRequest(action: .create, name: "name"), .init(action: .select, name: "name"),
+      .init(action: .list, id: id), .init(action: .retry, name: "name")] {
+      #expect(throws: CollaborationError.self) { try invalid.validate() }
+    }
+    try NotebookRuntimeWorkspaceRequest(action: .retry, id: id).validate()
+    let response = NotebookRuntimeWorkspaceResponse(status: .init(ready: true, pid: 42, build: "249",
+      state: .ready, workspaceID: id, socketKey: "addressed-owner"), workspaces: [])
+    let wire = try JSONValue.encode(response)
+    #expect(try wire.decode(NotebookRuntimeWorkspaceResponse.self) == response)
+    #expect(wire["status"]?["protocolVersion"] == .number(1))
+    #expect(wire["status"]?["build"] == .string("249"))
+    #expect(wire["status"]?["socketKey"] == .string("addressed-owner"))
   }
 
   @Test func panelPresentationWireAdmitsFullTypedProjectionAndRejectsStoreSelection() async throws {

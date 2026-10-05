@@ -67,9 +67,20 @@ async function response(operation:(deadline:number)=>Promise<{value:Value;images
 
 /** Transport and formatting only. Every read, program, effect and image is
  * owned by the installed Mac coordinator; no JS eval or store exists here. */
-export function createServer(socketPath=defaultSocketPath(),options:{panelHtml?:string}={}):McpServer {
+export function createServer(socketPath=defaultSocketPath(),options:{panelHtml?:string;bootstrapRuntime?:()=>Promise<Value>}={}):McpServer {
   const server=new McpServer({name:"notebook",version});
-  registerNotebookPanel(server,socketPath,options.panelHtml);
+  const bootstrapRuntime=options.bootstrapRuntime&& (async()=>{
+    try{return await options.bootstrapRuntime!();}
+    catch(cause){
+      // Launcher and server are separate bundles. Preserve the admitted
+      // error payload without relying on their BridgeError class identity.
+      const detail=cause instanceof Error&&"detail" in cause?cause.detail:undefined;
+      if(detail&&typeof detail==="object"&&"code" in detail&&typeof detail.code==="string"
+        &&"message" in detail&&typeof detail.message==="string")throw new BridgeError({...detail});
+      throw cause;
+    }
+  });
+  registerNotebookPanel(server,socketPath,options.panelHtml,bootstrapRuntime);
   server.registerTool("notebook_import_program",{
     title:"Stage an immutable program package from local Mac files",
     description:"Trusted Mac file import, outside QuickJS. Prepare a descriptor with the installed program-package.mjs tooling; pass its SHA-256 packageHash and absolute manifestPath. Returns staging/ready/error/cancelled and byte progress; poll status with the same hash. Cancel stops before the next bounded part; retry reuses accepted SHA blobs. A ready import only stages bytes; it does not publish or show a scene. No source bytes or Base64 belong in tool arguments. Files are never exposed to the browser, and this operation cannot select a Notebook store.",

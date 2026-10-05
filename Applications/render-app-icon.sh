@@ -4,14 +4,13 @@ set -eu
 ROOT=$(unset CDPATH; cd -- "$(dirname -- "$0")" && pwd)
 SOURCE="$ROOT/AppIcon.svg"
 OUTPUT_DIR=${1:-"$ROOT/Assets.xcassets/AppIcon.appiconset"}
-STATUS_DIR="$(dirname -- "$OUTPUT_DIR")/NotebookStatusIcon.imageset"
-mkdir -p "$OUTPUT_DIR" "$STATUS_DIR"
+mkdir -p "$OUTPUT_DIR"
 
 render() {
   name=$1
   pixels=$2
   # Center the painted mark (including the binding stroke), not its old SVG
-  # canvas. Leave room inside the system mask without shrinking the menu icon.
+  # canvas. Leave room inside the system mask.
   set -- $(LC_ALL=C awk -v pixels="$pixels" 'BEGIN {
     scale = 0.84
     centerX = (8.775 + 82.6) / 2
@@ -39,10 +38,3 @@ render AppIcon-256@1x.png 256
 render AppIcon-256@2x.png 512
 render AppIcon-512@1x.png 512
 render AppIcon-512@2x.png 1024
-
-# The menu bar uses the same silhouette as a native light/dark-aware template.
-for scale in 1 2; do
-  pixels=$((18 * scale))
-  rsvg-convert --width "$pixels" --height "$pixels" "$SOURCE" \
-    > "$STATUS_DIR/NotebookStatusIcon@${scale}x.png"
-done

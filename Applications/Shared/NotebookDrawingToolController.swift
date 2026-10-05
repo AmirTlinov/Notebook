@@ -667,7 +667,7 @@ extension NotebookRegionMaterialization {
       }
     }
 
-    var edits:[NotebookElementEdit]=[],working:[NotebookWorkingGraphic]=[],selected:[EditableElementReference]=[]
+    var edits:[Edit]=[],working:[NotebookWorkingGraphic]=[],selected:[EditableElementReference]=[]
     var remainders:[String:NotebookGraphic]=[:]
     let rawBudget = region.rawInk == nil ? 0 : 2
     guard region.graphics.count <= (32-rawBudget)/2 else {
@@ -687,14 +687,14 @@ extension NotebookRegionMaterialization {
       let graphic=copied(body,claims:raw.graphic.sourceInkIDs,mask:inside)
       let object=NotebookWorkingGraphic(id:region.id,surface:region.address.surface,frame:selectedFrame,
         worldOrigin:region.address.worldOrigin,graphic:graphic)
-      edits.append(.init(reference:reference,kind:.convertInkToElement,values:try object.authoredValues()))
+      edits.append(.create(reference,convertsInk:true))
       working.append(object);selected.append(reference)
       if !outside.regionPath(in:.init(x:0,y:0,width:1,height:1)).isEmpty {
         let id=UUID(),ref=region.address.reference(id.uuidString.lowercased())
         let rest=copied(raw.graphic,claims:[],mask:outside)
         let object=NotebookWorkingGraphic(id:id,surface:region.address.surface,frame:raw.frame,
           worldOrigin:region.address.worldOrigin,graphic:rest)
-        edits.append(.init(reference:ref,kind:.insertElement,values:try object.authoredValues()));working.append(object)
+        edits.append(.create(ref,convertsInk:false));working.append(object)
       }
     }
     // Query traversal is unordered; a fragment retains its source paint order.
@@ -730,9 +730,8 @@ extension NotebookRegionMaterialization {
       let frame=placement.frame,worldOrigin=node.surface.kind == .page ? nil : layout.origin
       let object=NotebookWorkingGraphic(id:id,surface:node.surface,frame:frame,
         worldOrigin:worldOrigin,graphic:selectedGraphic,basis:placement.basis)
-      edits.append(.init(reference:reference,kind:.updateElement,
-        values:["graphic":.object(["mask":try .encode(outside)])]))
-      edits.append(.init(reference:ref,kind:.insertElement,values:try object.authoredValues()))
+      edits.append(.remainder(reference,outside))
+      edits.append(.create(ref,convertsInk:false))
       working.append(object);selected.append(ref)
     }
     guard !selected.isEmpty,!edits.isEmpty else { return nil }

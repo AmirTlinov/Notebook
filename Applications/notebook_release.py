@@ -1,6 +1,9 @@
 """Build input, signature and evidence contracts shared by Notebook release commands."""
 import argparse
+import contextlib
 import datetime
+import errno
+import fcntl
 import hashlib
 import json
 import os
@@ -8,6 +11,7 @@ from pathlib import Path
 import plistlib
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import stat
@@ -119,7 +123,8 @@ def source_inputs(root):
             directories[:] = sorted(name for name in directories
                 if name not in (".git", ".build", "node_modules", "__pycache__", ".notebook-test")
                 and not name.endswith(".xcresult")
-                and (relative / name).as_posix() not in ("Applications/Notebook.xcodeproj", "MCP/.notebook/program-builds")
+                and (relative / name).as_posix() not in ("Applications/Notebook.xcodeproj", "MCP/.notebook/program-builds", "MCP/plugin/notebook/runtime")
+                and not (relative.as_posix() == "MCP/plugin/notebook" and name.startswith(".runtime-stage-"))
                 and not (relative.as_posix() == "Applications" and name.startswith("DerivedData")))
             for name in directories:
                 require(not (Path(base) / name).is_symlink(), "Ссылка за пределы исходников не допускается.")
@@ -196,14 +201,6 @@ def app_rows(result, bundle):
             "Неоднозначный ответ списка приложений.")
     require(len(rows) <= 1, "Несколько установок с одним bundle ID требуют ручного разбора.")
     return rows
-
-
-def canonical_identity(rows):
-    require(len(rows) == 1, "Исходная установка Notebook должна быть явно найдена до preview.")
-    row = rows[0]
-    keys = ("bundleIdentifier", "bundleVersion", "version", "name", "url")
-    require(all(isinstance(row.get(key), str) and row[key] for key in keys), "Неполная идентичность исходной установки.")
-    return {key: row[key] for key in keys}
 
 
 def validate_bundle_info(info, device):
@@ -350,10 +347,10 @@ def inspect_ipad(app, device, evidence, command):
 
 VERIFICATION_FILES = {
     "source-before.json", "source-after.json", "toolchain.json", "toolchain-after.json", "core.log",
-    "load-fixture.log", "preview-installer.log", "release-tools.log", "mcp-check.log",
+    "load-fixture.log", "release-tools.log", "mcp-check.log",
     "mcp-tests.log", "mcp-smoke.log", "computation-queue.json",
     "computation-dependencies.json", "computation-dependencies.log",
-    "recognition-preparation.log", "mac-helper-launch.json", "mac-helper-launch.png",
+    "recognition-preparation.log",
     "ipad-release-build.log", "mac.log", "ipad.log", "mac-summary.json", "ipad-summary.json",
 }
 
@@ -527,7 +524,7 @@ def build_mac(snapshot, evidence, command, typesetter_runtime, codex_runtime, su
     entitlements = evidence / "mac.entitlements"
     entitlements.write_bytes(plistlib.dumps({"com.apple.security.get-task-allow": True, **cloud_entitlements(mac=True)}))
     command("build-mac", ["/usr/bin/xcrun", "xcodebuild", "-project",
-        snapshot / "Applications/Notebook.xcodeproj", "-scheme", "NotebookMac",
+        snapshot / "Applications/Notebook.xcodeproj", "-scheme", "NotebookRuntime",
         "-configuration", CONFIGURATION, "-destination", "generic/platform=macOS",
         "-derivedDataPath", evidence / "derived-mac", "-allowProvisioningUpdates",
         "DEVELOPMENT_TEAM=" + TEAM,
@@ -539,17 +536,18 @@ def build_mac(snapshot, evidence, command, typesetter_runtime, codex_runtime, su
         "NOTEBOOK_TYPESCRIPT_RUNTIME=" + str(typescript_runtime),
         "SWIFT_OPTIMIZATION_LEVEL=" + SWIFT_OPTIMIZATION, "ARCHS=arm64", "build"],
         cwd=snapshot, timeout=1800)
-    return evidence / ("derived-mac/Build/Products/" + CONFIGURATION + "/Notebook.app")
+    return evidence / ("derived-mac/Build/Products/" + CONFIGURATION + "/NotebookRuntime.app")
 
 
 def inspect_mac(app, command):
     bundle = app_manifest(app)
     info = plistlib.loads((app / "Contents/Info.plist").read_bytes())
-    require(info.get("CFBundleIdentifier") == MAC_BUNDLE and info.get("LSUIElement", False) is False
+    require(info.get("CFBundleIdentifier") == MAC_BUNDLE and info.get("LSUIElement") is True
+            and info.get("NotebookPluginRuntime") is True
             and info.get("LSBackgroundOnly", False) is False
             and info.get("NotebookCloudContainer") == CLOUD_CONTAINER
             and info.get("CFBundlePackageType") == "APPL" and info.get("DTPlatformName") == "macosx",
-            "Нужно обычное приложение macOS с собственной идентичностью.")
+            "Нужен подписанный runtime плагина Notebook без самостоятельного интерфейса.")
     require(all(isinstance(info.get(key), str) and info[key]
                 for key in ("CFBundleShortVersionString", "CFBundleVersion", "LSMinimumSystemVersion")),
             "Mac bundle не назвал версию или минимальную систему.")
@@ -719,6 +717,11 @@ def build_verified_pair(source, verification, evidence, runner=None):
         surface_stage = prepare_surface_stage(source, command)
         mac = build_mac(snapshot, evidence, command, runtime, source / ".build/notebook-codex-runtime", surface_stage)
         mac_info, mac_signature, mac_uuids, mac_manifest = inspect_mac(mac, command)
+        plugin = evidence / "plugin"
+        shutil.copytree(snapshot / "MCP/plugin", plugin)
+        command("package-plugin", [shutil.which("node"), snapshot / "MCP/package-plugin-runtime.mjs",
+            mac, plugin / "notebook"], cwd=snapshot, timeout=600)
+        mac = plugin / "notebook/runtime/NotebookRuntime.app"
         require(all(ipad_info[key] == mac_info[key] for key in ("CFBundleVersion", "CFBundleShortVersionString")),
                 "Пара собрана с разными версиями приложений.")
         require(source_inputs(source) == before == source_inputs(snapshot), "Исходники изменились при сборке пары.")
@@ -735,6 +738,8 @@ def build_verified_pair(source, verification, evidence, runner=None):
             apps[role] = {"path": app.relative_to(evidence).as_posix(), "manifestSHA256": manifest["sha256"],
                           "signature": signature, "binaryUUIDs": uuids.strip()}
         receipt.update({"status": "verified-build", "device": device, "apps": apps,
+                        "plugin": {"path": plugin.relative_to(evidence).as_posix(),
+                                   "version": json.loads((plugin / "notebook/.codex-plugin/plugin.json").read_text())["version"]},
                         "version": ipad_info["CFBundleShortVersionString"], "build": ipad_info["CFBundleVersion"]})
         write_json(evidence / "build.json", receipt)
         return receipt
@@ -744,15 +749,209 @@ def build_verified_pair(source, verification, evidence, runner=None):
         raise
 
 
+def plugin_metadata(root):
+    """The authored plugin payload, without the separately sealed runtime."""
+    files = []
+    for base, directories, names in os.walk(root, followlinks=False):
+        relative = Path(base).relative_to(root)
+        if relative.as_posix() == "notebook":
+            directories[:] = [name for name in directories if name != "runtime" and not name.startswith(".runtime-stage-")]
+        for name in directories:
+            require(not (Path(base) / name).is_symlink(), "Plugin metadata содержит ссылку.")
+        for name in names:
+            path = Path(base) / name
+            require(stat.S_ISREG(path.lstat().st_mode), "Plugin metadata содержит специальный файл или ссылку.")
+            files.append({"path": path.relative_to(root).as_posix(), "sha256": file_digest(path),
+                          "executable": bool(path.stat().st_mode & 0o111)})
+    return sorted(files, key=lambda item: item["path"])
+
+
+@contextlib.contextmanager
+def stopped_runtime(command, root=None):
+    """Share the production writer lease while replacing only plugin binaries."""
+    root = root or Path("/tmp") / ("notebook-" + str(os.geteuid()))
+    root.mkdir(mode=0o700, exist_ok=True)
+    info = root.lstat()
+    require(stat.S_ISDIR(info.st_mode) and info.st_uid == os.geteuid() and stat.S_IMODE(info.st_mode) == 0o700,
+            "Каталог runtime должен принадлежать пользователю с правами 0700.")
+    endpoint = root / "bridge.sock"
+    lease = endpoint.with_suffix(".sock.owner")
+    descriptor = os.open(lease, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    try:
+        info, current = os.fstat(descriptor), lease.lstat()
+        require(stat.S_ISREG(info.st_mode) and info.st_uid == os.geteuid() and stat.S_IMODE(info.st_mode) == 0o600
+                and info.st_nlink == 1 and (info.st_dev, info.st_ino) == (current.st_dev, current.st_ino),
+                "Файл владельца runtime должен принадлежать пользователю с правами 0600.")
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise ReleaseError("Notebook runtime ещё работает; завершите его обычным способом до установки.") from error
+        with socket.socket(socket.AF_UNIX) as probe:
+            probe.settimeout(0.5)
+            try:
+                probe.connect(str(endpoint))
+            except OSError as error:
+                require(error.errno in (errno.ENOENT, errno.ECONNREFUSED), "Не удалось проверить владельца Notebook IPC.")
+            else:
+                raise ReleaseError("Notebook обслуживает рабочее пространство; завершите его обычным способом до установки.")
+        processes = command("owners-before-install", ["/bin/ps", "-axo", "pid=,comm="], read_output=True)[0].decode()
+        legacy = {str(path / "Contents/MacOS/Notebook") for path in (CANONICAL_MAC, Path("/Applications/Notebook.app"))}
+        require(not any(line.strip().split(None, 1)[-1] in legacy for line in processes.splitlines() if line.strip()),
+                "Настольный Notebook ещё завершает работу; дождитесь выхода процесса.")
+        yield
+    finally:
+        os.close(descriptor)
+
+
+def install_verified_pair(source, build, evidence, runner=None):
+    """Install one verified plugin/iPad pair in place; never open or copy content."""
+    source, build = source.resolve(), build.resolve()
+    raw_evidence = evidence.absolute()
+    evidence = raw_evidence.resolve()
+    require(not raw_evidence.is_symlink() and not evidence.exists() and not below(evidence, build)
+            and not any(part.endswith(".app") for part in evidence.parts)
+            and (not below(evidence, source) or evidence.relative_to(source).parts[0] == ".build"),
+            "Для установки нужен новый каталог вне release bundle и build inputs.")
+    release = read_json(build / "build.json")
+    require(release.get("format") == 1 and release.get("status") == "verified-build"
+            and set(release.get("apps", {})) == {"iPad", "mac"}, "Установка требует verified-build пары.")
+    snapshot = build / "source"
+    require(source_inputs(snapshot)["sha256"] == release.get("sourceSHA256"), "Проверенный source snapshot изменился.")
+    require(file_digest(snapshot / "Applications/notebook_release.py") == file_digest(Path(__file__)),
+            "Установщик должен принадлежать проверенному release snapshot.")
+    paths = {"iPad": "derived-data/Build/Products/Release-iphoneos/Notebook.app",
+             "mac": "plugin/notebook/runtime/NotebookRuntime.app"}
+    for role, path in paths.items():
+        require(release["apps"][role].get("path") == path, "Release называет неизвестный адрес bundle.")
+        manifest = read_json(build / (role + "-manifest.json"))
+        require(app_manifest(build / path) == manifest and manifest["sha256"] == release["apps"][role].get("manifestSHA256"),
+                "Подписанная пара изменилась после сборки.")
+    plugin = build / "plugin"
+    metadata = plugin_metadata(plugin)
+    require(metadata == plugin_metadata(snapshot / "MCP/plugin"), "Release plugin metadata изменилось.")
+    manifest = read_json(plugin / "notebook/.codex-plugin/plugin.json")
+    require(release.get("plugin") == {"path": "plugin", "version": manifest.get("version")}, "Release plugin version не совпала.")
+    evidence.mkdir(mode=0o700)
+    command = release_commands(evidence, runner)
+    receipt = {"format": 1, "status": "preflight", "buildSHA256": file_digest(build / "build.json"),
+               "build": release["build"], "version": release["version"], "pluginVersion": manifest["version"], "installationAttempted": False}
+    write_json(evidence / "installation.json", receipt)
+
+    def device_apps(label, bundle):
+        target = evidence / (label + ".json")
+        command(label, ["/usr/bin/xcrun", "devicectl", "device", "info", "apps", "--device", DEVICE,
+            "--bundle-id", bundle, "--include-default-apps", "--include-app-clips", "--include-removable-apps",
+            "--include-container-paths", "--include-app-group-identifiers", "--timeout", "30", "--json-output", target])
+        return app_rows(successful_json(target, "devicectl.device.info.apps"), bundle)
+
+    try:
+        output = command("primary-checkout", ["git", "-C", source, "worktree", "list", "--porcelain", "-z"], read_output=True)[0].decode().split("\0")[0]
+        require(output.startswith("worktree "), "Git не назвал primary checkout для установленного plugin marketplace.")
+        primary = Path(output.removeprefix("worktree ")).resolve()
+        stable = primary / "MCP/plugin"
+        require(metadata == plugin_metadata(stable), "Сначала перенесите проверенные plugin metadata в primary checkout.")
+        for script in ("install-plugin.mjs", "package-plugin-runtime.mjs"):
+            require(file_digest(primary / "MCP" / script) == file_digest(snapshot / "MCP" / script),
+                    "Установщик плагина в primary checkout отличается от release snapshot.")
+        device_path = evidence / "device.json"
+        command("device", ["/usr/bin/xcrun", "devicectl", "device", "info", "details", "--device", DEVICE,
+            "--timeout", "30", "--json-output", device_path, "--omit-deprecated-fields-in-json"])
+        device = validate_device(successful_json(device_path, "devicectl.device.info.details"))
+        require(device == release["device"], "Физический iPad или его система изменились после сборки пары.")
+        ipad, mac = (build / paths[role] for role in ("iPad", "mac"))
+        ipad_info, ipad_signature, _, _ = inspect_ipad(ipad, device, evidence, command)
+        mac_info, mac_signature, _, _ = inspect_mac(mac, command)
+        require(ipad_signature == release["apps"]["iPad"]["signature"] and mac_signature == release["apps"]["mac"]["signature"],
+                "Подпись release пары изменилась.")
+        require(all(info["CFBundleVersion"] == release["build"] and info["CFBundleShortVersionString"] == release["version"]
+                    for info in (ipad_info, mac_info)), "Release версия не совпала с подписанными bundles.")
+        before = device_apps("ipad-before", BUNDLE)
+        canonical = device_apps("canonical-before", CANONICAL)
+        build_number = release["build"]
+        require(isinstance(build_number, str) and build_number.isdecimal(), "Build пары должен быть числом.")
+        for info in before:
+            current = info.get("bundleVersion")
+            require(isinstance(current, str) and current.isdecimal() and int(current) <= int(build_number),
+                    "Установленный iPad новее этой пары; downgrade запрещён.")
+        node, codex = shutil.which("node"), os.environ.get("CODEX_BIN") or shutil.which("codex")
+        require(node and codex, "Для установки нужны node и Codex CLI.")
+        current_apps = [stable / "notebook/runtime/NotebookRuntime.app", CANONICAL_MAC]
+        plugins = json.loads(command("plugins-before", [codex, "plugin", "list", "--json"], read_output=True)[0])
+        installed = [item for item in plugins.get("installed", []) if item.get("pluginId") == "notebook@notebook-local"]
+        require(len(installed) <= 1, "Codex назвал несколько установок плагина Notebook.")
+        if installed:
+            previous = installed[0].get("version", "")
+            require(re.fullmatch(r"\d+\.\d+\.\d+", previous) and re.fullmatch(r"\d+\.\d+\.\d+", manifest["version"])
+                    and tuple(map(int, previous.split("."))) <= tuple(map(int, manifest["version"].split("."))),
+                    "Установленный плагин новее этой пары; downgrade запрещён.")
+            connected_before = json.loads(command("connected-before", [codex, "mcp", "get", "notebook", "--json"], read_output=True)[0])
+            previous_node = Path(connected_before.get("transport", {}).get("command", ""))
+            if previous_node.is_absolute() and previous_node.parts[-4:] == ("Contents", "Resources", "CodexRuntime", "node"):
+                current_apps.append(previous_node.parents[3])
+        for current_app in current_apps:
+            current_info = current_app / "Contents/Info.plist"
+            if current_info.exists():
+                current = plistlib.loads(current_info.read_bytes())
+                number = current.get("CFBundleVersion")
+                require(current.get("CFBundleIdentifier") == MAC_BUNDLE and isinstance(number, str)
+                        and number.isdecimal() and int(number) <= int(build_number),
+                        "Установленный runtime новее этой пары или имеет другую идентичность; downgrade запрещён.")
+        receipt.update({"ipadBefore": before, "canonicalBefore": canonical, "marketplace": str(stable)})
+        with stopped_runtime(command):
+            receipt.update({"status": "incomplete", "installationAttempted": True, "step": "package-plugin"})
+            write_json(evidence / "installation.json", receipt)
+            command("package-plugin", [node, snapshot / "MCP/package-plugin-runtime.mjs", mac, stable / "notebook"], timeout=600)
+            require(app_manifest(stable / "notebook/runtime/NotebookRuntime.app") == read_json(build / "mac-manifest.json"),
+                    "Подписанный runtime изменился при переносе в marketplace.")
+        # Releasing the lease allows Codex's new connection to start its owner.
+        receipt["step"] = "install-plugin"; write_json(evidence / "installation.json", receipt)
+        command("install-plugin", [node, primary / "MCP/install-plugin.mjs", "install"], cwd=primary, timeout=120)
+        connected = json.loads(command("installed-plugin", [codex, "mcp", "get", "notebook", "--json"], read_output=True)[0])
+        transport = connected.get("transport", {})
+        executable = Path(transport.get("command", ""))
+        suffix = ("Contents", "Resources", "CodexRuntime", "node")
+        require(connected.get("enabled") is True and transport.get("type") == "stdio" and executable.is_absolute()
+                and executable.parts[-4:] == suffix, "Codex не подключил bundled Notebook runtime.")
+        cached = executable.parents[3]
+        require(transport.get("args") == [str(cached / "Contents/Resources/NotebookTools/dist/launch-runtime.mjs")]
+                and app_manifest(cached) == read_json(build / "mac-manifest.json"),
+                "Codex сохранил другую сборку runtime; обновите plugin version перед выпуском.")
+        require(device_apps("ipad-preinstall", BUNDLE) == before, "Установленный iPad изменился во время подготовки.")
+        receipt["step"] = "install-ipad"; write_json(evidence / "installation.json", receipt)
+        installed_path = evidence / "install-ipad.json"
+        command("install-ipad", ["/usr/bin/xcrun", "devicectl", "device", "install", "app", "--device", DEVICE,
+            ipad, "--timeout", "120", "--json-output", installed_path], timeout=150)
+        installed = successful_json(installed_path, "devicectl.device.install.app").get("installedApplications")
+        require(isinstance(installed, list) and len(installed) == 1 and installed[0].get("bundleID") == BUNDLE,
+                "CLI не подтвердил единственную установку iPad; автоматического повтора нет.")
+        after = device_apps("ipad-after", BUNDLE)
+        require(len(after) == 1 and after[0].get("name") == DISPLAY_NAME and after[0].get("version") == release["version"]
+                and after[0].get("bundleVersion") == build_number and isinstance(after[0].get("url"), str)
+                and after[0]["url"] == installed[0].get("installationURL"), "iPad не подтвердил установленные build и bundle URL.")
+        for key in ("dataContainer", "dataContainerURL", "appGroups"):
+            if before and key in before[0]:
+                require(after[0].get(key) == before[0][key], "Контейнер iPad изменился при inplace установке.")
+        require(device_apps("canonical-after", CANONICAL) == canonical, "Историческая установка iPad изменилась.")
+        receipt.update({"status": "installed", "step": "complete", "ipadAfter": after, "runtime": str(cached)})
+        write_json(evidence / "installation.json", receipt)
+        return receipt
+    except Exception as error:
+        receipt.update({"status": "incomplete" if receipt["installationAttempted"] else "refused", "error": str(error)})
+        write_json(evidence / "installation.json", receipt)
+        raise
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Проверка и сборка Notebook без изменения установленных приложений или архивов.")
+    parser = argparse.ArgumentParser(description="Проверка, сборка и установка пары Notebook iPad + Codex plugin без переноса содержания.")
     actions = parser.add_subparsers(dest="action", required=True)
-    for name in ("fingerprint", "verification-start", "verification-finish", "build-pair"):
+    for name in ("fingerprint", "verification-start", "verification-finish", "build-pair", "install-pair"):
         action = actions.add_parser(name)
         action.add_argument("--source-root", type=Path, required=True)
         action.add_argument("--evidence-dir", type=Path, required=True)
         if name == "build-pair":
             action.add_argument("--verification-dir", type=Path, required=True)
+        if name == "install-pair":
+            action.add_argument("--build-dir", type=Path, required=True)
     args = parser.parse_args()
     if args.action == "fingerprint":
         write_json(args.evidence_dir, source_inputs(args.source_root))
@@ -763,9 +962,12 @@ def main():
         write_json(args.evidence_dir / "toolchain-after.json",
                    read_toolchain(release_commands(args.evidence_dir), prefix="toolchain-after-"))
         finish_verification(args.source_root, args.evidence_dir)
-    else:
+    elif args.action == "build-pair":
         build_verified_pair(args.source_root, args.verification_dir, args.evidence_dir)
         print("Подписанная пара собрана из проверенного среза. Приложения НЕ установлены, архивы НЕ изменены.")
+    else:
+        install_verified_pair(args.source_root, args.build_dir, args.evidence_dir)
+        print("Плагин Notebook и iPad установлены из проверенной пары. Квитанция: " + str(args.evidence_dir / "installation.json"))
 
 
 if __name__ == "__main__":

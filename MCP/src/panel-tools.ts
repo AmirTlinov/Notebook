@@ -41,7 +41,7 @@ type Value=Record<string,unknown>;
 type Address=z.infer<typeof panelAddressSchema>;
 
 /** A panel binds the admitted workspace socket; switching another window cannot redirect it. */
-export function panelSocket(address:Address,initialSocket=defaultSocketPath()):string {
+export function panelSocket(address:Pick<Address,"socketKey">,initialSocket=defaultSocketPath()):string {
   return join(dirname(initialSocket),`${address.socketKey}.sock`);
 }
 
@@ -58,7 +58,7 @@ async function result(operation:()=>Promise<Value>,appearance=false) {
   }
 }
 
-export function registerNotebookPanel(server:McpServer,socketPath:string,html?:string) {
+export function registerNotebookPanel(server:McpServer,socketPath:string,html?:string,bootstrapRuntime?:()=>Promise<Value>) {
   const appMetadata={ui:{resourceUri:panelResourceURI,visibility:["app"]}};
   registerAppResource(server,"Notebook workspace",panelResourceURI,{},async()=>({contents:[{
     uri:panelResourceURI,mimeType:RESOURCE_MIME_TYPE,
@@ -69,11 +69,28 @@ export function registerNotebookPanel(server:McpServer,socketPath:string,html?:s
   }]}));
   registerAppTool(server,"notebook_open",{
     title:"Notebook",
-    description:"Open the real Notebook workspace for human and agent collaboration. Uses the installed Mac runtime and existing saved material. Pass an exact board/page target when known; omitted target follows the admitted Notebook focus. The panel keeps its own camera and selection and never changes the iPad camera. Other Notebook tools remain usable without opening the panel.",
+    description:"Open the real Notebook workspace for human and agent collaboration. The plugin runtime owns saved material. Pass an exact board/page target when known; omitted target follows the admitted Notebook focus. The panel keeps its own camera and selection and never changes the iPad camera. With no selected workspace, choose or create one inside the panel.",
     inputSchema:z.object({target:panelTargetSchema.optional(),bounds:sceneBoundsSchema.optional()}).strict(),
     annotations:{readOnlyHint:true,destructiveHint:false,openWorldHint:false},
     _meta:{ui:{resourceUri:panelResourceURI},"openai/ui":{entrypoints:[{type:"thread"},{type:"global"}]}},
-  },input=>result(()=>runBridge<Value>(socketPath,{command:"panelRead",panelRead:input})));
+  },input=>result(async()=>{
+    const runtime=bootstrapRuntime?await bootstrapRuntime():await runBridge<Value>(socketPath,{command:"runtimeStatus"});
+    if(runtime.state!=="ready")return {runtime};
+    return readRuntimePanel(runtime,input,socketPath);
+  }));
+  registerAppTool(server,"notebook_panel_workspace",{
+    title:"Choose a Notebook workspace",
+    description:"Read, select, create or rename the personal workspace through the plugin runtime. Accepted edits retain their original workspace owner.",
+    inputSchema:z.object({action:z.enum(["list","create","select","rename","retry"]),id:z.uuid().optional(),name:z.string().trim().min(1).max(200).optional()}).strict(),
+    annotations:{readOnlyHint:false,destructiveHint:false,openWorldHint:false},_meta:appMetadata,
+  },request=>result(async()=>{
+    if(bootstrapRuntime&&["list","retry"].includes(request.action))await bootstrapRuntime();
+    const value=await runBridge<Value>(socketPath,{command:"runtimeWorkspace",runtimeWorkspace:request});
+    if(["create","select","retry"].includes(request.action)&&(value.status as Value)?.state==="ready"&&!value.error){
+      value.snapshot=await readRuntimePanel(value.status as Value,{},socketPath);
+    }
+    return value;
+  }));
   registerAppTool(server,"notebook_panel_presentation",{
     title:"Prepare this Notebook view",
     description:"Read native world tiles and captured source geometry for this panel. Reuse immutable assets already held by the panel; Notebook preserves ink, physical covers and painter order without changing any device camera.",
@@ -96,4 +113,16 @@ export function registerNotebookPanel(server:McpServer,socketPath:string,html?:s
     annotations:{readOnlyHint:false,destructiveHint:true,openWorldHint:false,idempotentHint:true},_meta:appMetadata,
   },({socketKey,...request})=>result(()=>runBridge<Value>(panelSocket({...request,socketKey},socketPath),
     {command:"panelUndo",panelUndo:request})));
+}
+
+/** Another panel can select a workspace between these two requests. The
+ * captured endpoint and identity keep this initial read with its accepted owner. */
+async function readRuntimePanel(status:Value,request:Value,socketPath:string):Promise<Value>{
+  const address=panelAddressSchema.pick({workspaceID:true,socketKey:true}).parse({workspaceID:status.workspaceID,socketKey:status.socketKey});
+  const snapshot=await runBridge<Value>(panelSocket(address,socketPath),
+    {command:"panelRead",panelRead:{...request,workspaceID:address.workspaceID}});
+  if(String(snapshot.workspaceID).toLowerCase()!==address.workspaceID.toLowerCase()||snapshot.socketKey!==address.socketKey){
+    throw new BridgeError({code:"workspace_changed",message:"Notebook вернул другое пространство."});
+  }
+  return snapshot;
 }

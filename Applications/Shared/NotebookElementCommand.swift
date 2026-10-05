@@ -148,10 +148,10 @@ struct NotebookElementCommandWriteResult:Sendable {
 
 @MainActor final class NotebookElementCommandBatch {
   let id=UUID(),generation=UUID()
+  var reservedReferences=Set<EditableElementReference>()
   var result:Task<[EditableElementReference:NotebookElementCommandResult]?,Never>!
   private var admission:Result<NotebookElementCommandPlan,Error>?
   private var waiters:[CheckedContinuation<NotebookElementCommandPlan,Error>]=[]
-  var admittedPlan:NotebookElementCommandPlan? { try? admission?.get() }
   func prepared() async throws -> NotebookElementCommandPlan {
     if let admission { return try admission.get() }
     return try await withCheckedThrowingContinuation { waiters.append($0) }
