@@ -104,9 +104,9 @@ private struct PreviewPublicationSlot<Key: Equatable> {
   }
 }
 
-private enum PreviewPublicationError: Error {
-  case sourceUnavailable
-  case sourceChanged
+private enum PreviewPublicationError {
+  static let sourceUnavailable = CollaborationError("snapshot_changed", "Источник изображения больше недоступен.")
+  static let sourceChanged = CollaborationError("snapshot_changed", "Источник изображения изменился во время подготовки.")
 }
 
 /// The process owns publication independently from the working
@@ -120,7 +120,7 @@ final class MacPreviewPublisher {
   private var pageRequestTask: Task<Void, Never>?
   private var sourceReadTask: Task<Void, Never>?
   private var lastReadDemand: PreviewReadDemand?
-  private var receiptRefresh: (demand: PreviewReadDemand, permit: CurrentViewPublicationPermit)?
+  private var receiptRefresh: (demand: PreviewReadDemand, permit: NotebookPreviewPublication<CurrentViewPublicationFiles?>)?
   private var sourceKey: PreviewCurrentViewKey?
   private var sourcePageKey: PreviewPageKey?
   private var renderedScene: (key: PreviewCurrentViewKey, dependencies: ScenePixelDependencies)?
@@ -458,7 +458,7 @@ final class MacPreviewPublisher {
           sourcePageKey = page.flatMap { header in header.inkStamp.map { .init(pageID: header.target.id, inkStamp: $0, size: header.size) } }
           if let key = makeCurrentViewKey(), currentView.published == key {
             let dependencies = renderedScene.flatMap { $0.key == key ? $0.dependencies : nil }
-            let permit = CurrentViewPublicationPermit()
+            let permit = NotebookPreviewPublication<CurrentViewPublicationFiles?>()
             receiptRefresh = (demand, permit)
             defer { if receiptRefresh?.permit === permit { receiptRefresh = nil } }
             try await withTaskCancellationHandler {

@@ -15,23 +15,17 @@ private struct RasterSnapshot {
   }
 }
 
-/// Current-view output is derived and revocable while queued. Once admitted
-/// immediately before I/O its atomic file replacements finish in writer order.
-/// The lock protects only this tiny admission state, never encoding or disk I/O.
-final class CurrentViewPublicationPermit: @unchecked Sendable {
-  private enum State { case queued, revoked, admitted }
-  private let lock = NSLock()
-  private var state = State.queued
+struct CurrentViewPublicationFiles: Sendable {
+  let png: (data: Data, url: URL)?
+  let receipt: Data
+  let receiptURL: URL
 
-  func revoke() {
-    lock.lock(); defer { lock.unlock() }
-    if state == .queued { state = .revoked }
-  }
-
-  func admit() throws {
-    lock.lock(); defer { lock.unlock() }
-    guard state == .queued else { throw CancellationError() }
-    state = .admitted
+  func write() throws {
+    if let png {
+      try FileManager.default.createDirectory(at: png.url.deletingLastPathComponent(), withIntermediateDirectories: true)
+      try png.data.write(to: png.url, options: .atomic)
+    }
+    try receipt.write(to: receiptURL, options: .atomic)
   }
 }
 
@@ -40,13 +34,13 @@ enum CurrentViewPreviewWriter {
   /// workspace metadata. Script readers can keep their strict receipt fence
   /// without making an unrelated edit render the same image again.
   static func refreshReceipt(store: NotebookStore, presence: SessionPresence,
-    identity: PreviewSourceIdentity, dependencies: ScenePixelDependencies?, permit: CurrentViewPublicationPermit) throws {
-    try store.readTransaction { store in
+    identity: PreviewSourceIdentity, dependencies: ScenePixelDependencies?, permit: NotebookPreviewPublication<CurrentViewPublicationFiles?>) throws {
+    try permit.publish(preparing: { try store.readTransaction { store in
       guard let receipt = try store.loadCurrentViewReceipt(),
-        receipt.presence.previewPixelIdentity == presence.previewPixelIdentity else { return }
+        receipt.presence.previewPixelIdentity == presence.previewPixelIdentity else { return nil }
       let header = try store.workspaceHeader()
       guard receipt.workspaceStamp != header.stamp || receipt.boardRevision != header.boardRevision
-        || receipt.spatialInkStamp != header.spatialInkStamp || receipt.presence != presence else { return }
+        || receipt.spatialInkStamp != header.spatialInkStamp || receipt.presence != presence else { return nil }
       if let dependencies {
         guard try dependencies.isCurrent(store) else { throw PreviewError.sourceChanged }
       } else {
@@ -58,10 +52,8 @@ enum CurrentViewPreviewWriter {
         surface: receipt.surface, pngSHA256: receipt.pngSHA256)
       guard updated.isValid else { throw PreviewError.invalidReceipt }
       let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-      let data = try encoder.encode(updated)
-      try permit.admit()
-      try data.write(to: store.currentViewRevisionURL, options: .atomic)
-    }
+      return .init(png: nil, receipt: try encoder.encode(updated), receiptURL: store.currentViewRevisionURL)
+    } }, writing: { try $0?.write() })
   }
 
   @MainActor
@@ -139,10 +131,10 @@ enum CurrentViewPreviewWriter {
       model.observedPresencePhase == .settled,
       model.workspaceHeader?.workspaceID == header.workspaceID
     else { throw PreviewError.sourceChanged }
-    let permit = CurrentViewPublicationPermit()
+    let permit = NotebookPreviewPublication<CurrentViewPublicationFiles?>()
     try await withTaskCancellationHandler {
       try await model.performStoreCommand { store in
-        try store.readTransaction { store in
+        try permit.publish(preparing: { try store.readTransaction { store in
           let latest = try store.workspaceHeader()
           let current: Bool
           if let dependencies { current = try dependencies.isCurrent(store) }
@@ -154,12 +146,8 @@ enum CurrentViewPreviewWriter {
             renderViewport: .init(x: viewport.width, y: viewport.height), surface: surface, pngSHA256: pngHash)
           guard receipt.isValid else { throw PreviewError.invalidReceipt }
           let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-          let receiptData = try encoder.encode(receipt)
-          try permit.admit()
-          try FileManager.default.createDirectory(at: pngURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-          try png.write(to: pngURL, options: [.atomic])
-          try receiptData.write(to: receiptURL, options: [.atomic])
-        }
+          return .init(png: (png, pngURL), receipt: try encoder.encode(receipt), receiptURL: receiptURL)
+        } }, writing: { try $0?.write() })
       }
     } onCancel: { permit.revoke() }
     return dependencies
@@ -194,11 +182,15 @@ enum CurrentViewPreviewWriter {
           inkRegions: vision.regions.map(\.contentPoints))
       }
       let receipt = try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
-      try await model.performStoreCommand { store in
-        try Task.checkCancellation()
-        guard try NotebookStore.pageVisionSourceRevision(store.loadPage(request.target.id)) == request.sourceRevision else { throw PreviewError.sourceChanged }
-        try store.saveTargetRender(receipt)
-      }
+      let publication = NotebookPreviewPublication<TargetRenderReceipt>()
+      try await withTaskCancellationHandler {
+        try await model.performStoreCommand { store in
+          try publication.publish(preparing: {
+            guard try NotebookStore.pageVisionSourceRevision(store.loadPage(request.target.id)) == request.sourceRevision else { throw PreviewError.sourceChanged }
+            return receipt
+          }, writing: { try store.saveTargetRender($0) })
+        }
+      } onCancel: { publication.revoke() }
       return
     }
     guard model.permitsBackgroundPreparation else { throw PreviewError.inputActive }
@@ -301,18 +293,22 @@ enum CurrentViewPreviewWriter {
     let png = output.png, outputHash = output.sha256
     let outputCamera = camera, outputDiagnostics = diagnostics, outputRegions = inkRegions, outputBuildID = buildID
     let outputPrograms = programs
-    try await model.performStoreCommand { store in
-      try Task.checkCancellation()
-      let latest = try store.workspaceHeader()
-      guard latest.cursor == header.cursor, latest.workspaceID == header.workspaceID else { throw PreviewError.sourceChanged }
-      guard try store.referenceRevision(target: target) == request.sourceRevision else { throw PreviewError.sourceChanged }
-      guard let image = NSBitmapImageRep(data: png) else { throw PreviewError.pngEncoding }
-      let fingerprint = request.region == nil ? nil : target.kind == .document ? outputHash
-        : try store.regionalFingerprint(request, inkFingerprint: inkFingerprint)
-      try store.saveTargetRender(.init(request: request, status: "ready", buildID: outputBuildID, pngSHA256: outputHash, referenceFingerprint: fingerprint,
-        pixelSize: .init(x: Double(image.pixelsWide), y: Double(image.pixelsHigh)), camera: outputCamera,
-        diagnostics: outputDiagnostics, programs: outputPrograms, inkRegions: outputRegions), png: png)
-    }
+    let publication = NotebookPreviewPublication<TargetRenderReceipt>()
+    try await withTaskCancellationHandler {
+      try await model.performStoreCommand { store in
+        try publication.publish(preparing: {
+          let latest = try store.workspaceHeader()
+          guard latest.cursor == header.cursor, latest.workspaceID == header.workspaceID else { throw PreviewError.sourceChanged }
+          guard try store.referenceRevision(target: target) == request.sourceRevision else { throw PreviewError.sourceChanged }
+          guard let image = NSBitmapImageRep(data: png) else { throw PreviewError.pngEncoding }
+          let fingerprint = request.region == nil ? nil : target.kind == .document ? outputHash
+            : try store.regionalFingerprint(request, inkFingerprint: inkFingerprint)
+          return .init(request: request, status: "ready", buildID: outputBuildID, pngSHA256: outputHash, referenceFingerprint: fingerprint,
+            pixelSize: .init(x: Double(image.pixelsWide), y: Double(image.pixelsHigh)), camera: outputCamera,
+            diagnostics: outputDiagnostics, programs: outputPrograms, inkRegions: outputRegions)
+        }, writing: { try store.saveTargetRender($0, png: png) })
+      }
+    } onCancel: { publication.revoke() }
   }
 
   private static func crop(_ raster: RasterSnapshot, region: PageRect?) throws -> RasterSnapshot {
@@ -390,13 +386,15 @@ enum CurrentViewPreviewWriter {
     SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
   }
 
-  private enum PreviewError: Error {
-    case agentSnapshotPending
-    case documentSnapshotPending
-    case invalidReceipt
-    case invalidSurface
-    case sourceChanged
-    case inputActive
-    case pngEncoding
+  // These are definitive presentation refusals inside the same accepted writer.
+  // File/SQL failures keep their original type and retained retry ownership.
+  private enum PreviewError {
+    static let agentSnapshotPending = CollaborationError("snapshot_pending", "Изображение элемента ещё готовится.")
+    static let documentSnapshotPending = CollaborationError("snapshot_pending", "Изображение документа ещё готовится.")
+    static let invalidReceipt = CollaborationError("invalid_snapshot", "Изображение не соответствует источнику.")
+    static let invalidSurface = CollaborationError("invalid_snapshot", "Поверхность изображения недоступна.")
+    static let sourceChanged = CollaborationError("snapshot_changed", "Источник изображения изменился во время подготовки.")
+    static let inputActive = CollaborationError("snapshot_pending", "Изображение ждёт завершения ввода.")
+    static let pngEncoding = CollaborationError("invalid_snapshot", "Не удалось подготовить PNG изображения.")
   }
 }

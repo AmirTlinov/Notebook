@@ -1,0 +1,126 @@
+{
+  "format": 1,
+  "date": "2026-10-06",
+  "status": "passed",
+  "baseCommit": "ccd2d51021375b3f59137f61d08f91f399046f8f",
+  "scope": "Eight isolated native Mac tests in the headless NotebookRuntime. Production252 was not modified or restarted; the live poisoned writer and accepted RAM tail remain retained.",
+  "sourceSHA256": "7ded2b3a45ecef2983c0582b54eb12c787a01c1889039abfef02ed168d946b18",
+  "passed": 8,
+  "failed": 0,
+  "skipped": 0,
+  "runtimeWarnings": [],
+  "behavior": [
+    "Presentation invalidation returns a typed refusal only after the accepted transaction proves rollback; later accepted work continues.",
+    "Current-view PNG/receipt and target regional proof retain their exact admitted output for I/O Retry; revocation cannot abandon a partly written publication.",
+    "Core transaction, persistence queue and unknown-commit witness semantics are unchanged."
+  ],
+  "scenarios": [
+    {
+      "seconds": 0.6827369928359985,
+      "target": "NotebookMacTests",
+      "test": "PageVisionDemandTests/testQueuedCurrentViewDoesNotPublishAfterCameraChanges()"
+    },
+    {
+      "seconds": 0.6273820400238037,
+      "target": "NotebookMacTests",
+      "test": "PageVisionDemandTests/testQueuedCurrentViewDoesNotPublishAfterPublisherCancellation()"
+    },
+    {
+      "seconds": 0.6226599216461182,
+      "target": "NotebookMacTests",
+      "test": "PageVisionDemandTests/testQueuedCurrentViewDoesNotPublishDuringNewInput()"
+    },
+    {
+      "seconds": 0.4452630281448364,
+      "target": "NotebookMacTests",
+      "test": "PageVisionDemandTests/testRevokedMetadataRefreshRetriesTheSameSelectionAfterInputEnds()"
+    },
+    {
+      "seconds": 0.04692995548248291,
+      "target": "NotebookMacTests",
+      "test": "NotebookPreviewPublicationTests/testPartialFilePublicationRetriesTheExactAdmittedBytesAfterRevocation()"
+    },
+    {
+      "seconds": 0.043862104415893555,
+      "target": "NotebookMacTests",
+      "test": "NotebookPreviewPublicationTests/testStaleReceiptRefusesOnlyItsOwnSlotAndPreservesTheAcceptedTail()"
+    },
+    {
+      "seconds": 0.0391850471496582,
+      "target": "NotebookMacTests",
+      "test": "NotebookPreviewPublicationTests/testTargetReceiptRetriesItsAdmittedFingerprintAfterPartialPublication()"
+    },
+    {
+      "seconds": 0.03296101093292236,
+      "target": "NotebookMacTests",
+      "test": "NotebookPreviewPublicationTests/testRevocationBeforeAdmissionDoesNotBlockLaterAcceptedWork()"
+    }
+  ],
+  "ownerFiles": [
+    {
+      "executable": false,
+      "path": "Applications/Mac/CurrentViewPreviewWriter.swift",
+      "sha256": "2eecfca8bc46e186e8f2992ba087a3b49de05a12d9f65c19af1fa8e08d470d76"
+    },
+    {
+      "executable": false,
+      "path": "Applications/Mac/MacPreviewPublisher.swift",
+      "sha256": "124de370a27e2167fb7b61c47f8d970b5ed5f17ce2febd37ede57e76017dbc99"
+    },
+    {
+      "executable": false,
+      "path": "Applications/Mac/NotebookPreviewPublication.swift",
+      "sha256": "18315fed39e31adaef3658762775d613bd1b2c438ee8b8a9ab4c18f9375d0a85"
+    },
+    {
+      "executable": false,
+      "path": "Applications/MacTests/NotebookPreviewPublicationTests.swift",
+      "sha256": "aee6cd3177eb68314fd42e83860275a9030f31185f4bfbe432cd2ba03638ad23"
+    },
+    {
+      "executable": false,
+      "path": "Applications/MacTests/PageVisionDemandTests.swift",
+      "sha256": "96460ce68ad64907895160abf2899b0f71fa61431940147cda2a94ba5fa8181c"
+    }
+  ],
+  "review": "Independent source and fixture review: no remaining findings. Initial stale-source fixture was corrected before native execution to advance real receipt metadata; target fixture exercises regional baseline and exact completion time.",
+  "initialWrapperRefusal": "An initial invocation was rejected before build/test execution because its evidence directory already existed. Its log is retained; the successful run used a fresh directory.",
+  "receipts": [
+    {
+      "path": ".build/runtime-253-preview-publication-run/source-before.json",
+      "sha256": "4ce1d7e8bb771e37cffb4f61ec2b1d822f271e3db8b5f9b7a18e30421d02d4ad"
+    },
+    {
+      "path": ".build/runtime-253-preview-publication-run/source-after.json",
+      "sha256": "4ce1d7e8bb771e37cffb4f61ec2b1d822f271e3db8b5f9b7a18e30421d02d4ad"
+    },
+    {
+      "path": ".build/runtime-253-preview-publication-run/verification.json",
+      "sha256": "43d1b14a89abc5863cba894abc298f7722bb212feabb77e6b59564f5ad54fe04"
+    },
+    {
+      "path": ".build/runtime-253-preview-publication-run/mac-summary.json",
+      "sha256": "37e32ee63cf25b0a9787043e6e4ede995c047a56e357256f1c3bc71743feb283"
+    },
+    {
+      "path": ".build/runtime-253-preview-publication-run/mac-tests.json",
+      "sha256": "493f7f75d83b8e662d44a5b6c3ed6e2a042ff4754edfb51f8c09ed1fb5fa8ffb"
+    },
+    {
+      "path": ".build/runtime-253-preview-publication-run/mac-timings.json",
+      "sha256": "ea169e676551b3c3326bb241fc2dcd70cd13920ca8028f6dc54d560770056058"
+    },
+    {
+      "path": ".build/runtime-253-preview-publication-run/selection.json",
+      "sha256": "7ba21d7d18fdf9ab8a550865d00782acf476e89199b0dc7ca546b34f1402ad00"
+    },
+    {
+      "path": ".build/runtime-253-preview-publication/wrapper.log",
+      "sha256": "4fe37e300774bcd1432a48c808a8b9257d34fc8cac0a8fe2f9e533d1565e78d2"
+    }
+  ],
+  "remaining": [
+    "Installed252 notebook_open returned failed with CurrentViewPreviewWriter.PreviewError.sourceChanged. No safe drain of its accepted RAM tail has yet been demonstrated.",
+    "Real Codex panel flow, hardware Pencil timing and full physical acceptance remain open."
+  ]
+}
