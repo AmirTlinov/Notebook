@@ -1,0 +1,211 @@
+{
+  "format": 1,
+  "result": "PASS",
+  "scope": "local DB29 search recipe and addressed document-file references; portable Core only",
+  "physicalAcceptance": false,
+  "source": {
+    "sha256": "3a449fef242edae118e7d45c0831b2b7ad8e3d312cf4dc918893ce0a2b6d61da",
+    "inputCount": 1650,
+    "beforeEqualsAfter": true,
+    "owningInputs": [
+      {
+        "executable": false,
+        "path": "Sources/NotebookCore/CollaborationRuntime.swift",
+        "sha256": "330a3861c7a5aebcd6e0d4327dc84ab2d5b1ed97c1d1ddf2aa2bb6bed1a243b9"
+      },
+      {
+        "executable": false,
+        "path": "Sources/NotebookCore/NotebookReadCoverage.swift",
+        "sha256": "e7f57f9473efb33c66a88fedf8e73cbdb6bbd0089798f79def1717aa2417e42c"
+      },
+      {
+        "executable": false,
+        "path": "Sources/NotebookCore/NotebookSQLite.swift",
+        "sha256": "c0efd80f2d65f166bda98ccd19f51dfda016a6d2971df02499a5f8587e8293d0"
+      },
+      {
+        "executable": false,
+        "path": "Sources/NotebookCore/NotebookSearchIndex.swift",
+        "sha256": "0a968dc988856b280a73785be42dc41144dabcf842764a869d3c1dcaa037d2c8"
+      },
+      {
+        "executable": false,
+        "path": "Sources/NotebookCore/NotebookSearchText.swift",
+        "sha256": "c3cd9495b099fb062e56fb283b42575a22bfbd5b7d2dd5c077b525401de30659"
+      },
+      {
+        "executable": false,
+        "path": "Sources/NotebookCore/ReferenceSourceFiles.swift",
+        "sha256": "debdba9e27e4c6cb42c2fd9d55ffd517d4aa78a96bf3a7339b1477d97ea7c564"
+      },
+      {
+        "executable": false,
+        "path": "Tests/NotebookCoreTests/NotebookDocumentFileReferenceTests.swift",
+        "sha256": "23d5f3a6c8fbe500ae328f342737940d32621fea006b3bb5c3d1cf43b28a07f8"
+      },
+      {
+        "executable": false,
+        "path": "Tests/NotebookCoreTests/NotebookSearchIndexCostTests.swift",
+        "sha256": "2386fdaa6f38b174f8087fd778bb4aac6041d4c93411164c00a364a2c56242ef"
+      },
+      {
+        "executable": false,
+        "path": "Tests/NotebookCoreTests/NotebookSearchIndexTests.swift",
+        "sha256": "6c3b01777079fc1265febac23d53421cff982b1777d3f1056903402b41df67f6"
+      },
+      {
+        "executable": false,
+        "path": "Tests/NotebookCoreTests/NotebookSearchRecipeTests.swift",
+        "sha256": "f794b8ac547bf2703e972ddfa4e54f643ee23cb3a27b8d0fa906d215787bfe11"
+      },
+      {
+        "executable": false,
+        "path": "Tests/NotebookCoreTests/NotebookSearchTextTests.swift",
+        "sha256": "30043064e0a8d8cdfd7b8f9dd5a9408245e4bd60547ae585abff3aa49c6467d8"
+      }
+    ]
+  },
+  "core": {
+    "functions": 21,
+    "executions": 27,
+    "skipped": [],
+    "failed": [],
+    "receiptSHA256": "bb5a66c8a8c08a81b2b6c514e02fcd809d6d311af1a6d34c698b0bc42a6d2587"
+  },
+  "compatibility": {
+    "wire": 44,
+    "manifest": 26,
+    "databaseAdmission": 29,
+    "searchRecipe": 1,
+    "searchCursor": 2,
+    "oldDocumentFileReferences": "historical captured sources remain immutable/readable; fresh references use scoped recipe"
+  },
+  "NB10": "actual owner-only attribution confirms follow-up preparation cost; no planner architecture implemented. Base b46361ab, current Root allowances require integrated measurement.",
+  "artifacts": [
+    {
+      "path": "attribution-1024.json",
+      "bytes": 2215,
+      "sha256": "66132fe62bd759a2f15ebf6307b6263472b11e9f208dcc7f4fc036df4e99663b"
+    },
+    {
+      "path": "attribution-1048576.json",
+      "bytes": 2231,
+      "sha256": "b64ed417353fcecb1bf8792c8000e4cd328ae55789d8c16a5cd42d86bd041bb5"
+    },
+    {
+      "path": "attribution-4194304.json",
+      "bytes": 2240,
+      "sha256": "aa626330867b9a7a0239d8b4be3dfa62fb0a924fbc0e51ea0892197e697c0755"
+    },
+    {
+      "path": "attribution-README.md",
+      "bytes": 919,
+      "sha256": "2db3c3c0017676f268b984e3af1989fdf318850ff6ae1f1cf63b0a0a6b3a991c"
+    },
+    {
+      "path": "attribution-hashes.json",
+      "bytes": 622,
+      "sha256": "101027c729e35a2aa21eb51890d3a11356c0192ecf8d2745913039523abe8732"
+    },
+    {
+      "path": "attribution-results.json",
+      "bytes": 12764,
+      "sha256": "4ca4a803626f55435bb73f1aefe6a7691929ecb2ed31db9065fe05c6bca8fdc2"
+    },
+    {
+      "path": "commands.json",
+      "bytes": 4885,
+      "sha256": "30cb139da9e00be627f2aabab7efb14c755685497a1a679a95e38a407ad1600e"
+    },
+    {
+      "path": "completed.json",
+      "bytes": 10506,
+      "sha256": "4071296cc990c3d921f05939258bffac0d553acb4a2cdc7a514a6caffef6f7e1"
+    },
+    {
+      "path": "core-execution.json",
+      "bytes": 10165,
+      "sha256": "a75997d6d754fa91040effdcd835926c6fcf579a1a49f76eec4776f1cb5067f4"
+    },
+    {
+      "path": "initial-README.md",
+      "bytes": 1216,
+      "sha256": "790176bbe47c9fbc9eda4b2bd8e561b2b8b52d00a5753581df8152776b706b75"
+    },
+    {
+      "path": "initial-commands.json",
+      "bytes": 4883,
+      "sha256": "1da204f23b5bda8c1cd7f690f360070846ffae5447982639e461653bf9037bd7"
+    },
+    {
+      "path": "initial-completed.json",
+      "bytes": 10506,
+      "sha256": "4071296cc990c3d921f05939258bffac0d553acb4a2cdc7a514a6caffef6f7e1"
+    },
+    {
+      "path": "initial-core-NotebookCoreTests-events.jsonl",
+      "bytes": 39197,
+      "sha256": "f5c49a67b3a6b4644e9586d84dc8dbb68eab0faf2b697ddca445e36038c1ebb6"
+    },
+    {
+      "path": "initial-core-NotebookCoreTests.stdout.log",
+      "bytes": 6141,
+      "sha256": "8daa583fa623e32691f7921155d762e025e0bc001af84f28dc7ff583fcfac22b"
+    },
+    {
+      "path": "initial-core-execution.json",
+      "bytes": 10165,
+      "sha256": "a75997d6d754fa91040effdcd835926c6fcf579a1a49f76eec4776f1cb5067f4"
+    },
+    {
+      "path": "initial-cost-1024.json",
+      "bytes": 963,
+      "sha256": "1623b7c4b9e32e4e9e4c8acde7d7d793f1214cf0ccecd88b16fbe8a3f919a915"
+    },
+    {
+      "path": "initial-cost-1048576.json",
+      "bytes": 970,
+      "sha256": "ba40d087b20b81765f03ba9398d41d6ae9f3eb6efccab160750550a6a29ae0c2"
+    },
+    {
+      "path": "initial-cost-4194304.json",
+      "bytes": 972,
+      "sha256": "f641cc39daf074afec0d767cfd7071f26f2b60e86ba73a301307e9836eeb4ff2"
+    },
+    {
+      "path": "initial-hashes.json",
+      "bytes": 1707,
+      "sha256": "41b0ecce59beabdb225371220b57bffe89ab264ed995dcde17e497d21066ed38"
+    },
+    {
+      "path": "initial-results.json",
+      "bytes": 9782,
+      "sha256": "10739f11eb922d3a6db648f9df0e59233b815f1b24232bc8a93b5395f9df3f0d"
+    },
+    {
+      "path": "initial-selection.json",
+      "bytes": 1942,
+      "sha256": "e13561672109ef27eb6ac7fba78316497b1f54cb3c14e428459fd96508da0b46"
+    },
+    {
+      "path": "initial-toolchain.json",
+      "bytes": 178,
+      "sha256": "6032850b3f5d2c1584f34ae33bf0925786333e1b8e3b54336a6e52f77b1debf7"
+    },
+    {
+      "path": "initial-verification-summary.json",
+      "bytes": 4025,
+      "sha256": "e51d498d79764fd91709b226706ce9d80627a2c78b2cff7904d03d4a4856dec8"
+    },
+    {
+      "path": "selection.json",
+      "bytes": 1942,
+      "sha256": "e13561672109ef27eb6ac7fba78316497b1f54cb3c14e428459fd96508da0b46"
+    },
+    {
+      "path": "toolchain.json",
+      "bytes": 178,
+      "sha256": "6032850b3f5d2c1584f34ae33bf0925786333e1b8e3b54336a6e52f77b1debf7"
+    }
+  ]
+}

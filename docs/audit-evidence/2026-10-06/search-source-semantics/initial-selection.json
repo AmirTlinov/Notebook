@@ -1,0 +1,47 @@
+{
+  "baseCommit": "b46361abe8b8a0a188955258f7afeab4a2f6356b",
+  "changedFiles": [
+    "Sources/NotebookCore/CollaborationRuntime.swift",
+    "Sources/NotebookCore/NotebookReadCoverage.swift",
+    "Sources/NotebookCore/NotebookSQLite.swift",
+    "Sources/NotebookCore/NotebookSearchIndex.swift",
+    "Sources/NotebookCore/NotebookSearchText.swift",
+    "Sources/NotebookCore/ReferenceSourceFiles.swift",
+    "Tests/NotebookCoreTests/NotebookDocumentFileReferenceTests.swift",
+    "Tests/NotebookCoreTests/NotebookSearchIndexCostTests.swift",
+    "Tests/NotebookCoreTests/NotebookSearchIndexTests.swift",
+    "Tests/NotebookCoreTests/NotebookSearchRecipeTests.swift",
+    "Tests/NotebookCoreTests/NotebookSearchTextTests.swift",
+    "docs/search-contract.md"
+  ],
+  "checks": {
+    "commands": [],
+    "core": [
+      "NotebookCoreTests.NotebookDocumentFileReferenceTests",
+      "NotebookCoreTests.NotebookSearchIndexTests",
+      "NotebookCoreTests.NotebookSearchRecipeTests",
+      "NotebookCoreTests.NotebookSearchTextTests"
+    ],
+    "ipad": [],
+    "mac": []
+  },
+  "format": 2,
+  "manualSelection": true,
+  "optimized": false,
+  "profiles": [],
+  "selectionMode": "explicit-only",
+  "sourceRoot": "/Users/amir/.codex/worktrees/notebook-search-remediation/Notebook",
+  "unclassified": [
+    "Sources/NotebookCore/CollaborationRuntime.swift",
+    "Sources/NotebookCore/NotebookReadCoverage.swift",
+    "Sources/NotebookCore/NotebookSQLite.swift",
+    "Sources/NotebookCore/NotebookSearchIndex.swift",
+    "Sources/NotebookCore/NotebookSearchText.swift",
+    "Sources/NotebookCore/ReferenceSourceFiles.swift",
+    "Tests/NotebookCoreTests/NotebookDocumentFileReferenceTests.swift",
+    "Tests/NotebookCoreTests/NotebookSearchIndexCostTests.swift",
+    "Tests/NotebookCoreTests/NotebookSearchIndexTests.swift",
+    "Tests/NotebookCoreTests/NotebookSearchRecipeTests.swift",
+    "Tests/NotebookCoreTests/NotebookSearchTextTests.swift"
+  ]
+}

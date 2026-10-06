@@ -1,0 +1,22 @@
+{
+  "1024.json": {
+    "bytes": 2215,
+    "sha256": "66132fe62bd759a2f15ebf6307b6263472b11e9f208dcc7f4fc036df4e99663b"
+  },
+  "1048576.json": {
+    "bytes": 2231,
+    "sha256": "b64ed417353fcecb1bf8792c8000e4cd328ae55789d8c16a5cd42d86bd041bb5"
+  },
+  "4194304.json": {
+    "bytes": 2240,
+    "sha256": "aa626330867b9a7a0239d8b4be3dfa62fb0a924fbc0e51ea0892197e697c0755"
+  },
+  "README.md": {
+    "bytes": 919,
+    "sha256": "2db3c3c0017676f268b984e3af1989fdf318850ff6ae1f1cf63b0a0a6b3a991c"
+  },
+  "results.json": {
+    "bytes": 12764,
+    "sha256": "4ca4a803626f55435bb73f1aefe6a7691929ecb2ed31db9065fe05c6bca8fdc2"
+  }
+}

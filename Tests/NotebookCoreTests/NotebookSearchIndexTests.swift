@@ -5,6 +5,17 @@ import Testing
 
 @Suite("Search follows addressed committed sources")
 struct NotebookSearchIndexTests {
+  private final class SQLWork {
+    var steps: Int64 = 0
+    func attach(_ database: NotebookSQLConnection) {
+      sqlite3_trace_v2(database.handle, UInt32(SQLITE_TRACE_PROFILE), { _, pointer, raw, _ in
+        guard let pointer, let raw else { return 0 }
+        let work = Unmanaged<SQLWork>.fromOpaque(pointer).takeUnretainedValue()
+        work.steps += Int64(sqlite3_stmt_status(OpaquePointer(raw), SQLITE_STMTSTATUS_VM_STEP, 1))
+        return 0
+      }, Unmanaged.passUnretained(self).toOpaque())
+    }
+  }
   private func fixture(_ body: (NotebookStore, UUID, UUID, UUID, UUID) throws -> Void) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -151,19 +162,16 @@ struct NotebookSearchIndexTests {
         try store.currentSQL!.run("UPDATE blobs SET data=? WHERE hash=(SELECT hash FROM records WHERE address=?)",
           [.blob(Data("unselected matching body".utf8)), .text(documentFile(documentID) + "#/files/@match-0511")])
       }
-      let counter = UnsafeMutablePointer<Int>.allocate(capacity: 1)
-      counter.initialize(to: 0); defer { counter.deinitialize(count: 1); counter.deallocate() }
+      let counter = SQLWork()
       let page = try store.readTransaction { _ in
-        sqlite3_progress_handler(store.currentSQL!.handle, 1, { pointer in
-          let counter = pointer!.assumingMemoryBound(to: Int.self)
-          counter.pointee += 1; return counter.pointee > 100_000 ? 1 : 0
-        }, counter)
-        defer { sqlite3_progress_handler(store.currentSQL!.handle, 0, nil, nil) }
+        counter.attach(store.currentSQL!)
+        defer { sqlite3_trace_v2(store.currentSQL!.handle, 0, nil, nil) }
         return try store.search("needle", limit: 1)
       }
       #expect(page.total == 512 && page.results.count == 1 && !page.coverage.complete)
       #expect(page.results.first?.elementID == "match-0000")
-      print("Search 512 matches: total+keys+one body SQL instructions=\(counter.pointee)")
+      #expect(counter.steps > 0 && counter.steps < 100_000)
+      print("Search 512 matches: total+keys+one body SQL instructions=\(counter.steps)")
     }
   }
 }

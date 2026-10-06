@@ -45,7 +45,21 @@ struct NotebookReferenceReader {
       }
     case .document:
       guard let document = files["documents/" + suffix] else { throw CollaborationError("target_missing", "Документ отсутствует.", target: target) }
-      content = .object(["document": document.setting("collaboration", nil), "state": files["document-states/" + suffix] ?? .null])
+      if let elementID {
+        guard document["id"]?.string.flatMap(UUID.init(uuidString:)) == target.id,
+          let value = document["files"]?.array.first(where: { $0.memberIdentity == collaborationIdentity(elementID) }) else {
+          throw CollaborationError("target_missing", "Файл документа отсутствует.", target: target)
+        }
+        let file = try value.decode(DocumentFile.self)
+        let versions = try DocumentFile.causalFieldKeys(id: file.id).compactMap {
+          try document["collaboration"]?["fields"]?[$0]?.decode(ContentFieldVersion.self)
+        }
+        guard let stamp = try document["contentStamp"]?.decode(VersionStamp.self) else { throw NotebookStorageError.corruptRecord("document reference stamp") }
+        content = try .object(["domain": .string("NotebookDocumentFileReference/1"), "documentID": .string(target.id.uuidString.lowercased()),
+          "file": .encode(file), "sourceVersion": .encode(ContentFieldVersion.fileBasis(versions, fallback: stamp))])
+      } else {
+        content = .object(["document": document.setting("collaboration", nil), "state": files["document-states/" + suffix] ?? .null])
+      }
     case .board, .cover:
       guard let hierarchy = files["board.json"], files["workspace.json"] != nil else { throw CollaborationError("target_missing", "Доска отсутствует.", target: target) }
       let boardID = target.kind == .board ? target.id : target.boardID

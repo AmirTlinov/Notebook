@@ -1,0 +1,73 @@
+[
+  {
+    "argv": [
+      "/opt/homebrew/opt/python@3.14/bin/python3.14",
+      "--version"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "toolchain-python"
+  },
+  {
+    "argv": [
+      "swift",
+      "--version"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "toolchain-swift"
+  },
+  {
+    "argv": [
+      "swift",
+      "test",
+      "list",
+      "--disable-xctest",
+      "--event-stream-output-path",
+      "/dev/stdout",
+      "--event-stream-version",
+      "6.4"
+    ],
+    "cwd": "/Users/amir/.codex/worktrees/notebook-search-remediation/Notebook",
+    "exitCode": 0,
+    "label": "core-inventory",
+    "stdoutMode": "pipe"
+  },
+  {
+    "argv": [
+      "swift",
+      "test",
+      "--disable-xctest",
+      "--skip-build",
+      "--test-product",
+      "NotebookCoreTests",
+      "--filter",
+      "^(?:NotebookCoreTests\\.NotebookDocumentFileReferenceTests/corruptSiblingsAndStateCannotBlockAnExactReadWhileMissingFileStillRefuses\\(\\)/NotebookDocumentFileReferenceTests\\.swift:43:4|NotebookCoreTests\\.NotebookDocumentFileReferenceTests/projectedCompleteColdAndReplicaCutsHaveTheSameSelectedFileIdentity\\(\\)/NotebookDocumentFileReferenceTests\\.swift:13:4|NotebookCoreTests\\.NotebookDocumentFileReferenceTests/savedAggregateEraContextAndPinnedFileRemainInspectableWithoutLiveHashFallback\\(\\)/NotebookDocumentFileReferenceTests\\.swift:60:4|NotebookCoreTests\\.NotebookDocumentFileReferenceTests/siblingChangesKeepTheFileReferenceButSameValuedSelectedSuccessorsChangeIt\\(\\)/NotebookDocumentFileReferenceTests\\.swift:28:4|NotebookCoreTests\\.NotebookSearchIndexTests/AQueryDoesNotDecodeUnrelatedPaperAndRollbackDoesNotPublishItsIndex\\(\\)/NotebookSearchIndexTests\\.swift:54:4|NotebookCoreTests\\.NotebookSearchIndexTests/RussianMixedCaseAccentsAndOneOrTwoCharacterSubstringsKeepTheirMeaning\\(\\)/NotebookSearchIndexTests\\.swift:37:4|NotebookCoreTests\\.NotebookSearchIndexTests/allMatchingFilesAreReachableWithStableTieBreakersAndChangingPageSizes\\(size:\\)/NotebookSearchIndexTests\\.swift:81:4|NotebookCoreTests\\.NotebookSearchIndexTests/continuationRejectsDifferentQueryFiltersWorkspaceAndMalformedTokens\\(\\)/NotebookSearchIndexTests\\.swift:117:4|NotebookCoreTests\\.NotebookSearchIndexTests/countAndPageSelectionDoNotDecodeUnselectedMatchingBodies\\(\\)/NotebookSearchIndexTests\\.swift:153:4|NotebookCoreTests\\.NotebookSearchIndexTests/insertingOrRemovingAMatchInvalidatesTheOldPage\\(insert:\\)/NotebookSearchIndexTests\\.swift:139:4|NotebookCoreTests\\.NotebookSearchIndexTests/limitedSearchExposesAContinuationInsteadOfHidingMatches\\(\\)/NotebookSearchIndexTests\\.swift:73:4|NotebookCoreTests\\.NotebookSearchIndexTests/sourceChangesInvalidateContinuationRatherThanMixingSnapshots\\(\\)/NotebookSearchIndexTests\\.swift:108:4|NotebookCoreTests\\.NotebookSearchRecipeTests/aCurrentDatabaseWithAnUnknownRecipeFailsAdmissionBeforeWriting\\(\\)/NotebookSearchRecipeTests\\.swift:168:4|NotebookCoreTests\\.NotebookSearchRecipeTests/anAlreadyOpened28HandleCannotPublishAnOldRecipeAfter29Commits\\(mutation:\\)/NotebookSearchRecipeTests\\.swift:129:4|NotebookCoreTests\\.NotebookSearchRecipeTests/authoredAnglesAndVisibleLabelsAgreeWithSearchAndReferencePreviews\\(\\)/NotebookSearchRecipeTests\\.swift:78:4|NotebookCoreTests\\.NotebookSearchRecipeTests/current28RebuildChangesOnlyTheDisposableIndexAndRejectsOldContinuation\\(\\)/NotebookSearchRecipeTests\\.swift:90:4|NotebookCoreTests\\.NotebookSearchRecipeTests/interruptedRebuildRollsBackItsIndexRecipeAndAdmissionVersionTogether\\(\\)/NotebookSearchRecipeTests\\.swift:111:4|NotebookCoreTests\\.NotebookSearchTextTests/entitiesDecodeOnceAndUnknownOrMalformedNamesStayLiteral\\(\\)/NotebookSearchTextTests\\.swift:18:4|NotebookCoreTests\\.NotebookSearchTextTests/malformedMarkupHasADeterministicTailContractWithoutDroppingLiteralAngles\\(\\)/NotebookSearchTextTests\\.swift:25:4|NotebookCoreTests\\.NotebookSearchTextTests/quotesCommentsRawTextAndBlockBoundariesKeepOnlyStructuralText\\(\\)/NotebookSearchTextTests\\.swift:7:4|NotebookCoreTests\\.NotebookSearchTextTests/sourceLimitsRefuseWholeExtractionBeforeAllocatingAWorkingCopy\\(\\)/NotebookSearchTextTests\\.swift:33:4)$",
+      "--event-stream-output-path",
+      "/Users/amir/.codex/worktrees/notebook-search-remediation/Notebook/.build/remediation-search-core-20261006-v1/core-NotebookCoreTests-events.jsonl",
+      "--event-stream-version",
+      "6.4"
+    ],
+    "cwd": "/Users/amir/.codex/worktrees/notebook-search-remediation/Notebook",
+    "exitCode": 0,
+    "label": "core-NotebookCoreTests"
+  },
+  {
+    "argv": [
+      "/opt/homebrew/opt/python@3.14/bin/python3.14",
+      "--version"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "toolchain-after-python"
+  },
+  {
+    "argv": [
+      "swift",
+      "--version"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "toolchain-after-swift"
+  }
+]

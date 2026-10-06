@@ -1,0 +1,126 @@
+{
+  "artifacts": [
+    {
+      "bytes": 4883,
+      "path": "commands.json",
+      "sha256": "1da204f23b5bda8c1cd7f690f360070846ffae5447982639e461653bf9037bd7"
+    },
+    {
+      "bytes": 10506,
+      "path": "completed.json",
+      "sha256": "4071296cc990c3d921f05939258bffac0d553acb4a2cdc7a514a6caffef6f7e1"
+    },
+    {
+      "bytes": 39197,
+      "path": "core-NotebookCoreTests-events.jsonl",
+      "sha256": "f5c49a67b3a6b4644e9586d84dc8dbb68eab0faf2b697ddca445e36038c1ebb6"
+    },
+    {
+      "bytes": 0,
+      "path": "core-NotebookCoreTests.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 6141,
+      "path": "core-NotebookCoreTests.stdout.log",
+      "sha256": "8daa583fa623e32691f7921155d762e025e0bc001af84f28dc7ff583fcfac22b"
+    },
+    {
+      "bytes": 10165,
+      "path": "core-execution.json",
+      "sha256": "a75997d6d754fa91040effdcd835926c6fcf579a1a49f76eec4776f1cb5067f4"
+    },
+    {
+      "bytes": 1059007,
+      "path": "core-inventory.jsonl",
+      "sha256": "4b4350d1474dae35e045bbcc9eebafc6e4ecea06d99884f186043ee0d286af4a"
+    },
+    {
+      "bytes": 111,
+      "path": "core-inventory.stderr.log",
+      "sha256": "6f92e45c8aa87b644d2bb07b003dde76b2c392c29fbbbe2f6a36b1f4cbd27348"
+    },
+    {
+      "bytes": 1134508,
+      "path": "core-inventory.stdout.log",
+      "sha256": "48286bd2d5658285e5a6ecca0bc174a6eb0d7bcad4cc5f54535be7fd2b458fb0"
+    },
+    {
+      "bytes": 1942,
+      "path": "selection.json",
+      "sha256": "e13561672109ef27eb6ac7fba78316497b1f54cb3c14e428459fd96508da0b46"
+    },
+    {
+      "bytes": 314254,
+      "path": "source-after.json",
+      "sha256": "39b667457ec4a01685c3626d890915858cc5c265e7937e83f659b1fbca4fdad6"
+    },
+    {
+      "bytes": 314254,
+      "path": "source-before.json",
+      "sha256": "39b667457ec4a01685c3626d890915858cc5c265e7937e83f659b1fbca4fdad6"
+    },
+    {
+      "bytes": 0,
+      "path": "toolchain-after-python.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 14,
+      "path": "toolchain-after-python.stdout.log",
+      "sha256": "917601090ffb73a030e3eaa8b7a01c41400cad4b61366b4218d7756a5733b66c"
+    },
+    {
+      "bytes": 30,
+      "path": "toolchain-after-swift.stderr.log",
+      "sha256": "bbc8b176d3c74d4c5a7fd00b40280f98168e116d5272273bfe8e71407625540e"
+    },
+    {
+      "bytes": 98,
+      "path": "toolchain-after-swift.stdout.log",
+      "sha256": "04630ab8fa201f57c63c59730e638135e32584a97e16e004a417eb8ed283dc83"
+    },
+    {
+      "bytes": 178,
+      "path": "toolchain-after.json",
+      "sha256": "6032850b3f5d2c1584f34ae33bf0925786333e1b8e3b54336a6e52f77b1debf7"
+    },
+    {
+      "bytes": 0,
+      "path": "toolchain-python.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 14,
+      "path": "toolchain-python.stdout.log",
+      "sha256": "917601090ffb73a030e3eaa8b7a01c41400cad4b61366b4218d7756a5733b66c"
+    },
+    {
+      "bytes": 30,
+      "path": "toolchain-swift.stderr.log",
+      "sha256": "bbc8b176d3c74d4c5a7fd00b40280f98168e116d5272273bfe8e71407625540e"
+    },
+    {
+      "bytes": 98,
+      "path": "toolchain-swift.stdout.log",
+      "sha256": "04630ab8fa201f57c63c59730e638135e32584a97e16e004a417eb8ed283dc83"
+    },
+    {
+      "bytes": 178,
+      "path": "toolchain.json",
+      "sha256": "6032850b3f5d2c1584f34ae33bf0925786333e1b8e3b54336a6e52f77b1debf7"
+    }
+  ],
+  "format": 2,
+  "physicalAcceptance": false,
+  "route": "./verify.sh:selected",
+  "scope": "registry-contracts",
+  "status": "passed",
+  "source": {
+    "format": 2,
+    "sha256": "8f6993aad5e5d2986e22d4130f44a24013fe8054606a22b045995783ff153d4a",
+    "filesCount": 1650
+  },
+  "originalVerificationSHA256": "4a726d446724f2dd9aca2d881eeaa7de11526db210d84a79fc5a8b2412d4987a",
+  "extraction": "Compact derivative; original full-source and unselected-inventory artifact hashes retained, contents omitted."
+}

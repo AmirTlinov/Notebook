@@ -257,6 +257,7 @@ final class NotebookSQLConnection {
       throw NotebookStorageError.corruptRecord("database")
     }
     handle = pointer; self.writable = writable
+    try NotebookStore.registerSearchRecipe(on: self)
     sqlite3_busy_timeout(handle, 4_000)
     try run("PRAGMA foreign_keys=ON")
     try run("PRAGMA synchronous=FULL")
@@ -582,7 +583,7 @@ extension NotebookStore {
   var currentSQL: NotebookSQLConnection? { Thread.current.threadDictionary[connectionKey] as? NotebookSQLConnection }
 
   // SQLite admission is local to this database, independently of wire and content formats.
-  static let currentDatabaseVersion: Int64 = 28
+  static let currentDatabaseVersion: Int64 = 29
 
   @discardableResult
   func prepareDatabase(initialWorkspaceID: UUID? = nil,
@@ -603,7 +604,10 @@ extension NotebookStore {
     let version = try database.rows("PRAGMA user_version").first?.first?.integer ?? 0
     guard applicationID == 0 || (applicationID == 1_313_999_665 && (2...Self.currentDatabaseVersion).contains(version)) else { throw NotebookStorageError.unsupportedFormat }
     // A current database admits addressed reads without consulting content bodies.
-    if applicationID == 1_313_999_665 && version == Self.currentDatabaseVersion { return database }
+    if applicationID == 1_313_999_665 && version == Self.currentDatabaseVersion {
+      try Self.requireSearchRecipe(database: database)
+      return database
+    }
     try database.run("PRAGMA journal_mode=WAL")
     try database.run("PRAGMA wal_autocheckpoint=1000")
     if applicationID == 0 {
@@ -666,7 +670,7 @@ extension NotebookStore {
     // sole writer. Another opener may have completed admission while we waited.
     try commandTransaction(advancesReadRevision: true, preparedDatabase: database) {
       let admittedVersion = try database.rows("PRAGMA user_version").first?.first?.integer ?? 0
-      if admittedVersion == Self.currentDatabaseVersion { return }
+      if admittedVersion == Self.currentDatabaseVersion { try Self.requireSearchRecipe(database: database); return }
       guard (2..<Self.currentDatabaseVersion).contains(admittedVersion) else { throw NotebookStorageError.unsupportedFormat }
       try prepareCurrentDatabaseSchema(database)
       if admittedVersion < 13 {
@@ -771,6 +775,7 @@ extension NotebookStore {
           try indexPageInkOrder(database.decodeFragmentEnvelope(row[1].blob!), database: database)
         }
       }
+      if admittedVersion < 29 { try rebuildSearchIndex(database: database) }
       try database.run("PRAGMA user_version=\(Self.currentDatabaseVersion)")
     }
     // Admission published its own command. Its pending changes, ownership

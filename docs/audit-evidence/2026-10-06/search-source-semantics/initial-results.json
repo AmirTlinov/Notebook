@@ -1,0 +1,249 @@
+{
+  "format": 1,
+  "worktree": "/Users/amir/.codex/worktrees/notebook-search-remediation/Notebook",
+  "baseCommit": "b46361abe8b8a0a188955258f7afeab4a2f6356b",
+  "sourceSHA256": "8f6993aad5e5d2986e22d4130f44a24013fe8054606a22b045995783ff153d4a",
+  "sourceFiles": 1650,
+  "ownedSource": [
+    {
+      "executable": false,
+      "path": "Sources/NotebookCore/CollaborationRuntime.swift",
+      "sha256": "330a3861c7a5aebcd6e0d4327dc84ab2d5b1ed97c1d1ddf2aa2bb6bed1a243b9"
+    },
+    {
+      "executable": false,
+      "path": "Sources/NotebookCore/NotebookReadCoverage.swift",
+      "sha256": "e7f57f9473efb33c66a88fedf8e73cbdb6bbd0089798f79def1717aa2417e42c"
+    },
+    {
+      "executable": false,
+      "path": "Sources/NotebookCore/NotebookSQLite.swift",
+      "sha256": "c0efd80f2d65f166bda98ccd19f51dfda016a6d2971df02499a5f8587e8293d0"
+    },
+    {
+      "executable": false,
+      "path": "Sources/NotebookCore/NotebookSearchIndex.swift",
+      "sha256": "0a968dc988856b280a73785be42dc41144dabcf842764a869d3c1dcaa037d2c8"
+    },
+    {
+      "executable": false,
+      "path": "Sources/NotebookCore/NotebookSearchText.swift",
+      "sha256": "c3cd9495b099fb062e56fb283b42575a22bfbd5b7d2dd5c077b525401de30659"
+    },
+    {
+      "executable": false,
+      "path": "Sources/NotebookCore/ReferenceSourceFiles.swift",
+      "sha256": "debdba9e27e4c6cb42c2fd9d55ffd517d4aa78a96bf3a7339b1477d97ea7c564"
+    },
+    {
+      "executable": false,
+      "path": "Tests/NotebookCoreTests/NotebookSearchIndexTests.swift",
+      "sha256": "6c3b01777079fc1265febac23d53421cff982b1777d3f1056903402b41df67f6"
+    },
+    {
+      "executable": false,
+      "path": "Tests/NotebookCoreTests/NotebookSearchIndexCostTests.swift",
+      "sha256": "90913d33ce7dc5554f7ee2c5f1ab7fc730c9766f18002118d528f5cd945bcef1"
+    },
+    {
+      "executable": false,
+      "path": "Tests/NotebookCoreTests/NotebookSearchRecipeTests.swift",
+      "sha256": "f794b8ac547bf2703e972ddfa4e54f643ee23cb3a27b8d0fa906d215787bfe11"
+    },
+    {
+      "executable": false,
+      "path": "Tests/NotebookCoreTests/NotebookSearchTextTests.swift",
+      "sha256": "30043064e0a8d8cdfd7b8f9dd5a9408245e4bd60547ae585abff3aa49c6467d8"
+    },
+    {
+      "executable": false,
+      "path": "Tests/NotebookCoreTests/NotebookDocumentFileReferenceTests.swift",
+      "sha256": "23d5f3a6c8fbe500ae328f342737940d32621fea006b3bb5c3d1cf43b28a07f8"
+    }
+  ],
+  "documentationOnly": {
+    "path": "docs/search-contract.md",
+    "sha256": "b45af578d2cdb90897941686502debce3a25f3de6f102c25950bc7e5794e1d39",
+    "includedInReleaseSourceManifest": false
+  },
+  "checks": {
+    "coreFunctions": 21,
+    "coreExecutions": 27,
+    "failed": 0,
+    "skipped": 0,
+    "status": "passed",
+    "strictPublicRoute": true
+  },
+  "semantics": {
+    "databaseVersion": 29,
+    "searchRecipe": 1,
+    "searchCursorVersion": 2,
+    "documentFileReferenceRecipe": "NotebookDocumentFileReference/1",
+    "wireVersion": 44,
+    "manifestFormat": 26,
+    "physicalAcceptance": false
+  },
+  "performance": {
+    "machine": "Mac17,6 / Apple M5 Max /128GiB",
+    "os": "macOS27.0.1",
+    "runs": [
+      {
+        "after": {
+          "mallocLiveBlocks": 6224,
+          "mallocLiveBytes": 1628496,
+          "mallocReservedBytes": 50331648,
+          "residentFootprintBytes": 17367856,
+          "sqliteBytes": 0
+        },
+        "before": {
+          "mallocLiveBlocks": 5823,
+          "mallocLiveBytes": 1459872,
+          "mallocReservedBytes": 50331648,
+          "residentFootprintBytes": 17007408,
+          "sqliteBytes": 0
+        },
+        "coordinationMilliseconds": 0.429041,
+        "databaseCacheBytesAtSQLPeak": 280832,
+        "inkAttemptMilliseconds": 40.743042,
+        "inkSaved": true,
+        "inkWriterHoldMilliseconds": 13.534792,
+        "mallocLiveBlocksAtSQLPeak": 8320,
+        "mallocLiveBytesAtSQLPeak": 2175712,
+        "measurement": "Completed BEGIN IMMEDIATE to completed COMMIT; instrumentation and coordinated competing ink attempt included. Malloc live peaks sampled at SQL PROFILE, not total allocation events. Process RSS high water includes setup.",
+        "processPeakRSSBytes": 75382784,
+        "sourceBytes": 1024,
+        "sqliteBytesAtSQLPeak": 0,
+        "sqliteHighWaterBytes": 0,
+        "statementBytesAtSQLPeak": 316944,
+        "writerHoldMilliseconds": 20.962541,
+        "writerStatements": 214,
+        "writerVMSteps": 6826
+      },
+      {
+        "after": {
+          "mallocLiveBlocks": 7210,
+          "mallocLiveBytes": 4863520,
+          "mallocReservedBytes": 67108864,
+          "residentFootprintBytes": 43795224,
+          "sqliteBytes": 0
+        },
+        "before": {
+          "mallocLiveBlocks": 5823,
+          "mallocLiveBytes": 4620192,
+          "mallocReservedBytes": 62914560,
+          "residentFootprintBytes": 41665304,
+          "sqliteBytes": 0
+        },
+        "coordinationMilliseconds": 0.515291,
+        "databaseCacheBytesAtSQLPeak": 4302080,
+        "inkAttemptMilliseconds": 238.78875,
+        "inkSaved": true,
+        "inkWriterHoldMilliseconds": 13.43575,
+        "mallocLiveBlocksAtSQLPeak": 9306,
+        "mallocLiveBytesAtSQLPeak": 18839248,
+        "measurement": "Completed BEGIN IMMEDIATE to completed COMMIT; instrumentation and coordinated competing ink attempt included. Malloc live peaks sampled at SQL PROFILE, not total allocation events. Process RSS high water includes setup.",
+        "processPeakRSSBytes": 106856448,
+        "sourceBytes": 1048576,
+        "sqliteBytesAtSQLPeak": 0,
+        "sqliteHighWaterBytes": 0,
+        "statementBytesAtSQLPeak": 2285456,
+        "writerHoldMilliseconds": 184.134625,
+        "writerStatements": 407,
+        "writerVMSteps": 9551
+      },
+      {
+        "after": {
+          "mallocLiveBlocks": 8306,
+          "mallocLiveBytes": 10211136,
+          "mallocReservedBytes": 62996480,
+          "residentFootprintBytes": 102237048,
+          "sqliteBytes": 0
+        },
+        "before": {
+          "mallocLiveBlocks": 5824,
+          "mallocLiveBytes": 9883552,
+          "mallocReservedBytes": 62996480,
+          "residentFootprintBytes": 87999352,
+          "sqliteBytes": 0
+        },
+        "coordinationMilliseconds": 0.511292,
+        "databaseCacheBytesAtSQLPeak": 8771584,
+        "inkAttemptMilliseconds": 749.3325,
+        "inkSaved": true,
+        "inkWriterHoldMilliseconds": 14.338625,
+        "mallocLiveBlocksAtSQLPeak": 10402,
+        "mallocLiveBytesAtSQLPeak": 66237840,
+        "measurement": "Completed BEGIN IMMEDIATE to completed COMMIT; instrumentation and coordinated competing ink attempt included. Malloc live peaks sampled at SQL PROFILE, not total allocation events. Process RSS high water includes setup.",
+        "processPeakRSSBytes": 168804352,
+        "sourceBytes": 4194304,
+        "sqliteBytesAtSQLPeak": 0,
+        "sqliteHighWaterBytes": 0,
+        "statementBytesAtSQLPeak": 8527760,
+        "writerHoldMilliseconds": 640.9525,
+        "writerStatements": 878,
+        "writerVMSteps": 15673
+      }
+    ],
+    "scope": "One isolated SwiftPM process per UTF8 source size, equal-byte A→B single-character edit and actual competing native ink command. Completed BEGIN IMMEDIATE→completed COMMIT, including SQL_PROFILE instrumentation/coordinating overhead.",
+    "globalSQLiteMemoryAccounting": "sqlite3_memory_used/highwater returned0 while per-connection cache/statement allocations were positive; unavailable accounting, not zero actual memory.",
+    "allocationBoundary": "All-zone malloc live blocks/bytes sampled at SQL_PROFILE, not total allocation events. Process peak RSS includes fixture setup. One sample per size; no steady-state distribution.",
+    "architectureChanged": false,
+    "NB10Accepted": false
+  },
+  "performanceCommands": [
+    {
+      "argv": [
+        "xcrun",
+        "swift",
+        "test",
+        "--skip-build",
+        "--filter",
+        "NotebookSearchIndexCostTests"
+      ],
+      "cwd": "/Users/amir/.codex/worktrees/notebook-search-remediation/Notebook",
+      "env": {
+        "NOTEBOOK_SEARCH_TRACE_BYTES": "1024",
+        "NOTEBOOK_SEARCH_TRACE_OUTPUT": "/Users/amir/.codex/worktrees/notebook-search-remediation/Notebook/.build/search-writer-cost-20261006/1024.json"
+      },
+      "exitCode": 0
+    },
+    {
+      "argv": [
+        "xcrun",
+        "swift",
+        "test",
+        "--skip-build",
+        "--filter",
+        "NotebookSearchIndexCostTests"
+      ],
+      "cwd": "/Users/amir/.codex/worktrees/notebook-search-remediation/Notebook",
+      "env": {
+        "NOTEBOOK_SEARCH_TRACE_BYTES": "1048576",
+        "NOTEBOOK_SEARCH_TRACE_OUTPUT": "/Users/amir/.codex/worktrees/notebook-search-remediation/Notebook/.build/search-writer-cost-20261006/1048576.json"
+      },
+      "exitCode": 0
+    },
+    {
+      "argv": [
+        "xcrun",
+        "swift",
+        "test",
+        "--skip-build",
+        "--filter",
+        "NotebookSearchIndexCostTests"
+      ],
+      "cwd": "/Users/amir/.codex/worktrees/notebook-search-remediation/Notebook",
+      "env": {
+        "NOTEBOOK_SEARCH_TRACE_BYTES": "4194304",
+        "NOTEBOOK_SEARCH_TRACE_OUTPUT": "/Users/amir/.codex/worktrees/notebook-search-remediation/Notebook/.build/search-writer-cost-20261006/4194304.json"
+      },
+      "exitCode": 0
+    }
+  ],
+  "boundaries": [
+    "Core-only portable semantics; no native/UI/installation/physical acceptance.",
+    "Old aggregate-era document-file hashes differ from fresh addressed references; saved contexts, pinned envelopes and receipts are not rewritten.",
+    "Rebuild changes only derived rows; material hashes/causal/read/delivery state stays unchanged and interruption rolls back atomically.",
+    "No source-hash plan or delta-postings architecture implemented; NB10 remains a measured follow-up."
+  ]
+}

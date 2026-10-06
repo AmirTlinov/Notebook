@@ -1,0 +1,308 @@
+{
+  "format": 1,
+  "baseCommit": "b46361abe8b8a0a188955258f7afeab4a2f6356b",
+  "worktree": "/Users/amir/.codex/worktrees/notebook-search-remediation/Notebook",
+  "source": [
+    {
+      "path": "Sources/NotebookCore/NotebookSearchIndex.swift",
+      "sha256": "0a968dc988856b280a73785be42dc41144dabcf842764a869d3c1dcaa037d2c8"
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookSearchText.swift",
+      "sha256": "c3cd9495b099fb062e56fb283b42575a22bfbd5b7d2dd5c077b525401de30659"
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookSQLite.swift",
+      "sha256": "c0efd80f2d65f166bda98ccd19f51dfda016a6d2971df02499a5f8587e8293d0"
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookSearchIndexCostTests.swift",
+      "sha256": "2386fdaa6f38b174f8087fd778bb4aac6041d4c93411164c00a364a2c56242ef"
+    }
+  ],
+  "previousWholeTreeReceipt": "8f6993aad5e5d2986e22d4130f44a24013fe8054606a22b045995783ff153d4a",
+  "wholeTreeDrift": [
+    "Tests/NotebookCoreTests/NotebookSearchIndexCostTests.swift"
+  ],
+  "unchangedProductionScope": true,
+  "actualExecutions": 3,
+  "commands": [
+    {
+      "argv": [
+        "xcrun",
+        "swift",
+        "test",
+        "--filter",
+        "NotebookSearchIndexCostTests/indexOnlyOneCharacterEditAttributesItsOwnerAndRollsBackTheFixture"
+      ],
+      "cwd": "/Users/amir/.codex/worktrees/notebook-search-remediation/Notebook",
+      "env": {
+        "NOTEBOOK_SEARCH_TRACE_BYTES": "1024",
+        "NOTEBOOK_SEARCH_TRACE_OUTPUT": "/Users/amir/.codex/worktrees/notebook-search-remediation/Notebook/.build/search-writer-cost-20261006/index-only-1024.json"
+      },
+      "exitCode": 0
+    },
+    {
+      "argv": [
+        "xcrun",
+        "swift",
+        "test",
+        "--skip-build",
+        "--filter",
+        "NotebookSearchIndexCostTests/indexOnlyOneCharacterEditAttributesItsOwnerAndRollsBackTheFixture"
+      ],
+      "cwd": "/Users/amir/.codex/worktrees/notebook-search-remediation/Notebook",
+      "env": {
+        "NOTEBOOK_SEARCH_TRACE_BYTES": "1048576",
+        "NOTEBOOK_SEARCH_TRACE_OUTPUT": "/Users/amir/.codex/worktrees/notebook-search-remediation/Notebook/.build/search-writer-cost-20261006/index-only-1048576.json"
+      },
+      "exitCode": 0
+    },
+    {
+      "argv": [
+        "xcrun",
+        "swift",
+        "test",
+        "--skip-build",
+        "--filter",
+        "NotebookSearchIndexCostTests/indexOnlyOneCharacterEditAttributesItsOwnerAndRollsBackTheFixture"
+      ],
+      "cwd": "/Users/amir/.codex/worktrees/notebook-search-remediation/Notebook",
+      "env": {
+        "NOTEBOOK_SEARCH_TRACE_BYTES": "4194304",
+        "NOTEBOOK_SEARCH_TRACE_OUTPUT": "/Users/amir/.codex/worktrees/notebook-search-remediation/Notebook/.build/search-writer-cost-20261006/index-only-4194304.json"
+      },
+      "exitCode": 0
+    }
+  ],
+  "rows": [
+    {
+      "after": {
+        "mallocLiveBlocks": 5930,
+        "mallocLiveBytes": 1460832,
+        "mallocReservedBytes": 33554432,
+        "residentFootprintBytes": 16810752,
+        "sqliteBytes": 0
+      },
+      "before": {
+        "mallocLiveBlocks": 5872,
+        "mallocLiveBytes": 1422128,
+        "mallocReservedBytes": 33554432,
+        "residentFootprintBytes": 16794368,
+        "sqliteBytes": 0
+      },
+      "mallocLiveBlocksAtSQLPeak": 5986,
+      "mallocLiveBytesAtSQLPeak": 1612640,
+      "measurement": "Only actual updateSearchIndex, inside the sole writer, followed by deliberate whole-transaction rollback. Top-level PROFILE includes nested FTS; all raw statement profiles are retained and may overlap. SQLite profile timing is millisecond-resolution; residual combines non-SQL preparation and resolution/instrumentation.",
+      "nonSQLOrProfileResolutionMilliseconds": 5.569583,
+      "ownerVMSteps": 3592,
+      "rollbackPreservedSourceIndexAndCursors": true,
+      "sourceBytes": 1024,
+      "sourceHash": "c7798f5cc129f35af7c5c908768e5b21ba1b8d205943372b6a88f8dbd7c9d014",
+      "sql": {
+        "DELETE FROM 'main'.'search_fts_docsize' WHERE id=?": {
+          "executions": 1,
+          "profileNanoseconds": 0,
+          "vmSteps": 11
+        },
+        "DELETE FROM search_short WHERE entry_id=?": {
+          "executions": 1,
+          "profileNanoseconds": 0,
+          "vmSteps": 1202
+        },
+        "INSERT INTO search_entries(address,kind,owner_id,target_kind,target_id,element_id,plain_text,folded) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(address) DO UPDATE SET kind=excluded.kind,owner_id=excluded.owner_id,target_kind=excluded.target_kind,target_id=excluded.target_id,element_id=excluded.element_id,plain_text=excluded.plain_text,folded=excluded.folded": {
+          "executions": 1,
+          "profileNanoseconds": 0,
+          "vmSteps": 111
+        },
+        "INSERT INTO search_short(gram,entry_id) VALUES(?,?)": {
+          "executions": 67,
+          "profileNanoseconds": 0,
+          "vmSteps": 2211
+        },
+        "PRAGMA 'main'.data_version": {
+          "executions": 1,
+          "profileNanoseconds": 0,
+          "vmSteps": 6
+        },
+        "REPLACE INTO 'main'.'search_fts_docsize' VALUES(?,?)": {
+          "executions": 1,
+          "profileNanoseconds": 0,
+          "vmSteps": 13
+        },
+        "SELECT k, v FROM 'main'.'search_fts_config'": {
+          "executions": 1,
+          "profileNanoseconds": 0,
+          "vmSteps": 11
+        },
+        "SELECT rowid FROM search_entries WHERE address=?": {
+          "executions": 1,
+          "profileNanoseconds": 0,
+          "vmSteps": 12
+        },
+        "SELECT rowid,folded FROM search_entries WHERE address=?": {
+          "executions": 1,
+          "profileNanoseconds": 0,
+          "vmSteps": 15
+        }
+      },
+      "topLevelSQLProfileMilliseconds": 0,
+      "updateSearchIndexMilliseconds": 5.569583
+    },
+    {
+      "after": {
+        "mallocLiveBlocks": 6485,
+        "mallocLiveBytes": 7865424,
+        "mallocReservedBytes": 71303168,
+        "residentFootprintBytes": 44761928,
+        "sqliteBytes": 0
+      },
+      "before": {
+        "mallocLiveBlocks": 5886,
+        "mallocLiveBytes": 7782960,
+        "mallocReservedBytes": 67108864,
+        "residentFootprintBytes": 41386824,
+        "sqliteBytes": 0
+      },
+      "mallocLiveBlocksAtSQLPeak": 6542,
+      "mallocLiveBytesAtSQLPeak": 19330704,
+      "measurement": "Only actual updateSearchIndex, inside the sole writer, followed by deliberate whole-transaction rollback. Top-level PROFILE includes nested FTS; all raw statement profiles are retained and may overlap. SQLite profile timing is millisecond-resolution; residual combines non-SQL preparation and resolution/instrumentation.",
+      "nonSQLOrProfileResolutionMilliseconds": 113.198958,
+      "ownerVMSteps": 3592,
+      "rollbackPreservedSourceIndexAndCursors": true,
+      "sourceBytes": 1048576,
+      "sourceHash": "41cf0e4864c0e5be4726d53fbf5b3b0add3c1f761643a8262e2f3b232d148ab7",
+      "sql": {
+        "DELETE FROM 'main'.'search_fts_docsize' WHERE id=?": {
+          "executions": 1,
+          "profileNanoseconds": 0,
+          "vmSteps": 11
+        },
+        "DELETE FROM search_short WHERE entry_id=?": {
+          "executions": 1,
+          "profileNanoseconds": 0,
+          "vmSteps": 1202
+        },
+        "INSERT INTO search_entries(address,kind,owner_id,target_kind,target_id,element_id,plain_text,folded) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(address) DO UPDATE SET kind=excluded.kind,owner_id=excluded.owner_id,target_kind=excluded.target_kind,target_id=excluded.target_id,element_id=excluded.element_id,plain_text=excluded.plain_text,folded=excluded.folded": {
+          "executions": 1,
+          "profileNanoseconds": 15000000,
+          "vmSteps": 111
+        },
+        "INSERT INTO search_short(gram,entry_id) VALUES(?,?)": {
+          "executions": 67,
+          "profileNanoseconds": 0,
+          "vmSteps": 2211
+        },
+        "PRAGMA 'main'.data_version": {
+          "executions": 1,
+          "profileNanoseconds": 0,
+          "vmSteps": 6
+        },
+        "REPLACE INTO 'main'.'search_fts_docsize' VALUES(?,?)": {
+          "executions": 1,
+          "profileNanoseconds": 0,
+          "vmSteps": 13
+        },
+        "SELECT k, v FROM 'main'.'search_fts_config'": {
+          "executions": 1,
+          "profileNanoseconds": 0,
+          "vmSteps": 11
+        },
+        "SELECT rowid FROM search_entries WHERE address=?": {
+          "executions": 1,
+          "profileNanoseconds": 0,
+          "vmSteps": 12
+        },
+        "SELECT rowid,folded FROM search_entries WHERE address=?": {
+          "executions": 1,
+          "profileNanoseconds": 0,
+          "vmSteps": 15
+        }
+      },
+      "topLevelSQLProfileMilliseconds": 15,
+      "updateSearchIndexMilliseconds": 128.198958
+    },
+    {
+      "after": {
+        "mallocLiveBlocks": 8061,
+        "mallocLiveBytes": 22626368,
+        "mallocReservedBytes": 67289088,
+        "residentFootprintBytes": 102040440,
+        "sqliteBytes": 0
+      },
+      "before": {
+        "mallocLiveBlocks": 5885,
+        "mallocLiveBytes": 22426160,
+        "mallocReservedBytes": 67289088,
+        "residentFootprintBytes": 84018040,
+        "sqliteBytes": 0
+      },
+      "mallocLiveBlocksAtSQLPeak": 8118,
+      "mallocLiveBytesAtSQLPeak": 73474816,
+      "measurement": "Only actual updateSearchIndex, inside the sole writer, followed by deliberate whole-transaction rollback. Top-level PROFILE includes nested FTS; all raw statement profiles are retained and may overlap. SQLite profile timing is millisecond-resolution; residual combines non-SQL preparation and resolution/instrumentation.",
+      "nonSQLOrProfileResolutionMilliseconds": 472.985208,
+      "ownerVMSteps": 3592,
+      "rollbackPreservedSourceIndexAndCursors": true,
+      "sourceBytes": 4194304,
+      "sourceHash": "e2f11cadc87f19a39af591230a7511f9577f00d547ab19166a3b8312c822072c",
+      "sql": {
+        "DELETE FROM 'main'.'search_fts_docsize' WHERE id=?": {
+          "executions": 1,
+          "profileNanoseconds": 0,
+          "vmSteps": 11
+        },
+        "DELETE FROM search_short WHERE entry_id=?": {
+          "executions": 1,
+          "profileNanoseconds": 0,
+          "vmSteps": 1202
+        },
+        "INSERT INTO search_entries(address,kind,owner_id,target_kind,target_id,element_id,plain_text,folded) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(address) DO UPDATE SET kind=excluded.kind,owner_id=excluded.owner_id,target_kind=excluded.target_kind,target_id=excluded.target_id,element_id=excluded.element_id,plain_text=excluded.plain_text,folded=excluded.folded": {
+          "executions": 1,
+          "profileNanoseconds": 67000000,
+          "vmSteps": 111
+        },
+        "INSERT INTO search_short(gram,entry_id) VALUES(?,?)": {
+          "executions": 67,
+          "profileNanoseconds": 0,
+          "vmSteps": 2211
+        },
+        "PRAGMA 'main'.data_version": {
+          "executions": 1,
+          "profileNanoseconds": 0,
+          "vmSteps": 6
+        },
+        "REPLACE INTO 'main'.'search_fts_docsize' VALUES(?,?)": {
+          "executions": 1,
+          "profileNanoseconds": 0,
+          "vmSteps": 13
+        },
+        "SELECT k, v FROM 'main'.'search_fts_config'": {
+          "executions": 1,
+          "profileNanoseconds": 0,
+          "vmSteps": 11
+        },
+        "SELECT rowid FROM search_entries WHERE address=?": {
+          "executions": 1,
+          "profileNanoseconds": 0,
+          "vmSteps": 12
+        },
+        "SELECT rowid,folded FROM search_entries WHERE address=?": {
+          "executions": 1,
+          "profileNanoseconds": 3000000,
+          "vmSteps": 15
+        }
+      },
+      "topLevelSQLProfileMilliseconds": 70,
+      "updateSearchIndexMilliseconds": 542.985208
+    }
+  ],
+  "conclusion": "Actual search owner consumes substantial writer time. Pure source-hash-bound preparation is justified for follow-up; no planner/delta algorithm implemented.",
+  "boundaries": [
+    "Baseb463 precedes Rootcurrent01b6a23e read/SQL allowance substrate; runtime cost must be remeasured after integration.",
+    "The direct owner timing includes normalization/folding/gram construction and SQL install. All SQL profiles are retained; nested FTS profile timings may overlap.",
+    "Only matching top-level SQL profiles are summed, at millisecond resolution. Residual also includes resolution/instrumentation and is not a measured standalone pure-phase total.",
+    "Allocator live peaks are sampled at SQL_PROFILE, not total allocation events; validation is detached from the recorder.",
+    "Each probe deliberately rolls back the entire writer transaction and verifies original source hash/text, search entries/short postings/FTS results and read/delivery cursors.",
+    "Core-only diagnostic; no native/UI/physical acceptance or NB10 completion."
+  ]
+}

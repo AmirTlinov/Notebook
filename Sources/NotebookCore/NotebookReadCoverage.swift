@@ -30,7 +30,7 @@ public struct NotebookSearchFilters: Codable, Equatable, Sendable {
 /// Its format fixes the stable (kind,address) order. Source commits invalidate
 /// it; local presence, run events and camera changes do not.
 struct NotebookSearchCursor: Codable {
-  var version = 1
+  var version = 2
   let workspaceID: UUID
   let changeCursor: String
   let query: String
@@ -41,7 +41,7 @@ struct NotebookSearchCursor: Codable {
   func encode() throws -> String { try JSONEncoder().encode(self).base64EncodedString() }
   static func decode(_ token: String) throws -> Self {
     guard token.utf8.count <= 16_384, let data = Data(base64Encoded: token),
-      let value = try? JSONDecoder().decode(Self.self, from: data), value.version == 1,
+      let value = try? JSONDecoder().decode(Self.self, from: data), value.version == 2,
       let cursor = UInt64(value.changeCursor), String(cursor) == value.changeCursor, cursor <= UInt64(Int64.max),
       !value.address.isEmpty, value.address.utf8.count <= 4096, Kind(rawValue: value.kind) != nil else {
       throw CollaborationError("invalid_search_cursor", "Курсор поиска повреждён или не поддерживается; начните новый поиск.")

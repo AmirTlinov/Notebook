@@ -1,0 +1,64 @@
+◇ Test run started.
+↳ Testing Library Version: 2084
+↳ Target Platform: arm64e-apple-macos14.0
+◇ Suite "An exact document reference owns one authored file" started.
+◇ Suite "Search selects authored text and atomically admits its recipe" started.
+◇ Suite "Portable structural HTML search text" started.
+◇ Suite "Search follows addressed committed sources" started.
+◇ Test current28RebuildChangesOnlyTheDisposableIndexAndRejectsOldContinuation() started.
+◇ Test authoredAnglesAndVisibleLabelsAgreeWithSearchAndReferencePreviews() started.
+◇ Test aCurrentDatabaseWithAnUnknownRecipeFailsAdmissionBeforeWriting() started.
+◇ Test interruptedRebuildRollsBackItsIndexRecipeAndAdmissionVersionTogether() started.
+◇ Test anAlreadyOpened28HandleCannotPublishAnOldRecipeAfter29Commits(mutation:) started.
+◇ Test limitedSearchExposesAContinuationInsteadOfHidingMatches() started.
+◇ Test RussianMixedCaseAccentsAndOneOrTwoCharacterSubstringsKeepTheirMeaning() started.
+◇ Test allMatchingFilesAreReachableWithStableTieBreakersAndChangingPageSizes(size:) started.
+◇ Test continuationRejectsDifferentQueryFiltersWorkspaceAndMalformedTokens() started.
+◇ Test AQueryDoesNotDecodeUnrelatedPaperAndRollbackDoesNotPublishItsIndex() started.
+◇ Test countAndPageSelectionDoNotDecodeUnselectedMatchingBodies() started.
+◇ Test malformedMarkupHasADeterministicTailContractWithoutDroppingLiteralAngles() started.
+◇ Test sourceChangesInvalidateContinuationRatherThanMixingSnapshots() started.
+◇ Test quotesCommentsRawTextAndBlockBoundariesKeepOnlyStructuralText() started.
+◇ Test entitiesDecodeOnceAndUnknownOrMalformedNamesStayLiteral() started.
+◇ Test insertingOrRemovingAMatchInvalidatesTheOldPage(insert:) started.
+◇ Test corruptSiblingsAndStateCannotBlockAnExactReadWhileMissingFileStillRefuses() started.
+◇ Test siblingChangesKeepTheFileReferenceButSameValuedSelectedSuccessorsChangeIt() started.
+◇ Test savedAggregateEraContextAndPinnedFileRemainInspectableWithoutLiveHashFallback() started.
+◇ Test projectedCompleteColdAndReplicaCutsHaveTheSameSelectedFileIdentity() started.
+◇ Test sourceLimitsRefuseWholeExtractionBeforeAllocatingAWorkingCopy() started.
+◇ Test case passing 1 argument mutation → .foreignKeyDelete to anAlreadyOpened28HandleCannotPublishAnOldRecipeAfter29Commits(mutation:) started.
+◇ Test case passing 1 argument mutation → .insert to anAlreadyOpened28HandleCannotPublishAnOldRecipeAfter29Commits(mutation:) started.
+◇ Test case passing 1 argument mutation → .update to anAlreadyOpened28HandleCannotPublishAnOldRecipeAfter29Commits(mutation:) started.
+◇ Test case passing 1 argument mutation → .delete to anAlreadyOpened28HandleCannotPublishAnOldRecipeAfter29Commits(mutation:) started.
+◇ Test case passing 1 argument insert → true to insertingOrRemovingAMatchInvalidatesTheOldPage(insert:) started.
+◇ Test case passing 1 argument size → 1 to allMatchingFilesAreReachableWithStableTieBreakersAndChangingPageSizes(size:) started.
+◇ Test case passing 1 argument insert → false to insertingOrRemovingAMatchInvalidatesTheOldPage(insert:) started.
+◇ Test case passing 1 argument size → 4 to allMatchingFilesAreReachableWithStableTieBreakersAndChangingPageSizes(size:) started.
+◇ Test case passing 1 argument size → 7 to allMatchingFilesAreReachableWithStableTieBreakersAndChangingPageSizes(size:) started.
+✔ Test malformedMarkupHasADeterministicTailContractWithoutDroppingLiteralAngles() passed after 0.412 seconds.
+✔ Test entitiesDecodeOnceAndUnknownOrMalformedNamesStayLiteral() passed after 0.412 seconds.
+✔ Test quotesCommentsRawTextAndBlockBoundariesKeepOnlyStructuralText() passed after 0.412 seconds.
+✔ Test corruptSiblingsAndStateCannotBlockAnExactReadWhileMissingFileStillRefuses() passed after 0.412 seconds.
+✔ Test limitedSearchExposesAContinuationInsteadOfHidingMatches() passed after 0.413 seconds.
+✔ Test aCurrentDatabaseWithAnUnknownRecipeFailsAdmissionBeforeWriting() passed after 0.413 seconds.
+✔ Test sourceChangesInvalidateContinuationRatherThanMixingSnapshots() passed after 0.413 seconds.
+✔ Test RussianMixedCaseAccentsAndOneOrTwoCharacterSubstringsKeepTheirMeaning() passed after 0.413 seconds.
+✔ Test interruptedRebuildRollsBackItsIndexRecipeAndAdmissionVersionTogether() passed after 0.416 seconds.
+✔ Test siblingChangesKeepTheFileReferenceButSameValuedSelectedSuccessorsChangeIt() passed after 0.417 seconds.
+✔ Test authoredAnglesAndVisibleLabelsAgreeWithSearchAndReferencePreviews() passed after 0.431 seconds.
+✔ Test continuationRejectsDifferentQueryFiltersWorkspaceAndMalformedTokens() passed after 0.438 seconds.
+✔ Test sourceLimitsRefuseWholeExtractionBeforeAllocatingAWorkingCopy() passed after 0.447 seconds.
+✔ Suite "Portable structural HTML search text" passed after 0.448 seconds.
+✔ Test savedAggregateEraContextAndPinnedFileRemainInspectableWithoutLiveHashFallback() passed after 0.449 seconds.
+✔ Test current28RebuildChangesOnlyTheDisposableIndexAndRejectsOldContinuation() passed after 0.451 seconds.
+✔ Test anAlreadyOpened28HandleCannotPublishAnOldRecipeAfter29Commits(mutation:) with 4 test cases passed after 0.454 seconds.
+✔ Suite "Search selects authored text and atomically admits its recipe" passed after 0.454 seconds.
+✔ Test insertingOrRemovingAMatchInvalidatesTheOldPage(insert:) with 2 test cases passed after 0.455 seconds.
+✔ Test AQueryDoesNotDecodeUnrelatedPaperAndRollbackDoesNotPublishItsIndex() passed after 0.484 seconds.
+✔ Test allMatchingFilesAreReachableWithStableTieBreakersAndChangingPageSizes(size:) with 3 test cases passed after 0.541 seconds.
+✔ Test projectedCompleteColdAndReplicaCutsHaveTheSameSelectedFileIdentity() passed after 0.680 seconds.
+✔ Suite "An exact document reference owns one authored file" passed after 0.680 seconds.
+Search 512 matches: total+keys+one body SQL instructions=31723
+✔ Test countAndPageSelectionDoNotDecodeUnselectedMatchingBodies() passed after 0.876 seconds.
+✔ Suite "Search follows addressed committed sources" passed after 0.876 seconds.
+✔ Test run with 21 tests in 4 suites passed after 0.876 seconds.

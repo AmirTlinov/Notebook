@@ -32,6 +32,13 @@ extension NotebookStore {
     case .document:
       guard try readItemHeader(target.id)?.kind == .document else { throw referenceMissing(target) }
       let file = "documents/" + suffix, state = "document-states/" + suffix
+      if let elementID {
+        guard let document = try documentFileProjection(documentID: target.id, fileID: elementID),
+          document.files.contains(where: { collaborationIdentity($0.id) == collaborationIdentity(elementID) }) else {
+          throw referenceMissing(target)
+        }
+        return [file: try .encode(document)]
+      }
       guard try hasStoredValue(file) else { throw referenceMissing(target) }
       return [file: try .encode(loadDocument(target.id)), state: try .encode(loadDocumentState(target.id))]
     case .workspace:
