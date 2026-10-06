@@ -248,7 +248,7 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
       if let prior = current.action(id: action.id) {
         _ = try current.appending(action) // Still validate immutable identity on a retry.
         return .init(pageID:id,baseStamp:drawingStamp,stamp:drawingStamp,drawing:current,
-          mutation:.append(prior),erasureDirectory:projection.erasures,eraserIndex:projection.eraserIndex)
+          mutation:.append(prior),erasureDirectory:projection.erasures,contactIndex:projection.contactIndex)
       }
       guard action.isActive else { throw PageInkDrawing.InkError.invalidDrawing }
       effective = mutation; expected = [:]
@@ -260,7 +260,7 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
       effective = .setActive(Set(expected.keys),active)
       if expected.isEmpty {
         return .init(pageID:id,baseStamp:drawingStamp,stamp:drawingStamp,drawing:current,
-          mutation:effective,erasureDirectory:projection.erasures,eraserIndex:projection.eraserIndex)
+          mutation:effective,erasureDirectory:projection.erasures,contactIndex:projection.contactIndex)
       }
     }
     let frontier = max(drawingStamp.counter, expected.values.compactMap { $0.stateStamp?.counter }.max() ?? 0)
@@ -276,11 +276,14 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
       drawing = try current.settingActive(active,for:ids,stamp:next); accepted = effective
     }
     try Task.checkCancellation()
-    var eraserIndex=projection.eraserIndex
-    if case .append(let action)=accepted {eraserIndex.append(action)}
+    var contactIndex=projection.contactIndex
+    switch accepted {
+    case .append(let action):contactIndex.append(action)
+    case .setActive(let ids,let active):contactIndex.setActive(active,for:ids)
+    }
     return .init(pageID:id,baseStamp:drawingStamp,stamp:next,drawing:drawing,
       mutation:accepted,expectedVisibility:expected,
-      erasureDirectory:projection.erasures.applying(accepted,drawing:drawing),eraserIndex:eraserIndex)
+      erasureDirectory:projection.erasures.applying(accepted,drawing:drawing),contactIndex:contactIndex)
   }
 
   @discardableResult
@@ -610,6 +613,8 @@ public struct PageInkSource:Sendable {
   public var stamp:VersionStamp { source.stamp }
   public var identity:ObjectIdentifier { ObjectIdentifier(source) }
   public var preparedDrawing:PageInkDrawing? {source.prepared?.drawing}
+  public var preparedElementErasures:InkElementErasureMap? {source.prepared?.erasures.values}
+  public var retainedPayloadBytes:Int? {source.retainedPayloadBytes}
   var preparedProjection:PageInkPreparedProjection? {source.prepared}
   func prepare() throws -> PageInkPreparedProjection {try source.prepare()}
   public func prepareForPresentation() throws {_ = try source.prepare()}
@@ -630,14 +635,14 @@ public struct PreparedPageInkChange: Sendable {
   public var inkSource:PageInkSource {.init(source:source)}
   let source:PageInkDrawingCache.Source
   let erasureDirectory:PageInkErasureDirectory
-  let eraserIndex:InkReadSetBoundsIndex
+  let contactIndex:InkContactBoundsIndex
   public var data:Data {try! source.data()}
 
   fileprivate init(pageID: UUID, baseStamp: VersionStamp, stamp: VersionStamp, drawing: PageInkDrawing,
-    mutation:PageInkMutation,expectedVisibility:[UUID:PageInkVisibility] = [:],erasureDirectory:PageInkErasureDirectory,eraserIndex:InkReadSetBoundsIndex) {
+    mutation:PageInkMutation,expectedVisibility:[UUID:PageInkVisibility] = [:],erasureDirectory:PageInkErasureDirectory,contactIndex:InkContactBoundsIndex) {
     self.pageID = pageID; self.baseStamp = baseStamp; self.stamp = stamp
     self.drawing = drawing;self.mutation=mutation;self.expectedVisibility=expectedVisibility
-    source = .init(stamp:stamp,drawing:drawing,erasures:erasureDirectory,eraserIndex:eraserIndex)
-    self.erasureDirectory=erasureDirectory;self.eraserIndex=eraserIndex
+    source = .init(stamp:stamp,drawing:drawing,erasures:erasureDirectory,contactIndex:contactIndex)
+    self.erasureDirectory=erasureDirectory;self.contactIndex=contactIndex
   }
 }

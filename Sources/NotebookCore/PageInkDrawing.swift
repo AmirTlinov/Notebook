@@ -15,12 +15,17 @@ final class PageInkDrawingCache: @unchecked Sendable {
     private var value:PageInkDrawing?
     private var bytes:Data?
     private var erasures:PageInkErasureDirectory?
-    private var eraserIndex:InkReadSetBoundsIndex?
-    init(stamp:VersionStamp,drawing:PageInkDrawing? = nil,data:Data? = nil,erasures:PageInkErasureDirectory? = nil,eraserIndex:InkReadSetBoundsIndex? = nil) {
-      self.stamp=stamp;value=drawing;bytes=data;self.erasures=erasures;self.eraserIndex=eraserIndex
+    private var contactIndex:InkContactBoundsIndex?
+    init(stamp:VersionStamp,drawing:PageInkDrawing? = nil,data:Data? = nil,erasures:PageInkErasureDirectory? = nil,contactIndex:InkContactBoundsIndex? = nil) {
+      self.stamp=stamp;value=drawing;bytes=data;self.erasures=erasures;self.contactIndex=contactIndex
     }
     var prepared:PageInkPreparedProjection? { lock.withLock {
-      guard let value,let erasures,let eraserIndex else { return nil };return .init(drawing:value,erasures:erasures,eraserIndex:eraserIndex)
+      guard let value,let erasures,let contactIndex else { return nil };return .init(drawing:value,erasures:erasures,contactIndex:contactIndex)
+    } }
+    var retainedPayloadBytes:Int? { lock.withLock {
+      guard let value else { return nil }
+      return value.retainedPayloadBytes + (bytes?.count ?? 0) + (contactIndex?.retainedMetadataBytes ?? 0)
+        + (erasures?.values.retainedMetadataBytes ?? 0)
     } }
     func drawing() throws -> PageInkDrawing {
       if let ready=lock.withLock({value}) { return ready }
@@ -36,10 +41,10 @@ final class PageInkDrawingCache: @unchecked Sendable {
       return try preparation.withLock {
         if let prepared {return prepared}
         let drawing=try drawing(),directory=PageInkErasureDirectory(drawing)
-        let index=InkReadSetBoundsIndex(page:drawing.actions)
+        let index=InkContactBoundsIndex(page:drawing.actions)
         return lock.withLock {
-          erasures=directory;eraserIndex=index
-          return .init(drawing:drawing,erasures:directory,eraserIndex:index)
+          erasures=directory;contactIndex=index
+          return .init(drawing:drawing,erasures:directory,contactIndex:index)
         }
       }
     }
@@ -54,15 +59,15 @@ final class PageInkDrawingCache: @unchecked Sendable {
   }
   private let lock=NSLock()
   private var current:Source?
-  init(_ drawing:PageInkDrawing? = nil,stamp:VersionStamp? = nil,erasures:PageInkErasureDirectory? = nil,eraserIndex:InkReadSetBoundsIndex? = nil) {
-    if let drawing,let stamp { current=Source(stamp:stamp,drawing:drawing,erasures:erasures,eraserIndex:eraserIndex) }
+  init(_ drawing:PageInkDrawing? = nil,stamp:VersionStamp? = nil,erasures:PageInkErasureDirectory? = nil,contactIndex:InkContactBoundsIndex? = nil) {
+    if let drawing,let stamp { current=Source(stamp:stamp,drawing:drawing,erasures:erasures,contactIndex:contactIndex) }
   }
   init(source:Source) {current=source}
   func stamp(fallback:VersionStamp)->VersionStamp { lock.withLock { current?.stamp ?? fallback } }
   func source(data:Data,stamp:VersionStamp)->Source {
     lock.withLock {
       if let current { return current }
-      let source=data.isEmpty ? Source(stamp:stamp,drawing:.init(),data:data,erasures:.init(),eraserIndex:.init()) : Source(stamp:stamp,data:data)
+      let source=data.isEmpty ? Source(stamp:stamp,drawing:.init(),data:data,erasures:.init(),contactIndex:.init()) : Source(stamp:stamp,data:data)
       current=source;return source
     }
   }
@@ -82,7 +87,7 @@ final class PageInkDrawingCache: @unchecked Sendable {
 struct PageInkPreparedProjection:Sendable {
   let drawing:PageInkDrawing
   let erasures:PageInkErasureDirectory
-  let eraserIndex:InkReadSetBoundsIndex
+  let contactIndex:InkContactBoundsIndex
 }
 struct PageInkErasureDirectory:Sendable {
   private var targets:InkActionMapNode<String,[String]>?
@@ -127,6 +132,7 @@ private final class PageInkActionStorage: @unchecked Sendable {
   let ids: InkActionMapNode<String,Int>?
   let count: Int
   let activeCount: Int
+  let retainedPayloadBytes: Int
   let maximumSequence: UInt64
   let cursorToken:PageInkActionCursorToken
   let predecessorToken:PageInkActionCursorToken?
@@ -142,15 +148,17 @@ private final class PageInkActionStorage: @unchecked Sendable {
     order=InkActionMapNode.balanced(Array(actions.enumerated().map { ($0.offset,$0.element) }),0,actions.count)
     ids=InkActionMapNode.balanced(identifiers,0,identifiers.count)
     count=actions.count;activeCount=actions.reduce(0) { $0+($1.isActive ? 1:0) }
+    retainedPayloadBytes=actions.reduce(128) { $0 + $1.retainedPayloadBytes + 192 }
     maximumSequence=actions.map(\.sequence).max() ?? 0
     cursorToken = .init();predecessorToken=nil;predecessorCount=nil
     isValid=unique && actions.allSatisfy(\.isValid)
   }
 
   private init(order: InkActionMapNode<Int,PageInkAction>?, ids: InkActionMapNode<String,Int>?,
-    count:Int,activeCount:Int,maximumSequence:UInt64,cursorToken:PageInkActionCursorToken,
+    count:Int,activeCount:Int,retainedPayloadBytes:Int,maximumSequence:UInt64,cursorToken:PageInkActionCursorToken,
     predecessorToken:PageInkActionCursorToken?,predecessorCount:Int?) {
     self.order=order;self.ids=ids;self.count=count;self.activeCount=activeCount
+    self.retainedPayloadBytes=retainedPayloadBytes
     self.maximumSequence=maximumSequence;self.cursorToken=cursorToken
     self.predecessorToken=predecessorToken;self.predecessorCount=predecessorCount;isValid=true
   }
@@ -173,7 +181,9 @@ private final class PageInkActionStorage: @unchecked Sendable {
     let accepted=action.ordered(last+1),position=count
     return .init(order:order?.inserting(position,accepted) ?? .init(position,accepted),
       ids:ids?.inserting(accepted.id.uuidString.lowercased(),position) ?? .init(accepted.id.uuidString.lowercased(),position),
-      count:count+1,activeCount:activeCount+(accepted.isActive ? 1:0),maximumSequence:accepted.sequence,
+      count:count+1,activeCount:activeCount+(accepted.isActive ? 1:0),
+      retainedPayloadBytes:retainedPayloadBytes+accepted.retainedPayloadBytes+192,
+      maximumSequence:accepted.sequence,
       cursorToken:.init(),predecessorToken:cursorToken,predecessorCount:count)
   }
 
@@ -187,7 +197,8 @@ private final class PageInkActionStorage: @unchecked Sendable {
       active += (next.isActive ? 1 : 0) - (action.isActive ? 1 : 0)
     }
     guard root !== order else { return self }
-    return .init(order:root,ids:ids,count:count,activeCount:active,maximumSequence:maximumSequence,
+    return .init(order:root,ids:ids,count:count,activeCount:active,retainedPayloadBytes:retainedPayloadBytes,
+      maximumSequence:maximumSequence,
       cursorToken:.init(),predecessorToken:nil,predecessorCount:nil)
   }
 }
@@ -205,6 +216,7 @@ public struct PageInkDrawing: Codable, Equatable, Sendable {
   public let baselineActionCount: Int
   private let storage: PageInkActionStorage
   public var actions: [PageInkAction] { storage.actions }
+  public var retainedPayloadBytes:Int { storage.retainedPayloadBytes + (baselinePNG?.count ?? 0) }
 
   public init(baselinePNG: Data? = nil, baselineActionCount: Int = 0, actions: [PageInkAction] = [])
   {
@@ -341,6 +353,11 @@ public struct PageInkAction: Codable, Equatable, Identifiable, Sendable {
   public let isActive: Bool
   public let stateStamp: VersionStamp?
   public var visibility: PageInkVisibility { .init(isActive:isActive,stateStamp:stateStamp) }
+  var retainedPayloadBytes:Int {
+    MemoryLayout<Self>.stride + samples.payloadBytes
+      + (elementTargets?.capacity ?? 0) * MemoryLayout<InkElementTarget>.stride
+      + (elementTargets ?? []).reduce(0) { $0 + $1.elementID.utf8.count * 2 }
+  }
 
   public init(
     id: UUID = UUID(), tool: SpatialInkTool, color: SpatialInkColor = .black,

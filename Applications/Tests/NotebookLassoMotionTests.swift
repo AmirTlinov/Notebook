@@ -118,7 +118,7 @@ import XCTest
       return nil
     }
     defer { release.continuation.finish();preparation.cancel() }
-    var pending=ready;pending.materialization=nil;pending.preparation=NotebookRegionPreparation(preparation)
+    var pending=ready;pending.materialization=nil;pending.preparation=NotebookRegionPreparation(preparation,allowance:model.regionWriteAllowance(ready))
     model.selectRegion(pending)
     let oldControls=try XCTUnwrap(NotebookAttentionProjection.editingFrame(pending.reference,model:model,presence:presence))
     let contact=try XCTUnwrap(model.beginElementManipulation(pending.reference,kind:.move))

@@ -265,6 +265,27 @@ Overflow rejects the contact without replacing the previous selection. Spatial
 base, moved-group and live-delta candidate unions reject world bounds before exact
 geometry and share one 4,096-object bound; exact work remains off-main.
 
+An unresolved region carries its captured source/ink/causal size through the same
+accepted material tail. `NotebookRegionWriteAllowance` covers both cut fragments,
+captured erasures, encoding, inverse and early continuations before preparation
+finishes; it rejects known overflow above the existing 192 MiB command ceiling.
+The existing scene query bounds the captured bodies, parent frames, connector
+endpoints and their causal fields; foreign scene sources are not retained or
+measured. Input-ready ink roots maintain contact bounds and size summaries;
+the same index serves causal reads and bounds encoded pen/eraser material before
+exact lasso preparation, including erasers over the full candidate pen extent
+and addressed element masks. Lift retains only those relations in original paint
+order and releases the journal/index; pending presentation keeps no source root
+or spatial window. The existing erasure map captures only addressed persistent
+mask roots and caches their byte bounds, including future array disclosure.
+Known overflow is refused before exact preparation; renewed candidates are
+checked before masks are disclosed. Immutable relation storage caches its allocation
+summary before input admission. Claimed raw contacts do not spend the candidate limit. Captured
+causal frontiers survive materialization and reject peer
+replacements before their bodies are read. A refreshed source must fit the
+captured bound. Ready plans use the existing exact meter; the writer retains
+the shared 256 MiB limit and FIFO throughout.
+
 Selection pose, cancellation and canonical handoff enter the existing canvas frame
 clock. Preparation supplies immutable geometry; at most three flight slots hold
 buffers/drawables. Scheduling publishes raw pixels, authored hosts and controls in
@@ -288,7 +309,7 @@ one canonical vector mask from pending/attention subjects off-main, reusing it f
 animation. Its job survives unrelated owner revisions; the episode clock starts only
 after both the source pixels and its current mask are ready.
 
-The tool controller retains one prepared accepted lasso snapshot. Its identity
+Whole-element selection retains one prepared accepted ink snapshot. Its identity
 covers the owner, revision and actual spatial-window action membership. Suppressed
 stroke IDs belong to the pinned query and do not rebuild unchanged measurements.
 Moving the world origin reprojects the query, not the samples. Local

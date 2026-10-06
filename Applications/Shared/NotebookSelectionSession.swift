@@ -62,8 +62,11 @@ struct NotebookRegionSelection: Equatable, Sendable {
 /// command queue. Cancelling focus only disposes of unclaimed preparation.
 @MainActor final class NotebookRegionPreparation: Equatable {
   let task:Task<NotebookRegionSelection?,Error>
+  let allowance:NotebookRegionWriteAllowance
   var claimed=false
-  init(_ task:Task<NotebookRegionSelection?,Error>) { self.task=task }
+  init(_ task:Task<NotebookRegionSelection?,Error>,allowance:NotebookRegionWriteAllowance) {
+    self.task=task;self.allowance=allowance
+  }
   nonisolated static func == (lhs:NotebookRegionPreparation,rhs:NotebookRegionPreparation)->Bool { lhs === rhs }
 }
 

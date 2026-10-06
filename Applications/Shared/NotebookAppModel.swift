@@ -1006,8 +1006,8 @@ final class NotebookAppModel {
     defer { withExtendedLifetime(work) {} }
     return .init(content:try await NotebookClipboard.read(providers,availableSize:availableSize),workLease:work)
   }
-  func reserveElementPreparation() -> NotebookPersistenceAdmission.Reservation? {
-    guard let reservation = persistence.reserveWrite(NotebookElementWriteAllowance.maximumCost) else {
+  func reserveElementPreparation(cost:NotebookPersistenceAdmission.Cost = NotebookElementWriteAllowance.maximumCost) -> NotebookPersistenceAdmission.Reservation? {
+    guard let reservation = persistence.reserveWrite(cost) else {
       showCue("Сохранение заполнено. Повторите после восстановления записи."); return nil
     }
     return reservation
@@ -1083,7 +1083,7 @@ final class NotebookAppModel {
   private var pencilUndoHistory = PencilUndoHistory()
   @ObservationIgnored private var pendingCollaborationCommands:[UUID:Task<Bool,Never>]=[:]
   private(set) var graphicCommandTask: Task<NotebookElementCommandResult?, Never>?
-  @ObservationIgnored var pendingMaterialAdmissions:[SurfaceID:(id:UUID,task:Task<Void,Never>)] = [:]
+  @ObservationIgnored var pendingMaterialAdmissions:[SurfaceID:NotebookMaterialAdmission] = [:]
   @ObservationIgnored private var graphicCommandGeneration = UUID()
   @ObservationIgnored var workingGraphics: [NotebookWorkingGraphic] = []
   @ObservationIgnored var workingGraphicSignals:[SurfaceID:NotebookWorkingGraphicSignal] = [:]
@@ -3402,9 +3402,6 @@ final class NotebookAppModel {
     presentation:NotebookSelectionPresentation? = nil) -> Bool {
     guard let source=frozen ?? selectionEditSource(deleting:deleting),selectionEditSourceIsCurrent(source),
       deleting || (edits.count == source.members.count && Set(edits.map(\.id)) == Set(source.members.map(\.id))) else { return false }
-    guard let reservation = reserveElementPreparation() else { return false }
-    var transferred = false
-    defer { if !transferred { releaseElementPreparation(reservation) } }
     // Authored-only patches contain bounded poses/styles, never a measured
     // body. Preserve their synchronous draft admission through the same helper.
     if !source.needsOrderedPresentation {
@@ -3421,11 +3418,13 @@ final class NotebookAppModel {
           presentation.claim()
         }
         guard enqueueElementCommand(target:source.address.target,ready:plan,presentation:presentation,
-          reservation:reservation) != nil else { presentation?.commandFailed(); return false }
-        transferred = true
+          reservation:nil) != nil else { presentation?.commandFailed(); return false }
         if deleting { clearSelection() };return true
       } catch { showCue(error.localizedDescription);return false }
     }
+    guard let reservation = reserveElementPreparation() else { return false }
+    var transferred = false
+    defer { if !transferred { releaseElementPreparation(reservation) } }
     let working:[NotebookWorkingGraphic]
     do { working=try source.presentationWorking(for:edits,deleting:deleting) }
     catch { showCue(error.localizedDescription);return false }
@@ -3472,7 +3471,7 @@ final class NotebookAppModel {
         self?.pendingMaterialAdmissions[source.address.surface]=nil
       }
     }
-    pendingMaterialAdmissions[source.address.surface]=(batch.id,admission)
+    pendingMaterialAdmissions[source.address.surface] = .init(id:batch.id,task:admission)
     return true
   }
 
@@ -4211,12 +4210,21 @@ final class NotebookAppModel {
     presentation:NotebookSelectionPresentation? = nil,
     batch:NotebookElementCommandBatch = .init(),
     reservation suppliedReservation:NotebookPersistenceAdmission.Reservation? = nil) -> NotebookElementCommandBatch? {
-    guard let reservation = suppliedReservation ?? persistence.reserveWrite(NotebookElementWriteAllowance.maximumCost) else {
-      showCue("Сохранение заполнено. Повторите после восстановления записи."); return nil
-    }
+    let cost:NotebookPersistenceAdmission.Cost
     if let ready {
-      do { _ = try NotebookElementWriteAllowance.cost(ready) }
-      catch { persistence.releaseWriteReservation(reservation); showCue(error.localizedDescription); return nil }
+      do {
+        let measured=try NotebookElementWriteAllowance.cost(ready)
+        // A plain ready plan already holds its exact source. A dependency's
+        // receipt can still add causal metadata; its supplied region bound or
+        // the existing maximum covers that unresolved source.
+        cost=ready.sourceTasks.isEmpty ? measured : NotebookElementWriteAllowance.maximumCost
+      } catch {
+        if let suppliedReservation { persistence.releaseWriteReservation(suppliedReservation) }
+        showCue(error.localizedDescription);return nil
+      }
+    } else { cost=NotebookElementWriteAllowance.maximumCost }
+    guard let reservation = suppliedReservation ?? persistence.reserveWrite(cost) else {
+      showCue("Сохранение заполнено. Повторите после восстановления записи."); return nil
     }
     let actor=actorID
     let commandID=batch.id,generation=batch.generation
