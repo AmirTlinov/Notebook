@@ -145,7 +145,7 @@ final class NotebookCodexSidecar {
           // Recovery shares the journal's retry deadline. A startup storage
           // failure cannot terminate the only worker and strand saved input.
           if needsRecovery {
-            _ = try await persistence.submit { store in
+            _ = try await persistence.submit(writesStore: true) { store in
               for job in try store.pendingChatJobs() where job.state == .attempting {
                 _ = try store.advanceChatJob(job.id, from: .attempting, to: .uncertain, error: "Проверяется принятие после перезапуска Mac")
               }
@@ -226,7 +226,7 @@ final class NotebookCodexSidecar {
     removeSubscription(peer)
     // Register this fence synchronously: earlier attempts keep their right to
     // finish, but a later admission cannot overtake revocation.
-    persistence.enqueueCommand({ try $0.rejectSavedChatInputs(from: peer) }, completion: { _ in })
+    persistence.enqueueCommand(writesStore: true, { try $0.rejectSavedChatInputs(from: peer) }, completion: { _ in })
   }
   func allowDevice(_ peer: UUID) { revokedPeers.remove(peer); peerGenerations[peer, default: 0] += 1 }
 
@@ -259,7 +259,7 @@ final class NotebookCodexSidecar {
         guard current.peer == authorized.peer, current.generation == authorized.generation,
           current.account == authorized.account else { throw CodexBridgeError.unavailable }
         let computer = computerID
-        persistence.enqueueCommand({ store in
+        persistence.enqueueCommand(writesStore: true, { store in
           let job = try store.saveChatSubmission(input, to: computer)
           guard attempt, job.state == .saved else { return job }
           return try store.advanceChatJob(input.id, from: .saved, to: .attempting)
@@ -272,7 +272,7 @@ final class NotebookCodexSidecar {
     if let accountIdentity { identity = try await accountIdentity() ?? "signed-out" }
     else if let accountRequest { identity = try await accountRequest(.read).account?.identity ?? "signed-out" }
     else { return } // injected contract owner in native tests
-    _ = try await persistence.submit { try $0.admitCodexAccount(identity) }
+    _ = try await persistence.submit(writesStore: true) { try $0.admitCodexAccount(identity) }
   }
 
   func receive(_ envelope: NotebookChatEnvelope, peerID: UUID) async -> NotebookChatEnvelope? {
@@ -291,7 +291,7 @@ final class NotebookCodexSidecar {
           let request = state.requests.first(where: { $0.id == id }) else { throw CodexBridgeError.staleRequest }
         reply = .requestDetails(request)
       case .stopWaiting(let id):
-        reply = .job(try await persistence.submit { try $0.stopWaitingForChatJob(id, author: peerID) })
+        reply = .job(try await persistence.submit(writesStore: true) { try $0.stopWaitingForChatJob(id, author: peerID) })
       case .dictation(let query):
         guard let dictation else { throw CodexBridgeError.unavailable }
         reply = .dictation(try dictation.receive(query, peer: peerID))
@@ -311,7 +311,7 @@ final class NotebookCodexSidecar {
           case .upload: throw CodexBridgeError.invalidInput
           }
         } else if case .upload(let chunk) = query {
-          reply = .file(.uploaded(try await persistence.submit { try $0.stageFileUpload(chunk, author: peerID) }))
+          reply = .file(.uploaded(try await persistence.submit(writesStore: true) { try $0.stageFileUpload(chunk, author: peerID) }))
         } else { throw CodexBridgeError.invalidInput }
 
       case .job(let input):
@@ -399,7 +399,7 @@ final class NotebookCodexSidecar {
     guard !stopped else { return }
     guard job.state == .saved else { return }
     guard !revokedPeers.contains(job.input.author), authorizePeer(job.input.author) else {
-      try await persistence.submit { try $0.rejectSavedChatInputs(from: job.input.author) }; return
+      try await persistence.submit(writesStore: true) { try $0.rejectSavedChatInputs(from: job.input.author) }; return
     }
     let admission = try authorization(job.input.author)
     guard try await persistence.submit({ try $0.chatJob(job.id)?.state }) == .saved else { return }
@@ -424,7 +424,7 @@ final class NotebookCodexSidecar {
       let code = error as? CodexBridgeError
       if error is CodexRequestRejection || code == .externalOwnerUnavailable || code == .staleTurn
         || code == .staleRequest || code == .unsupportedRequest || code == .invalidInput || code == .signInRequired {
-        _ = try await persistence.submit {
+        _ = try await persistence.submit(writesStore: true) {
           try $0.advanceChatJob(job.id, from: .saved, to: .rejected, error: Self.message(error))
         }
       }
@@ -459,7 +459,7 @@ final class NotebookCodexSidecar {
         let target = project?.roots.first.map { URL(fileURLWithPath: $0) } ?? directory
         if project == nil { try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true) }
         result = .created(try await metadata.create(directory: target, title: title, workspaceID: workspaceID, project: project) { [persistence] task in
-          try await persistence.submit { try $0.recordCreatedChatTask(job.id, task: task) }
+          try await persistence.submit(writesStore: true) { try $0.recordCreatedChatTask(job.id, task: task) }
         })
       case .send(let thread, let text, let context):
         result = .turn(try await bridge.send(threadID: thread, clientMessageID: job.id, text: text, context: context, attachments: attachments))
@@ -475,7 +475,7 @@ final class NotebookCodexSidecar {
       // the Mac is a definite stale Stop, not an indefinitely unknown acceptance.
       if case .create = job.input.action,
         let task = try await persistence.submit({ try $0.chatJob(job.id)?.createdTask }) {
-        _ = try await persistence.submit { try $0.advanceChatJob(job.id, from: .attempting, to: .accepted,
+        _ = try await persistence.submit(writesStore: true) { try $0.advanceChatJob(job.id, from: .attempting, to: .accepted,
           result: .created(task), error: "Задача создана. Дополнительная настройка не завершена: " + Self.message(error)) }
         return
       }
@@ -494,14 +494,14 @@ final class NotebookCodexSidecar {
         retryable = code == .busy || code == .unavailable
       } else if case .respond = job.input.action { retryable = code == .busy }
       else { retryable = false }
-      _ = try await persistence.submit {
+      _ = try await persistence.submit(writesStore: true) {
         try $0.advanceChatJob(job.id, from: .attempting, to: rejected ? .rejected : (retryable ? .saved : .uncertain), error: Self.message(error))
       }
       return
     }
     // A post-commit storage failure is reconciled from the existing row next time,
     // never by executing this input again.
-    _ = try await persistence.submit { try $0.advanceChatJob(job.id, from: .attempting, to: .accepted, result: result) }
+    _ = try await persistence.submit(writesStore: true) { try $0.advanceChatJob(job.id, from: .attempting, to: .accepted, result: result) }
   }
 
   private func reconcile(_ job: NotebookChatJob) async throws {
@@ -509,27 +509,27 @@ final class NotebookCodexSidecar {
     defer { if let thread = job.input.action.threadID { releaseObservation(thread, observationID) } }
     guard try await persistence.submit({ try $0.chatJob(job.id)?.state }) == job.state else { return }
     if let task = job.createdTask {
-      _ = try await persistence.submit { try $0.advanceChatJob(job.id, from: job.state, to: .accepted,
+      _ = try await persistence.submit(writesStore: true) { try $0.advanceChatJob(job.id, from: job.state, to: .accepted,
         result: .created(task), error: "Задача создана до обрыва. Дополнительная настройка не подтверждена; состояние проверяется при открытии.") }
       return
     }
     if case .createProject(let name, let path) = job.input.action {
       // Only this public API explicitly guarantees idempotent creation by key.
       let project = try await metadata.createProject(name: name, path: path, idempotencyKey: job.id)
-      _ = try await persistence.submit { try $0.advanceChatJob(job.id, from: job.state, to: .accepted, result: .project(project)) }
+      _ = try await persistence.submit(writesStore: true) { try $0.advanceChatJob(job.id, from: job.state, to: .accepted, result: .project(project)) }
       return
     }
     if case .setModel(let thread, let selection) = job.input.action {
       try await observe(thread, observationID: observationID)
       if await bridge.snapshot(threadID: thread)?.model == selection {
-        _ = try await persistence.submit { try $0.advanceChatJob(job.id, from: job.state, to: .accepted, result: .acknowledged) }
+        _ = try await persistence.submit(writesStore: true) { try $0.advanceChatJob(job.id, from: job.state, to: .accepted, result: .acknowledged) }
       }
       return // Never repeat a settings write after an unknown response.
     }
     if case .setAccess(let thread, let mode) = job.input.action {
       try await observe(thread, observationID: observationID)
       if await bridge.snapshot(threadID: thread)?.access?.mode == mode {
-        _ = try await persistence.submit { try $0.advanceChatJob(job.id, from: job.state, to: .accepted, result: .acknowledged) }
+        _ = try await persistence.submit(writesStore: true) { try $0.advanceChatJob(job.id, from: job.state, to: .accepted, result: .acknowledged) }
       }
       return
     }
@@ -538,7 +538,7 @@ final class NotebookCodexSidecar {
       reconciliationAfter[job.id] = Date().addingTimeInterval(5)
       let project = try await metadata.readProject(id: request.address.project)
       if let result = try await files.reconcileRename(job.id, project: project) {
-        _ = try await persistence.submit { try $0.advanceChatJob(job.id, from: job.state, to: .accepted, result: .renamed(result)) }
+        _ = try await persistence.submit(writesStore: true) { try $0.advanceChatJob(job.id, from: job.state, to: .accepted, result: .renamed(result)) }
       }
       return
     }
@@ -547,14 +547,14 @@ final class NotebookCodexSidecar {
       reconciliationAfter[job.id] = Date().addingTimeInterval(5)
       let project = try await metadata.readProject(id: address.project)
       if let result = try await files.reconcile(job.id, project: project) {
-        _ = try await persistence.submit { try $0.advanceChatJob(job.id, from: job.state, to: .accepted, result: .file(result)) }
+        _ = try await persistence.submit(writesStore: true) { try $0.advanceChatJob(job.id, from: job.state, to: .accepted, result: .file(result)) }
       }
       return
     }
     if case .updateProject(let edit) = job.input.action {
       let project = try await metadata.readProject(id: edit.id)
       if edit.matches(project) {
-        _ = try await persistence.submit { try $0.advanceChatJob(job.id, from: job.state, to: .accepted, result: .project(project)) }
+        _ = try await persistence.submit(writesStore: true) { try $0.advanceChatJob(job.id, from: job.state, to: .accepted, result: .project(project)) }
         reconciliationAfter.removeValue(forKey: job.id)
       }
       return // Observation can confirm the requested state; it never repeats an edit over newer work.
@@ -563,7 +563,7 @@ final class NotebookCodexSidecar {
     do {
       let page = try await metadata.history(threadID: thread, cursor: historyCursors[job.id], turnID: nil)
       if let message = page.messages.first(where: { $0.clientID == job.id.uuidString.lowercased() }) {
-        _ = try await persistence.submit { try $0.advanceChatJob(job.id, from: job.state, to: .accepted, result: .turn(message.turnID)) }
+        _ = try await persistence.submit(writesStore: true) { try $0.advanceChatJob(job.id, from: job.state, to: .accepted, result: .turn(message.turnID)) }
         historyCursors.removeValue(forKey: job.id); reconciliationAfter.removeValue(forKey: job.id)
       } else {
         historyCursors[job.id] = page.nextCursor

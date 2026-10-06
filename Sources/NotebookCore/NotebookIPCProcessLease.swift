@@ -5,6 +5,8 @@ import Darwin
 /// this lease until accepted writes drain; child processes must not inherit it.
 public final class NotebookIPCProcessLease: Sendable {
   let descriptor: Int32
+  let acceptedWitnessLeaseIdentity: String
+  let acceptedWitnessGeneration = UUID()
 
   public init(socketURL: URL = NotebookIPC.defaultSocketURL) throws {
     try SocketIO.validateDirectory(socketURL.deletingLastPathComponent(), create: true)
@@ -23,6 +25,8 @@ public final class NotebookIPCProcessLease: Sendable {
         throw SocketIO.failure("Не удалось занять владение Notebook runtime.")
       }
       descriptor = fd
+      acceptedWitnessLeaseIdentity = socketURL.appendingPathExtension("owner").standardizedFileURL.resolvingSymlinksInPath().path
+        + ":" + String(info.st_dev) + ":" + String(info.st_ino)
     } catch { close(fd); throw error }
   }
 

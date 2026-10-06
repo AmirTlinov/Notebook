@@ -27,6 +27,7 @@ import QuartzCore
   @ObservationIgnored private var claimed=false
   @ObservationIgnored private var accepted=false
   @ObservationIgnored private var acceptedCursor:UInt64?
+  @ObservationIgnored private var acceptedSources:[EditableElementReference:NotebookNativeElementSource]=[:]
   @ObservationIgnored private(set) var canonicalAuthoredCutReady=false
   @ObservationIgnored private var canonicalCommitScheduled=false
   @ObservationIgnored private var preparationFailed=false
@@ -70,7 +71,13 @@ import QuartzCore
   var needsCanonicalSource:Bool {!disposed && accepted && (preparationFailed || !installed)}
   var awaitsAcceptedDeleteCut:Bool {!disposed && accepted && deleting && canvas != nil}
   func acceptsCanonicalCut(_ cursor:UInt64)->Bool {
-    awaitsAcceptedDeleteCut && acceptedCursor.map({cursor >= $0}) == true
+    awaitsAcceptedDeleteCut && acceptedCursor.map({cursor >= $0}) == true && acceptedSourcesAreLoaded
+  }
+  private var acceptedSourcesAreLoaded:Bool {
+    guard let model,!acceptedSources.isEmpty else {return false}
+    return acceptedSources.allSatisfy { reference, expected in
+      model.nativeElementSource(reference)?.covers(expected) == true
+    }
   }
   // Cancellation ends the contact, not its installed picture. Authored peers
   // and controls leave this pose only with the raw restoration's frame receipt.
@@ -162,8 +169,6 @@ import QuartzCore
       installedDisplayGenerations=displayGenerations
       if let model {model.selectedGraphicHosts.installControls(model:model,selectionID:source.selectionID)}
       CATransaction.commit()
-      #else
-      return
       #endif
       return
     }
@@ -300,9 +305,10 @@ import QuartzCore
     }
     #endif
   }
-  func didAcceptSource(cursor:UInt64? = nil) {
+  func didAcceptSource(cursor:UInt64? = nil,sources:[EditableElementReference:NotebookNativeElementSource] = [:]) {
     accepted=true
     acceptedCursor=cursor ?? acceptedCursor
+    if !sources.isEmpty {acceptedSources=sources}
     // The atomic writer receipt ends rollback authority. Keep only the current
     // native picture/controls, not the captured pre-command body geometry.
     restoration=nil
@@ -317,8 +323,8 @@ import QuartzCore
     }
     if let canvas,canvas.window == nil {selectionCanvasUnmounted(canvas)}
     if let model {
-      canonicalAuthoredSourceLoaded(upTo:model.sceneContentCursor)
-      if let cursor=acceptedCursor,model.sceneContentCursor>=cursor,
+      canonicalAuthoredSourceLoaded()
+      if acceptedSourcesAreLoaded,
         let canvas,source.address.surface.kind == .page,let pageID=source.address.surface.ownerID,
         let page=model.pages[pageID],canvas.presentsCanonicalPageSource(page.inkSource) {
         canonicalInstalled(canvas.orderedInkPlan,on:canvas,surface:source.address.surface)
@@ -333,7 +339,7 @@ import QuartzCore
     canvas=nil
     generation=UUID();preparation?.cancel();preparation=nil
     releasePhysicalLease()
-    if let model {canonicalAuthoredSourceLoaded(upTo:model.sceneContentCursor)}
+    canonicalAuthoredSourceLoaded()
     authoredHostUnmounted()
   }
   func authoredHostUnmounted(_ memberID:String? = nil) {
@@ -348,17 +354,18 @@ import QuartzCore
       return
     }
     guard accepted,canvas == nil,!disposed,let model,
-      acceptedCursor.map({model.sceneContentCursor >= $0}) == true,
+      acceptedSourcesAreLoaded,
       model.selectedGraphicHosts.mountedHosts(source,ownerID:id).isEmpty,
       requiredTextHostIDs.isEmpty else {return}
     finishRetirement()
     #endif
     if canonicalAuthoredCutReady {canonicalHostStaged()}
   }
-  func canonicalAuthoredSourceLoaded(upTo cursor:UInt64) {
+  func canonicalAuthoredSourceLoaded() {
     guard accepted,canvas == nil,!disposed,!canonicalAuthoredCutReady,
-      acceptedCursor.map({cursor >= $0}) == true,let model else {return}
+      acceptedSourcesAreLoaded else {return}
     #if os(iOS)
+    guard let model else {return}
     if deleting {
       CATransaction.begin();CATransaction.setDisableActions(true)
       for host in model.selectedGraphicHosts.mountedHosts(source,ownerID:id).values {host.hide()}
@@ -366,9 +373,6 @@ import QuartzCore
       finishRetirement();CATransaction.commit();return
     }
     if model.selectedGraphicHosts.mountedHosts(source,ownerID:id).isEmpty,requiredTextHostIDs.isEmpty {finishRetirement();return}
-    #else
-    finishRetirement();return
-    #endif
     canonicalAuthoredCutReady=true
     // A later queued edit or peer action may already have superseded this
     // command. The scene's current source, not this command's desired pose,
@@ -376,6 +380,9 @@ import QuartzCore
     // picture until that source has been staged together.
     model.didChangeWorkingGraphics(on:[source.address.surface])
     canonicalHostStaged()
+    #else
+    finishRetirement()
+    #endif
   }
   func canonicalHostStaged() {
     guard canonicalAuthoredCutReady,!disposed,!canonicalCommitScheduled else {return}
@@ -405,10 +412,10 @@ import QuartzCore
   }
   func canonicalInstalled(_ plan:NotebookOrderedInkPlan,on current:InkCanvasView,surface:SurfaceID) {
     guard (needsCanonicalSource || awaitsAcceptedDeleteCut),surface == source.address.surface,current.window != nil,
-      current.isStableFramePresented,current.orderedInkPlan == plan else {return}
+      acceptedSourcesAreLoaded,current.isStableFramePresented,current.orderedInkPlan == plan else {return}
     current.acknowledgeAcceptedOrderedFrame(plan)
-    // The caller also checked its accepted publication cursor and immutable
-    // source. A newer physical owner may legitimately replace the original one.
+    // The addressed canonical source and this native receipt cover the same
+    // immutable output. A newly mounted physical owner can perform the handoff.
     finishRetirement()
   }
   func commandFailed() { claimed=false;cancel() }

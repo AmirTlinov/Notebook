@@ -149,7 +149,7 @@ final class SpatialInkContactResizeTests: XCTestCase {
         registry: fixture.registry, resources: fixture.resources)
       fixture.window.rootViewController = fixture.host
       fixture.host.view.addSubview(fixture.mount); fixture.window.makeKeyAndVisible()
-      fixture.coordinator = .init(surfaceRegistry: fixture.registry, inputGate: fixture.gate) { [weak fixture] tool, color, spans, _ in
+      fixture.coordinator = .init(surfaceRegistry: fixture.registry, inputGate: fixture.gate, reserveAction: { _ in true }) { [weak fixture] tool, color, spans, _ in
         fixture?.accept(tool: tool, color: color, spans: spans)
       }
       fixture.update(tool: .pen)

@@ -22,8 +22,9 @@ public struct NotebookPasteFragment: Codable, Sendable {
   public let diagnostics: [Diagnostic]
   public let size: SpatialPoint
   public let canInsert: Bool
+  public let programResources: NotebookProgramTransfer?
 
-  public init(elements: [AgentElement], size: SpatialPoint) {
+  public init(elements: [AgentElement], size: SpatialPoint, programResources: NotebookProgramTransfer? = nil) {
     self.elements = elements
     self.size = size
     self.items = elements.map { .init(id: $0.id, parentID: nil, type: $0.kind.rawValue, label: $0.source) }
@@ -31,12 +32,14 @@ public struct NotebookPasteFragment: Codable, Sendable {
     self.sourceIDs = [:]
     self.diagnostics = []
     self.canInsert = !elements.isEmpty
+    self.programResources = programResources
   }
 
   init(items: [Item], selectedIDs: [String], elements: [AgentElement], sourceIDs: [String: String],
-    diagnostics: [Diagnostic], size: SpatialPoint, canInsert: Bool) {
+    diagnostics: [Diagnostic], size: SpatialPoint, canInsert: Bool, programResources: NotebookProgramTransfer? = nil) {
     self.items = items; self.selectedIDs = selectedIDs; self.elements = elements
     self.sourceIDs = sourceIDs; self.diagnostics = diagnostics; self.size = size; self.canInsert = canInsert
+    self.programResources = programResources
   }
 
   /// Every paste receives fresh identities. Internal links remain internal;
@@ -65,7 +68,17 @@ public struct NotebookPasteFragment: Codable, Sendable {
         programPackage:element.programPackage,state:element.state,graphic:copiedGraphic,
         textStyle:element.textStyle,parentID:element.parentID.map { ids[collaborationIdentity($0)]! },basis:element.basis)
     }
-    return .init(elements:copies,size:size)
+    return .init(elements:copies,size:size,programResources:programResources)
+  }
+
+  /// The complete closure is prepared before the ordinary paste is accepted.
+  public func prepareProgramResources() throws -> NotebookProgramTransfer.Prepared? {
+    let roots = elements.compactMap(\.programPackage)
+    if let programResources { return try programResources.prepare(packageHashes: roots) }
+    guard roots.isEmpty else {
+      throw CollaborationError("incomplete_fragment","Для переноса программы нужны все её ресурсы.")
+    }
+    return nil
   }
 
   private func validateTransfer() throws {
@@ -81,11 +94,6 @@ public struct NotebookPasteFragment: Codable, Sendable {
         NotebookElementBasis.validLocalFrame(element.frame) else {
         throw CollaborationError("invalid_fragment","Содержимое фрагмента не проходит проверку вставки.")
       }
-      // A package hash without its resources cannot be pasted in another
-      // workspace. Keep the original until its complete transfer is available.
-      guard element.programPackage == nil else {
-        throw CollaborationError("incomplete_fragment","Для переноса программы нужны все её ресурсы.")
-      }
       var visited:Set<String>=[collaborationIdentity(element.id)],parentID=element.parentID
       while let id=parentID {
         guard visited.insert(collaborationIdentity(id)).inserted,let parent=byID[collaborationIdentity(id)],parent.kind == .group else {
@@ -94,6 +102,7 @@ public struct NotebookPasteFragment: Codable, Sendable {
         parentID=parent.parentID
       }
     }
+    _ = try prepareProgramResources()
   }
 
   public func operations(target: CollaborationTarget, offset: SpatialPoint = .init(x:0,y:0),

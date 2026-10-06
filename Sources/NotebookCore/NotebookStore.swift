@@ -24,16 +24,23 @@ public struct NotebookStore: Sendable {
   }
 
   private static func transactionKey(_ root: URL) -> String {
-    // Foundation normalizes an existing /private/var container differently
-    // from a not-yet-created one. Resolve the existing ancestor once, so store
-    // copies and later reopenings borrow the same thread-local transaction.
+    "Notebook.SQL." + canonicalWorkspacePath(root)
+  }
+
+  /// Filesystem identity for a workspace owner, stable before first creation
+  /// and through directory URL spelling or an existing ancestor's symlinks.
+  /// A URL's directory flag is not part of that identity. Accepted writes also
+  /// bind the durable workspace UUID before replaying a confirmed outcome.
+  public static func canonicalWorkspacePath(_ root: URL) -> String {
     var ancestor = root, suffix: [String] = []
     while ancestor.path != "/", !FileManager.default.fileExists(atPath: ancestor.path) {
       suffix.append(ancestor.lastPathComponent)
       ancestor.deleteLastPathComponent()
     }
-    let normalized = suffix.reversed().reduce(ancestor.standardizedFileURL) { $0.appendingPathComponent($1) }
-    return "Notebook.SQL." + normalized.path
+    let normalized = suffix.reversed().reduce(ancestor.standardizedFileURL.resolvingSymlinksInPath()) {
+      $0.appendingPathComponent($1)
+    }
+    return normalized.path
   }
 
   public static var defaultRoot: URL {

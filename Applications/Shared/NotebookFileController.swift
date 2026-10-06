@@ -259,7 +259,7 @@ final class NotebookFileController {
         draft.pending = id; draft.submitted = value.text
         let input = NotebookChatInput(id: id, author: author, action: .saveFile(value.address))
         let savedDraft = draft
-        _ = try await persistence.submit { try $0.saveFileSubmission(input, draft: savedDraft) }
+        _ = try await persistence.submit(writesStore: true) { try $0.saveFileSubmission(input, draft: savedDraft) }
         if document?.address == value.address {
           // Text typed during the database wait is newer than savedDraft.
           document?.pending = id; document?.submitted = value.text; persistDocument()
@@ -274,7 +274,7 @@ final class NotebookFileController {
     defer { saving = false; notes.changingFile = document?.rename == nil ? nil : document?.address }
     let author = author, id = UUID()
     do {
-      try await persistence.submit { store in
+      try await persistence.submit(writesStore: true) { store in
         let request = NotebookFileRename(address: value.address, path: path, version: .init(Data(value.base.utf8)), after: try store.currentChangeCursor())
         guard request.isValid else { throw CollaborationError("file_name", "Укажите другой относительный путь внутри проекта.") }
         var draft = value; draft.rename = id
@@ -325,7 +325,7 @@ final class NotebookFileController {
         // Enqueue before yielding so later native typing cannot be overwritten
         // by a stale receipt callback returning from persistence.
         if document?.address == address { document = current; persistDocument(); error = job.error; notice = job.error ?? (current.other == nil ? "Сохранено на Mac" : "Конфликт · обе версии сохранены") }
-        else { try await persistence.submit { try $0.saveFileDraft(accepted) } }
+        else { try await persistence.submit(writesStore: true) { try $0.saveFileDraft(accepted) } }
       } catch { if document?.address == address { self.error = error.localizedDescription } }
     }
   }

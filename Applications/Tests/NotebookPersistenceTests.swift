@@ -150,16 +150,17 @@ final class NotebookPersistenceTests: XCTestCase {
 
   @MainActor
   func testRejectedCommandDoesNotWakeDeliveryOrExecutorAsIfItCommitted() async throws {
-    enum Rejected: Error { case sourceConflict }
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let queue = NotebookPersistenceQueue(store: .init(root: root))
     var commits = 0
     queue.onCommit = { _ in commits += 1 }
     do {
-      let _: Bool = try await queue.submit(publishesChanges: true) { _ in throw Rejected.sourceConflict }
+      let _: Bool = try await queue.submit(publishesChanges: true) { _ in
+        throw CollaborationError("source_conflict", "The command no longer owns its source")
+      }
       XCTFail("The rejected command cannot report success")
-    } catch Rejected.sourceConflict { }
+    } catch let error as CollaborationError { XCTAssertEqual(error.code, "source_conflict") }
     let saved = await queue.flush()
     XCTAssertTrue(saved, "A domain rejection does not poison the native input queue")
     XCTAssertEqual(commits, 0, "No commit notification may create a retry loop after a rejected command")
@@ -238,17 +239,19 @@ final class NotebookPersistenceTests: XCTestCase {
     let (workspace,_)=try store.loadOrCreate(actor:actor,pageSize:NotebookAppModel.defaultPageSize)
     _=try store.loadOrCreateSpatialInk(actor:actor)
     let target=CollaborationTarget(kind:.page,id:try XCTUnwrap(workspace.selectedPageID))
-    let queue=NotebookPersistenceQueue(store:store),readbackReady=root.appendingPathComponent("readback-ready")
+    let readbackReady=root.appendingPathComponent("readback-ready")
+    let failing=NotebookStore(root:root,storageFault:{ phase in
+      if case .afterCommit=phase,!FileManager.default.fileExists(atPath:readbackReady.path) {
+        throw TestFailure.unavailable
+      }
+    })
+    let queue=NotebookPersistenceQueue(store:failing)
     let actionID=UUID(),command=NotebookNativeCommand([.init(kind:.insertElement,target:target,id:"figure",values:[
       "kind":.string("graphic"),"source":.string(""),"graphic":try .encode(NotebookGraphic(shape:.rectangle)),
       "frame":try .encode(PageRect(x:20,y:20,width:100,height:100))])],summary:"Accepted figure",
       sources:[.init(target:target,id:"figure")],actionID:actionID,actor:actor)
     let saved=queue.enqueuePreparedCommand(Task { () throws -> @Sendable (NotebookStore) throws -> NotebookNativeCommand<NotebookNativeElementSource>.Output in
-      { store in
-        let result=try command.apply(to:store)
-        guard FileManager.default.fileExists(atPath:readbackReady.path) else { throw TestFailure.unavailable }
-        return result
-      }
+      { store in try command.apply(to:store) }
     },publishesChanges:true)
     let failed=await queue.flush();XCTAssertFalse(failed)
     let committed=try XCTUnwrap(store.readPageElement(pageID:target.id,elementID:"figure"))

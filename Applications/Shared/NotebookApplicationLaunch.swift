@@ -28,14 +28,14 @@ final class NotebookApplicationLaunch {
   typealias Workspace = NotebookRuntimeWorkspace
   private var library: NotebookWorkspaceLibrary { .init(originalRoot: root) }
   var selectedWorkspaceID: UUID? { try? model?.store.storedWorkspaceID() }
+  private var runtimeLease: NotebookIPCProcessLease?
+  private let runtimeSocketURL: URL?
 
   #if os(macOS)
     private let workspaceWriters = NotebookWorkspaceWriters()
     @ObservationIgnored private(set) lazy var codexHost = NotebookCodexHost(workspaceWriters: workspaceWriters)
     private var retainedModels: [UUID: NotebookAppModel] = [:]
     private var defaultCommandServer: NotebookIPCServer?
-    private var runtimeLease: NotebookIPCProcessLease?
-    private let runtimeSocketURL: URL?
     private(set) var existingRuntimeSocketURL: URL?
     private var archiveAdmitted = false
     private var runtimeIsStopping = false
@@ -58,27 +58,25 @@ final class NotebookApplicationLaunch {
     self.root = root; self.target = target; self.makeModel = makeModel; isFixture = false
     self.arguments = arguments
     #if os(macOS)
-      self.runtimeSocketURL = root.standardizedFileURL.resolvingSymlinksInPath()
-        == NotebookStore.defaultRoot.standardizedFileURL.resolvingSymlinksInPath()
+      self.runtimeSocketURL = NotebookStore.canonicalWorkspacePath(root)
+        == NotebookStore.canonicalWorkspacePath(NotebookStore.defaultRoot)
           ? NotebookIPC.defaultSocketURL : runtimeSocketURL
+    #else
+      self.runtimeSocketURL = runtimeSocketURL ?? (makeModel == nil ? Self.acceptedWitnessLeaseEndpoint(root: root) : nil)
     #endif
   }
 
   init(fixture model: NotebookAppModel?) {
     self.model = model; root = URL(fileURLWithPath: "/unused-notebook-fixture")
     target = nil; makeModel = nil; isFixture = true; arguments = []
-    #if os(macOS)
-      runtimeSocketURL = nil
-    #endif
+    runtimeSocketURL = nil
     installWorkspaceSelection()
   }
 
   init(failure: String) {
     self.failure = failure; root = URL(fileURLWithPath: "/unused-notebook-rejected-launch")
     target = nil; makeModel = nil; isFixture = true; arguments = []
-    #if os(macOS)
-      runtimeSocketURL = nil
-    #endif
+    runtimeSocketURL = nil
   }
 
   var message: String {
@@ -111,9 +109,7 @@ final class NotebookApplicationLaunch {
       finishOperation()
     }
     do {
-      #if os(macOS)
-        try claimRuntime()
-      #endif
+      try claimRuntime()
       let root = root, previous = activation
       let target: NotebookArchiveTarget?
       if FileManager.default.fileExists(atPath: NotebookArchiveActivation.controlURL(for: root).path) {
@@ -162,7 +158,7 @@ final class NotebookApplicationLaunch {
     #if os(macOS)
       !runtimeIsStopping && !runtimeNeedsRecovery && (isFixture || archiveAdmitted) && (runtimeSocketURL == nil || runtimeLease != nil)
     #else
-      true
+      isFixture || runtimeSocketURL == nil || runtimeLease != nil
     #endif
   }
 
@@ -351,10 +347,14 @@ final class NotebookApplicationLaunch {
       return await workspaceWriters.shutdown()
     }
 
-    /// Reserve the endpoint before archive, catalog or store access. An older
-    /// runtime holds no lease, so its live IPC must also refuse this bootstrap.
-    private func claimRuntime() throws {
-      guard let runtimeSocketURL, runtimeLease == nil else { return }
+  #endif
+
+  /// Claim the existing process lease before archive/catalog/store access.
+  /// iPad keeps its stable owner file beside the switchable workspace root;
+  /// both platforms retain this descriptor through a failed shutdown/Retry.
+  private func claimRuntime() throws {
+    guard runtimeLease == nil, let runtimeSocketURL else { return }
+    #if os(macOS)
       existingRuntimeSocketURL = nil
       do {
         let lease = try NotebookIPCProcessLease(socketURL: runtimeSocketURL)
@@ -363,13 +363,23 @@ final class NotebookApplicationLaunch {
           return try await self.executeRuntimeCommand(command)
         }
         try server.start()
+        workspaceWriters.bindAcceptedWitnessLease(lease)
         defaultCommandServer = server; runtimeLease = lease
       } catch {
-        if (error as? CollaborationError)?.code == "ipc_owner_running" {
-          existingRuntimeSocketURL = runtimeSocketURL
-        }
+        if (error as? CollaborationError)?.code == "ipc_owner_running" { existingRuntimeSocketURL = runtimeSocketURL }
         throw error
       }
+    #else
+      runtimeLease = try NotebookIPCProcessLease(socketURL: runtimeSocketURL)
+    #endif
+  }
+
+  #if !os(macOS)
+    private static func acceptedWitnessLeaseEndpoint(root: URL) -> URL {
+      let canonical = URL(fileURLWithPath: NotebookStore.canonicalWorkspacePath(root), isDirectory: true)
+      let identity = SHA256.hash(data: Data(canonical.path.utf8)).prefix(12).map { String(format: "%02x", $0) }.joined()
+      return canonical.deletingLastPathComponent().appendingPathComponent(".notebook-runtime", isDirectory: true)
+        .appendingPathComponent(identity + ".sock")
     }
   #endif
 
@@ -398,7 +408,7 @@ final class NotebookApplicationLaunch {
       let socketID = SHA256.hash(data: Data(store.root.standardizedFileURL.path.utf8)).prefix(12).map { String(format: "%02x", $0) }.joined()
       let socket = NotebookIPC.defaultSocketURL.deletingLastPathComponent().appendingPathComponent(socketID + ".sock")
     #else
-      let writer: NotebookPersistenceQueue? = nil
+      let writer = NotebookPersistenceQueue(store: store, acceptedWitnessLease: runtimeLease)
     #endif
     #if os(macOS)
       let model = NotebookAppModel(store: store, commandSocketURL: socket, allowsCodexRegistration: allowsCodexRegistration,
@@ -722,7 +732,7 @@ final class NotebookApplicationLaunch {
     #if os(macOS)
       guard !isFixture,
         ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil,
-        root.standardizedFileURL.resolvingSymlinksInPath() == NotebookStore.defaultRoot.standardizedFileURL.resolvingSymlinksInPath() else { return false }
+        NotebookStore.canonicalWorkspacePath(root) == NotebookStore.canonicalWorkspacePath(NotebookStore.defaultRoot) else { return false }
       switch activation {
       case .admitted(let receipt): guard receipt.target.role == .mac, receipt.target.bundleID == Bundle.main.bundleIdentifier else { return false }
       case .unchanged: guard !FileManager.default.fileExists(atPath: NotebookArchiveActivation.controlURL(for: root).path) else { return false }

@@ -3,6 +3,7 @@ import Foundation
 /// Admission precedes Foundation's JSON map and the decoded Swift containers.
 /// This scan allocates no value tree and leaves syntax validation to the decoder.
 public enum NotebookJSONAdmission {
+  static let maximumDepth = 256
   public static func allocationCost(_ data:Data,maximumBytes:Int) throws -> Int {
     guard maximumBytes >= 0,data.count <= maximumBytes/8 else {
       throw NotebookStorageError.limitExceeded("json_decode_memory")
@@ -22,7 +23,7 @@ public enum NotebookJSONAdmission {
           inString=true;inScalar=false
         case 91,123:
           depth += 1;inScalar=false
-          guard depth <= 256 else { throw NotebookStorageError.limitExceeded("json_decode_depth") }
+          guard depth <= maximumDepth else { throw NotebookStorageError.limitExceeded("json_decode_depth") }
         case 93,125:
           depth -= 1;inScalar=false;continue
         case 9,10,13,32,44,58:

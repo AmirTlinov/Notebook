@@ -130,7 +130,7 @@ final class SpatialInkTerminalStopTests: XCTestCase {
       fixture.host.view.backgroundColor = .white; fixture.host.view.addSubview(fixture.mount)
       fixture.window.makeKeyAndVisible()
       try await waitUntil { fixture.host.appeared }
-      fixture.coordinator = .init(surfaceRegistry: fixture.tiles.surfaceRegistry, inputGate: fixture.gate) { [weak fixture] tool, color, spans, _ in
+      fixture.coordinator = .init(surfaceRegistry: fixture.tiles.surfaceRegistry, inputGate: fixture.gate, reserveAction: { _ in true }) { [weak fixture] tool, color, spans, _ in
         fixture?.accept(tool: tool, color: color, spans: spans)
       }
       fixture.update()

@@ -567,6 +567,182 @@ import XCTest
     }
   }
 
+  func testLateClipboardCompositionCannotReplaceANewerMenuOrCloseItsPresentation() async throws {
+    try await fixture { model,reference in
+      let window=UIWindow(windowScene:try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
+      let controller=UIViewController();window.rootViewController=controller;window.makeKeyAndVisible()
+      let menus=mountContextMenus(in:controller.view,gate:model.inputGate),reader=ClipboardReadBarrier()
+      defer { reader.cancel();menus.uninstall();window.isHidden=true;window.rootViewController=nil }
+      model.selectElement(reference)
+      var oldIntent:NotebookContextMenus.PresentationIntent?
+      menus.presentContent(in:model,at:.init(x:100,y:200)) { intent in oldIntent=intent;return Text("Old menu") }
+      await settlePresentation(try XCTUnwrap(controller.presentedViewController))
+      let original=try XCTUnwrap(oldIntent),destination=clipboardDestination(reference,model:model)
+      var callbacks=0
+      let task=try XCTUnwrap(menus.pasteClipboard([],at:destination,in:model,presentation:original,
+        read:{ _,_,work in try await reader.read(work) }) { intent,_ in
+          callbacks += 1
+          menus.presentContent(for:intent,in:model,at:.init(x:100,y:200)) { _ in Text("Stale composition") }
+        })
+      await reader.waitUntilStarted()
+      model.clearSelection()
+      var nextIntent:NotebookContextMenus.PresentationIntent?
+      menus.presentContent(in:model,at:.init(x:160,y:220)) { intent in nextIntent=intent;return Text("New menu") }
+      let next=try XCTUnwrap(nextIntent),presented=try XCTUnwrap(controller.presentedViewController)
+      await settlePresentation(presented)
+      reader.finish(.composition("late structured source"))
+      await task.value
+      XCTAssertEqual(callbacks,0)
+      XCTAssertTrue(controller.presentedViewController === presented)
+      menus.finishContentPresentation(original) // A delayed old close callback has the same owner gate.
+      XCTAssertTrue(menus.isCurrent(next,in:model))
+      XCTAssertTrue(controller.presentedViewController === presented)
+    }
+  }
+
+  func testNewPasteIntentOwnsItsErrorAndRejectsAnOlderComposition() async throws {
+    try await fixture { model,reference in
+      let menus=NotebookContextMenus(),reader=ClipboardReadBarrier()
+      defer { reader.cancel();menus.uninstall() }
+      model.selectElement(reference)
+      let presentation=menus.beginContentPresentation(in:model),destination=clipboardDestination(reference,model:model)
+      var results:[String]=[]
+      let older=try XCTUnwrap(menus.pasteClipboard([],at:destination,in:model,presentation:presentation,
+        read:{ _,_,work in try await reader.read(work) }) { _,_ in results.append("old") })
+      await reader.waitUntilStarted()
+      let latest=menus.pasteClipboard([],at:destination,in:model,presentation:presentation) { _,outcome in
+        if case .failed = outcome { results.append("latest error") } else { results.append("unexpected") }
+      }
+      XCTAssertNil(latest,"Synchronous capacity refusal starts no source worker")
+      reader.finish(.composition("older composition"));await older.value
+      XCTAssertEqual(results,["latest error"],"The latest read owns transient completion, including capacity refusal")
+      XCTAssertTrue(menus.isCurrent(presentation,in:model))
+    }
+  }
+
+  func testPasteReservesBeforeItsTaskStartsAndCannotShowAStaleAdmissionCue() async throws {
+    try await fixture { model,reference in
+      let menus=NotebookContextMenus()
+      defer { menus.uninstall() }
+      model.selectElement(reference)
+      let original=menus.beginContentPresentation(in:model),destination=clipboardDestination(reference,model:model)
+      var callbacks=0
+      let task=try XCTUnwrap(menus.pasteClipboard([],at:destination,in:model,presentation:original) { _,_ in callbacks += 1 })
+      XCTAssertThrowsError(try model.beginClipboardWork(),"The first gesture already owns its 192 MiB source credit before returning")
+      let remaining=try XCTUnwrap(model.reserveClipboardWork(maximumCost:.init(payloadBytes:64 * 1_024 * 1_024)))
+      defer { model.releaseClipboardWork(remaining) }
+      let current=menus.beginContentPresentation(in:model)
+      model.showCue("Current menu")
+      // No actor suspension occurred before replacement. The old task starts
+      // with full admission, and must reuse its gesture lease without a new cue.
+      await task.value
+      XCTAssertEqual(callbacks,0)
+      XCTAssertEqual(model.actionCue,"Current menu")
+      XCTAssertTrue(menus.isCurrent(current,in:model))
+    }
+  }
+
+  func testClipboardErrorCannotReturnAfterItsDestinationOrContactChanges() async throws {
+    try await fixture { model,reference in
+      for changesDestination in [true,false] {
+        let menus=NotebookContextMenus(),reader=ClipboardReadBarrier()
+        defer { reader.cancel();menus.uninstall() }
+        if changesDestination {
+          // Cover presentation admits a document-page position. Page mode
+          // fixes that index at zero, so it cannot exercise this context change.
+          let presence=try XCTUnwrap(model.presence)
+          model.updatePresence(.init(boardID:presence.boardID,mode:.cover,camera:presence.camera,
+            viewport:presence.viewport,focusedItemID:presence.focusedItemID,openProgress:presence.openProgress,
+            documentPageIndex:presence.documentPageIndex,selectedItemID:presence.selectedItemID,
+            notebookPageID:presence.notebookPageID),settled:false)
+        }
+        model.selectElement(reference)
+        let intent=menus.beginContentPresentation(in:model),destination=clipboardDestination(reference,model:model)
+        let cue=model.actionCue
+        var failures=0
+        let task=try XCTUnwrap(menus.pasteClipboard([],at:destination,in:model,presentation:intent,
+          read:{ _,_,work in try await reader.read(work) }) { _,_ in failures += 1;model.showCue("stale error") })
+        await reader.waitUntilStarted()
+        if changesDestination {
+          let presence=try XCTUnwrap(model.presence)
+          let replacement=SessionPresence(boardID:presence.boardID,mode:presence.mode,camera:presence.camera,
+            viewport:presence.viewport,focusedItemID:presence.focusedItemID,openProgress:presence.openProgress,
+            documentPageIndex:presence.documentPageIndex+1,selectedItemID:presence.selectedItemID,
+            notebookPageID:presence.notebookPageID)
+          XCTAssertTrue(replacement.isValid)
+          model.updatePresence(replacement,settled:false)
+          XCTAssertEqual(model.presence,replacement)
+        } else { model.inputGate.notifyAcceptedContact() }
+        reader.fail(CollaborationError("clipboard_failure","Late provider failure"))
+        await task.value
+        XCTAssertEqual(failures,0)
+        XCTAssertEqual(model.actionCue,cue)
+        XCTAssertFalse(menus.isCurrent(intent,in:model))
+        // The actual failed source call has ended; settle its provisional lease
+        // before the next independent case enters the same model admission.
+        reader.releaseCredit(in:model)
+      }
+    }
+  }
+
+  func testClipboardFragmentStillCommitsToItsCapturedPageAfterTheMenuLeaves() async throws {
+    try await fixture { model,reference in
+      let menus=NotebookContextMenus(),reader=ClipboardReadBarrier()
+      defer { reader.cancel();menus.uninstall() }
+      model.selectElement(reference)
+      let intent=menus.beginContentPresentation(in:model),destination=clipboardDestination(reference,model:model)
+      let id="accepted-paste-"+UUID().uuidString.lowercased()
+      let fragment=NotebookPasteFragment(elements:[
+        .init(id:id,kind:.nativeText,frame:.init(x:0,y:0,width:120,height:44),source:"Captured page",html:"")],
+        size:.init(x:120,y:44))
+      var callbacks=0
+      let task=try XCTUnwrap(menus.pasteClipboard([],at:destination,in:model,presentation:intent,
+        read:{ _,_,work in try await reader.read(work) }) { _,_ in callbacks += 1 })
+      await reader.waitUntilStarted()
+      menus.finishContentPresentation(intent);model.clearSelection()
+      reader.finish(.fragment(fragment));await task.value
+      let saved=await model.finishPendingPersistence();XCTAssertTrue(saved)
+      XCTAssertNotNil(try model.store.loadPage(destination.target.id).element(id:id))
+      XCTAssertEqual(callbacks,0,"Acceptance persists while close/error presentation belongs to the retired menu")
+    }
+  }
+
+  private func settlePresentation(_ controller:UIViewController) async {
+    if let transition=controller.transitionCoordinator {
+      await withCheckedContinuation { continuation in
+        if !transition.animate(alongsideTransition:nil,completion:{ _ in continuation.resume() }) { continuation.resume() }
+      }
+    }
+  }
+  private func clipboardDestination(_ reference:EditableElementReference,model:NotebookAppModel) -> NotebookPasteDestination {
+    guard case .page(let id,_)=reference else { preconditionFailure("The fixture owns a page") }
+    return .init(target:.init(kind:.page,id:id),title:"Лист",center:.init(x:400,y:500),
+      availableSize:.init(x:model.notebookPageSize.width,y:model.notebookPageSize.height),worldOrigin:nil)
+  }
+  @MainActor private final class ClipboardReadBarrier {
+    private var continuation:CheckedContinuation<NotebookClipboard.Content,Error>?
+    private var started:CheckedContinuation<Void,Never>?
+    private var reservation:NotebookPersistenceAdmission.Reservation?
+    func read(_ work:NotebookClipboardWorkLease) async throws -> NotebookClipboard.Content {
+      reservation=work.reservation
+      defer { withExtendedLifetime(work) {} }
+      let content=try await withCheckedThrowingContinuation { continuation in
+        self.continuation=continuation;started?.resume();started=nil
+      }
+      return content
+    }
+    func waitUntilStarted() async {
+      if continuation != nil { return }
+      await withCheckedContinuation { started=$0 }
+    }
+    func finish(_ content:NotebookClipboard.Content) { continuation?.resume(returning:content);continuation=nil }
+    func fail(_ error:Error) { continuation?.resume(throwing:error);continuation=nil }
+    func cancel() { fail(CancellationError()) }
+    func releaseCredit(in model:NotebookAppModel) {
+      if let reservation { model.releaseClipboardWork(reservation);self.reservation=nil }
+    }
+  }
+
   func testStylePaletteKeepsAcceptedEditsAcrossRepaintAndRetiresWithSelection() async throws {
     try await fixture { model, reference in
       var page = try XCTUnwrap(model.activePage)
@@ -575,8 +751,8 @@ import XCTest
       try model.store.savePage(page);await model.reloadExternalChanges()?.value
       let window = try await mountNotebookScene(model)
       model.selectElement(reference)
-      func descendants(_ view:UIView)->[UIView] { [view]+view.subviews.flatMap(descendants) }
-      func controls()->NotebookSelectionControlsView? {
+      @MainActor func descendants(_ view:UIView)->[UIView] { [view]+view.subviews.flatMap(descendants) }
+      @MainActor func controls()->NotebookSelectionControlsView? {
         descendants(window).compactMap { $0 as? NotebookSelectionControlsView }.first
       }
       try await assertUX("style-actions-installed",since:.now,budget:.seconds(2),window:window) {

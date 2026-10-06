@@ -7,6 +7,32 @@
 
   @MainActor
   final class NotebookAppLaunchTests: XCTestCase {
+    func testASecondLaunchCannotReachItsModelFactoryWhileTheFailedOwnerKeepsItsLease() async throws {
+      let base = FileManager.default.temporaryDirectory.appendingPathComponent("launch-lease-\(UUID())")
+      let root = base.appendingPathComponent("Notebook"), endpoint = base.appendingPathComponent("writer.sock")
+      defer { try? FileManager.default.removeItem(at: base) }
+      var firstConstructions = 0, secondConstructions = 0
+      let first = NotebookApplicationLaunch(root: root, runtimeSocketURL: endpoint) { _, _ in
+        firstConstructions += 1
+        throw NotebookStorageError.corruptRecord("isolated launch failure")
+      }
+      await first.start()
+      XCTAssertNotNil(first.failure); XCTAssertNil(first.model)
+      XCTAssertEqual(firstConstructions, 1)
+      let second = NotebookApplicationLaunch(root: root, runtimeSocketURL: endpoint) { _, _ in
+        secondConstructions += 1
+        throw NotebookStorageError.corruptRecord("second owner must not reach the model")
+      }
+      await second.start()
+      XCTAssertNotNil(second.failure); XCTAssertNil(second.model)
+      XCTAssertEqual(secondConstructions, 0)
+      XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("notebook.sqlite").path))
+      XCTAssertThrowsError(try NotebookIPCProcessLease(socketURL: endpoint)) { error in
+        XCTAssertEqual((error as? CollaborationError)?.code, "ipc_owner_running")
+      }
+      withExtendedLifetime(first) { XCTAssertNil(second.model) }
+    }
+
     func testBackgroundReadersWaitForTheInitialWorkspacePublication() async throws {
       let root = FileManager.default.temporaryDirectory.appendingPathComponent("launch-readers-\(UUID())")
       let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)

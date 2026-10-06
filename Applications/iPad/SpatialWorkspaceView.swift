@@ -326,6 +326,7 @@ struct SpatialWorkspaceView: View {
       }
       .accessibilityAction(named:"Назад") { returnToParent() }
       .environment(\.sceneComposition, .init(cohort,portal:transitionPortalOverride))
+      .environment(\.notebookContextMenus,contextMenus)
       .onAppear {
         cameraOwner.attach(model)
         contextMenus.selectionActions = { id,point in selectionContextActions(id,at:point) }
@@ -682,7 +683,9 @@ struct SpatialWorkspaceView: View {
     model.clearSelection()
     let center=presence.camera.screenToWorld(.init(x:point.x,y:point.y),viewport:presence.viewport)
     let canBack = !model.returnPlaces.isEmpty || presence.mode != .board || presence.boardID != model.workspace?.rootBoardID
-    contextMenus.presentContent(NotebookCanvasContextContent(dismiss:{ contextMenus.dismissPresentedContent() },destination:contextDestination(at:point,presence:presence),
+    contextMenus.presentContent(in:model,at:point) { intent in
+      NotebookCanvasContextContent(dismiss:{ contextMenus.finishContentPresentation(intent) },
+      contextMenus:contextMenus,presentationIntent:intent,destination:contextDestination(at:point,presence:presence),
       create:presence.mode == .board ? { kind,paper in
         guard model.presence?.boardID == presence.boardID,model.presence?.mode == presence.mode else { return }
         createItem(kind:kind,template:paper,presence:presence,viewport:presence.viewport,at:center)
@@ -690,7 +693,8 @@ struct SpatialWorkspaceView: View {
       back:canBack ? {
         guard model.presence?.boardID == presence.boardID,model.presence?.focusedItemID == presence.focusedItemID else { return }
         returnToParent()
-      } : nil, importDocument: importNotebookDocument).environment(model),at:point)
+      } : nil, importDocument: importNotebookDocument).environment(model)
+    }
   }
 
   private func selectionContextActions(_ selection:UUID,at point:CGPoint) -> [UIMenuElement] {
@@ -711,15 +715,17 @@ struct SpatialWorkspaceView: View {
 
   private func pasteContext(at destination:NotebookPasteDestination,point:CGPoint) {
     let providers=UIPasteboard.general.itemProviders
-    Task {
-      do {
-        switch try await NotebookClipboard.read(providers,availableSize:destination.availableSize) {
-        case .fragment(let fragment): _ = await model.insertClipboardFragment(fragment,at:destination)
-        case .composition(let source):
-          contextMenus.presentContent(NotebookTldrawCompositionView(destinations:[destination],initialSource:source,
-            onClose:{ contextMenus.dismissPresentedContent() }).environment(model).frame(width:600,height:600),at:point)
+    contextMenus.pasteClipboard(providers,at:destination,in:model) { intent,outcome in
+      switch outcome {
+      case .composition(let source):
+        contextMenus.presentContent(for:intent,in:model,at:point) { presentation in
+          NotebookTldrawCompositionView(destinations:[destination],initialSource:source,
+            onClose:{ contextMenus.finishContentPresentation(presentation) })
+            .environment(model).frame(width:600,height:600)
         }
-      } catch { model.showCue(error.localizedDescription) }
+      case .inserted: break
+      case .failed(let message): model.showCue(message)
+      }
     }
   }
 

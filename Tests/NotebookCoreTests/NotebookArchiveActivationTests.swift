@@ -226,6 +226,8 @@ struct NotebookArchiveActivationTests {
     try store.commandTransaction {
       try store.currentSQL!.run("INSERT INTO peer_cursors(peer_id,direction,sequence) VALUES(?,'incoming',7)", [.text(UUID().uuidString)])
     }
+    let witness = NotebookAcceptedWrite(witnesses: .init(root: store.root)) { _ in 1 }
+    _ = try witness.apply(to: store)
     let before = try NotebookArchiveFingerprint.read(store.root)
     let replicaURL = value.base.appendingPathComponent("replica"), presence = SessionPresence(mode: .board,
       camera: .init(center: .init(x: 100, y: 200)), viewport: .init(x: 500, y: 400))
@@ -241,6 +243,8 @@ struct NotebookArchiveActivationTests {
     #expect(try replica.storedValue("local/actor.json") == nil)
     #expect(try replica.chatJob(job.id) == nil)
     #expect(try store.chatJob(job.id) != nil)
+    #expect(try replica.sqlRead { try $0.rows("SELECT * FROM accepted_write_witnesses").isEmpty })
+    #expect(try store.sqlRead { try $0.rows("SELECT accepted FROM accepted_write_witnesses").first?[0].text } == witness.identity.uuidString)
     #expect(try replica.sqlRead { try $0.rows("SELECT * FROM peer_cursors").isEmpty })
     #expect(try replica.currentChangeCursor() == 1)
     let seed = try #require(replica.changeJournal(after: 0).first)
@@ -251,6 +255,8 @@ struct NotebookArchiveActivationTests {
   @Test func continuingDeviceKeepsLocalJobsAndRebasesRetiredDeliveryWithoutDecodingIt() throws {
     let value = try Fixture(); defer { try? FileManager.default.removeItem(at: value.base) }
     let store = NotebookStore(root: value.candidate), actor = UUID()
+    let witness = NotebookAcceptedWrite(witnesses: .init(root: store.root)) { _ in 1 }
+    _ = try witness.apply(to: store)
     let job = NotebookChatInput(author: actor, action: .create(title: "Keep this request"))
     let saved = try store.saveChatInput(job)
     let panel = NotebookChatPanelState(threadID: UUID().uuidString, draft: "Незавершённый вопрос")
@@ -281,6 +287,8 @@ struct NotebookArchiveActivationTests {
     #expect(try next.loadPresence() == presence)
     #expect(try next.chatJob(job.id) == saved)
     #expect(try next.chatPanel(author: actor) == panel)
+    #expect(try next.sqlRead { try $0.rows("SELECT * FROM accepted_write_witnesses").isEmpty })
+    #expect(try store.sqlRead { try $0.rows("SELECT accepted FROM accepted_write_witnesses").first?[0].text } == witness.identity.uuidString)
     #expect(try next.storedValue("document-drafts/test.json") == store.storedValue("document-drafts/test.json"))
     #expect(try next.currentChangeCursor() == 1)
     #expect(try next.validateArchiveSnapshot() == prepared)

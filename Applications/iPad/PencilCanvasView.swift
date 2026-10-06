@@ -833,6 +833,7 @@ final class PaperInputView: UIView {
       contact.move(to:touch.preciseLocation(in:self)); contact.finish(); return
     }
     updateAction(with: touch, event: event)
+    guard actionTool != nil else { return }
     activeTouch = nil
     actionHasEnded = true
     actionEndedNormally = true
@@ -889,6 +890,7 @@ final class PaperInputView: UIView {
 
     guard let firstChangedIndex else { return }
     rebuildProcessedActionPoints(from: firstChangedIndex)
+    guard actionTool != nil else { return }
     refreshAction()
     if actionHasEnded && pendingForceEstimates.isEmpty {
       finalizeAction()
@@ -929,7 +931,6 @@ final class PaperInputView: UIView {
   private var elementContact = InkElementContact([])
   private var reportedElementTargetIDs = Set<String>()
   private var activePageEraserSource: NotebookPageEraserSource?
-  private var elementEraserFailed = false
 
   private func beginAction(with touch: UITouch, event: UIEvent?) {
     guard canBeginAction() else { return }
@@ -963,7 +964,6 @@ final class PaperInputView: UIView {
     } else { guideConstraint = nil }
     elementContact = InkElementContact([])
     activePageEraserSource = drawingTool == .eraser ? pageEraserSource() : nil
-    elementEraserFailed = false
     reportsPencilActivity = touch.type == .pencil || simulatesPencilContacts
     if reportsPencilActivity { onActionActivityChange?(true) }
     actionPenStyle = penStyle
@@ -987,6 +987,7 @@ final class PaperInputView: UIView {
     actionCompletions = []
 
     addActualSamples(for: touch, event: event)
+    guard actionTool != nil else { return }
     updatePredictions(for: touch, event: event)
     refreshAction()
     completedQuickShape = nil
@@ -1006,6 +1007,7 @@ final class PaperInputView: UIView {
       quickShape.move(to: .init(x: point.x, y: point.y)); return
     }
     addActualSamples(for: touch, event: event)
+    guard actionTool != nil else { return }
     if let point = samples.last?.point.location { quickShape.move(to: .init(x: point.x, y: point.y)) }
     if quickShape.fit == nil {
       updatePredictions(for: touch, event: event)
@@ -1016,7 +1018,13 @@ final class PaperInputView: UIView {
   private func addActualSamples(for touch: UITouch, event: UIEvent?) {
     let coalesced = event?.coalescedTouches(for: touch) ?? [touch]
     var firstChangedIndex: Int?
+    var reachedLimit = false
     for sampleTouch in coalesced where acceptsDrawingTouch(sampleTouch) {
+      let timestamp = max(0, sampleTouch.timestamp - actionStartTimestamp)
+      if samples.count == NotebookInkWriteAllowance.maximumMeasurements,
+        samples.last.map({ timestamp > $0.timestamp + 0.000_001 }) == true {
+        reachedLimit = true; break
+      }
       let profileKind: InputFrameMonitor.SampleKind? = inputFrameBatch == nil ? nil
         : sampleTouch.timestamp == touch.timestamp ? .actual : .coalesced
       guard let changedIndex = appendActualSample(from: sampleTouch, profileKind: profileKind) else {
@@ -1027,6 +1035,7 @@ final class PaperInputView: UIView {
     if let firstChangedIndex {
       rebuildProcessedActionPoints(from: firstChangedIndex)
     }
+    if reachedLimit, actionTool != nil { sealAction(at: NotebookInkWriteAllowance.Limit.measurements) }
   }
 
   func acceptsDrawingTouch(_ touch: UITouch) -> Bool {
@@ -1076,6 +1085,7 @@ final class PaperInputView: UIView {
     }
     predictedSamples = (event?.predictedTouches(for: touch) ?? [])
       .filter(acceptsDrawingTouch)
+      .prefix(NotebookInkWriteAllowance.maximumPredictions)
       .map {
         makeSample(
           from: $0,
@@ -1131,19 +1141,22 @@ final class PaperInputView: UIView {
   private func rebuildProcessedActionPoints(from changedIndex: Int) {
     if actionTool == .eraser, let activeEraserStroke {
       let startIndex = min(max(changedIndex, 0), samples.count)
-      activeEraserStroke.replaceMeasuredTail(
-        from: startIndex,
-        with: samples[startIndex...].map { SpatialInkSample($0.point) }
-      )
-      if !elementEraserFailed,let source=activePageEraserSource,
-        let bounds=pageEraserBounds(activeEraserStroke.measured,from:startIndex) {
+      var proposed = activeEraserStroke.measured
+      proposed.replaceTail(from: startIndex,
+        with: samples[startIndex...].map { SpatialInkSample($0.point) })
+      var proposedContact = elementContact
+      if let source=activePageEraserSource,
+        let bounds=pageEraserBounds(proposed,from:startIndex) {
         do {
           let query=try source.query(bounds:bounds)
-          elementContact.update(activeEraserStroke.measured,from:startIndex,
+          proposedContact.update(proposed,from:startIndex,
             queried:query.targets,visitedNodes:query.visitedNodes)
-        } catch { failElementEraser(error,sourceID:activeEraserStroke.measured.sourceID) }
+        } catch { sealAction(at: error); return }
       }
-      let targets = elementContact.selected
+      let targets = proposedContact.selected
+      if let limit = NotebookInkWriteAllowance.targetLimit(targets) { sealAction(at: limit); return }
+      activeEraserStroke.acceptMeasured(proposed, from: startIndex)
+      elementContact = proposedContact
       let targetIDs = Set(targets.map(\.elementID))
       if targetIDs != reportedElementTargetIDs, let pageID = quickShapePageID {
         reportedElementTargetIDs = targetIDs
@@ -1208,6 +1221,19 @@ final class PaperInputView: UIView {
     )
   }
 
+  /// An explicit resource boundary seals the last admitted exact source. The
+  /// prospective tail/hits have not replaced it, including late corrections.
+  private func sealAction(at error: Error) {
+    guard actionTool != nil else { return }
+    onEraserFailure(error)
+    quickShape.cancel()
+    activeTouch = nil; actionHasEnded = true; actionEndedNormally = false
+    if reportsPencilActivity { onActionContactReleased?() }
+    predictedSamples = []; pendingForceEstimates = [:]
+    showMeasuredActionWithoutPredictions()
+    finalizeAction()
+  }
+
   private func pageEraserBounds(_ source:InkSampleRelations.Contact,
     from changedIndex:Int)->CGRect? {
     guard source.count > changedIndex else { return nil }
@@ -1219,15 +1245,6 @@ final class PaperInputView: UIView {
         width:radius*2,height:radius*2))
     }
     return bounds.isNull ? nil : bounds
-  }
-
-  private func failElementEraser(_ error:Error,sourceID:UUID) {
-    guard !elementEraserFailed else { return }
-    elementEraserFailed=true;elementContact=InkElementContact([])
-    onLiveElementErasing(.cancel)
-    if !reportedElementTargetIDs.isEmpty { onElementErasing([],sourceID) }
-    reportedElementTargetIDs.removeAll(keepingCapacity:true)
-    onEraserFailure(error)
   }
 
   private func processedPredictedPenPoints() -> [PKStrokePoint] {
@@ -1292,12 +1309,9 @@ final class PaperInputView: UIView {
 
   private func presentMeasuredErasure(_ stroke: ActiveEraserStroke) {
     presentActiveEraser?(stroke)
-    if !elementEraserFailed {
-      // The accepted contact already owns exact hits, including retractions
-      // after corrected measurements. No element hit means no element mask;
-      // the ink renderer still receives every measured eraser sample.
-      onLiveElementErasing(elementContact.isEmpty ? .cancel : .update(stroke))
-    }
+    // The accepted contact already owns exact hits, including retractions
+    // after corrected measurements. No element hit means no element mask.
+    onLiveElementErasing(elementContact.isEmpty ? .cancel : .update(stroke))
   }
 
   private func showMeasuredActionWithoutPredictions() {
@@ -1412,7 +1426,6 @@ final class PaperInputView: UIView {
     reportedElementTargetIDs.removeAll(keepingCapacity: true)
     elementContact = InkElementContact([])
     activePageEraserSource = nil
-    elementEraserFailed = false
     activeTouch = nil
     actionTool = nil
     guideConstraint = nil

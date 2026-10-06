@@ -286,6 +286,9 @@ targets:
     sources:
       - path: MacTests
       - path: TestSupport
+      - path: Tests/NotebookPersistenceQueueTests.swift
+      - path: Tests/NotebookPersistenceAdmissionTests.swift
+      - path: Tests/NotebookScenePublicationTests.swift
       - path: ../MCP/skills/notebook/assets/science
         type: folder
         buildPhase: resources

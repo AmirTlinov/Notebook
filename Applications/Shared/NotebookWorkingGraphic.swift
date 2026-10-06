@@ -17,6 +17,8 @@ struct NotebookWorkingGraphic: Equatable, Identifiable, Sendable {
   var inkPresentation:NotebookSelectionPresentation?
   var accepted = false
   var publicationCursor: UInt64?
+  var durableSource: NotebookNativeElementSource? = nil
+  var publication: NotebookNativeElementSource? = nil
   private let authoredID:String?
   var id: String { authoredID ?? strokeID.uuidString.lowercased() }
 
@@ -59,6 +61,24 @@ struct NotebookWorkingGraphic: Equatable, Identifiable, Sendable {
     let placement=(try? raw.updating(frame:frame,basis:basis)) ?? raw
     return .init(id: id, graphic: graphic, frame: frame, origin: worldOrigin ?? .zero,
       surface: surface, shown: true,placement:placement)
+  }
+
+  /// Once the addressed read admits a successor, the retained painter and
+  /// pointing graph borrow that same member while its cohort is preparing.
+  @MainActor func presentingPublication() -> Self? {
+    guard inkPresentation?.holdsPresentation != true, let publication else { return self }
+    let frame: PageRect, surface: SurfaceID, origin: WorldPoint?, graphic: NotebookGraphic, basis: NotebookElementBasis?
+    if let element = publication.page, let value = element.graphic {
+      frame = element.frame; surface = .page(publication.target.id); origin = nil; graphic = value; basis = element.basis
+    } else if let element = publication.spatial, let value = element.graphic {
+      frame = .init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height)
+      surface = element.surface; origin = element.worldOrigin; graphic = value; basis = element.basis
+    } else { return nil }
+    var result = Self(elementID:id,sourceID:strokeID,surface:surface,frame:frame,
+      worldOrigin:origin,graphic:graphic,basis:basis)
+    result.accepted = accepted; result.publicationCursor = publicationCursor
+    result.durableSource = durableSource; result.publication = publication; result.inkPresentation = inkPresentation
+    return result
   }
 
   /// One durable representation for every accepted working graphic. The
@@ -105,7 +125,37 @@ extension NotebookAppModel {
   /// Rendering may retain an insertion until its raster is installed. Authoring
   /// stops overlaying that original as soon as the logical model admits it.
   var pendingModelGraphics: [NotebookWorkingGraphic] {
-    workingGraphics.filter { $0.accepted && ($0.publicationCursor.map { sceneContentCursor < $0 } ?? true) }
+    workingGraphics.filter { $0.accepted && $0.publication == nil }
+  }
+
+  func admitWorkingGraphicSources(in state: NotebookSceneState) {
+    var changed = Set<SurfaceID>()
+    for index in workingGraphics.indices {
+      let value = workingGraphics[index]
+      guard value.accepted, let expected = value.durableSource,
+        let reference = workingGraphicReference(value), let observed = state.elementSource(reference),
+        observed.covers(expected), value.publication != observed else { continue }
+      workingGraphics[index].publication = observed
+      changed.insert(value.surface)
+    }
+    if !changed.isEmpty { didChangeWorkingGraphics(on:changed) }
+  }
+
+  func workingGraphicReference(_ value: NotebookWorkingGraphic) -> EditableElementReference? {
+    if value.surface.kind == .page, let page = value.surface.ownerID { return .page(pageID:page,elementID:value.id) }
+    let board = value.surface.kind == .board ? value.surface.ownerID
+      : value.durableSource?.target.boardID ?? value.surface.ownerID.flatMap { boardHierarchy?.ownerBoardID(of:$0) }
+    return board.map { .spatial(boardID:$0,elementID:value.id) }
+  }
+
+  func workingGraphicIsInstalled(_ value: NotebookWorkingGraphic, in cohort: SceneCompositionCohort) -> Bool {
+    guard let source = value.publication, let reference = workingGraphicReference(value) else { return false }
+    return cohortContainsInstalledSource(source, reference:reference, cohort:cohort)
+  }
+
+  func pageWorkingGraphicsForDisplay(_ page: PageDocument) -> [NotebookWorkingGraphic] {
+    workingGraphics.filter { $0.surface == .page(page.id)
+      && ($0.inkPresentation?.holdsPresentation == true || $0.publication == nil) }
   }
 
   func acceptedWorkingGraphic(_ reference: EditableElementReference) -> NotebookWorkingGraphic? {
@@ -167,20 +217,12 @@ extension NotebookAppModel {
     workingGraphics.removeAll(where:removes);didChangeWorkingGraphics(on:changed);return true
   }
 
-  func pageElementsForDisplay(_ page: PageDocument) -> [AgentElement] {
-    _ = workingGraphicRevision(on:.page(page.id))
-    let working = workingGraphics.filter { $0.surface == .page(page.id) }
-    guard !working.isEmpty else { return page.elements }
-    let ids = Set(working.map(\.id))
-    return page.elements.filter { !ids.contains($0.id) } + working.map(\.pageElement)
-  }
-
   func pageSuppressedInkIDs(_ page: PageDocument) -> Set<UUID> {
     _ = workingGraphicRevision(on:.page(page.id))
     let working=workingGraphics.filter { $0.surface == .page(page.id) }
     let held=Set(working.filter { value in
       guard let owner=value.inkPresentation else {return false}
-      let canonical=owner.needsCanonicalSource && (value.publicationCursor.map { sceneContentCursor >= $0 } ?? false)
+      let canonical=owner.needsCanonicalSource && value.publication != nil
       return owner.retainsRawSource(value.id) && !canonical
     }.flatMap { $0.graphic.sourceInkIDs })
     return page.graphicPresentation.suppressedInkIDs.union(
@@ -191,8 +233,8 @@ extension NotebookAppModel {
     _ = workingGraphicRevision(on:surface)
     return workingGraphics.filter { graphic in
       graphic.surface == surface
-        && (graphic.inkPresentation?.holdsPresentation == true || (graphic.publicationCursor.map { cohort.plan.revision < $0 } ?? true))
-    }
+        && (graphic.inkPresentation?.holdsPresentation == true || !workingGraphicIsInstalled(graphic,in:cohort))
+    }.compactMap { $0.presentingPublication() }
   }
 
   /// One temporary vector run in the existing element plane, below ink/covers.
@@ -223,14 +265,14 @@ extension NotebookAppModel {
     var delivered=Set<UUID>()
     for value in workingGraphics {
       guard let owner=value.inkPresentation,owner.needsCanonicalSource,delivered.insert(owner.id).inserted,
-        value.surface.kind != .page,value.publicationCursor.map({cohort.plan.revision >= $0}) == true,
+        value.surface.kind != .page,workingGraphicIsInstalled(value,in:cohort),
         let plan=cohort.liveData.orderedInk[value.surface],
         let canvas=compositionTiles.surfaceRegistry.canvas(for:value.surface) else {continue}
       owner.canonicalInstalled(plan,on:canvas,surface:value.surface)
     }
     func installed(_ graphic: NotebookWorkingGraphic) -> Bool {
       graphic.surface.kind != .page && graphic.inkPresentation?.holdsPresentation != true
-        && (graphic.publicationCursor.map { cohort.plan.revision >= $0 } ?? false)
+        && workingGraphicIsInstalled(graphic,in:cohort)
     }
     // Display confirmation is a read unless an actual handoff completes.
     // Even a no-op removeAll mutates Observation and rebuilds the ink scene.
@@ -268,7 +310,7 @@ extension NotebookAppModel {
     var delivered=Set<UUID>()
     for value in workingGraphics {
       guard value.surface == surface,let owner=value.inkPresentation,owner.needsCanonicalSource,
-        delivered.insert(owner.id).inserted,value.publicationCursor.map({sceneContentCursor >= $0}) == true else {continue}
+        delivered.insert(owner.id).inserted,value.publication != nil else {continue}
       owner.canonicalInstalled(canvas.orderedInkPlan,on:canvas,surface:surface)
     }
     for owner in deleting {owner.canonicalInstalled(canvas.orderedInkPlan,on:canvas,surface:surface)}
@@ -279,6 +321,7 @@ extension NotebookAppModel {
     for index in workingGraphics.indices where workingGraphics[index].inkPresentation === owner {
       guard var value=desired[workingGraphics[index].id] else { continue }
       value.accepted=workingGraphics[index].accepted;value.publicationCursor=workingGraphics[index].publicationCursor
+      value.durableSource=workingGraphics[index].durableSource;value.publication=workingGraphics[index].publication
       workingGraphics[index]=value
     }
     // A deleted ordered member leaves the working projection in this same
@@ -290,7 +333,7 @@ extension NotebookAppModel {
     didChangeWorkingGraphics(on:[owner.source.address.surface])
     removeWorkingGraphics { $0.inkPresentation === owner && $0.surface.kind == .page
       && $0.inkPresentation?.holdsPresentation != true
-      && ($0.publicationCursor.map { sceneContentCursor >= $0 } ?? false) }
+      && $0.publication != nil }
   }
   func retireSelectedInkPresentation(_ owner:NotebookSelectionPresentation) {
     removeWorkingGraphics { $0.inkPresentation === owner }

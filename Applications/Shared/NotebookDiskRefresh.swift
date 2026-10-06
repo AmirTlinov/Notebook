@@ -110,12 +110,16 @@ struct NotebookDiskRefresh: Sendable {
 /// without keeping accepted Pencil writes behind mesh/index/metadata work.
 actor NotebookSceneReader {
   private var session: NotebookReadSession?
-  init(store: NotebookStore) { session = NotebookReadSession(store: store) }
+  private let beforeRead: (@Sendable () throws -> Void)?
+  init(store: NotebookStore, beforeRead: (@Sendable () throws -> Void)? = nil) {
+    session = NotebookReadSession(store: store); self.beforeRead = beforeRead
+  }
   /// Serialized behind active reads; retained models cannot reopen after quit.
   func close() { session = nil }
   func read<Value: Sendable>(_ operation: @Sendable (NotebookStore) throws -> Value) throws -> Value {
     try Task.checkCancellation()
     guard let session else { throw CancellationError() }
+    try beforeRead?()
     let value = try session.read(operation)
     try Task.checkCancellation()
     return value

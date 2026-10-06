@@ -115,6 +115,10 @@ final class ActiveEraserStroke {
     let start=min(max(startIndex,0),measured.count)
     measured.replaceTail(from:start,with:samples);history.record(start)
   }
+  func acceptMeasured(_ contact: InkSampleRelations.Contact, from changedIndex: Int) {
+    precondition(contact.sourceID == measured.sourceID && contact.span == measured.span)
+    measured = contact; history.record(changedIndex)
+  }
 }
 
 /// The renderer that turns a mounted notebook surface into pixels on both platforms.
@@ -464,6 +468,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     let geometry:InkOrderedGeometry?
     let plan:NotebookOrderedInkPlan
     let sourceGeneration:UInt64
+    let requestGeneration:UUID
     let basis:NotebookOrderedInkPlan
     let replacing:Set<UUID>?
     let canonical:Bool
@@ -471,9 +476,9 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     let install:@MainActor ()->Void
     private var completion:CheckedContinuation<Void,Error>?
     var cancelled=false
-    init(geometry:InkOrderedGeometry?,plan:NotebookOrderedInkPlan,sourceGeneration:UInt64,basis:NotebookOrderedInkPlan,replacing:Set<UUID>?,canonical:Bool,
+    init(geometry:InkOrderedGeometry?,plan:NotebookOrderedInkPlan,sourceGeneration:UInt64,requestGeneration:UUID,basis:NotebookOrderedInkPlan,replacing:Set<UUID>?,canonical:Bool,
       validate:@escaping @MainActor ()->Bool,install:@escaping @MainActor ()->Void,completion:CheckedContinuation<Void,Error>) {
-      self.geometry=geometry;self.plan=plan;self.sourceGeneration=sourceGeneration;self.basis=basis
+      self.geometry=geometry;self.plan=plan;self.sourceGeneration=sourceGeneration;self.requestGeneration=requestGeneration;self.basis=basis
       self.validate=validate;self.install=install;self.completion=completion;self.replacing=replacing;self.canonical=canonical
     }
     func canApply(to current:NotebookOrderedInkPlan)->Bool {
@@ -500,7 +505,9 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
         guard !Task.isCancelled,!spatialHandoffIsStopping,window != nil,material == nil,
           allowsContact || (activeInkStroke == nil && activeEraserStroke == nil && spatialActionBase == nil) else {continuation.resume(throwing:CancellationError());return}
         pendingOrderedCut?.cancelled=true;pendingOrderedCut?.resolve(CancellationError())
-        let cut=OrderedFrameCut(geometry:geometry,plan:plan,sourceGeneration:spatialSourceGeneration,basis:orderedInkPlan,replacing:replacing,canonical:canonical,validate:validate,install:install,completion:continuation)
+        let cut=OrderedFrameCut(geometry:geometry,plan:plan,sourceGeneration:spatialSourceGeneration,
+          requestGeneration:orderedPreparationID,basis:orderedInkPlan,replacing:replacing,canonical:canonical,
+          validate:validate,install:install,completion:continuation)
         pendingOrderedCut=cut;orderedCutRequests[token]=cut
         publishAcceptedMaterialReadiness()
         requestFrame()
@@ -1868,7 +1875,8 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     var orderedCutFailure:Error=SceneRenderError.resourceLimit
     if let orderedCut {
       pendingOrderedCut=nil
-      guard !orderedCut.cancelled,orderedCut.validate(),orderedCut.canApply(to:orderedInkPlan),orderedCut.sourceGeneration == spatialSourceGeneration else {
+      guard !orderedCut.cancelled,orderedCut.validate(),orderedCut.canApply(to:orderedInkPlan),
+        orderedCut.sourceGeneration == spatialSourceGeneration,orderedCut.requestGeneration == orderedPreparationID else {
         orderedCut.resolve(CancellationError());return
       }
       if let replacing=orderedCut.replacing {
@@ -1883,7 +1891,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     }
     defer {
       if let orderedCut,!orderedCutSubmitted {
-        orderedGeometry=previousOrderedGeometry;orderedInkPlan=previousOrderedPlan;orderedRequest=previousOrderedPlan;orderedFrameIsCanonical=previousCanonical
+        orderedGeometry=previousOrderedGeometry;orderedInkPlan=previousOrderedPlan;orderedFrameIsCanonical=previousCanonical
         installedSpatialSource=previousSpatialSource
         if previousSpatialSource == nil {setSuppressedPageActions(previousOrderedPlan.suppressedInkIDs)}
         invalidateOrderedPaint(from:orderedCut.plan,to:previousOrderedPlan,ids:orderedCut.replacing)
@@ -2299,6 +2307,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
             publicationWindow != nil,spatialSourceGeneration == sourceGeneration,
             !emptyPublication || (pendingTransaction?.id == submission && presentsCurrentEmptyPage),
             orderedCut?.cancelled != true,orderedCut?.validate() != false,
+            orderedCut == nil || orderedCut?.requestGeneration == orderedPreparationID,
             stableContentRevision == submittedRevision || sameFirstInk else {
             if firstPagePresentation {self?.onFirstFrameEvent?(.rejected(submission))}
             if self?.submittedPageContact?.submission == submission { self?.submittedPageContact = nil }
@@ -2308,7 +2317,9 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
             }
             orderedCut?.resolve(CancellationError())
             if let self,orderedCut != nil,stableContentRevision == submittedRevision {
-              orderedGeometry=previousOrderedGeometry;orderedInkPlan=previousOrderedPlan;orderedRequest=previousOrderedPlan;orderedFrameIsCanonical=previousCanonical
+              // The old frame owns its displayed geometry alone. A newer
+              // requested plan keeps its own generation through this rollback.
+              orderedGeometry=previousOrderedGeometry;orderedInkPlan=previousOrderedPlan;orderedFrameIsCanonical=previousCanonical
               installedSpatialSource=previousSpatialSource
               if previousSpatialSource == nil {setSuppressedPageActions(previousOrderedPlan.suppressedInkIDs)}
               invalidateOrderedPaint(from:orderedCut?.plan ?? .init(),to:previousOrderedPlan,ids:orderedCut?.replacing)
@@ -2812,6 +2823,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     fileprivate weak var canvas: InkCanvasView?
     fileprivate let sourceGeneration: UInt64
     fileprivate let contentRevision: UInt64
+    fileprivate let requestGeneration: UUID
     fileprivate var batches: [CommittedBatch]
     fileprivate let visible:[(Int,Range<Int>)]
     fileprivate let replacesMesh: Bool
@@ -2855,16 +2867,19 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       }
       if revoked || transactionCommitted {releasePreparedResources()}
     }
-    fileprivate init(id: UUID, canvas: InkCanvasView, batches: [CommittedBatch], visible:[(Int,Range<Int>)], replacesMesh: Bool,
+    fileprivate init(id: UUID, canvas: InkCanvasView, requestGeneration: UUID,
+      batches: [CommittedBatch], visible:[(Int,Range<Int>)], replacesMesh: Bool,
       layout: SpatialTargetLayout, viewport: SpatialPoint, camera: SpatialCamera?,
       target: SpatialTarget?, drawables: [any CAMetalDrawable]) {
       self.id = id; self.canvas = canvas; self.batches = batches; self.visible=visible; self.drawables = drawables
       self.replacesMesh = replacesMesh; self.layout = layout; self.viewport = viewport; self.camera = camera; self.target = target
       sourceGeneration = canvas.spatialSourceGeneration; contentRevision = canvas.stableContentRevision
+      self.requestGeneration = requestGeneration
     }
     var isValid: Bool {
       guard let canvas,ready,!revoked,!installed,!canvas.spatialHandoffIsStopping,canvas.spatialStagingID == id,
         canvas.spatialSourceGeneration == sourceGeneration,canvas.stableContentRevision == contentRevision,
+        canvas.orderedPreparationID == requestGeneration,
         canvas.spatialActionBase == nil,canvas.activeInkStroke == nil,canvas.activeEraserStroke == nil else { return false }
       // Spatial candidates are prepared before their first physical mount.
       // Source/generation admission above, not a former window, owns validity.
@@ -2893,7 +2908,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     guard !spatialHandoffIsStopping,!pageBackingIsReclaimed,spatialActionBase == nil,
       activeInkStroke == nil,activeEraserStroke == nil,spatialStagingID == nil,
       let commandQueue else { throw CancellationError() }
-    let id=UUID();spatialStagingID=id;pauseFrameLoop()
+    let id=UUID(),oldRequest=orderedPreparationID;spatialStagingID=id;pauseFrameLoop()
     publishAcceptedMaterialReadiness()
     var succeeded=false
     defer { if !succeeded { cancelSpatialStaging(id:id) } }
@@ -2902,12 +2917,12 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     while !takeFrameSlotIfAvailable() {
       await withCheckedContinuation {frameSlotWaiters.append($0)}
       try Task.checkCancellation()
-      guard spatialStagingID == id,!spatialHandoffIsStopping else {throw CancellationError()}
+      guard spatialStagingID == id,orderedPreparationID == oldRequest,!spatialHandoffIsStopping else {throw CancellationError()}
     }
     var ownsSlot=true
     defer {if ownsSlot {inFlightSemaphore.signal();resumeFrameSlotWaiters()}}
     try Task.checkCancellation()
-    guard spatialStagingID == id,!spatialHandoffIsStopping else { throw CancellationError() }
+    guard spatialStagingID == id,orderedPreparationID == oldRequest,!spatialHandoffIsStopping else { throw CancellationError() }
     let oldSource=spatialSourceGeneration,oldProjection=stableContentRevision
     let layout:SpatialTargetLayout,viewport:SpatialPoint,camera:SpatialCamera?
     var batches:[CommittedBatch],replacesMesh=false
@@ -2940,7 +2955,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
         passes.append((spatialRenderPass(target:tile,drawable:drawable),drawable,target!.viewport(index),target!.logicalRect(index)))
       }
     }
-    let result=PreparedFrame(id:id,canvas:self,batches:batches,visible:visible,replacesMesh:replacesMesh,
+    let result=PreparedFrame(id:id,canvas:self,requestGeneration:oldRequest,batches:batches,visible:visible,replacesMesh:replacesMesh,
       layout:layout,viewport:viewport,camera:camera,target:target,drawables:passes.map { $0.1 })
     if case .spatial(let mesh,_,_,_,_,_)=request { result.actionRanges=mesh?.actionRanges }
     result.ordered=geometry;result.orderedPlan=candidatePlan
@@ -2994,6 +3009,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     }
     try Task.checkCancellation()
     guard spatialStagingID == id,spatialSourceGeneration == oldSource,stableContentRevision == oldProjection,
+      orderedPreparationID == oldRequest,
       spatialActionBase == nil,activeInkStroke == nil,activeEraserStroke == nil else { throw CancellationError() }
     result.ready=true;succeeded=true;return result
   }

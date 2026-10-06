@@ -1,0 +1,74 @@
+{
+  "format": 1,
+  "productRoot": "/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/5a0fbec685353e35/ipad/Build/Products",
+  "files": [
+    {
+      "path": "Debug-iphoneos/Notebook.app/Notebook",
+      "bytes": 91920,
+      "sha256": "fdebe712ecaa2d73a54bd52fdcb0fc32c7e7437295ca03dbeaeeb21127f586ff",
+      "file": "Mach-O 64-bit executable arm64",
+      "machoBuild": "/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/5a0fbec685353e35/ipad/Build/Products/Debug-iphoneos/Notebook.app/Notebook:\nLoad command 11\n      cmd LC_BUILD_VERSION\n  cmdsize 32\n platform IOS\n    minos 27.0\n      sdk 27.0\n   ntools 1\n     tool LD\n  version 27037.1"
+    },
+    {
+      "path": "Debug-iphoneos/Notebook.app/Notebook.debug.dylib",
+      "bytes": 148425920,
+      "sha256": "5d025572f411fdd9d09ff7ee5e5d2b6c442ee97548de7fff596eac0452bc57fe",
+      "file": "Mach-O 64-bit dynamically linked shared library arm64",
+      "machoBuild": "/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/5a0fbec685353e35/ipad/Build/Products/Debug-iphoneos/Notebook.app/Notebook.debug.dylib:\nLoad command 10\n      cmd LC_BUILD_VERSION\n  cmdsize 32\n platform IOS\n    minos 27.0\n      sdk 27.0\n   ntools 1\n     tool LD\n  version 27037.1"
+    },
+    {
+      "path": "Debug-iphoneos/Notebook.app/PlugIns/NotebookTests.xctest/NotebookTests",
+      "bytes": 66114672,
+      "sha256": "2e85127bee5e162f49eef9fbd88239ca517f4e92970e6333b2b1af5a61c14893",
+      "file": "Mach-O 64-bit bundle arm64",
+      "machoBuild": "/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/5a0fbec685353e35/ipad/Build/Products/Debug-iphoneos/Notebook.app/PlugIns/NotebookTests.xctest/NotebookTests:\nLoad command 9\n      cmd LC_BUILD_VERSION\n  cmdsize 32\n platform IOS\n    minos 27.0\n      sdk 27.0\n   ntools 1\n     tool LD\n  version 27037.1"
+    },
+    {
+      "path": "Debug-iphoneos/NotebookUITests-Runner.app/PlugIns/NotebookUITests.xctest/NotebookUITests",
+      "bytes": 2907376,
+      "sha256": "c102cf3001121af0bc1950a62f0eddcc6f13148a9b2bfbdd96a13c5aeefdccca",
+      "file": "Mach-O 64-bit bundle arm64",
+      "machoBuild": "/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/5a0fbec685353e35/ipad/Build/Products/Debug-iphoneos/NotebookUITests-Runner.app/PlugIns/NotebookUITests.xctest/NotebookUITests:\nLoad command 9\n      cmd LC_BUILD_VERSION\n  cmdsize 32\n platform IOS\n    minos 27.0\n      sdk 27.0\n   ntools 1\n     tool LD\n  version 27037.1"
+    },
+    {
+      "path": "Debug-iphoneos/Notebook.app/Info.plist",
+      "bytes": 2961,
+      "sha256": "803a6ee8e957ec3728d687bbbcd9f48a24e37476fbed6d1649338dc9db8bb95d"
+    },
+    {
+      "path": "Notebook_iphoneos27.0-arm64.xctestrun",
+      "bytes": 7192,
+      "sha256": "07bd9a4d53c902bc7683f7108efaf91c7597c19b09c7dc6a52bb86564f7f3f2b"
+    }
+  ],
+  "bundle": {
+    "CFBundleIdentifier": "com.amirtlinov.notebook.native-test",
+    "CFBundleExecutable": "Notebook",
+    "CFBundleVersion": "249",
+    "DTPlatformName": "iphoneos",
+    "DTSDKName": "iphoneos27.0",
+    "DTSDKBuild": "24A430",
+    "DTXcodeBuild": "27A266a",
+    "MinimumOSVersion": "27.0",
+    "CFBundleSupportedPlatforms": [
+      "iPhoneOS"
+    ]
+  },
+  "testBundlesBuilt": [
+    "NotebookTests",
+    "NotebookUITests"
+  ],
+  "testBundlesExecuted": [],
+  "runtime": {
+    "stage": "/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/.build/surface-ink-runtime",
+    "manifest": {
+      "bytes": 3680,
+      "sha256": "f1138d9c36b3dc828335bbe304abe412c283adc685eccbeeade0401006f36203"
+    },
+    "inputSHA256": "923a636aa9081342f603b7da33600c20ee9fdf77a4ac143343979f898d5a07a3",
+    "iphoneosLibrary": {
+      "bytes": 101599688,
+      "sha256": "6d333ee769a11ba42914b66882ea034b4f727ebea90b021e84de1a023f70e9b6"
+    }
+  }
+}

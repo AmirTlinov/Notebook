@@ -30,6 +30,8 @@ struct SpatialInkCanvas: UIViewRepresentable {
     Coordinator(
       surfaceRegistry: surfaceRegistry,
       inputGate: inputGate,
+      reserveAction: { [weak model] in model?.reserveSpatialDrawingAction($0) ?? false },
+      releaseAction: { [weak model] in model?.releaseSpatialDrawingReservation($0) },
       onCommit: onCommit
     )
   }
@@ -44,6 +46,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
     context.coordinator.onWorkingGraphic = { [weak model] in model?.updateWorkingGraphic($0, strokeID: $1) }
     context.coordinator.toolController = model?.drawingTools
     context.coordinator.model = model
+    context.coordinator.installWriter(model)
     context.coordinator.onQuickShape = onQuickShape
     context.coordinator.appearances = model?.elementErasureCache
     context.coordinator.resolveEraserSource = { [weak model] in
@@ -83,6 +86,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
     context.coordinator.onWorkingGraphic = { [weak model] in model?.updateWorkingGraphic($0, strokeID: $1) }
     context.coordinator.toolController = model?.drawingTools
     context.coordinator.model = model
+    context.coordinator.installWriter(model)
     context.coordinator.onQuickShape = onQuickShape
     context.coordinator.appearances = model?.elementErasureCache
     context.coordinator.resolveEraserSource = { [weak model] in
@@ -140,6 +144,10 @@ struct SpatialInkCanvas: UIViewRepresentable {
     private let quickShape = NotebookQuickShapeSession()
     var onWorkingGraphic: (NotebookWorkingGraphic?, UUID) -> Void = { _, _ in }
     private var actionStrokeID = UUID()
+    private var reserveAction: (UUID) -> Bool
+    private var releaseAction: (UUID) -> Void
+    private var reservedRelease: (() -> Void)?
+    private var reservedWriterModel: NotebookAppModel?
     private var inputGate: NotebookInputGate
     private var pencilActionIsActive = false
     private weak var view: SpatialInkContainerView?
@@ -189,7 +197,9 @@ struct SpatialInkCanvas: UIViewRepresentable {
     private(set) var rejectedWorldAddressCount = 0
     private var activePen: ActiveInkStroke?
     private var activeEraser: ActiveEraserStroke?
-    private var elementEraserFailed = false
+    private var capturedMeasurementCount = 0
+    private var closedTargetCount = 0
+    private var closedTargetBytes = 0
     private var changedElementTargets: [Int:Set<String>] = [:]
     private var currentSurface: SurfaceID?
     private var touchedSurfaces: Set<SurfaceID> = []
@@ -200,6 +210,8 @@ struct SpatialInkCanvas: UIViewRepresentable {
     init(
       surfaceRegistry: SpatialInkSurfaceRegistry,
       inputGate: NotebookInputGate,
+      reserveAction: @escaping (UUID) -> Bool = { _ in false },
+      releaseAction: @escaping (UUID) -> Void = { _ in },
       onCommit: @escaping (
         SpatialInkTool,
         SpatialInkColor,
@@ -209,6 +221,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
     ) {
       self.surfaceRegistry = surfaceRegistry
       self.inputGate = inputGate
+      self.reserveAction = reserveAction; self.releaseAction = releaseAction
       self.onCommit = onCommit
       quickShape.onChange = { [weak self] fit in
         guard let self else { return }
@@ -225,6 +238,11 @@ struct SpatialInkCanvas: UIViewRepresentable {
           if let currentSurface, let activePen { surfaceRegistry.canvas(for: currentSurface)?.displayActiveStroke(activePen) }
         }
       }
+    }
+
+    func installWriter(_ model: NotebookAppModel?) {
+      reserveAction = { [weak model] in model?.reserveSpatialDrawingAction($0) ?? false }
+      releaseAction = { [weak model] in model?.releaseSpatialDrawingReservation($0) }
     }
 
     func update(
@@ -441,11 +459,17 @@ struct SpatialInkCanvas: UIViewRepresentable {
         toolContact?.onFinish = { [weak self] in self?.toolContact = nil }
         return
       }
+      let sourceID = UUID()
+      guard reserveAction(sourceID) else { return }
+      reservedWriterModel = model
+      let release = releaseAction
+      reservedRelease = { release(sourceID) }
       var leases: [SpatialInkSurfaceRegistry.ContactLease] = []
       var frozen: [SpatialScreenSurface] = []
       for surface in surfaces {
         guard let lease = surfaceRegistry.acquireContact(on: surface.id, in: view) else {
           for lease in leases { lease.release() }
+          releaseReservation()
           return
         }
         leases.append(lease)
@@ -485,7 +509,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
         }
       }
       setPencilActionActive(touch.type == .pencil || inputGate.simulatesPencilContacts)
-      actionStrokeID = UUID()
+      actionStrokeID = sourceID
       actionTool = drawingTool
       actionPenStyle = penStyle
       actionEraserStyle = eraserStyle
@@ -498,7 +522,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
       touchedSurfaces = []
       previousFilteredForce = nil
       previousTimestamp = nil
-      elementEraserFailed = false
+      capturedMeasurementCount = 0; closedTargetCount = 0; closedTargetBytes = 0
       actionStartTimestamp = touch.timestamp
       appendSamples(touch: touch, event: event)
       if actionTool == .pen, guideConstraint == nil, currentSurface == boardSurface, let point = lastActionPoint?.location {
@@ -538,16 +562,16 @@ struct SpatialInkCanvas: UIViewRepresentable {
           tool: actionTool
         )
         if let previous = lastActionPoint {
-          routeMeasuredSegment(from: previous, to: point)
+          guard routeMeasuredSegment(from: previous, to: point) else { return }
         } else {
-          beginSegment(
+          guard beginSegment(
             on: guideConstraint?.surface ?? SpatialSurfaceRouter.surface(
               at: point.location,
               covers: screenSurfaces(),
               board: boardSurface
             ),
             with: point
-          )
+          ) else { return }
         }
         lastActionPoint = point
       }
@@ -564,6 +588,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
       {
         let predictions = (event.predictedTouches(for: touch) ?? [])
           .filter(accepts)
+          .prefix(NotebookInkWriteAllowance.maximumPredictions)
           .map {
             makePoint(
               touch: $0,
@@ -599,6 +624,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
         && geometry?.camera == camera && geometry?.viewport == viewport
       if !continuesSequence { quickShape.cancel() }
       defer {
+        releaseReservation()
         for lease in geometry?.leases ?? [] { lease.release() }
         actionGeometry = nil
         guideConstraint = nil
@@ -664,6 +690,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
       quickShape.cancel()
       let geometry = actionGeometry
       defer {
+        releaseReservation()
         for lease in geometry?.leases ?? [] { lease.release() }
         actionGeometry = nil
         guideConstraint = nil
@@ -707,7 +734,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
     private func routeMeasuredSegment(
       from start: PKStrokePoint,
       to end: PKStrokePoint
-    ) {
+    ) -> Bool {
       routedSegmentCount += 1
       let intervals = SpatialSurfaceRouter.intervals(
         from: start.location,
@@ -726,22 +753,27 @@ struct SpatialInkCanvas: UIViewRepresentable {
         let lower = interpolate(start, end, t: Double(interval.lowerBound))
         if currentSurface != interval.surface {
           finishCurrentSegment()
-          beginSegment(on: interval.surface, with: lower)
+          guard beginSegment(on: interval.surface, with: lower) else { return false }
         }
         let upper = interpolate(start, end, t: Double(interval.upperBound))
-        if currentSurface == nil { beginSegment(on: interval.surface, with: upper) }
-        else { appendToCurrentSegment(upper) }
+        if currentSurface == nil {
+          guard beginSegment(on: interval.surface, with: upper) else { return false }
+        } else if !appendToCurrentSegment(upper) { return false }
       }
+      return true
     }
 
     private func beginSegment(
       on surface: SurfaceID,
       with point: PKStrokePoint
-    ) {
+    ) -> Bool {
       guard convert(point, to: surface) != nil else {
         rejectedWorldAddressCount += 1
         finishCurrentSegment()
-        return
+        return true
+      }
+      guard actionSpans.count < NotebookInkWriteAllowance.maximumSpans else {
+        sealAction(at: NotebookInkWriteAllowance.Limit.spans); return false
       }
       currentSurface = surface
       touchedSurfaces.insert(surface)
@@ -757,13 +789,13 @@ struct SpatialInkCanvas: UIViewRepresentable {
           color:.init(red:c.red,green:c.green,blue:c.blue),projection:liveProjection(on:surface))
       }
       elementContact = InkElementContact([])
-      appendToCurrentSegment(point)
+      return appendToCurrentSegment(point)
     }
 
     private var elementContact = InkElementContact([])
 
-    private func appendToCurrentSegment(_ point: PKStrokePoint) {
-      guard let currentSurface else { return }
+    private func appendToCurrentSegment(_ point: PKStrokePoint) -> Bool {
+      guard let currentSurface else { return true }
       // This is the same measured segment used by the live canvas. Persist
       // its physical address now; Pencil-up never routes the whole action again.
       guard let sample = convert(point, to: currentSurface) else {
@@ -771,7 +803,10 @@ struct SpatialInkCanvas: UIViewRepresentable {
         // never a line through unaddressable space or a discarded whole contact.
         rejectedWorldAddressCount += 1
         finishCurrentSegment()
-        return
+        return true
+      }
+      guard capturedMeasurementCount < NotebookInkWriteAllowance.maximumMeasurements else {
+        sealAction(at: NotebookInkWriteAllowance.Limit.measurements); return false
       }
       if let activePen {
         activePen.replaceMeasuredTail(
@@ -782,24 +817,31 @@ struct SpatialInkCanvas: UIViewRepresentable {
           .displayActiveStroke(activePen)
       } else if let activeEraser {
         let start = activeEraser.measured.count
-        activeEraser.replaceMeasuredTail(
-          from:activeEraser.measured.count,
-          with:[sample]
-        )
-        if !elementEraserFailed, let source = actionGeometry?.eraserSource,
-          let bounds = eraserBounds(source: activeEraser.measured, from: start, surface: currentSurface) {
+        var proposed = activeEraser.measured
+        proposed.replaceTail(from: start, with: [sample])
+        var proposedContact = elementContact
+        if let source = actionGeometry?.eraserSource,
+          let bounds = eraserBounds(source: proposed, from: start, surface: currentSurface) {
           do {
             let query = try source.query(surface: currentSurface, bounds: bounds)
-            changedElementTargets[actionSpans.count,default:[]].formUnion(query.targets.map(\.elementID))
-            elementContact.update(activeEraser.measured, from: start,
+            proposedContact.update(proposed, from: start,
               queried: query.targets, visitedNodes: query.visitedNodes)
+            if let limit = NotebookInkWriteAllowance.targetLimit(proposedContact.selected,
+              priorCount: closedTargetCount, priorBytes: closedTargetBytes) {
+              sealAction(at: limit); return false
+            }
+            changedElementTargets[actionSpans.count,default:[]].formUnion(query.targets.map(\.elementID))
           } catch {
-            failElementEraser(error)
+            sealAction(at: error); return false
           }
         }
+        activeEraser.acceptMeasured(proposed, from: start)
+        elementContact = proposedContact
         surfaceRegistry.canvas(for: currentSurface)?
           .displayActiveEraser(activeEraser)
       }
+      capturedMeasurementCount += 1
+      return true
     }
 
     private func eraserBounds(source: InkSampleRelations.Contact, from changedIndex: Int,
@@ -823,15 +865,13 @@ struct SpatialInkCanvas: UIViewRepresentable {
         height: abs(a.y - b.y) + 2 * radius)
     }
 
-    private func failElementEraser(_ error: Error) {
-      guard !elementEraserFailed else { return }
-      elementEraserFailed = true
-      elementContact = InkElementContact([])
-      actionSpans = actionSpans.map {
-        SpatialInkSpan(surface: $0.surface, measurements: $0.samples)
-      }
-      onElementErasing([], actionStrokeID)
+    private func sealAction(at error: Error) {
       onEraserFailure(error)
+      finishAction()
+    }
+
+    private func releaseReservation() {
+      reservedRelease?(); reservedRelease = nil; reservedWriterModel = nil
     }
 
     private func measuredSpan(surface: SurfaceID, measurements: InkMeasurements) -> SpatialInkSpan {
@@ -854,7 +894,11 @@ struct SpatialInkCanvas: UIViewRepresentable {
     private func finishCurrentSegment() {
       guard let currentSurface else { return }
       if let source=segmentSource,source.count > 0 {
-        actionSpans.append(measuredSpan(surface:currentSurface,measurements:source.frozen().measurements))
+        let span = measuredSpan(surface:currentSurface,measurements:source.frozen().measurements)
+        actionSpans.append(span)
+        let targets = span.elementTargets ?? []
+        closedTargetCount += targets.count
+        closedTargetBytes += NotebookInkWriteAllowance.targetBytes(targets)
       }
       activePen?.replacePredictions(with: [])
       surfaceRegistry.canvas(for: currentSurface)?

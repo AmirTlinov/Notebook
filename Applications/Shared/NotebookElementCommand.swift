@@ -7,14 +7,63 @@ import NotebookCore
 struct NotebookElementCommandResult: Sendable {
   let page: AgentElement?
   let spatial: SpatialElement?
+  var versions: [String: ContentFieldVersion]? = nil
+  var target: CollaborationTarget? = nil
   var boardHeader: BoardDocument? = nil
+
+  func source(target: CollaborationTarget, id: String) -> NotebookNativeElementSource {
+    .init(target: self.target ?? target, id: id, page: page, spatial: spatial, versions: versions)
+  }
 }
 
 struct NotebookElementCommand: Equatable, Sendable {
   let id: UUID
   let task: Task<NotebookElementCommandResult?, Never>
   var cursor: UInt64?
+  var accepted: NotebookElementCommandResult?
   static func == (lhs:Self,rhs:Self)->Bool { lhs.id == rhs.id }
+}
+
+extension NotebookNativeElementSource {
+  func covers(_ output: NotebookElementCommandResult) -> Bool {
+    covers(output.source(target:target,id:id))
+  }
+
+  func covers(_ output: NotebookNativeElementSource) -> Bool {
+    guard id == output.id else { return false }
+    guard let expected = output.versions, let versions else {
+      return page == output.page && spatial == output.spatial
+    }
+    if page == output.page, spatial == output.spatial, versions == expected { return true }
+    // A tombstone supersedes the whole member, including fields it no longer
+    // carries as a displayed body. Missing window membership has no such clock.
+    if page == nil, spatial == nil,
+      let existence = expected.first(where: { $0.key.hasSuffix("/exists") }),
+      versions[existence.key]?.includes(existence.value) == true { return true }
+    guard page != nil || spatial != nil else { return false }
+    return !expected.isEmpty && expected.allSatisfy { versions[$0.key]?.includes($0.value) == true }
+  }
+}
+
+extension NotebookSceneState {
+  func elementSource(_ reference: EditableElementReference) -> NotebookNativeElementSource? {
+    if let pinned = pinnedElementSources[reference] { return pinned }
+    switch reference {
+    case .page(let owner, let id):
+      guard let page = pages[owner] else { return nil }
+      return .init(target: .init(kind:.page,id:owner), id:id, page:page.element(id:id),
+        versions:page.collaboration?.elementVersions(id:id))
+    case .spatial(let owner, let id):
+      guard let board = hierarchy.board(owner) else { return nil }
+      let element = board.element(id:id)
+      guard element != nil || board.hasRemovedElement(id:id)
+        || missingPinnedElements[owner]?.contains(id) == true else { return nil }
+      let target = element?.surface.kind == .cover
+        ? CollaborationTarget(kind:.cover,id:element!.surface.ownerID!,boardID:owner) : .init(kind:.board,id:owner)
+      return .init(target:target,id:id,spatial:element,
+        versions:board.collaboration?.elementVersions(id:id))
+    }
+  }
 }
 
 /// A ready or asynchronously prepared edit enters this same causal writer.
@@ -30,6 +79,10 @@ struct NotebookElementCommandPlan: Sendable {
   let copiedFrom:[String:String]
   let expectedInkRevision:String?
   var inkReadSets:[NotebookInkReadSet] = []
+  var transferWitness:NotebookElementTransferWitness? = nil
+  var retainedProgramResources:NotebookProgramTransfer.Prepared? = nil
+  var drafts:[EditableElementReference:NotebookElementCommandDraft] = [:]
+  var working:[NotebookWorkingGraphic] = []
 }
 
 /// The first edit of a raw contact uses the same native command as authored
@@ -164,7 +217,7 @@ struct NotebookElementCommandWriteResult:Sendable {
   }
 }
 
-struct NotebookElementCommandDraft: Equatable {
+struct NotebookElementCommandDraft: Equatable, Sendable {
   let source: NotebookElementPlacement.Source
   let graphic: NotebookGraphic?
   var capture: NotebookGraphicContactSource? = nil
@@ -172,6 +225,7 @@ struct NotebookElementCommandDraft: Equatable {
   var textSource: String? = nil
   var textHTML: String? = nil
   var textStyle: NativeTextStyle? = nil
+  var publication: NotebookNativeElementSource? = nil
   var frame: PageRect { source.frame }
   var basis: NotebookElementBasis? { source.basis }
   var rect: CGRect { .init(x: frame.x, y: frame.y, width: frame.width, height: frame.height) }
@@ -201,20 +255,132 @@ extension NotebookAppModel {
   /// Accepted content is independent of focus. The exact writer predecessor
   /// still supplies its durable stamp; this projection never invents one.
   func acceptedElementSource(_ reference:EditableElementReference) -> NotebookNativeElementSource? {
-    guard let source=nativeElementSource(reference) else { return nil }
+    guard let canonical=nativeElementSource(reference) else { return nil }
+    let source = elementCommandSources[reference]?.accepted?.source(target:canonical.target,id:canonical.id) ?? canonical
     let working=acceptedWorkingGraphic(reference),draft=elementCommandDrafts[reference]
     let page=working?.surface.kind == .page ? working?.pageElement : source.page
     let spatial=working.map { $0.surface.kind == .page ? nil : $0.spatialElement(stamp:source.spatial?.stamp ?? .init(counter:0,actor:actorID)) } ?? source.spatial
     return .init(target:source.target,id:source.id,
       page:page.flatMap { draft == nil ? $0 : draft!.projecting($0) },
-      spatial:spatial.flatMap { draft == nil ? $0 : draft!.projecting($0) })
+      spatial:spatial.flatMap { draft == nil ? $0 : draft!.projecting($0) },versions:source.versions)
   }
 
-  func retireGraphicCommands(through cursor: UInt64) {
+  /// A read covers one addressed output or a causal successor. Keep its exact
+  /// receipt and visible delta until drawing and pointing borrow that source.
+  func admitGraphicCommandSources(in state: NotebookSceneState) {
     for (reference, command) in elementCommandSources {
-      guard !editingNativeTextReferences.contains(reference), let accepted = command.cursor, cursor >= accepted else { continue }
+      guard let cursor = command.cursor, state.header.cursor >= cursor,
+        let accepted = command.accepted, let read = state.elementSource(reference),
+        read.covers(accepted) else { continue }
+      let observed = read.page == nil && read.spatial == nil
+        ? NotebookNativeElementSource(target:accepted.target ?? read.target,id:read.id,versions:read.versions) : read
+      guard !editingNativeTextReferences.contains(reference) else { continue }
+      // The predecessor task retained by an already accepted dependent remains
+      // its exact B. Future edits now start from this admitted B or successor C.
       elementCommandSources[reference] = nil
+      guard elementCommandDrafts[reference] != nil else { continue }
+      let element = observed.page.map { ($0.frame, $0.graphic, $0.source, $0.html, $0.textStyle) }
+        ?? observed.spatial.map { (.init(x:$0.frame.x,y:$0.frame.y,width:$0.frame.width,height:$0.frame.height),
+          $0.graphic,$0.source,$0.html,$0.textStyle) }
+      if let source = observed.placementSource, let element {
+        elementCommandDrafts[reference] = .init(source:source,graphic:element.1,
+          textSource:element.2,textHTML:element.3,textStyle:element.4,publication:observed)
+      } else if var draft = elementCommandDrafts[reference] {
+        draft.removed = true; draft.publication = observed; draft.capture = nil
+        elementCommandDrafts[reference] = draft
+      }
+    }
+  }
+
+  /// An offscreen delta can release its derived pose after an addressed source
+  /// observation. Active dependents still own their immutable predecessor task.
+  func retireUnshownGraphicCommands() {
+    for (reference, draft) in elementCommandDrafts where draft.publication != nil {
+      guard !editingNativeTextReferences.contains(reference) else { continue }
+      switch reference {
+      case .page(let owner, _):
+        #if os(iOS)
+        guard !pagePresentations.hasVisiblePage(owner) else { continue }
+        #else
+        guard pageInkPublication.currentCanvas(on:owner)?.window == nil else { continue }
+        #endif
+      case .spatial(let owner, _):
+        // Absence from an older index cannot retire a new visible insertion.
+        // A mounted board waits for its exact installed cohort below.
+        guard compositionTiles.published?.frame.presences[owner] == nil else { continue }
+      }
       elementCommandDrafts[reference] = nil
+    }
+    removeWorkingGraphics { value in
+      guard value.accepted, value.publication != nil,
+        value.inkPresentation?.holdsPresentation != true,
+        let reference = workingGraphicReference(value) else { return false }
+      switch reference {
+      case .page(let owner, _):
+        #if os(iOS)
+        return !pagePresentations.hasVisiblePage(owner)
+        #else
+        return pageInkPublication.currentCanvas(on:owner)?.window == nil
+        #endif
+      case .spatial(let owner, _):
+        return compositionTiles.published?.frame.presences[owner] == nil
+      }
+    }
+  }
+
+  func retirePresentedGraphicCommands(in cohort: SceneCompositionCohort) {
+    guard cohort.isPaintInstalled else { return }
+    for (reference, draft) in elementCommandDrafts {
+      guard case .spatial = reference, let expected = draft.publication,
+        !editingNativeTextReferences.contains(reference),
+        cohortContainsInstalledSource(expected,reference:reference,cohort:cohort) else { continue }
+      elementCommandDrafts[reference] = nil
+    }
+  }
+
+  /// Frozen addressed source and installed geometry share the paint/picking
+  /// cohort. The global frontier only gates reads; it cannot prove this handoff.
+  func cohortContainsInstalledSource(_ expected: NotebookNativeElementSource,
+    reference: EditableElementReference, cohort: SceneCompositionCohort) -> Bool {
+    guard cohort.isPaintInstalled, case .spatial(let owner, let id) = reference,
+      let board = cohort.frame.index.capturedHierarchy.board(owner) else { return false }
+    let current = NotebookNativeElementSource(target:expected.target,id:id,spatial:board.element(id:id),
+      versions:board.collaboration?.elementVersions(id:id))
+    if current != expected {
+      // A converted/hidden member owns a source but contributes no body to
+      // this display window. Its frozen complete field clocks still identify
+      // the exact addressed source; the installed plane paints its absence.
+      guard current.spatial == nil, current.versions == expected.versions,
+        let graphic = expected.spatial?.graphic, !graphic.showsGeometry else { return false }
+    }
+    let plane: SceneCompositionPlane = expected.target.kind == .cover
+      ? .cover(boardID:owner,itemID:expected.target.id) : .board(owner)
+    // Removing the last member or its carrier may remove its physical plane.
+    // The installed board then paints the exact witnessed absence.
+    let geometryPlane = expected.spatial == nil && cohort.plan.presentations[plane] == nil ? .board(owner) : plane
+    guard cohort.hasInstalledGeometry(in:geometryPlane) else { return false }
+    if let source = expected.placementSource, source.isGroup,
+      let installed = cohort.plan.groupPoses[plane]?[id], installed != source { return false }
+    if let element = expected.spatial, element.graphic == nil, element.kind != .nativeText, element.kind != .group {
+      guard cohort.hasInstalledPixels(for:.init(plane:plane,elementID:id)) else { return false }
+    }
+    return true
+  }
+
+  func retirePresentedPageGraphicCommands(_ page: PageDocument, installedGraphics: Bool) {
+    guard installedGraphics else { return }
+    for (reference, draft) in elementCommandDrafts {
+      guard case .page(let owner, let id) = reference, owner == page.id,
+        !editingNativeTextReferences.contains(reference), let expected = draft.publication,
+        page.element(id:id) == expected.page,
+        page.collaboration?.elementVersions(id:id) == expected.versions else { continue }
+      elementCommandDrafts[reference] = nil
+    }
+    removeWorkingGraphics { value in
+      guard value.surface == .page(page.id), value.inkPresentation?.holdsPresentation != true,
+        let expected = value.publication else { return false }
+      return page.element(id:value.id) == expected.page
+        && page.collaboration?.elementVersions(id:value.id) == expected.versions
     }
   }
 

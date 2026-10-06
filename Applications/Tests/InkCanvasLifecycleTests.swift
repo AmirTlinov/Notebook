@@ -195,6 +195,39 @@ final class InkCanvasLifecycleTests: XCTestCase {
   }
 
   @MainActor
+  func testRejectedScheduledOrderedFrameCannotOverwriteNewerDesiredPlan() async throws {
+    try await withPreparedSelectionCanvas { canvas, window, action, oldPlan in
+      var graphic = try XCTUnwrap(oldPlan.bodies.first).graphic
+      graphic.transform = .init(a: 1, b: 0, c: 0, d: 1, tx: 0, ty: 35.0 / 160)
+      let latest = try self.handoffPlan(action: action, graphic: graphic)
+      let prepared = try await canvas.prepareOrderedPlan(oldPlan)
+      var advanced = false, installations = 0
+      do {
+        try await canvas.presentOrderedPlan(prepared, plan: oldPlan, canonical: true, validate: {
+          // This callback runs both before submission and at the scheduled
+          // receipt. Supersede A only after it owns the physical frame slot.
+          guard canvas.framePublicationState.pendingPresentation != nil else { return true }
+          if !advanced { advanced = true; canvas.updateOrderedInk(latest) }
+          return false
+        }, install: { installations += 1 })
+        XCTFail("The stale scheduled candidate must be rejected")
+      } catch is CancellationError {}
+      XCTAssertTrue(advanced)
+      XCTAssertEqual(installations, 0)
+      try await self.waitForStableFrame(canvas, accepted: true)
+      XCTAssertEqual(canvas.orderedInkPlan, latest)
+      XCTAssertFalse(canvas.framePublicationState.pendingOrderedCut)
+      XCTAssertEqual(canvas.framePublicationState.queuedOrderedCuts, 0)
+      try await assertUX("stale-frame-cannot-restore-older-desire", since: .now, window: window) {
+        try NotebookUXObservation.Pixels(window: window).matches([
+          (canvas.convert(.init(x: 80, y: 40), to: window), .paper),
+          (canvas.convert(.init(x: 80, y: 75), to: window), .black),
+          (canvas.convert(.init(x: 80, y: 110), to: window), .paper)])
+      }
+    }
+  }
+
+  @MainActor
   func testAbandonedAndSourceChangedPreparedPageFramesCannotSuppressCurrentInk() async throws {
     try await withPreparedSelectionCanvas { canvas,window,action,plan in
       let count=canvas.committedSourceNodeCount

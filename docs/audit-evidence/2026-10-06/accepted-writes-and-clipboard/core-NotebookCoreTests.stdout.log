@@ -1,0 +1,74 @@
+◇ Test run started.
+↳ Testing Library Version: 2084
+↳ Target Platform: arm64e-apple-macos14.0
+◇ Suite "SQLite owns atomic addressed publication" started.
+◇ Suite "SQL peer transactions" started.
+◇ Suite "Complete addressed selection transfer" started.
+◇ Suite "Accepted native outcomes belong to their transaction" started.
+◇ Suite "Portable program closure follows the ordinary native paste" started.
+◇ Test textBindingAndRowsPreserveEmbeddedNULAndUnicode() started.
+◇ Test cachedStatementsReleaseTheirCopiedPayloadAtCompletionAndReadRefusal() started.
+◇ Test aLateChildRejectsTheEntireCutBeforeRemovingAnyOriginal() started.
+◇ Test oversizedGroupRefusesWholeTransferWithoutReturningAPrefix() started.
+◇ Test fullGroupReadIncludesChildrenOutsideAOneItemSceneWindow() started.
+◇ Test mixedGroupMovesBetweenWorkspacesWithExactBinaryBytesAndDeduplicatedParts() started.
+◇ Test corruptSameLengthDestinationPartRefusesWithoutKeepingEarlierStaging() started.
+◇ Test actionReuseCannotAttachProgramResourcesToAnUnrelatedSavedAction() started.
+◇ Test failedPasteCommitRollsBackBlobsElementsAndReceiptTogether() started.
+◇ Test oneWitnessPerWriterPlateausAndOnlyAProvedRetiredLeaseGenerationIsCollected() started.
+◇ Test noncanonicalManifestAndRawByteOverflowCannotBecomePreparedTransfers() started.
+◇ Test embeddedNulKeepsTheWholeAuthoredSourceSearchAndReplica() started.
+◇ Test selectionAndBinaryClosureBorrowTheSameSQLSourceCut() started.
+◇ Test warmPageRetryReturnsTheOriginalOutputAfterAPeerAdvancesItsFrozenState() started.
+◇ Test missingTamperedDuplicateAndUnreferencedBlobsRefuseTheWholeFragment() started.
+◇ Test confirmedOutputRequiresTheOriginalWorkspaceIdentityAfterMarkerRetirement() started.
+◇ Test anErrorNamedAsADomainLimitAfterCommitStillHasAnUnresolvedOutcome() started.
+◇ Test nestedSourceWritesShareOneCommitAndPublication() started.
+◇ Test refusalAfterNestedWritesRollsBackTheWholeAcceptedCommand() started.
+◇ Test aBeforeCommitRollbackRetriesTheSameAcceptedIdentityAndOnlyItsSuccessfulOutput() started.
+◇ Test acceptedNoOpWithANestedReadRevisionOwnerAndWitnessFlushKeepsEveryCursor() started.
+◇ Test aMissingWorkspaceThroughASymlinkAliasSharesItsTransactionAndAcceptedOutcome() started.
+◇ Test aNewWorkspaceKeepsItsAcceptedOwnerThroughCreationPresenceAndReplay() started.
+◇ Test anUnreadableWitnessRetainsTheOriginalOutputAndNeverReexecutesItsBody() started.
+◇ Test nonpublishingNestedChatCommandsKeepTheirLocalReadFence() started.
+◇ Test spatialRetryReturnsItsOriginalElementWithoutMintingAnotherDotAfterAPeer() started.
+◇ Test aStorageProtocolBridgeDoesNotBecomeATerminalDomainRefusal() started.
+◇ Test coldPageRetryReturnsItsOriginalReceiptWithoutOverwritingAPeerAfterUnknownCommit() started.
+◇ Test diskFailureKeepsItsStorageOutcomeAfterSuccessfulRollback(phase:) started.
+◇ Test case passing 1 argument phase → .afterRecordWrites to diskFailureKeepsItsStorageOutcomeAfterSuccessfulRollback(phase:) started.
+◇ Test case passing 1 argument phase → .beforeCommit to diskFailureKeepsItsStorageOutcomeAfterSuccessfulRollback(phase:) started.
+✔ Test cachedStatementsReleaseTheirCopiedPayloadAtCompletionAndReadRefusal() passed after 0.346 seconds.
+✔ Test anErrorNamedAsADomainLimitAfterCommitStillHasAnUnresolvedOutcome() passed after 0.345 seconds.
+✔ Test aMissingWorkspaceThroughASymlinkAliasSharesItsTransactionAndAcceptedOutcome() passed after 0.345 seconds.
+✔ Test refusalAfterNestedWritesRollsBackTheWholeAcceptedCommand() passed after 0.346 seconds.
+✔ Test nestedSourceWritesShareOneCommitAndPublication() passed after 0.346 seconds.
+✔ Test textBindingAndRowsPreserveEmbeddedNULAndUnicode() passed after 0.346 seconds.
+✔ Test aBeforeCommitRollbackRetriesTheSameAcceptedIdentityAndOnlyItsSuccessfulOutput() passed after 0.346 seconds.
+✔ Test warmPageRetryReturnsTheOriginalOutputAfterAPeerAdvancesItsFrozenState() passed after 0.346 seconds.
+✔ Test acceptedNoOpWithANestedReadRevisionOwnerAndWitnessFlushKeepsEveryCursor() passed after 0.346 seconds.
+✔ Test nonpublishingNestedChatCommandsKeepTheirLocalReadFence() passed after 0.346 seconds.
+✔ Test aNewWorkspaceKeepsItsAcceptedOwnerThroughCreationPresenceAndReplay() passed after 0.346 seconds.
+✔ Test anUnreadableWitnessRetainsTheOriginalOutputAndNeverReexecutesItsBody() passed after 0.346 seconds.
+✔ Test confirmedOutputRequiresTheOriginalWorkspaceIdentityAfterMarkerRetirement() passed after 0.346 seconds.
+✔ Suite "SQLite owns atomic addressed publication" passed after 0.346 seconds.
+✔ Test aStorageProtocolBridgeDoesNotBecomeATerminalDomainRefusal() passed after 0.445 seconds.
+✔ Test aLateChildRejectsTheEntireCutBeforeRemovingAnyOriginal() passed after 0.452 seconds.
+✔ Test diskFailureKeepsItsStorageOutcomeAfterSuccessfulRollback(phase:) with 2 test cases passed after 0.468 seconds.
+✔ Test oneWitnessPerWriterPlateausAndOnlyAProvedRetiredLeaseGenerationIsCollected() passed after 0.537 seconds.
+✔ Test spatialRetryReturnsItsOriginalElementWithoutMintingAnotherDotAfterAPeer() passed after 0.549 seconds.
+✔ Test coldPageRetryReturnsItsOriginalReceiptWithoutOverwritingAPeerAfterUnknownCommit() passed after 0.560 seconds.
+✔ Suite "Accepted native outcomes belong to their transaction" passed after 0.560 seconds.
+✔ Test noncanonicalManifestAndRawByteOverflowCannotBecomePreparedTransfers() passed after 0.628 seconds.
+✔ Test missingTamperedDuplicateAndUnreferencedBlobsRefuseTheWholeFragment() passed after 0.655 seconds.
+✔ Test fullGroupReadIncludesChildrenOutsideAOneItemSceneWindow() passed after 0.665 seconds.
+✔ Test corruptSameLengthDestinationPartRefusesWithoutKeepingEarlierStaging() passed after 0.691 seconds.
+✔ Test selectionAndBinaryClosureBorrowTheSameSQLSourceCut() passed after 0.693 seconds.
+✔ Test actionReuseCannotAttachProgramResourcesToAnUnrelatedSavedAction() passed after 0.701 seconds.
+✔ Test embeddedNulKeepsTheWholeAuthoredSourceSearchAndReplica() passed after 0.717 seconds.
+✔ Suite "SQL peer transactions" passed after 0.717 seconds.
+✔ Test failedPasteCommitRollsBackBlobsElementsAndReceiptTogether() passed after 0.775 seconds.
+✔ Test oversizedGroupRefusesWholeTransferWithoutReturningAPrefix() passed after 0.781 seconds.
+✔ Suite "Complete addressed selection transfer" passed after 0.781 seconds.
+✔ Test mixedGroupMovesBetweenWorkspacesWithExactBinaryBytesAndDeduplicatedParts() passed after 0.938 seconds.
+✔ Suite "Portable program closure follows the ordinary native paste" passed after 0.938 seconds.
+✔ Test run with 29 tests in 5 suites passed after 0.938 seconds.

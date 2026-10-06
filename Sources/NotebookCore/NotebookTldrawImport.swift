@@ -9,11 +9,7 @@ public enum NotebookTldrawImport {
   /// Recognize a structured format before choosing it over ordinary text/image.
   /// A malformed marked envelope still belongs to this parser; never flatten it.
   public static func recognizes(_ source: String) -> Bool {
-    if source.range(of: #"<div\s+data-tldraw(?:\s|=|>)"#, options: [.regularExpression, .caseInsensitive]) != nil { return true }
-    guard source.utf8.count <= NotebookTldrawClipboard.maximumBytes,
-      let json = try? JSONSerialization.jsonObject(with: Data(source.utf8)) as? [String: Any] else { return false }
-    return json["type"] as? String == "application/tldraw" || json["tldrawFileFormatVersion"] != nil
-      || (json["schema"] != nil && json["shapes"] is [Any])
+    NotebookTldrawRecognition.recognizes(source)
   }
 
   public static func prepare(source: String, selectedIDs: [String]? = nil, namespace: UUID,

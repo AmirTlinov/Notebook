@@ -1,0 +1,45 @@
+{
+  "format": 1,
+  "files": [
+    {
+      "path": "commands.json",
+      "bytes": 27208,
+      "sha256": "97510c1735158a91d575e25b349d05ce52e70b51eb413e586673af2d4488b628"
+    },
+    {
+      "path": "completed.json",
+      "bytes": 23574,
+      "sha256": "1eb485fd2b9b0ac9d0a92be25f1e6502be0bb0b51caf26f321a4746510a5a078"
+    },
+    {
+      "path": "core-NotebookCoreTests-events.jsonl",
+      "bytes": 43633,
+      "sha256": "0646f5b21439f783fc8161bbe67000f3593366c405f6ce87e727f53f16701b86"
+    },
+    {
+      "path": "core-NotebookCoreTests.stdout.log",
+      "bytes": 6632,
+      "sha256": "e505282743acf78cffae4a3ac113ee0abde4e61f0e28057e27eb69708e7c209f"
+    },
+    {
+      "path": "mac-summary.json",
+      "bytes": 1135,
+      "sha256": "12644e2058f9d490e19d58b2adb8b903cedfb431efaf6f8f909a6432be9d46e2"
+    },
+    {
+      "path": "mac-tests.json",
+      "bytes": 26260,
+      "sha256": "b59c3d0ffe58940753fa759fe0fe34a5ac277071a470f519195a22930de112d3"
+    },
+    {
+      "path": "results.json",
+      "bytes": 75254,
+      "sha256": "6e8805a44cf74c0d770ff48ffdcf028938d0df322405bd7e0ff3bfe3478715d6"
+    },
+    {
+      "path": "toolchain.json",
+      "bytes": 318,
+      "sha256": "ee0fce6c2e726405f0a3685a69be5335ed15bff52d034039ed77556d0785dc0c"
+    }
+  ]
+}

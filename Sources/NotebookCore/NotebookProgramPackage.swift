@@ -107,7 +107,16 @@ public struct NotebookProgramPackage: Codable, Equatable, Sendable {
   }
 
   public var sha256: String { get throws { Self.hash(try canonicalData()) } }
-  static func hash(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
+  static func hash(_ data: Data) -> String { NotebookHexEncoding.encode(SHA256.hash(data: data)) }
+
+  static func decodeCanonicalData(_ data: Data, expectedHash: String) throws -> Self {
+    guard validHash(expectedHash), (1...maximumManifestBytes).contains(data.count), hash(data) == expectedHash else {
+      throw NotebookStorageError.blobHashMismatch
+    }
+    let package = try JSONDecoder().decode(Self.self, from: data)
+    guard try package.canonicalData() == data else { throw NotebookStorageError.invalidTransaction("program package canonical encoding") }
+    return package
+  }
 }
 
 extension NotebookStore {
@@ -131,10 +140,7 @@ extension NotebookStore {
         throw NotebookStorageError.limitExceeded("program package manifest")
       }
       let data = try snapshot.readBlobChunk(hash: hash, offset: 0, maxBytes: Int(size))
-      guard NotebookProgramPackage.hash(data) == hash else { throw NotebookStorageError.blobHashMismatch }
-      let package = try JSONDecoder().decode(NotebookProgramPackage.self, from: data)
-      guard try package.canonicalData() == data else { throw NotebookStorageError.invalidTransaction("program package canonical encoding") }
-      return package
+      return try NotebookProgramPackage.decodeCanonicalData(data, expectedHash: hash)
     }
   }
 

@@ -28,6 +28,9 @@ struct NotebookGraphicBatchView: View {
 
   private var objects: [Object] {
     let sources = Dictionary(uniqueKeysWithValues: elements.map { ($0.id, $0) })
+    // Resolve against this presentation's immutable camera projection. Local
+    // geometry helpers then borrow values, without reading the view's actor.
+    let projectOrigin=projectOrigin,scale=scale
     return run.owners.compactMap { owner in
       guard case .element(let id) = owner.id, let element = sources[id],let graphic=graph.nodes[id]?.graphic else {return nil}
       let reference=EditableElementReference.spatial(boardID:run.plane.boardID,elementID:id)

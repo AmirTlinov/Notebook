@@ -4,6 +4,38 @@ import XCTest
 @testable import Notebook
 
 @MainActor final class NotebookSelectionClipboardTests: XCTestCase {
+  func testCutRetainsItsSourceWhenSystemClipboardPublicationFails() async throws {
+    let (model,pageID)=try await clipboardModel()
+    let menus=NotebookContextMenus(),pasteboard=UIPasteboard.general,previous=pasteboard.items
+    defer { menus.uninstall();pasteboard.items=previous }
+    menus.publishClipboard={ _ in false }
+    model.selectElement(.page(pageID:pageID,elementID:"first"))
+    menus.copySelection(model,selection:model.selectionSession.id,cut:true)
+    await menus.clipboardTask?.value
+    XCTAssertNotEqual(try model.store.loadPage(pageID).element(id:"first")?.graphic?.visible,false)
+    XCTAssertTrue(model.actionCue?.contains("Выделение сохранено") == true)
+    XCTAssertEqual(pasteboard.items.count,previous.count)
+  }
+
+  func testExportRejectsCapturedErasureThatExceedsCurrentMaskAdmission() async throws {
+    let frame=PageRect(x:0,y:0,width:100,height:100)
+    let polygon:[SpatialPoint]=[.init(x:0,y:0),.init(x:1,y:0),.init(x:1,y:1),.init(x:0,y:1)]
+    let mask=NotebookGraphicMask(operations:(0..<64).map { _ in .init(.intersect,polygon:polygon) })
+    let element=AgentElement(id:"masked",kind:.graphic,frame:frame,source:"",html:"",
+      graphic:.init(shape:.rectangle,mask:mask))
+    let page=PageDocument(size:.init(width:834,height:1194),actor:UUID(),elements:[element])
+    let measurements=InkMeasurements([.init(point:.init(x:50,y:50),timeOffset:0,
+      width:4,opacity:1,force:1,azimuth:0,altitude:1)])
+    let cut=InkElementErasure(target:.init(elementID:element.id,frame:frame),measurements:measurements)
+    let snapshot=NotebookSelectionExport(selectionID:UUID(),surface:.page(page.id),inkRevision:nil,
+      sourceChecks:[:],sources:[element],graph:page.graphicGraph(),rootOrigin:.zero,
+      erasures:[element.id:[cut]])
+    let fragment=try snapshot.prepare().fragment
+    XCTAssertEqual(fragment.elements[0].graphic?.mask?.operations.count,65)
+    XCTAssertThrowsError(try NotebookClipboard.prepareExport(fragment))
+    XCTAssertEqual(page.elements[0].graphic?.mask?.operations.count,64)
+  }
+
   func testUIKitCopyPublishesItsCapturedMaterialAfterSelectionChanges() async throws {
     let (model,pageID)=try await clipboardModel()
     let menus=NotebookContextMenus(),pasteboard=UIPasteboard.general,previous=pasteboard.items
@@ -34,9 +66,10 @@ import XCTest
   }
 
   func testUIKitCutRejectsChangedSourceWithoutWritingClipboardOrDeletingMaterial() async throws {
-    let (model,pageID)=try await clipboardModel()
-    let menus=NotebookContextMenus(),pasteboard=UIPasteboard.general,previous=pasteboard.items
-    defer { menus.uninstall();pasteboard.items=previous }
+    let (model,pageID)=try await clipboardModel(),barrier=ExportBarrier()
+    let menus=NotebookContextMenus(clipboardExports:.init(encoder:{ try await barrier.encode($0) }))
+    let pasteboard=UIPasteboard.general,previous=pasteboard.items
+    defer { Task { await barrier.release() };menus.uninstall();pasteboard.items=previous }
     let sentinel="unchanged-clipboard-"+UUID().uuidString
     pasteboard.string=sentinel
     let reference=EditableElementReference.page(pageID:pageID,elementID:"first")
@@ -44,10 +77,15 @@ import XCTest
     let selected=model.selectionSession.id
     menus.copySelection(model,selection:selected,cut:true)
     let cut=try XCTUnwrap(menus.clipboardTask)
-    XCTAssertTrue(model.performElementOperations([.init(reference:reference,kind:.updateElement,
-      values:["frame":try .encode(PageRect(x:180,y:220,width:100,height:80))])],summary:"Переместить выбранный объект"))
+    await barrier.waitUntilStarted()
+    let page=try model.store.loadPage(pageID),target=CollaborationTarget(kind:.page,id:pageID)
+    _ = try model.store.applyCollaborationAction(.init(summary:"Peer moves the captured source",
+      expected:[.init(target:target,revision:page.agentStamp.revision)],operations:[
+        .init(kind:.updateElement,target:target,id:reference.elementID,
+          values:["frame":try .encode(PageRect(x:180,y:220,width:100,height:80))])]),actor:UUID())
+    await model.reloadExternalChanges()?.value
     XCTAssertEqual(model.selectionSession.id,selected,"The conflict is the source, not just a replaced selection token")
-    await cut.value
+    await barrier.release();await cut.value
     XCTAssertEqual(pasteboard.string,sentinel)
     XCTAssertEqual(model.actionCue,"Выделение изменилось. Повторите вырезание.")
     let saved=await model.finishPendingPersistence();XCTAssertTrue(saved)
@@ -60,16 +98,119 @@ import XCTest
     let (model,pageID)=try await clipboardModel()
     let first=NotebookContextMenus(),second=NotebookContextMenus(),pasteboard=UIPasteboard.general,previous=pasteboard.items
     defer { first.uninstall();second.uninstall();pasteboard.items=previous }
+    var olderPublications=0
+    let publish=first.publishClipboard
+    first.publishClipboard={ value in olderPublications += 1;return publish(value) }
     model.selectElement(.page(pageID:pageID,elementID:"first"))
     first.copySelection(model,selection:model.selectionSession.id,cut:false)
     let older=try XCTUnwrap(first.clipboardTask)
     model.selectElement(.page(pageID:pageID,elementID:"second"))
     second.copySelection(model,selection:model.selectionSession.id,cut:false)
     let newer=try XCTUnwrap(second.clipboardTask)
-    XCTAssertTrue(older.isCancelled,"All windows share the system clipboard, not the menu instance")
     first.uninstall() // An old window cannot cancel the newer window's command.
     await newer.value;await older.value
+    XCTAssertEqual(olderPublications,0,"All windows share the system clipboard publication owner")
     XCTAssertEqual(try clipboardFragment().elements.map(\.id),["second"])
+  }
+
+  func testRapidCopiesJoinTheActualProducerAndOnlyTheLatestCutReservesAndPublishes() async throws {
+    let (model,pageID)=try await clipboardModel(),barrier=ExportBarrier()
+    let exports=NotebookClipboardExportOwner(encoder:{ try await barrier.encode($0) })
+    let menus=NotebookContextMenus(clipboardExports:exports),pasteboard=UIPasteboard.general,previous=pasteboard.items
+    defer { Task { await barrier.release() };menus.uninstall();pasteboard.items=previous }
+    model.selectElement(.page(pageID:pageID,elementID:"first"))
+    menus.copySelection(model,selection:model.selectionSession.id,cut:false)
+    await barrier.waitUntilStarted()
+    model.selectElement(.page(pageID:pageID,elementID:"second"))
+    for _ in 0..<1_000 { menus.copySelection(model,selection:model.selectionSession.id,cut:false) }
+    menus.copySelection(model,selection:model.selectionSession.id,cut:true)
+    let drain=try XCTUnwrap(menus.clipboardTask)
+    let before=await barrier.state()
+    XCTAssertEqual(before.encodes,1,"Waiting gestures must have no source/encoder worker")
+    XCTAssertTrue(before.firstLeaseAlive,"Cancellation retains the old source credit until its producer exits")
+    XCTAssertThrowsError(try model.beginClipboardWork(),"A second 192 MiB source cannot enter before the actual old producer joins")
+    await barrier.release()
+    await drain.value
+    let after=await barrier.state()
+    XCTAssertEqual(after.encodes,2,"Only the latest request reaches source preparation")
+    XCTAssertTrue(after.previousLeaseGoneBeforeNext,"The old source/result pins leave before the next reservation/encoder")
+    XCTAssertEqual(try clipboardFragment().elements.map(\.id),["second"])
+    let saved=await model.finishPendingPersistence();XCTAssertTrue(saved)
+    let page=try model.store.loadPage(pageID)
+    XCTAssertNotEqual(page.element(id:"first")?.graphic?.visible,false)
+    XCTAssertEqual(page.element(id:"second")?.graphic?.visible,false,"The accepted latest Cut completes independently of its menu task")
+  }
+
+  func testWaitingCopyRefusesAnEditedSourceBeforeTakingItsSnapshot() async throws {
+    let (model,pageID)=try await clipboardModel(),barrier=ExportBarrier()
+    let menus=NotebookContextMenus(clipboardExports:.init(encoder:{ try await barrier.encode($0) }))
+    let pasteboard=UIPasteboard.general,previous=pasteboard.items
+    defer { Task { await barrier.release() };menus.uninstall();pasteboard.items=previous }
+    let sentinel="queued-source-"+UUID().uuidString;pasteboard.string=sentinel
+    model.selectElement(.page(pageID:pageID,elementID:"first"))
+    menus.copySelection(model,selection:model.selectionSession.id,cut:false)
+    await barrier.waitUntilStarted()
+    model.selectElement(.page(pageID:pageID,elementID:"second"))
+    let selection=model.selectionSession.id
+    menus.copySelection(model,selection:selection,cut:false)
+    let drain=try XCTUnwrap(menus.clipboardTask)
+    var page=try model.store.loadPage(pageID)
+    let changed=page.elements.map { value in
+      value.id == "second" ? AgentElement(id:value.id,kind:value.kind,
+        frame:.init(x:600,y:220,width:100,height:80),source:value.source,html:value.html,graphic:value.graphic) : value
+    }
+    XCTAssertTrue(page.replaceElements(changed,actor:UUID()));try model.store.savePage(page)
+    await model.reloadExternalChanges()?.value
+    XCTAssertEqual(model.selectionSession.id,selection)
+    await barrier.release();await drain.value
+    let state=await barrier.state()
+    XCTAssertEqual(state.encodes,1,"The queued intent must not adopt the edited body after its join")
+    XCTAssertEqual(pasteboard.string,sentinel)
+    XCTAssertTrue(model.actionCue?.contains("Выделение изменилось") == true)
+  }
+
+  func testWaitingCopyPreservesItsSystemClipboardVersionAcrossTheJoin() async throws {
+    let (model,pageID)=try await clipboardModel(),barrier=ExportBarrier()
+    let menus=NotebookContextMenus(clipboardExports:.init(encoder:{ try await barrier.encode($0) }))
+    let pasteboard=UIPasteboard.general,previous=pasteboard.items
+    defer { Task { await barrier.release() };menus.uninstall();pasteboard.items=previous }
+    model.selectElement(.page(pageID:pageID,elementID:"first"))
+    menus.copySelection(model,selection:model.selectionSession.id,cut:false)
+    await barrier.waitUntilStarted()
+    model.selectElement(.page(pageID:pageID,elementID:"second"))
+    menus.copySelection(model,selection:model.selectionSession.id,cut:true)
+    let drain=try XCTUnwrap(menus.clipboardTask)
+    let external="external-copy-"+UUID().uuidString;pasteboard.string=external
+    await barrier.release();await drain.value
+    XCTAssertEqual(pasteboard.string,external)
+    XCTAssertNotEqual(try model.store.loadPage(pageID).element(id:"second")?.graphic?.visible,false)
+    let state=await barrier.state();XCTAssertEqual(state.encodes,1)
+  }
+
+  private actor ExportBarrier {
+    private var encodes=0
+    private var releaseProducer:CheckedContinuation<Void,Never>?
+    private var started:CheckedContinuation<Void,Never>?
+    private weak var firstLease:NotebookClipboardWorkLease?
+    private var previousLeaseGoneBeforeNext=false
+    func encode(_ material:NotebookSelectionExport) async throws -> NotebookClipboard.Export {
+      encodes += 1
+      if encodes == 1 {
+        firstLease=material.workLease
+        await withCheckedContinuation { continuation in
+          releaseProducer=continuation;started?.resume();started=nil
+        }
+      } else { previousLeaseGoneBeforeNext = firstLease == nil }
+      return try NotebookClipboard.prepareExport(material.prepare().fragment)
+    }
+    func waitUntilStarted() async {
+      if releaseProducer != nil { return }
+      await withCheckedContinuation { started=$0 }
+    }
+    func release() { releaseProducer?.resume();releaseProducer=nil }
+    func state() -> (encodes:Int,firstLeaseAlive:Bool,previousLeaseGoneBeforeNext:Bool) {
+      (encodes,firstLease != nil,previousLeaseGoneBeforeNext)
+    }
   }
 
   func testSystemClipboardChangeRevokesPendingCutWithoutDeletingTheSelection() async throws {
@@ -150,13 +291,13 @@ import XCTest
     await model.reloadExternalChanges()?.value
     model.selectElement(.page(pageID:page.id,elementID:element.id))
     XCTAssertTrue(model.canExportSelection)
-    var snapshot=try model.clipboardSelectionSnapshot()
+    var snapshot=try await model.clipboardSelectionSnapshot().materialized()
     XCTAssertTrue(model.selectionStillMatches(snapshot))
     model.endSurfaceEditing()
     XCTAssertEqual(model.selectionSession.id,snapshot.selectionID)
     XCTAssertFalse(model.selectionStillMatches(snapshot),"Ending editing revokes Cut even when context keeps the UUID")
     model.selectElement(.page(pageID:page.id,elementID:element.id))
-    snapshot=try model.clipboardSelectionSnapshot()
+    snapshot=try await model.clipboardSelectionSnapshot().materialized()
     model.interactiveElementFocus = .page(pageID:page.id,elementID:element.id)
     XCTAssertFalse(model.selectionStillMatches(snapshot),"An active editor owns its own text commands")
     model.interactiveElementFocus=nil
@@ -194,13 +335,13 @@ import XCTest
     await model.reloadExternalChanges()?.value
     model.selectElement(.page(pageID:page.id,elementID:whole.id))
     XCTAssertTrue(model.canExportSelection)
-    let copied=try model.clipboardSelectionSnapshot().prepare().fragment
+    let copied=try await model.clipboardSelectionSnapshot().materialized().prepare().fragment
     XCTAssertEqual(copied.elements.count,3)
     XCTAssertEqual(copied.elements[1].frame,child.frame)
     XCTAssertEqual(copied.elements[1].parentID,whole.id)
     XCTAssertEqual(copied.elements[2].source,text.source)
     model.selectElement(.page(pageID:page.id,elementID:child.id))
-    let memberSnapshot=try model.clipboardSelectionSnapshot()
+    let memberSnapshot=try await model.clipboardSelectionSnapshot().materialized()
     XCTAssertNotNil(memberSnapshot.sourceChecks[.page(pageID:page.id,elementID:whole.id)],
       "A late Cut also checks the ancestor that supplied the detached pose")
     let member=try memberSnapshot.prepare().fragment

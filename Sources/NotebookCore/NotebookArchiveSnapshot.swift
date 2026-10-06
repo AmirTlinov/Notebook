@@ -66,9 +66,9 @@ extension NotebookStore {
         try database.run("INSERT INTO metadata(key,value) VALUES(?,?)", [.text("peer_generation:" + sourcePeer.uuidString.lowercased()), .text((sourceGeneration ?? sourcePeer).uuidString.lowercased())])
         try database.run("INSERT INTO metadata(key,value) VALUES(?,?)", [.text("replication_snapshot:" + NotebookReplicationSource(deviceID: sourcePeer, generation: sourceGeneration ?? sourcePeer).cursorKey), .text(String(sourceCursor))])
       }
-      // A prepared copy starts another journal. Its cloud transport state is
-      // local to the old journal/account and must never be inherited as enabled.
-      for table in ["cloud_control", "cloud_accounts", "cloud_exports", "cloud_outbox", "cloud_uploaded", "cloud_inbox", "cloud_chunks"] {
+      // A copy starts another journal/process. Transport state and volatile
+      // accepted witnesses stay with their original live owner/output in RAM.
+      for table in ["cloud_control", "cloud_accounts", "cloud_exports", "cloud_outbox", "cloud_uploaded", "cloud_inbox", "cloud_chunks", "accepted_write_witnesses"] {
         if try !database.rows("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", [.text(table)]).isEmpty { try database.run("DELETE FROM \(table)") }
       }
       if !preservingLocalState {

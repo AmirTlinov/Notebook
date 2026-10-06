@@ -55,9 +55,12 @@ extension NotebookAppModel {
       dependencies: itemPlacementCommands.filter { ids.contains($0.key) && $0.value.boardID == boardID })
   }
 
-  func retireItemPlacementCommands(through cursor: UInt64) {
+  func retireItemPlacementCommands(in state: NotebookSceneState) {
     for (id, command) in itemPlacementCommands {
-      guard let accepted = command.accepted, accepted.cursor <= cursor else { continue }
+      guard let accepted = command.accepted, accepted.cursor <= state.header.cursor,
+        let expected = accepted.placements[id],
+        let current = state.hierarchy.board(command.boardID)?.placements.first(where: { $0.id == id }),
+        current.hasObserved(expected) else { continue }
       itemPlacementCommands[id] = nil
     }
   }

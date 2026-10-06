@@ -66,7 +66,7 @@ final class NotebookProgramImporter {
             let start = source.partPaths == nil ? offset : 0
             let url = URL(fileURLWithPath: source.partPaths?[index] ?? source.sourcePath!)
             let range = start..<(start + Int64(part.byteCount))
-            try await persistence.submit { store in
+            try await persistence.submit(writesStore: true) { store in
               try store.stageBlob(file: url, expectedHash: part.sha256, byteCount: Int64(part.byteCount), range: range)
             }
             offset = range.upperBound; job.stagedBytes += Int64(part.byteCount)
@@ -76,7 +76,7 @@ final class NotebookProgramImporter {
           }
         }
         try Task.checkCancellation()
-        let admitted = try await persistence.submit { try $0.stageProgramPackage(descriptor.package) }
+        let admitted = try await persistence.submit(writesStore: true) { try $0.stageProgramPackage(descriptor.package) }
         guard admitted == hash else { throw NotebookStorageError.blobHashMismatch }
         job.status = "ready"
       } catch is CancellationError { job.status = "cancelled" }
@@ -98,7 +98,7 @@ final class NotebookProgramImporter {
       guard !stopped else { throw CancellationError() }
       try Task.checkCancellation()
       let range = offset..<(offset+Int64(part.byteCount)), url = prepared.fileURL
-      try await persistence.submit { store in
+      try await persistence.submit(writesStore: true) { store in
         try store.stageBlob(file: url, expectedHash: part.sha256, byteCount: Int64(part.byteCount), range: range)
       }
       offset = range.upperBound

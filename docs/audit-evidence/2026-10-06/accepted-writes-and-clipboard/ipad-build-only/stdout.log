@@ -1,0 +1,132 @@
+error: the following command failed with exit code 0 but produced no further output
+SwiftCompile normal arm64 /Users/amir/.codex/worktrees/notebook-remediation-104/Notebook/Applications/Tests/DocumentProgramOverlayHostTests.swift (in target 'NotebookTests' from project 'Notebook' at path '/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook/Applications/Notebook.xcodeproj')
+/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook/Applications/Tests/DocumentProgramOverlayHostTests.swift:11:18: warning: 'init(frame:)' was deprecated in iOS 26.0: Use init(windowScene:) instead. [#DeprecatedDeclaration]
+  9 |   func testPassiveCutKeepsItsOwnAccountedPixelsAndReceiptObservesTheInstalledVersion() throws {
+ 10 |     let resources = SceneRenderResources(byteLimit: 16 * 1024 * 1024)
+ 11 |     let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 600, height: 800))
+    |                  `- warning: 'init(frame:)' was deprecated in iOS 26.0: Use init(windowScene:) instead. [#DeprecatedDeclaration]
+ 12 |     let root = UIViewController(); window.rootViewController = root; window.makeKeyAndVisible()
+ 13 |     defer { window.isHidden = true; window.rootViewController = nil }
+
+/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook/Applications/Tests/DocumentProgramOverlayHostTests.swift:109:18: warning: 'init(frame:)' was deprecated in iOS 26.0: Use init(windowScene:) instead. [#DeprecatedDeclaration]
+107 |   @MainActor
+108 |   func testFractionalCanonicalCutSurvivesUIKitFrameRoundTripButRejectsRealMovement() {
+109 |     let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 600, height: 800))
+    |                  `- warning: 'init(frame:)' was deprecated in iOS 26.0: Use init(windowScene:) instead. [#DeprecatedDeclaration]
+110 |     let root = UIViewController(); window.rootViewController = root; window.makeKeyAndVisible()
+111 |     defer { window.isHidden = true; window.rootViewController = nil }
+
+/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook/Applications/Tests/DocumentProgramOverlayHostTests.swift:194:18: warning: 'init(frame:)' was deprecated in iOS 26.0: Use init(windowScene:) instead. [#DeprecatedDeclaration]
+192 |   @MainActor
+193 |   func testParkingAndTransferPreserveOneWindowAttachedRuntimeAndReleaseIt() {
+194 |     let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 600, height: 800))
+    |                  `- warning: 'init(frame:)' was deprecated in iOS 26.0: Use init(windowScene:) instead. [#DeprecatedDeclaration]
+195 |     let root = UIViewController(); window.rootViewController = root; window.makeKeyAndVisible()
+196 |     defer { window.isHidden = true; window.rootViewController = nil }
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+error: the following command failed with exit code 0 but produced no further output
+SwiftCompile normal arm64 /Users/amir/.codex/worktrees/notebook-remediation-104/Notebook/Applications/Tests/NotebookFirstPresentationSchedulingTests.swift (in target 'NotebookTests' from project 'Notebook' at path '/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook/Applications/Notebook.xcodeproj')
+/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook/Applications/Tests/NotebookFirstPresentationSchedulingTests.swift:17:26: warning: 'coordinateSpace' was deprecated in iOS 26.0: Use effectiveGeometry.coordinateSpace instead. [#DeprecatedDeclaration]
+ 15 |     visible.forEach { $0.isHidden = true }
+ 16 |     let window = UIWindow(windowScene: scene)
+ 17 |     window.frame = scene.coordinateSpace.bounds
+    |                          `- warning: 'coordinateSpace' was deprecated in iOS 26.0: Use effectiveGeometry.coordinateSpace instead. [#DeprecatedDeclaration]
+ 18 |     let controller = UIViewController()
+ 19 |     controller.view.backgroundColor = .white
+
+/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook/Applications/Tests/NotebookFirstPresentationSchedulingTests.swift:55:81: warning: 'coordinateSpace' was deprecated in iOS 26.0: Use effectiveGeometry.coordinateSpace instead. [#DeprecatedDeclaration]
+ 53 |       policy.isEnabled = false; trace.stop()
+ 54 |       add(try trace.attachment(scenario: sceneBound ? "immediate-scene-control" : "immediate-view-control"))
+ 55 |       let context = "activation=\(scene.activationState.rawValue),scene=\(scene.coordinateSpace.bounds),window=\(window.frame),screen=\(scene.screen.bounds),key=\(window.isKeyWindow),visibleWindows=\(scene.windows.filter { !$0.isHidden }.count),lowPower=\(ProcessInfo.processInfo.isLowPowerModeEnabled),thermal=\(ProcessInfo.processInfo.thermalState.rawValue),requestBeforeEnabling=\(requestBeforeEnabling),requestAfterEnabling=\(requestAfterEnabling),requestAfterEnabledAssignment=\(requestAfterEnabledAssignment),requestBeforeDisabling=\(requestBeforeDisabling),requestedDuringUpdates=\(requestedDuringUpdates)"
+    |                                                                                 `- warning: 'coordinateSpace' was deprecated in iOS 26.0: Use effectiveGeometry.coordinateSpace instead. [#DeprecatedDeclaration]
+ 56 |       let attachment = XCTAttachment(string: context)
+ 57 |       attachment.name = sceneBound ? "immediate-scene-context" : "immediate-view-context"
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook/Applications/Tests/AgentSceneFingerRoutingTests.swift:144:140: warning: string interpolation produces a debug description for an optional value; did you mean to make this explicit?
+142 |       if !predicate() {
+143 |         let state = try await web.evaluateJavaScript("JSON.stringify({active:document.activeElement?.id,documentFocused:document.hasFocus(),fieldFocused:document.getElementById('field')?.matches(':focus'),hash:location.hash,inlineStyle:document.getElementById('target').style.cssText,touchAction:getComputedStyle(document.getElementById('target')).touchAction,rect:document.getElementById('target').getBoundingClientRect().toJSON()})")
+144 |         XCTFail("Finger map after \(lastMutation): native=\(coordinator.fingerInput(at: .init(x: 160, y: 30), in: web.bounds.size)), DOM=\(state)", file: file, line: line)
+    |                                                                                                                                            |- warning: string interpolation produces a debug description for an optional value; did you mean to make this explicit?
+    |                                                                                                                                            |- note: use a default value parameter to avoid this warning
+    |                                                                                                                                            |- note: provide a default value to avoid this warning
+    |                                                                                                                                            `- note: use 'String(describing:)' to silence this warning
+145 |       }
+146 |     }
+
+/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook/Applications/Tests/AgentSceneFingerRoutingTests.swift:164:97: warning: string interpolation produces a debug description for an optional value; did you mean to make this explicit?
+162 |       guard actual as? String == expected else {
+163 |         let state = try await web.evaluateJavaScript("JSON.stringify({active:document.activeElement?.id,documentFocused:document.hasFocus(),fieldFocused:document.getElementById('field')?.matches(':focus'),focusRule:target.matches('body:has(#field:focus) #target'),targetRule:target.matches('#target:target'),hash:location.hash,inlineStyle:target.style.cssText})")
+164 |         XCTFail("Authored CSS after \(lastMutation): expected touchAction=\(expected), actual=\(actual), DOM=\(state)", file: file, line: line)
+    |                                                                                                 |- warning: string interpolation produces a debug description for an optional value; did you mean to make this explicit?
+    |                                                                                                 |- note: use a default value parameter to avoid this warning
+    |                                                                                                 |- note: provide a default value to avoid this warning
+    |                                                                                                 `- note: use 'String(describing:)' to silence this warning
+165 |         return false
+166 |       }
+
+/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook/Applications/Tests/AgentSceneFingerRoutingTests.swift:164:112: warning: string interpolation produces a debug description for an optional value; did you mean to make this explicit?
+162 |       guard actual as? String == expected else {
+163 |         let state = try await web.evaluateJavaScript("JSON.stringify({active:document.activeElement?.id,documentFocused:document.hasFocus(),fieldFocused:document.getElementById('field')?.matches(':focus'),focusRule:target.matches('body:has(#field:focus) #target'),targetRule:target.matches('#target:target'),hash:location.hash,inlineStyle:target.style.cssText})")
+164 |         XCTFail("Authored CSS after \(lastMutation): expected touchAction=\(expected), actual=\(actual), DOM=\(state)", file: file, line: line)
+    |                                                                                                                |- warning: string interpolation produces a debug description for an optional value; did you mean to make this explicit?
+    |                                                                                                                |- note: use a default value parameter to avoid this warning
+    |                                                                                                                |- note: provide a default value to avoid this warning
+    |                                                                                                                `- note: use 'String(describing:)' to silence this warning
+165 |         return false
+166 |       }
+/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook/Applications/Tests/NotebookSceneSelectionTests.swift:56:18: warning: 'init(frame:)' was deprecated in iOS 26.0: Use init(windowScene:) instead. [#DeprecatedDeclaration]
+ 54 | 
+ 55 |   func testKeyboardLayoutShiftIsNotFingerMotion() {
+ 56 |     let window = UIWindow(frame:.init(x:0,y:0,width:600,height:800)), anchor = UIView(frame:.init(x:0,y:0,width:600,height:800))
+    |                  `- warning: 'init(frame:)' was deprecated in iOS 26.0: Use init(windowScene:) instead. [#DeprecatedDeclaration]
+ 57 |     window.addSubview(anchor)
+ 58 |     let recognizer = SceneSelectionRecognizer(), gate = NotebookInputGate()
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+error: the following command failed with exit code 0 but produced no further output
+SwiftCompile normal arm64 /Users/amir/.codex/worktrees/notebook-remediation-104/Notebook/Applications/Tests/NotebookPageMotionUXTests.swift (in target 'NotebookTests' from project 'Notebook' at path '/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook/Applications/Notebook.xcodeproj')
+/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook/Applications/Tests/NotebookPageMotionUXTests.swift:952:42: warning: 'weak' ownership of capture 'controller' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+ 949 |       controller.update(ownerID:owner,sequenceRevision:"motion",pageCount:3,selectedIndex:selected,
+ 950 |         navigationIsEnabled:true,pageIsInteractive:true,canBeginNavigation:{true},
+ 951 |         page:{ index,_,ready in
+     |              |- note: 'controller' implicitly strongly captured here
+     |              `- note: add 'controller' as a capture list item to silence
+ 952 |           ready.setFrameProvider { [weak controller] _ in
+     |                                          |- warning: 'weak' ownership of capture 'controller' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+     |                                          `- note: explicitly assign the capture list item to silence
+ 953 |             try await PageTurnFrameFixture.artwork(index: index, size: controller?.view.bounds.size ?? .init(width: 834, height: 1194))
+ 954 |           }; ready(true)
+
+[#ImplicitStrongCapture]: <https://docs.swift.org/compiler/documentation/diagnostics/implicit-strong-capture>
+/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook/Applications/Tests/NotebookDocumentStatePersistenceTests.swift:82:14: warning: weak variable 'retainedTransfer' was never mutated; consider changing to 'let' constant [#VariableNeverMutated::WeakMutability]
+ 80 |     defer { pressure.release() }
+ 81 |     var transfer: NotebookProgramStateTransfer? = NotebookProgramStateTransfer(resources: resources)
+ 82 |     weak var retainedTransfer = transfer
+    |              `- warning: weak variable 'retainedTransfer' was never mutated; consider changing to 'let' constant [#VariableNeverMutated::WeakMutability]
+ 83 |     let baseline = resources.rasterAdmission.heldBytes
+ 84 |     let initialCredit = try XCTUnwrap(transfer).initialCredit
+
+/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook/Applications/Tests/NotebookDrawingToolsTests.swift:1440:20: warning: 'init(frame:)' was deprecated in iOS 26.0: Use init(windowScene:) instead. [#DeprecatedDeclaration]
+1438 |   func testLassoFeedbackStaysAboveCoversAndReleasesItsWindowLayer() async throws {
+1439 |     try await fixture { model in
+1440 |       let window = UIWindow(frame:.init(x:0,y:0,width:600,height:800))
+     |                    `- warning: 'init(frame:)' was deprecated in iOS 26.0: Use init(windowScene:) instead. [#DeprecatedDeclaration]
+1441 |       let ink = UIView(frame:.init(x:20,y:40,width:500,height:700))
+1442 |       window.addSubview(ink)
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[#VariableNeverMutated]: <https://docs.swift.org/compiler/documentation/diagnostics/variable-never-mutated>
+[#WeakMutability]: <https://docs.swift.org/compiler/documentation/diagnostics/weak-mutability>
+/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook/Applications/TestSupport/ProgramStateTransferTests.swift:257:14: warning: weak variable 'retained' was never mutated; consider changing to 'let' constant [#VariableNeverMutated::WeakMutability]
+255 |     let resources = SceneRenderResources()
+256 |     var owner: NotebookProgramStateTransfer? = NotebookProgramStateTransfer(resources: resources)
+257 |     weak var retained = owner
+    |              `- warning: weak variable 'retained' was never mutated; consider changing to 'let' constant [#VariableNeverMutated::WeakMutability]
+258 |     let payload = String(repeating: "x", count: 5 * 1_024 * 1_024)
+259 |     let jsons = (1...3).map { "\"\($0)" + payload + "\"" }
+
+[#VariableNeverMutated]: <https://docs.swift.org/compiler/documentation/diagnostics/variable-never-mutated>
+[#WeakMutability]: <https://docs.swift.org/compiler/documentation/diagnostics/weak-mutability>
+note: Using codesigning identity override: Apple Development

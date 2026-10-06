@@ -109,7 +109,7 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
       let container = try container(), current = try await currentAccount(container)
       guard epoch == token else { return }
       guard current == expected else { throw NotebookAccountError.changed }
-      try await writer.submit { [source] store in
+      try await writer.submit(writesStore: true) { [source] store in
         let bound = try store.cloudConfiguration().account
         guard bound == nil || bound == expected else { throw NotebookAccountError.changed }
         try store.enableCloud(account: current, source: source)
@@ -130,7 +130,7 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
       let container = try container(), current = try await currentAccount(container)
       guard epoch == token else { return }
       guard current == bound else {
-        try await writer.submit { try $0.disableCloud(account: bound) }
+        try await writer.submit(writesStore: true) { try $0.disableCloud(account: bound) }
         guard epoch == token else { return }
         await stop()
         await report(.init(enabled: false, message: "Apple Account изменился. Для отправки этой тетради новому аккаунту откройте пространство этого аккаунта.")); return
@@ -181,7 +181,7 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
     let token = await stopEngine()
     guard epoch == token else { return }
     do {
-      try await writer.submit { try $0.disableCloud() }
+      try await writer.submit(writesStore: true) { try $0.disableCloud() }
       guard epoch == token else { return }
       await report(.off)
       if let observer = accountObserver {
@@ -243,7 +243,7 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
           defer { try? FileManager.default.removeItem(at: file) }
           try await Task.detached(priority: .utility) { [store] in try store.assembleCloudBlob(blob, account: account, file: file) }.value
           guard epoch == token else { return }
-          try await writer.submit { try $0.installCloudBlob(blob, account: account, file: file) }
+          try await writer.submit(writesStore: true) { try $0.installCloudBlob(blob, account: account, file: file) }
         }
         var progressed = true
         while progressed {
@@ -275,7 +275,7 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
           }
           if let plan {
             do {
-              if try await writer.submit({ try $0.beginCloudUpload(plan, account: account) }) { preparation = plan.id }
+              if try await writer.submit(writesStore: true, { try $0.beginCloudUpload(plan, account: account) }) { preparation = plan.id }
               else { try? await uploadReader.discard(plan.id) }
             } catch {
               try? await uploadReader.discard(plan.id)
@@ -290,7 +290,7 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
               try await uploadReader.discard(preparation); break
             }
             guard epoch == token else { return }
-            let complete = try await writer.submit { try $0.installCloudUploadBatch(batch, account: account) }
+            let complete = try await writer.submit(writesStore: true) { try $0.installCloudUploadBatch(batch, account: account) }
             if complete { try await uploadReader.discard(preparation); break }
             // Each transaction ends before the next FIFO admission. Accepted
             // Pencil/program writes can pass while an initial export is built.
@@ -364,7 +364,7 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
       case .stateUpdate(let value):
         guard contentEnabled else { return }
         let data = try Self.encode(value.stateSerialization)
-        try await writer.submit { try $0.saveCloudEngineState(data, account: account) }
+        try await writer.submit(writesStore: true) { try $0.saveCloudEngineState(data, account: account) }
       case .accountChange(let value):
         switch value.changeType {
         case .signIn(let user) where user.recordName == account: break
@@ -386,8 +386,8 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
         for modification in value.modifications where modification.record.recordID.zoneID == zoneID {
           guard syncEngine === engine else { return }
           let (record, data) = try Self.decode(modification.record)
-          if let delivery = record.delivery { try await writer.submit { [source] in try $0.stageCloudDelivery(delivery, account: account, localSource: source) } }
-          else if let data { try await writer.submit { try $0.stageCloudChunk(record, data: data, account: account) } }
+          if let delivery = record.delivery { try await writer.submit(writesStore: true) { [source] in try $0.stageCloudDelivery(delivery, account: account, localSource: source) } }
+          else if let data { try await writer.submit(writesStore: true) { try $0.stageCloudChunk(record, data: data, account: account) } }
         }
         // Returning from this event is the fetch checkpoint boundary. Every
         // asset and envelope is durable before a later stateUpdate is saved.
@@ -410,7 +410,7 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
           }
         }
         for ids in stride(from: 0, to: accepted.count, by: 16).map({ Array(accepted[$0..<min($0 + 16, accepted.count)]) }) {
-          try await writer.submit { try $0.acknowledgeCloudRecords(ids, account: account) }
+          try await writer.submit(writesStore: true) { try $0.acknowledgeCloudRecords(ids, account: account) }
         }
         if value.failedRecordSaves.isEmpty, !accepted.isEmpty { hasFailure = false }
         for id in accepted { if let file = assets.removeValue(forKey: id) { try? FileManager.default.removeItem(at: file) } }
@@ -433,7 +433,7 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
     let bound = account
     stopFromDelegate()
     let token = epoch
-    do { try await writer.submit { try $0.disableCloud(account: bound) } }
+    do { try await writer.submit(writesStore: true) { try $0.disableCloud(account: bound) } }
     catch { await reportFailure(error) }
     guard epoch == token else { return }
     await report(.init(enabled: false, message: "iCloud недоступен или аккаунт изменился. Материалы сохранены на устройстве."))

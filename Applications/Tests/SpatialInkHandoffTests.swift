@@ -569,6 +569,11 @@ final class SpatialInkHandoffTests: XCTestCase {
     XCTAssertEqual(canvas.bounds, bounds)
     XCTAssertTrue(fixture.canvas.inkView === canvas)
     XCTAssertEqual(try XCTUnwrap(canvas.installedSpatialSource).referenceInk(), source)
+    let replacement = try await fixture.prepareResize(viewport: .init(x: bounds.width, y: bounds.height))
+    withExtendedLifetime(candidate) {
+      XCTAssertFalse(replacement.isInstalled,
+        "Rejecting the still-retained old lease must release its staging slot for the next candidate")
+    }
   }
 
   func testEmptyReadinessCannotArriveAfterTheNativeOwnerHasStopped() async throws {
@@ -968,7 +973,7 @@ final class SpatialInkHandoffTests: XCTestCase {
       window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
       window.rootViewController = host; host.view.addSubview(canvas); host.view.addSubview(passive); window.makeKeyAndVisible()
       passive.frame = .init(x: viewport.x / 2 - 120, y: viewport.y / 2 - 120, width: 240, height: 240)
-      coordinator = .init(surfaceRegistry: registry, inputGate: gate) { [weak self] tool, color, spans, _ in self?.accept(tool, color, spans) }
+      coordinator = .init(surfaceRegistry: registry, inputGate: gate, reserveAction: { _ in true }) { [weak self] tool, color, spans, _ in self?.accept(tool, color, spans) }
     }
     func mountActive(_ id: UUID) throws {
       coordinator.uninstall(); physical?.close(); currentID = id

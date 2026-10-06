@@ -32,7 +32,12 @@ final class SpatialInkSceneLease {
         update.owner.canvas.spatialSourceGeneration == update.generation
           && !registry.hasActiveAction(on: update.owner.surface) && !registry.hasContact(on: update.owner.surface)
           && (update.frame?.isValid ?? true)
-      }) else { throw CancellationError() }
+      }) else {
+      // A superseded source/preparation cannot keep a staging slot. Revocation
+      // retains submitted buffers and drawables until their GPU completion.
+      for update in updates { update.frame?.cancel() }
+      throw CancellationError()
+    }
     guard updates.allSatisfy({ update in
         // Native motion can reverse while the private GPU candidate prepares.
         // Keep the shown crop until a candidate covers the current destination;

@@ -18,6 +18,37 @@ struct NotebookReplicationTests {
     return try destination.applyRemoteChange(change, peerID: peer)
   }
 
+  @Test func embeddedNulKeepsTheWholeAuthoredSourceSearchAndReplica() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("nul-replication-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let a = NotebookStore(root: root.appendingPathComponent("a"))
+    let b = NotebookStore(root: root.appendingPathComponent("b")), actor = UUID()
+    let header = try a.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
+    let page = try #require(try a.loadIndex().selectedPageID), target = CollaborationTarget(kind: .page, id: page)
+    let source = "Начало\u{0}проверка\u{0}尾🖋️"
+    _ = try a.applyCollaborationAction(.init(summary: "Источник с NUL", expected: [
+      .init(target: target, revision: a.targetContentRevision(target: target))], operations: [
+      .init(kind: .insertElement, target: target, id: "nul-source", values: [
+        "kind": .string("markdown"), "source": .string(source), "html": .string(""),
+        "frame": try .encode(PageRect(x: 20, y: 20, width: 200, height: 120))])]), actor: actor)
+    try b.prepareEmptyWorkspace(workspaceID: header.workspaceID)
+    for change in try a.changeJournal(after: 0) {
+      _ = try transfer(change, from: a, to: b, peer: actor)
+      let cursor = try b.currentChangeCursor()
+      _ = try transfer(change, from: a, to: b, peer: actor)
+      #expect(try b.currentChangeCursor() == cursor)
+    }
+    for store in [NotebookStore(root: a.root), NotebookStore(root: b.root)] {
+      let authored = try #require(try store.readPageElement(pageID: page, elementID: "nul-source"))
+      #expect(Data(authored.source.utf8) == Data(source.utf8))
+      for query in ["проверка", "尾"] {
+        let hit = try #require(try store.search(query).results.first(where: { $0.elementID == authored.id }))
+        #expect(hit.target == target && hit.preview == source)
+        #expect(try hit.reference.revision == store.referenceRevision(target: target, elementID: authored.id))
+      }
+    }
+  }
+
   @Test func polygonCornersSurviveAddressedDeliveryEchoAndRestart() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at:root) }

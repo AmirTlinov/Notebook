@@ -106,12 +106,14 @@ extension NotebookStore {
   /// activity release can follow it in the FIFO; that release (or a subsequent
   /// local contact) cannot veto accepted content. Peer contacts still hold it.
   @discardableResult
-  public func applyNativeAction(_ action: CollaborationAction, actor: UUID, requestFingerprint: String? = nil) throws -> CollaborationReceipt {
+  public func applyNativeAction(_ action: CollaborationAction, actor: UUID, requestFingerprint: String? = nil,
+    programResources: NotebookProgramTransfer.Prepared? = nil) throws -> CollaborationReceipt {
     guard action.operations.allSatisfy({ [.insertElement, .updateElement, .removeElement,
       .appendInkStroke, .convertInkToElement, .reorderElements, .moveItem, .stackItems, .deleteItem].contains($0.kind) }) else {
       throw invalid("Нативная правка содержит штрихи, элементы, расположение или удаление предметов.")
     }
-    return try applyCollaborationActionImmediately(action, actor: actor, requestFingerprint: requestFingerprint, human: true, nativeInputOwner: actor)
+    return try applyCollaborationActionImmediately(action, actor: actor, requestFingerprint: requestFingerprint,
+      human: true, nativeInputOwner: actor, programResources: programResources)
   }
 
   /// The next native edit is admitted against the exact element saved by its
@@ -134,13 +136,23 @@ extension NotebookStore {
 
   /// Internal native owners perform their field-level CAS before entering this
   /// same executor. Only the public agent entry point accepts agent authorship.
-  func applyCollaborationActionImmediately(_ action: CollaborationAction, actor: UUID, requestFingerprint: String?, human: Bool, nativeInputOwner: UUID? = nil, repeating originalID: UUID? = nil) throws -> CollaborationReceipt {
+  func applyCollaborationActionImmediately(_ action: CollaborationAction, actor: UUID, requestFingerprint: String?, human: Bool,
+    nativeInputOwner: UUID? = nil, repeating originalID: UUID? = nil,
+    programResources: NotebookProgramTransfer.Prepared? = nil) throws -> CollaborationReceipt {
+    if let programResources {
+      guard human else { throw invalid("Перенос ресурсов принадлежит нативной вставке.") }
+      try programResources.validate(operations: action.operations)
+    }
     try prepare()
     return try commandTransaction(readAllowance: human ? .nativeCommand : .agentCommand) {
       if try hasStoredValue(actionFile(action.id)) {
         let previous = try loadAction(action.id)
         guard requestFingerprint.map({ previous.requestFingerprint == $0 }) ?? (previous.action == action) else {
           throw CollaborationError("action_id_conflict", "Этот ID уже принадлежит другому ходу.")
+        }
+        if let programResources {
+          guard previous.author == .human else { throw CollaborationError("action_id_conflict", "Этот ID уже принадлежит другому ходу.") }
+          try programResources.validate(operations: previous.action.operations)
         }
         return previous
       }
@@ -163,6 +175,7 @@ extension NotebookStore {
       try requireIdleInput(for: heldTargets, excludingDevice: nativeInputOwner)
       let scopeReferences = contextReferences ?? action.references
       try validateCollaborationExpectations(action, projection: before)
+      try programResources?.stage(in: self)
       let hasLifecycle = action.operations.contains(where: \.isLifecycle)
       var initialItems: [UUID: NotebookItemHeader] = [:]
       if hasLifecycle {

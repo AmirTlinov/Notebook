@@ -7,6 +7,30 @@ private enum SQLTestFault: Error { case injected }
 
 @Suite("SQLite owns atomic addressed publication")
 struct NotebookSQLiteTests {
+  @Test func cachedStatementsReleaseTheirCopiedPayloadAtCompletionAndReadRefusal() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("sql-payload-lifetime-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let database = try NotebookSQLConnection(url: root.appendingPathComponent("test.sqlite"), writable: true, create: true)
+    let payload = Data(repeating: 37, count: 1_048_576), text = String(repeating: "x", count: 1_048_576)
+    try database.run("CREATE TABLE payloads(value BLOB)")
+    try database.run("INSERT INTO payloads(value) VALUES(?)", [.blob(payload)])
+    let row = try #require(database.rows("SELECT ?,?", [.blob(payload), .text(text)]).first)
+    #expect(row[0].blob == payload && row[1].text == text)
+    #expect(throws: SQLTestFault.self) {
+      try database.forEachRow("SELECT ? AS interrupted", [.blob(payload)]) { _ in throw SQLTestFault.injected }
+    }
+    var statement = sqlite3_next_stmt(database.handle, nil), inspected = 0
+    while let cached = statement {
+      // The actual SQLite statement allocation includes its transient bindings.
+      // Several idle statement shapes must not retain separate one-MiB payloads.
+      #expect(sqlite3_stmt_status(cached, SQLITE_STMTSTATUS_MEMUSED, 0) < 16_384)
+      inspected += 1; statement = sqlite3_next_stmt(database.handle, cached)
+    }
+    #expect(inspected >= 3)
+    #expect(try database.rows("SELECT value FROM payloads").first?[0].blob == payload)
+  }
+
   @Test func textBindingAndRowsPreserveEmbeddedNULAndUnicode() throws {
     try fixture { store, _ in
       try store.readTransaction { _ in
@@ -21,6 +45,16 @@ struct NotebookSQLiteTests {
       let file = "local/nul-source.json", source = "до\u{0}после 🖋️"
       try store.publishRecords(writes: [file: .object(["source": .string(source)])])
       #expect(try JSONDecoder().decode(JSONValue.self, from: store.storedData(file))["source"]?.string == source)
+      let cursor = try store.currentChangeCursor(), readCursor = try store.currentReadCursor()
+      let invalid = "local/invalid-source.json"
+      #expect(throws: NotebookStorageError.corruptRecord("sql_text_utf8")) {
+        try store.commandTransaction {
+          try store.publishRecords(writes: [invalid: .object(["source": .string("must roll back")])])
+          _ = try store.currentSQL!.rows("SELECT CAST(x'FF' AS TEXT)")
+        }
+      }
+      #expect(try store.sqlRead { try $0.rows("SELECT address FROM records WHERE file=?", [.text(invalid)]).isEmpty })
+      #expect(try store.currentChangeCursor() == cursor && store.currentReadCursor() == readCursor)
     }
   }
 

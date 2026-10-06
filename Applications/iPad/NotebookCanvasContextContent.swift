@@ -5,6 +5,8 @@ import SwiftUI
 struct NotebookCanvasContextContent: View {
   @Environment(NotebookAppModel.self) private var model
   let dismiss: () -> Void
+  let contextMenus: NotebookContextMenus
+  let presentationIntent: NotebookContextMenus.PresentationIntent
   let destination: NotebookPasteDestination?
   let create: ((WorkspaceItemKind,DocumentTemplate) -> Void)?
   let back: (() -> Void)?
@@ -12,7 +14,10 @@ struct NotebookCanvasContextContent: View {
 
   var body: some View {
     VStack(alignment:.leading,spacing:4) {
-      if let destination { NotebookActionsContent(destination:destination,onClose:dismiss) }
+      if let destination {
+        NotebookActionsContent(destination:destination,contextMenus:contextMenus,
+          presentationIntent:presentationIntent,onClose:dismiss)
+      }
       if let create {
         row("Тетрадь",symbol:"book.closed") { create(.notebook,.article) }.accessibilityIdentifier("context-create-notebook")
         row("Доска",symbol:"folder") { create(.board,.article) }.accessibilityIdentifier("create-nested-board")

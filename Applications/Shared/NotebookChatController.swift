@@ -156,7 +156,7 @@ final class NotebookChatController {
     guard !loaded else { return }
     do {
       let author = author
-      let state = try await persistence.submit { store in try store.prepareChatComputers(author: author); return try store.chatPanel(author: author) }
+      let state = try await persistence.submit(writesStore: true) { store in try store.prepareChatComputers(author: author); return try store.chatPanel(author: author) }
       threadID = state.threadID; draft = state.draft; attachments = state.attachments ?? []; readPosition = state.readPosition; peer = state.sidecarID
       creationID = state.creationID; browsesChats = state.browsesChats ?? (threadID == nil && creationID == nil)
       dictationReceipt = state.dictationReceipt
@@ -279,7 +279,7 @@ final class NotebookChatController {
     connected = false; cancelQueries(); await files.suspendForComputerSwitch()
     do {
       let author = author
-      let restored = try await persistence.submit { store in
+      let restored = try await persistence.submit(writesStore: true) { store in
         do { return try store.selectChatComputer(id, author: author) }
         catch {
           guard try store.activeChatComputer(author: author) == id else { throw error }
@@ -651,7 +651,7 @@ final class NotebookChatController {
     let input = savingInput ?? NotebookChatInput(id: controlID ?? UUID(), author: author, action: action, attentionContextID: attentionContextID, attachments: attachments)
     savingInput = input; savingFirstMessage = firstMessage
     do {
-      _ = try await persistence.submit { try $0.saveChatSubmission(input, to: computer, firstMessage: firstMessage) }
+      _ = try await persistence.submit(writesStore: true) { try $0.saveChatSubmission(input, to: computer, firstMessage: firstMessage) }
       try await refreshJobs(); savingInput = nil; savingFirstMessage = nil; error = nil
       wake.continuation.yield(())
       if action.isInteractiveControl, connected, computer == peer,
@@ -705,7 +705,7 @@ final class NotebookChatController {
     insertingDictation = true
     defer { insertingDictation = false; persistPanel() }
     let author = author
-    let state = try await persistence.submit { try $0.insertChatDictation(text, id: id, thread: thread, computer: computer, author: author) }
+    let state = try await persistence.submit(writesStore: true) { try $0.insertChatDictation(text, id: id, thread: thread, computer: computer, author: author) }
     dictationReceipt = state.dictationReceipt; draft = state.draft
   }
   func hasSavedDictation(_ id: UUID, thread: String, computer: UUID, text: String) async throws -> Bool {
@@ -720,7 +720,7 @@ final class NotebookChatController {
     let computer = peer
     do {
       guard case .job(let job) = try await directQuery(.stopWaiting(id)), peer == computer else { return }
-      _ = try await persistence.submit { try $0.receiveChatReceipt(job) }
+      _ = try await persistence.submit(writesStore: true) { try $0.receiveChatReceipt(job) }
       try await refreshJobs(); error = job.error
     } catch { self.error = error.localizedDescription }
   }
@@ -753,7 +753,7 @@ final class NotebookChatController {
     let existing = try await persistence.submit { try $0.chatJob(id) }
     if let existing, existing.input.action != action { throw NotebookTransportError.invalidAcknowledgement }
     let input = existing?.input ?? NotebookChatInput(id: id, author: author, action: action)
-    do { _ = try await persistence.submit { try $0.saveChatInput(input, to: computer) } }
+    do { _ = try await persistence.submit(writesStore: true) { try $0.saveChatInput(input, to: computer) } }
     catch {
       guard try await persistence.submit({ try $0.chatJob(input.id)?.input == input && $0.chatDestination(input.id) == computer }) else { throw error }
     }
@@ -990,7 +990,7 @@ final class NotebookChatController {
     case (.job(let input), .job(let job)):
       guard input == job.input else { throw NotebookTransportError.invalidAcknowledgement }
       let previousRevision = jobs.first(where: { $0.id == input.id })?.revision ?? -1
-      let received = try await persistence.submit { try $0.receiveChatReceipt(job) }
+      let received = try await persistence.submit(writesStore: true) { try $0.receiveChatReceipt(job) }
       let destination = try await persistence.submit { try $0.chatDestination(input.id) }
       guard destination == peer else { return }
       offeredJobs.insert(input.id)

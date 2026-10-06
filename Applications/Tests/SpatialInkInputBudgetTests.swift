@@ -38,7 +38,7 @@ final class SpatialInkInputBudgetTests: XCTestCase {
     let gate = NotebookInputGate(), host = BudgetInputHost()
     let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
     let mount = SpatialInkContainerView(frame: .init(x: 0, y: 0, width: oldViewport.x, height: oldViewport.y))
-    let coordinator = SpatialInkCanvas.Coordinator(surfaceRegistry: tiles.surfaceRegistry, inputGate: gate) { tool, color, spans, _ in
+    let coordinator = SpatialInkCanvas.Coordinator(surfaceRegistry: tiles.surfaceRegistry, inputGate: gate, reserveAction: { _ in true }) { tool, color, spans, _ in
       accepted.append(tool: tool, color: color, spans: spans)
     }
     addTeardownBlock { @MainActor [weak coordinator] in
@@ -164,7 +164,7 @@ final class SpatialInkInputBudgetTests: XCTestCase {
     let gate = NotebookInputGate(), host = BudgetInputHost()
     let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
     let mount = SpatialInkContainerView(frame: .init(x: 0, y: 0, width: viewport.x, height: viewport.y))
-    let coordinator = SpatialInkCanvas.Coordinator(surfaceRegistry: tiles.surfaceRegistry, inputGate: gate) { tool, color, spans, _ in
+    let coordinator = SpatialInkCanvas.Coordinator(surfaceRegistry: tiles.surfaceRegistry, inputGate: gate, reserveAction: { _ in true }) { tool, color, spans, _ in
       accepted.append(tool: tool, color: color, spans: spans)
     }
     let pressure = BudgetPinnedRasters()

@@ -250,6 +250,9 @@ extension NotebookAppModel {
   /// Both ready and still-preparing regions reserve the same causal writer at
   /// acceptance. The typed material becomes visible before its JSON is built.
   private func acceptRegionCommand(_ region:NotebookRegionSelection,change:RegionChange,summary:String)->Bool {
+    guard let reservation=reserveElementPreparation() else { return false }
+    var transferred=false
+    defer { if !transferred { releaseElementPreparation(reservation) } }
     let ready:NotebookRegionMaterialization?
     do {
       if region.materialization != nil {
@@ -284,13 +287,23 @@ extension NotebookAppModel {
       let encoding=Task.detached(priority:.userInitiated) { try material.encodedEdits() }
       let edits=try await withTaskCancellationHandler { try await encoding.value } onCancel:{ encoding.cancel() }
       try Task.checkCancellation()
-      guard let self,let plan=prepareElementOperations(edits,summary:summary,
+      guard let self,var plan=prepareElementOperations(edits,summary:summary,
         readSources:Array(material.sources.keys),insertionTarget:source.address.target,
         expectedInkRevision:source.expectedInkRevision,previews:false,
         frozenSources:material.commandSources(at:source.address),frozenDependencies:material.dependencies) else { throw staleRegion() }
+      plan.working=material.working
       return plan
     }
-    enqueueElementCommand(target:region.address.target,preparing:plan,batch:batch)
+    guard enqueueElementCommand(target:region.address.target,preparing:plan,batch:batch,reservation:reservation) != nil else {
+      plan.cancel();admitted.cancel();resolved.cancel()
+      Task { [self] in
+        _ = await plan.result;_ = await admitted.result;_ = await resolved.result
+        releaseElementPreparation(reservation)
+      }
+      transferred=true
+      return false
+    }
+    transferred=true
     if let ready { admitRegionMaterial(ready,batch:batch) }
     let admission=Task { [weak self] in
       _ = try? await admitted.value

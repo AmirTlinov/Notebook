@@ -1,37 +1,63 @@
+#if os(iOS)
 import SwiftUI
 import NotebookCore
 
-/// Opening actions does not read the clipboard. The system paste gesture below
-/// captures a physical owner; content chooses its decoder, not the UI.
+/// Opening actions captures a context. Its paste gesture shares the workspace
+/// menu owner with selection/canvas menus and retains its physical destination.
 struct NotebookActionsMenu: View {
   let destination: NotebookPasteDestination
   @Environment(NotebookAppModel.self) private var model
-  @State private var openedDestination: NotebookPasteDestination?
+  @Environment(\.notebookContextMenus) private var contextMenus
+  @State private var opened: Opened?
+  private struct Opened: Identifiable {
+    let destination: NotebookPasteDestination
+    let intent: NotebookContextMenus.PresentationIntent
+    var id: UUID { intent.id }
+  }
+  private var opening: Binding<Opened?> {
+    .init(get: { opened }, set: { value in
+      if let previous=opened,previous.id != value?.id {
+        contextMenus?.finishContentPresentation(previous.intent)
+      }
+      opened=value
+    })
+  }
 
   var body: some View {
-    Button { openedDestination = destination } label: {
+    Button {
+      guard let contextMenus else { return }
+      opened = .init(destination:destination,intent:contextMenus.beginContentPresentation(in:model))
+    } label: {
       Image(systemName: "wrench")
         .font(NotebookChrome.iconFont)
         .frame(width: NotebookChrome.controlSize, height: NotebookChrome.controlSize)
         .background {
-          Circle().fill(openedDestination == nil ? Color.clear : NotebookChrome.selectionSurface)
-            .padding(5)
+          Circle().fill(opened == nil ? Color.clear : NotebookChrome.selectionSurface).padding(5)
         }
         .contentShape(Rectangle())
     }
-    .buttonStyle(.plain).foregroundStyle(.primary)
+    .buttonStyle(.plain).foregroundStyle(.primary).disabled(contextMenus == nil)
     .accessibilityLabel("Действия").accessibilityIdentifier("notebook-actions-open")
-    .popover(item: $openedDestination, arrowEdge: .top) { captured in
-      NotebookActionsContent(destination: captured)
-        .environment(model)
-        .presentationCompactAdaptation(.popover)
-        .presentationBackground(NotebookChrome.surface)
+    .popover(item: opening, arrowEdge: .top) { captured in
+      if let contextMenus {
+        NotebookActionsContent(destination:captured.destination,contextMenus:contextMenus,
+          presentationIntent:captured.intent)
+          .environment(model)
+          .presentationCompactAdaptation(.popover)
+          .presentationBackground(NotebookChrome.surface)
+      }
+    }
+    .onDisappear {
+      if let opened { contextMenus?.finishContentPresentation(opened.intent) }
+      opened=nil
     }
   }
 }
 
 struct NotebookActionsContent: View {
   let destination: NotebookPasteDestination
+  @ObservedObject var contextMenus: NotebookContextMenus
+  let presentationIntent: NotebookContextMenus.PresentationIntent
   var onClose: (() -> Void)? = nil
   @Environment(NotebookAppModel.self) private var model
   @Environment(\.dismiss) private var dismiss
@@ -39,27 +65,28 @@ struct NotebookActionsContent: View {
   @State private var failure: String?
   @State private var loading = false
   private struct Composition: Identifiable {
-    let id = UUID()
+    let intent: NotebookContextMenus.ClipboardIntent
     let source: String
+    var id: UUID { intent.id }
   }
-
-  private func close() { if let onClose { onClose() } else { dismiss() } }
+  private func close() {
+    guard contextMenus.isCurrent(presentationIntent,in:model) else { return }
+    if let onClose { onClose() } else { dismiss() }
+    contextMenus.finishContentPresentation(presentationIntent)
+  }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
       PasteButton(supportedContentTypes: NotebookClipboard.types) { providers in
-        loading = true
-        failure = nil
-        Task {
-          defer { loading = false }
-          do {
-            switch try await NotebookClipboard.read(providers, availableSize: destination.availableSize) {
-            case .composition(let source): presentation = .init(source: source)
-            case .fragment(let fragment):
-              if await model.insertClipboardFragment(fragment, at: destination) { close() }
-              else { failure = model.persistenceFailure ?? model.actionCue ?? "Не удалось сохранить. Попробуйте ещё раз." }
-            }
-          } catch { failure = error.localizedDescription }
+        guard contextMenus.isCurrent(presentationIntent,in:model) else { return }
+        loading=true;failure=nil
+        contextMenus.pasteClipboard(providers,at:destination,in:model,presentation:presentationIntent) { intent,outcome in
+          loading=false
+          switch outcome {
+          case .composition(let source): presentation = .init(intent:intent,source:source)
+          case .inserted: close()
+          case .failed(let message): failure=message
+          }
         }
       }
       .labelStyle(.titleAndIcon).tint(Color(white: 0.28)).buttonBorderShape(.capsule)
@@ -73,9 +100,19 @@ struct NotebookActionsContent: View {
     }
     .padding(.horizontal, 16).padding(.vertical, 4)
     .frame(width: failure == nil ? 136 : 280).background(NotebookChrome.surface)
-    .sheet(item: $presentation, onDismiss: { close() }) { value in
-      NotebookTldrawCompositionView(destinations: [destination], initialSource: value.source,
-        onClose: { presentation = nil }).environment(model)
+    .sheet(item: $presentation) { value in
+      NotebookTldrawCompositionView(destinations:[destination],initialSource:value.source,onClose: {
+        guard presentation?.id == value.id,contextMenus.isCurrent(value.intent,in:model) else { return }
+        presentation=nil
+      }).environment(model)
+        .onDisappear {
+          guard contextMenus.isCurrent(value.intent,in:model) else { return }
+          close()
+        }
+    }
+    .onChange(of:contextMenus.isCurrent(presentationIntent,in:model)) { _,current in
+      if !current { presentation=nil;dismiss() }
     }
   }
 }
+#endif

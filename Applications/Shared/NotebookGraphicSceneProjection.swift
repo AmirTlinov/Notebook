@@ -22,7 +22,7 @@ extension NotebookAppModel {
     for id in pinned where layouts[id] == nil {
       resolved += 1;layouts[id]=graph.resolve(id).layout
     }
-    let working=workingGraphics.filter { $0.surface == .page(page.id) }
+    let working=pageWorkingGraphicsForDisplay(page)
     let workingIDs=Set(working.map(\.id))
     let admitted=page.displayElements(graphicIDs:Set(layouts.keys)).filter { element in
       guard !workingIDs.contains(element.id) else { return false }
@@ -69,7 +69,7 @@ extension NotebookAppModel {
     let graph = (preview ? retainedGraphicGraph { .page(pageID:page.id,elementID:$0) } : nil) ?? page.graphicGraph()
     guard preview else { return graph }
     _ = workingGraphicRevision(on:.page(page.id))
-    let working = workingGraphics.filter { $0.surface == .page(page.id) }
+    let working = pageWorkingGraphicsForDisplay(page)
     let combined = graph.projecting(adding:working.map(\.node))
     return projectingGraphicCommands(combined) { .page(pageID: page.id, elementID: $0) }
   }

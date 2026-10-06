@@ -20,7 +20,7 @@ import PDFKit
     try Task.checkCancellation()
     // Once the final fence is accepted, its durable receipt wins over a late
     // cancellation. No byte copying or hashing occupies this writer slot.
-    return try await persistence.submit { try $0.publishDocumentExport(prepared) }
+    return try await persistence.submit(writesStore: true) { try $0.publishDocumentExport(prepared) }
   }
 
   static func publication(cut: NotebookExportCut, options: NotebookExportOptions = .init(), jobID: UUID, store: NotebookStore, persistence: NotebookPersistenceQueue) async throws -> NotebookExportPublication {
@@ -186,7 +186,7 @@ import PDFKit
     for part in file.file.parts {
       try Task.checkCancellation()
       let range = offset..<(offset+Int64(part.byteCount))
-      try await persistence.submit { try $0.stageBlob(file: url, expectedHash: part.sha256, byteCount: Int64(part.byteCount), range: range) }
+      try await persistence.submit(writesStore: true) { try $0.stageBlob(file: url, expectedHash: part.sha256, byteCount: Int64(part.byteCount), range: range) }
       offset = range.upperBound
       await Task.yield()
     }

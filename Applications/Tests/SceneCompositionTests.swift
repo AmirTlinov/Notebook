@@ -1136,7 +1136,7 @@ final class SceneCompositionTests: XCTestCase {
 
 
   @MainActor
-  func testAdmittedSourceSurvivesInputPauseAndPublishesOnlyAfterTheBarrierOpens() async throws {
+  func testAdmittedSourceSurvivesInputPauseAndCancelledPrivateRepaint() async throws {
     let fixture = Fixture(count: 1, html: """
       <div style='position:absolute;inset:0;background:red'></div>
       <script>window.notebook.ready(new Promise(resolve => setTimeout(resolve, 450)))</script>
@@ -1169,11 +1169,27 @@ final class SceneCompositionTests: XCTestCase {
     XCTAssertTrue(coordinator.published === old,
       "Completing pixels does not replace the contact's published scene while installation is closed")
     XCTAssertFalse(old.sourceReceipts[address]?.hasCurrentPixels == true)
+    var cancelledPrivateRepaint = false
+    coordinator.onPreparationPhase = { _, phase in
+      guard phase == "validate", !cancelledPrivateRepaint else { return }
+      cancelledPrivateRepaint = true
+      permitsInstallation = false
+      coordinator.cancelPreparation()
+    }
+    permitsInstallation = true
+    prepare()
+    try await waitUntil { cancelledPrivateRepaint && !coordinator.isPreparing }
+    XCTAssertTrue(coordinator.published === old)
+    XCTAssertFalse(old.sourceReceipts[address]?.hasCurrentPixels == true,
+      "A cancelled candidate cannot certify the old placeholder as current pixels")
+    coordinator.onPreparationPhase = nil
     permitsInstallation = true
     prepare()
     try await waitUntil { coordinator.published?.sourceReceipts[address]?.hasCurrentPixels == true }
     let ready = try XCTUnwrap(coordinator.published?.sourceRasters[address])
     XCTAssertNotNil(ready.image(for: .agent(element), minimumScale: 2))
+    XCTAssertFalse(coordinator.published?.hasInstalledPixels(for: address) == true,
+      "The prepared image still needs its actual mounted display receipt")
     XCTAssertEqual(resources.activeWebSurfaceCount, 0)
     XCTAssertLessThanOrEqual(resources.residentBytes + resources.reservedBytes, resources.byteLimit)
   }

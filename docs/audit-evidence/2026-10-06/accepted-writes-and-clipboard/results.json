@@ -1,0 +1,1391 @@
+{
+  "format": 1,
+  "result": "PASS",
+  "evidenceKind": "compact immutable extract of independently validated selected Core+Mac receipt",
+  "route": "./verify.sh:selected",
+  "scope": "registry-contracts",
+  "physicalAcceptance": false,
+  "sourceRoot": "/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook",
+  "source": {
+    "format": 2,
+    "sha256": "587f3ff6a8e9d372d20c05ba2aff534f4af328d4bbdfc48b0d161aa99af36b21",
+    "inputCount": 1645,
+    "beforeEqualsAfter": true,
+    "owningInputs": [
+      {
+        "executable": false,
+        "path": "Sources/NotebookCore/NotebookAcceptedWrite.swift",
+        "sha256": "d35a4030288e25aa4b4971144beb27824685a8826a839a90f8337b6894cbf992"
+      },
+      {
+        "executable": false,
+        "path": "Sources/NotebookCore/NotebookSQLite.swift",
+        "sha256": "5b4d01cb5c15c55710950ae3576b812a3d5e26018b4564411c67508b3e535324"
+      },
+      {
+        "executable": false,
+        "path": "Sources/NotebookCore/NotebookStore.swift",
+        "sha256": "358c1dbb93f6e9d9625f78a0517661c97b0eac195aaf68af6620514b07679b92"
+      },
+      {
+        "executable": false,
+        "path": "Sources/NotebookCore/NotebookIPCProcessLease.swift",
+        "sha256": "d2564d24d0a79a2188efe6c827901b4843b7178308f157738eabdd36799a4539"
+      },
+      {
+        "executable": false,
+        "path": "Sources/NotebookCore/NotebookStorage.swift",
+        "sha256": "bce91474c96b73ea878848fe4f95740e4d0bc9fe0db3528224ab01298a083691"
+      },
+      {
+        "executable": false,
+        "path": "Sources/NotebookCore/NotebookArchiveSnapshot.swift",
+        "sha256": "5366fc3067e8b99ff5145a851f467817192bde129a9ca3bfcb480d4b7819476a"
+      },
+      {
+        "executable": false,
+        "path": "Sources/NotebookCore/NotebookElementTransfer.swift",
+        "sha256": "5916b85c6a0ae2ecd423ab1981159c99954ccf62429a78a8cf2897259b454876"
+      },
+      {
+        "executable": false,
+        "path": "Sources/NotebookCore/NotebookProgramTransfer.swift",
+        "sha256": "5510fc336f73af397455c7cc461fe9c7589507c86480a746332ce6227c8c77ca"
+      },
+      {
+        "executable": false,
+        "path": "Applications/Shared/NotebookPersistenceQueue.swift",
+        "sha256": "0771967f1619e067e1044831a7c2a9745207165065ec5f08c63077c76b3a4e5d"
+      },
+      {
+        "executable": false,
+        "path": "Applications/Shared/NotebookApplicationLaunch.swift",
+        "sha256": "de103dcc2a96f5e03e9ad781395c9aace1eed9d7d71ab745df8d0f10584afb4b"
+      },
+      {
+        "executable": false,
+        "path": "Applications/Mac/NotebookWorkspaceWriters.swift",
+        "sha256": "6acda181920a561187e80c068d1572c32d21a976f0a442b07bac57f19c4ac7ec"
+      },
+      {
+        "executable": false,
+        "path": "Applications/Shared/NotebookClipboardImage.swift",
+        "sha256": "5a075ed80bb0c6182f09a08aa8b81008812a594ef81b7259474d6c273f6fff91"
+      },
+      {
+        "executable": false,
+        "path": "Applications/Shared/NotebookClipboardWorkLease.swift",
+        "sha256": "8eb95ef9ca6422b94c62a1a90f07f36b0c8eaf484f6205f8569d08e4755f8627"
+      },
+      {
+        "executable": false,
+        "path": "Applications/Shared/NotebookSelectionClipboard.swift",
+        "sha256": "ee432383833d813bf7cb00a7a97a2f2089266766b45b70d9b3725fdb052ac0c2"
+      },
+      {
+        "executable": false,
+        "path": "Applications/Shared/NotebookElementWriteAllowance.swift",
+        "sha256": "ea9da2bff310c6949bc4001fcc679ed3bfb49e0ccaf3db2fc13afb318aa76623"
+      },
+      {
+        "executable": false,
+        "path": "Applications/Shared/NotebookAppModel.swift",
+        "sha256": "5db7fa91b61883e09e999bc9f801fc54a82779319db28c2bcc614183f9c42128"
+      },
+      {
+        "executable": false,
+        "path": "Applications/Shared/NotebookClipboard.swift",
+        "sha256": "bb4e5649dcdd7bdc66c05374c92e88e84780de1425a852fc63728879f26517be"
+      },
+      {
+        "executable": false,
+        "path": "Tests/NotebookCoreTests/NotebookAcceptedWriteTests.swift",
+        "sha256": "ee94eecb903343ba28d7e99fd6b6971948bd3085b68a6e0b0e1098409f78d52d"
+      },
+      {
+        "executable": false,
+        "path": "Tests/NotebookCoreTests/NotebookSQLiteTests.swift",
+        "sha256": "2e11c9fc2465c7281f1544167693b647d7ac07e9bfd8d6a7f7b685ff41ef855d"
+      },
+      {
+        "executable": false,
+        "path": "Tests/NotebookCoreTests/NotebookReplicationTests.swift",
+        "sha256": "40f401e2ebfaa25fd1fe1ff8be27eba261b42c8ab2b22c0ad1ca7e1cc4489b1d"
+      },
+      {
+        "executable": false,
+        "path": "Tests/NotebookCoreTests/NotebookElementTransferTests.swift",
+        "sha256": "54a5687778c9d089175a8297669bcf4ec8851d119c9d824e1d03a68a7db8ed44"
+      },
+      {
+        "executable": false,
+        "path": "Tests/NotebookCoreTests/NotebookProgramTransferTests.swift",
+        "sha256": "99be655c2d74fb4f6a068ebb691213a12f8c1616b8756486313b06e79cfb3306"
+      },
+      {
+        "executable": false,
+        "path": "Applications/Tests/NotebookPersistenceQueueTests.swift",
+        "sha256": "e5524f453a2acdb7e74d7dff72001312e8992b932039eb839ad4a6aa107bef75"
+      },
+      {
+        "executable": false,
+        "path": "Applications/Tests/NotebookPersistenceAdmissionTests.swift",
+        "sha256": "5d94f30278e2ddd6eac76a73178d2c65896d9c02969a13c68b3d12497d5fca2a"
+      },
+      {
+        "executable": false,
+        "path": "Applications/Tests/NotebookScenePublicationTests.swift",
+        "sha256": "eb5f174bf21a07968107370cf03acf4850c8a8494118180e91bdf01b17af1498"
+      },
+      {
+        "executable": false,
+        "path": "Applications/MacTests/NotebookClipboardSourceTests.swift",
+        "sha256": "c5c39acbedfdec0c377a0bb0d9740dcefe4940f07ffd731ad07d3dd7a7eb30e2"
+      },
+      {
+        "executable": false,
+        "path": "Applications/MacTests/NotebookClipboardWriterTests.swift",
+        "sha256": "ae54d1d04a299cabceba86b307b542cf93c0bfde697ff76a30a1c2e136b41da8"
+      },
+      {
+        "executable": false,
+        "path": "Applications/MacTests/NotebookWorkspaceWritersTests.swift",
+        "sha256": "e085147b01098b1b7f8ecf3f1554172ad93602c07184e4c67cc4fb29f662214c"
+      },
+      {
+        "executable": false,
+        "path": "Applications/MacTests/DocumentRuntimeTests.swift",
+        "sha256": "dfff7d80bd9f5f0f955d223a3194fa86b262108661dae4a660cdafed2a528201"
+      }
+    ],
+    "historicalWholeSourceAfterValidation": true,
+    "atExtract": {
+      "wholeSourceSHA256": "211d4585816884a87ea1c1e97d9212296b45d215488ac0a1c647470afd009d91",
+      "driftAfterValidation": [
+        "Applications/Tests/NotebookElementManipulationTests.swift",
+        "Applications/iPad/NotebookClipboardExportOwner.swift",
+        "Applications/iPad/NotebookContextMenus.swift"
+      ],
+      "coreAndMacOwnerInputCount": 978,
+      "coreAndMacOwnerInputsUnchanged": true,
+      "coreAndMacOwnerInputSHA256": "ce3de815c76bd7fd6f614276ba4107b3d00881b95d55be2680798e775d62559b",
+      "ownerScopeDefinition": "All Sources, Core tests, Mac target Shared/Mac/WebResources and MacTests/TestSupport plus the three explicit shared test sources from Applications/project.yml; iPad target paths and unrelated UIKit tests are separate."
+    }
+  },
+  "baseCommit": "cd8247a96190712e0e5bf3d8a46365b3272c9536",
+  "selectors": {
+    "commands": [],
+    "core": [
+      "NotebookCoreTests.NotebookAcceptedWriteTests",
+      "NotebookCoreTests.NotebookElementTransferTests",
+      "NotebookCoreTests.NotebookProgramTransferTests",
+      "NotebookCoreTests.NotebookReplicationTests/embeddedNulKeepsTheWholeAuthoredSourceSearchAndReplica",
+      "NotebookCoreTests.NotebookSQLiteTests/cachedStatementsReleaseTheirCopiedPayloadAtCompletionAndReadRefusal",
+      "NotebookCoreTests.NotebookSQLiteTests/textBindingAndRowsPreserveEmbeddedNULAndUnicode"
+    ],
+    "ipad": [],
+    "mac": [
+      "NotebookMacTests/DocumentRuntimeTests/testCheckpointWriterRetryRetainsItsFrozenSnapshotAndDoesNotRepeatTransfer",
+      "NotebookMacTests/DocumentRuntimeTests/testSpatialCheckpointKeepsItsOwnerOnWriterRefusalAndCapturesTheAcceptedState",
+      "NotebookMacTests/NotebookClipboardSourceTests",
+      "NotebookMacTests/NotebookClipboardWriterTests",
+      "NotebookMacTests/NotebookPersistenceAdmissionTests",
+      "NotebookMacTests/NotebookPersistenceQueueTests",
+      "NotebookMacTests/NotebookScenePublicationTests",
+      "NotebookMacTests/NotebookWorkspaceWritersTests"
+    ]
+  },
+  "selectionMode": "explicit-only",
+  "actual": {
+    "core": {
+      "executed": [
+        "NotebookCoreTests.NotebookAcceptedWriteTests/aBeforeCommitRollbackRetriesTheSameAcceptedIdentityAndOnlyItsSuccessfulOutput()/NotebookAcceptedWriteTests.swift:282:4",
+        "NotebookCoreTests.NotebookAcceptedWriteTests/aMissingWorkspaceThroughASymlinkAliasSharesItsTransactionAndAcceptedOutcome()/NotebookAcceptedWriteTests.swift:71:4",
+        "NotebookCoreTests.NotebookAcceptedWriteTests/aNewWorkspaceKeepsItsAcceptedOwnerThroughCreationPresenceAndReplay()/NotebookAcceptedWriteTests.swift:44:4",
+        "NotebookCoreTests.NotebookAcceptedWriteTests/aStorageProtocolBridgeDoesNotBecomeATerminalDomainRefusal()/NotebookAcceptedWriteTests.swift:183:4",
+        "NotebookCoreTests.NotebookAcceptedWriteTests/acceptedNoOpWithANestedReadRevisionOwnerAndWitnessFlushKeepsEveryCursor()/NotebookAcceptedWriteTests.swift:320:4",
+        "NotebookCoreTests.NotebookAcceptedWriteTests/anErrorNamedAsADomainLimitAfterCommitStillHasAnUnresolvedOutcome()/NotebookAcceptedWriteTests.swift:140:4",
+        "NotebookCoreTests.NotebookAcceptedWriteTests/anUnreadableWitnessRetainsTheOriginalOutputAndNeverReexecutesItsBody()/NotebookAcceptedWriteTests.swift:303:4",
+        "NotebookCoreTests.NotebookAcceptedWriteTests/coldPageRetryReturnsItsOriginalReceiptWithoutOverwritingAPeerAfterUnknownCommit()/NotebookAcceptedWriteTests.swift:213:4",
+        "NotebookCoreTests.NotebookAcceptedWriteTests/confirmedOutputRequiresTheOriginalWorkspaceIdentityAfterMarkerRetirement()/NotebookAcceptedWriteTests.swift:367:4",
+        "NotebookCoreTests.NotebookAcceptedWriteTests/diskFailureKeepsItsStorageOutcomeAfterSuccessfulRollback(phase:)/NotebookAcceptedWriteTests.swift:161:4",
+        "NotebookCoreTests.NotebookAcceptedWriteTests/nestedSourceWritesShareOneCommitAndPublication()/NotebookAcceptedWriteTests.swift:125:4",
+        "NotebookCoreTests.NotebookAcceptedWriteTests/nonpublishingNestedChatCommandsKeepTheirLocalReadFence()/NotebookAcceptedWriteTests.swift:197:4",
+        "NotebookCoreTests.NotebookAcceptedWriteTests/oneWitnessPerWriterPlateausAndOnlyAProvedRetiredLeaseGenerationIsCollected()/NotebookAcceptedWriteTests.swift:337:4",
+        "NotebookCoreTests.NotebookAcceptedWriteTests/refusalAfterNestedWritesRollsBackTheWholeAcceptedCommand()/NotebookAcceptedWriteTests.swift:103:4",
+        "NotebookCoreTests.NotebookAcceptedWriteTests/spatialRetryReturnsItsOriginalElementWithoutMintingAnotherDotAfterAPeer()/NotebookAcceptedWriteTests.swift:252:4",
+        "NotebookCoreTests.NotebookAcceptedWriteTests/warmPageRetryReturnsTheOriginalOutputAfterAPeerAdvancesItsFrozenState()/NotebookAcceptedWriteTests.swift:232:4",
+        "NotebookCoreTests.NotebookElementTransferTests/aLateChildRejectsTheEntireCutBeforeRemovingAnyOriginal()/NotebookElementTransferTests.swift:44:4",
+        "NotebookCoreTests.NotebookElementTransferTests/fullGroupReadIncludesChildrenOutsideAOneItemSceneWindow()/NotebookElementTransferTests.swift:28:4",
+        "NotebookCoreTests.NotebookElementTransferTests/oversizedGroupRefusesWholeTransferWithoutReturningAPrefix()/NotebookElementTransferTests.swift:62:4",
+        "NotebookCoreTests.NotebookProgramTransferTests/actionReuseCannotAttachProgramResourcesToAnUnrelatedSavedAction()/NotebookProgramTransferTests.swift:191:4",
+        "NotebookCoreTests.NotebookProgramTransferTests/corruptSameLengthDestinationPartRefusesWithoutKeepingEarlierStaging()/NotebookProgramTransferTests.swift:152:4",
+        "NotebookCoreTests.NotebookProgramTransferTests/failedPasteCommitRollsBackBlobsElementsAndReceiptTogether()/NotebookProgramTransferTests.swift:174:4",
+        "NotebookCoreTests.NotebookProgramTransferTests/missingTamperedDuplicateAndUnreferencedBlobsRefuseTheWholeFragment()/NotebookProgramTransferTests.swift:105:4",
+        "NotebookCoreTests.NotebookProgramTransferTests/mixedGroupMovesBetweenWorkspacesWithExactBinaryBytesAndDeduplicatedParts()/NotebookProgramTransferTests.swift:72:4",
+        "NotebookCoreTests.NotebookProgramTransferTests/noncanonicalManifestAndRawByteOverflowCannotBecomePreparedTransfers()/NotebookProgramTransferTests.swift:131:4",
+        "NotebookCoreTests.NotebookProgramTransferTests/selectionAndBinaryClosureBorrowTheSameSQLSourceCut()/NotebookProgramTransferTests.swift:228:4",
+        "NotebookCoreTests.NotebookReplicationTests/embeddedNulKeepsTheWholeAuthoredSourceSearchAndReplica()/NotebookReplicationTests.swift:21:4",
+        "NotebookCoreTests.NotebookSQLiteTests/cachedStatementsReleaseTheirCopiedPayloadAtCompletionAndReadRefusal()/NotebookSQLiteTests.swift:10:4",
+        "NotebookCoreTests.NotebookSQLiteTests/textBindingAndRowsPreserveEmbeddedNULAndUnicode()/NotebookSQLiteTests.swift:34:4"
+      ],
+      "executions": {
+        "NotebookCoreTests.NotebookAcceptedWriteTests/aBeforeCommitRollbackRetriesTheSameAcceptedIdentityAndOnlyItsSuccessfulOutput()/NotebookAcceptedWriteTests.swift:282:4": 1,
+        "NotebookCoreTests.NotebookAcceptedWriteTests/aMissingWorkspaceThroughASymlinkAliasSharesItsTransactionAndAcceptedOutcome()/NotebookAcceptedWriteTests.swift:71:4": 1,
+        "NotebookCoreTests.NotebookAcceptedWriteTests/aNewWorkspaceKeepsItsAcceptedOwnerThroughCreationPresenceAndReplay()/NotebookAcceptedWriteTests.swift:44:4": 1,
+        "NotebookCoreTests.NotebookAcceptedWriteTests/aStorageProtocolBridgeDoesNotBecomeATerminalDomainRefusal()/NotebookAcceptedWriteTests.swift:183:4": 1,
+        "NotebookCoreTests.NotebookAcceptedWriteTests/acceptedNoOpWithANestedReadRevisionOwnerAndWitnessFlushKeepsEveryCursor()/NotebookAcceptedWriteTests.swift:320:4": 1,
+        "NotebookCoreTests.NotebookAcceptedWriteTests/anErrorNamedAsADomainLimitAfterCommitStillHasAnUnresolvedOutcome()/NotebookAcceptedWriteTests.swift:140:4": 1,
+        "NotebookCoreTests.NotebookAcceptedWriteTests/anUnreadableWitnessRetainsTheOriginalOutputAndNeverReexecutesItsBody()/NotebookAcceptedWriteTests.swift:303:4": 1,
+        "NotebookCoreTests.NotebookAcceptedWriteTests/coldPageRetryReturnsItsOriginalReceiptWithoutOverwritingAPeerAfterUnknownCommit()/NotebookAcceptedWriteTests.swift:213:4": 1,
+        "NotebookCoreTests.NotebookAcceptedWriteTests/confirmedOutputRequiresTheOriginalWorkspaceIdentityAfterMarkerRetirement()/NotebookAcceptedWriteTests.swift:367:4": 1,
+        "NotebookCoreTests.NotebookAcceptedWriteTests/diskFailureKeepsItsStorageOutcomeAfterSuccessfulRollback(phase:)/NotebookAcceptedWriteTests.swift:161:4": 2,
+        "NotebookCoreTests.NotebookAcceptedWriteTests/nestedSourceWritesShareOneCommitAndPublication()/NotebookAcceptedWriteTests.swift:125:4": 1,
+        "NotebookCoreTests.NotebookAcceptedWriteTests/nonpublishingNestedChatCommandsKeepTheirLocalReadFence()/NotebookAcceptedWriteTests.swift:197:4": 1,
+        "NotebookCoreTests.NotebookAcceptedWriteTests/oneWitnessPerWriterPlateausAndOnlyAProvedRetiredLeaseGenerationIsCollected()/NotebookAcceptedWriteTests.swift:337:4": 1,
+        "NotebookCoreTests.NotebookAcceptedWriteTests/refusalAfterNestedWritesRollsBackTheWholeAcceptedCommand()/NotebookAcceptedWriteTests.swift:103:4": 1,
+        "NotebookCoreTests.NotebookAcceptedWriteTests/spatialRetryReturnsItsOriginalElementWithoutMintingAnotherDotAfterAPeer()/NotebookAcceptedWriteTests.swift:252:4": 1,
+        "NotebookCoreTests.NotebookAcceptedWriteTests/warmPageRetryReturnsTheOriginalOutputAfterAPeerAdvancesItsFrozenState()/NotebookAcceptedWriteTests.swift:232:4": 1,
+        "NotebookCoreTests.NotebookElementTransferTests/aLateChildRejectsTheEntireCutBeforeRemovingAnyOriginal()/NotebookElementTransferTests.swift:44:4": 1,
+        "NotebookCoreTests.NotebookElementTransferTests/fullGroupReadIncludesChildrenOutsideAOneItemSceneWindow()/NotebookElementTransferTests.swift:28:4": 1,
+        "NotebookCoreTests.NotebookElementTransferTests/oversizedGroupRefusesWholeTransferWithoutReturningAPrefix()/NotebookElementTransferTests.swift:62:4": 1,
+        "NotebookCoreTests.NotebookProgramTransferTests/actionReuseCannotAttachProgramResourcesToAnUnrelatedSavedAction()/NotebookProgramTransferTests.swift:191:4": 1,
+        "NotebookCoreTests.NotebookProgramTransferTests/corruptSameLengthDestinationPartRefusesWithoutKeepingEarlierStaging()/NotebookProgramTransferTests.swift:152:4": 1,
+        "NotebookCoreTests.NotebookProgramTransferTests/failedPasteCommitRollsBackBlobsElementsAndReceiptTogether()/NotebookProgramTransferTests.swift:174:4": 1,
+        "NotebookCoreTests.NotebookProgramTransferTests/missingTamperedDuplicateAndUnreferencedBlobsRefuseTheWholeFragment()/NotebookProgramTransferTests.swift:105:4": 1,
+        "NotebookCoreTests.NotebookProgramTransferTests/mixedGroupMovesBetweenWorkspacesWithExactBinaryBytesAndDeduplicatedParts()/NotebookProgramTransferTests.swift:72:4": 1,
+        "NotebookCoreTests.NotebookProgramTransferTests/noncanonicalManifestAndRawByteOverflowCannotBecomePreparedTransfers()/NotebookProgramTransferTests.swift:131:4": 1,
+        "NotebookCoreTests.NotebookProgramTransferTests/selectionAndBinaryClosureBorrowTheSameSQLSourceCut()/NotebookProgramTransferTests.swift:228:4": 1,
+        "NotebookCoreTests.NotebookReplicationTests/embeddedNulKeepsTheWholeAuthoredSourceSearchAndReplica()/NotebookReplicationTests.swift:21:4": 1,
+        "NotebookCoreTests.NotebookSQLiteTests/cachedStatementsReleaseTheirCopiedPayloadAtCompletionAndReadRefusal()/NotebookSQLiteTests.swift:10:4": 1,
+        "NotebookCoreTests.NotebookSQLiteTests/textBindingAndRowsPreserveEmbeddedNULAndUnicode()/NotebookSQLiteTests.swift:34:4": 1
+      },
+      "failed": [],
+      "format": 1,
+      "planned": [
+        "NotebookCoreTests.NotebookAcceptedWriteTests/aBeforeCommitRollbackRetriesTheSameAcceptedIdentityAndOnlyItsSuccessfulOutput()/NotebookAcceptedWriteTests.swift:282:4",
+        "NotebookCoreTests.NotebookAcceptedWriteTests/aMissingWorkspaceThroughASymlinkAliasSharesItsTransactionAndAcceptedOutcome()/NotebookAcceptedWriteTests.swift:71:4",
+        "NotebookCoreTests.NotebookAcceptedWriteTests/aNewWorkspaceKeepsItsAcceptedOwnerThroughCreationPresenceAndReplay()/NotebookAcceptedWriteTests.swift:44:4",
+        "NotebookCoreTests.NotebookAcceptedWriteTests/aStorageProtocolBridgeDoesNotBecomeATerminalDomainRefusal()/NotebookAcceptedWriteTests.swift:183:4",
+        "NotebookCoreTests.NotebookAcceptedWriteTests/acceptedNoOpWithANestedReadRevisionOwnerAndWitnessFlushKeepsEveryCursor()/NotebookAcceptedWriteTests.swift:320:4",
+        "NotebookCoreTests.NotebookAcceptedWriteTests/anErrorNamedAsADomainLimitAfterCommitStillHasAnUnresolvedOutcome()/NotebookAcceptedWriteTests.swift:140:4",
+        "NotebookCoreTests.NotebookAcceptedWriteTests/anUnreadableWitnessRetainsTheOriginalOutputAndNeverReexecutesItsBody()/NotebookAcceptedWriteTests.swift:303:4",
+        "NotebookCoreTests.NotebookAcceptedWriteTests/coldPageRetryReturnsItsOriginalReceiptWithoutOverwritingAPeerAfterUnknownCommit()/NotebookAcceptedWriteTests.swift:213:4",
+        "NotebookCoreTests.NotebookAcceptedWriteTests/confirmedOutputRequiresTheOriginalWorkspaceIdentityAfterMarkerRetirement()/NotebookAcceptedWriteTests.swift:367:4",
+        "NotebookCoreTests.NotebookAcceptedWriteTests/diskFailureKeepsItsStorageOutcomeAfterSuccessfulRollback(phase:)/NotebookAcceptedWriteTests.swift:161:4",
+        "NotebookCoreTests.NotebookAcceptedWriteTests/nestedSourceWritesShareOneCommitAndPublication()/NotebookAcceptedWriteTests.swift:125:4",
+        "NotebookCoreTests.NotebookAcceptedWriteTests/nonpublishingNestedChatCommandsKeepTheirLocalReadFence()/NotebookAcceptedWriteTests.swift:197:4",
+        "NotebookCoreTests.NotebookAcceptedWriteTests/oneWitnessPerWriterPlateausAndOnlyAProvedRetiredLeaseGenerationIsCollected()/NotebookAcceptedWriteTests.swift:337:4",
+        "NotebookCoreTests.NotebookAcceptedWriteTests/refusalAfterNestedWritesRollsBackTheWholeAcceptedCommand()/NotebookAcceptedWriteTests.swift:103:4",
+        "NotebookCoreTests.NotebookAcceptedWriteTests/spatialRetryReturnsItsOriginalElementWithoutMintingAnotherDotAfterAPeer()/NotebookAcceptedWriteTests.swift:252:4",
+        "NotebookCoreTests.NotebookAcceptedWriteTests/warmPageRetryReturnsTheOriginalOutputAfterAPeerAdvancesItsFrozenState()/NotebookAcceptedWriteTests.swift:232:4",
+        "NotebookCoreTests.NotebookElementTransferTests/aLateChildRejectsTheEntireCutBeforeRemovingAnyOriginal()/NotebookElementTransferTests.swift:44:4",
+        "NotebookCoreTests.NotebookElementTransferTests/fullGroupReadIncludesChildrenOutsideAOneItemSceneWindow()/NotebookElementTransferTests.swift:28:4",
+        "NotebookCoreTests.NotebookElementTransferTests/oversizedGroupRefusesWholeTransferWithoutReturningAPrefix()/NotebookElementTransferTests.swift:62:4",
+        "NotebookCoreTests.NotebookProgramTransferTests/actionReuseCannotAttachProgramResourcesToAnUnrelatedSavedAction()/NotebookProgramTransferTests.swift:191:4",
+        "NotebookCoreTests.NotebookProgramTransferTests/corruptSameLengthDestinationPartRefusesWithoutKeepingEarlierStaging()/NotebookProgramTransferTests.swift:152:4",
+        "NotebookCoreTests.NotebookProgramTransferTests/failedPasteCommitRollsBackBlobsElementsAndReceiptTogether()/NotebookProgramTransferTests.swift:174:4",
+        "NotebookCoreTests.NotebookProgramTransferTests/missingTamperedDuplicateAndUnreferencedBlobsRefuseTheWholeFragment()/NotebookProgramTransferTests.swift:105:4",
+        "NotebookCoreTests.NotebookProgramTransferTests/mixedGroupMovesBetweenWorkspacesWithExactBinaryBytesAndDeduplicatedParts()/NotebookProgramTransferTests.swift:72:4",
+        "NotebookCoreTests.NotebookProgramTransferTests/noncanonicalManifestAndRawByteOverflowCannotBecomePreparedTransfers()/NotebookProgramTransferTests.swift:131:4",
+        "NotebookCoreTests.NotebookProgramTransferTests/selectionAndBinaryClosureBorrowTheSameSQLSourceCut()/NotebookProgramTransferTests.swift:228:4",
+        "NotebookCoreTests.NotebookReplicationTests/embeddedNulKeepsTheWholeAuthoredSourceSearchAndReplica()/NotebookReplicationTests.swift:21:4",
+        "NotebookCoreTests.NotebookSQLiteTests/cachedStatementsReleaseTheirCopiedPayloadAtCompletionAndReadRefusal()/NotebookSQLiteTests.swift:10:4",
+        "NotebookCoreTests.NotebookSQLiteTests/textBindingAndRowsPreserveEmbeddedNULAndUnicode()/NotebookSQLiteTests.swift:34:4"
+      ],
+      "skipped": []
+    },
+    "mac": {
+      "executed": [
+        "NotebookMacTests/DocumentRuntimeTests/testCheckpointWriterRetryRetainsItsFrozenSnapshotAndDoesNotRepeatTransfer",
+        "NotebookMacTests/DocumentRuntimeTests/testSpatialCheckpointKeepsItsOwnerOnWriterRefusalAndCapturesTheAcceptedState",
+        "NotebookMacTests/NotebookClipboardSourceTests/testAuthoritativeNativeAndRecognizableStructuredContentNeverFlattenIntoText",
+        "NotebookMacTests/NotebookClipboardSourceTests/testCancellationOfAnOptionalProviderDoesNotProceedToItsPlainText",
+        "NotebookMacTests/NotebookClipboardSourceTests/testCanonicalImageKeepsResolutionAndExactPixelsBeyondTheOldThumbnailBoundary",
+        "NotebookMacTests/NotebookClipboardSourceTests/testCanonicalImagePreservesTransparencyAndSixteenBitSamples",
+        "NotebookMacTests/NotebookClipboardSourceTests/testEveryExifOrientationKeepsTheSourcePixelPermutationAndClearsPrivateMetadata",
+        "NotebookMacTests/NotebookClipboardSourceTests/testImageFinishCapacityRefusesInsteadOfChangingQuality",
+        "NotebookMacTests/NotebookClipboardSourceTests/testOversizedStructuredUtf16AndJSONPrefixesRefuseThePlainTextAlternative",
+        "NotebookMacTests/NotebookClipboardSourceTests/testUnreadableAndOversizedOptionalHTMLCanUseThePlainTextRepresentation",
+        "NotebookMacTests/NotebookClipboardWriterTests/testClipboardFragmentUsesNativeBoardWriterAndOneUndo",
+        "NotebookMacTests/NotebookClipboardWriterTests/testCopyPasteCarriesAProgramsBinaryClosureThroughTheOrdinaryWriterAndUndo",
+        "NotebookMacTests/NotebookPersistenceAdmissionTests/testAReservationCannotBeTransferredTwiceOrUsedByAnotherWriter",
+        "NotebookMacTests/NotebookPersistenceAdmissionTests/testElementAdmissionChargesAFrozenGraphOnceAndOnlyAsRetainedContent",
+        "NotebookMacTests/NotebookPersistenceAdmissionTests/testElementAdmissionCountsSemanticStateInsteadOfOnlyItsWireTokens",
+        "NotebookMacTests/NotebookPersistenceAdmissionTests/testLiveInkWorstLiteralBodyFitsItsFinishReserveAndRejectsTheNextMeasurement",
+        "NotebookMacTests/NotebookPersistenceAdmissionTests/testPreparationShrinksItsCreditWhileBlockedAndKeepsTheResultAcrossRetry",
+        "NotebookMacTests/NotebookPersistenceAdmissionTests/testStorageFailureReachesABytePlateauAndRetryReleasesEachAcceptedBody",
+        "NotebookMacTests/NotebookPersistenceQueueTests/testCancellingPreparedResultWaitDoesNotDiscardItsResultOrDependentWrite",
+        "NotebookMacTests/NotebookPersistenceQueueTests/testCoalescingAndDiscardCannotReplaceAnAlreadyAttemptedAcceptedHead",
+        "NotebookMacTests/NotebookPersistenceQueueTests/testDeterministicLimitRefusalDoesNotBecomeAnInfiniteStorageRetry",
+        "NotebookMacTests/NotebookPersistenceQueueTests/testDomainRejectionWithoutAnObserverClosesOnlyItsAcceptedSlot",
+        "NotebookMacTests/NotebookPersistenceQueueTests/testMutatingCommandRetainsItsCompletionAndFIFOAcrossStorageRetry",
+        "NotebookMacTests/NotebookPersistenceQueueTests/testNonpublishingScriptAdmissionReturnsItsOriginalResultAfterUnknownCommitAndRetry",
+        "NotebookMacTests/NotebookPersistenceQueueTests/testPreparedCommandKeepsOneAcceptedInstanceAndExactResultAfterUnknownCommitAndPeer",
+        "NotebookMacTests/NotebookPersistenceQueueTests/testPublishingSubmitKeepsTheSameWaiterUntilItsStorageRetryFinishes",
+        "NotebookMacTests/NotebookPersistenceQueueTests/testStorageErrorBridgeRetainsTheHeadEvenWhenARejectionObserverExists",
+        "NotebookMacTests/NotebookPersistenceQueueTests/testTypedCompletionAndItsCreditStayPendingUntilTheOuterCommitOutcomeIsKnown",
+        "NotebookMacTests/NotebookPersistenceQueueTests/testTypedEffectKeepsNonpublishingMutationAndReleasesReadObserver",
+        "NotebookMacTests/NotebookScenePublicationTests/testDurableResultSurvivesFailedRefreshThenDependentEditAndUndo",
+        "NotebookMacTests/NotebookScenePublicationTests/testEquivalentReadInstallKeepsConcurrentReadAdmittedAndActualEditInvalidatesIt",
+        "NotebookMacTests/NotebookScenePublicationTests/testNewerPreparedCutSurvivesOldWorkerAndWaitsForInputAdmission",
+        "NotebookMacTests/NotebookScenePublicationTests/testNewerWindowCursorCannotRetireUnobservedOutputAndPinnedTombstoneCan",
+        "NotebookMacTests/NotebookScenePublicationTests/testWarmRequestsCoalesceAndCancelBeforeDeliveryJoinsTheDispatchedWorker",
+        "NotebookMacTests/NotebookWorkspaceWritersTests/testCanonicalAliasesShareAcceptedWriteOrder",
+        "NotebookMacTests/NotebookWorkspaceWritersTests/testFailedRetirementRetainsTheWriterAndAcceptedTailForRetry"
+      ],
+      "failed": [],
+      "format": 1,
+      "planned": [
+        "NotebookMacTests/DocumentRuntimeTests/testCheckpointWriterRetryRetainsItsFrozenSnapshotAndDoesNotRepeatTransfer",
+        "NotebookMacTests/DocumentRuntimeTests/testSpatialCheckpointKeepsItsOwnerOnWriterRefusalAndCapturesTheAcceptedState",
+        "NotebookMacTests/NotebookClipboardSourceTests/testAuthoritativeNativeAndRecognizableStructuredContentNeverFlattenIntoText",
+        "NotebookMacTests/NotebookClipboardSourceTests/testCancellationOfAnOptionalProviderDoesNotProceedToItsPlainText",
+        "NotebookMacTests/NotebookClipboardSourceTests/testCanonicalImageKeepsResolutionAndExactPixelsBeyondTheOldThumbnailBoundary",
+        "NotebookMacTests/NotebookClipboardSourceTests/testCanonicalImagePreservesTransparencyAndSixteenBitSamples",
+        "NotebookMacTests/NotebookClipboardSourceTests/testEveryExifOrientationKeepsTheSourcePixelPermutationAndClearsPrivateMetadata",
+        "NotebookMacTests/NotebookClipboardSourceTests/testImageFinishCapacityRefusesInsteadOfChangingQuality",
+        "NotebookMacTests/NotebookClipboardSourceTests/testOversizedStructuredUtf16AndJSONPrefixesRefuseThePlainTextAlternative",
+        "NotebookMacTests/NotebookClipboardSourceTests/testUnreadableAndOversizedOptionalHTMLCanUseThePlainTextRepresentation",
+        "NotebookMacTests/NotebookClipboardWriterTests/testClipboardFragmentUsesNativeBoardWriterAndOneUndo",
+        "NotebookMacTests/NotebookClipboardWriterTests/testCopyPasteCarriesAProgramsBinaryClosureThroughTheOrdinaryWriterAndUndo",
+        "NotebookMacTests/NotebookPersistenceAdmissionTests/testAReservationCannotBeTransferredTwiceOrUsedByAnotherWriter",
+        "NotebookMacTests/NotebookPersistenceAdmissionTests/testElementAdmissionChargesAFrozenGraphOnceAndOnlyAsRetainedContent",
+        "NotebookMacTests/NotebookPersistenceAdmissionTests/testElementAdmissionCountsSemanticStateInsteadOfOnlyItsWireTokens",
+        "NotebookMacTests/NotebookPersistenceAdmissionTests/testLiveInkWorstLiteralBodyFitsItsFinishReserveAndRejectsTheNextMeasurement",
+        "NotebookMacTests/NotebookPersistenceAdmissionTests/testPreparationShrinksItsCreditWhileBlockedAndKeepsTheResultAcrossRetry",
+        "NotebookMacTests/NotebookPersistenceAdmissionTests/testStorageFailureReachesABytePlateauAndRetryReleasesEachAcceptedBody",
+        "NotebookMacTests/NotebookPersistenceQueueTests/testCancellingPreparedResultWaitDoesNotDiscardItsResultOrDependentWrite",
+        "NotebookMacTests/NotebookPersistenceQueueTests/testCoalescingAndDiscardCannotReplaceAnAlreadyAttemptedAcceptedHead",
+        "NotebookMacTests/NotebookPersistenceQueueTests/testDeterministicLimitRefusalDoesNotBecomeAnInfiniteStorageRetry",
+        "NotebookMacTests/NotebookPersistenceQueueTests/testDomainRejectionWithoutAnObserverClosesOnlyItsAcceptedSlot",
+        "NotebookMacTests/NotebookPersistenceQueueTests/testMutatingCommandRetainsItsCompletionAndFIFOAcrossStorageRetry",
+        "NotebookMacTests/NotebookPersistenceQueueTests/testNonpublishingScriptAdmissionReturnsItsOriginalResultAfterUnknownCommitAndRetry",
+        "NotebookMacTests/NotebookPersistenceQueueTests/testPreparedCommandKeepsOneAcceptedInstanceAndExactResultAfterUnknownCommitAndPeer",
+        "NotebookMacTests/NotebookPersistenceQueueTests/testPublishingSubmitKeepsTheSameWaiterUntilItsStorageRetryFinishes",
+        "NotebookMacTests/NotebookPersistenceQueueTests/testStorageErrorBridgeRetainsTheHeadEvenWhenARejectionObserverExists",
+        "NotebookMacTests/NotebookPersistenceQueueTests/testTypedCompletionAndItsCreditStayPendingUntilTheOuterCommitOutcomeIsKnown",
+        "NotebookMacTests/NotebookPersistenceQueueTests/testTypedEffectKeepsNonpublishingMutationAndReleasesReadObserver",
+        "NotebookMacTests/NotebookScenePublicationTests/testDurableResultSurvivesFailedRefreshThenDependentEditAndUndo",
+        "NotebookMacTests/NotebookScenePublicationTests/testEquivalentReadInstallKeepsConcurrentReadAdmittedAndActualEditInvalidatesIt",
+        "NotebookMacTests/NotebookScenePublicationTests/testNewerPreparedCutSurvivesOldWorkerAndWaitsForInputAdmission",
+        "NotebookMacTests/NotebookScenePublicationTests/testNewerWindowCursorCannotRetireUnobservedOutputAndPinnedTombstoneCan",
+        "NotebookMacTests/NotebookScenePublicationTests/testWarmRequestsCoalesceAndCancelBeforeDeliveryJoinsTheDispatchedWorker",
+        "NotebookMacTests/NotebookWorkspaceWritersTests/testCanonicalAliasesShareAcceptedWriteOrder",
+        "NotebookMacTests/NotebookWorkspaceWritersTests/testFailedRetirementRetainsTheWriterAndAcceptedTailForRetry"
+      ],
+      "skipped": []
+    }
+  },
+  "counts": {
+    "coreFunctions": 29,
+    "coreExecutions": 30,
+    "macTests": 36,
+    "totalFunctions": 65,
+    "totalExecutions": 66,
+    "skipped": 0,
+    "failed": 0,
+    "macRuntimeWarnings": 0
+  },
+  "strictValidation": {
+    "result": "PASS",
+    "method": "notebook_verification.validate_selected(root, evidence, receipt)",
+    "reportedToRootAtUTC": "2026-10-06T00:34:31Z",
+    "performedOnFrozenExactSource": true,
+    "beforeSubsequentIPadSemanticFixes": true,
+    "checks": [
+      "real inventory resolution and machine execution IDs",
+      "balanced Swift case events and complete native summary",
+      "exact argv/cwd/sourceRoot",
+      "declared prerequisites and runtime paths",
+      "source before=after=current at independent validation",
+      "toolchain before=after",
+      "all38 commands exit0",
+      "all190 original artifact hashes"
+    ]
+  },
+  "toolchains": {
+    "iphoneosSDK": "24A430",
+    "macosSDK": "26A425",
+    "node": "v24.8.0",
+    "npm": "11.18.0",
+    "python": "Python 3.14.6",
+    "swift": "Apple Swift version 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1)\nTarget: arm64-apple-macosx27.0.0",
+    "xcode": "Xcode 27.0\nBuild version 27A266a",
+    "xcodegen": "Version: 2.46.0"
+  },
+  "duration": {
+    "coreTestSeconds": 0.938,
+    "macSummarySeconds": 8.020999908447266,
+    "scope": "Runner test durations; no interactive/system performance measure"
+  },
+  "originalEvidence": "/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook/.build/remediation-accepted-clipboard-mixed-20261006-v9",
+  "originalReceipt": {
+    "bytes": 368620,
+    "sha256": "a6ca26f0f57fe136ae288e3715361caae8bea47c1479eee83d6bc5bd3515d43e",
+    "format": 2,
+    "scope": "registry-contracts",
+    "physicalAcceptance": false,
+    "artifacts": [
+      {
+        "bytes": 0,
+        "path": "codex-resources.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 0,
+        "path": "codex-resources.stdout.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 27208,
+        "path": "commands.json",
+        "sha256": "97510c1735158a91d575e25b349d05ce52e70b51eb413e586673af2d4488b628"
+      },
+      {
+        "bytes": 23574,
+        "path": "completed.json",
+        "sha256": "1eb485fd2b9b0ac9d0a92be25f1e6502be0bb0b51caf26f321a4746510a5a078"
+      },
+      {
+        "bytes": 43633,
+        "path": "core-NotebookCoreTests-events.jsonl",
+        "sha256": "0646f5b21439f783fc8161bbe67000f3593366c405f6ce87e727f53f16701b86"
+      },
+      {
+        "bytes": 0,
+        "path": "core-NotebookCoreTests.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 6632,
+        "path": "core-NotebookCoreTests.stdout.log",
+        "sha256": "e505282743acf78cffae4a3ac113ee0abde4e61f0e28057e27eb69708e7c209f"
+      },
+      {
+        "bytes": 13885,
+        "path": "core-execution.json",
+        "sha256": "b707b2e8dd0f5446c796810d3edf9e5f19371859ae1968b63dd2ca2ff478cd2e"
+      },
+      {
+        "bytes": 1043480,
+        "path": "core-inventory.jsonl",
+        "sha256": "8b1f9042546bdca41d76cb85a75ad9cdd762e7e29cbd5dbbe70c8cfa8805d5cc"
+      },
+      {
+        "bytes": 99,
+        "path": "core-inventory.stderr.log",
+        "sha256": "51a8592c11a28b91dceaabed275b30f14e1e016e13010878222f5491a8368de7"
+      },
+      {
+        "bytes": 1117559,
+        "path": "core-inventory.stdout.log",
+        "sha256": "e67da6472655970f81755bacdc585afa9cab76b9cdb558c9d2ef1048fe5142c0"
+      },
+      {
+        "bytes": 0,
+        "path": "generate-project.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 200,
+        "path": "generate-project.stdout.log",
+        "sha256": "3b290759d2e62808a8c1852df71fda2115fbba12e68f61d3f43dce2d54239380"
+      },
+      {
+        "bytes": 0,
+        "path": "mac-build-for-testing.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 2340,
+        "path": "mac-build-for-testing.stdout.log",
+        "sha256": "17f6ce6258423570ce4d428784f0448276bd4b2d721c2e0fa49575e6448108f3"
+      },
+      {
+        "bytes": 8920,
+        "path": "mac-execution.json",
+        "sha256": "01c5efde867251ce70c5a36e992651be4d92ed2d396247ef9e1bd8006f8d692d"
+      },
+      {
+        "bytes": 86308,
+        "path": "mac-inventory.json",
+        "sha256": "e6a28261c239966f5b8a72fdbbd7ce69a8e2408e051590c873c58414944ca146"
+      },
+      {
+        "bytes": 0,
+        "path": "mac-inventory.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 0,
+        "path": "mac-inventory.stdout.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 260,
+        "path": "mac-native-signature.json",
+        "sha256": "9f74f4774d538f2e3ce942962eabb774d364f480ad87e119121ac25c2973856a"
+      },
+      {
+        "bytes": 1229,
+        "path": "mac-native-signer.stderr.log",
+        "sha256": "33efe2d65099d47287a6d4d88c4372159fa03554f44aaf306d32f5345e34bed0"
+      },
+      {
+        "bytes": 0,
+        "path": "mac-native-signer.stdout.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 1135,
+        "path": "mac-summary.json",
+        "sha256": "12644e2058f9d490e19d58b2adb8b903cedfb431efaf6f8f909a6432be9d46e2"
+      },
+      {
+        "bytes": 0,
+        "path": "mac-summary.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 872,
+        "path": "mac-summary.stdout.log",
+        "sha256": "446a3f790e5cb1771ef1c447cad6b8fc67afe206021e4f5d0538bea80de38ef2"
+      },
+      {
+        "bytes": 26260,
+        "path": "mac-tests.json",
+        "sha256": "b59c3d0ffe58940753fa759fe0fe34a5ac277071a470f519195a22930de112d3"
+      },
+      {
+        "bytes": 0,
+        "path": "mac-tests.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 18897,
+        "path": "mac-tests.stdout.log",
+        "sha256": "e630a03e2b28187cfb3fb1a09caa23a78e258ec95d67289d9e7293e1b319f8f9"
+      },
+      {
+        "bytes": 3206,
+        "path": "mac-timings.json",
+        "sha256": "3bcdaf742e791c05fba858df6a88d6b4c33ac8f16933597c1c9bcb92d0ad5764"
+      },
+      {
+        "bytes": 368,
+        "path": "mac.stderr.log",
+        "sha256": "5ced3cc1d48b614c9db934d8483dfc2d08cf89fc1dd0f0d54f36b815f7c98d21"
+      },
+      {
+        "bytes": 181,
+        "path": "mac.stdout.log",
+        "sha256": "c2e281bd5e9b0cc1818f42f9b942317729cb00ea88f86addfe5df3b438af59ae"
+      },
+      {
+        "bytes": 423,
+        "path": "mac.xcresult/Data/data.0~-JluEVIlp9oH9U_aF3yBD9KRQNsiHtbrHOl-3sD324lm3u_0p8wkr0K7KMVwyHgmSw8AZaW-YfFBmU8TECKRfg==",
+        "sha256": "be22d6efa6b081b8e99f49c5e25c41484e2f04a99176e0307f38c46de47acfa9"
+      },
+      {
+        "bytes": 315,
+        "path": "mac.xcresult/Data/data.0~1GNRyVGkGils94Pc_5oUxrmOqESLnk-6mn5cwYYIABZIPlgtwOAhG9AgTTYQ6DuUwoVMX_AOo9BbW6ZvU23jsA==",
+        "sha256": "f83b54336ddf64829d92abe1fefbab44e501b70479b1c15f501aa0772caf677e"
+      },
+      {
+        "bytes": 19871,
+        "path": "mac.xcresult/Data/data.0~41wQ9gikGHAoa6eQPehwwO9tyyFz0O6e9AF3O2cX70nLQh-dTFaQvL9MAlMO2YrgqwBKmMv3FGtmnvnzMwCnHA==",
+        "sha256": "ba354a1a64b2a2f906e58b7c36deaaf5cc740d0af30e52bf8786318cddc61f49"
+      },
+      {
+        "bytes": 152,
+        "path": "mac.xcresult/Data/data.0~52fz7ZR4O9vS8aNrlObIqT9iJIZ1eBKCeH9OrJflVEsCvRIjuRwGlw8h-DMTFji8rUyN7ElC0NOBfIBpCNFggw==",
+        "sha256": "2d11e9fb701d0b1cd1e41baf575ac23a6fb3c8a3a88c4ee2219e90bdf1b7e7ea"
+      },
+      {
+        "bytes": 428,
+        "path": "mac.xcresult/Data/data.0~7eXWHVuDHWV_DGFDBV5ai7e3VkHf4lenRZ2vt-r4oJPtBltGZzMhoZLsqvuZA1_pBXdAVq9WRvgvOaFefJe5mw==",
+        "sha256": "cf1af25ee811edc36ba685bdb475f6e17025bb2b760745d9b949ca5b3f2f6742"
+      },
+      {
+        "bytes": 428,
+        "path": "mac.xcresult/Data/data.0~7hm9MlM3e2ORcg_Ip1vaVboY50Es9Bvi6rvFHXx51U2TPBNK2gXdrTEZdZZYIA3_08rln9wamIUbJERQ0qZpmA==",
+        "sha256": "b92d1285aa3b19fc5b336423e294babbd774563424db0f0619f44d93ac22a7e6"
+      },
+      {
+        "bytes": 423,
+        "path": "mac.xcresult/Data/data.0~7xbt2CgMHXwn_KoeBGvGeKJBCn3bpSn-AhJl4Q5IlD1vq62NEzQk2LfYNNnPRpqt9DI_UEk0x6MANV9meEDzrQ==",
+        "sha256": "0cf751d6f7a036b89850b2f112085890240e928cb7157226f4b70b74ed6c0ccf"
+      },
+      {
+        "bytes": 110,
+        "path": "mac.xcresult/Data/data.0~90AGA-vsIqDMDpvjCgxls_AaBTY7yF-vJWsXektLUaWqGLyQiKVIqFPxNpjYtSHRa-Hxxkx6Soth_Upg_P3lkQ==",
+        "sha256": "0e9d3431858d3f2042d38abfe71f73722acb3ac0622ee514551c096959969728"
+      },
+      {
+        "bytes": 11149,
+        "path": "mac.xcresult/Data/data.0~AqRh-DzKo0WV6jJ_DBF9I6aDbaJTcJnfcWfH-iLqPgGynWyCpZFqWvNVobrgjJFVnDlofH89rW3WM_o31SwHTw==",
+        "sha256": "1dc30fdd033a09c33aceee19b103229dda900f92627a1ffa2f444cfcec341e23"
+      },
+      {
+        "bytes": 424,
+        "path": "mac.xcresult/Data/data.0~DgOsayF0OIGsBnULub9D-KFD6RNYXlkvwLR7nJFkDuP-wTsKukf-uyolhxQrXi6jI8u_jUtd3rt1s3vQPedusQ==",
+        "sha256": "11cd5b1dd9aa44e1dcf48e12bca98f1639db58b7f770350ee531c586af39ad6f"
+      },
+      {
+        "bytes": 429,
+        "path": "mac.xcresult/Data/data.0~DlXhatENW-X2HDbIThtlRnG0MB2fa4KTfgYhOdHMObtD8oXHC4h-89EThZCcdwXZDhEeSWDfQ3lRHr3ddnRikg==",
+        "sha256": "6bc6b85c0c662c590b849fb83c85bbd670c96f6d041af8f006da0789f3d3c3be"
+      },
+      {
+        "bytes": 408,
+        "path": "mac.xcresult/Data/data.0~E5Bs-Fm8vzEFeZM2OK2IIULtBhClxpPa8bbHdALIWtG4j16qttImhVjcI4GiK482et1VE-GZ_RofK5KqxiQ76w==",
+        "sha256": "32b53dfead49f47d620f391ba1c9f768d68df04fa555a31740634ec502ae75eb"
+      },
+      {
+        "bytes": 422,
+        "path": "mac.xcresult/Data/data.0~FvhWn2yp4YaPp_GrFbRyvWaa8r8e4EXTufasWiCm9NTrZQ7VmwJNkDkEejHagzRynCNMc2GtO1MMt4mIqSOYHg==",
+        "sha256": "a12761d566dac42ddbcc67dfbef8dc8c6a8c0d408c3141eb13f66f53377ecbb1"
+      },
+      {
+        "bytes": 6563,
+        "path": "mac.xcresult/Data/data.0~GuXWNseRq_WUrO3VeMv-gb9NNA5FhlD12UOAKF2CHysL92Qx8Ln0fLcxNIJh6MxdJHP21xVLw_qm66dakPqbSA==",
+        "sha256": "60144de93868d0b74827be57edfa1e5e54b1499baf37080df8aa9e1c4cb398ef"
+      },
+      {
+        "bytes": 802,
+        "path": "mac.xcresult/Data/data.0~Ho5ddQq8iw6VthD6q38mtCbsww0UNP6S1X5lMuPTKxFsdAcSlozZTsQCvS152-aw_IOL1li3jCtu71oACqUL4g==",
+        "sha256": "4c4912e0bbbaf849e426cc1175430acc32e6f13bc71ceafaddd6fde3cf653af2"
+      },
+      {
+        "bytes": 421,
+        "path": "mac.xcresult/Data/data.0~KdPvT9rS8R5GPuhQbYD47om2OtZNPkSxo0ERbfLxajZpZ8DiRY5aSx1-hcfxNtt9XYD_uOx8ogEHVZpBSpuWnQ==",
+        "sha256": "8cfc3e4874dec1697ad03a371119b53d2d69cdbeb1939d628c439f065212f286"
+      },
+      {
+        "bytes": 424,
+        "path": "mac.xcresult/Data/data.0~M2gS7hDBw7HdrdeWf1J2tM5vyi9bGgLoeJuGpFxgaSRnrZ0bf2mrJB9ZQua4h--ANfboIH4Hj0Wvd1IxGnUokA==",
+        "sha256": "98a5384dde580a12d7e1468c1fd7fd4c94a20f89b0fd6a006ea81c8440e204e4"
+      },
+      {
+        "bytes": 421,
+        "path": "mac.xcresult/Data/data.0~N9kKFid43V9mvDs8UoRitH2Vz8Rr6WeMPSXcyP4sqZhgxOR0FkdHTA3iux2BAxKMhpqD9D8AQdh-VDZPWuVIpw==",
+        "sha256": "048a8656f70bc52047aa70be5ea64bcde13148ca4239fbcc6d13e67dbf9ea065"
+      },
+      {
+        "bytes": 38,
+        "path": "mac.xcresult/Data/data.0~O-LfFpFQLqXw0-CG7_hZTgTmcdmbuEF6zjrL0COcGuGgwQeVboSdv-vLEiM6RfXg7FkJ4pfV4WY8Vvy4xst4Bg==",
+        "sha256": "0a3e38a7ee2f4a7971fb4853eb1fdbd6acbeae91d43fcf4a6e70f65e3371434d"
+      },
+      {
+        "bytes": 419,
+        "path": "mac.xcresult/Data/data.0~P5wU4fguyfE3poqcb4Utacaj0YCTBsArXyvM2g1_A_l0nJ2NweGmGTInfEqQlPHlM0LdkepCpDddJzazlFXN7A==",
+        "sha256": "27f710e3037209817f574841280bf7313b04b1eff0c71b0e9127053a1e8f8094"
+      },
+      {
+        "bytes": 429,
+        "path": "mac.xcresult/Data/data.0~PsLnH3hcvTdsw5nnz9u_vSzCGO9hVscxADxPsNh3zCGArgvnPQ5HgaAIS-cqHTBvmHxr3kV9VVCCLMbOzZ8s_Q==",
+        "sha256": "ba7296076f8de145cf8bf66cb2f16fb14a25a3c4e4fcb051609ccf12e10224e9"
+      },
+      {
+        "bytes": 5143,
+        "path": "mac.xcresult/Data/data.0~R2b7weWZj_JyBdScu4sprAFqICGXwG3Q9agKGgr4ezaOn1Ui8eDKoJLjzF572FLf3yPHOV75-0fWw6xEDFeE6g==",
+        "sha256": "87c6fbc5af8db3b59a1640936b9324aab07f02d8957dcc11485f786697767535"
+      },
+      {
+        "bytes": 426,
+        "path": "mac.xcresult/Data/data.0~R7OlvHyTFzbpql4jQFrzL8c2IlP5AMFOEFOB8U0k_uU4Njg2oQPIHpOeDQBpJsXdKu-Ga5LFpyvlD-jtnZ8neg==",
+        "sha256": "c7f6708b87430bf8369450af0dd7ba67fe828646a6b62044dafa062d8e5f0e0b"
+      },
+      {
+        "bytes": 414,
+        "path": "mac.xcresult/Data/data.0~ROgCJ2IrHTwYxcwRPlXkRbV8vlQIgZxnOE3Uls0oi3teVfqtvuPqGtJK5qU9afyYWWnk50kjuvkAgdVAOhaXPg==",
+        "sha256": "495cbbe85259ff3030d66379f688ed0dfaf25c763267eca187a850bd841d96f0"
+      },
+      {
+        "bytes": 434,
+        "path": "mac.xcresult/Data/data.0~UJL5ZkJ7kz_v96ui8o7gYHTqZ3UgLuPuFOi6qN872xncxicj8GPna1yHKo5DMa0SNMCFNTa1eD7zg2jKUPpZ5g==",
+        "sha256": "51b6bc1e119c48770ca7a4b27049f4ff808fd30ca90ab1db4d50d75c7bfd8c19"
+      },
+      {
+        "bytes": 419,
+        "path": "mac.xcresult/Data/data.0~UPt_cF5TUDo2WQV9CC83m-Kd8zfkNJIW4ulMKTFhXLPwEOYbkSMUjOvtmo0IcJAAx6Tp6Ouyt1EXH8KgcSRKVw==",
+        "sha256": "33413a656d880c854a8ed2f3943aa37804d1a0653ce7316bbd1cb41bf97c90cc"
+      },
+      {
+        "bytes": 1582,
+        "path": "mac.xcresult/Data/data.0~Up1i4tYILIFbI6ys9nIvdewzmSoQF3FfbiqGoSksJCKVci-nrh5oYZZ_1mQU1WArF8HjEBc8PUmK3_EN2JAo3g==",
+        "sha256": "8952679ce0db65885aaf29233f71fb46bd06d9ca325e63d6ed573437e627d6fb"
+      },
+      {
+        "bytes": 429,
+        "path": "mac.xcresult/Data/data.0~Wrku1UijpX3xU7zUYku_yw_YoszkeGZicWhEwvG0kA0qdYpQ3fuEyvJ_vOj4TLT602Ky4PbNlw6rvk8eVvTE0A==",
+        "sha256": "406759554b14773995cde6ddbe3d630b9e5f10a26c979f8cffea004ece339a88"
+      },
+      {
+        "bytes": 420,
+        "path": "mac.xcresult/Data/data.0~YgfAoU30JmGyCrsbzWlsI8_pibb6vj7hfZQ_HRViw8Cc70FAlDmwegSFlZCfsuQkVbD5DrNtkSta1ruLsn2zmQ==",
+        "sha256": "bf509db2ab008e7f1225f869b03474846b8a266208a0ca9a5d0dfda56d44f99b"
+      },
+      {
+        "bytes": 429,
+        "path": "mac.xcresult/Data/data.0~Zc_Ul7UeKUyqD3oSdIfR7yeaH1HSFnffeR8jW5GtzzLO9jBoeKEN7RV4rEgw2SGpe1QPjjaESITufXh3mhWXKg==",
+        "sha256": "5916de7210886313a3a4e8b8aa911cfaba517a88357d120866c6ed91dc7a5856"
+      },
+      {
+        "bytes": 426,
+        "path": "mac.xcresult/Data/data.0~_JK7lk1MVmH73Kb_69MYlByU9fXrFQIuxdZIdvjg6P3W385YCGJuFFsSVJ6D3rgiejt-mV3V3do2-uTyHfsncg==",
+        "sha256": "c7dd5f770ddd5de1682d0424c6811cad2a057de4c54e9fcfe84525aca9e31520"
+      },
+      {
+        "bytes": 424,
+        "path": "mac.xcresult/Data/data.0~a2UDiTBK3Q3fqB8wkBAx9m_1mjghipTBf4msvZtypIHe4XSHjQ6db_yBfKgfKzh0zZZZBsYgLrihhXZ0sGQplg==",
+        "sha256": "409d13de1154c00a9cf6f45db001ae7b0c8a828dbc02d7d1d85e3557fbd1faed"
+      },
+      {
+        "bytes": 418,
+        "path": "mac.xcresult/Data/data.0~aRsCIuZUiBOQiI9NVdylu3e-AWXk1u5unWNuKz2OYAf-3EO6puyNBmnT75Me22ivHfzwq2ZG8ek0EGTlx6Ytkg==",
+        "sha256": "031d9a80ea4b88538c899cfc20f990dd92d9e5c85a4e3602f6ad9d7b80873b82"
+      },
+      {
+        "bytes": 423,
+        "path": "mac.xcresult/Data/data.0~b-Ybbdh-nIEw8IDHsCntExTgra7MpvwuL0YrwwQsA1E1w0Ox4cvHiiKIJNqzePExmn9IV7JL3PNzlOuDgcP47A==",
+        "sha256": "ff2ba7a0258487e967dbedaab2bffc2ca627ee2930b32da62dc0858ac23feb5d"
+      },
+      {
+        "bytes": 118,
+        "path": "mac.xcresult/Data/data.0~bBk6AaX13kLu9yFmWfoCyH5CxpN-XURoe5kYOLp0r4fVDo9wbw86ZfZQ5U5nQgx9hiwOSNyKbQifMj6k8yAkQQ==",
+        "sha256": "2648f917a79a322e36871c515a45b557873dbb93c4e55278ef2e253f3cb9637a"
+      },
+      {
+        "bytes": 407,
+        "path": "mac.xcresult/Data/data.0~eGpYKIBet6DyfqJwNv_L6jLrFkHWjneDwoO2NgJY64SC3b3HUvGy-7moWlrGU2TZEuTvTe3Jp0auRc2uARQq7w==",
+        "sha256": "9fb186307f89575d82150cebdcb0df8d364d31d9a98152b3a70df8551fd34346"
+      },
+      {
+        "bytes": 424,
+        "path": "mac.xcresult/Data/data.0~g0Juf9QU830bBraRBNmbSVGkEobeyS4nCyBIM97t3oBIeG4UyLj1JL4hsnqSTsem6bWjHlW36_DDQq4Fo-F-jQ==",
+        "sha256": "05e16b72e77a01975b22d491a5dafc9ea03a033d68db0d059b4cb4d6eecf9b42"
+      },
+      {
+        "bytes": 419,
+        "path": "mac.xcresult/Data/data.0~hgTkxrSVSNPkoOn9TnmZn0Mnu22NdJ4GI7epJRhUXDJbybVO63SrhvuSAK0ztGUooUI5s59luoLtuTZZqghRtQ==",
+        "sha256": "a0ba30a4824881dccb22777038436fd82d56b14271a7046690f445fa59fdc8ae"
+      },
+      {
+        "bytes": 432,
+        "path": "mac.xcresult/Data/data.0~hye-OEcQB6TkH40lgprqkl1a3asNhuD0diP8GDE4x8Kyl9GC6CRs7hDt8V6YwWWtmXSyAdrQIFtJ6E1tuWfyfA==",
+        "sha256": "d8ad76978cbb3273f663631c8a7890cf53fb7b26188f9ae5d05df64be71e5e4d"
+      },
+      {
+        "bytes": 432,
+        "path": "mac.xcresult/Data/data.0~iBErCeIk86CL52y4wkzh30knP8Ucj0bN2bYk58w2jfyQTfJDiO6q2eztgDxISo2UW9Osgc-obYJp4zPNCwAYDA==",
+        "sha256": "c2d449e56acb357ec332f4f4507e508ef7609f7ed7948f827ae84820bbb66541"
+      },
+      {
+        "bytes": 276,
+        "path": "mac.xcresult/Data/data.0~iRPxaos_CqWOGs_jXsg-kghLCagq36uE9TJsjdu6tNFgZgrMJthfYGJyeaZIVguq_doqOIeJpUHKoe6EGPYHkA==",
+        "sha256": "e5292fda882358e990f1687867fa23be8556427fcf51a3ca78fa6030d7ff0f5c"
+      },
+      {
+        "bytes": 426,
+        "path": "mac.xcresult/Data/data.0~lamVY7LzJ9FJSz4fmK9wQenXcGuyLTAwbBTXeoufrDWfssfDJlcDNehlwuC8PKwMn_SBj7QBihMUzzftYhKjMQ==",
+        "sha256": "8c67d8b47fec6c88153c83bfd4309011304ad57750537e35e457071763dac83f"
+      },
+      {
+        "bytes": 418,
+        "path": "mac.xcresult/Data/data.0~mxSCP4fAMSa_u8sJKW11BuBJZL-RMbN88OTZ3Z85hld4Ws9VAgmnW-q8piIhFoSVmMizc-jfAWX-QBUB-v6-qg==",
+        "sha256": "d93f340df7cdedaa28c3ecfac6990114c63f6c28a2f0f2cbd6c611076fc158f6"
+      },
+      {
+        "bytes": 420,
+        "path": "mac.xcresult/Data/data.0~r1qyy_X-top0GWVGKuT-YFYtqKUYBOfng4RR-vU8JSh8H334lWHh2Gi6Ej5mSejLmD9poXJmlz4fKk7VQuMmzA==",
+        "sha256": "d972d9660d2da2e61bde2720b6ed52051a79678f85fce1567236b39bc3bba541"
+      },
+      {
+        "bytes": 420,
+        "path": "mac.xcresult/Data/data.0~tCwFkRKf3qJ5gi_eH7gYbROUFOF3MnHB5Tp934mAh4KH7fXMNyS057kUpJnF_D4H7uxO7PSaZ6Ty03w_bNHOWg==",
+        "sha256": "1eb1bb844404fa15619f673af8bae11c28b31c7e53edaa0a110c387e92c7c3c9"
+      },
+      {
+        "bytes": 424,
+        "path": "mac.xcresult/Data/data.0~tpml6iydbVj1XxA-15_nwq9RdA4QaGgLqcc16q_G01bk1f32VU90sPzT3gfWtWcA3--2gUHZeIMa4IcJWpAZzQ==",
+        "sha256": "5b40b136f28dc73b53ef3f67623d0fbe6db4ff163fd7a7c9ef9572e374bf02bc"
+      },
+      {
+        "bytes": 421,
+        "path": "mac.xcresult/Data/data.0~y1xJVLDjDX6GxSGXua-mm_00QtCubv8W7Q39_ZCcyWG8RSiJ8NhD59XXwuAQtduComOgBVXGkwUd32RWHTARNQ==",
+        "sha256": "b77cc2dc8a230d25c9e25b4e5fde7d59cdeecb6bec555320f5b54b66bda8b237"
+      },
+      {
+        "bytes": 428,
+        "path": "mac.xcresult/Data/data.0~zBjh8ZFKi_pGf7mkm8VdsUPOU9XlO7FwLOf9vV6L9Gfi5C-uLGvB71_gtuwMJZjdfPPi9rq5JB-t5EaCtwUxWA==",
+        "sha256": "ebe8207bed79ee1082a243d17b0ceb554ac3208f3087d8feb2f1286ee9475240"
+      },
+      {
+        "bytes": 1,
+        "path": "mac.xcresult/Data/refs.0~-JluEVIlp9oH9U_aF3yBD9KRQNsiHtbrHOl-3sD324lm3u_0p8wkr0K7KMVwyHgmSw8AZaW-YfFBmU8TECKRfg==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 1,
+        "path": "mac.xcresult/Data/refs.0~1GNRyVGkGils94Pc_5oUxrmOqESLnk-6mn5cwYYIABZIPlgtwOAhG9AgTTYQ6DuUwoVMX_AOo9BbW6ZvU23jsA==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 1,
+        "path": "mac.xcresult/Data/refs.0~41wQ9gikGHAoa6eQPehwwO9tyyFz0O6e9AF3O2cX70nLQh-dTFaQvL9MAlMO2YrgqwBKmMv3FGtmnvnzMwCnHA==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 133,
+        "path": "mac.xcresult/Data/refs.0~52fz7ZR4O9vS8aNrlObIqT9iJIZ1eBKCeH9OrJflVEsCvRIjuRwGlw8h-DMTFji8rUyN7ElC0NOBfIBpCNFggw==",
+        "sha256": "48db7c1b52227c8d6a8c2186d25dc525f638d38e976fbc6a89bc526ccee330a3"
+      },
+      {
+        "bytes": 1,
+        "path": "mac.xcresult/Data/refs.0~7eXWHVuDHWV_DGFDBV5ai7e3VkHf4lenRZ2vt-r4oJPtBltGZzMhoZLsqvuZA1_pBXdAVq9WRvgvOaFefJe5mw==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 1,
+        "path": "mac.xcresult/Data/refs.0~7hm9MlM3e2ORcg_Ip1vaVboY50Es9Bvi6rvFHXx51U2TPBNK2gXdrTEZdZZYIA3_08rln9wamIUbJERQ0qZpmA==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 1,
+        "path": "mac.xcresult/Data/refs.0~7xbt2CgMHXwn_KoeBGvGeKJBCn3bpSn-AhJl4Q5IlD1vq62NEzQk2LfYNNnPRpqt9DI_UEk0x6MANV9meEDzrQ==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 133,
+        "path": "mac.xcresult/Data/refs.0~90AGA-vsIqDMDpvjCgxls_AaBTY7yF-vJWsXektLUaWqGLyQiKVIqFPxNpjYtSHRa-Hxxkx6Soth_Upg_P3lkQ==",
+        "sha256": "b7238b41516de449b77ccdf1e844cfc519726c426d8b51ca7d670caaa5f88fb6"
+      },
+      {
+        "bytes": 1,
+        "path": "mac.xcresult/Data/refs.0~AqRh-DzKo0WV6jJ_DBF9I6aDbaJTcJnfcWfH-iLqPgGynWyCpZFqWvNVobrgjJFVnDlofH89rW3WM_o31SwHTw==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 1,
+        "path": "mac.xcresult/Data/refs.0~DgOsayF0OIGsBnULub9D-KFD6RNYXlkvwLR7nJFkDuP-wTsKukf-uyolhxQrXi6jI8u_jUtd3rt1s3vQPedusQ==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 1,
+        "path": "mac.xcresult/Data/refs.0~DlXhatENW-X2HDbIThtlRnG0MB2fa4KTfgYhOdHMObtD8oXHC4h-89EThZCcdwXZDhEeSWDfQ3lRHr3ddnRikg==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 1,
+        "path": "mac.xcresult/Data/refs.0~E5Bs-Fm8vzEFeZM2OK2IIULtBhClxpPa8bbHdALIWtG4j16qttImhVjcI4GiK482et1VE-GZ_RofK5KqxiQ76w==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 1,
+        "path": "mac.xcresult/Data/refs.0~FvhWn2yp4YaPp_GrFbRyvWaa8r8e4EXTufasWiCm9NTrZQ7VmwJNkDkEejHagzRynCNMc2GtO1MMt4mIqSOYHg==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 2377,
+        "path": "mac.xcresult/Data/refs.0~GuXWNseRq_WUrO3VeMv-gb9NNA5FhlD12UOAKF2CHysL92Qx8Ln0fLcxNIJh6MxdJHP21xVLw_qm66dakPqbSA==",
+        "sha256": "94defddaca13307735c9179b9ec352e178cc554acdbe63c71b246c6459bd171c"
+      },
+      {
+        "bytes": 1,
+        "path": "mac.xcresult/Data/refs.0~Ho5ddQq8iw6VthD6q38mtCbsww0UNP6S1X5lMuPTKxFsdAcSlozZTsQCvS152-aw_IOL1li3jCtu71oACqUL4g==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 1,
+        "path": "mac.xcresult/Data/refs.0~KdPvT9rS8R5GPuhQbYD47om2OtZNPkSxo0ERbfLxajZpZ8DiRY5aSx1-hcfxNtt9XYD_uOx8ogEHVZpBSpuWnQ==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 1,
+        "path": "mac.xcresult/Data/refs.0~M2gS7hDBw7HdrdeWf1J2tM5vyi9bGgLoeJuGpFxgaSRnrZ0bf2mrJB9ZQua4h--ANfboIH4Hj0Wvd1IxGnUokA==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 1,
+        "path": "mac.xcresult/Data/refs.0~N9kKFid43V9mvDs8UoRitH2Vz8Rr6WeMPSXcyP4sqZhgxOR0FkdHTA3iux2BAxKMhpqD9D8AQdh-VDZPWuVIpw==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 67,
+        "path": "mac.xcresult/Data/refs.0~O-LfFpFQLqXw0-CG7_hZTgTmcdmbuEF6zjrL0COcGuGgwQeVboSdv-vLEiM6RfXg7FkJ4pfV4WY8Vvy4xst4Bg==",
+        "sha256": "6ef3a6e53e65b9c88ff08b24197371cebb7e5ab5410c0f5df9a7a1f0ffba62ec"
+      },
+      {
+        "bytes": 1,
+        "path": "mac.xcresult/Data/refs.0~P5wU4fguyfE3poqcb4Utacaj0YCTBsArXyvM2g1_A_l0nJ2NweGmGTInfEqQlPHlM0LdkepCpDddJzazlFXN7A==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 1,
+        "path": "mac.xcresult/Data/refs.0~PsLnH3hcvTdsw5nnz9u_vSzCGO9hVscxADxPsNh3zCGArgvnPQ5HgaAIS-cqHTBvmHxr3kV9VVCCLMbOzZ8s_Q==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 1,
+        "path": "mac.xcresult/Data/refs.0~R2b7weWZj_JyBdScu4sprAFqICGXwG3Q9agKGgr4ezaOn1Ui8eDKoJLjzF572FLf3yPHOV75-0fWw6xEDFeE6g==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 1,
+        "path": "mac.xcresult/Data/refs.0~R7OlvHyTFzbpql4jQFrzL8c2IlP5AMFOEFOB8U0k_uU4Njg2oQPIHpOeDQBpJsXdKu-Ga5LFpyvlD-jtnZ8neg==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 1,
+        "path": "mac.xcresult/Data/refs.0~ROgCJ2IrHTwYxcwRPlXkRbV8vlQIgZxnOE3Uls0oi3teVfqtvuPqGtJK5qU9afyYWWnk50kjuvkAgdVAOhaXPg==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 1,
+        "path": "mac.xcresult/Data/refs.0~UJL5ZkJ7kz_v96ui8o7gYHTqZ3UgLuPuFOi6qN872xncxicj8GPna1yHKo5DMa0SNMCFNTa1eD7zg2jKUPpZ5g==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 1,
+        "path": "mac.xcresult/Data/refs.0~UPt_cF5TUDo2WQV9CC83m-Kd8zfkNJIW4ulMKTFhXLPwEOYbkSMUjOvtmo0IcJAAx6Tp6Ouyt1EXH8KgcSRKVw==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 265,
+        "path": "mac.xcresult/Data/refs.0~Up1i4tYILIFbI6ys9nIvdewzmSoQF3FfbiqGoSksJCKVci-nrh5oYZZ_1mQU1WArF8HjEBc8PUmK3_EN2JAo3g==",
+        "sha256": "b56e131d4a785e33661f24d5fbdc2f73df292c7ee3a263cff9c84465d170e8bb"
+      },
+      {
+        "bytes": 1,
+        "path": "mac.xcresult/Data/refs.0~Wrku1UijpX3xU7zUYku_yw_YoszkeGZicWhEwvG0kA0qdYpQ3fuEyvJ_vOj4TLT602Ky4PbNlw6rvk8eVvTE0A==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 1,
+        "path": "mac.xcresult/Data/refs.0~YgfAoU30JmGyCrsbzWlsI8_pibb6vj7hfZQ_HRViw8Cc70FAlDmwegSFlZCfsuQkVbD5DrNtkSta1ruLsn2zmQ==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 1,
+        "path": "mac.xcresult/Data/refs.0~Zc_Ul7UeKUyqD3oSdIfR7yeaH1HSFnffeR8jW5GtzzLO9jBoeKEN7RV4rEgw2SGpe1QPjjaESITufXh3mhWXKg==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 1,
+        "path": "mac.xcresult/Data/refs.0~_JK7lk1MVmH73Kb_69MYlByU9fXrFQIuxdZIdvjg6P3W385YCGJuFFsSVJ6D3rgiejt-mV3V3do2-uTyHfsncg==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 1,
+        "path": "mac.xcresult/Data/refs.0~a2UDiTBK3Q3fqB8wkBAx9m_1mjghipTBf4msvZtypIHe4XSHjQ6db_yBfKgfKzh0zZZZBsYgLrihhXZ0sGQplg==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 1,
+        "path": "mac.xcresult/Data/refs.0~aRsCIuZUiBOQiI9NVdylu3e-AWXk1u5unWNuKz2OYAf-3EO6puyNBmnT75Me22ivHfzwq2ZG8ek0EGTlx6Ytkg==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 1,
+        "path": "mac.xcresult/Data/refs.0~b-Ybbdh-nIEw8IDHsCntExTgra7MpvwuL0YrwwQsA1E1w0Ox4cvHiiKIJNqzePExmn9IV7JL3PNzlOuDgcP47A==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 133,
+        "path": "mac.xcresult/Data/refs.0~bBk6AaX13kLu9yFmWfoCyH5CxpN-XURoe5kYOLp0r4fVDo9wbw86ZfZQ5U5nQgx9hiwOSNyKbQifMj6k8yAkQQ==",
+        "sha256": "3faa1609a78f4fe62cbe03ebf85e95704de71f12d97d4bd6cc3b834085ca0b59"
+      },
+      {
+        "bytes": 1,
+        "path": "mac.xcresult/Data/refs.0~eGpYKIBet6DyfqJwNv_L6jLrFkHWjneDwoO2NgJY64SC3b3HUvGy-7moWlrGU2TZEuTvTe3Jp0auRc2uARQq7w==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 1,
+        "path": "mac.xcresult/Data/refs.0~g0Juf9QU830bBraRBNmbSVGkEobeyS4nCyBIM97t3oBIeG4UyLj1JL4hsnqSTsem6bWjHlW36_DDQq4Fo-F-jQ==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 1,
+        "path": "mac.xcresult/Data/refs.0~hgTkxrSVSNPkoOn9TnmZn0Mnu22NdJ4GI7epJRhUXDJbybVO63SrhvuSAK0ztGUooUI5s59luoLtuTZZqghRtQ==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 1,
+        "path": "mac.xcresult/Data/refs.0~hye-OEcQB6TkH40lgprqkl1a3asNhuD0diP8GDE4x8Kyl9GC6CRs7hDt8V6YwWWtmXSyAdrQIFtJ6E1tuWfyfA==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 1,
+        "path": "mac.xcresult/Data/refs.0~iBErCeIk86CL52y4wkzh30knP8Ucj0bN2bYk58w2jfyQTfJDiO6q2eztgDxISo2UW9Osgc-obYJp4zPNCwAYDA==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 1,
+        "path": "mac.xcresult/Data/refs.0~iRPxaos_CqWOGs_jXsg-kghLCagq36uE9TJsjdu6tNFgZgrMJthfYGJyeaZIVguq_doqOIeJpUHKoe6EGPYHkA==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 1,
+        "path": "mac.xcresult/Data/refs.0~lamVY7LzJ9FJSz4fmK9wQenXcGuyLTAwbBTXeoufrDWfssfDJlcDNehlwuC8PKwMn_SBj7QBihMUzzftYhKjMQ==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 1,
+        "path": "mac.xcresult/Data/refs.0~mxSCP4fAMSa_u8sJKW11BuBJZL-RMbN88OTZ3Z85hld4Ws9VAgmnW-q8piIhFoSVmMizc-jfAWX-QBUB-v6-qg==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 1,
+        "path": "mac.xcresult/Data/refs.0~r1qyy_X-top0GWVGKuT-YFYtqKUYBOfng4RR-vU8JSh8H334lWHh2Gi6Ej5mSejLmD9poXJmlz4fKk7VQuMmzA==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 1,
+        "path": "mac.xcresult/Data/refs.0~tCwFkRKf3qJ5gi_eH7gYbROUFOF3MnHB5Tp934mAh4KH7fXMNyS057kUpJnF_D4H7uxO7PSaZ6Ty03w_bNHOWg==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 1,
+        "path": "mac.xcresult/Data/refs.0~tpml6iydbVj1XxA-15_nwq9RdA4QaGgLqcc16q_G01bk1f32VU90sPzT3gfWtWcA3--2gUHZeIMa4IcJWpAZzQ==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 1,
+        "path": "mac.xcresult/Data/refs.0~y1xJVLDjDX6GxSGXua-mm_00QtCubv8W7Q39_ZCcyWG8RSiJ8NhD59XXwuAQtduComOgBVXGkwUd32RWHTARNQ==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 1,
+        "path": "mac.xcresult/Data/refs.0~zBjh8ZFKi_pGf7mkm8VdsUPOU9XlO7FwLOf9vV6L9Gfi5C-uLGvB71_gtuwMJZjdfPPi9rq5JB-t5EaCtwUxWA==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 776,
+        "path": "mac.xcresult/Info.plist",
+        "sha256": "608f39ac10886cf87fd5e8bfe5d465ad706266af606320864650f324e5b3f1d1"
+      },
+      {
+        "bytes": 266240,
+        "path": "mac.xcresult/database.sqlite3",
+        "sha256": "8d75c6045efc534672d5203135815c183514595bd25d31144e1255be7957d491"
+      },
+      {
+        "bytes": 0,
+        "path": "mcp-dependencies.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 230,
+        "path": "mcp-dependencies.stdout.log",
+        "sha256": "9768b19554cc9437dcac08a9e9f95aa1b4de08d4637900f6b1d71e32943e870c"
+      },
+      {
+        "bytes": 8664,
+        "path": "selection.json",
+        "sha256": "450b50c981f520396ca48e1bb3c05cb13c26753295edfd3600cc2d7ff252f404"
+      },
+      {
+        "bytes": 313274,
+        "path": "source-after.json",
+        "sha256": "46c0f1cb8859ae1169813c4267b6c54753de46c675f724282be1a47ac03ed3f1"
+      },
+      {
+        "bytes": 313274,
+        "path": "source-before.json",
+        "sha256": "46c0f1cb8859ae1169813c4267b6c54753de46c675f724282be1a47ac03ed3f1"
+      },
+      {
+        "bytes": 0,
+        "path": "surface-resources.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 1060,
+        "path": "surface-resources.stdout.log",
+        "sha256": "2b19869c3acd811b7006263a6afcfff406db781367e03815e0950ea8a6378b3c"
+      },
+      {
+        "bytes": 174,
+        "path": "test-host-reseal.stderr.log",
+        "sha256": "655723b96b574def1af0faf4cb598312ad0e18182957e3428ace1ee1b99fbbe1"
+      },
+      {
+        "bytes": 0,
+        "path": "test-host-reseal.stdout.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 0,
+        "path": "test-host-seal-verify.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 0,
+        "path": "test-host-seal-verify.stdout.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 327,
+        "path": "test-worker-rights-0.stderr.log",
+        "sha256": "01eb94e028fe2d6cec87d32094e95d18b73a14fd8c1f7361d4b177b848bae473"
+      },
+      {
+        "bytes": 276,
+        "path": "test-worker-rights-0.stdout.log",
+        "sha256": "367fd06da553732455876f7e31bd0abc7862848d7f1464f41eeadb6121efb568"
+      },
+      {
+        "bytes": 327,
+        "path": "test-worker-rights-1.stderr.log",
+        "sha256": "fc65ef1b62f54e308d83a7edc45148a10eff154e4c6364fdb45f08ff50eea236"
+      },
+      {
+        "bytes": 232,
+        "path": "test-worker-rights-1.stdout.log",
+        "sha256": "f8b4cfc5e7c5076be716c5a3e37f8f6b03db3f5c47220215175e9ea3cd9ef6f0"
+      },
+      {
+        "bytes": 327,
+        "path": "test-worker-rights-2.stderr.log",
+        "sha256": "3d8172f8faf53419f44f0a76f051d70f21afbd61cde69ee5f30f322f7b0471ae"
+      },
+      {
+        "bytes": 232,
+        "path": "test-worker-rights-2.stdout.log",
+        "sha256": "f8b4cfc5e7c5076be716c5a3e37f8f6b03db3f5c47220215175e9ea3cd9ef6f0"
+      },
+      {
+        "bytes": 258,
+        "path": "test-worker-sign-0.stderr.log",
+        "sha256": "3f1117fd486288cdf8ff572721357a7569dd2ffc9497f1a81600088137026670"
+      },
+      {
+        "bytes": 0,
+        "path": "test-worker-sign-0.stdout.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 221,
+        "path": "test-worker-sign-1.stderr.log",
+        "sha256": "b57777e9a380f4bb1c31909a2cc9cbed90de3d94d1178496fed63aa61a773164"
+      },
+      {
+        "bytes": 0,
+        "path": "test-worker-sign-1.stdout.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 221,
+        "path": "test-worker-sign-2.stderr.log",
+        "sha256": "8541c9c66f30a5549460a75cf7685b99fab64a379cd95ec358e1ad74026f773d"
+      },
+      {
+        "bytes": 0,
+        "path": "test-worker-sign-2.stdout.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 0,
+        "path": "toolchain-after-iphoneosSDK.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 7,
+        "path": "toolchain-after-iphoneosSDK.stdout.log",
+        "sha256": "62cbab419e9a35d0a85cc03b9d4bb98e5dae96591632655688ac714805d333be"
+      },
+      {
+        "bytes": 0,
+        "path": "toolchain-after-macosSDK.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 7,
+        "path": "toolchain-after-macosSDK.stdout.log",
+        "sha256": "8e78a5c0c20fa1f07a154dbd8319d52d2bc1c38974a5b30047e300e8d0ec8a23"
+      },
+      {
+        "bytes": 0,
+        "path": "toolchain-after-node.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 8,
+        "path": "toolchain-after-node.stdout.log",
+        "sha256": "d95f1e489f48c12fd8ae0fe8a79c78d48c9f8f9ca012a3264f59c380f0465220"
+      },
+      {
+        "bytes": 0,
+        "path": "toolchain-after-npm.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 8,
+        "path": "toolchain-after-npm.stdout.log",
+        "sha256": "324f52ea836cd47edb7932f3992fa50b67fc7fec13a6950e1a1ddf720afab6d2"
+      },
+      {
+        "bytes": 0,
+        "path": "toolchain-after-python.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 14,
+        "path": "toolchain-after-python.stdout.log",
+        "sha256": "917601090ffb73a030e3eaa8b7a01c41400cad4b61366b4218d7756a5733b66c"
+      },
+      {
+        "bytes": 30,
+        "path": "toolchain-after-swift.stderr.log",
+        "sha256": "bbc8b176d3c74d4c5a7fd00b40280f98168e116d5272273bfe8e71407625540e"
+      },
+      {
+        "bytes": 98,
+        "path": "toolchain-after-swift.stdout.log",
+        "sha256": "04630ab8fa201f57c63c59730e638135e32584a97e16e004a417eb8ed283dc83"
+      },
+      {
+        "bytes": 0,
+        "path": "toolchain-after-xcode.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 33,
+        "path": "toolchain-after-xcode.stdout.log",
+        "sha256": "694b44731d0b415c5b11d844151e466d7f5e200a95627efda377f232f1a6ab77"
+      },
+      {
+        "bytes": 0,
+        "path": "toolchain-after-xcodegen.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 16,
+        "path": "toolchain-after-xcodegen.stdout.log",
+        "sha256": "bf8aa757345fcd22d1fd26e760aa058f02991e2d930686b8eaf750cd6e5f8532"
+      },
+      {
+        "bytes": 318,
+        "path": "toolchain-after.json",
+        "sha256": "ee0fce6c2e726405f0a3685a69be5335ed15bff52d034039ed77556d0785dc0c"
+      },
+      {
+        "bytes": 0,
+        "path": "toolchain-iphoneosSDK.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 7,
+        "path": "toolchain-iphoneosSDK.stdout.log",
+        "sha256": "62cbab419e9a35d0a85cc03b9d4bb98e5dae96591632655688ac714805d333be"
+      },
+      {
+        "bytes": 0,
+        "path": "toolchain-macosSDK.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 7,
+        "path": "toolchain-macosSDK.stdout.log",
+        "sha256": "8e78a5c0c20fa1f07a154dbd8319d52d2bc1c38974a5b30047e300e8d0ec8a23"
+      },
+      {
+        "bytes": 0,
+        "path": "toolchain-node.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 8,
+        "path": "toolchain-node.stdout.log",
+        "sha256": "d95f1e489f48c12fd8ae0fe8a79c78d48c9f8f9ca012a3264f59c380f0465220"
+      },
+      {
+        "bytes": 0,
+        "path": "toolchain-npm.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 8,
+        "path": "toolchain-npm.stdout.log",
+        "sha256": "324f52ea836cd47edb7932f3992fa50b67fc7fec13a6950e1a1ddf720afab6d2"
+      },
+      {
+        "bytes": 0,
+        "path": "toolchain-python.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 14,
+        "path": "toolchain-python.stdout.log",
+        "sha256": "917601090ffb73a030e3eaa8b7a01c41400cad4b61366b4218d7756a5733b66c"
+      },
+      {
+        "bytes": 30,
+        "path": "toolchain-swift.stderr.log",
+        "sha256": "bbc8b176d3c74d4c5a7fd00b40280f98168e116d5272273bfe8e71407625540e"
+      },
+      {
+        "bytes": 98,
+        "path": "toolchain-swift.stdout.log",
+        "sha256": "04630ab8fa201f57c63c59730e638135e32584a97e16e004a417eb8ed283dc83"
+      },
+      {
+        "bytes": 0,
+        "path": "toolchain-xcode.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 33,
+        "path": "toolchain-xcode.stdout.log",
+        "sha256": "694b44731d0b415c5b11d844151e466d7f5e200a95627efda377f232f1a6ab77"
+      },
+      {
+        "bytes": 0,
+        "path": "toolchain-xcodegen.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 16,
+        "path": "toolchain-xcodegen.stdout.log",
+        "sha256": "bf8aa757345fcd22d1fd26e760aa058f02991e2d930686b8eaf750cd6e5f8532"
+      },
+      {
+        "bytes": 318,
+        "path": "toolchain.json",
+        "sha256": "ee0fce6c2e726405f0a3685a69be5335ed15bff52d034039ed77556d0785dc0c"
+      },
+      {
+        "bytes": 0,
+        "path": "typescript-resources.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 1893,
+        "path": "typescript-resources.stdout.log",
+        "sha256": "50774f7607c8af614145cf8eef64e06a7e7ca048bb4beaefaef300c635ff605a"
+      },
+      {
+        "bytes": 0,
+        "path": "typesetter-resources-macosx.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 98,
+        "path": "typesetter-resources-macosx.stdout.log",
+        "sha256": "38b36dfd023c9309c8648f12ddec4e36e03577883bcdac82958a1eac0ab1d852"
+      }
+    ]
+  },
+  "createdAtUTC": "2026-10-06T00:40:24.148301+00:00",
+  "boundaries": [
+    "This is the exact historical v9 whole-source snapshot independently validated before subsequent iPad-only semantic fixes.",
+    "Current extraction confirms unchanged Core/Mac owner inputs; it does not reissue v9 for a changed whole tree.",
+    "No iPad device execution, gesture, system frame/CPU/GPU/RSS measure or all104 acceptance is claimed.",
+    "The iPhoneOS semantic build is a separate build-only route; its later result is not included here.",
+    "Earlier v5-v8 failed/interrupted aggregate routes stay failed/incomplete; their subsets do not certify those whole routes.",
+    "Large inventory/source manifests, compiled products and xcresult binaries stay only in the original evidence; the extract retains their exact original hashes."
+  ]
+}

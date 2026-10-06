@@ -5,7 +5,7 @@ import NotebookCore
 /// One workspace presentation owner. Features supply actions and their anchor;
 /// this owner supplies the surface, placement, native-menu lifetime and input boundary.
 @MainActor
-final class NotebookContextMenus: NSObject, UIPopoverPresentationControllerDelegate {
+final class NotebookContextMenus: NSObject, ObservableObject, UIPopoverPresentationControllerDelegate {
   let view = HostView()
   // This small control surface must not filter the entire live ink backdrop
   // whenever selection changes. Keep the same native buttons and geometry.
@@ -33,56 +33,135 @@ final class NotebookContextMenus: NSObject, UIPopoverPresentationControllerDeleg
   private var registeredSelection: UUID?
   private var pendingSelection: (id:UUID,point:CGPoint)?
   var selectionActions: ((UUID,CGPoint) -> [UIMenuElement])?
-  private(set) var clipboardTask:Task<Void,Never>?
-  private var clipboardCommand:UUID?
-  // The system clipboard is shared by all Notebook windows. A menu owns its
-  // presentation, but only the latest explicit export owns publication.
-  private static weak var clipboardOwner:NotebookContextMenus?
-
-  private func cancelClipboard() {
-    clipboardTask?.cancel();clipboardTask=nil;clipboardCommand=nil
-    if Self.clipboardOwner === self { Self.clipboardOwner=nil }
+  private let clipboardExports: NotebookClipboardExportOwner
+  var clipboardTask: Task<Void, Never>? { clipboardExports.task(for: self) }
+  var publishClipboard: (NotebookClipboard.Export) -> Bool = { exported in
+    let pasteboard=UIPasteboard.general,previous=pasteboard.changeCount
+    pasteboard.setItems([exported.representations],options:[:])
+    return pasteboard.changeCount != previous
+      && pasteboard.data(forPasteboardType:NotebookClipboard.fragmentType.identifier) == exported.fragment
   }
 
-  func copySelection(_ model:NotebookAppModel,selection:UUID,cut:Bool) {
-    guard model.selectionSession.id == selection else { return }
-    Self.clipboardOwner?.cancelClipboard()
-    Self.clipboardOwner=self
-    let command=UUID();clipboardCommand=command
-    let clipboardVersion=UIPasteboard.general.changeCount
-    do {
-      let snapshot=try model.clipboardSelectionSnapshot()
-      clipboardTask=Task { [weak self,weak model] in
-        defer {
-          if let self, clipboardCommand == command {
-            clipboardTask=nil;clipboardCommand=nil
-            if Self.clipboardOwner === self { Self.clipboardOwner=nil }
-          }
+  fileprivate struct PresentationContext: Equatable {
+    let selection: UUID
+    let references: [EditableElementReference]
+    let ink: [NotebookSelectedInk.Key]
+    let items: [NotebookSelectedItem]
+    let region: UUID?
+    let manipulation: UUID?
+    let interactive: Bool
+    let navigation: UInt64
+    let contact: UInt64
+    let workspace: UUID?
+    let board: UUID?
+    let mode: WorkspaceSemanticMode?
+    let focusedItem: UUID?
+    let notebookPage: UUID?
+    let documentPage: Int?
+    @MainActor init(_ model: NotebookAppModel) {
+      let session=model.selectionSession,presence=model.presence
+      selection=session.id;references=session.elements;ink=session.ink.map(\.key)
+      items=session.items;region=session.region?.id;manipulation=session.manipulation?.id
+      interactive=session.isInteractive
+      navigation=model.navigationGeneration;contact=model.inputGate.acceptedContactGeneration
+      workspace=model.workspaceHeader?.workspaceID;board=presence?.boardID;mode=presence?.mode
+      focusedItem=presence?.focusedItemID;notebookPage=presence?.notebookPageID
+      documentPage=presence?.documentPageIndex
+    }
+  }
+  struct PresentationIntent: Identifiable, Equatable {
+    let id: UUID
+    fileprivate let context: PresentationContext
+  }
+  struct ClipboardIntent: Identifiable, Equatable {
+    let id: UUID
+    let presentation: PresentationIntent
+  }
+  enum PasteOutcome {
+    case composition(String)
+    case inserted
+    case failed(String)
+  }
+  /// The gesture owns admission; a reader borrows that lease through its actual
+  /// callback/worker completion and returns only decoded content.
+  typealias ClipboardReader = @MainActor ([NSItemProvider], SpatialPoint, NotebookClipboardWorkLease) async throws -> NotebookClipboard.Content
+  @Published private var presentationIntent: PresentationIntent?
+  private var clipboardIntentID: UUID?
+  private var presentationUsesPopover = false
+
+  func copySelection(_ model: NotebookAppModel, selection: UUID, cut: Bool) {
+    clipboardExports.copySelection(model, owner: self, selection: selection, cut: cut)
+  }
+
+  /// One context token covers UIKit palettes and the SwiftUI actions popover.
+  /// Geometry repaint does not create a new user intent.
+  func beginContentPresentation(in model: NotebookAppModel) -> PresentationIntent {
+    dismissCurrent();selectionModel=model
+    return replacePresentation(in: model)
+  }
+  private func replacePresentation(in model: NotebookAppModel) -> PresentationIntent {
+    let intent=PresentationIntent(id:UUID(),context:.init(model))
+    presentationIntent=intent;clipboardIntentID=nil;presentationUsesPopover=false
+    return intent
+  }
+  private func invalidatePresentation() {
+    presentationIntent=nil;clipboardIntentID=nil;presentationUsesPopover=false
+  }
+  func isCurrent(_ intent: PresentationIntent, in model: NotebookAppModel) -> Bool {
+    presentationIntent?.id == intent.id && selectionModel === model && model.shutdownPhase == .running
+      && intent.context == PresentationContext(model)
+      && (!presentationUsesPopover || popover?.presentingViewController != nil)
+  }
+  func isCurrent(_ intent: ClipboardIntent, in model: NotebookAppModel) -> Bool {
+    clipboardIntentID == intent.id && isCurrent(intent.presentation,in:model)
+  }
+  func finishContentPresentation(_ intent: PresentationIntent) {
+    guard presentationIntent?.id == intent.id else { return }
+    dismissCurrent();pendingSelection=nil
+  }
+
+  /// A fragment enters its captured accepted writer even after its menu leaves.
+  /// Composition previews, errors and close callbacks require the current intent.
+  @discardableResult
+  func pasteClipboard(_ providers: [NSItemProvider], at destination: NotebookPasteDestination,
+    in model: NotebookAppModel, presentation: PresentationIntent? = nil,
+    read: ClipboardReader? = nil,
+    completion: @escaping @MainActor (ClipboardIntent, PasteOutcome) -> Void) -> Task<Void, Never>? {
+    let context: PresentationIntent
+    if let presentation {
+      guard isCurrent(presentation,in:model) else { return nil };context=presentation
+    } else if let current=presentationIntent,isCurrent(current,in:model) { context=current }
+    else { selectionModel=model;context=replacePresentation(in:model) }
+    let intent=ClipboardIntent(id:UUID(),presentation:context)
+    clipboardIntentID=intent.id
+    let work:NotebookClipboardWorkLease
+    do { work=try model.beginClipboardWork() }
+    catch {
+      if isCurrent(intent,in:model) { completion(intent,.failed(error.localizedDescription)) }
+      return nil
+    }
+    return Task { [weak self] in
+      defer { withExtendedLifetime(work) {} }
+      let outcome: PasteOutcome
+      do {
+        let content:NotebookClipboard.Content
+        if let read { content=try await read(providers,destination.availableSize,work) }
+        else { content=try await model.readClipboard(providers,availableSize:destination.availableSize,workLease:work).content }
+        switch content {
+        case .composition(let source): outcome = .composition(source)
+        case .fragment(let fragment):
+          let saved=await model.insertClipboardFragment(fragment,at:destination,workLease:work)
+          outcome = saved ? .inserted : .failed(model.persistenceFailure ?? model.actionCue ?? "Не удалось сохранить. Попробуйте ещё раз.")
         }
-        guard !Task.isCancelled else { return }
-        let worker=Task.detached(priority:.userInitiated) {
-          try NotebookClipboard.prepareExport(snapshot.prepare().fragment)
-        }
-        do {
-          let exported=try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
-          guard !Task.isCancelled,let self,let model,clipboardCommand == command else { return }
-          guard Self.clipboardOwner === self, UIPasteboard.general.changeCount == clipboardVersion else { return }
-          if cut && !model.selectionStillMatches(snapshot) {
-            model.showCue("Выделение изменилось. Повторите вырезание.");return
-          }
-          UIPasteboard.general.setItems([exported.representations],options:[:])
-          if cut { model.deleteSelectedContent() }
-        } catch is CancellationError {} catch {
-          if self?.clipboardCommand == command { model?.showCue(error.localizedDescription) }
-        }
-      }
-    } catch {
-      cancelClipboard();model.showCue(error.localizedDescription)
+      } catch { outcome = .failed(error.localizedDescription) }
+      guard let self,isCurrent(intent,in:model) else { return }
+      completion(intent,outcome)
     }
   }
 
-
-  override init() {
+  override convenience init() { self.init(clipboardExports: .shared) }
+  init(clipboardExports: NotebookClipboardExportOwner) {
+    self.clipboardExports=clipboardExports
     super.init()
     view.backgroundColor = .clear; view.isOpaque = false
     view.owner = self
@@ -169,6 +248,9 @@ final class NotebookContextMenus: NSObject, UIPopoverPresentationControllerDeleg
   }
   func updateSelection(_ model: NotebookAppModel) {
     selectionModel=model
+    if let intent=presentationIntent,!isCurrent(intent,in:model) {
+      dismissCurrent();source=nil;anchorView=nil
+    }
     let reference=model.selectionSession.editingElement
     let graphic=reference.flatMap { model.graphicElement($0) }
     // The Host observes the selected material before an action opens its
@@ -204,14 +286,16 @@ final class NotebookContextMenus: NSObject, UIPopoverPresentationControllerDeleg
     return true
   }
   func uninstall() {
-    cancelClipboard()
+    clipboardExports.cancel(self)
     dismissCurrent(); source = nil; anchorView = nil; selectionActions = nil; pendingSelection = nil
     selectionModel=nil
     gate?.unregisterControlRegion(source:controlSource); gate = nil
   }
   private func dismissCurrent(preservingPending selection:UUID? = nil) {
+    let preservesIntent=selection != nil && pendingSelection?.id == selection
+      && presentationIntent?.context.selection == selection
     if pendingSelection?.id != selection { pendingSelection=nil }
-    dismissPopover()
+    dismissPopover(endingPresentation:!preservesIntent)
     selectionMore.dismissMenu();selectionMore.contents=[]
     selectionCommands=nil;selectionActionsEnabled=false
     registeredSelection=nil; inlineControls=false;selectionActionsVisible=false
@@ -228,6 +312,7 @@ final class NotebookContextMenus: NSObject, UIPopoverPresentationControllerDeleg
   }
   func requestSelectionMenu(_ selection: UUID, at point: CGPoint) {
     guard permitsSelectionMenu(selection),popover?.presentingViewController == nil else { return }
+    if let model=selectionModel { _ = replacePresentation(in:model) }
     pendingSelection = (selection,point)
     presentRegisteredSelectionIfReady()
   }
@@ -320,12 +405,27 @@ final class NotebookContextMenus: NSObject, UIPopoverPresentationControllerDeleg
       guard let self,let model=selectionModel,model.selectionSession.editingElement == reference,isCurrent(),
         configureSelectionPopover(controller,reference:reference,graphic:model.graphicElement(reference),model:model) else { return }
       dismissPopover()
+      _ = replacePresentation(in:model)
       selectionPopover=(selection,reference,isCurrent)
       presentPopover(controller,from:view,rect:selectionAnchor)
     }
   }
   func presentContent<Content: View>(_ content: Content, at point: CGPoint) {
     dismissCurrent()
+    if let model=selectionModel { _ = replacePresentation(in:model) }
+    installContent(content,at:point)
+  }
+  func presentContent<Content: View>(in model: NotebookAppModel, at point: CGPoint,
+    content: (PresentationIntent) -> Content) {
+    let intent=beginContentPresentation(in:model)
+    installContent(content(intent),at:point)
+  }
+  func presentContent<Content: View>(for intent: ClipboardIntent, in model: NotebookAppModel,
+    at point: CGPoint, content: (PresentationIntent) -> Content) {
+    guard isCurrent(intent,in:model) else { return }
+    presentContent(in:model,at:point,content:content)
+  }
+  private func installContent<Content: View>(_ content: Content, at point: CGPoint) {
     source=nil;anchorView=nil
     let controller=UIHostingController(rootView:content)
     controller.modalPresentationStyle = .popover
@@ -333,7 +433,10 @@ final class NotebookContextMenus: NSObject, UIPopoverPresentationControllerDeleg
     presentPopover(controller,from:view,rect:.init(x:point.x,y:point.y,width:1,height:1))
   }
   func dismissPresentedContent() { dismissCurrent(); pendingSelection=nil }
-  private func dismissPopover() { let old = popover; popover = nil; selectionPopover=nil; old?.dismiss(animated:false) }
+  private func dismissPopover(endingPresentation:Bool = true) {
+    if endingPresentation { invalidatePresentation() }
+    let old = popover;popover = nil;selectionPopover=nil;old?.dismiss(animated:false)
+  }
   private func presentPopover(_ controller:UIViewController,from anchor:UIView,rect:CGRect) {
     var responder: UIResponder? = view
     while responder != nil && !(responder is UIViewController) { responder = responder?.next }
@@ -342,10 +445,12 @@ final class NotebookContextMenus: NSObject, UIPopoverPresentationControllerDeleg
     controller.popoverPresentationController?.sourceView = view
     controller.popoverPresentationController?.sourceRect = anchor.convert(rect,to:view)
     controller.popoverPresentationController?.permittedArrowDirections = .any
-    popover = controller; owner.present(controller,animated:true)
+    popover = controller;presentationUsesPopover=true;owner.present(controller,animated:true)
   }
   func presentationControllerDidDismiss(_ presentationController: UIPresentationController) {
-    if popover === presentationController.presentedViewController { popover = nil;selectionPopover=nil }
+    if popover === presentationController.presentedViewController {
+      popover = nil;selectionPopover=nil;invalidatePresentation()
+    }
   }
   func popoverPresentationControllerDidDismissPopover(_ controller: UIPopoverPresentationController) { presentationControllerDidDismiss(controller) }
   func adaptivePresentationStyle(for controller: UIPresentationController) -> UIModalPresentationStyle { .none }
@@ -388,6 +493,16 @@ final class NotebookContextMenus: NSObject, UIPopoverPresentationControllerDeleg
       let hit = super.hitTest(point,with:event)
       return hit === self ? nil : hit
     }
+  }
+}
+
+private struct NotebookContextMenusKey: EnvironmentKey {
+  static let defaultValue: NotebookContextMenus? = nil
+}
+extension EnvironmentValues {
+  var notebookContextMenus: NotebookContextMenus? {
+    get { self[NotebookContextMenusKey.self] }
+    set { self[NotebookContextMenusKey.self] = newValue }
   }
 }
 

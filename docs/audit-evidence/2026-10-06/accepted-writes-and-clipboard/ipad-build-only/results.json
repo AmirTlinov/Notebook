@@ -1,0 +1,90 @@
+{
+  "format": 1,
+  "result": "PASS build only",
+  "scope": "iphoneos semantic build only",
+  "testsExecuted": [],
+  "physicalAcceptance": false,
+  "sourceRoot": "/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook",
+  "source": {
+    "format": 2,
+    "sha256": "211d4585816884a87ea1c1e97d9212296b45d215488ac0a1c647470afd009d91",
+    "inputCount": 1645,
+    "beforeEqualsAfterEqualsCurrentAtIndependentAudit": true,
+    "diffFromV9": [
+      {
+        "path": "Applications/Tests/NotebookElementManipulationTests.swift",
+        "v9SHA256": "f0e29ed3e084bab9f24bfe77699b933af75832df933dc7a4b051570a5da83182",
+        "semanticV3SHA256": "0e36c81a5d9faed26291fc87d58de34ea66c9fbb49bdcbcfa560747bf16eac48"
+      },
+      {
+        "path": "Applications/iPad/NotebookClipboardExportOwner.swift",
+        "v9SHA256": "504cd2c142ad616359fb3e1abd2b51f0c7299e134e2847b6e8321ef22d865724",
+        "semanticV3SHA256": "97805a6670d57e9cd56bd575e096b08500146e7c593371d2382abef4bfd8ffbe"
+      },
+      {
+        "path": "Applications/iPad/NotebookContextMenus.swift",
+        "v9SHA256": "7c8292da2c6a8dd95a33526af10fcb95af46326eae538a235908796a506d49c0",
+        "semanticV3SHA256": "d3cadcf10f832a383cc095dd9888383e7b93c6f3677c40737825a1f2ba5ede11"
+      }
+    ]
+  },
+  "independentValidation": {
+    "recordedAtUTC": "2026-10-06T00:45:31.145732+00:00",
+    "exactArgvScope": true,
+    "sourceBeforeAfterCurrentEqual": true,
+    "runtimeManifestHashMatchesRecord": true,
+    "iphoneosStaticLibraryHashMatchesManifest": true,
+    "allFourSwiftMachOProductsAreArm64IOSSDK27": true,
+    "appAndTestBundleSDKBuild": "24A430",
+    "xcodeBuild": "27A266a",
+    "appAndTwoTestBundleProductsExist": true,
+    "xctestrunListsBothTestBundles": true
+  },
+  "productFingerprints": "products.json",
+  "command": "command.json",
+  "durationSeconds": 29.463499069213867,
+  "originalEvidence": "/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook/.build/remediation-ipad-semantic-build-20261006-v3",
+  "originalArtifacts": [
+    {
+      "path": "command.json",
+      "bytes": 1190,
+      "sha256": "4d017e731250ccc002e16b135d48634a06676d54bbc2a12f86baceb746ce2ae3"
+    },
+    {
+      "path": "source-after.json",
+      "bytes": 313274,
+      "sha256": "e3795e9b49753109ac165bd1e7f57d2621ea8991c527eb4f3c9dc186b486e2a1"
+    },
+    {
+      "path": "source-before.json",
+      "bytes": 313274,
+      "sha256": "e3795e9b49753109ac165bd1e7f57d2621ea8991c527eb4f3c9dc186b486e2a1"
+    },
+    {
+      "path": "stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "stdout.log",
+      "bytes": 15616,
+      "sha256": "b614fc8bee619be6724efa34c41a638fe1362b51697aa9c2f6fe5b97ae015083"
+    }
+  ],
+  "companionScope": {
+    "extract": "/tmp/notebook-remediation-accepted-clipboard-mixed-20261006-v9",
+    "coreFunctions": 29,
+    "coreExecutions": 30,
+    "macTests": 36,
+    "sourceSHA256": "587f3ff6a8e9d372d20c05ba2aff534f4af328d4bbdfc48b0d161aa99af36b21",
+    "threeChangedPathsAreOutsideMacTestSources": "NotebookRuntime sources Shared/Mac/WebResources; MacTests adds MacTests/TestSupport and only PersistenceQueue/Admission/ScenePublication shared test files."
+  },
+  "boundaries": [
+    "build-for-testing compiled iPhoneOS app, unit and UI test bundles; no test action, device installation or physical gesture occurred.",
+    "The isolated bundle is com.amirtlinov.notebook.native-test; this result does not update the installed pair.",
+    "This source snapshot differs from historical v9 only by two iPad owner files and one UIKit fixture; Core/Mac source inputs remain unchanged.",
+    "The runtime dependency comes from the explicitly frozen C4 worktree stage, pinned by manifest and iPhoneOS library hashes.",
+    "Root last observed the physical iPad passcodeRequired=true at00:38 UTC; physical execution remains pending.",
+    "No system frame/CPU/GPU/RSS or whole104 acceptance is measured by this build."
+  ]
+}

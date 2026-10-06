@@ -9,19 +9,25 @@ final class NotebookWorkspaceWritersTests: XCTestCase {
   @MainActor
   func testCanonicalAliasesShareAcceptedWriteOrder() async throws {
     let parent = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    let root = parent.appendingPathComponent("workspace"), alias = parent.appendingPathComponent("alias")
-    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-    try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: root)
+    let physical = parent.appendingPathComponent("physical"), alias = parent.appendingPathComponent("alias")
+    try FileManager.default.createDirectory(at: physical, withIntermediateDirectories: true)
+    try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: physical)
+    let root = physical.appendingPathComponent("workspace")
+    let aliasedRoot = alias.appendingPathComponent("workspace", isDirectory: true)
     defer { try? FileManager.default.removeItem(at: parent) }
 
     let owners = NotebookWorkspaceWriters()
     let first = owners.persistence(for: NotebookStore(root: root))
-    let second = owners.persistence(for: NotebookStore(root: alias))
+    let second = owners.persistence(for: NotebookStore(root: aliasedRoot))
     XCTAssertTrue(first === second, "A new surface and the agent borrow the same workspace FIFO")
     let accepted = root.appendingPathComponent("accepted")
     first.enqueue { _ in try Data("first".utf8).write(to: accepted); return false }
     let observed = try await second.submit { _ in try String(contentsOf: accepted, encoding: .utf8) }
     XCTAssertEqual(observed, "first", "A second client reads after the first client's accepted write")
+    XCTAssertTrue(owners.persistence(for: NotebookStore(root: root)) === first,
+      "Creating the directory retains the original FIFO")
+    XCTAssertTrue(owners.persistence(for: NotebookStore(root: aliasedRoot)) === first,
+      "A directory URL and its symlink alias retain the same owner after creation")
     let stopped = await owners.shutdown()
     XCTAssertTrue(stopped)
   }

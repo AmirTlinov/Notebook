@@ -130,7 +130,7 @@ final class NotebookInputTests: XCTestCase {
     let commit: (SpatialInkTool, SpatialInkColor, [SpatialInkSpan], UUID) -> SpatialInkAction? = { _, _, _, _ in
       XCTFail("A menu contact cannot create ink"); return nil
     }
-    let ink = SpatialInkCanvas.Coordinator(surfaceRegistry: registry, inputGate: gate, onCommit: commit)
+    let ink = SpatialInkCanvas.Coordinator(surfaceRegistry: registry, inputGate: gate, reserveAction: { _ in true }, onCommit: commit)
     ink.update(view: anchor, cohort: cohort, boardID: board, camera: inkCamera, viewport: viewport,
       items: [], journal: cohort.liveData.ink, penStyle: .standard, eraserStyle: .standard, drawingTool: .pen,
       surfaceRegistry: registry, inputGate: gate, isItemBeingDeleted: { _ in false },
@@ -497,7 +497,7 @@ final class NotebookInputTests: XCTestCase {
       presence: .init(boardID: board, mode: .board, camera: .init(scale: 0.1), viewport: .init(x: 600, y: 800)),
       canvas: canvas, parent: host, registry: registry, gate: gate, journal: nil)
     defer { physical.close() }
-    let owner = SpatialInkCanvas.Coordinator(surfaceRegistry: registry, inputGate: gate) { tool, color, spans, _ in commits.append(spans); return self.acceptedAction(tool, color, spans) }
+    let owner = SpatialInkCanvas.Coordinator(surfaceRegistry: registry, inputGate: gate, reserveAction: { _ in true }) { tool, color, spans, _ in commits.append(spans); return self.acceptedAction(tool, color, spans) }
     defer { owner.uninstall(); window.isHidden = true }
     func update(camera: SpatialCamera, items: [SpatialWorkspaceItemSurface]) {
       owner.update(view: canvas, cohort: cohort, boardID: board, camera: camera, viewport: .init(x: 600, y: 800),
@@ -542,7 +542,7 @@ final class NotebookInputTests: XCTestCase {
       canvas: canvas, parent: host, registry: registry, gate: gate, journal: nil)
     defer { physical.close() }
     var blocked: Set<UUID> = [], commits: [[SpatialInkSpan]] = [], events: [String] = []
-    let owner = SpatialInkCanvas.Coordinator(surfaceRegistry: registry, inputGate: gate) { _, _, _, _ in nil }
+    let owner = SpatialInkCanvas.Coordinator(surfaceRegistry: registry, inputGate: gate, reserveAction: { _ in true }) { _, _, _, _ in nil }
     defer { owner.uninstall(); window.isHidden = true }
     owner.update(view: canvas, cohort: cohort, boardID: board, camera: .init(scale: 0.3), viewport: .init(x: 1000, y: 800),
       items: [.init(itemID: deleting, geometry: .notebook, center: .zero, zIndex: 1),
@@ -619,7 +619,7 @@ final class NotebookInputTests: XCTestCase {
       canvas: canvas, parent: host, registry: registry, gate: gate, journal: nil)
     defer { physical.close() }
     var preparing = false, commits: [[SpatialInkSpan]] = []
-    let owner = SpatialInkCanvas.Coordinator(surfaceRegistry: registry, inputGate: gate) { _, _, _, _ in nil }
+    let owner = SpatialInkCanvas.Coordinator(surfaceRegistry: registry, inputGate: gate, reserveAction: { _ in true }) { _, _, _, _ in nil }
     defer { owner.uninstall(); window.isHidden = true }
     func update(enabled: Bool = true) {
       owner.update(view: canvas, cohort: cohort, boardID: board, camera: .init(scale: 0.3), viewport: .init(x: 600, y: 800),
@@ -685,7 +685,7 @@ final class NotebookInputTests: XCTestCase {
       presence: .init(boardID: board, mode: .board, camera: .init(scale: 1), viewport: .init(x: 600, y: 800)),
       canvas: canvas, parent: host, registry: registry, gate: gate, journal: journal)
     defer { physical.close() }
-    let coordinator = SpatialInkCanvas.Coordinator(surfaceRegistry: registry, inputGate: gate) { _, _, _, _ in nil }
+    let coordinator = SpatialInkCanvas.Coordinator(surfaceRegistry: registry, inputGate: gate, reserveAction: { _ in true }) { _, _, _, _ in nil }
     defer { coordinator.uninstall(); window.isHidden = true }
     func update(camera: SpatialCamera = .init(scale: 1)) {
       coordinator.update(view: canvas, cohort: cohort, boardID: board, camera: camera, viewport: .init(x: 600, y: 800),
@@ -784,7 +784,7 @@ final class NotebookInputTests: XCTestCase {
     var nextBoardID = boardID
     var projection = SpatialCamera(scale: 1)
     var commits: [(SpatialInkTool, [SpatialInkSpan])] = []
-    let coordinator = SpatialInkCanvas.Coordinator(surfaceRegistry: registry, inputGate: gate) { tool, color, spans, _ in commits.append((tool, spans)); return self.acceptedAction(tool, color, spans) }
+    let coordinator = SpatialInkCanvas.Coordinator(surfaceRegistry: registry, inputGate: gate, reserveAction: { _ in true }) { tool, color, spans, _ in commits.append((tool, spans)); return self.acceptedAction(tool, color, spans) }
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let window = UIWindow(windowScene: scene)
     let host = UIViewController()
@@ -1033,7 +1033,7 @@ extension NotebookInputTests {
           let commit: (SpatialInkTool, SpatialInkColor, [SpatialInkSpan], UUID) -> SpatialInkAction? = { tool, color, spans, _ in
             let value = self.acceptedAction(tool, color, spans); commits.append(value); return value
           }
-          let owner = SpatialInkCanvas.Coordinator(surfaceRegistry: registry, inputGate: gate, onCommit: commit)
+          let owner = SpatialInkCanvas.Coordinator(surfaceRegistry: registry, inputGate: gate, reserveAction: { _ in true }, onCommit: commit)
           defer { owner.uninstall(); window.isHidden = true }
           owner.update(view: canvas, cohort: cohort, boardID: board, camera: camera, viewport: viewport,
             items: [], journal: cohort.liveData.ink, penStyle: .standard, eraserStyle: .standard, drawingTool: tool,

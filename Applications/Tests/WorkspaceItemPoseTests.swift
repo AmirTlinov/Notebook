@@ -209,7 +209,7 @@ final class WorkspaceItemPoseTests: XCTestCase {
       host.didMove(toParent: parent); window.makeKeyAndVisible()
       canvas.update(lease: cohort.nativeInk, surface: .board(boardID), boardID: boardID,
         camera: presence.camera, active: true)
-      let coordinator = SpatialInkCanvas.Coordinator(surfaceRegistry: registry, inputGate: model.inputGate) { _, _, _, _ in nil }
+      let coordinator = SpatialInkCanvas.Coordinator(surfaceRegistry: registry, inputGate: model.inputGate, reserveAction: { _ in true }) { _, _, _, _ in nil }
       defer { coordinator.uninstall(); window.isHidden = true; window.rootViewController = nil }
       try await waitUntil {
         [a, b].allSatisfy { registry.pose(for: .cover($0))?.cohortID == cohort.id && registry.installedSource(on: .cover($0)) != nil }
@@ -523,7 +523,7 @@ final class WorkspaceItemPoseTests: XCTestCase {
       window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
       window.rootViewController = host; host.view.addSubview(canvas); window.makeKeyAndVisible()
       physical = try .init(cohort: cohort, presence: presence, canvas: canvas, parent: host, registry: registry, gate: gate, journal: journal)
-      coordinator = .init(surfaceRegistry: registry, inputGate: gate) { _, _, _, _ in nil }
+      coordinator = .init(surfaceRegistry: registry, inputGate: gate, reserveAction: { _ in true }) { _, _, _, _ in nil }
       update()
     }
     func update() { update(cohort: physical.cohort) }

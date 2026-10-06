@@ -688,6 +688,12 @@ final class SceneCompositionCohort {
   var isPaintInstalled: Bool {
     installedLayers[.elements]?.isInstalled == true && installedLayers[.covers]?.isInstalled == true
   }
+  func hasInstalledGeometry(in plane: SceneCompositionPlane) -> Bool {
+    guard isPaintInstalled, plan.presentations[plane] != nil else { return false }
+    return rasters.keys.filter { $0.plane == plane }.allSatisfy {
+      installedTiles[$0]?.entryID == rasters[$0]?.entryID && installedTiles[$0]?.isInstalled == true
+    }
+  }
   func installation(for layer: ScenePaintPosition.Layer) -> SceneCameraPlaneInstallation {
     if let value = installedLayers[layer] { return value }
     let value = SceneCameraPlaneInstallation()
@@ -843,7 +849,8 @@ final class SceneCompositionTiles {
   @ObservationIgnored private var pendingRequest: Request?
   @ObservationIgnored private var lastRequest: Request?
   @ObservationIgnored private var nativeProjectionWakeupPending = false
-  @ObservationIgnored private var dirtySources: Set<SceneSourceAddress> = []
+  @ObservationIgnored private var dirtySources: [SceneSourceAddress: UInt64] = [:]
+  @ObservationIgnored private var sourcePaintGeneration: UInt64 = 0
   @ObservationIgnored private var sourceFailures: [SceneSourceAddress: (SceneSourceDemand, String)] = [:]
   private struct RuntimeSource {
     let leaseID: UUID
@@ -879,7 +886,7 @@ final class SceneCompositionTiles {
       runtimeSources[address] = .init(leaseID: leaseID, demand: demand)
       // Only failure presentation observes this generation. A successful
       // admission/density update must not invalidate every other live view.
-      if hadFailure { runtimeSourceGeneration &+= 1; dirtySources.insert(address); refreshSources() }
+      if hadFailure { runtimeSourceGeneration &+= 1; markSourceDirty(address); refreshSources() }
     }
     return address
   }
@@ -898,7 +905,7 @@ final class SceneCompositionTiles {
       current.leaseID == failure.leaseID, SceneRasterSource.agent(current.demand.source) == .agent(failure.source),
       failure.policy == nil || failure.policy == current.demand.policy else { return false }
     current.failure = failure; runtimeSources[address] = current
-    runtimeSourceGeneration &+= 1; dirtySources.insert(address); refreshSources()
+    runtimeSourceGeneration &+= 1; markSourceDirty(address); refreshSources()
     return true
   }
 
@@ -907,7 +914,7 @@ final class SceneCompositionTiles {
       current.leaseID == leaseID, SceneRasterSource.agent(current.demand.source) == .agent(source),
       current.failure?.policy != nil else { return }
     current.failure = nil; runtimeSources[address] = current
-    runtimeSourceGeneration &+= 1; dirtySources.insert(address); refreshSources()
+    runtimeSourceGeneration &+= 1; markSourceDirty(address); refreshSources()
   }
 
   func retireRuntimeSource(_ address: SceneSourceAddress, leaseID: UUID) {
@@ -1027,8 +1034,8 @@ final class SceneCompositionTiles {
     if reusablePaint != nil, containsNativeProjection(for: request) { return }
     cancelPreparation()
     let id = requestID
-    let changedSources = dirtySources
-    dirtySources.removeAll()
+    let sourceChanges = dirtySources
+    let changedSources = Set(sourceChanges.keys)
     lastRefinementAdmission = resources.rasterAdmission
     isPreparing = true; failure = nil; budgetFailures = []; preparingRequest = request
     task = Task { [weak self, resources, surfaceRegistry] in
@@ -1188,14 +1195,6 @@ final class SceneCompositionTiles {
                 status: .failed(failed.diagnostic.kind + ": " + failed.diagnostic.message),
                 installedRegion: receipt.installedRegion)
             }
-            // A source completed early enough to be consumed by this pass.
-            // Its notification must not force another identical paint pass.
-            for (address, receipt) in receipts where receipt.hasCurrentPixels {
-              if let prepared = self?.preparedSources[address],
-                prepared.entryID == renderer.sourceRasters[address]?.entryID {
-                self?.dirtySources.remove(address)
-              }
-            }
             renderer.cachePreparedTiles(rasters)
             let ownedSources = renderer.sourceRasters.compactMapValues { $0.retainedCopy() }
             let geometryID = previous.flatMap { previous in
@@ -1223,6 +1222,7 @@ final class SceneCompositionTiles {
                 runtimeOwners: runtimeOwners,
                 tileSources: renderer.tileSources, tilePresenters: tilePresenters)
             #endif
+            self?.consumeSourceChanges(sourceChanges, receipts: receipts, rasters: renderer.sourceRasters)
             self?.onPreparationPhase?(id, "published")
             rasters.removeAll(); liveRasters.removeAll()
             self?.hasQualityDebt = !plan.meetsRequiredDensity
@@ -1399,7 +1399,7 @@ final class SceneCompositionTiles {
           preparedSources[address] = raster
           sourceJobs[address] = nil
           isPreparing = preparingRequest != nil || !sourceJobs.isEmpty
-          dirtySources.insert(address)
+          markSourceDirty(address)
           refreshSources()
         } catch {
           guard let self, sourceJobs[address]?.id == id else { return }
@@ -1407,7 +1407,7 @@ final class SceneCompositionTiles {
           sourceJobs[address] = nil
           if !(error is CancellationError) {
             sourceFailures[address] = (failedDemand, String(describing: error))
-            dirtySources.insert(address)
+            markSourceDirty(address)
             refreshSources()
           }
           isPreparing = preparingRequest != nil || !sourceJobs.isEmpty
@@ -1419,12 +1419,36 @@ final class SceneCompositionTiles {
     isPreparing = preparingRequest != nil || !sourceJobs.isEmpty
   }
 
+  private func markSourceDirty(_ address: SceneSourceAddress) {
+    sourcePaintGeneration &+= 1
+    dirtySources[address] = sourcePaintGeneration
+  }
+
+  /// Private preparation only borrows this obligation. Cancellation and failed
+  /// native installation leave it pending; the successful cohort consumes the
+  /// exact change it rendered without clearing a newer notification.
+  private func consumeSourceChanges(_ observed: [SceneSourceAddress: UInt64],
+    receipts: [SceneSourceAddress: SceneSourceReceipt], rasters: [SceneSourceAddress: RasterLease]) {
+    for (address, generation) in observed where dirtySources[address] == generation {
+      guard let receipt = receipts[address] else { dirtySources[address] = nil; continue }
+      if receipt.hasCurrentPixels { dirtySources[address] = nil }
+      else if case .failed = receipt.status { dirtySources[address] = nil }
+    }
+    // A capture can complete while this pass is rendering. Its exact retained
+    // raster proves the later notification was consumed by this same cohort.
+    for (address, receipt) in receipts where receipt.hasCurrentPixels {
+      if let prepared = preparedSources[address], prepared.entryID == rasters[address]?.entryID {
+        dirtySources[address] = nil
+      }
+    }
+  }
+
   private func sourcePixelsChanged(_ elementID: String) {
     guard !stopped, let published else { return }
     for (address, receipt) in published.sourceReceipts where address.elementID == elementID && !receipt.hasCurrentPixels {
       if let raster = resources.retainRaster(for: receipt.demand.rasterSource, minimumScale: receipt.demand.minimumScale) {
         preparedSources[address] = raster
-        dirtySources.insert(address)
+        markSourceDirty(address)
       }
     }
     if !dirtySources.isEmpty { refreshSources() }
@@ -1478,7 +1502,7 @@ final class SceneCompositionTiles {
     }
     for (address, failed) in sourceFailures where failed.1 == SceneRenderError.resourceLimit.description {
       sourceFailures[address] = nil
-      dirtySources.insert(address)
+      markSourceDirty(address)
     }
     let needsNativeRefinement = !containsNativeProjection(for: request)
     if hasQualityDebt || !dirtySources.isEmpty || needsNativeRefinement { prepare(request) }
@@ -1494,7 +1518,7 @@ final class SceneCompositionTiles {
       // so consumer remounts cannot lose its stationary refinement wake-up.
       runtimeSources[address] = nil
       runtimeSourceGeneration &+= 1
-      dirtySources.insert(address)
+      markSourceDirty(address)
       resumed = true
     }
     return resumed
@@ -1508,7 +1532,7 @@ final class SceneCompositionTiles {
       runtimeSources[address] = nil
       runtimeSourceGeneration &+= 1
     }
-    dirtySources.insert(address); refreshSources()
+    markSourceDirty(address); refreshSources()
   }
 
   func cancelPreparation() {

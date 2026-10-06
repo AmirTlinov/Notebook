@@ -168,10 +168,10 @@ import UIKit
     }
     return result
   }
-  func retireAcceptedAuthored(upTo cursor:UInt64) {
+  func admitAcceptedAuthoredSources() {
     // The model has installed the accepted SQLite cut before SwiftUI is
     // invalidated. Its ordinary graph may now replace the temporary pose.
-    for owner in Array(claims.values.compactMap(\.owner)) {owner.canonicalAuthoredSourceLoaded(upTo:cursor)}
+    for owner in Array(claims.values.compactMap(\.owner)) {owner.canonicalAuthoredSourceLoaded()}
   }
   func acceptedDeletingOwners(on surface:SurfaceID,through cursor:UInt64)->[NotebookSelectionPresentation] {
     claims.values.compactMap(\.owner).filter {

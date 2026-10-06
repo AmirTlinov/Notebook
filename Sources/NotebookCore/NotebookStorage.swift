@@ -139,7 +139,7 @@ public enum NotebookStorageError: Error, LocalizedError, Equatable, Sendable {
 }
 
 /// Faults are injected only by isolated Core tests; production has no hook.
-enum NotebookStorageFault: Sendable { case afterRecordWrites, beforeCommit, afterCommit }
+enum NotebookStorageFault: Sendable { case afterRecordWrites, beforeCommit, afterCommit, beforeAcceptedWitnessRead }
 
 extension WorkspaceSpatialEntry: Codable {
   private enum CodingKeys: String, CodingKey { case kind, id, bounds, zIndex }

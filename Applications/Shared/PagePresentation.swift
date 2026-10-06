@@ -62,6 +62,11 @@ final class NotebookPagePresentationRegistry {
     owners = owners.filter { $0.value.value != nil }
     return owners.values.contains { $0.value?.hasInstalledGraphics(page) == true }
   }
+
+  func hasVisiblePage(_ id: UUID) -> Bool {
+    owners = owners.filter { $0.value.value != nil }
+    return owners.values.contains { $0.value?.hasVisiblePage(id) == true }
+  }
 }
 
 struct PagePresentationView: UIViewRepresentable {
@@ -168,16 +173,20 @@ final class PagePresentationNativeView: PageTurnOutputParkingHost, NotebookScene
     readiness?.hasInstalledGraphics(page) == true && isShowingCurrentPaper(page)
   }
 
-  private func isShowingCurrentPaper(_ page:PageDocument) -> Bool {
+  func hasVisiblePage(_ id: UUID) -> Bool {
     guard !retired, isCurrent, isVisible, activity?.isTransitioning != true,
-      pageID == page.id, pageSize == page.size, let window, !window.isHidden, !bounds.isEmpty,
-      convert(bounds, to: window).intersects(window.bounds) else { return false }
+      pageID == id, let window, !window.isHidden, !bounds.isEmpty,
+      convert(bounds, to:window).intersects(window.bounds) else { return false }
     var ancestor: UIView? = self
     while let view = ancestor {
       guard !view.isHidden, view.alpha > 0.001 else { return false }
       ancestor = view.superview
     }
     return true
+  }
+
+  private func isShowingCurrentPaper(_ page:PageDocument) -> Bool {
+    pageSize == page.size && hasVisiblePage(page.id)
   }
 
   func uninstall() {

@@ -1,6 +1,5 @@
 import Foundation
 import CoreText
-import ImageIO
 import UniformTypeIdentifiers
 import NotebookCore
 
@@ -12,6 +11,10 @@ enum NotebookClipboard {
   enum Content: Sendable {
     case composition(String)
     case fragment(NotebookPasteFragment)
+  }
+  struct Read: Sendable {
+    let content: Content
+    let workLease: NotebookClipboardWorkLease
   }
   private enum Item: Sendable {
     case text(String)
@@ -33,6 +36,9 @@ enum NotebookClipboard {
     let data=try JSONEncoder().encode(fragment)
     guard data.count <= 16 * 1_048_576 else { throw failure("Выделение слишком большое для буфера.") }
     try Task.checkCancellation()
+    // Use the same decoder and admission as Paste before a destructive Cut.
+    _ = try NotebookJSONAdmission.allocationCost(data,maximumBytes:96 * 1_048_576)
+    _ = try JSONDecoder().decode(NotebookPasteFragment.self,from:data).reidentified()
     let text=fragment.elements.count == 1 && fragment.elements[0].kind == .nativeText ? fragment.elements[0].source : nil
     return .init(fragment:data,plainText:text)
   }
@@ -46,14 +52,32 @@ enum NotebookClipboard {
       if provider.hasItemConformingToTypeIdentifier(fragmentType.identifier) {
         guard providers.count == 1 else { throw failure("Вставьте выделение отдельно от других материалов.") }
         let bytes = try await data(provider,type:fragmentType,limit:16 * 1_048_576)
-        let fragment = try JSONDecoder().decode(NotebookPasteFragment.self,from:bytes)
-        return .fragment(try fragment.reidentified())
+        let worker=Task.detached(priority:.userInitiated) {
+          _ = try NotebookJSONAdmission.allocationCost(bytes,maximumBytes:96 * 1_048_576)
+          let fragment=try JSONDecoder().decode(NotebookPasteFragment.self,from:bytes)
+          return try fragment.reidentified()
+        }
+        return try await withTaskCancellationHandler { .fragment(try await worker.value) } onCancel: { worker.cancel() }
       }
       // HTML is inspected only for a structured envelope. Ordinary HTML never
       // enters WebKit: use its image/text representation instead, without a fetch.
       for type in [UTType.html, .json] where provider.hasItemConformingToTypeIdentifier(type.identifier) {
-        let source = try text(await data(provider, type: type, limit: 1_048_576))
-        if NotebookTldrawImport.recognizes(source) {
+        let bytes: Data
+        do { bytes = try await data(provider, type: type, limit: 1_048_576, optionalStructure: true) }
+        catch is CancellationError { throw CancellationError() }
+        catch let error as CollaborationError where error.code == "clipboard_structure_limit" { throw error }
+        catch { try Task.checkCancellation(); continue }
+        let worker=Task.detached(priority:.userInitiated) { () throws -> String? in
+          try Task.checkCancellation()
+          // A marked envelope remains authoritative when its encoding fails.
+          let recognized=NotebookTldrawImport.recognizes(structuredPrefix(bytes))
+          let source:String
+          do { source=try text(bytes) }
+          catch { if recognized { throw error };return nil }
+          return NotebookTldrawImport.recognizes(source) ? source : nil
+        }
+        let source=try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
+        if let source {
           guard providers.count == 1 else { throw failure("Вставьте структурный фрагмент отдельно от других материалов.") }
           return .composition(source)
         }
@@ -87,18 +111,51 @@ enum NotebookClipboard {
     return try await withTaskCancellationHandler { .fragment(try await task.value) } onCancel: { task.cancel() }
   }
 
-  @MainActor private static func data(_ provider: NSItemProvider, type: UTType, limit: Int) async throws -> Data {
+  @MainActor private static func data(_ provider: NSItemProvider, type: UTType, limit: Int,
+    optionalStructure: Bool = false) async throws -> Data {
     try Task.checkCancellation()
-    let data: Data = try await withCheckedThrowingContinuation { continuation in
-      provider.loadDataRepresentation(forTypeIdentifier: type.identifier) { data, error in
-        if let error { continuation.resume(throwing: error) }
-        else if let data { continuation.resume(returning: data) }
-        else { continuation.resume(throwing: failure("Не удалось прочитать буфер.")) }
+    let request = ProviderRequest()
+    let data: Data = try await withTaskCancellationHandler {
+      try await withCheckedThrowingContinuation { continuation in
+        let progress = provider.loadFileRepresentation(forTypeIdentifier: type.identifier) { url, error in
+          if let error { continuation.resume(throwing: error); return }
+          guard let url, url.isFileURL else {
+            continuation.resume(throwing: failure("Не удалось прочитать буфер.")); return
+          }
+          do {
+            // The provider removes this temporary file after its callback. Read
+            // within that lifetime, admitting at most limit+1 compressed bytes.
+            let file = try FileHandle(forReadingFrom: url)
+            defer { try? file.close() }
+            let bytes = try file.read(upToCount: limit + 1) ?? Data()
+            guard bytes.count <= limit else {
+              if optionalStructure, NotebookTldrawImport.recognizes(structuredPrefix(bytes)) {
+                throw CollaborationError("clipboard_structure_limit", "Структурный фрагмент слишком велик для вставки.")
+              }
+              throw failure("Материал слишком большой. Скопируйте меньшую часть.")
+            }
+            continuation.resume(returning: bytes)
+          } catch { continuation.resume(throwing: error) }
+        }
+        request.install(progress)
       }
-    }
+    } onCancel: { request.cancel() }
     try Task.checkCancellation()
-    guard data.count <= limit else { throw failure("Материал слишком большой. Скопируйте меньшую часть.") }
     return data
+  }
+
+  private final class ProviderRequest: @unchecked Sendable {
+    private let lock = NSLock()
+    private var progress: Progress?
+    private var cancelled = false
+    func install(_ progress: Progress) {
+      let cancel = lock.withLock { self.progress = progress; return cancelled }
+      if cancel { progress.cancel() }
+    }
+    func cancel() {
+      let progress = lock.withLock { cancelled = true; return progress }
+      progress?.cancel()
+    }
   }
 
   private static func text(_ data: Data) throws -> String {
@@ -106,6 +163,22 @@ enum NotebookClipboard {
     if data.starts(with: [0xFF, 0xFE]) || data.starts(with: [0xFE, 0xFF]),
       let text = String(data: data, encoding: .utf16) { return text }
     throw failure("Не удалось прочитать текст в буфере.")
+  }
+
+  /// Identity survives a bounded or malformed prefix. Validation still uses
+  /// text(_:); this probe only decides which representation owns the paste.
+  private static func structuredPrefix(_ data: Data) -> String {
+    guard data.starts(with: [0xFF, 0xFE]) || data.starts(with: [0xFE, 0xFF]) else {
+      return String(decoding: data, as: UTF8.self)
+    }
+    let littleEndian = data.starts(with: [0xFF, 0xFE])
+    let units: [UInt16] = data.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) in
+      stride(from: 2, to: bytes.count - 1, by: 2).map { index in
+        let first = UInt16(bytes[index]), second = UInt16(bytes[index + 1])
+        return littleEndian ? first | second << 8 : first << 8 | second
+      }
+    }
+    return String(decoding: units, as: UTF16.self)
   }
 
   private struct Prepared {
@@ -120,6 +193,9 @@ enum NotebookClipboard {
       throw failure("Поверхность вставки ещё не готова.")
     }
     let width = max(1, min(600, availableSize.x * 0.75))
+    let inputBytes = items.reduce(0) { total, item in
+      switch item { case .image(let data): total + data.count; case .text(let value): total + value.utf8.count }
+    }
     var prepared: [Prepared] = []
     for item in items {
       try Task.checkCancellation()
@@ -139,27 +215,14 @@ enum NotebookClipboard {
         let html = isLink ? "<p><a href=\"\(escape(trimmed))\">\(escape(value))</a></p>" : "<p>\(escape(value).replacingOccurrences(of: "\n", with: "<br>"))</p>"
         prepared.append(.init(kind: .markdown, source: source, html: html, size: size))
       case .image(let data):
-        guard let input = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
-          let properties = CGImageSourceCopyPropertiesAtIndex(input, 0, nil) as? [CFString: Any],
-          let w = properties[kCGImagePropertyPixelWidth] as? NSNumber,
-          let h = properties[kCGImagePropertyPixelHeight] as? NSNumber,
-          w.doubleValue > 0, h.doubleValue > 0, w.doubleValue * h.doubleValue <= 40_000_000,
-          let image = CGImageSourceCreateThumbnailAtIndex(input, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceThumbnailMaxPixelSize: 1600, kCGImageSourceCreateThumbnailWithTransform: true] as CFDictionary) else {
-          throw failure("Изображение повреждено или превышает 40 мегапикселей.")
-        }
-        // Re-encode pixels, not metadata, remote URLs, SVG or executable HTML.
-        let alpha = [.first, .last, .premultipliedFirst, .premultipliedLast].contains(image.alphaInfo)
-        let type: UTType = alpha ? .png : .jpeg
-        let encoded = NSMutableData()
-        guard let output = CGImageDestinationCreateWithData(encoded, type.identifier as CFString, 1, nil) else { throw failure("Не удалось подготовить изображение.") }
-        CGImageDestinationAddImage(output, image, [kCGImageDestinationLossyCompressionQuality: 0.86] as CFDictionary)
-        guard CGImageDestinationFinalize(output), encoded.length <= 2 * 1_048_576 else { throw failure("Изображение слишком большое для вставки. Уменьшите его размер.") }
+        let image = try NotebookClipboardImage.prepare(data, totalInputBytes: inputBytes,
+          retainedHTMLBytes: prepared.reduce(0) { $0 + $1.html.utf8.count })
         let ratio = min(1, width / Double(image.width))
-        prepared.append(.init(kind: .web, source: "Изображение", html: "<img alt=\"Изображение\" src=\"data:\(type.preferredMIMEType!);base64,\((encoded as Data).base64EncodedString())\">",
+        prepared.append(.init(kind: .web, source: "Изображение",
+          html: "<img alt=\"Изображение\" src=\"data:image/png;base64,\(image.png.base64EncodedString())\">",
           size: .init(x: Double(image.width) * ratio, y: Double(image.height) * ratio)))
       }
-      guard prepared.reduce(0, { $0 + $1.html.utf8.count }) <= 3 * 1_048_576 else { throw failure("Содержимое слишком большое для одной вставки.") }
+      guard prepared.reduce(0, { $0 + $1.html.utf8.count }) <= 6 * 1_048_576 else { throw failure("Содержимое слишком большое для одной вставки.") }
     }
     let height = prepared.reduce(0, { $0 + $1.size.y }) + Double(max(0, prepared.count - 1)) * 16
     let factor = min(1, availableSize.y * 0.75 / max(1, height))

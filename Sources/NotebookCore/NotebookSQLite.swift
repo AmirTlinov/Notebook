@@ -171,6 +171,8 @@ final class NotebookSQLConnection {
       guard sqlite3_prepare_v2(handle, sql, -1, &prepared, nil) == SQLITE_OK, let prepared else { throw failure(sql) }
       statements[sql] = prepared; statement = prepared
     }
+    var bound = false
+    defer { if !bound { finish(statement) } }
     guard sqlite3_bind_parameter_count(statement) == Int32(values.count) else { throw NotebookStorageError.invalidTransaction("SQL bind count") }
     for (offset, value) in values.enumerated() {
       let index = Int32(offset + 1)
@@ -188,12 +190,20 @@ final class NotebookSQLConnection {
       }
       guard status == SQLITE_OK else { throw failure(sql) }
     }
+    bound = true
     return statement
+  }
+
+  /// An idle cached statement retains its bytecode, never a completed call's
+  /// SQLITE_TRANSIENT payload. Reset alone keeps those copied bindings alive.
+  private func finish(_ statement: OpaquePointer) {
+    sqlite3_reset(statement)
+    sqlite3_clear_bindings(statement)
   }
 
   func run(_ sql: String, _ values: [NotebookSQLValue] = []) throws {
     let statement = try statement(sql, values)
-    defer { sqlite3_reset(statement) }
+    defer { finish(statement) }
     var status = sqlite3_step(statement)
     while status == SQLITE_ROW { status = sqlite3_step(statement) }
     guard status == SQLITE_DONE else { throw failure(sql) }
@@ -211,7 +221,7 @@ final class NotebookSQLConnection {
     _ consume: ([NotebookSQLValue]) throws -> Void) throws {
     try checkReadAllowance()
     let statement = try statement(sql, values)
-    defer { sqlite3_reset(statement) }
+    defer { finish(statement) }
     while true {
       let status = sqlite3_step(statement)
       if status == SQLITE_DONE { return }
@@ -761,9 +771,11 @@ extension NotebookStore {
 
   func commandTransaction<T>(advancesReadRevision: Bool = true,
     readAllowance: NotebookSQLReadAllowance? = nil, preparedDatabase: NotebookSQLConnection? = nil,
-    attestsAcceptedOutcome: Bool = false,
+    acceptedWitness: NotebookAcceptedWriteWitness? = nil,
     _ operation: () throws -> T) throws -> T {
+    let attestsAcceptedOutcome = acceptedWitness != nil
     if let currentSQL {
+      guard acceptedWitness == nil else { throw NotebookStorageError.invalidTransaction("nested accepted write") }
       guard currentSQL.writable else { throw NotebookStorageError.readOnlyTransaction }
       currentSQL.acceptedWriteAdvancesReadRevision = currentSQL.acceptedWriteAdvancesReadRevision || advancesReadRevision
       if let readAllowance { try currentSQL.limitReads(readAllowance) }
@@ -773,6 +785,10 @@ extension NotebookStore {
     do {
       if let preparedDatabase { database = preparedDatabase }
       else { database = try prepareDatabase() }
+      if let acceptedWitness {
+        try acceptedWitness.witnesses.bindWorkspace(database: database)
+        try NotebookAcceptedWriteWitnesses.prepareTable(database: database)
+      }
       if let readAllowance { try database.limitReads(readAllowance) }
       try database.run("BEGIN IMMEDIATE")
     } catch {
@@ -810,6 +826,11 @@ extension NotebookStore {
       try publishPendingChanges(database: database)
       try storageFault?(.beforeCommit)
       try database.checkReadAllowance()
+      // Local outcome metadata follows content accounting. A pure/no-op
+      // accepted body therefore keeps its original read/delivery cursors.
+      if let acceptedWitness {
+        try acceptedWitness.witnesses.install(acceptedWitness.identity, database: database)
+      }
       try database.run("COMMIT"); committed = true
       try storageFault?(.afterCommit)
       return result

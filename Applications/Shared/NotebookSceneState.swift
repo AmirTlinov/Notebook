@@ -64,6 +64,7 @@ struct NotebookSceneState: Sendable {
   let truncatedBoards: Set<UUID>
   let completeCoverElementOwners: Set<UUID>
   let missingPinnedElements: [UUID: Set<String>]
+  var pinnedElementSources: [EditableElementReference: NotebookNativeElementSource] = [:]
   let missingPinnedItems: Set<UUID>
   let transferredPinnedItems: [UUID: UUID]
   var groupReads: [UUID:[String:NotebookElementGroupRead]] = [:]
@@ -218,6 +219,7 @@ struct NotebookSceneState: Sendable {
       var pending: [SessionPresence] = [presence]
       var remainingEntries = 96
       var missingPinnedElements: [UUID: Set<String>] = [:]
+      var pinnedElementSources: [EditableElementReference: NotebookNativeElementSource] = [:]
       var groupReads: [UUID:[String:NotebookElementGroupRead]] = [:]
       while !pending.isEmpty, coverage.count < 4, remainingEntries > 0 {
         let view = pending.removeFirst()
@@ -228,9 +230,14 @@ struct NotebookSceneState: Sendable {
         // Selection is an addressed owner even outside the camera. Its placement
         // must survive a bounded query so the next reveal can keep the same page.
         if view.boardID == owner, !pins.contains(selected.id) { pins.append(selected.id) }
-        let elementPins = try (pinnedElements[view.boardID] ?? []).filter { id in
-          if try store.readSpatialElement(boardID: view.boardID, elementID: id) != nil { return true }
-          missingPinnedElements[view.boardID, default: []].insert(id); return false
+        let elementPins = pinnedElements[view.boardID] ?? []
+        for id in elementPins {
+          let read = try store.readNativeElementSource(target:.init(kind:.board,id:view.boardID),id:id)
+          let target = read.spatial?.surface.kind == .cover
+            ? CollaborationTarget(kind:.cover,id:read.spatial!.surface.ownerID!,boardID:view.boardID) : read.target
+          pinnedElementSources[.spatial(boardID:view.boardID,elementID:id)] = .init(target:target,id:id,
+            spatial:read.spatial,versions:read.versions)
+          if read.spatial == nil { missingPinnedElements[view.boardID, default: []].insert(id) }
         }
         let window = try store.readSceneWindow(boardID: view.boardID, bounds: bounds,
           limit: remainingEntries, pinnedIDs: pins, pinnedElementIDs: elementPins)
@@ -345,6 +352,7 @@ struct NotebookSceneState: Sendable {
         reading: selected.kind == .document ? store.readDocumentReadingPosition(selected.id) : nil,
         hierarchy: hierarchy, boardContentRevisions: boardContentRevisions, ink: inkWindow.journal, inkWindow: inkWindow, inkHistoryStates: inkHistoryStates, presence: presence, paperSizes: paper,
         coverage: coverage, truncatedBoards: truncated, completeCoverElementOwners: completeCoverElementOwners, missingPinnedElements: missingPinnedElements,
+        pinnedElementSources: pinnedElementSources,
         missingPinnedItems: missingPinnedItems, transferredPinnedItems: transferredPinnedItems,
         groupReads:groupReads,history:history,redoHistory:redoHistory)
     }

@@ -368,7 +368,8 @@ final class InstalledInkAttentionTests: XCTestCase {
       self.model = model; self.presence = presence; self.cohort = cohort; registry = cohort.nativeInk.registry
       let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
       window = UIWindow(windowScene: scene)
-      coordinator = .init(surfaceRegistry: registry, inputGate: model.inputGate, onCommit: model.appendSpatialInk)
+      coordinator = .init(surfaceRegistry: registry, inputGate: model.inputGate, reserveAction: model.reserveSpatialDrawingAction,
+        releaseAction: model.releaseSpatialDrawingReservation, onCommit: model.appendSpatialInk)
       let host = UIViewController(); window.rootViewController = host
       host.view.addSubview(canvas); window.makeKeyAndVisible()
       physical = try .init(cohort: cohort, presence: presence, canvas: canvas, parent: host,

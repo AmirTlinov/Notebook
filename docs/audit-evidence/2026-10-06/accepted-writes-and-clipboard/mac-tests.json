@@ -1,0 +1,416 @@
+{
+  "devices": [
+    {
+      "architecture": "arm64",
+      "deviceId": "00006050-001650DA01F9401C",
+      "deviceName": "My Mac",
+      "modelName": "MacBook Pro",
+      "osBuildNumber": "26A434",
+      "osVersion": "27.0.1",
+      "platform": "macOS"
+    }
+  ],
+  "testNodes": [
+    {
+      "children": [
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "duration": "0,34s",
+                  "durationInSeconds": 0.3360710144042969,
+                  "name": "testCheckpointWriterRetryRetainsItsFrozenSnapshotAndDoesNotRepeatTransfer()",
+                  "nodeIdentifier": "DocumentRuntimeTests/testCheckpointWriterRetryRetainsItsFrozenSnapshotAndDoesNotRepeatTransfer()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/DocumentRuntimeTests/testCheckpointWriterRetryRetainsItsFrozenSnapshotAndDoesNotRepeatTransfer",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,061s",
+                  "durationInSeconds": 0.06098794937133789,
+                  "name": "testSpatialCheckpointKeepsItsOwnerOnWriterRefusalAndCapturesTheAcceptedState()",
+                  "nodeIdentifier": "DocumentRuntimeTests/testSpatialCheckpointKeepsItsOwnerOnWriterRefusalAndCapturesTheAcceptedState()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/DocumentRuntimeTests/testSpatialCheckpointKeepsItsOwnerOnWriterRefusalAndCapturesTheAcceptedState",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                }
+              ],
+              "name": "DocumentRuntimeTests",
+              "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/DocumentRuntimeTests",
+              "nodeType": "Test Suite",
+              "result": "Passed"
+            },
+            {
+              "children": [
+                {
+                  "duration": "0,0052s",
+                  "durationInSeconds": 0.005154013633728027,
+                  "name": "testAuthoritativeNativeAndRecognizableStructuredContentNeverFlattenIntoText()",
+                  "nodeIdentifier": "NotebookClipboardSourceTests/testAuthoritativeNativeAndRecognizableStructuredContentNeverFlattenIntoText()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookClipboardSourceTests/testAuthoritativeNativeAndRecognizableStructuredContentNeverFlattenIntoText",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,00097s",
+                  "durationInSeconds": 0.0009720325469970703,
+                  "name": "testCancellationOfAnOptionalProviderDoesNotProceedToItsPlainText()",
+                  "nodeIdentifier": "NotebookClipboardSourceTests/testCancellationOfAnOptionalProviderDoesNotProceedToItsPlainText()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookClipboardSourceTests/testCancellationOfAnOptionalProviderDoesNotProceedToItsPlainText",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,01s",
+                  "durationInSeconds": 0.009953975677490234,
+                  "name": "testCanonicalImageKeepsResolutionAndExactPixelsBeyondTheOldThumbnailBoundary()",
+                  "nodeIdentifier": "NotebookClipboardSourceTests/testCanonicalImageKeepsResolutionAndExactPixelsBeyondTheOldThumbnailBoundary()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookClipboardSourceTests/testCanonicalImageKeepsResolutionAndExactPixelsBeyondTheOldThumbnailBoundary",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,00097s",
+                  "durationInSeconds": 0.0009720325469970703,
+                  "name": "testCanonicalImagePreservesTransparencyAndSixteenBitSamples()",
+                  "nodeIdentifier": "NotebookClipboardSourceTests/testCanonicalImagePreservesTransparencyAndSixteenBitSamples()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookClipboardSourceTests/testCanonicalImagePreservesTransparencyAndSixteenBitSamples",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,0031s",
+                  "durationInSeconds": 0.003126978874206543,
+                  "name": "testEveryExifOrientationKeepsTheSourcePixelPermutationAndClearsPrivateMetadata()",
+                  "nodeIdentifier": "NotebookClipboardSourceTests/testEveryExifOrientationKeepsTheSourcePixelPermutationAndClearsPrivateMetadata()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookClipboardSourceTests/testEveryExifOrientationKeepsTheSourcePixelPermutationAndClearsPrivateMetadata",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,00038s",
+                  "durationInSeconds": 0.0003809928894042969,
+                  "name": "testImageFinishCapacityRefusesInsteadOfChangingQuality()",
+                  "nodeIdentifier": "NotebookClipboardSourceTests/testImageFinishCapacityRefusesInsteadOfChangingQuality()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookClipboardSourceTests/testImageFinishCapacityRefusesInsteadOfChangingQuality",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,046s",
+                  "durationInSeconds": 0.04591107368469238,
+                  "name": "testOversizedStructuredUtf16AndJSONPrefixesRefuseThePlainTextAlternative()",
+                  "nodeIdentifier": "NotebookClipboardSourceTests/testOversizedStructuredUtf16AndJSONPrefixesRefuseThePlainTextAlternative()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookClipboardSourceTests/testOversizedStructuredUtf16AndJSONPrefixesRefuseThePlainTextAlternative",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,029s",
+                  "durationInSeconds": 0.02939903736114502,
+                  "name": "testUnreadableAndOversizedOptionalHTMLCanUseThePlainTextRepresentation()",
+                  "nodeIdentifier": "NotebookClipboardSourceTests/testUnreadableAndOversizedOptionalHTMLCanUseThePlainTextRepresentation()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookClipboardSourceTests/testUnreadableAndOversizedOptionalHTMLCanUseThePlainTextRepresentation",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                }
+              ],
+              "name": "NotebookClipboardSourceTests",
+              "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookClipboardSourceTests",
+              "nodeType": "Test Suite",
+              "result": "Passed"
+            },
+            {
+              "children": [
+                {
+                  "duration": "1 с",
+                  "durationInSeconds": 1.0197479724884033,
+                  "name": "testClipboardFragmentUsesNativeBoardWriterAndOneUndo()",
+                  "nodeIdentifier": "NotebookClipboardWriterTests/testClipboardFragmentUsesNativeBoardWriterAndOneUndo()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookClipboardWriterTests/testClipboardFragmentUsesNativeBoardWriterAndOneUndo",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "1 с",
+                  "durationInSeconds": 1.317667007446289,
+                  "name": "testCopyPasteCarriesAProgramsBinaryClosureThroughTheOrdinaryWriterAndUndo()",
+                  "nodeIdentifier": "NotebookClipboardWriterTests/testCopyPasteCarriesAProgramsBinaryClosureThroughTheOrdinaryWriterAndUndo()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookClipboardWriterTests/testCopyPasteCarriesAProgramsBinaryClosureThroughTheOrdinaryWriterAndUndo",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                }
+              ],
+              "name": "NotebookClipboardWriterTests",
+              "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookClipboardWriterTests",
+              "nodeType": "Test Suite",
+              "result": "Passed"
+            },
+            {
+              "children": [
+                {
+                  "duration": "0,00043s",
+                  "durationInSeconds": 0.00042700767517089844,
+                  "name": "testAReservationCannotBeTransferredTwiceOrUsedByAnotherWriter()",
+                  "nodeIdentifier": "NotebookPersistenceAdmissionTests/testAReservationCannotBeTransferredTwiceOrUsedByAnotherWriter()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookPersistenceAdmissionTests/testAReservationCannotBeTransferredTwiceOrUsedByAnotherWriter",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,0008s",
+                  "durationInSeconds": 0.0007959604263305664,
+                  "name": "testElementAdmissionChargesAFrozenGraphOnceAndOnlyAsRetainedContent()",
+                  "nodeIdentifier": "NotebookPersistenceAdmissionTests/testElementAdmissionChargesAFrozenGraphOnceAndOnlyAsRetainedContent()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookPersistenceAdmissionTests/testElementAdmissionChargesAFrozenGraphOnceAndOnlyAsRetainedContent",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,047s",
+                  "durationInSeconds": 0.04737699031829834,
+                  "name": "testElementAdmissionCountsSemanticStateInsteadOfOnlyItsWireTokens()",
+                  "nodeIdentifier": "NotebookPersistenceAdmissionTests/testElementAdmissionCountsSemanticStateInsteadOfOnlyItsWireTokens()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookPersistenceAdmissionTests/testElementAdmissionCountsSemanticStateInsteadOfOnlyItsWireTokens",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,15s",
+                  "durationInSeconds": 0.14920198917388916,
+                  "name": "testLiveInkWorstLiteralBodyFitsItsFinishReserveAndRejectsTheNextMeasurement()",
+                  "nodeIdentifier": "NotebookPersistenceAdmissionTests/testLiveInkWorstLiteralBodyFitsItsFinishReserveAndRejectsTheNextMeasurement()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookPersistenceAdmissionTests/testLiveInkWorstLiteralBodyFitsItsFinishReserveAndRejectsTheNextMeasurement",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,021s",
+                  "durationInSeconds": 0.020707011222839355,
+                  "name": "testPreparationShrinksItsCreditWhileBlockedAndKeepsTheResultAcrossRetry()",
+                  "nodeIdentifier": "NotebookPersistenceAdmissionTests/testPreparationShrinksItsCreditWhileBlockedAndKeepsTheResultAcrossRetry()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookPersistenceAdmissionTests/testPreparationShrinksItsCreditWhileBlockedAndKeepsTheResultAcrossRetry",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,12s",
+                  "durationInSeconds": 0.1211249828338623,
+                  "name": "testStorageFailureReachesABytePlateauAndRetryReleasesEachAcceptedBody()",
+                  "nodeIdentifier": "NotebookPersistenceAdmissionTests/testStorageFailureReachesABytePlateauAndRetryReleasesEachAcceptedBody()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookPersistenceAdmissionTests/testStorageFailureReachesABytePlateauAndRetryReleasesEachAcceptedBody",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                }
+              ],
+              "name": "NotebookPersistenceAdmissionTests",
+              "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookPersistenceAdmissionTests",
+              "nodeType": "Test Suite",
+              "result": "Passed"
+            },
+            {
+              "children": [
+                {
+                  "duration": "0,024s",
+                  "durationInSeconds": 0.023843050003051758,
+                  "name": "testCancellingPreparedResultWaitDoesNotDiscardItsResultOrDependentWrite()",
+                  "nodeIdentifier": "NotebookPersistenceQueueTests/testCancellingPreparedResultWaitDoesNotDiscardItsResultOrDependentWrite()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookPersistenceQueueTests/testCancellingPreparedResultWaitDoesNotDiscardItsResultOrDependentWrite",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,034s",
+                  "durationInSeconds": 0.03366804122924805,
+                  "name": "testCoalescingAndDiscardCannotReplaceAnAlreadyAttemptedAcceptedHead()",
+                  "nodeIdentifier": "NotebookPersistenceQueueTests/testCoalescingAndDiscardCannotReplaceAnAlreadyAttemptedAcceptedHead()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookPersistenceQueueTests/testCoalescingAndDiscardCannotReplaceAnAlreadyAttemptedAcceptedHead",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,019s",
+                  "durationInSeconds": 0.01859593391418457,
+                  "name": "testDeterministicLimitRefusalDoesNotBecomeAnInfiniteStorageRetry()",
+                  "nodeIdentifier": "NotebookPersistenceQueueTests/testDeterministicLimitRefusalDoesNotBecomeAnInfiniteStorageRetry()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookPersistenceQueueTests/testDeterministicLimitRefusalDoesNotBecomeAnInfiniteStorageRetry",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,12s",
+                  "durationInSeconds": 0.11789202690124512,
+                  "name": "testDomainRejectionWithoutAnObserverClosesOnlyItsAcceptedSlot()",
+                  "nodeIdentifier": "NotebookPersistenceQueueTests/testDomainRejectionWithoutAnObserverClosesOnlyItsAcceptedSlot()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookPersistenceQueueTests/testDomainRejectionWithoutAnObserverClosesOnlyItsAcceptedSlot",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,13s",
+                  "durationInSeconds": 0.13016998767852783,
+                  "name": "testMutatingCommandRetainsItsCompletionAndFIFOAcrossStorageRetry()",
+                  "nodeIdentifier": "NotebookPersistenceQueueTests/testMutatingCommandRetainsItsCompletionAndFIFOAcrossStorageRetry()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookPersistenceQueueTests/testMutatingCommandRetainsItsCompletionAndFIFOAcrossStorageRetry",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,16s",
+                  "durationInSeconds": 0.1639620065689087,
+                  "name": "testNonpublishingScriptAdmissionReturnsItsOriginalResultAfterUnknownCommitAndRetry()",
+                  "nodeIdentifier": "NotebookPersistenceQueueTests/testNonpublishingScriptAdmissionReturnsItsOriginalResultAfterUnknownCommitAndRetry()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookPersistenceQueueTests/testNonpublishingScriptAdmissionReturnsItsOriginalResultAfterUnknownCommitAndRetry",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,15s",
+                  "durationInSeconds": 0.15429401397705078,
+                  "name": "testPreparedCommandKeepsOneAcceptedInstanceAndExactResultAfterUnknownCommitAndPeer()",
+                  "nodeIdentifier": "NotebookPersistenceQueueTests/testPreparedCommandKeepsOneAcceptedInstanceAndExactResultAfterUnknownCommitAndPeer()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookPersistenceQueueTests/testPreparedCommandKeepsOneAcceptedInstanceAndExactResultAfterUnknownCommitAndPeer",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,14s",
+                  "durationInSeconds": 0.14172792434692383,
+                  "name": "testPublishingSubmitKeepsTheSameWaiterUntilItsStorageRetryFinishes()",
+                  "nodeIdentifier": "NotebookPersistenceQueueTests/testPublishingSubmitKeepsTheSameWaiterUntilItsStorageRetryFinishes()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookPersistenceQueueTests/testPublishingSubmitKeepsTheSameWaiterUntilItsStorageRetryFinishes",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,15s",
+                  "durationInSeconds": 0.14651799201965332,
+                  "name": "testStorageErrorBridgeRetainsTheHeadEvenWhenARejectionObserverExists()",
+                  "nodeIdentifier": "NotebookPersistenceQueueTests/testStorageErrorBridgeRetainsTheHeadEvenWhenARejectionObserverExists()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookPersistenceQueueTests/testStorageErrorBridgeRetainsTheHeadEvenWhenARejectionObserverExists",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,2s",
+                  "durationInSeconds": 0.19922208786010742,
+                  "name": "testTypedCompletionAndItsCreditStayPendingUntilTheOuterCommitOutcomeIsKnown()",
+                  "nodeIdentifier": "NotebookPersistenceQueueTests/testTypedCompletionAndItsCreditStayPendingUntilTheOuterCommitOutcomeIsKnown()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookPersistenceQueueTests/testTypedCompletionAndItsCreditStayPendingUntilTheOuterCommitOutcomeIsKnown",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,042s",
+                  "durationInSeconds": 0.041738033294677734,
+                  "name": "testTypedEffectKeepsNonpublishingMutationAndReleasesReadObserver()",
+                  "nodeIdentifier": "NotebookPersistenceQueueTests/testTypedEffectKeepsNonpublishingMutationAndReleasesReadObserver()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookPersistenceQueueTests/testTypedEffectKeepsNonpublishingMutationAndReleasesReadObserver",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                }
+              ],
+              "name": "NotebookPersistenceQueueTests",
+              "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookPersistenceQueueTests",
+              "nodeType": "Test Suite",
+              "result": "Passed"
+            },
+            {
+              "children": [
+                {
+                  "duration": "1 с",
+                  "durationInSeconds": 1.0467140674591064,
+                  "name": "testDurableResultSurvivesFailedRefreshThenDependentEditAndUndo()",
+                  "nodeIdentifier": "NotebookScenePublicationTests/testDurableResultSurvivesFailedRefreshThenDependentEditAndUndo()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookScenePublicationTests/testDurableResultSurvivesFailedRefreshThenDependentEditAndUndo",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "1s",
+                  "durationInSeconds": 0.9994750022888184,
+                  "name": "testEquivalentReadInstallKeepsConcurrentReadAdmittedAndActualEditInvalidatesIt()",
+                  "nodeIdentifier": "NotebookScenePublicationTests/testEquivalentReadInstallKeepsConcurrentReadAdmittedAndActualEditInvalidatesIt()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookScenePublicationTests/testEquivalentReadInstallKeepsConcurrentReadAdmittedAndActualEditInvalidatesIt",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,003s",
+                  "durationInSeconds": 0.0030089616775512695,
+                  "name": "testNewerPreparedCutSurvivesOldWorkerAndWaitsForInputAdmission()",
+                  "nodeIdentifier": "NotebookScenePublicationTests/testNewerPreparedCutSurvivesOldWorkerAndWaitsForInputAdmission()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookScenePublicationTests/testNewerPreparedCutSurvivesOldWorkerAndWaitsForInputAdmission",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "1 с",
+                  "durationInSeconds": 1.0122190713882446,
+                  "name": "testNewerWindowCursorCannotRetireUnobservedOutputAndPinnedTombstoneCan()",
+                  "nodeIdentifier": "NotebookScenePublicationTests/testNewerWindowCursorCannotRetireUnobservedOutputAndPinnedTombstoneCan()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookScenePublicationTests/testNewerWindowCursorCannotRetireUnobservedOutputAndPinnedTombstoneCan",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,0032s",
+                  "durationInSeconds": 0.0031789541244506836,
+                  "name": "testWarmRequestsCoalesceAndCancelBeforeDeliveryJoinsTheDispatchedWorker()",
+                  "nodeIdentifier": "NotebookScenePublicationTests/testWarmRequestsCoalesceAndCancelBeforeDeliveryJoinsTheDispatchedWorker()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookScenePublicationTests/testWarmRequestsCoalesceAndCancelBeforeDeliveryJoinsTheDispatchedWorker",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                }
+              ],
+              "name": "NotebookScenePublicationTests",
+              "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookScenePublicationTests",
+              "nodeType": "Test Suite",
+              "result": "Passed"
+            },
+            {
+              "children": [
+                {
+                  "duration": "0,014s",
+                  "durationInSeconds": 0.013530969619750977,
+                  "name": "testCanonicalAliasesShareAcceptedWriteOrder()",
+                  "nodeIdentifier": "NotebookWorkspaceWritersTests/testCanonicalAliasesShareAcceptedWriteOrder()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookWorkspaceWritersTests/testCanonicalAliasesShareAcceptedWriteOrder",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,016s",
+                  "durationInSeconds": 0.01590704917907715,
+                  "name": "testFailedRetirementRetainsTheWriterAndAcceptedTailForRetry()",
+                  "nodeIdentifier": "NotebookWorkspaceWritersTests/testFailedRetirementRetainsTheWriterAndAcceptedTailForRetry()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookWorkspaceWritersTests/testFailedRetirementRetainsTheWriterAndAcceptedTailForRetry",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                }
+              ],
+              "name": "NotebookWorkspaceWritersTests",
+              "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookWorkspaceWritersTests",
+              "nodeType": "Test Suite",
+              "result": "Passed"
+            }
+          ],
+          "name": "NotebookMacTests",
+          "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests",
+          "nodeType": "Unit test bundle",
+          "result": "Passed"
+        }
+      ],
+      "name": "NotebookRuntime",
+      "nodeType": "Test Plan",
+      "result": "Passed"
+    }
+  ],
+  "testPlanConfigurations": [
+    {
+      "configurationId": "1",
+      "configurationName": "Test Scheme Action"
+    }
+  ]
+}

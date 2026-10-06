@@ -9,6 +9,7 @@ public struct NotebookElementTransfer: Sendable {
   public let rootOrigin: WorldPoint
   public let witness: NotebookElementTransferWitness
   public let inkKeys: [String: NotebookInkPaintKey]
+  public let programResources: NotebookProgramTransfer?
 }
 
 /// Cut checks this same source cut after the system clipboard accepts its bytes.
@@ -36,7 +37,9 @@ extension NotebookStore {
       throw CollaborationError("invalid_reference", "Выберите от 1 до 32 объектов одной поверхности.")
     }
     return try readTransaction { _ in
-      try currentSQL!.limitReads(.init(rows: 8_192, bytes: 32 * 1_024 * 1_024,
+      try currentSQL!.limitReads(.init(rows: 8_192 + 2 * NotebookProgramTransfer.maximumBlobs
+        + NotebookProgramTransfer.maximumBytes / NotebookProgramTransfer.readWindowBytes,
+        bytes: 32 * 1_024 * 1_024 + NotebookProgramTransfer.maximumBytes,
         valueBytes: 16 * 1_024 * 1_024, reason: "selection_transfer_read",jsonDecodeBytes:80 * 1_024 * 1_024))
       if let expectedInkRevision, try inkRevision(on:target) != expectedInkRevision {
         throw CollaborationError("revision_conflict", "Рукописное содержимое изменилось. Повторите действие.")
@@ -143,6 +146,7 @@ extension NotebookStore {
           parentID: spatial.parentID, basis: spatial.basis)
       }
       let graph = NotebookGraphicGraph(nodes, groupSources: groups, elementSources: bodies)
+      let programResources = try readProgramTransfer(packageHashes: elements.compactMap(\.programPackage))
       let contacts=Dictionary(uniqueKeysWithValues:elements.compactMap { element in
         element.graphic?.sourceInkContactID.map { (element.id,$0) }
       })
@@ -173,7 +177,8 @@ extension NotebookStore {
         throw CollaborationError("incomplete_fragment", "Не удалось прочитать основание выделения.")
       }
       return .init(elements: elements, graph: graph, surface: surface, rootOrigin: origin,
-        witness: .init(target: target, sources: sources.values.sorted { $0.id < $1.id }, groupChildren: memberships),inkKeys:inkKeys)
+        witness: .init(target: target, sources: sources.values.sorted { $0.id < $1.id }, groupChildren: memberships),
+        inkKeys:inkKeys,programResources:programResources)
     }
   }
 }

@@ -1,0 +1,35 @@
+{
+  "format": 1,
+  "files": [
+    {
+      "path": "command.json",
+      "bytes": 1190,
+      "sha256": "4d017e731250ccc002e16b135d48634a06676d54bbc2a12f86baceb746ce2ae3"
+    },
+    {
+      "path": "products.json",
+      "bytes": 3860,
+      "sha256": "4c2cc56da2c98047d2543a2e8a2af68dfd7be037f44eccff1efdd2b7bec72057"
+    },
+    {
+      "path": "results.json",
+      "bytes": 3999,
+      "sha256": "6540c2128591934407ad24624dd8d9409f451c0d5a251b69434dae7c8e607fcb"
+    },
+    {
+      "path": "runtime-manifest.json",
+      "bytes": 3680,
+      "sha256": "f1138d9c36b3dc828335bbe304abe412c283adc685eccbeeade0401006f36203"
+    },
+    {
+      "path": "stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "stdout.log",
+      "bytes": 15616,
+      "sha256": "b614fc8bee619be6724efa34c41a638fe1362b51697aa9c2f6fe5b97ae015083"
+    }
+  ]
+}

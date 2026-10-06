@@ -6,6 +6,33 @@ import Observation
 /// Input and peer owners grant publication; they never take over its worker.
 @MainActor @Observable
 final class NotebookScenePublication {
+  enum Installation {
+    case full
+    case coverage(loadsDocument: Bool, preservesDocumentDraft: Bool)
+    var isCoverageOnly: Bool { if case .coverage = self { return true }; return false }
+  }
+
+  private(set) var sourceHeader: NotebookWorkspaceHeader?
+  private(set) var sourceGeneration: UInt64 = 0
+  private(set) var pinnedElementSources: [EditableElementReference: NotebookNativeElementSource] = [:]
+
+  /// Every completed read installs its header, frontier and bounded bodies in
+  /// one MainActor segment. A durable header-only observation never enters
+  /// this boundary, and an older callback cannot roll the source cut back.
+  @discardableResult
+  func install(_ state: NotebookSceneState, as mode: Installation,
+    bodies: (_ mode: Installation) -> Void) -> Bool {
+    if let previous = sourceHeader {
+      guard previous.workspaceID == state.header.workspaceID,
+        state.header.cursor >= previous.cursor else { return false }
+    }
+    sourceHeader = state.header
+    pinnedElementSources = state.pinnedElementSources
+    bodies(mode)
+    sourceGeneration &+= 1
+    return true
+  }
+
   private struct Input: Sendable {
     let workspace: WorkspaceIndex
     let hierarchy: BoardHierarchy

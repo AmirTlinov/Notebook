@@ -170,11 +170,15 @@ Prepared native commands reserve the ordinary persistence FIFO at acceptance.
 A domain rejection releases that command; a storage failure retains the accepted
 command, its result channel and dependent edits for explicit retry. Failed storage
 releases a save/shutdown wait with failure, not a false saved acknowledgement.
-The in-flight native command retains its exact transaction result. After a lost
-commit/readback response, the durable action receipt proves its own commit;
-retry returns that original result rather than reading newer peer material.
-An absent receipt proves rollback and requires the original source checks again.
-This is recovery of the retained in-process command, not a new durable draft store.
+`NotebookAcceptedWrite` retains the exact prepared result and command identity.
+The outer SQL transaction records one local witness per workspace/writer lease;
+after an uncertain COMMIT, a fresh witness read proves that command's outcome.
+Retry returns its retained result without repeating the body or adopting a peer's
+later material. Unreadable evidence keeps the command pending. Confirmed rollback
+permits the original source checks; a deterministic refusal then releases its slot.
+Workspace replacement rejects the old owner even after witness retirement. Archive
+copies clear process-local witnesses. Completed SQL statements release their copied
+bindings, including read refusal. No decoded result or draft journal is replicated.
 
 Ruler is temporary owner-local pose, moved by finger and rotated at its round end.
 Pencil uses the ordinary measurer. `PhysicalPaper` defines 1 cm as two grid cells;
@@ -243,6 +247,21 @@ or already converted contacts with authored peers; unsupported item mixtures are
 refused as a whole. Original journal entries remain immutable; stale selection
 cannot replace new ink. Multi-contact region aggregates remain authored geometry,
 not a fabricated single paint rank.
+
+Copy/Cut/Duplicate read complete nested membership from one addressed SQL cut,
+including children outside the render window. The transfer carries exact masks
+and the validated binary closure of each program. Cut checks its own importer,
+encodes the whole fragment and confirms clipboard publication before deleting that
+same source through CAS. A refusal preserves every original. The current 64-mask
+format limit remains until the fleet transition is admitted.
+
+Clipboard work reserves its preparation/finish credit at the gesture. One UIKit
+export owner joins the actual producer before admitting its latest waiting request;
+that request retains only bounded identity metadata. Menu preview/error callbacks
+require the current selection, destination and contact intent. An accepted Paste
+keeps its captured writer and lease when the menu ends. Optional HTML/JSON may fall
+through to another allowed representation; a recognized mandatory payload reports
+its whole refusal. Image admission preserves sanitized lossless source pixels.
 
 Text is created directly by a surface tap, initially sized in screen points then
 converted through camera scale. UITextView/TextKit owns caret, selection and line

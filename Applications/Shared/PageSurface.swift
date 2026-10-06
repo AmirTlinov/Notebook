@@ -260,6 +260,9 @@ struct PageSurface: View {
     onRenderReady(readiness.isReady(page),
       capturable: materialOwner.isCaptureReady(readiness: onRenderReady) && onRenderReady.inkFrameIsReady?() == true,
       paperReady: readiness.paperIsReady(page))
+    guard isCurrent, isVisible, onRenderReady.activity?.isTransitioning != true,
+      readiness.hasInstalledGraphics(page), model.pagePresentations.hasInstalledGraphics(page) else { return }
+    model.retirePresentedPageGraphicCommands(page, installedGraphics: true)
   }
 
   private func publishGraphicCoverage(_ visible:Set<String>) {
