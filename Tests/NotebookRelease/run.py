@@ -672,6 +672,11 @@ class ReleaseTests(unittest.TestCase):
 
 
 class InstallationCLI(PairCLI):
+    support = "Library/Application Support"
+    catalog_path = support + "/Notebook.spaces.json"
+    sqlite_path = support + "/Notebook/notebook.sqlite"
+    workspace_id = "54349F3B-9E0A-4DEA-B990-40CAE04EF45E"
+
     def __init__(self, built, build):
         self.__dict__.update(built.__dict__)
         self.calls = []
@@ -683,14 +688,50 @@ class InstallationCLI(PairCLI):
         self.stale_cache = False
         self.missing_cached_typescript_library = False
         self.wrong_launcher_args = False
-        self.changed_ipad_container = False
         self.literal_plugin_root = False
         self.previous_runtime = None
+        self.on_preinstall = None
+        self.on_install = None
+        self.storage = {name: self.file(directory=True) for name in
+            ("Library", self.support, self.support + "/Notebook", self.support + "/Notebook.spaces")}
+        self.storage[self.catalog_path] = self.file(content=json.dumps({"format": 1,
+            "originalID": self.workspace_id, "selectedID": self.workspace_id,
+            "entries": [{"id": self.workspace_id, "name": "Fixture"}],
+            "deleting": [], "pendingCloudDeletion": []}).encode())
+        self.storage[self.sqlite_path] = self.file(size=329682944)
+        self.storage[self.sqlite_path + "-wal"] = self.file(size=1767512)
+
+    @staticmethod
+    def file(directory=False, size=0, content=None):
+        return {"resources": {"isDirectory": directory, "isSymbolicLink": False, "isReadable": True},
+                "metadata": {"size": len(content) if content is not None else size}, "content": content}
 
     def __call__(self, argv, cwd=None, stdout=None, stderr=None, timeout=None):
         label = Path(stdout.name).name.removesuffix(".stdout.log")
         output, exit_code = b"", 0
-        if label == "primary-checkout":
+        if argv[1:5] == ["devicectl", "device", "info", "files"]:
+            assert argv[argv.index("--domain-type") + 1] == "appDataContainer"
+            assert argv[argv.index("--domain-identifier") + 1] == release.BUNDLE
+            relative = argv[argv.index("--subdirectory") + 1] if "--subdirectory" in argv else ""
+            rows = []
+            for name, entry in self.storage.items():
+                parent, _, child = name.rpartition("/")
+                if parent == relative:
+                    rows.append({"name": child, "relativePath": child,
+                        "metadata": entry["metadata"], "resources": entry["resources"]})
+            release.write_json(Path(argv[argv.index("--json-output") + 1]), {
+                "info": {"outcome": "success", "commandType": "devicectl.device.info.files"},
+                "result": {"deviceIdentifier": release.DEVICE, "domain": "appDataContainer",
+                    "domainIdentifier": release.BUNDLE, "files": rows}})
+        elif argv[1:5] == ["devicectl", "device", "copy", "from"]:
+            assert argv[argv.index("--source") + 1] == self.catalog_path, "Installation may only copy the bounded catalog"
+            assert argv[argv.index("--domain-identifier") + 1] == release.BUNDLE
+            Path(argv[argv.index("--destination") + 1]).write_bytes(self.storage[self.catalog_path]["content"])
+        elif label == "ipad-preinstall":
+            if self.on_preinstall:
+                self.on_preinstall()
+            return super().__call__(argv, cwd=cwd, stdout=stdout, stderr=stderr, timeout=timeout)
+        elif label == "primary-checkout":
             output = ("worktree " + str(self.source) + "\0\0").encode()
         elif label == "plugins-before":
             output = json.dumps({"installed": [{"pluginId": "notebook@notebook-local", "version": "0.1.6"}]}).encode()
@@ -720,8 +761,8 @@ class InstallationCLI(PairCLI):
                 "args": [str(runtime / "Contents/Resources/NotebookTools/dist" / ("index.mjs" if self.wrong_launcher_args else "launch-runtime.mjs"))]}}).encode()
         elif label == "install-ipad":
             result = super().__call__(argv, cwd=cwd, stdout=stdout, stderr=stderr, timeout=timeout)
-            if self.changed_ipad_container:
-                self.preview["dataContainerPath"] = "/private/var/mobile/Containers/Data/Application/REPLACED"
+            if self.on_install:
+                self.on_install()
             return result
         else:
             return super().__call__(argv, cwd=cwd, stdout=stdout, stderr=stderr, timeout=timeout)
@@ -756,27 +797,127 @@ class InstallationTests(unittest.TestCase):
         receipt = self.install()
         self.assertEqual(receipt["status"], "installed")
         self.assertEqual(receipt["runtime"], str(self.cli.cache))
+        self.assertEqual(receipt["ipadWorkspaceBefore"]["identity"], receipt["ipadWorkspaceAfter"]["identity"])
+        self.assertEqual(receipt["ipadWorkspaceAfter"]["identity"]["selectedID"], self.cli.workspace_id.lower())
         for key in ("dataContainerPath", "appGroupIdentifiers", "groupContainerPaths"):
             self.assertEqual(receipt["ipadAfter"][0][key], before[key])
         self.assertEqual(receipt["ipadAfter"][0]["bundleVersion"], self.build_receipt["build"])
         self.assertEqual(len(self.cli.install_calls), 1)
         self.assertFalse(any({"kill", "terminate", "uninstall", "--remove-existing-content"}.intersection(call) for call in self.cli.calls))
 
-    def test_missing_container_identity_refuses_before_plugin_or_device_mutation(self):
-        del self.cli.preview["dataContainerPath"]
-        with self.assertRaisesRegex(release.ReleaseError, "CLI не подтвердил dataContainerPath"):
+    def test_missing_group_identity_refuses_before_plugin_or_device_mutation(self):
+        del self.cli.preview["appGroupIdentifiers"]
+        with self.assertRaisesRegex(release.ReleaseError, "CLI не подтвердил appGroupIdentifiers"):
             self.install()
         self.assertEqual(self.cli.install_calls, [])
         self.assertFalse((self.source / "MCP/plugin/notebook/runtime").exists())
         self.assertEqual(release.read_json(self.evidence / "installation.json")["status"], "refused")
 
-    def test_replaced_data_container_cannot_be_claimed_installed_or_retried(self):
-        self.cli.changed_ipad_container = True
-        with self.assertRaisesRegex(release.ReleaseError, "Контейнер iPad изменился"):
+    def test_relocated_container_and_checkpointed_wal_preserve_the_workspace(self):
+        self.cli.preview.update(appGroupIdentifiers=["group.notebook"],
+            groupContainerPaths={"group.notebook": "/private/var/mobile/Containers/Shared/BEFORE"})
+        def relocate():
+            self.cli.preview["dataContainerPath"] = "/private/var/mobile/Containers/Data/Application/AFTER"
+            self.cli.preview["groupContainerPaths"]["group.notebook"] = "/private/var/mobile/Containers/Shared/AFTER"
+            self.cli.storage[self.cli.sqlite_path]["metadata"]["size"] += 4096
+            del self.cli.storage[self.cli.sqlite_path + "-wal"]
+        self.cli.on_install = relocate
+        receipt = self.install()
+        self.assertEqual(receipt["status"], "installed")
+        self.assertNotEqual(receipt["ipadBefore"][0]["dataContainerPath"], receipt["ipadAfter"][0]["dataContainerPath"])
+        self.assertEqual(receipt["ipadWorkspaceBefore"]["identity"], receipt["ipadWorkspaceAfter"]["identity"])
+        self.assertEqual(len(self.cli.install_calls), 1)
+
+    def test_installed_unopened_app_keeps_an_empty_baseline(self):
+        self.cli.storage = {"Library": self.cli.file(directory=True)}
+        receipt = self.install()
+        self.assertEqual(receipt["ipadWorkspaceBefore"], {"identity": {"state": "empty"}})
+        self.assertEqual(receipt["ipadWorkspaceBefore"], receipt["ipadWorkspaceAfter"])
+        self.assertFalse(any(call[1:5] == ["devicectl", "device", "copy", "from"] for call in self.cli.calls))
+
+    def test_data_without_catalog_refuses_before_plugin_or_device_mutation(self):
+        del self.cli.storage[self.cli.catalog_path]
+        with self.assertRaisesRegex(release.ReleaseError, "без подтверждённого каталога"):
+            self.install()
+        self.assertEqual(self.cli.install_calls, [])
+        self.assertFalse((self.source / "MCP/plugin/notebook/runtime").exists())
+
+    def test_unknown_original_contents_without_catalog_are_not_an_empty_baseline(self):
+        for name in (self.cli.catalog_path, self.cli.sqlite_path, self.cli.sqlite_path + "-wal"):
+            del self.cli.storage[name]
+        self.cli.storage[self.cli.support + "/Notebook/workspace.json"] = self.cli.file(size=128)
+        with self.assertRaisesRegex(release.ReleaseError, "без подтверждённого каталога"):
+            self.install()
+        self.assertEqual(self.cli.install_calls, [])
+        self.assertFalse(any(call[1:5] == ["devicectl", "device", "copy", "from"] for call in self.cli.calls))
+
+    def test_oversized_catalog_is_not_copied_or_installed(self):
+        self.cli.storage[self.cli.catalog_path]["metadata"]["size"] = 262145
+        with self.assertRaisesRegex(release.ReleaseError, "превышает допустимый размер"):
+            self.install()
+        self.assertEqual(self.cli.install_calls, [])
+        self.assertFalse(any(call[1:5] == ["devicectl", "device", "copy", "from"] for call in self.cli.calls))
+
+    def test_catalog_change_during_plugin_setup_stops_before_ipad_install(self):
+        def changed():
+            catalog = json.loads(self.cli.storage[self.cli.catalog_path]["content"])
+            catalog["selectedID"] = None
+            self.cli.storage[self.cli.catalog_path] = self.cli.file(content=json.dumps(catalog).encode())
+        self.cli.on_preinstall = changed
+        with self.assertRaisesRegex(release.ReleaseError, "изменился во время подготовки"):
+            self.install()
+        self.assertEqual(self.cli.install_calls, [])
+        self.assertEqual(release.read_json(self.evidence / "installation.json")["status"], "incomplete")
+
+    def test_changed_selected_workspace_cannot_be_claimed_installed_or_retried(self):
+        def changed():
+            catalog = json.loads(self.cli.storage[self.cli.catalog_path]["content"])
+            catalog["selectedID"] = None
+            self.cli.storage[self.cli.catalog_path] = self.cli.file(content=json.dumps(catalog).encode())
+        self.cli.on_install = changed
+        with self.assertRaisesRegex(release.ReleaseError, "Каталог или выбранное пространство"):
             self.install()
         self.assertEqual(len(self.cli.install_calls), 1)
         receipt = release.read_json(self.evidence / "installation.json")
         self.assertEqual((receipt["status"], receipt["step"]), ("incomplete", "install-ipad"))
+
+    def test_lost_catalog_cannot_be_claimed_installed_or_retried(self):
+        self.cli.on_install = lambda: self.cli.storage.pop(self.cli.catalog_path)
+        with self.assertRaisesRegex(release.ReleaseError, "без подтверждённого каталога"):
+            self.install()
+        self.assertEqual(len(self.cli.install_calls), 1)
+        self.assertEqual(release.read_json(self.evidence / "installation.json")["status"], "incomplete")
+
+    def test_lost_active_sqlite_cannot_be_claimed_installed_or_retried(self):
+        self.cli.on_install = lambda: self.cli.storage.pop(self.cli.sqlite_path)
+        with self.assertRaisesRegex(release.ReleaseError, "потеряло notebook.sqlite"):
+            self.install()
+        self.assertEqual(len(self.cli.install_calls), 1)
+        self.assertEqual(release.read_json(self.evidence / "installation.json")["status"], "incomplete")
+
+    def test_symlinked_active_sqlite_refuses_before_plugin_or_device_mutation(self):
+        self.cli.storage[self.cli.sqlite_path]["resources"]["isSymbolicLink"] = True
+        with self.assertRaisesRegex(release.ReleaseError, "неизвестный тип"):
+            self.install()
+        self.assertEqual(self.cli.install_calls, [])
+        self.assertFalse((self.source / "MCP/plugin/notebook/runtime").exists())
+
+    def test_managed_workspace_uses_its_catalog_address(self):
+        catalog = json.loads(self.cli.storage[self.cli.catalog_path]["content"])
+        catalog["originalID"] = None
+        self.cli.storage[self.cli.catalog_path] = self.cli.file(content=json.dumps(catalog).encode())
+        directory = self.cli.support + "/Notebook.spaces/" + self.cli.workspace_id.lower()
+        self.cli.storage[directory] = self.cli.file(directory=True)
+        self.cli.storage[directory + "/notebook.sqlite"] = self.cli.file(size=8192)
+        receipt = self.install()
+        self.assertEqual(receipt["ipadWorkspaceAfter"]["identity"]["activeSQLite"], directory + "/notebook.sqlite")
+
+    def test_changed_app_groups_cannot_be_claimed_installed(self):
+        self.cli.on_install = lambda: self.cli.preview.update(appGroupIdentifiers=["group.other"])
+        with self.assertRaisesRegex(release.ReleaseError, "app groups"):
+            self.install()
+        self.assertEqual(len(self.cli.install_calls), 1)
+        self.assertEqual(release.read_json(self.evidence / "installation.json")["status"], "incomplete")
 
     def test_newer_ipad_refuses_before_plugin_or_device_mutation(self):
         self.cli.preview["bundleVersion"] = "999"
