@@ -7,27 +7,31 @@ final class SpatialInkActionToken: @unchecked Sendable {}
 final class SpatialInkActionStorage: @unchecked Sendable {
   let order: InkActionMapNode<Int, SpatialInkAction>?
   let ids: InkActionMapNode<UUID, Int>?
-  let eraserIndex:InkReadSetBoundsIndex
+  let contactIndex:InkContactBoundsIndex
   let count: Int
+  let retainedPayloadBytes: Int
   let isValid: Bool
   let token = SpatialInkActionToken()
   let predecessorToken: SpatialInkActionToken?
 
   init(_ actions: [SpatialInkAction]) {
     let identifiers = actions.enumerated().map { ($0.element.id, $0.offset) }.sorted { $0.0 < $1.0 }
+    let valid = zip(identifiers, identifiers.dropFirst()).allSatisfy { $0.0.0 != $0.1.0 }
+      && actions.allSatisfy(\.isValid)
     order = InkActionMapNode.balanced(actions.enumerated().map { ($0.offset, $0.element) }, 0, actions.count)
     ids = InkActionMapNode.balanced(identifiers, 0, identifiers.count)
-    eraserIndex=InkReadSetBoundsIndex(spatial:actions)
+    contactIndex=valid ? InkContactBoundsIndex(spatial:actions):.init()
     count = actions.count
-    isValid = zip(identifiers, identifiers.dropFirst()).allSatisfy { $0.0.0 != $0.1.0 }
-      && actions.allSatisfy(\.isValid)
+    retainedPayloadBytes = actions.reduce(128) { $0 + $1.retainedPayloadBytes + 192 }+contactIndex.retainedMetadataBytes
+    isValid = valid
     predecessorToken = nil
   }
 
   private init(order: InkActionMapNode<Int, SpatialInkAction>?, ids: InkActionMapNode<UUID, Int>?,
-    count: Int, isValid: Bool, predecessorToken: SpatialInkActionToken,eraserIndex:InkReadSetBoundsIndex) {
+    count: Int, retainedPayloadBytes:Int, isValid: Bool, predecessorToken: SpatialInkActionToken,contactIndex:InkContactBoundsIndex) {
     self.order = order; self.ids = ids; self.count = count
-    self.isValid = isValid; self.predecessorToken = predecessorToken;self.eraserIndex=eraserIndex
+    self.isValid = isValid; self.predecessorToken = predecessorToken;self.contactIndex=contactIndex
+    self.retainedPayloadBytes=retainedPayloadBytes
   }
 
   var actions: [SpatialInkAction] {
@@ -44,14 +48,21 @@ final class SpatialInkActionStorage: @unchecked Sendable {
 
   func appending(_ action: SpatialInkAction) -> SpatialInkActionStorage {
     let key = action.id
-    var index=eraserIndex;index.append(action)
+    var index=contactIndex;index.append(action)
     return .init(order: order?.inserting(count, action) ?? .init(count, action),
-      ids: ids?.inserting(key, count) ?? .init(key, count), count: count + 1, isValid: isValid, predecessorToken: token,eraserIndex:index)
+      ids: ids?.inserting(key, count) ?? .init(key, count), count: count + 1,
+      retainedPayloadBytes:retainedPayloadBytes+action.retainedPayloadBytes+192
+        + index.retainedMetadataBytes-contactIndex.retainedMetadataBytes,
+      isValid: isValid, predecessorToken: token,contactIndex:index)
   }
 
   func replacing(_ action: SpatialInkAction) -> SpatialInkActionStorage {
     guard let position = ids?.value(for: action.id) else { return self }
-    return .init(order: order?.inserting(position, action), ids: ids, count: count, isValid: isValid, predecessorToken: token,eraserIndex:eraserIndex)
+    var index=contactIndex;index.setActive(action.isActive,for:[action.id])
+    return .init(order: order?.inserting(position, action), ids: ids, count: count,
+      // Every replacement changes only the visibility gate of this identity.
+      retainedPayloadBytes:retainedPayloadBytes+index.retainedMetadataBytes-contactIndex.retainedMetadataBytes,
+      isValid: isValid, predecessorToken: token,contactIndex:index)
   }
 
   func hasSameActionStates(as other: SpatialInkActionStorage) -> Bool {

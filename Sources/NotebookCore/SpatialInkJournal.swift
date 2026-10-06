@@ -105,6 +105,14 @@ public struct SpatialInkAction: Codable, Equatable, Identifiable, Sendable {
   public let stamp: VersionStamp
   public private(set) var isActive: Bool
   public private(set) var stateStamp: VersionStamp
+  var retainedPayloadBytes:Int {
+    MemoryLayout<Self>.stride + spans.capacity * MemoryLayout<SpatialInkSpan>.stride
+      + spans.reduce(0) { total, span in
+        total + span.samples.payloadBytes
+          + (span.elementTargets?.capacity ?? 0) * MemoryLayout<InkElementTarget>.stride
+          + (span.elementTargets ?? []).reduce(0) { $0 + $1.elementID.utf8.count * 2 }
+      }
+  }
 
   public init(
     id: UUID = UUID(),
@@ -167,10 +175,13 @@ public struct SpatialInkJournal: Codable, Equatable, Sendable {
   public var orderedActions: some Sequence<SpatialInkAction> & Sendable { storage.orderedActions }
   public var actionCount: Int { storage.count }
   public var sourceIdentity:ObjectIdentifier {ObjectIdentifier(storage)}
-  /// Conservative retained metadata for both immutable nodes per action:
-  /// value, UUID/position, child pointers, heights, object headers and alignment.
+  /// Conservative retained metadata for both immutable nodes per action and
+  /// their shared contact index, including indirect identifiers and capacity.
   /// Shared roots are intentionally charged to each retaining cache entry.
-  public var retainedMetadataBytes: Int { 128 + actionCount * (MemoryLayout<SpatialInkAction>.stride + 128) }
+  public var retainedMetadataBytes: Int {
+    128 + actionCount * (MemoryLayout<SpatialInkAction>.stride + 128) + storage.contactIndex.retainedMetadataBytes
+  }
+  public var retainedPayloadBytes:Int { storage.retainedPayloadBytes }
   public private(set) var stamp: VersionStamp
 
   public init(actions: [SpatialInkAction] = [], stamp: VersionStamp) {

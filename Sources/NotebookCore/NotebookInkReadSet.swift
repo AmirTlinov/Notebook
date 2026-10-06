@@ -107,7 +107,7 @@ public struct NotebookInkReadSet:Equatable,Sendable {
     if let cached=validation.cached(source.source) {return cached}
     guard let prepared=source.preparedProjection else {return false}
     guard prepared.drawing.action(id:contact.id).map(NotebookInkContactWitness.init) == contact else {return validation.record(false,for:source.source)}
-    let cuts=prepared.eraserIndex.candidates(on:nil,in:bounds).compactMap {prepared.drawing.action(id:$0)}
+    let cuts=prepared.contactIndex.candidates(on:nil,in:bounds).compactMap {prepared.drawing.action(id:$0)}
       .filter{$0.isActive && contact.precedes(.init($0)) && support.intersects($0.samples)}
       .map(NotebookInkContactWitness.init).sorted{$0.id<$1.id}
     return validation.record(cuts == erasers,for:source.source)
@@ -116,70 +116,10 @@ public struct NotebookInkReadSet:Equatable,Sendable {
     guard !suppressed.contains(contact.id) else {return false}
     if let cached=validation.cached(journal.storage) {return cached}
     guard journal.action(id:contact.id).map(NotebookInkContactWitness.init) == contact else {return validation.record(false,for:journal.storage)}
-    let cuts=journal.storage.eraserIndex.candidates(on:surface,in:bounds).compactMap{journal.action(id:$0)}
+    let cuts=journal.storage.contactIndex.candidates(on:surface,in:bounds).compactMap{journal.action(id:$0)}
       .filter{$0.isActive && contact.precedes(.init($0)) && $0.spans.contains{$0.surface == surface && support.intersects($0.samples)}}
       .map(NotebookInkContactWitness.init).sorted{$0.id<$1.id}
     return validation.record(cuts == erasers,for:journal.storage)
-  }
-}
-
-/// Immutable blocks share the canonical measurement bounds. Appending an
-/// eraser rebuilds at most 256 bounds; pen and visibility changes reuse them.
-struct InkReadSetBoundsIndex:Sendable {
-  private struct Block:Sendable {
-    let entries:[WorkspaceSpatialEntry]
-    let index:WorkspaceSpatialIndex
-    init(_ entries:[WorkspaceSpatialEntry]) {self.entries=entries;index = .init(entries:entries)}
-  }
-  private var blocks:[SurfaceID?:[Block]] = [:]
-  init() {}
-  init(page actions:[PageInkAction]) {
-    self.init(entries:[nil:actions.filter{$0.tool == .eraser}.map {
-      .init(id:.element($0.id.uuidString),bounds:NotebookInkReadSet.bounds(of:$0.samples),zIndex:0)
-    }])
-  }
-  init(spatial actions:[SpatialInkAction]) {
-    var entries:[SurfaceID?:[WorkspaceSpatialEntry]]=[:]
-    for action in actions where action.tool == .eraser {
-      for (surface,bounds) in Self.regions(action) {
-        entries[surface,default:[]].append(.init(id:.element(action.id.uuidString),bounds:bounds,zIndex:0))
-      }
-    }
-    self.init(entries:entries)
-  }
-  private init(entries:[SurfaceID?:[WorkspaceSpatialEntry]]) {
-    blocks=entries.mapValues { values in
-      stride(from:0,to:values.count,by:256).map {.init(Array(values[$0..<min($0+256,values.count)]))}
-    }
-  }
-  private static func regions(_ action:SpatialInkAction)->[SurfaceID:WorkspaceSpatialBounds] {
-    var regions:[SurfaceID:WorkspaceSpatialBounds]=[:]
-    for span in action.spans {
-      let bounds=NotebookInkReadSet.bounds(of:span.samples)
-      regions[span.surface]=regions[span.surface].map{$0.union(bounds)} ?? bounds
-    }
-    return regions
-  }
-  mutating func append(id:UUID,surface:SurfaceID?,bounds:WorkspaceSpatialBounds) {
-    var group=blocks[surface] ?? [],tail:[WorkspaceSpatialEntry]=[]
-    if let last=group.last,last.entries.count<256 {tail=group.removeLast().entries}
-    tail.append(.init(id:.element(id.uuidString),bounds:bounds,zIndex:0));group.append(.init(tail));blocks[surface]=group
-  }
-  mutating func append(_ action:PageInkAction) {
-    if action.tool == .eraser {append(id:action.id,surface:nil,bounds:NotebookInkReadSet.bounds(of:action.samples))}
-  }
-  mutating func append(_ action:SpatialInkAction) {
-    guard action.tool == .eraser else {return}
-    for (surface,bounds) in Self.regions(action) {append(id:action.id,surface:surface,bounds:bounds)}
-  }
-  func candidates(on surface:SurfaceID?,in bounds:WorkspaceSpatialBounds)->Set<UUID> {
-    var ids=Set<UUID>()
-    for block in blocks[surface] ?? [] {
-      for entry in block.index.intersections(in:bounds,limit:256).entries {
-        if case .element(let id)=entry.id,let uuid=UUID(uuidString:id) {ids.insert(uuid)}
-      }
-    }
-    return ids
   }
 }
 
@@ -273,7 +213,7 @@ extension PageInkSource {
     guard surface.kind == .page,let prepared=preparedProjection,let action=prepared.drawing.action(id:id),action.isActive else {return nil}
     let bounds=NotebookInkReadSet.bounds(of:action.samples)
     let contact=NotebookInkContactWitness(action),support=NotebookInkPaintSupport(id:id,tool:action.tool,color:action.color,samples:[action.samples],bounds:bounds,world:false)
-    let cuts=prepared.eraserIndex.candidates(on:nil,in:bounds).compactMap{prepared.drawing.action(id:$0)}
+    let cuts=prepared.contactIndex.candidates(on:nil,in:bounds).compactMap{prepared.drawing.action(id:$0)}
       .filter{$0.isActive && contact.precedes(.init($0)) && support.intersects($0.samples)}.map(NotebookInkContactWitness.init)
     return .init(surface:surface,bounds:bounds,contact:contact,erasers:cuts,support:support,owner:source)
   }
@@ -286,7 +226,7 @@ extension SpatialInkJournal {
     let bounds=regions.dropFirst().reduce(first){$0.union($1)}
     let contact=NotebookInkContactWitness(action),support=NotebookInkPaintSupport(id:id,tool:action.tool,color:action.color,
       samples:action.spans.filter{$0.surface == surface}.map(\.samples),bounds:bounds,world:surface.kind == .board)
-    let cuts=storage.eraserIndex.candidates(on:surface,in:bounds).compactMap{self.action(id:$0)}
+    let cuts=storage.contactIndex.candidates(on:surface,in:bounds).compactMap{self.action(id:$0)}
       .filter{$0.isActive && contact.precedes(.init($0)) && $0.spans.contains{$0.surface == surface && support.intersects($0.samples)}}
       .map(NotebookInkContactWitness.init)
     return .init(surface:surface,bounds:bounds,contact:contact,erasers:cuts,support:support,owner:storage)

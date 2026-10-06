@@ -5,16 +5,48 @@ import NotebookCore
 /// A cheap immutable document cut. Only the selected sources and their bases
 /// survive preparation; a later edit never silently borrows today's revision.
 struct NotebookRegionSourceSnapshot: Sendable {
-  let page: PageDocument?
-  let board: BoardDocument?
+  let elements:NotebookElementSourceSnapshot?
   var accepted:[EditableElementReference:NotebookNativeElementSource] = [:]
   var appended:[String] = []
   var dependencies:[EditableElementReference:NotebookElementCommand] = [:]
 
+  init(page:PageDocument?,board:BoardDocument?,accepted:[EditableElementReference:NotebookNativeElementSource] = [:],
+    appended:[String] = [],dependencies:[EditableElementReference:NotebookElementCommand] = [:]) {
+    elements=page?.elementSourceSnapshot ?? board?.elementSourceSnapshot
+    self.accepted=accepted;self.appended=appended;self.dependencies=dependencies
+  }
+
+  private init(elements:NotebookElementSourceSnapshot?,accepted:[EditableElementReference:NotebookNativeElementSource],
+    appended:[String],dependencies:[EditableElementReference:NotebookElementCommand]) {
+    self.elements=elements;self.accepted=accepted;self.appended=appended;self.dependencies=dependencies
+  }
+
+  func capturing(_ ids:Set<String>)->Self {
+    let accepted=accepted.filter {ids.contains($0.key.elementID)}
+    return .init(elements:elements?.capturing(ids),accepted:accepted,
+      appended:appended.filter {ids.contains($0)},dependencies:dependencies.filter {ids.contains($0.key.elementID)})
+  }
+
+  func writeAllowance(graph:NotebookGraphicGraph,inkBytes:Int?,inkMaterialBytes:Int?,erasureBytes:(retained:Int,material:Int)?,contourCount:Int,
+    retainedClaims:Int=0,predecessor:NotebookRegionWriteAllowance? = nil)->NotebookRegionWriteAllowance {
+    guard let inkBytes,let inkMaterialBytes,let erasureBytes,let size=elements?.captureSize else { return .maximum }
+    var bodies=size.editableBytes,causal=size.editableCausalBytes,retained=size.bytes
+    for source in accepted.values {
+      let full=source.retainedPayloadBytes
+      let body=NotebookNativeElementSource(target:source.target,id:source.id,page:source.page,spatial:source.spatial).retainedPayloadBytes
+      bodies += body;causal += full-body;retained += full
+    }
+    // Only compact captured relations and masks survive lift. Their prepared
+    // entries, candidates and erasure views coexist with the typed source.
+    return .init(retainedBytes:retained+graph.retainedPayloadBytes+(inkBytes+erasureBytes.retained) * 4+retainedClaims*64,
+      bodyBytes:bodies+inkMaterialBytes+erasureBytes.material,causalBytes:causal,
+      elementCount:size.editableCount+accepted.count+(inkBytes > 0 ? 1 : 0),contourCount:contourCount,
+      predecessor:predecessor)
+  }
+
   func orderedGraphics(for region:NotebookRegionSelection) throws -> [EditableElementReference] {
     let ids=Set(region.graphics.map(\.elementID))
-    var ordered=page?.interactionElements(ids:ids).map(\.id)
-      ?? board?.interactionElements(ids:ids).map(\.id) ?? []
+    var ordered=elements?.orderedIDs(ids) ?? []
     let known=Set(ordered)
     ordered += appended.filter { ids.contains($0) && !known.contains($0) }
     guard ordered.count == region.graphics.count else { throw staleRegion() }
@@ -37,14 +69,13 @@ struct NotebookRegionSourceSnapshot: Sendable {
         case .page(let owner,_): ref = .page(pageID:owner,elementID:id);target = .init(kind:.page,id:owner)
         case .spatial(let owner,_):
           ref = .spatial(boardID:owner,elementID:id)
-          guard let surface=accepted[ref]?.spatial?.surface ?? board?.element(id:id)?.surface,
+          guard let surface=accepted[ref]?.spatial?.surface ?? elements?.spatialElement(id)?.surface,
             let surfaceID=surface.ownerID else { throw staleRegion() }
           target = .init(kind:surface.kind == .cover ? .cover : .board,id:surfaceID,
             boardID:surface.kind == .cover ? owner : nil)
         }
         guard result[ref] == nil else { continue }
-        let value=accepted[ref] ?? NotebookNativeElementSource(target:target,id:id,
-          page:page?.element(id:id),spatial:board?.element(id:id))
+        guard let value=accepted[ref] ?? elements?.nativeSource(id,target:target) else {throw staleRegion()}
         guard let source=value.placementSource,source == graph.source(id),
           (value.page?.graphic ?? value.spatial?.graphic) == graph.node(id)?.graphic else { throw staleRegion() }
         result[ref]=value
@@ -170,6 +201,21 @@ extension NotebookRegionMaterialization {
 }
 
 extension NotebookAppModel {
+  func regionWriteAllowance(_ region:NotebookRegionSelection)->NotebookRegionWriteAllowance {
+    if let preparation=region.preparation { return preparation.allowance }
+    guard let material=region.materialization else { return .maximum }
+    var bodies=0,causal=0
+    for source in material.sources.values {
+      let body=NotebookNativeElementSource(target:source.target,id:source.id,page:source.page,spatial:source.spatial).retainedPayloadBytes
+      bodies += body;causal += source.retainedPayloadBytes-body
+    }
+    for working in material.working { bodies += working.graphic.retainedPayloadBytes+MemoryLayout<NotebookWorkingGraphic>.stride }
+    for graphic in material.outside.values { bodies += graphic.retainedPayloadBytes }
+    if let raw=region.rawInk { bodies += raw.graphic.retainedPayloadBytes }
+    return .init(retainedBytes:bodies+causal,bodyBytes:bodies,causalBytes:causal,
+      elementCount:material.edits.count,contourCount:region.polygon.count,materialized:true)
+  }
+
   func regionSourceSnapshot(_ address:NotebookToolAddress) -> NotebookRegionSourceSnapshot {
     let working=pendingModelGraphics.filter { $0.surface == address.surface }
     var accepted:[EditableElementReference:NotebookNativeElementSource]=[:]
@@ -250,7 +296,11 @@ extension NotebookAppModel {
   /// Both ready and still-preparing regions reserve the same causal writer at
   /// acceptance. The typed material becomes visible before its JSON is built.
   private func acceptRegionCommand(_ region:NotebookRegionSelection,change:RegionChange,summary:String)->Bool {
-    guard let reservation=reserveElementPreparation() else { return false }
+    let allowance=region.preparation?.allowance ?? regionWriteAllowance(region)
+    let cost:NotebookPersistenceAdmission.Cost
+    do { cost=try allowance.cost() }
+    catch { showCue(error.localizedDescription);return false }
+    guard let reservation=reserveElementPreparation(cost:cost) else { return false }
     var transferred=false
     defer { if !transferred { releaseElementPreparation(reservation) } }
     let ready:NotebookRegionMaterialization?
@@ -311,10 +361,10 @@ extension NotebookAppModel {
         self?.pendingMaterialAdmissions[region.address.surface]=nil
       }
     }
-    pendingMaterialAdmissions[region.address.surface]=(batch.id,admission)
+    pendingMaterialAdmissions[region.address.surface] = .init(id:batch.id,task:admission,allowance:allowance.prospective)
     if case .deletion=change { clearSelection() }
     else if let ready { selectElements(ready.selected) }
-    else if case .placement(let frame)=change { continueRegion(region,in:frame,after:admitted) }
+    else if case .placement(let frame)=change { continueRegion(region,in:frame,after:admitted,allowance:allowance.continuing()) }
     return true
   }
 
@@ -345,7 +395,8 @@ extension NotebookAppModel {
   /// A second lift or Delete may address the accepted fragment before either
   /// material preparation or SQLite finishes, without splitting its source again.
   private func continueRegion(_ region:NotebookRegionSelection,in end:CGRect,
-    after admitted:Task<(NotebookRegionSelection,NotebookRegionMaterialization),Error>) {
+    after admitted:Task<(NotebookRegionSelection,NotebookRegionMaterialization),Error>,allowance:NotebookRegionWriteAllowance) {
+    let address=region.address
     let f=region.frame
     let change=CGAffineTransform(translationX:-f.x,y:-f.y)
       .concatenating(.init(scaleX:end.width/f.width,y:end.height/f.height))
@@ -365,7 +416,7 @@ extension NotebookAppModel {
       var sources:[EditableElementReference:NotebookNativeElementSource]=[:]
       var dependencies:[EditableElementReference:NotebookElementCommand]=[:]
       let edits=try working.map { object -> NotebookRegionMaterialization.Edit in
-        let ref=region.address.reference(object.id)
+        let ref=address.reference(object.id)
         guard let source=acceptedElementSource(ref) else { throw staleRegion() }
         sources[ref]=source;dependencies[ref]=elementCommandSources[ref]
         return .placement(ref)
@@ -373,7 +424,7 @@ extension NotebookAppModel {
       var ready=continuation
       ready.materialization = .init(edits:edits,working:working,selected:material.selected,sources:sources,dependencies:dependencies)
       return ready
-    })
+    },allowance:allowance)
     selectRegion(next)
     let focus=selectionSession.id,future=next.preparation!.task
     Task { [weak self] in

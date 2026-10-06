@@ -464,6 +464,31 @@ public struct NotebookGraphicGraph: Sendable {
   /// original node dictionary. No address or implementation type is exposed.
   public func sharesSource(with other:Self) -> Bool { base === other.base }
   public var projectedPlacementReadCount:Int { projection?.placementReadCount ?? 0 }
+
+  /// Keep only a bounded interaction's bodies, addressed parents and external
+  /// connector endpoints. Resolved parent frames already belong to each node;
+  /// this cut does not retain the scene's complete source or spatial index.
+  public func capturing(_ ids:Set<String>,maximumCount:Int) throws -> (graph:Self,ids:Set<String>) {
+    var pending=Array(ids),visited=Set<String>(),captured=Set<String>(),nodes:[Node]=[],groups:[String:ElementSource]=[:]
+    while let id=pending.popLast() {
+      let key=collaborationIdentity(id)
+      guard visited.insert(key).inserted else {continue}
+      guard visited.count<=maximumCount else {
+        throw CollaborationError("selection_limit","У области слишком много связанных исходников.")
+      }
+      if let node=node(id) {
+        captured.insert(node.id)
+        nodes.append(node)
+        pending += node.placement.ancestors
+        pending += (node.graphic.connection?.bindings ?? []).map(\.elementID)
+      } else if let group=base.groups[key],let source=source(id) {
+        captured.insert(id)
+        groups[key] = .init(source:source,surface:group.surface)
+        if let parent=source.parentID {pending.append(parent)}
+      }
+    }
+    return (.init(nodes,groupSources:groups),captured)
+  }
   /// Exact broad-phase candidates in the existing page coordinate system.
   /// Original nodes remain addressable even when no pixel query visits them.
   public func visiblePageGraphics(_ pageID:UUID,in area:CGRect,
