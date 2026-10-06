@@ -118,7 +118,7 @@ final class PageVisionDemandTests: XCTestCase {
       try await CurrentViewPreviewWriter.writeTarget(captured, model: model)
       XCTFail("A captured source must not silently follow new ink")
     } catch {
-      XCTAssertEqual(String(describing: error), "sourceChanged")
+      XCTAssertEqual((error as? CollaborationError)?.code, "snapshot_changed")
     }
     if let receipt = try store.loadTargetRenderReceipt(captured.id) {
       XCTAssertNotEqual(receipt.status, "ready")
