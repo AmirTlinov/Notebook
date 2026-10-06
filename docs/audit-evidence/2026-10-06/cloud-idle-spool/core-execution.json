@@ -1,0 +1,23 @@
+{
+  "executed": [
+    "NotebookCoreTests.NotebookCloudDeliveryTests/idlePreparationNeverTouchesSpoolStorageAndLaterWorkStillResumes()/NotebookCloudDeliveryTests.swift:78:4",
+    "NotebookCoreTests.NotebookCloudDeliveryTests/missingUnsealedSpoolRevokesOnlyItsUnexposedExport()/NotebookCloudDeliveryTests.swift:184:4",
+    "NotebookCoreTests.NotebookCloudDeliveryTests/preparedPlanCannotMoveToAnotherAccountWithTheSameCursor()/NotebookCloudDeliveryTests.swift:168:4",
+    "NotebookCoreTests.NotebookCloudDeliveryTests/unfinishedExportSurvivesRestartAndNeverAcknowledgesItsPartialCut()/NotebookCloudDeliveryTests.swift:109:4"
+  ],
+  "executions": {
+    "NotebookCoreTests.NotebookCloudDeliveryTests/idlePreparationNeverTouchesSpoolStorageAndLaterWorkStillResumes()/NotebookCloudDeliveryTests.swift:78:4": 1,
+    "NotebookCoreTests.NotebookCloudDeliveryTests/missingUnsealedSpoolRevokesOnlyItsUnexposedExport()/NotebookCloudDeliveryTests.swift:184:4": 1,
+    "NotebookCoreTests.NotebookCloudDeliveryTests/preparedPlanCannotMoveToAnotherAccountWithTheSameCursor()/NotebookCloudDeliveryTests.swift:168:4": 1,
+    "NotebookCoreTests.NotebookCloudDeliveryTests/unfinishedExportSurvivesRestartAndNeverAcknowledgesItsPartialCut()/NotebookCloudDeliveryTests.swift:109:4": 1
+  },
+  "failed": [],
+  "format": 1,
+  "planned": [
+    "NotebookCoreTests.NotebookCloudDeliveryTests/idlePreparationNeverTouchesSpoolStorageAndLaterWorkStillResumes()/NotebookCloudDeliveryTests.swift:78:4",
+    "NotebookCoreTests.NotebookCloudDeliveryTests/missingUnsealedSpoolRevokesOnlyItsUnexposedExport()/NotebookCloudDeliveryTests.swift:184:4",
+    "NotebookCoreTests.NotebookCloudDeliveryTests/preparedPlanCannotMoveToAnotherAccountWithTheSameCursor()/NotebookCloudDeliveryTests.swift:168:4",
+    "NotebookCoreTests.NotebookCloudDeliveryTests/unfinishedExportSurvivesRestartAndNeverAcknowledgesItsPartialCut()/NotebookCloudDeliveryTests.swift:109:4"
+  ],
+  "skipped": []
+}

@@ -1,0 +1,30 @@
+{
+  "baseCommit": "40bd01c85c6639ebede61104abb5d649b02772a4",
+  "changedFiles": [
+    "Applications/Shared/NotebookCloudSync.swift",
+    "Sources/NotebookCore/NotebookCloudUploadPlan.swift",
+    "Tests/NotebookCoreTests/NotebookCloudDeliveryTests.swift"
+  ],
+  "checks": {
+    "commands": [],
+    "core": [
+      "NotebookCoreTests.NotebookCloudDeliveryTests/idlePreparationNeverTouchesSpoolStorageAndLaterWorkStillResumes",
+      "NotebookCoreTests.NotebookCloudDeliveryTests/missingUnsealedSpoolRevokesOnlyItsUnexposedExport",
+      "NotebookCoreTests.NotebookCloudDeliveryTests/preparedPlanCannotMoveToAnotherAccountWithTheSameCursor",
+      "NotebookCoreTests.NotebookCloudDeliveryTests/unfinishedExportSurvivesRestartAndNeverAcknowledgesItsPartialCut"
+    ],
+    "ipad": [],
+    "mac": []
+  },
+  "format": 2,
+  "manualSelection": true,
+  "optimized": false,
+  "profiles": [],
+  "selectionMode": "explicit-only",
+  "sourceRoot": "/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook",
+  "unclassified": [
+    "Applications/Shared/NotebookCloudSync.swift",
+    "Sources/NotebookCore/NotebookCloudUploadPlan.swift",
+    "Tests/NotebookCoreTests/NotebookCloudDeliveryTests.swift"
+  ]
+}

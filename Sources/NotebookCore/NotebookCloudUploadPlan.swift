@@ -53,6 +53,12 @@ extension NotebookStore {
     // retain its WAL snapshot through the entire dependency graph again.
     guard currentSQL == nil else { throw NotebookStorageError.invalidTransaction("cloud plan requires its own read session") }
     try Task.checkCancellation()
+    // An idle request must not create a spool. The export captures/revalidates
+    // its actual cut below; a later local commit schedules its own demand.
+    guard try NotebookReadSession(store: self).read({ _ in
+      try cloudUploadWork(account: account, source: source) != nil
+    }) else { return nil }
+    try Task.checkCancellation()
     let id = UUID(), url = cloudPlanURL(id)
     try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
     var completed = false
@@ -61,6 +67,22 @@ extension NotebookStore {
     let result = try buildCloudUploadPlan(id: id, account: account, source: source)
     completed = result != nil
     return result
+  }
+
+  private func cloudUploadWork(account: String, source: NotebookReplicationSource)
+    throws -> (cursor: UInt64, next: NotebookDurableChange?)? {
+    try requireCloudAccount(account)
+    let database = currentSQL!
+    guard let binding = try database.rows("SELECT cursor,generation FROM cloud_accounts WHERE account=?", [.text(account)]).first,
+      let stored = binding[0].integer, stored >= 0,
+      binding[1].text == source.generation.uuidString.lowercased() else {
+      throw NotebookStorageError.invalidTransaction("cloud source generation")
+    }
+    guard try hasWorkspaceContent(),
+      try database.rows("SELECT 1 FROM cloud_exports WHERE account=? LIMIT 1", [.text(account)]).isEmpty else { return nil }
+    let cursor = UInt64(stored)
+    let next = cursor == 0 ? nil : try changeJournal(after: cursor, limit: 1).first
+    return cursor == 0 || next != nil ? (cursor, next) : nil
   }
 
   private func buildCloudUploadPlan(id: UUID, account: String, source: NotebookReplicationSource) throws -> NotebookCloudUploadPlan? {
@@ -91,16 +113,11 @@ extension NotebookStore {
           action.map { .text($0.uuidString.lowercased()) } ?? .null, position.map(NotebookSQLValue.integer) ?? .null])
     }
     let capture: (NotebookReplicationDelivery, UInt64)? = try reader.read { _ in
-      try requireCloudAccount(account)
+      guard let work = try cloudUploadWork(account: account, source: source) else { return nil }
       let database = currentSQL!
-      guard let binding = try database.rows("SELECT cursor,generation FROM cloud_accounts WHERE account=?", [.text(account)]).first,
-        binding[1].text == source.generation.uuidString.lowercased() else { throw NotebookStorageError.invalidTransaction("cloud source generation") }
-      guard try hasWorkspaceContent(), try database.rows("SELECT 1 FROM cloud_exports WHERE account=?", [.text(account)]).isEmpty else { return nil }
-      let cursor = UInt64(binding[0].integer!)
-      let next = cursor == 0 ? nil : try changeJournal(after: cursor, limit: 1).first
-      guard cursor == 0 || next != nil else { return nil }
+      let cursor = work.cursor
       let delivery = try cursor == 0 ? prepareCloudSnapshot(source: source, publish: publish)
-        : NotebookReplicationDelivery(source: source, change: next!)
+        : NotebookReplicationDelivery(source: source, change: work.next!)
       let workspaceID = try workspaceHeader().workspaceID
       func manifest(_ hash: String, part: Bool) throws -> NotebookChangeManifest {
         try Task.checkCancellation()

@@ -62,6 +62,13 @@ CA flush и OS receipt; её контракт прошёл, аппаратный
 
 ## Remediation 104
 
+Пустой cloud-plan проверяет source/account/cursor до создания SQLite spool;
+повторный реальный cut сохраняет точность отправки. **4 Core-сценария PASS**:
+блокированный idle spool-path, новая правка/возобновление, account gate и missing
+unsealed spool. Восстановление spool остаётся записью accepted FIFO.
+[Точный scope и исходный отказ fixture](audit-evidence/2026-10-06/cloud-idle-spool/results.json).
+Независимость incoming sources/outbound при конфликте ещё исправляется.
+
 Импорт `.notex` резервирует каждую фазу до чтения и decode, переносит один
 immutable create в обычный FIFO и возвращает полезный результат до необязательного
 print-cache. Оригинал/копия научного документа дают одинаковые checkpoint,

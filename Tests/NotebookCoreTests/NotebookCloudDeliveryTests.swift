@@ -75,6 +75,37 @@ struct NotebookCloudDeliveryTests {
     _ = try store.applyCollaborationAction(action, actor: actor)
   }
 
+  @Test func idlePreparationNeverTouchesSpoolStorageAndLaterWorkStillResumes() throws {
+    let pair = try Pair()
+    try receive(upload(pair.a, source: pair.sourceA, account: pair.account),
+      to: pair.b, source: pair.sourceB, account: pair.account)
+    #expect(try pair.a.cloudHasUploadedCurrentContent(account: pair.account))
+    let directory = pair.a.cloudPlanURL(UUID()).deletingLastPathComponent()
+    if FileManager.default.fileExists(atPath: directory.path) {
+      #expect(try FileManager.default.contentsOfDirectory(atPath: directory.path).isEmpty)
+      try FileManager.default.removeItem(at: directory)
+    }
+    // A file blocks any mkdir/open at the spool path. An idle request must
+    // complete without touching it, rather than create and discard a database.
+    let barrier = Data("No new upload work".utf8)
+    try barrier.write(to: directory)
+    for _ in 0..<3 {
+      #expect(try pair.a.prepareCloudUploadPlan(account: pair.account, source: pair.sourceA) == nil)
+    }
+    #expect(try Data(contentsOf: directory) == barrier)
+    try FileManager.default.removeItem(at: directory)
+    let item = try pair.a.loadIndex().selectedItemID
+    try rename(pair.a, item: item, title: "New work after idle", actor: pair.actorA)
+    let plan = try #require(try pair.a.prepareCloudUploadPlan(account: pair.account, source: pair.sourceA))
+    #expect(FileManager.default.fileExists(atPath: pair.a.cloudPlanURL(plan.id).path))
+    #expect(try pair.a.beginCloudUpload(plan, account: pair.account))
+    let reopened = NotebookStore(root: pair.a.root)
+    #expect(try reopened.pendingCloudUploadPlan(account: pair.account) == plan.id)
+    try receive(upload(reopened, source: pair.sourceA, account: pair.account),
+      to: pair.b, source: pair.sourceB, account: pair.account)
+    #expect(try pair.b.readItemHeader(item)?.title == "New work after idle")
+  }
+
   @Test func unfinishedExportSurvivesRestartAndNeverAcknowledgesItsPartialCut() throws {
     let pair = try Pair(), item = try pair.a.loadIndex().selectedItemID
     let beforeTitle = try pair.a.readItemHeader(item)?.title

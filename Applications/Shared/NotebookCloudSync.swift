@@ -259,7 +259,7 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
           }
         }
         guard epoch == token else { return }
-        var preparation = try await writer.submit { try $0.pendingCloudUploadPlan(account: account) }
+        var preparation = try await writer.submit(writesStore: true) { try $0.pendingCloudUploadPlan(account: account) }
         if preparation == nil {
           let preparationTask = Task { [uploadReader, source] in
             try await uploadReader.prepare(account: account, source: source)

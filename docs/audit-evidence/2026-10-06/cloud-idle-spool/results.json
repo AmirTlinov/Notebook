@@ -1,0 +1,31 @@
+{
+  "status": "local-core-passed",
+  "scope": "noncreating idle cloud-plan preflight and real/resumed export; independent inbound-source fairness remains open",
+  "sourceSHA256": "eca34978acefbb508b0ae0d60311b2cd5f5b3467d56e3aef2652cc80ebdea81f",
+  "sourceInputCount": 1673,
+  "sourceUnchanged": true,
+  "functions": 4,
+  "executions": 4,
+  "failed": 0,
+  "skipped": 0,
+  "initialAttempt": {
+    "path": ".build/remediation-cloud-idle-core-20261006-v1",
+    "result": "3 passed, 1 failed; fixture discarded initial snapshot before sending delta. Fixed snapshot delivery; production unchanged."
+  },
+  "nativeAndPhysicalAcceptance": false,
+  "existingCompilerWarning": "NotebookGraphicVisibilityTests.swift:167 UnnecessaryEffectMarker; unchanged",
+  "artifacts": [
+    {
+      "path": ".build/remediation-cloud-idle-core-20261006-v2/verification.json",
+      "sha256": "351ab9f57a978dd3b615641b4492a9ba89a494deb80fee7ac47e66416f7ab79b"
+    },
+    {
+      "path": ".build/remediation-cloud-idle-core-20261006-v2/source-before.json",
+      "sha256": "b11214f4d3f98ad36768e2ee6a1dd407d8468521c7e933080aad46a0c13adfcd"
+    },
+    {
+      "path": ".build/remediation-cloud-idle-core-20261006-v2/source-after.json",
+      "sha256": "b11214f4d3f98ad36768e2ee6a1dd407d8468521c7e933080aad46a0c13adfcd"
+    }
+  ]
+}
