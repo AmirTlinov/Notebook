@@ -237,6 +237,9 @@ final class NotebookApplicationLaunch {
               selectedModel = workspaceModel(id)
               if selectedModel == nil { error = workspaceError ?? failure ?? "Не удалось восстановить пространство этой панели." }
             }
+            if let owner = selectedModel ?? model, owner.allowsCodexRegistration || owner.acceptance != nil {
+              await owner.startCodexSidecar()
+            }
           }
         } catch let failure { error = failure.localizedDescription }
         let responseModel = selectedModel ?? model

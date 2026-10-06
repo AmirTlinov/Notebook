@@ -2,8 +2,8 @@ import Foundation
 import NotebookCore
 import NotebookCodex
 
-/// The Mac application owns one official executor connection. Workspace routes
-/// retain their accepted journals; a window is only a detachable presentation.
+/// The runtime owns one official executor connection. Workspace routes retain
+/// their accepted journals; a surface is only a detachable presentation.
 @MainActor
 final class NotebookCodexHost {
   private var server: CodexAppServer?
@@ -12,23 +12,28 @@ final class NotebookCodexHost {
   private var changingAccount = false
   private var events: Task<Void, Never>?
   private let workspaceWriters: NotebookWorkspaceWriters?
+  private let discoverInstallation: @Sendable () throws -> CodexRuntimeInstallation
   private struct WorkspaceRoute {
     let sidecar: NotebookCodexSidecar
     let persistence: NotebookPersistenceQueue
   }
   private var routes: [UUID: WorkspaceRoute] = [:]
 
-  init(workspaceWriters: NotebookWorkspaceWriters? = nil) {
+  init(workspaceWriters: NotebookWorkspaceWriters? = nil,
+    discoverInstallation: @escaping @Sendable () throws -> CodexRuntimeInstallation = { try CodexRuntimeInstallation.discover() }) {
     self.workspaceWriters = workspaceWriters
+    self.discoverInstallation = discoverInstallation
   }
 
   private var persistenceQueues: [NotebookPersistenceQueue] {
     workspaceWriters?.persistenceQueues ?? routes.values.map(\.persistence)
   }
 
-  func workspace(persistence: NotebookPersistenceQueue, installation: CodexRuntimeInstallation,
+  func workspace(persistence: NotebookPersistenceQueue,
     workspaceID: UUID, computerID: UUID, directory: URL, scope: CodexRuntimeScope?,
-    entry: URL, socket: URL, authorizePeer: @escaping (UUID) -> Bool, publish: @escaping (NotebookChatEnvelope, UUID) -> Void) async throws -> NotebookCodexSidecar {
+    entry: URL, socket: URL, isWorkspaceOpen: @escaping () -> Bool,
+    authorizePeer: @escaping (UUID) -> Bool, publish: @escaping (NotebookChatEnvelope, UUID) -> Void) async throws -> NotebookCodexSidecar {
+    guard isWorkspaceOpen() else { throw CodexBridgeError.unavailable }
     if let route = routes[workspaceID] {
       guard route.persistence === persistence else { throw CodexBridgeError.unsafeEndpoint }
       route.sidecar.authorizePeer = authorizePeer; route.sidecar.attachView(publish: publish)
@@ -36,8 +41,12 @@ final class NotebookCodexHost {
     }
     if server != nil, self.scope != scope { throw CodexBridgeError.unsafeEndpoint }
     if server == nil {
-      let owner = CodexAppServer(installation: installation, scope: scope)
-      server = owner; self.scope = scope
+      let installation = try await Task.detached(priority: .userInitiated, operation: discoverInstallation).value
+      guard isWorkspaceOpen() else { throw CodexBridgeError.unavailable }
+      if server == nil {
+        server = CodexAppServer(installation: installation, scope: scope); self.scope = scope
+      }
+      guard self.scope == scope else { throw CodexBridgeError.unsafeEndpoint }
     }
     if events == nil, let owner = server {
       events = Task { [weak self] in
@@ -47,23 +56,32 @@ final class NotebookCodexHost {
         }
       }
     }
-    try await server!.registerWorkspace(workspaceID, entry: entry, socket: socket)
-    // Registration suspends; another window may already have installed this route.
+    guard let owner = server else { throw CodexBridgeError.unavailable }
+    try await owner.registerWorkspace(workspaceID, entry: entry, socket: socket)
+    // Admission can close while registration suspends. Only a live workspace
+    // may attach a presentation or start recovering its accepted journal.
+    guard server === owner, isWorkspaceOpen() else {
+      // A concurrent attachment may already own this registration. Otherwise
+      // release the exact executor's slot, including after host shutdown.
+      if server !== owner || routes[workspaceID] == nil {
+        try await owner.unregisterWorkspace(workspaceID)
+      }
+      throw CodexBridgeError.unavailable
+    }
     if let route = routes[workspaceID] {
       guard route.persistence === persistence else { throw CodexBridgeError.unsafeEndpoint }
       route.sidecar.authorizePeer = authorizePeer; route.sidecar.attachView(publish: publish)
       return route.sidecar
     }
-    let route = NotebookCodexSidecar(persistence: persistence, server: server!, workspaceID: workspaceID,
+    let route = NotebookCodexSidecar(persistence: persistence, server: owner, workspaceID: workspaceID,
       computerID: computerID, directory: directory, publish: publish)
     route.authorizePeer = authorizePeer
-    route.prepareThread = { [server] thread in try await server?.bindWorkspace(workspaceID, threadID: thread) }
+    route.prepareThread = { thread in try await owner.bindWorkspace(workspaceID, threadID: thread) }
     route.accountAdmission = { [weak self] in
       guard let self, !changingAccount else { return nil }; return accountGeneration
     }
-    route.accountIdentity = { [server] in
-      guard let server else { throw CodexBridgeError.unavailable }
-      return try await server.account(.read, includeLimits: false).account?.identity
+    route.accountIdentity = {
+      try await owner.account(.read, includeLimits: false).account?.identity
     }
     route.accountRequest = { [weak self] query in
       guard let self else { throw CodexBridgeError.unavailable }
@@ -76,19 +94,21 @@ final class NotebookCodexHost {
 
   /// Deletion must not discard journals still receiving output or approvals.
   func removeWorkspace(_ id: UUID) async throws {
-    if let route = routes[id] {
-      let pending = try await route.persistence.submit { try !$0.pendingChatJobs().isEmpty || !$0.activeRuns().isEmpty }
-      guard !pending, await server?.hasActiveWork(workspace: id) != true else { throw CodexBridgeError.busy }
+    guard let route = routes[id] else {
       try await server?.unregisterWorkspace(id)
-      await route.sidecar.stop()
-      routes.removeValue(forKey: id)
-      guard await route.persistence.flush() else { throw NotebookTransportError.storageUnavailable }
+      return
     }
+    let pending = try await route.persistence.submit { try !$0.pendingChatJobs().isEmpty || !$0.activeRuns().isEmpty }
+    guard !pending, await server?.hasActiveWork(workspace: id) != true else { throw CodexBridgeError.busy }
+    try await server?.unregisterWorkspace(id)
+    await route.sidecar.stop()
+    routes.removeValue(forKey: id)
+    guard await route.persistence.flush() else { throw NotebookTransportError.storageUnavailable }
   }
 
   func account(_ query: CodexAccountQuery) async throws -> CodexAccountState {
     if server == nil {
-      let installation = try await Task.detached(priority: .userInitiated) { try CodexRuntimeInstallation.discover() }.value
+      let installation = try await Task.detached(priority: .userInitiated, operation: discoverInstallation).value
       if server == nil { server = CodexAppServer(installation: installation) }
     }
     let mutating: Bool

@@ -1210,7 +1210,7 @@ final class NotebookAppModel {
   #if os(macOS)
     @ObservationIgnored var codexHost: NotebookCodexHost?
     @ObservationIgnored private var codexSidecar: NotebookCodexSidecar?
-    private(set) var localCodexEvent: NotebookChatEnvelope?
+    @ObservationIgnored private var codexStartupTask: Task<Void, Never>?
     private(set) var agentStartupError: String?
     @ObservationIgnored private var commandServer: NotebookIPCServer?
     @ObservationIgnored private var scriptCoordinator: NotebookScriptCoordinator?
@@ -4859,7 +4859,7 @@ final class NotebookAppModel {
       previewPublisher = publisher
     }
 
-    /// Local presentation uses the same journal/owner directly, never a loopback transport.
+    /// Native acceptance exercises the same journal and owner as paired input.
     func localCodexQuery(_ query: NotebookChatQuery, requestID: UUID = UUID()) async throws -> NotebookChatReply {
       if codexSidecar == nil { await startCodexSidecar() }
       guard let codexSidecar else { throw NotebookPersistenceQueue.Failure(message: agentStartupError ?? "Codex недоступен") }
@@ -4868,51 +4868,49 @@ final class NotebookAppModel {
       if case .failure(let message) = reply { throw NotebookPersistenceQueue.Failure(message: message) }
       return reply
     }
-    func localCodexPanel() async throws -> NotebookChatPanelState {
-      let author = actorID
-      return try await persistence.submit { try $0.chatPanel(author: author, computer: author) }
-    }
-    func localCodexControl(_ action: NotebookChatAction) async throws -> NotebookChatJob? {
-        let author = actorID
-        return try await persistence.submit { try $0.savedChatControl(action, author: author, computer: author) }
-    }
-
-    private func startCodexSidecar() async {
-      guard codexSidecar == nil, let workspaceID = workspaceHeader?.workspaceID else { return }
-      do {
-        guard allowsCodexRegistration || acceptance != nil else {
-          agentStartupError = "Запуск Codex из этого архива закрыт до безопасной активации пары. Действующие инструменты Notebook не перенаправлены."
-          return
-        }
-        let installation = try await Task.detached(priority: .userInitiated) { try CodexRuntimeInstallation.discover() }.value
-        guard let entry = Bundle.main.resourceURL?.appendingPathComponent("NotebookTools/dist/index.mjs"),
-          let commandSocketURL else { throw CodexBridgeError.notInstalled }
-        let directory: URL
-        let scope: CodexRuntimeScope?
-        if let acceptance, let path = acceptance.codexDirectory {
-          directory = URL(fileURLWithPath: path, isDirectory: true)
-          try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700])
-          scope = try CodexRuntimeScope(directory: directory, toolsEntry: entry, socket: commandSocketURL)
-        } else {
-          directory = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/Notebook/Codex", isDirectory: true)
-          scope = nil
-        }
-        let host = codexHost ?? NotebookCodexHost()
-        codexHost = host
-        let sidecar = try await host.workspace(persistence: persistence, installation: installation,
-          workspaceID: workspaceID, computerID: actorID, directory: directory, scope: scope, entry: entry, socket: commandSocketURL,
-          authorizePeer: { [weak self] peer in
-            guard let self else { return false }
-            return peer == self.actorID || self.sync?.pairedPeers.contains(where: { $0.deviceID == peer }) == true
-          }) { [weak self] envelope, peer in
-            guard let self else { return }
-            if peer == actorID { localCodexEvent = envelope }
-            else { sync?.sendTransient(.codex(envelope), to: peer) }
+    func startCodexSidecar() async {
+      guard !isClosing, loadState == .ready, codexSidecar == nil,
+        let workspaceID = workspaceHeader?.workspaceID else { return }
+      if let codexStartupTask { await codexStartupTask.value; return }
+      let task = Task { [self] in
+        defer { codexStartupTask = nil }
+        do {
+          guard allowsCodexRegistration || acceptance != nil else {
+            agentStartupError = "Запуск Codex из этого архива закрыт до безопасной активации пары. Действующие инструменты Notebook не перенаправлены."
+            return
           }
-        codexSidecar = sidecar; sidecar.start(); agentStartupError = nil
-      } catch { agentStartupError = NotebookCodexSidecar.message(error) }
+          guard let entry = Bundle.main.resourceURL?.appendingPathComponent("NotebookTools/dist/index.mjs"),
+            let commandSocketURL else { throw CodexBridgeError.notInstalled }
+          let directory: URL
+          let scope: CodexRuntimeScope?
+          if let acceptance, let path = acceptance.codexDirectory {
+            directory = URL(fileURLWithPath: path, isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
+              attributes: [.posixPermissions: 0o700])
+            scope = try CodexRuntimeScope(directory: directory, toolsEntry: entry, socket: commandSocketURL)
+          } else {
+            directory = FileManager.default.homeDirectoryForCurrentUser
+              .appendingPathComponent("Library/Application Support/Notebook/Codex", isDirectory: true)
+            scope = nil
+          }
+          let host = codexHost ?? NotebookCodexHost()
+          codexHost = host
+          let sidecar = try await host.workspace(persistence: persistence,
+            workspaceID: workspaceID, computerID: actorID, directory: directory, scope: scope, entry: entry, socket: commandSocketURL,
+            isWorkspaceOpen: { [weak self] in self?.isClosing == false },
+            authorizePeer: { [weak self] peer in
+              guard let self else { return false }
+              return peer == self.actorID || self.sync?.pairedPeers.contains(where: { $0.deviceID == peer }) == true
+            }) { [weak self] envelope, peer in
+              guard let self, !isClosing, peer != actorID else { return }
+              sync?.sendTransient(.codex(envelope), to: peer)
+            }
+          guard !isClosing else { sidecar.detachView(); return }
+          codexSidecar = sidecar; agentStartupError = nil
+        } catch { if !isClosing { agentStartupError = NotebookCodexSidecar.message(error) } }
+      }
+      codexStartupTask = task
+      await task.value
     }
 
     @ObservationIgnored private var programImporter: NotebookProgramImporter?
@@ -5060,7 +5058,9 @@ final class NotebookAppModel {
         chat?.receive(envelope, peerID: peerID)
       #else
         Task { [weak self] in
-          guard let self else { return }
+          guard let self, peerGenerations[peerID] == generation, !isClosing else { return }
+          await startCodexSidecar()
+          guard peerGenerations[peerID] == generation, !isClosing else { return }
           let reply: NotebookChatEnvelope
           if let codexSidecar {
             guard let response = await codexSidecar.receive(envelope, peerID: peerID) else { return }
@@ -6614,6 +6614,9 @@ final class NotebookAppModel {
       presentationPlayer.interrupt("closing")
       NotebookNavigationObservation.webPreparation("shutdown_startup_join", ownerID: actorID)
       if let startupTask { await startupTask.value }
+      #if os(macOS)
+        if let codexStartupTask { await codexStartupTask.value }
+      #endif
       NotebookNavigationObservation.webPreparation("shutdown_services_stop", ownerID: actorID)
       if !bootstrapAdmission.wasAccepted { abortBootstrapPreparations() }
       accountContentTask?.cancel()
@@ -6622,14 +6625,16 @@ final class NotebookAppModel {
       await accountConnection?.stop()
       await cloudSync?.stop()
       if let sync, !(await sync.stopAndDrainTrust()) { return false }
-      sync = nil
       #if os(macOS)
+        // The stopped transport retains persisted trust until the host joins
+        // accepted Codex work. Closing admission does not revoke its authors.
         await previewPublisher?.stop()
         await commandServer?.stopAndDrain(); commandServer = nil
         codexSidecar?.detachView(); codexSidecar = nil
         await scriptCoordinator?.shutdown(); scriptCoordinator = nil
         let agentStopped = true
       #else
+        sync = nil
         await chatSubmissionTask?.value
         await chat?.stop()
         let agentStopped = true

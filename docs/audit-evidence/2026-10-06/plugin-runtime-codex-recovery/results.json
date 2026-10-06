@@ -1,0 +1,128 @@
+{
+  "scope": "Codex admission recovery in the plugin-owned runtime",
+  "sourceSHA256": "7e5ac349beedcfb78f77add312351b5d8fe416b27edd9fba7a695a34149e026c",
+  "mac": {
+    "passed": 6,
+    "failed": 0,
+    "skipped": 0,
+    "runtimeWarnings": [],
+    "execution": {
+      "executed": [
+        "NotebookMacTests/NotebookArchiveLaunchTests/testRuntimeBootstrapAndCreateRetryKeepTheAcceptedOwnerAndWorkspaceAddress",
+        "NotebookMacTests/NotebookArchiveLaunchTests/testRuntimeCommandsCreateAndSelectThroughTheOwnerWithoutADesktopWindow",
+        "NotebookMacTests/NotebookArchiveLaunchTests/testRuntimeRetriesRetainedAcceptedWritesWithoutQuitOrWorkspaceSwitch",
+        "NotebookMacTests/NotebookArchiveLaunchTests/testRuntimeRetryCoalescesCodexAdmissionAfterDiscoveryFailure",
+        "NotebookMacTests/NotebookArchiveLaunchTests/testRuntimeRetryDrainsRetainedAcceptedWritesBeforeReplacingWorkspaceOwners",
+        "NotebookMacTests/NotebookArchiveLaunchTests/testRuntimeShutdownReturnsBlockedAndRetriesTheAcceptedIPCMutationBeforeRetiringItsOwner"
+      ],
+      "failed": [],
+      "format": 1,
+      "planned": [
+        "NotebookMacTests/NotebookArchiveLaunchTests/testRuntimeBootstrapAndCreateRetryKeepTheAcceptedOwnerAndWorkspaceAddress",
+        "NotebookMacTests/NotebookArchiveLaunchTests/testRuntimeCommandsCreateAndSelectThroughTheOwnerWithoutADesktopWindow",
+        "NotebookMacTests/NotebookArchiveLaunchTests/testRuntimeRetriesRetainedAcceptedWritesWithoutQuitOrWorkspaceSwitch",
+        "NotebookMacTests/NotebookArchiveLaunchTests/testRuntimeRetryCoalescesCodexAdmissionAfterDiscoveryFailure",
+        "NotebookMacTests/NotebookArchiveLaunchTests/testRuntimeRetryDrainsRetainedAcceptedWritesBeforeReplacingWorkspaceOwners",
+        "NotebookMacTests/NotebookArchiveLaunchTests/testRuntimeShutdownReturnsBlockedAndRetriesTheAcceptedIPCMutationBeforeRetiringItsOwner"
+      ],
+      "skipped": []
+    },
+    "verification": {
+      "path": ".build/runtime-250-codex-recovery-verification-r3/verification.json",
+      "sha256": "040143f52ed5f3a409721fdcb9d212161aa416f7ae24d62ef6599c2f7773ef3b"
+    },
+    "commands": {
+      "path": ".build/runtime-250-codex-recovery-verification-r3/commands.json",
+      "sha256": "5fd20e1952eb9072914fa3f4b1cc9a79d29cdbb4460fb31ccd192658979e9039"
+    }
+  },
+  "ipadBuildOnly": {
+    "durationSeconds": 35.86822562501766,
+    "installationAttempted": false,
+    "physicalAcceptance": false,
+    "scope": "generic-iphoneos-build-for-testing",
+    "sourceSHA256": "7e5ac349beedcfb78f77add312351b5d8fe416b27edd9fba7a695a34149e026c",
+    "status": "passed",
+    "testExecution": false,
+    "commands": {
+      "path": ".build/runtime-250-codex-recovery-ipad-build-only/commands.json",
+      "sha256": "556ba67db2fb227c4bd482b9cd6411096021b3df45adbfe1b971e8ef3df4131d"
+    }
+  },
+  "independentReview": {
+    "status": "completed",
+    "remainingFindings": [],
+    "sourceInventoryFiles": 1645,
+    "repairs": [
+      "Coalesce Codex startup and retry through the admitted workspace owner",
+      "Keep persisted trust while the host joins accepted work after admission closes",
+      "Release refused workspace registration on the exact executor; remove orphan registrations",
+      "Remove unused former Mac window chat helpers"
+    ],
+    "verifiedReceiptSourceMatchesCurrent": true
+  },
+  "earlierAttempts": [
+    {
+      "path": ".build/runtime-250-codex-recovery-verification",
+      "passed": 5,
+      "failed": 1,
+      "correction": "Use the existing isolated acceptance bundle suffix and canonical root/Codex path; production validation unchanged"
+    },
+    {
+      "path": ".build/runtime-250-codex-recovery-verification-r2",
+      "passed": 5,
+      "failed": 1,
+      "correction": "Check the addressed effects, context and FIFO rather than total queue size; the independent preview publisher can add commands"
+    }
+  ],
+  "installationAttempted": false,
+  "physicalAcceptance": false,
+  "installedBaseline": {
+    "pair": "248",
+    "version": "0.3.178",
+    "plugin": "0.1.6"
+  },
+  "pending": [
+    "Inspect old Mac drafts and unresolved commands before cutover",
+    "Install plugin runtime and iPad in place, verify current content and trust, remove old Mac application",
+    "Physical iPad/Codex workflows, input latency gate and full C1-C5 acceptance"
+  ],
+  "signedPair": {
+    "status": "verified-build",
+    "build": "250",
+    "version": "0.3.180",
+    "sourceSHA256": "7e5ac349beedcfb78f77add312351b5d8fe416b27edd9fba7a695a34149e026c",
+    "plugin": {
+      "path": "plugin",
+      "version": "0.2.1"
+    },
+    "receipt": {
+      "path": ".build/runtime-pair-250-final/build.json",
+      "sha256": "f0ee120b60bc82595d1c642c2cc6799dd224296fa0a45cdc6a5420f670d22b2c"
+    },
+    "apps": {
+      "iPad": {
+        "manifestSHA256": "da5cd692752191f29b4ba331cc578cd65128d87d3d1f0a3c3055d5591187f8c2",
+        "cdhash": "61180d6e9568af552de9985a6e0f458d582a81a6",
+        "identifier": "com.amirtlinov.notebook.preview",
+        "team": "M94V58FCVP"
+      },
+      "mac": {
+        "manifestSHA256": "0aab8110f41d5667e426285cc5728b494cdc65c08e9f637bba32681ebc641f4b",
+        "cdhash": "d0013101ab784094d9b605888f9bc5a25f3c7355",
+        "identifier": "com.amirtlinov.notebook.mac",
+        "team": "M94V58FCVP"
+      }
+    }
+  },
+  "preflight": {
+    "at": "2026-10-06T02:43:31Z",
+    "macUIAvailable": true,
+    "ipadPasscodeRequired": false,
+    "installedMacPID": 23361,
+    "installedMacCDHash": "d8475bc2799a965207002e49cd2a239d96ff32d0",
+    "currentWorkspaceID": "54349F3B-9E0A-4DEA-B990-40CAE04EF45E",
+    "currentItemCount": 7,
+    "currentContentCursor": 5356
+  }
+}
