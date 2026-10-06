@@ -2,10 +2,79 @@
 import Security
 import XCTest
 @testable import Notebook
+#if os(macOS)
+import NotebookCodex
+#endif
 
 @MainActor
 final class NotebookArchiveLaunchTests: XCTestCase {
   #if os(macOS)
+    func testRuntimeRetryCoalescesCodexAdmissionAfterDiscoveryFailure() async throws {
+      let run = UUID(), actor = UUID()
+      let base = URL(fileURLWithPath: "/tmp/" + run.uuidString.lowercased(), isDirectory: true)
+      try FileManager.default.createDirectory(at: base, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+      let root = base.appendingPathComponent("Notebook"), socket = base.appendingPathComponent("bridge.sock")
+      let suite = "Notebook.tests.codex-recovery." + run.uuidString
+      let preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
+      preferences.set(actor.uuidString, forKey: "notebook.actor-id")
+      let entering = expectation(description: "Retry reaches the original Codex admission")
+      let discovery = CodexDiscoveryFault(entering: entering)
+      let host = NotebookCodexHost(discoverInstallation: { try discovery.discover() })
+      var constructions = 0
+      let launch = NotebookApplicationLaunch(root: root, runtimeSocketURL: socket) { store, _ in
+        constructions += 1
+        let header = try store.initializeWorkspace(actor: actor, pageSize: NotebookAppModel.defaultPageSize)
+        let key = String(UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased().prefix(24))
+        let endpoint = base.appendingPathComponent(key + ".sock")
+        let canonicalRoot = store.root.standardizedFileURL.resolvingSymlinksInPath()
+        let bundle = "com.amirtlinov.notebook.mac.acceptance." + String(run.uuidString.replacingOccurrences(of: "-", with: "").lowercased().prefix(12))
+        let acceptance = NotebookAcceptanceConfiguration(version: 1, runID: run, workspaceID: header.workspaceID,
+          actorID: actor, role: .mac, bundleID: bundle,
+          sourceRevision: String(repeating: "0", count: 40), root: canonicalRoot.path,
+          socket: endpoint.path, codexDirectory: canonicalRoot.appendingPathComponent("Codex").path)
+        try acceptance.validate(bundle: acceptance.bundleID, enabled: true)
+        let model = NotebookAppModel(store: store, startsNearbySync: false, commandSocketURL: endpoint,
+          preferences: preferences, acceptance: acceptance)
+        model.codexHost = host
+        return model
+      }
+      addTeardownBlock { @MainActor in
+        discovery.release.signal()
+        _ = await launch.shutdown()
+        preferences.removePersistentDomain(forName: suite)
+        try FileManager.default.removeItem(at: base)
+      }
+      await launch.start()
+      let model = try XCTUnwrap(launch.model, launch.failure ?? "Runtime launch did not construct its admitted model")
+      await model.start(pageSize: NotebookAppModel.defaultPageSize)
+      let workspaceID = try XCTUnwrap(model.workspaceHeader?.workspaceID)
+      await model.startCodexSidecar()
+      XCTAssertNotNil(model.agentStartupError); XCTAssertEqual(discovery.attempts, 1)
+      var retry = NotebookCommand(command: .runtimeWorkspace)
+      retry.runtimeWorkspace = .init(action: .retry, id: workspaceID)
+      let first = Task.detached { [retry] in
+        try NotebookIPCClient(socketURL: socket).send(retry).decode(NotebookRuntimeWorkspaceResponse.self)
+      }
+      await fulfillment(of: [entering], timeout: 3)
+      XCTAssertFalse(launch.isChecking, "Codex admission does not replace the workspace transition owner")
+      let second = Task.detached { [retry] in
+        try NotebookIPCClient(socketURL: socket).send(retry).decode(NotebookRuntimeWorkspaceResponse.self)
+      }
+      discovery.release.signal()
+      for response in [try await first.value, try await second.value] {
+        XCTAssertEqual(response.status.state, .ready); XCTAssertNil(response.error)
+        XCTAssertEqual(response.status.workspaceID, workspaceID)
+      }
+      XCTAssertNil(model.agentStartupError)
+      XCTAssertTrue(launch.model === model); XCTAssertTrue(model.codexHost === host)
+      XCTAssertEqual(constructions, 1); XCTAssertEqual(discovery.attempts, 2)
+      _ = try await launch.executeRuntimeCommand(retry)
+      XCTAssertEqual(discovery.attempts, 2, "An admitted AppServer and workspace route are reused")
+      let stopped = await launch.shutdown(); XCTAssertTrue(stopped)
+      await model.startCodexSidecar()
+      XCTAssertEqual(discovery.attempts, 2, "Shutdown closes Codex admission")
+    }
+
     func testRuntimeBootstrapAndCreateRetryKeepTheAcceptedOwnerAndWorkspaceAddress() async throws {
       enum Fault: Error { case storageUnavailable }
       for creating in [false, true] {
@@ -207,14 +276,14 @@ final class NotebookArchiveLaunchTests: XCTestCase {
       XCTAssertTrue(status.ready); XCTAssertEqual(status.state, .failed)
       XCTAssertNotNil(status.socketKey); XCTAssertEqual(model.shutdownPhase, .running)
       var retry = NotebookCommand(command: .runtimeWorkspace); retry.runtimeWorkspace = .init(action: .retry, id: firstID)
-      let acceptedCount = persistence.pendingCount
       for _ in 0..<3 {
         let blocked = try await Task.detached { [retry] in
           try NotebookIPCClient(socketURL: socket).send(retry).decode(NotebookRuntimeWorkspaceResponse.self)
         }.value
         XCTAssertEqual(blocked.status.state, .failed); XCTAssertNotNil(blocked.error)
         XCTAssertTrue(model.selectionSession.isResolvingContext)
-        XCTAssertEqual(persistence.pendingCount, acceptedCount)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: accepted.path),
+          "Failed Retry retains the addressed commands before their effects; independent publication may use the same FIFO")
         XCTAssertLessThanOrEqual(persistence.observedLifecycleTaskCount, 1,
           "Failed Retry observes the one retained publication without accumulating finish tasks")
         XCTAssertEqual(try model.store.sharedContexts().contexts.count, contextCount)
@@ -582,3 +651,26 @@ final class NotebookArchiveLaunchTests: XCTestCase {
     XCTAssertEqual(reopened.records, [newPeer]); XCTAssertEqual(retained.records, [peer])
   }
 }
+
+#if os(macOS)
+private final class CodexDiscoveryFault: @unchecked Sendable {
+  private let lock = NSLock()
+  private var count = 0
+  private let entering: XCTestExpectation
+  let release = DispatchSemaphore(value: 0)
+  var attempts: Int { lock.withLock { count } }
+
+  init(entering: XCTestExpectation) { self.entering = entering }
+
+  func discover() throws -> CodexRuntimeInstallation {
+    let attempt = lock.withLock { count += 1; return count }
+    if attempt == 1 { throw CodexBridgeError.notInstalled }
+    guard attempt == 2 else { throw CodexBridgeError.invalidInput }
+    entering.fulfill()
+    guard release.wait(timeout: .now() + 5) == .success else { throw CodexBridgeError.timeout }
+    // Preserve the production signature/installation admission. No executor or
+    // account request is made; only the isolated workspace route is registered.
+    return try CodexRuntimeInstallation.discover()
+  }
+}
+#endif
