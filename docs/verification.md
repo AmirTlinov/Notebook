@@ -94,6 +94,28 @@ CA flush и OS receipt; её контракт прошёл, аппаратный
 страницы требуют отдельного ускорения. Исправление ещё не доставлено
 в установленную 253. [Исходные отказы, сравнение и окончательные результаты](audit-evidence/2026-10-06/lasso-admission/results.json).
 
+## Переносимый срез DP19: публикация чата
+
+Отдельный срез подготовлен поверх `7274f6c1`: transcript delta принимается без
+ожидания MathJax. Один producer готовит активную batch в скрытом подключённом
+контейнере той же ширины. До typesetting фиксируются точные source nodes/UTF-16
+ranges; готовый результат синхронно заменяет только найденные TeX spans.
+Prose, links и disclosure nodes сохраняют идентичность, selection и focus;
+последующее streaming использует исходные координаты известных math spans.
+Старые source bodies и пересекающиеся ranges не принимаются. MathJax records
+освобождаются до переноса output; failed jobs оставляют plain text и не удерживают
+очередь. Прежняя блокирующая очередь и whole-body math replacement удалены.
+**20 Node regressions и полный строгий MCP TypeScript PASS** на Linux.
+Проверки используют настоящий DOM Range/Selection; три также проверяют bundled
+MathJax4.1.3, включая assistive MathML, rejected-job cleanup и сохранение SVG.
+Baseline renderer даёт ожидаемый FAIL на финальном regression.
+Два прохода независимого ревью выявили lifecycle/selection/focus замечания;
+они исправлены. Третье ревью принято в границах кода и переносимых проверок:
+20/20 повторены независимо; отдельные math/selection probes также прошли. Native visual fixture явно ждёт math
+readiness. WebKit/font metrics, физические жесты, сборка и установка не выполнялись;
+GUI-498/DP19 ещё не имеет физической приёмки.
+[Точные исходники, результаты и ограничения](audit-evidence/2026-10-06/chat-math-publication-dp19/results.json).
+
 ## Условия завершения
 
 | Срез | Подтверждено | Осталось |

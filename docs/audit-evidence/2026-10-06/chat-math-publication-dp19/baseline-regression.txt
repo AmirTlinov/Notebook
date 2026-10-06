@@ -1,0 +1,31 @@
+(node:31) ExperimentalWarning: Transform Types is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✖ plain text and conversation reset publish before MathJax startup (9.354775ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 230.021328
+
+✖ failing tests:
+
+test at MCP/test/chat-render.test.ts:83:1
+✖ plain text and conversation reset publish before MathJax startup (9.354775ms)
+  AssertionError [ERR_ASSERTION]: Transcript acceptance must not wait for unrelated MathJax work
+
+  false !== true
+
+      at accepted (/workspace/shared/notebook-dp19-repo/MCP/test/chat-render.test.ts:54:10)
+      at async TestContext.<anonymous> (/workspace/shared/notebook-dp19-repo/MCP/test/chat-render.test.ts:85:3)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
