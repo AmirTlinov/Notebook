@@ -165,8 +165,8 @@ test('runtime staging preserves the previous package until the copied product va
   const root=await realpath(await mkdtemp('/tmp/notebook-package-'));
   t.after(()=>rm(root,{recursive:true,force:true}));
   const plugin=join(root,'plugin'), source=join(root,'signed/NotebookRuntime.app');
-  await mkdir(join(plugin,'.codex-plugin'),{recursive:true});
-  await writeFile(join(plugin,'.codex-plugin/plugin.json'),JSON.stringify({name:'notebook'}));
+  await mkdir(plugin,{recursive:true});
+  await writeFile(join(plugin,'plugin.json'),JSON.stringify({name:'notebook'}));
   await mkdir(source,{recursive:true});await writeFile(join(source,'sealed'),'new sealed resource');
   const previous=join(plugin,'runtime/NotebookRuntime.app');
   await mkdir(previous,{recursive:true});await writeFile(join(previous,'sealed'),'previous sealed resource');

@@ -1,0 +1,26 @@
+[
+  {
+    "id": 1,
+    "method": "initialize",
+    "params": {
+      "clientInfo": {
+        "name": "notebook_plugin_package_probe",
+        "version": "0.2.2"
+      },
+      "capabilities": {
+        "experimentalApi": true
+      }
+    }
+  },
+  {
+    "method": "initialized"
+  },
+  {
+    "id": 2,
+    "method": "plugin/read",
+    "params": {
+      "marketplacePath": "/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/MCP/plugin/.agents/plugins/marketplace.json",
+      "pluginName": "notebook"
+    }
+  }
+]

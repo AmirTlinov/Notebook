@@ -50,7 +50,7 @@ export async function inspectRuntimeBundle(app) {
 
 /** Copies the already signed product; the package never re-signs or edits it. */
 export async function packageRuntime(app, pluginRoot, { inspect = inspectRuntimeBundle, copy } = {}) {
-  const manifest = JSON.parse(await readFile(join(pluginRoot, '.codex-plugin/plugin.json'), 'utf8'));
+  const manifest = JSON.parse(await readFile(join(pluginRoot, 'plugin.json'), 'utf8'));
   assert.equal(manifest.name, 'notebook');
   const root = await realpath(pluginRoot), source = await realpath(app);
   const output = join(root, 'runtime');

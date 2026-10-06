@@ -49,11 +49,12 @@ remain in the app-only response and never enter model context. The installed
 runtime and the iPad keep one saved workspace and the same delivery path.
 
 `MCP/plugin` is the `notebook-local` marketplace; `notebook/` contains the plugin.
-Its `.codex-plugin/plugin.json` manifest references `mcp.json`, as supported by
-Codex 0.159.3. That file starts the bundled Node and
-MCP server from `NOTEBOOK_APP`, `~/Applications/Notebook.app`, or
-`/Applications/Notebook.app`. An admitted IPC read precedes startup. If needed,
-the app launches with `--background`; readiness waits at most six seconds.
+Its root `plugin.json` selects the portable Agent Plugins format. Codex resolves
+the contained `./runtime/.../node` executable and expands `${PLUGIN_ROOT}` in
+the launcher argument from `mcp.json`. A legacy manifest would leave that argument
+literal. The signed `NotebookRuntime.app` lives inside the plugin; it has no
+windows or Dock entry. An admitted IPC read precedes startup. All panels attach
+to the same local owner, which survives their closure.
 
 ```sh
 node MCP/install-plugin.mjs check
@@ -62,12 +63,13 @@ node MCP/install-plugin.mjs uninstall
 ```
 
 `check` validates source packaging without changing Codex. Installation requires
-the updated signed app containing native panel presentation, registers this source with
+the signed runtime already packaged by the verified pair builder, registers this source with
 `codex plugin marketplace add`, and installs `notebook@notebook-local` with
 `codex plugin add`. An enabled global `notebook` MCP must first be migrated to
 the plugin to keep one tool provider. Existing unrelated configuration is preserved.
 Uninstall removes this plugin and its dedicated marketplace; saved Notebook
-content and the installed app remain available.
+content remains in its existing container. The pair installer reads back the
+resolved installed command and sealed runtime before updating the iPad in place.
 
 After install, connect the plugin in a Codex conversation and call
 `notebook_open`. Verify editing, agent changes, undo, and reopening on that
