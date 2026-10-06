@@ -22,6 +22,108 @@ public struct ContentFieldVersion: Codable, Equatable, Sendable {
       + observed.keys.reduce(0) { $0 + $1.utf8.count * 2 } + retainedHeadsBytes
   }
 
+  /// Integer-only accounting of the clock's Codable representation. It does
+  /// not encode a body or construct a second JSON tree during admission.
+  public struct WriteFootprint: Equatable, Sendable {
+    public let wireBytes: Int
+    public let tokens: Int
+    public var decodingBytes: Int { wireBytes * 8 + tokens * 512 }
+
+    public init(wireBytes: Int, tokens: Int) throws {
+      let limit = NotebookNativeWriteAllowance.maximumExecutionBytes
+      guard wireBytes >= 0, tokens >= 0, wireBytes <= limit / 8,
+        tokens <= (limit - wireBytes * 8) / 512 else {
+        throw NotebookStorageError.limitExceeded("placement_metadata_memory")
+      }
+      self.wireBytes = wireBytes; self.tokens = tokens
+    }
+
+    static var object: Self { try! .init(wireBytes: 2, tokens: 1) }
+    static var array: Self { object }
+    static var number: Self { try! .init(wireBytes: 32, tokens: 1) }
+    static var boolean: Self { try! .init(wireBytes: 5, tokens: 1) }
+    static var uuid: Self { try! .init(wireBytes: 38, tokens: 1) }
+
+    static func string(_ value: String) throws -> Self {
+      var bytes = 2
+      let limit = NotebookNativeWriteAllowance.maximumExecutionBytes / 8
+      for byte in value.utf8 {
+        let next = byte < 0x20 ? 6 : byte == 34 || byte == 92 || byte == 47 ? 2 : 1
+        guard bytes <= limit - next else { throw NotebookStorageError.limitExceeded("placement_metadata_memory") }
+        bytes += next
+      }
+      return try .init(wireBytes: bytes, tokens: 1)
+    }
+
+    mutating func field(_ key: String, _ value: Self) throws {
+      let key = try Self.string(key)
+      self = try .init(wireBytes: wireBytes + key.wireBytes + value.wireBytes + 2,
+        tokens: tokens + 1 + value.tokens)
+    }
+
+    mutating func element(_ value: Self) throws {
+      self = try .init(wireBytes: wireBytes + value.wireBytes + 1, tokens: tokens + value.tokens)
+    }
+
+    static func stamp() throws -> Self {
+      var value = object
+      try value.field("counter", number); try value.field("actor", uuid)
+      return value
+    }
+
+    static func json(_ source: JSONValue, depth: Int = 0) throws -> Self {
+      guard depth <= NotebookJSONAdmission.maximumDepth else { throw NotebookStorageError.limitExceeded("placement_metadata_depth") }
+      switch source {
+      case .null: return try .init(wireBytes: 4, tokens: 1)
+      case .bool: return boolean
+      case .number: return number
+      case .string(let value): return try string(value)
+      case .array(let values):
+        var value = array
+        for child in values { try value.element(json(child, depth: depth + 1)) }
+        return value
+      case .object(let values):
+        var value = object
+        for (key, child) in values { try value.field(key, json(child, depth: depth + 1)) }
+        return value
+      }
+    }
+  }
+
+  public func writeFootprint() throws -> WriteFootprint {
+    var observations = WriteFootprint.object
+    for actor in observed.keys { try observations.field(actor, .number) }
+    var value = WriteFootprint.object
+    try value.field("stamp", .stamp()); try value.field("human", .boolean)
+    try value.field("observed", observations)
+    if let heads {
+      var alternatives = WriteFootprint.array
+      for head in heads {
+        var alternative = WriteFootprint.object
+        try alternative.field("stamp", .stamp()); try alternative.field("human", .boolean)
+        try alternative.field("hasValue", .boolean)
+        if let body = head.value { try alternative.field("value", .json(body)) }
+        try alternatives.element(alternative)
+      }
+      try value.field("heads", alternatives)
+    }
+    return value
+  }
+
+  static func authoredWriteFootprint(actorCount: Int) throws -> WriteFootprint {
+    guard (0...256).contains(actorCount) else { throw NotebookStorageError.limitExceeded("placement_observers") }
+    var observations = WriteFootprint.object
+    for _ in 0..<actorCount {
+      // Valid placement actor keys are canonical UUID strings.
+      observations = try .init(wireBytes: observations.wireBytes + 38 + 32 + 2,
+        tokens: observations.tokens + 2)
+    }
+    var value = WriteFootprint.object
+    try value.field("stamp", .stamp()); try value.field("human", .boolean)
+    try value.field("observed", observations)
+    return value
+  }
+
   init(stamp: VersionStamp, human: Bool, previous: ContentFieldVersion? = nil) {
     var observed = previous?.observed ?? [:]
     observed[stamp.actor.uuidString.lowercased()] = stamp.counter

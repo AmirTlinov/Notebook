@@ -38,7 +38,8 @@ export class NotebookSession {
   suspended=false;
   onSnapshot:(snapshot:PanelSnapshot)=>void=()=>{};
   onPrepareSnapshot:(snapshot:PanelSnapshot,view:PanelView)=>Promise<boolean>=async()=>true;
-  onClose:()=>void=()=>{};
+  onCancelSnapshotPreparation:()=>Promise<void>=async()=>{};
+  onClose:()=>void|Promise<void>=()=>{};
   onStatus:(text:string)=>void=()=>{};
   onError:(message:string,retry:(()=>Promise<void>)|null)=>void=()=>{};
   onRuntime:(status:RuntimeStatus)=>void=()=>{};
@@ -56,7 +57,7 @@ export class NotebookSession {
   private presentedView:PanelView|undefined;
   private generation=0;
   private viewRevision=0;
-  private navigation=0;
+  private navigation:{controller:AbortController;finished:Promise<void>}|undefined;
   private forcedRefreshQueued=false;
   private viewportRefreshQueued=false;
   private refreshTimer:ReturnType<typeof setTimeout>|undefined;
@@ -76,11 +77,12 @@ export class NotebookSession {
     this.app.onteardown=async()=>{
       if(this.closed)return {};
       this.closed=true;this.presented=false;++this.generation;
+      this.cancelNavigation();
       clearInterval(this.timer);clearTimeout(this.refreshTimer);clearTimeout(this.contextTimer);
       this.timer=undefined;this.refreshTimer=undefined;this.contextTimer=undefined;
       this.pending?.reject(new Error("Панель закрыта."));this.pending=undefined;
       this.busy=false;this.releaseReaders();
-      this.onStatus("Панель закрыта");this.onClose();return {};
+      this.onStatus("Панель закрыта");await this.onClose();return {};
     };
     try{await this.app.connect();}catch(error){if(!this.closed)throw error;}
     if(this.closed)return;
@@ -112,7 +114,7 @@ export class NotebookSession {
           // action. The runtime's current focus belongs to another surface.
           if(repaired)this.failedWrite=false;
         }else{
-          ++this.generation;++this.navigation;
+          ++this.generation;this.cancelNavigation();
           this.initialClaimed=true;this.presented=false;this.snapshot=value.snapshot;
           this.presentedView=undefined;this.boundsDirty=true;this.failedWrite=false;
           this.contextSelection=null;this.contextDirty=false;
@@ -135,6 +137,19 @@ export class NotebookSession {
     if(this.boundsDirty){if(!this.viewportRefreshQueued)this.queueRefresh();}
     else {clearTimeout(this.refreshTimer);this.refreshTimer=undefined;this.viewportRefreshQueued=false;}
   }
+  /** A measured view intent owns the currently installed surface immediately. */
+  beginCameraInteraction():Promise<void>|undefined {
+    if(this.closed)return;
+    ++this.viewRevision;
+    return this.cancelNavigation();
+  }
+  private cancelNavigation():Promise<void>|undefined {
+    const navigation=this.navigation;if(!navigation)return;
+    this.navigation=undefined;++this.generation;
+    navigation.controller.abort();
+    void this.onCancelSnapshotPreparation();
+    return navigation.finished;
+  }
   private queueRefresh(){
     if(this.closed||this.refreshTimer!==undefined)return;
     this.refreshTimer=setTimeout(()=>{this.refreshTimer=undefined;this.viewportRefreshQueued=true;this.drainRefresh();},80);
@@ -147,30 +162,43 @@ export class NotebookSession {
   }
   async openSurface(target:PanelTarget,camera?:PanelView["camera"]){
     if(this.busy||this.pending||this.closed)return false;
-    const navigation=++this.navigation;++this.generation;
+    let finish!:()=>void;
+    const navigation={controller:new AbortController(),finished:new Promise<void>(resolve=>{finish=resolve;})};
+    this.navigation=navigation;
+    const generation=++this.generation;
+    const current=()=>!this.closed&&this.navigation===navigation&&generation===this.generation;
+    const priorPreparation=this.onCancelSnapshotPreparation();
     this.busy=true;this.failedWrite=false;this.onError("",null);this.onStatus("Открытие…");
     try {
-      while(!this.closed&&navigation===this.navigation){
-        const generation=this.generation,viewRevision=this.viewRevision,request={...this.address(),target,appearance:this.view(true,camera),knownAssets:this.knownAssets()};
-        const value=body(await this.app.callServerTool({name:"notebook_panel_presentation",arguments:request}) as ToolResult);
-        if(!isSnapshot(value)||!sameAddress(request,value))throw new Error("Notebook вернул другую поверхность.");
-        if(this.closed||navigation!==this.navigation)return false;
-        if(generation!==this.generation||viewRevision!==this.viewRevision)continue;
-        if(!(await this.onPrepareSnapshot(value,request.appearance)))return false;
-        if(this.closed||navigation!==this.navigation)return false;
-        // A resized panel still opens the requested target, using a fresh native
-        // entry projection for its latest bounds before any pixels are accepted.
-        if(generation!==this.generation||viewRevision!==this.viewRevision)continue;
-        this.accept(value,request.appearance);this.boundsDirty=this.needsPresentation();this.viewportRefreshQueued=false;
-        clearTimeout(this.refreshTimer);this.refreshTimer=undefined;return true;
-      }
-      return false;
-    }catch(error){if(!this.closed)this.report(error,null);return false;}
-    finally{this.busy=false;this.drainRefresh();}
+      const request={...this.address(),target,appearance:this.view(true,camera),knownAssets:this.knownAssets()};
+      const result=await this.app.callServerTool({name:"notebook_panel_presentation",arguments:request},
+        {signal:navigation.controller.signal}) as ToolResult;
+      if(!current())return false;
+      const value=body(result);
+      if(!isSnapshot(value)||!sameAddress(request,value))throw new Error("Notebook вернул другую поверхность.");
+      await priorPreparation;
+      if(!current()||!(await this.onPrepareSnapshot(value,request.appearance))||!current())return false;
+      this.accept(value,request.appearance);
+      // Resize keeps this destination. World pixels install at its current
+      // viewport; only uncovered demand asks for a coalesced projection read.
+      this.boundsDirty=this.needsPresentation();this.viewportRefreshQueued=this.boundsDirty;
+      clearTimeout(this.refreshTimer);this.refreshTimer=undefined;return true;
+    }catch(error){if(current())this.report(error,null);return false;}
+    finally{
+      await priorPreparation;
+      const revoked=!current();
+      if(this.navigation===navigation)this.navigation=undefined;
+      this.busy=false;finish();
+      if(revoked&&!this.closed&&this.presented)this.onStatus("Подключено");
+      this.drainRefresh();
+    }
   }
   async requestFit():Promise<SceneBounds|undefined>{
-    if(!this.mutationReady||this.suspended||this.closed)return;
+    if(this.suspended||this.closed||!this.presented)return;
+    const withdrawn=this.beginCameraInteraction();
     const generation=this.generation,revision=this.viewRevision;
+    await withdrawn;
+    if(!this.mutationReady||this.closed||generation!==this.generation||revision!==this.viewRevision)return;
     while(this.reading&&!this.closed)await new Promise<void>(resolve=>this.readers.push(resolve));
     if(this.closed||generation!==this.generation||revision!==this.viewRevision)return;
     const snapshot=await this.refresh(true,true);

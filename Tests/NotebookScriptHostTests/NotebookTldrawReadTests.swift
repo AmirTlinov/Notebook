@@ -11,7 +11,7 @@ struct NotebookTldrawReadTests {
     let owner=NotebookSDKV2ReadTests.Owner.self
     let session=try owner.init()
     defer { try? FileManager.default.removeItem(at:session.store.root) }
-    let host=NotebookScriptCoordinator(command:{ try await session.read($0) },persistence:{ try await session.persist($0) },workingDirectory:root)
+    let host=NotebookScriptCoordinator(command:{ try await session.read($0) },reader:{ try await session.observe($0) },persistence:{ try await session.persist($0) },workingDirectory:root)
     let source=#"{"schema":{"schemaVersion":2,"sequences":{}},"shapes":[{"id":"shape:a","type":"geo","parentId":"page:a","index":"a1","x":10,"y":20,"rotation":0,"props":{"geo":"triangle","w":120,"h":100}}],"bindings":[]}"#
     let namespace=UUID(), before=try session.store.currentReadCursor()
     let snapshot=try await host.context(.init(method:"prepareTldraw",arguments:.object(["source":.string(source),"namespace":.string(namespace.uuidString)])))

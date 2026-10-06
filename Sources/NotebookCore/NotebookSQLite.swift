@@ -19,9 +19,11 @@ struct NotebookSQLReadAllowance {
   let valueBytes: Int
   let reason: String
   var jsonDecodeBytes:Int? = nil
+  var sqlSteps: Int? = nil
 
   static let agentCommand = Self(rows: 65_536, bytes: 32 * 1_024 * 1_024,
-    valueBytes: 8 * 1_024 * 1_024, reason: "agent_command_read")
+    valueBytes: 8 * 1_024 * 1_024, reason: "agent_command_read",
+    jsonDecodeBytes: 96 * 1_024 * 1_024, sqlSteps: 2_000_000)
   // Completed contacts retain up to 65,536 measured points in their receipt.
   // Native entry points admit that bounded contact; nested agent commands still
   // tighten the same lease and can never renew an exhausted allowance.
@@ -57,16 +59,38 @@ final class NotebookSQLConnection {
     // Accepted commands keep their independent durable lifetime.
     if !writable { try Task.checkCancellation() }
     if !writable, let decoded = decodedFragments[data] { return decoded }
-    if let remaining=remainingJSONDecodeBytes {
-      do { remainingJSONDecodeBytes=remaining-(try NotebookJSONAdmission.allocationCost(data,maximumBytes:remaining)) }
-      catch { readRefusal=readAllowance?.reason ?? "json_decode_memory";throw error }
-    }
+    try admitJSONDecode(data)
     let decoded = try JSONDecoder().decode(NotebookStoredFragment.self, from: data)
     if !writable, decodedFragments.count < 128, data.count <= 524_288 - decodedFragmentBytes {
       decodedFragments[data] = decoded
       decodedFragmentBytes += data.count
     }
     return decoded
+  }
+
+  /// Direct receipt/inverse decoders borrow the same aggregate transaction
+  /// allowance as fragment envelopes. A helper cannot renew consumed capacity.
+  func admitJSONDecode(_ data: Data) throws {
+    try checkReadAllowance()
+    if let remaining = remainingJSONDecodeBytes {
+      do { try admitJSONAllocation(bytes: NotebookJSONAdmission.allocationCost(data, maximumBytes: remaining,
+        observesCancellation: !writable)) }
+      catch { readRefusal = readAllowance?.reason ?? "json_decode_memory"; throw error }
+    }
+  }
+
+  /// Typed projections and inverse codecs charge before allocating output.
+  /// Their owner computes its bounded cost without encoding a measuring copy.
+  func admitJSONAllocation(bytes: Int) throws {
+    try checkReadAllowance()
+    guard bytes >= 0 else { throw NotebookStorageError.invalidTransaction("negative JSON allocation") }
+    if let remaining = remainingJSONDecodeBytes {
+      guard bytes <= remaining else {
+        readRefusal = readAllowance?.reason ?? "json_decode_memory"
+        throw NotebookStorageError.limitExceeded(readRefusal!)
+      }
+      remainingJSONDecodeBytes = remaining - bytes
+    }
   }
 
   var inkDecoding: InkRelationDecoding {
@@ -78,10 +102,84 @@ final class NotebookSQLConnection {
   private var remainingReadBytes = 0
   private var readRefusal: String?
   private var remainingJSONDecodeBytes:Int?
+  private var transactionSQLBudget: NotebookSQLExecutionBudget?
+  private var sqlExecutionBudgets: [NotebookSQLExecutionBudget] = []
+  private var sqlExecutionFailure: (any Error)?
+  private(set) var sqlExecutionInterrupted = false
+  private var observesSQLCancellation = false
+  private var readCancellation: NotebookReadCancellation?
+  private var cancellationProbe: UInt32 = 0
+  private(set) var readSnapshotIdentity: UUID?
+
+  fileprivate func beginReadExecution(observesCancellation: Bool, cancellation: NotebookReadCancellation?) throws {
+    readSnapshotIdentity = UUID()
+    observesSQLCancellation = observesCancellation
+    readCancellation = cancellation
+    if let transactionSQLBudget { transactionSQLBudget.tighten(remainingSteps: 8_000_000) }
+    else { installTransactionSQLBudget(steps: 8_000_000, reason: "read_sql_work") }
+    try checkSQLExecution()
+  }
+
+  private func installTransactionSQLBudget(steps: Int, reason: String) {
+    let budget = NotebookSQLExecutionBudget(steps: steps, reason: reason)
+    transactionSQLBudget = budget; sqlExecutionBudgets.append(budget)
+    installSQLProgressHandler()
+  }
+
+  /// Placement and other bounded domain operations borrow this connection's
+  /// handler. They cannot replace or reset an outer command's progress budget.
+  func withSQLExecution<T>(_ budget: NotebookSQLExecutionBudget, _ operation: () throws -> T) throws -> T {
+    try checkSQLExecution()
+    guard !budget.exhausted else { throw NotebookStorageError.limitExceeded(budget.reason) }
+    if sqlExecutionBudgets.contains(where: { $0 === budget }) { return try operation() }
+    sqlExecutionBudgets.append(budget)
+    installSQLProgressHandler()
+    defer {
+      sqlExecutionBudgets.removeAll { $0 === budget }
+      installSQLProgressHandler()
+    }
+    return try operation()
+  }
+
+  private func installSQLProgressHandler() {
+    guard !sqlExecutionBudgets.isEmpty else { suspendSQLExecution(); return }
+    // Interval one also charges sequences of cheap point reads, which could
+    // otherwise each finish before the handler's first invocation.
+    sqlite3_progress_handler(handle, 1, { pointer in
+      guard let pointer else { return 1 }
+      return Unmanaged<NotebookSQLConnection>.fromOpaque(pointer).takeUnretainedValue().advanceSQLExecution()
+    }, Unmanaged.passUnretained(self).toOpaque())
+  }
+
+  private func advanceSQLExecution() -> Int32 {
+    if sqlExecutionFailure != nil { return 1 }
+    cancellationProbe &+= 1
+    if observesSQLCancellation && cancellationProbe & 255 == 0,
+      (readCancellation?.isCancelled == true || withUnsafeCurrentTask(body: { $0?.isCancelled ?? false })) {
+      sqlExecutionFailure = CancellationError(); return 1
+    }
+    for budget in sqlExecutionBudgets where !budget.advance() {
+      sqlExecutionFailure = NotebookStorageError.limitExceeded(budget.reason); return 1
+    }
+    return 0
+  }
+
+  private func checkSQLExecution() throws {
+    if observesSQLCancellation && (readCancellation?.isCancelled == true || withUnsafeCurrentTask(body: { $0?.isCancelled ?? false })) {
+      sqlExecutionFailure = CancellationError()
+    }
+    if let sqlExecutionFailure { throw sqlExecutionFailure }
+  }
+
+  fileprivate func suspendSQLExecution() { sqlite3_progress_handler(handle, 0, nil, nil) }
 
   func limitReads(_ allowance: NotebookSQLReadAllowance) throws {
     precondition(allowance.rows >= 0 && allowance.bytes >= 0 && allowance.valueBytes >= 0)
     try checkReadAllowance()
+    if let steps = allowance.sqlSteps {
+      if let transactionSQLBudget { transactionSQLBudget.tighten(remainingSteps: steps) }
+      else { installTransactionSQLBudget(steps: steps, reason: allowance.reason) }
+    }
     if let limit=allowance.jsonDecodeBytes {
       remainingJSONDecodeBytes=min(remainingJSONDecodeBytes ?? limit,limit)
     }
@@ -97,10 +195,17 @@ final class NotebookSQLConnection {
   }
 
   func checkReadAllowance() throws {
+    try checkSQLExecution()
     if let readRefusal { throw NotebookStorageError.limitExceeded(readRefusal) }
   }
 
   fileprivate func endReadSnapshot() {
+    suspendSQLExecution()
+    transactionSQLBudget = nil; sqlExecutionBudgets.removeAll(keepingCapacity: false)
+    sqlExecutionFailure = nil; sqlExecutionInterrupted = false
+    observesSQLCancellation = false; cancellationProbe = 0
+    readCancellation = nil
+    readSnapshotIdentity = nil
     readAllowance = nil; readRefusal = nil
     remainingReadRows = 0; remainingReadBytes = 0
     remainingJSONDecodeBytes=nil
@@ -202,6 +307,18 @@ final class NotebookSQLConnection {
   }
 
   func run(_ sql: String, _ values: [NotebookSQLValue] = []) throws {
+    try checkReadAllowance()
+    try runStatement(sql, values)
+  }
+
+  /// A refusal vetoes every subsequent ordinary statement, including writes
+  /// after SQLite's automatic rollback. Only explicit rollback bypasses it.
+  fileprivate func rollback() throws {
+    suspendSQLExecution()
+    try runStatement("ROLLBACK", [])
+  }
+
+  private func runStatement(_ sql: String, _ values: [NotebookSQLValue]) throws {
     let statement = try statement(sql, values)
     defer { finish(statement) }
     var status = sqlite3_step(statement)
@@ -253,6 +370,10 @@ final class NotebookSQLConnection {
   }
 
   private func failure(_ operation: String) -> Error {
+    if sqlite3_errcode(handle) == SQLITE_INTERRUPT && sqlExecutionFailure != nil {
+      sqlExecutionInterrupted = true
+    }
+    if let sqlExecutionFailure { return sqlExecutionFailure }
     let status = sqlite3_errcode(handle)
     if status == SQLITE_BUSY || status == SQLITE_LOCKED {
       return CollaborationError("publication_pending", "Предыдущая транзакция ещё записывается. Повторите запрос.")
@@ -756,17 +877,20 @@ extension NotebookStore {
   /// A serial reader may retain its idle handle, never the prior read cut.
   /// Admission is performed again before borrowing this synchronous snapshot.
   func readTransaction<T>(using database: NotebookSQLConnection,
+    observesCancellation: Bool = true,
+    cancellation: NotebookReadCancellation? = nil,
     _ read: (NotebookStore) throws -> T) throws -> T {
     precondition(currentSQL == nil)
     database.writable = false
+    defer { database.endReadSnapshot() }
+    try database.beginReadExecution(observesCancellation: observesCancellation, cancellation: cancellation)
     try database.run("BEGIN DEFERRED")
     Thread.current.threadDictionary[connectionKey] = database
     defer {
       Thread.current.threadDictionary.removeObject(forKey: connectionKey)
-      database.endReadSnapshot()
     }
     do { let result = try read(self); try database.checkReadAllowance(); try database.run("COMMIT"); return result }
-    catch { try? database.run("ROLLBACK"); throw error }
+    catch { try? database.rollback(); throw error }
   }
 
   func commandTransaction<T>(advancesReadRevision: Bool = true,
@@ -777,14 +901,22 @@ extension NotebookStore {
     if let currentSQL {
       guard acceptedWitness == nil else { throw NotebookStorageError.invalidTransaction("nested accepted write") }
       guard currentSQL.writable else { throw NotebookStorageError.readOnlyTransaction }
-      currentSQL.acceptedWriteAdvancesReadRevision = currentSQL.acceptedWriteAdvancesReadRevision || advancesReadRevision
+      let before = sqlite3_total_changes64(currentSQL.handle)
+      defer {
+        if advancesReadRevision && sqlite3_total_changes64(currentSQL.handle) > before {
+          currentSQL.acceptedWriteAdvancesReadRevision = true
+        }
+      }
       if let readAllowance { try currentSQL.limitReads(readAllowance) }
       return try operation()
     }
     let database: NotebookSQLConnection
+    var borrowedDatabase: NotebookSQLConnection?
+    defer { borrowedDatabase?.endReadSnapshot() }
     do {
       if let preparedDatabase { database = preparedDatabase }
       else { database = try prepareDatabase() }
+      borrowedDatabase = database
       if let acceptedWitness {
         try acceptedWitness.witnesses.bindWorkspace(database: database)
         try NotebookAcceptedWriteWitnesses.prepareTable(database: database)
@@ -792,14 +924,22 @@ extension NotebookStore {
       if let readAllowance { try database.limitReads(readAllowance) }
       try database.run("BEGIN IMMEDIATE")
     } catch {
+      if let database = borrowedDatabase, database.sqlExecutionInterrupted,
+        sqlite3_get_autocommit(database.handle) != 0, attestsAcceptedOutcome,
+        NotebookAcceptedWriteError.isDomainRefusal(error) {
+        throw NotebookAcceptedWriteError(.rejected, error)
+      }
       if attestsAcceptedOutcome { throw NotebookAcceptedWriteError(.storageUnavailable, error) }
       throw error
     }
     let changesAtStart = sqlite3_total_changes64(database.handle)
     database.acceptedWriteAdvancesReadRevision = false
     Thread.current.threadDictionary[connectionKey] = database
-    defer { Thread.current.threadDictionary.removeObject(forKey: connectionKey) }
+    defer {
+      Thread.current.threadDictionary.removeObject(forKey: connectionKey)
+    }
     var committed = false
+    var commitAttempted = false
     do {
       let result = try operation()
       try refreshGraphicIndex(database: database)
@@ -809,8 +949,10 @@ extension NotebookStore {
       try refreshBoardFrontier(database: database)
       try refreshReferenceIndex(database: database)
       try refreshItemLifecycleIndex(database: database)
-      let advancesAcceptedReadRevision = attestsAcceptedOutcome
-        ? database.acceptedWriteAdvancesReadRevision : advancesReadRevision
+      // A nested content owner cannot disappear inside an outer bookkeeping
+      // transaction. Accepted witnesses themselves carry no read-visible change.
+      let advancesAcceptedReadRevision = database.acceptedWriteAdvancesReadRevision
+        || (!attestsAcceptedOutcome && advancesReadRevision)
       if !advancesAcceptedReadRevision, database.pendingChangeCount > 0 { throw NotebookStorageError.invalidTransaction("local chat changed shared content") }
       // Schema admission may rebuild derived indexes without changing any
       // accepted content. Only a real publication advances its read cut.
@@ -831,6 +973,7 @@ extension NotebookStore {
       if let acceptedWitness {
         try acceptedWitness.witnesses.install(acceptedWitness.identity, database: database)
       }
+      commitAttempted = true
       try database.run("COMMIT"); committed = true
       try storageFault?(.afterCommit)
       return result
@@ -839,7 +982,12 @@ extension NotebookStore {
         if attestsAcceptedOutcome { throw NotebookAcceptedWriteError(.unresolved, error) }
         throw error
       }
-      do { try database.run("ROLLBACK") }
+      // The sole connection attests an interrupted write's automatic rollback
+      // before any COMMIT attempt. Autocommit after a failed COMMIT is never
+      // absence evidence: it remains an unresolved accepted outcome.
+      let automaticallyRolledBack = !commitAttempted && database.sqlExecutionInterrupted
+        && sqlite3_get_autocommit(database.handle) != 0
+      do { if !automaticallyRolledBack { try database.rollback() } }
       catch let rollbackFailure {
         // A COMMIT whose acknowledgement was lost can leave no transaction to
         // roll back. Neither its response nor a failed rollback proves absence.
@@ -896,7 +1044,9 @@ extension NotebookStore {
   }
 
   func publishRecords(writes: [String: JSONValue], removals: [String] = []) throws {
-    try commandTransaction {
+    let changesMaterial = writes.keys.contains { !Self.localRecord($0) }
+      || removals.contains { !Self.localRecord($0) }
+    try commandTransaction(advancesReadRevision: changesMaterial) {
       guard let database = currentSQL else { throw NotebookStorageError.invalidTransaction("missing command") }
       for file in removals {
         try removeFragment(file + "#", database: database)
@@ -996,7 +1146,7 @@ extension NotebookStore {
   }
 
   public func stageBlob(data: Data, expectedHash: String) throws {
-    try commandTransaction {
+    try commandTransaction(advancesReadRevision: false) {
       let hash = try currentSQL!.putBlob(data)
       guard hash == expectedHash else { throw NotebookStorageError.blobHashMismatch }
     }
@@ -1013,7 +1163,7 @@ extension NotebookStore {
 
   public func acknowledgePeer(peerID: UUID, through sequence: UInt64) throws {
     guard sequence <= UInt64(Int64.max) else { throw NotebookStorageError.limitExceeded("cursor") }
-    try commandTransaction {
+    try commandTransaction(advancesReadRevision: false) {
       try requireActiveReplicationPeer(peerID, database: currentSQL!)
       guard sequence <= (try currentChangeCursor()) else { throw NotebookStorageError.invalidTransaction("acknowledges an unpublished change") }
       try currentSQL!.run("INSERT INTO peer_cursors(peer_id,direction,sequence) VALUES(?,'outgoing',?) ON CONFLICT(peer_id,direction) DO UPDATE SET sequence=MAX(sequence,excluded.sequence)", [.text(peerID.uuidString.lowercased()), .integer(Int64(sequence))])

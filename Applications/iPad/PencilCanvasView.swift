@@ -1017,13 +1017,22 @@ final class PaperInputView: UIView {
 
   private func addActualSamples(for touch: UITouch, event: UIEvent?) {
     let coalesced = event?.coalescedTouches(for: touch) ?? [touch]
+    let retainedTargets = elementContact.selected
+    let targetPayloadBytes = NotebookInkWriteAllowance.targetBytes(retainedTargets)
+    let targetWriteAllowance = elementContact.writeAllowance
     var firstChangedIndex: Int?
-    var reachedLimit = false
+    var reachedLimit: NotebookInkWriteAllowance.Limit?
     for sampleTouch in coalesced where acceptsDrawingTouch(sampleTouch) {
       let timestamp = max(0, sampleTouch.timestamp - actionStartTimestamp)
       if samples.count == NotebookInkWriteAllowance.maximumMeasurements,
         samples.last.map({ timestamp > $0.timestamp + 0.000_001 }) == true {
-        reachedLimit = true; break
+        reachedLimit = .measurements; break
+      }
+      let grows = samples.last.map { timestamp > $0.timestamp + 0.000_001 } ?? true
+      if grows, let limit = NotebookInkWriteAllowance.contactLimit(measurements: samples.count + 1,
+        worldMeasurements: 0, targetCount: retainedTargets.count, targetPayloadBytes: targetPayloadBytes,
+        targetWriteAllowance: targetWriteAllowance, spans: 1) {
+        reachedLimit = limit; break
       }
       let profileKind: InputFrameMonitor.SampleKind? = inputFrameBatch == nil ? nil
         : sampleTouch.timestamp == touch.timestamp ? .actual : .coalesced
@@ -1035,7 +1044,7 @@ final class PaperInputView: UIView {
     if let firstChangedIndex {
       rebuildProcessedActionPoints(from: firstChangedIndex)
     }
-    if reachedLimit, actionTool != nil { sealAction(at: NotebookInkWriteAllowance.Limit.measurements) }
+    if let reachedLimit, actionTool != nil { sealAction(at: reachedLimit) }
   }
 
   func acceptsDrawingTouch(_ touch: UITouch) -> Bool {
@@ -1154,7 +1163,12 @@ final class PaperInputView: UIView {
         } catch { sealAction(at: error); return }
       }
       let targets = proposedContact.selected
-      if let limit = NotebookInkWriteAllowance.targetLimit(targets) { sealAction(at: limit); return }
+      if let limit = NotebookInkWriteAllowance.contactLimit(measurements: proposed.count,
+        worldMeasurements: 0, targetCount: targets.count,
+        targetPayloadBytes: NotebookInkWriteAllowance.targetBytes(targets),
+        targetWriteAllowance: proposedContact.writeAllowance, spans: 1) {
+        sealAction(at: limit); return
+      }
       activeEraserStroke.acceptMeasured(proposed, from: startIndex)
       elementContact = proposedContact
       let targetIDs = Set(targets.map(\.elementID))

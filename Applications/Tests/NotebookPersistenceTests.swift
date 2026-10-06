@@ -188,11 +188,17 @@ final class NotebookPersistenceTests: XCTestCase {
     defer { try? FileManager.default.removeItem(at:root) }
     let queue=NotebookPersistenceQueue(store:.init(root:root))
     var commits=0;queue.onCommit={ _ in commits += 1 }
-    let rejected=queue.enqueuePreparedCommand(Task { () throws -> @Sendable (NotebookStore) throws -> Int in
-      { _ in throw CollaborationError("revision_conflict","Changed source") }
+    let cost=NotebookPersistenceAdmission.Cost(payloadBytes: MemoryLayout<Int>.stride,
+      completionBytes: 8 * 1_024 * 1_024)
+    let rejectedReservation=try XCTUnwrap(queue.reserveWrite(cost))
+    let rejected=try queue.enqueuePreparedCommand(reservation:rejectedReservation,
+      Task { () throws -> NotebookPersistenceQueue.PreparedCommand<Int> in
+      .init(cost:cost,operation:{ _ in throw CollaborationError("revision_conflict","Changed source") })
     },publishesChanges:true)
-    let accepted=queue.enqueuePreparedCommand(Task { () throws -> @Sendable (NotebookStore) throws -> Int in
-      { _ in 7 }
+    let acceptedReservation=try XCTUnwrap(queue.reserveWrite(cost))
+    let accepted=try queue.enqueuePreparedCommand(reservation:acceptedReservation,
+      Task { () throws -> NotebookPersistenceQueue.PreparedCommand<Int> in
+      .init(cost:cost,operation:{ _ in 7 })
     },publishesChanges:true)
     let flushed=await queue.flush();XCTAssertTrue(flushed)
     do { _=try await rejected.value;XCTFail("A stale command must be rejected") }
@@ -209,19 +215,25 @@ final class NotebookPersistenceTests: XCTestCase {
     let ready=root.appendingPathComponent("ready"),first=root.appendingPathComponent("first")
     let queue=NotebookPersistenceQueue(store:.init(root:root))
     var commits=0;queue.onCommit={ _ in commits += 1 }
-    let accepted=queue.enqueuePreparedCommand(Task { () throws -> @Sendable (NotebookStore) throws -> Int in
-      { _ in
+    let cost=NotebookPersistenceAdmission.Cost(payloadBytes:(ready.path.utf8.count+first.path.utf8.count)*2,
+      completionBytes:8 * 1_024 * 1_024)
+    let firstReservation=try XCTUnwrap(queue.reserveWrite(cost))
+    let accepted=try queue.enqueuePreparedCommand(reservation:firstReservation,
+      Task { () throws -> NotebookPersistenceQueue.PreparedCommand<Int> in
+      .init(cost:cost,operation:{ _ in
         guard FileManager.default.fileExists(atPath:ready.path) else { throw TestFailure.unavailable }
         try Data("accepted".utf8).write(to:first);return 1
-      }
+      })
     },publishesChanges:true)
     let failed=await queue.flush();XCTAssertFalse(failed)
     XCTAssertNotNil(queue.failure);XCTAssertEqual(queue.pendingCount,1);XCTAssertEqual(commits,0)
-    let later=queue.enqueuePreparedCommand(Task { () throws -> @Sendable (NotebookStore) throws -> Int in
-      { _ in
+    let laterReservation=try XCTUnwrap(queue.reserveWrite(cost))
+    let later=try queue.enqueuePreparedCommand(reservation:laterReservation,
+      Task { () throws -> NotebookPersistenceQueue.PreparedCommand<Int> in
+      .init(cost:cost,operation:{ _ in
         guard FileManager.default.fileExists(atPath:first.path) else { throw TestFailure.unavailable }
         return 2
-      }
+      })
     },publishesChanges:true)
     XCTAssertEqual(queue.pendingCount,2,"Already blocked storage still retains a new accepted command")
     try Data().write(to:ready);queue.retry()
@@ -246,12 +258,17 @@ final class NotebookPersistenceTests: XCTestCase {
       }
     })
     let queue=NotebookPersistenceQueue(store:failing)
-    let actionID=UUID(),command=NotebookNativeCommand([.init(kind:.insertElement,target:target,id:"figure",values:[
+    let actionID=UUID(),operation=CollaborationOperation(kind:.insertElement,target:target,id:"figure",values:[
       "kind":.string("graphic"),"source":.string(""),"graphic":try .encode(NotebookGraphic(shape:.rectangle)),
-      "frame":try .encode(PageRect(x:20,y:20,width:100,height:100))])],summary:"Accepted figure",
+      "frame":try .encode(PageRect(x:20,y:20,width:100,height:100))])
+    let command=NotebookNativeCommand([operation],summary:"Accepted figure",
       sources:[.init(target:target,id:"figure")],actionID:actionID,actor:actor)
-    let saved=queue.enqueuePreparedCommand(Task { () throws -> @Sendable (NotebookStore) throws -> NotebookNativeCommand<NotebookNativeElementSource>.Output in
-      { store in try command.apply(to:store) }
+    let cost=NotebookPersistenceAdmission.Cost(payloadBytes:JSONValue.object(operation.values).retainedPayloadBytes
+      + MemoryLayout<NotebookNativeElementSource>.stride,completionBytes:8 * 1_024 * 1_024)
+    let reservation=try XCTUnwrap(queue.reserveWrite(cost))
+    let saved=try queue.enqueuePreparedCommand(reservation:reservation,
+      Task { () throws -> NotebookPersistenceQueue.PreparedCommand<NotebookNativeCommand<NotebookNativeElementSource>.Output> in
+      .init(cost:cost,operation:{ store in try command.apply(to:store) })
     },publishesChanges:true)
     let failed=await queue.flush();XCTAssertFalse(failed)
     let committed=try XCTUnwrap(store.readPageElement(pageID:target.id,elementID:"figure"))
@@ -259,12 +276,20 @@ final class NotebookPersistenceTests: XCTestCase {
     let peer=try store.applyNativeElementEdits([.init(kind:.updateElement,target:target,id:"figure",values:[
       "frame":try .encode(PageRect(x:160,y:20,width:100,height:100))])],summary:"Peer move",
       sources:[.init(target:target,id:"figure",page:committed)],actor:UUID())
-    let dependent=queue.enqueuePreparedCommand(Task { () throws -> @Sendable (NotebookStore) throws -> CollaborationReceipt in
+    let dependentReservation=try XCTUnwrap(queue.reserveWrite(.init(payloadBytes:1_048_576,
+      completionBytes:8 * 1_024 * 1_024)))
+    let dependent=try queue.enqueuePreparedCommand(reservation:dependentReservation,
+      Task { () throws -> NotebookPersistenceQueue.PreparedCommand<CollaborationReceipt> in
       let first=try await saved.value
-      return { store in
+      let reference=EditableElementReference.page(pageID:target.id,elementID:"figure")
+      let plan=NotebookElementCommandPlan(target:target,references:[reference],sources:[:],sourceTasks:[:],
+        operations:[.init(kind:.removeElement,target:target,id:"figure")],summary:"Old cut",
+        layerMove:nil,copiedFrom:[:],expectedInkRevision:nil)
+      let measured=try NotebookElementWriteAllowance.cost(plan,resolvedSources:first.sources)
+      return .init(cost:measured,operation:{ store in
         try store.applyNativeElementEdits([.init(kind:.removeElement,target:target,id:"figure")],summary:"Old cut",
           sources:first.sources,actor:actor).receipt
-      }
+      })
     })
     try Data().write(to:readbackReady);queue.retry()
     let retried=await queue.flush();XCTAssertTrue(retried)

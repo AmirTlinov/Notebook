@@ -8,6 +8,74 @@ import NotebookCodex
 
 @MainActor
 final class NotebookArchiveLaunchTests: XCTestCase {
+  #if os(iOS)
+    func testCommittedSelectionRetainsItsOriginalWriterUntilTheSameRetirementRetries() async throws {
+      enum Fault: Error { case storageUnavailable }
+      let base = FileManager.default.temporaryDirectory.appendingPathComponent("ipad-retirement-" + UUID().uuidString)
+      try FileManager.default.createDirectory(at: base, withIntermediateDirectories: false)
+      let root = base.appendingPathComponent("Notebook"), armed = base.appendingPathComponent("armed")
+      let repaired = base.appendingPathComponent("repaired")
+      let blocked = expectation(description: "The original accepted writer is held after its commit")
+      var owners: [(model: NotebookAppModel, writer: NotebookPersistenceQueue)] = []
+      let launch = NotebookApplicationLaunch(root: root) { store, _ in
+        let original = owners.isEmpty
+        let admitted = NotebookStore(root: store.root, storageFault: { phase in
+          if original, phase == .afterCommit, FileManager.default.fileExists(atPath: armed.path),
+            !FileManager.default.fileExists(atPath: repaired.path) { throw Fault.storageUnavailable }
+        })
+        let writer = NotebookPersistenceQueue(store: admitted)
+        let model = NotebookAppModel(store: admitted, startsNearbySync: false, persistenceQueue: writer)
+        if original {
+          let receive = writer.onFailureChange
+          writer.onFailureChange = { message in receive?(message); if message != nil { blocked.fulfill() } }
+        } else {
+          try Data().write(to: armed)
+          let sourceWriter = try XCTUnwrap(owners.first?.writer)
+          // New accepted source work arrives after initial preparation. A
+          // manual selection may commit, but retirement must keep this FIFO.
+          sourceWriter.enqueueCommand(writesStore: true, { source in
+            try source.publishRecords(writes: ["local/transition-tail.json": .string("retained exactly")])
+            return true
+          }, completion: { _ in })
+        }
+        owners.append((model, writer)); return model
+      }
+      addTeardownBlock { @MainActor in
+        try Data().write(to: repaired)
+        for owner in owners { owner.writer.retry() }
+        _ = await launch.shutdown()
+        try FileManager.default.removeItem(at: base)
+      }
+      await launch.start()
+      let original = try XCTUnwrap(launch.model)
+      let originalWriter = try XCTUnwrap(owners.first?.writer)
+      await original.start(pageSize: NotebookAppModel.defaultPageSize)
+      let sourceID = try XCTUnwrap(original.admittedWorkspaceID), destinationID = UUID()
+      await launch.openWorkspace(destinationID, creatingName: "New selection")
+      await fulfillment(of: [blocked], timeout: 3)
+      let selected = try XCTUnwrap(launch.model)
+      XCTAssertFalse(selected === original)
+      XCTAssertEqual(owners.count, 2)
+      XCTAssertEqual(launch.selectedWorkspaceID, destinationID)
+      XCTAssertEqual(original.admittedWorkspaceID, sourceID)
+      XCTAssertEqual(original.shutdownPhase, .closing)
+      XCTAssertGreaterThan(originalWriter.pendingCount, 0)
+      XCTAssertTrue(launch.hasPendingWorkspaceRetirement)
+      XCTAssertEqual(try original.store.storedValue("local/transition-tail.json"), .string("retained exactly"))
+      try Data().write(to: repaired)
+      let finished = await launch.retryWorkspaceTransition()
+      XCTAssertTrue(finished)
+      XCTAssertTrue(launch.model === selected)
+      XCTAssertEqual(owners.count, 2, "Retirement Retry keeps the original writer instead of constructing another owner")
+      XCTAssertEqual(original.admittedWorkspaceID, sourceID)
+      XCTAssertEqual(original.shutdownPhase, .stopped)
+      XCTAssertEqual(originalWriter.pendingCount, 0)
+      XCTAssertFalse(launch.hasPendingWorkspaceRetirement)
+      XCTAssertNil(launch.workspaceError)
+      XCTAssertEqual(try original.store.storedValue("local/transition-tail.json"), .string("retained exactly"))
+    }
+  #endif
+
   #if os(macOS)
     func testRuntimeRetryCoalescesCodexAdmissionAfterDiscoveryFailure() async throws {
       let run = UUID(), actor = UUID()
@@ -77,7 +145,7 @@ final class NotebookArchiveLaunchTests: XCTestCase {
 
     func testRuntimeBootstrapAndCreateRetryKeepTheAcceptedOwnerAndWorkspaceAddress() async throws {
       enum Fault: Error { case storageUnavailable }
-      for creating in [false, true] {
+      for (creating, retiringWhileBlocked) in [(false, false), (true, false), (true, true)] {
         let base = URL(fileURLWithPath: "/tmp/nb-start-" + UUID().uuidString.lowercased(), isDirectory: true)
         try FileManager.default.createDirectory(at: base, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         let root = base.appendingPathComponent("Notebook"), socket = base.appendingPathComponent("bridge.sock")
@@ -85,6 +153,11 @@ final class NotebookArchiveLaunchTests: XCTestCase {
         let blocked = expectation(description: "Accepted bootstrap reports its storage fault")
         var owners: [(model: NotebookAppModel, writer: NotebookPersistenceQueue)] = []
         let launch = NotebookApplicationLaunch(root: root, runtimeSocketURL: socket) { store, _ in
+          if retiringWhileBlocked, owners.count == 2 {
+            XCTAssertEqual(owners[1].writer.pendingCount, 0, "A replacement cannot precede the hidden candidate's accepted result")
+            XCTAssertNil(owners[1].writer.failure)
+            XCTAssertEqual(owners[1].model.shutdownPhase, .stopped)
+          }
           let faults = owners.count == (creating ? 1 : 0)
           let admitted = NotebookStore(root: store.root, storageFault: { phase in
             if faults, phase == .afterCommit, !FileManager.default.fileExists(atPath: repaired.path) { throw Fault.storageUnavailable }
@@ -122,12 +195,14 @@ final class NotebookArchiveLaunchTests: XCTestCase {
           try Data().write(to: repaired); for owner in owners { owner.writer.retry() }
           await opening.value; return
         }
-        let candidate = try XCTUnwrap(launch.model), writer = try XCTUnwrap(owners.last?.writer)
+        let candidate = try XCTUnwrap(owners.last?.model), writer = try XCTUnwrap(owners.last?.writer)
         XCTAssertFalse(launch.isChecking); XCTAssertTrue(candidate.runtimeStartupPending)
         XCTAssertGreaterThan(writer.pendingCount, 0)
         let id = try (creating ? requestedID : candidate.store.storedWorkspaceID())
         if creating {
           XCTAssertFalse(candidate === first); XCTAssertEqual(first.shutdownPhase, .running)
+          XCTAssertTrue(launch.model === first, "The original scene remains selected until the destination commits")
+          XCTAssertEqual(launch.selectedWorkspaceID, first.admittedWorkspaceID)
           XCTAssertEqual(try NotebookWorkspaceLibrary(originalRoot: root).catalog().selectedID, previousID)
           var other = NotebookCommand(command: .runtimeWorkspace)
           other.runtimeWorkspace = .init(action: .create, id: UUID(), name: "Cannot displace the accepted candidate")
@@ -135,18 +210,103 @@ final class NotebookArchiveLaunchTests: XCTestCase {
           catch let error as CollaborationError { XCTAssertEqual(error.code, "owner_unavailable") }
         }
         let constructions = owners.count
+        if retiringWhileBlocked {
+          let stopped = await launch.shutdown()
+          XCTAssertFalse(stopped)
+          XCTAssertGreaterThan(writer.pendingCount, 0)
+          XCTAssertEqual(owners.count, constructions)
+        }
         try Data().write(to: repaired)
         var retry = NotebookCommand(command: .runtimeWorkspace); retry.runtimeWorkspace = .init(action: .retry, id: id)
         let response = try await Task.detached { [retry] in
           try NotebookIPCClient(socketURL: socket).send(retry).decode(NotebookRuntimeWorkspaceResponse.self)
         }.value
         XCTAssertEqual(response.status.state, .ready); XCTAssertEqual(response.status.workspaceID, id)
-        XCTAssertNil(response.error); XCTAssertTrue(launch.model === candidate)
-        XCTAssertEqual(owners.count, constructions); XCTAssertFalse(candidate.runtimeStartupPending)
+        XCTAssertNil(response.error)
+        if retiringWhileBlocked {
+          XCTAssertFalse(launch.model === candidate)
+          XCTAssertEqual(candidate.shutdownPhase, .stopped)
+          XCTAssertEqual(owners.count, constructions + 1, "The terminal owner is replaced only after its original accepted queue drains")
+        } else {
+          XCTAssertTrue(launch.model === candidate)
+          XCTAssertEqual(owners.count, constructions)
+        }
+        XCTAssertFalse(candidate.runtimeStartupPending)
         XCTAssertEqual(writer.pendingCount, 0)
         XCTAssertEqual(try candidate.store.storedWorkspaceID(), id)
         if creating { XCTAssertEqual(try NotebookWorkspaceLibrary(originalRoot: root).catalog().selectedID, requestedID) }
       }
+    }
+
+    func testAutomaticOpeningRollsBackNewSourceWorkAndRetryCannotCreateASuccessor() async throws {
+      enum Fault: Error { case storageUnavailable }
+      let base = URL(fileURLWithPath: "/tmp/nb-auto-cut-" + UUID().uuidString.lowercased(), isDirectory: true)
+      try FileManager.default.createDirectory(at: base, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+      let root = base.appendingPathComponent("Notebook"), socket = base.appendingPathComponent("bridge.sock")
+      let repaired = base.appendingPathComponent("repaired"), library = NotebookWorkspaceLibrary(originalRoot: root)
+      let blocked = expectation(description: "The exact destination startup is retained after its storage fault")
+      var owners: [(model: NotebookAppModel, writer: NotebookPersistenceQueue)] = []
+      let launch = NotebookApplicationLaunch(root: root, runtimeSocketURL: socket) { store, _ in
+        let candidate = !owners.isEmpty
+        let admitted = NotebookStore(root: store.root, storageFault: { phase in
+          if candidate, phase == .afterCommit, !FileManager.default.fileExists(atPath: repaired.path) { throw Fault.storageUnavailable }
+        })
+        let writer = NotebookPersistenceQueue(store: admitted)
+        let key = String(UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased().prefix(24))
+        let model = NotebookAppModel(store: admitted, startsNearbySync: false,
+          commandSocketURL: base.appendingPathComponent(key + ".sock"), opensDefaultAccountWorkspace: !candidate,
+          persistenceQueue: writer)
+        let receive = writer.onFailureChange
+        writer.onFailureChange = { message in receive?(message); if message != nil { blocked.fulfill() } }
+        owners.append((model, writer)); return model
+      }
+      addTeardownBlock { @MainActor in
+        try Data().write(to: repaired)
+        for owner in owners { owner.writer.retry() }
+        _ = await launch.shutdown()
+        try FileManager.default.removeItem(at: base)
+      }
+      await launch.start()
+      let previous = try XCTUnwrap(launch.model)
+      await previous.start(pageSize: NotebookAppModel.defaultPageSize)
+      let sourceID = try XCTUnwrap(previous.admittedWorkspaceID), candidateID = UUID()
+      let destination = try library.prepare(candidateID)
+      _ = try NotebookStore(root: destination).initializeWorkspace(actor: UUID(), pageSize: NotebookAppModel.defaultPageSize)
+      _ = try library.select(candidateID, name: "Account destination")
+      _ = try library.select(sourceID, name: "Original source")
+      let returned = expectation(description: "Opening observer returns while the accepted startup survives")
+      let opening = Task { await launch.openWorkspace(candidateID, automatically: true); returned.fulfill() }
+      await fulfillment(of: [blocked, returned], timeout: 3)
+      guard owners.count == 2, owners.last?.writer.failure != nil else {
+        await opening.value
+        XCTFail("The scenario must retain its exact blocked destination before source input or Retry")
+        return
+      }
+      XCTAssertTrue(launch.model === previous)
+      XCTAssertEqual(previous.shutdownPhase, .running)
+      XCTAssertTrue(previous.permitsExternalWork && previous.inputGate.permitsNewContact)
+      XCTAssertFalse(previous.permitsBackgroundPreparation)
+      XCTAssertEqual(launch.selectedWorkspaceID, sourceID)
+      XCTAssertEqual(owners.count, 2)
+      let candidate = try XCTUnwrap(owners.last?.model)
+      XCTAssertTrue(candidate.runtimeStartupPending)
+      let accepted = try XCTUnwrap(previous.createNotebook(at: .zero))
+      let sourceSaved = await previous.finishPendingPersistence()
+      XCTAssertTrue(sourceSaved)
+      try Data().write(to: repaired)
+      var retry = NotebookCommand(command: .runtimeWorkspace)
+      retry.runtimeWorkspace = .init(action: .retry, id: candidateID)
+      _ = try await launch.executeRuntimeCommand(retry)
+      await opening.value
+      XCTAssertTrue(launch.model === previous)
+      XCTAssertEqual(launch.selectedWorkspaceID, sourceID)
+      XCTAssertEqual(try library.catalog().selectedID, sourceID)
+      XCTAssertEqual(owners.count, 2, "Retry resumes the retained attempt; newer source work cancels it without a replacement")
+      XCTAssertEqual(previous.shutdownPhase, .running)
+      XCTAssertTrue(previous.permitsExternalWork && previous.inputGate.permitsNewContact)
+      XCTAssertNotNil(try previous.store.readItemHeader(accepted))
+      XCTAssertEqual(candidate.shutdownPhase, .stopped)
+      XCTAssertFalse(launch.hasPendingWorkspaceRetirement)
     }
 
     func testRuntimeShutdownReturnsBlockedAndRetriesTheAcceptedIPCMutationBeforeRetiringItsOwner() async throws {

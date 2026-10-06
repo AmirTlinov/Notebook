@@ -7,7 +7,8 @@ import Testing
 @MainActor @Suite("Selection and historical message sources", .serialized)
 struct NotebookSelectionReadTests {
   func host(_ owner: NotebookSDKV2ReadTests.Owner) -> NotebookScriptCoordinator {
-    .init(command: { try await owner.read($0) }, persistence: { try await owner.persist($0) },
+    .init(command: { try await owner.read($0) }, reader: { try await owner.observe($0) },
+      persistence: { try await owner.persist($0) },
       workingDirectory: owner.store.root.appendingPathComponent("derived/script-runtime"))
   }
 

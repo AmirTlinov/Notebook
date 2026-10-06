@@ -1,0 +1,85 @@
+{
+  "slowest": [
+    {
+      "seconds": 2.235787034034729,
+      "target": "NotebookMacTests",
+      "test": "NotebookScriptServiceTests/testCancellationPreservesAnAlreadyAcceptedNativeCommit()"
+    },
+    {
+      "seconds": 2.2350529432296753,
+      "target": "NotebookMacTests",
+      "test": "NotebookItemPlacementTests/testDropChainsUseOneSavedSourceAndColdUndoRedoPerLift()"
+    },
+    {
+      "seconds": 2.1116539239883423,
+      "target": "NotebookMacTests",
+      "test": "NotebookArchiveLaunchTests/testRuntimeRetryDrainsRetainedAcceptedWritesBeforeReplacingWorkspaceOwners()"
+    },
+    {
+      "seconds": 1.5406990051269531,
+      "target": "NotebookMacTests",
+      "test": "NotebookArchiveLaunchTests/testRuntimeBootstrapAndCreateRetryKeepTheAcceptedOwnerAndWorkspaceAddress()"
+    },
+    {
+      "seconds": 1.3771640062332153,
+      "target": "NotebookMacTests",
+      "test": "NotebookArchiveLaunchTests/testRuntimeRetriesRetainedAcceptedWritesWithoutQuitOrWorkspaceSwitch()"
+    },
+    {
+      "seconds": 1.3717869520187378,
+      "target": "NotebookMacTests",
+      "test": "NotebookAccountWorkspaceTests/testJoinedPageVisionWorkerCannotAdmitAfterAutomaticCutAndSameOwnerResumesOnRollback()"
+    },
+    {
+      "seconds": 1.191696047782898,
+      "target": "NotebookMacTests",
+      "test": "NotebookAccountWorkspaceTests/testOpeningAccountSpaceWaitsForItsRealMaterialInsteadOfCreatingAnotherNotebook()"
+    },
+    {
+      "seconds": 1.133989930152893,
+      "target": "NotebookMacTests",
+      "test": "NotebookArchiveLaunchTests/testRuntimeShutdownReturnsBlockedAndRetriesTheAcceptedIPCMutationBeforeRetiringItsOwner()"
+    },
+    {
+      "seconds": 1.1229339838027954,
+      "target": "NotebookMacTests",
+      "test": "NotebookArchiveLaunchTests/testRuntimeCommandsCreateAndSelectThroughTheOwnerWithoutADesktopWindow()"
+    },
+    {
+      "seconds": 1.0804229974746704,
+      "target": "NotebookMacTests",
+      "test": "NotebookPersistenceAdmissionTests/testItemAndHistoryAdmissionRejectBeforeDraftDeletionOrSourceWork()"
+    },
+    {
+      "seconds": 1.0587639808654785,
+      "target": "NotebookMacTests",
+      "test": "NotebookArchiveLaunchTests/testRuntimeRetryCoalescesCodexAdmissionAfterDiscoveryFailure()"
+    },
+    {
+      "seconds": 0.8948619365692139,
+      "target": "NotebookMacTests",
+      "test": "NotebookArchiveLaunchTests/testAutomaticOpeningRollsBackNewSourceWorkAndRetryCannotCreateASuccessor()"
+    },
+    {
+      "seconds": 0.4862769842147827,
+      "target": "NotebookMacTests",
+      "test": "NotebookPersistenceAdmissionTests/testWorldContactAndEraserMetadataShareARealDecodeAndFinishBudget()"
+    },
+    {
+      "seconds": 0.3527339696884155,
+      "target": "NotebookMacTests",
+      "test": "NotebookScriptServiceTests/testAddressedObservationAndPageReadCrossTheRealSandboxedSDK()"
+    },
+    {
+      "seconds": 0.29616308212280273,
+      "target": "NotebookMacTests",
+      "test": "NotebookCodexSidecarTests/testRevocationBeforeAdmissionRejectsRunAndVoiceButDoesNotUndoAcceptedWork()"
+    }
+  ],
+  "targets": {
+    "NotebookMacTests": {
+      "seconds": 22.125081062316895,
+      "tests": 54
+    }
+  }
+}

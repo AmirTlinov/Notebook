@@ -1,0 +1,3991 @@
+{
+  "format": 1,
+  "scope": "all SwiftPM package, source and test inputs",
+  "files": [
+    {
+      "path": "Package.swift",
+      "sha256": "5b7aa5a6f78d2dc35b720b3e9288bafae2c21b229b5ae4c7eef1bcc0d2069373",
+      "executable": false
+    },
+    {
+      "path": "Sources/CNotebookTypesetter/gzip.c",
+      "sha256": "f5b088fac36f0ce83d82a627534ed826fb5ccfb4b0da9c0bdc4b84352f242210",
+      "executable": false
+    },
+    {
+      "path": "Sources/CNotebookTypesetter/include/NotebookTypesetter.h",
+      "sha256": "d0e59009c3b09bc33c17e8bebc02b770273dcd1ef65b3460ddd1b10391a39ca8",
+      "executable": false
+    },
+    {
+      "path": "Sources/CQuickJS/LICENSE",
+      "sha256": "598fd7fc928e4350abce36e337ba5a1346923c5c692f5be92c3d8e29ddd7c18d",
+      "executable": false
+    },
+    {
+      "path": "Sources/CQuickJS/UPSTREAM.md",
+      "sha256": "3f05e1ed1fa6fa5d125c977182763c76a3e008e6657ad9100bd78a32dcf3ee23",
+      "executable": false
+    },
+    {
+      "path": "Sources/CQuickJS/cutils.c",
+      "sha256": "b73a403a59da30726257ddbdf5e399298941c1def997782ee0d4d33f796a80a2",
+      "executable": false
+    },
+    {
+      "path": "Sources/CQuickJS/cutils.h",
+      "sha256": "d2da6d06a75b9e6c116c82b7a41df6bcc170c8b1779f374fa953ecf688eda647",
+      "executable": false
+    },
+    {
+      "path": "Sources/CQuickJS/dtoa.c",
+      "sha256": "af5abd68fa9806d1a19bdd5f2daef00d5fd0990ae56311382dfed4700343f074",
+      "executable": false
+    },
+    {
+      "path": "Sources/CQuickJS/dtoa.h",
+      "sha256": "462070f7678a894b9f3612422f280f4dce412eb360a5cc585a513f407fc23114",
+      "executable": false
+    },
+    {
+      "path": "Sources/CQuickJS/include/NotebookQuickJS.h",
+      "sha256": "30100b36e5300fc6838fd2be249b861c768c2616ca33e36596b5ae94b86d9c75",
+      "executable": false
+    },
+    {
+      "path": "Sources/CQuickJS/libregexp-opcode.h",
+      "sha256": "2a98d646089f3a72f25480116297c5fdb5b28fd9f815447273951f4ade4a115e",
+      "executable": false
+    },
+    {
+      "path": "Sources/CQuickJS/libregexp.c",
+      "sha256": "fdfcf86167029ab2c39c35730d4ae6875b7bbeb9406a0fcc886de4e9b1f5e2ac",
+      "executable": false
+    },
+    {
+      "path": "Sources/CQuickJS/libregexp.h",
+      "sha256": "f5c5ef1899f224dcc718422a22c789ef9d8b5b837b622818fcfaf681ae793446",
+      "executable": false
+    },
+    {
+      "path": "Sources/CQuickJS/libunicode-table.h",
+      "sha256": "cf782bc7a07549e976f606bd3cb8555858482b279574554dcb8d46412986006c",
+      "executable": false
+    },
+    {
+      "path": "Sources/CQuickJS/libunicode.c",
+      "sha256": "26203ae888c0582e7d0e2113f13db0c9b39dc7b0b3836d68fa308c54f7a0898c",
+      "executable": false
+    },
+    {
+      "path": "Sources/CQuickJS/libunicode.h",
+      "sha256": "ce310152bc80d7415dcb657e23abd9a40bf83e393c0d05d325dae384bb01d259",
+      "executable": false
+    },
+    {
+      "path": "Sources/CQuickJS/list.h",
+      "sha256": "181c6b25d9d0e4853315d36a6e6fab3b2c3554271693d898a439384ba0f67c2b",
+      "executable": false
+    },
+    {
+      "path": "Sources/CQuickJS/notebook-quickjs.c",
+      "sha256": "3f5aad4212ad804dd5b46dc2627b6248218472a88fdb224378c4dcec6d2e7ed1",
+      "executable": false
+    },
+    {
+      "path": "Sources/CQuickJS/quickjs-atom.h",
+      "sha256": "342194359417664e652f54e7d682ee2ef91dd982e91f74decbde992a2c848236",
+      "executable": false
+    },
+    {
+      "path": "Sources/CQuickJS/quickjs-opcode.h",
+      "sha256": "a9c60a8c9366820733d9d2acbb805f48b2e9e2778df526e6bcb845fdb6b47834",
+      "executable": false
+    },
+    {
+      "path": "Sources/CQuickJS/quickjs.c",
+      "sha256": "a00762d2eee42316cecbc9c15efc4549b715ec500461845cd91b2a6c38190d08",
+      "executable": false
+    },
+    {
+      "path": "Sources/CQuickJS/quickjs.h",
+      "sha256": "2165f47772af9faee1798999a599fa9de850d1bf0259502dade1c25d4a588316",
+      "executable": false
+    },
+    {
+      "path": "Sources/CSQLite/module.modulemap",
+      "sha256": "c121281d5395a9bb1c92e3110af7c157d34222dcde8fdd785ff5c427a62af902",
+      "executable": false
+    },
+    {
+      "path": "Sources/CSQLite/shim.h",
+      "sha256": "b052d8e561e942f97b503033ecd2eaa2b35213bdbf374983efe9e68eabdfc024",
+      "executable": false
+    },
+    {
+      "path": "Sources/CZlib/module.modulemap",
+      "sha256": "80a5aa1a428378f336bd0ecbb1691fe89cf5e834624bd9fa674b1f052b0a0420",
+      "executable": false
+    },
+    {
+      "path": "Sources/CZlib/shim.h",
+      "sha256": "80324eed37fb3c06611102a5ed598bb3d60aa818eeb6f848068e359677a07ea7",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookAcceptance/main.swift",
+      "sha256": "a3816bde6063b6c9990dec37dea533c77fdf287a5b420aeba42c0b245f9e9ff3",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookArchiveTransfer/ArchiveComputerPreparation.swift",
+      "sha256": "49131be4c0d49e4d995037a3268a294d378cc36a4521af8659de8a1a23ab7ab5",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookArchiveTransfer/ArchiveConsolidation.swift",
+      "sha256": "bac716f8e5472c354d1d23a14718fb98d7911298f57c843d2b61766ad68da77f",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookArchiveTransfer/ArchivePairPreparation.swift",
+      "sha256": "a4d9e93469d65bda43bc34a902b8b5999d470d007dce6fd8bd9f3bb5487d6de8",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookArchiveTransfer/ArchiveRecordProof.swift",
+      "sha256": "9d3988a9b9a74a6d91e82170039f5346f13df8cdb79709627911ab6b71269cee",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookArchiveTransfer/ArchiveTransfer.swift",
+      "sha256": "95e5aa0a48543d1218d323387b04ac5eabf57fe9573f227cbd99011908056e1f",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookArchiveTransfer/LegacyArchive.swift",
+      "sha256": "a8eda03d48f73305c8d1e58cec13555b734d717e8ed1c4f444ee9debffe29b10",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookArchiveTransfer/LegacyDocumentAndBoard.swift",
+      "sha256": "1b9dd77d96d26fc8e9a8e0653f45c8831f6bbfffc083f4760c7ff31c53e8c26c",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookArchiveTransfer/TransferCommand.swift",
+      "sha256": "199687665bd4aea0ac0f86178a23c82f63f4515c6c6a40c051f57415e4752622",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookBridge/main.swift",
+      "sha256": "21fe7cfa7de4bfa4a939bad12e30e4be4cd5d732394f74e0b785954d7c8cfd1c",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCodex/CodexAccess.swift",
+      "sha256": "b01a45adf60261c795fd9d598f72e9748388263ff16c4b8a9d4d4a15f23d4ba5",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCodex/CodexAccount.swift",
+      "sha256": "7b5ffd34a2033fca2d204e781e74645e5a58e2f2713cbcc4d293916661c2447a",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCodex/CodexAppServer.swift",
+      "sha256": "293e968dc64cf786a823a8c6aede365f2fb3ec34781527ce8b725cbdc36b02a0",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCodex/CodexAppServerState.swift",
+      "sha256": "13255d9fbc0972433332a8f42d0a0da697976f06d11cf45b65237b3e53297023",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCodex/CodexCatalogue.swift",
+      "sha256": "1eb08edadb6cc9def0a44bdd05e68ca77cf695ad2a5d8df290e82287edb5403e",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCodex/CodexChannel.swift",
+      "sha256": "e45f16acf0e973e848942427faf240c19c7fdb29070622b868c06b02437c40cf",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCodex/CodexComposer.swift",
+      "sha256": "bb873fe4e8b98cf46f6d50f3dbb907a3c2ecf9aa982b4bc87b40db037d899fc4",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCodex/CodexDictation.swift",
+      "sha256": "ff403ee94d92d4458baae86bca5896005f08ec79fd6196bcaf95d5d4fd40f217",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCodex/CodexInstallation.swift",
+      "sha256": "283b4a673f32723ee738f43e2eae837704b98786a6489f895d5149f3340fd078",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCodex/CodexProcessOutput.swift",
+      "sha256": "27ccf283ddaf76aa6ffdc0b49735cdb6ab7ee96d5c120c8fa03f35518830738b",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCodex/CodexProtocol.swift",
+      "sha256": "db422464c980e7eaf317b1a0e60a2661df7582b7dffb3c9d19d023e41f5c7c70",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCodex/CodexRPC.swift",
+      "sha256": "c38e75a9379372f7c8e36695eb1059b9f5f9c4a91f7f63b8b59e5069edc73a94",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCodex/CodexRuntimeScope.swift",
+      "sha256": "7144d53d0e45043c2068c33f1cbdf992bb66a486008f94117ab62371c96c0684",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCodex/CodexToolPolicy.swift",
+      "sha256": "6ad4b85477c5f119193af9ff197ef39b50470a0173954bdc22ebe5b3327b3b87",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCodex/CodexUserMessageDisplay.swift",
+      "sha256": "8e05395201976324283d4c64fda2f046f8178558d1839a3cdbd771742962b6f6",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/AddressedReplication.swift",
+      "sha256": "4fe1c48e699ef9fdfa4483e418b8eb59a1a4a50148611db5f9e35f153da28576",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/AgentArchive.swift",
+      "sha256": "d567bc0a16d26b9190cfb9127f189f90868b000a144edfc58ec003bf1bc1c9aa",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/AgentPinnedImage.swift",
+      "sha256": "ed4ab704376207ed19e5159f450c1cc6da4a1b504cf7d91b7d38c84958b8f695",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/AgentPinnedSource.swift",
+      "sha256": "2936ce1f832f158b7883da7583bb1419b243d73cec6fd3900d68d26c99a04a0f",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/AgentRequest.swift",
+      "sha256": "f19237dc22755ff19e2cbfb027e62037ceaf36e7ff883eff56bfe455677e28de",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/BoardElementLookup.swift",
+      "sha256": "2616628152953d2ee9dc3ec509e16a625d2bca748ecacc87171f914ac36801ca",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/BoardHierarchy.swift",
+      "sha256": "85df64825f0e19c1c290a18c35182c95437784822a9e2b1299b47b350cb0e3d4",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/BoardPortalProjection.swift",
+      "sha256": "a442ea441a776b7406bc033baa5796d7137d7f7f1b61b76a876a511bac8b7fba",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/BoardReplication.swift",
+      "sha256": "70db471cb1995d26c2cceffc6ed984632336ab139f151aea8c20772922520d2c",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/CodexAccess.swift",
+      "sha256": "0644080c6e8a001d6fee5a3cfb7bffc5d4a0e4245b4d639a01301eff0f19e878",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/CodexAccount.swift",
+      "sha256": "e6ef66fc22c86bc085ce6968665c6e8a9c40413520e64db92f09a35e6afdf4d4",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/CodexComposer.swift",
+      "sha256": "428064081c97d8ca63d41c4d72cb1b83f0f3e38cd681997c949eeae8ad8cc11b",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/CodexMessageTransfer.swift",
+      "sha256": "0d650caa1d2513928086e41bea3e19965a777ae22f647896dbc442ae70f02655",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/CodexReadProjection.swift",
+      "sha256": "18b2a798c427563dd6ffc28dcc8f91429ed7e18826bb97ab59bb11093b2b6bde",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/Collaboration.swift",
+      "sha256": "7a29cac856f5622940fab1d94e19444b433f44edaecf58c55634c8f70f52cd24",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/CollaborationContent.swift",
+      "sha256": "cbb7ae581deebe785595d23559a5081d65b4a65d311a66e6821a1f28818fa8ad",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/CollaborationInkStroke.swift",
+      "sha256": "1d44ca49b732bb1633a1b9087050d634c1a3fd7e50d59a47b9f55c58ebdd1a32",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/CollaborationPlacement.swift",
+      "sha256": "44fa6590575778656e97f75f05cf7055b1af2504c8af1822cb4eda2359f3c77c",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/CollaborationReadSnapshot.swift",
+      "sha256": "0f216fb0c3225d0b7255e092a4a637d41184de8f64f76577da6e63d781e12393",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/CollaborationResults.swift",
+      "sha256": "fa06bd5b680853bdbff20c47a91b26cb07b81a34cfec2e1de4408416bdc972b6",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/CollaborationRuntime.swift",
+      "sha256": "3bc480badb0662bb83260a267156fe80b1c1652c40393de50a61eb41b3b4dac0",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/CollaborationStore.swift",
+      "sha256": "8ae0b1d78b7004b3aac5645b7cfe42f60218d37b6d2afe39ceea71f227b691e6",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/CollaborativeContent.swift",
+      "sha256": "cdf493ffac3f5dd9479577b84404d25262165f3cde06d70bcaac8072ecd11dfb",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/CompositionScope.swift",
+      "sha256": "9988e197fce2e17a7b350ea6effa5c4b7b65735341471c675e748841cd087e15",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/CompositionTile.swift",
+      "sha256": "7842ed81cf5624621139c48cc319b0e98180052f961df5c16847ba21916612a1",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/CurrentViewReceipt.swift",
+      "sha256": "89725645a4c082788a24cc1cdf45d19ac52201092c2dca24147865430b0f7235",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/DocumentDocument.swift",
+      "sha256": "8cde43cbb1a1513b0172734ef4fd38aeb0c6fa1fe88d212d1db9ba62bb916757",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/DocumentEditingSession.swift",
+      "sha256": "0b8696f433825b7b11f59c6ef80f4376ae731e8f5ba493af9cc743f62af446e0",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/DocumentPrintDependencies.swift",
+      "sha256": "f1714ae4a14ff57e8a88956d74e33a5ee30c0f5a9b16164ac0123cc1d8617775",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/DocumentPrintGeometry.swift",
+      "sha256": "f5a4e84f0003e0a44adedfd6df5b1effb3c94ad16feb029f0543171e1581e0bd",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/DocumentPrintLocations.swift",
+      "sha256": "e2d899c8727aff519d591e6a4ac2d064433fed47319c37afa4db6c17259fd259",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/DocumentPrintSourceMap.swift",
+      "sha256": "9a7fcc7a9be1d32cec5d49a4c4bf6d93a4d2d7826da72f5725eadf06f4b4000e",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/DocumentProgramSource.swift",
+      "sha256": "0b201e1cb7cd7d0e9f694f0e47c130e2a0f9ed8d20649bca77770d4b26030e05",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/DocumentReadingPosition.swift",
+      "sha256": "749eb7124f5d45f0e63c32a5052b0db88b16cbce13980484cb42fa68644f8c22",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/DocumentSourceDelivery.swift",
+      "sha256": "74cf83d01e981ee25b5d57f973835575794e3d9015d280ac66394b66b03122a2",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/DocumentSourceReplication.swift",
+      "sha256": "52c149cdfcf37dd0d0901a8224912ec704dd5e23234521287b82470ab6f04ca6",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/DocumentStateReplication.swift",
+      "sha256": "1e3267dec67a4a354585a9dfb8c1b9e2dd8892363d79dcfaba1f85a7a457d846",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/DocumentStructure.swift",
+      "sha256": "263c120bb07938055f84dd7e38d8b663bf2d77f633a82fb85073bcd0242654d3",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/DocumentTemplate.swift",
+      "sha256": "daff24d967978429080130ac15cff8bdc96e59286cf203b6e1958d48661e1c3a",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/InkActionMap.swift",
+      "sha256": "10588f40c3380fd00c80cbc09cf116bd893627ba41192ec98f48575ea27d0458",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/InkAffine.swift",
+      "sha256": "64c4af9b0f778368059b20e016e8c6ee6da16ea5d337c7a14a7f95cdad6a40cf",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/InkBoundsIndex.swift",
+      "sha256": "b035fdf167b04c2815e8f6d16dffa70589a652430c4a6e4910984620874be5db",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/InkDisplayNormalization.swift",
+      "sha256": "ceb9fc20805e0c0f1414f15a1fc8c11223d7bfd3e29fae3d990f96ba5bbb9054",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/InkElementContact.swift",
+      "sha256": "fbd3ac7c306c0bbf1670670a85eae2996b07e719c99bd7b6216a5fe07c666890",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/InkElementErasureMap.swift",
+      "sha256": "9980a2256023bf922b7dc7947b2bb312352bfd4481624b05149389541427ea94",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/InkElementTarget.swift",
+      "sha256": "4dfe44806d6f23a893d73cae8e34aacc9fc3bf652dd09eff9e5b90fa38def011",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/InkExactRelation.swift",
+      "sha256": "09d072ddde5cabd5cf1244a68218b1a329ec82845169d73dfda15404576e4c56",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/InkMeasurements.swift",
+      "sha256": "f49f5c13bb2609470bb21cd40d41defe01cf6500dfa59a80a562644b2b6506ad",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/InkMeasurementsPrefix.swift",
+      "sha256": "92e0e9461bb2c14645f532dbb0f21819743f601e28032d54b508161b51effdae",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/InkRelationCodec.swift",
+      "sha256": "c982b18dfddad8726c40060c4cfe8f1a41807a7c7b357e20c7efbcdc36b54e3b",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/InkRelationSequence.swift",
+      "sha256": "607ef2b2e46a5addb90a21e1ef53d048c58132195fb2532eee5484603ac1e728",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/InkRenderBounds.swift",
+      "sha256": "721bd3c6f323963a0b9251ccecbae7d3fc2bcee89885fcc8d3b78df66cc95db4",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/InkSampleRelations.swift",
+      "sha256": "6e692b88006a14f35aa9d5090fa67afb7f0a6fac53cadc807b311f1e9ef41c95",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/JSONValue.swift",
+      "sha256": "f20f84c3c2f01ab015896ef351afa0828e58dc2396e8c44a06d9bc86ba35854a",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NativeTextFormat.swift",
+      "sha256": "86b2aeaf4ace8b5884aa22ec7d91446785cf5ecc9b66c988f131b9da24617b2a",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookAcceptedWrite.swift",
+      "sha256": "5cffa8f1ef3b0aa80d61f133384a995d78825adea0aeafab83e32a6db98a828f",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookAccountDirectory.swift",
+      "sha256": "821111eb875dd6a067b1e0524b27b66f47acf779371a4d9b0f4f4ab08e8c67f2",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookAcousticUtterance.swift",
+      "sha256": "c6bc8c30c71e08afd47e3d283c75c291857bb046521f59ce66b1da5cf38f078c",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookActionDelivery.swift",
+      "sha256": "ed29347437be9a850c6e9bb725e46f7b00256489c0891cc36386abfa7817136b",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookActionDetails.swift",
+      "sha256": "c4b727628008a285fb72d1c06d4b8f8b148542f094c624c4ab33378544a40031",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookActionInverseDependencies.swift",
+      "sha256": "92eba5768ee4712772052a7afc138e0a97875c7e8b6e92b145c6b5bcb31a41d6",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookActionInverseStore.swift",
+      "sha256": "c0ac1837fdfe3bca0f6488b967f779d5687f03a021e737730fe96d21d4b22621",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookActionProjection.swift",
+      "sha256": "17efa9e1245d6c29debdea746bbfbb443cada18123e0e1a932f8fea3bf9ae11c",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookActionReadModel.swift",
+      "sha256": "431122e2c0761b9680000872af8b343e376df448e9bb6b3d287a99b0362633c8",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookActionRecordCapture.swift",
+      "sha256": "5f7ac0db27c4205bdbd5e0fd84b9e04931e041baa2110b88cbcf5be29d3185da",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookActionResult.swift",
+      "sha256": "9434f430c169d0f57ac9a6860533503c45f70d40898c4903f40806d37faddabe",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookActionSubmission.swift",
+      "sha256": "38f836d27fb551a1f5c16970cccc3d407f45d57c20a2f5a5efc1bee3822b3929",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookAddressedRead.swift",
+      "sha256": "535066eb9addcfb5f24f48e130bf394a75db504db82e85491498d2f2113aed89",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookAgentArchive.swift",
+      "sha256": "83489111017037db59a2c425a5f0d7ab7a761d0f6b575cc688e1644c2156f12f",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookAgentFeedbackChange.swift",
+      "sha256": "d9366a5e49f4b9b4d6a241acd65b5cbfdfe6d6bb745ed485826d55c06d398886",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookAppendedPageUndo.swift",
+      "sha256": "aa9faf0402aafd0886ae99287d5bc83bda3a1871bdedaf2b7268bda588e2166c",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookArchiveActivation.swift",
+      "sha256": "b3827aa79728198723199a52262c7d97007b873361400d6941f098cc73e6cc0d",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookArchiveEnrollment.swift",
+      "sha256": "db54ec8a9e364bb8b0cd301999fae15228535fed40904f47175bb7e85ec4b749",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookArchiveFiles.swift",
+      "sha256": "9040f09a7d64abaa51fef898d5b1b89724c7c4d88836b425f06e03f44bc054ae",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookArchiveSnapshot.swift",
+      "sha256": "5366fc3067e8b99ff5145a851f467817192bde129a9ca3bfcb480d4b7819476a",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookAttentionEvidence.swift",
+      "sha256": "0d59cba34a4e5c75dac3c85b485bb3f1862fbac6d3a4ccb9f236c49d8e925f6b",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookBirthReservation.swift",
+      "sha256": "446fc36ecdd47ba4de24e4e1d36f26c8662dd0667cc6950588f3fe0e6821bf23",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookBoardFrontier.swift",
+      "sha256": "f4d5a258cf0fd1eaf3b83ee01e6ccc0fc83c6edff57760d34eed200bdb5c7954",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookBoardPlacementMigration.swift",
+      "sha256": "34ab6e3374339bcb721e27f17b43d159bc22dfa618798146d22985858921ed68",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookChat.swift",
+      "sha256": "b78a22cc490c2db8be01bec1a500e08a71377c9ffce78b5843b79e2cffccf93f",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookChatImages.swift",
+      "sha256": "6d24dfb0c692c69e1f34270ee2d40ef8e605811596ce63793de4b0c2604dd146",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookChatReadPosition.swift",
+      "sha256": "91abf2f4ee6f965c9918ddf971bcac7c90bc113e7dfcd4b2500ac9bf914e9f48",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookChatStore.swift",
+      "sha256": "1b3a3a0abecc34e89ab2617ecf577e9f857338af8c8ee1884cf5bbb559d12edb",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookCheckpoint.swift",
+      "sha256": "54e1d25580232b64ae78c473b7681812d970e00502c59d7e9b0d40e74690fbdf",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookCloudSnapshot.swift",
+      "sha256": "b239b84956c1248aa28397f90bf7b3cd50331f8e43a149a0fa4899840a15875d",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookCloudStorage.swift",
+      "sha256": "ce194252866801d5f9c0712cc4809aeb02e20df3672f52341a47ec06eea0f9f6",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookCloudUploadPlan.swift",
+      "sha256": "ee31feb50543f4265960d026f9e27be91387117f958a6e3309c2e8dab1f97f9b",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookCodeFragment.swift",
+      "sha256": "f701709124591222065aca36e1507d51fd6726405b4cddc945d8bd594c31cb69",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookCodeLink.swift",
+      "sha256": "e801e08ef01d233a7906ea17fc46f1643f401022feb312f8cef2b6d933e58f8a",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookCodeStore.swift",
+      "sha256": "1c4c32cd184408f4ce4a63910107e620ebcb631b2d56b1947267eaebaef9d333",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookCommandDispatcher.swift",
+      "sha256": "37a2a493acc87645656919d385907248b873f5d1d892dcd3aee3a2a43d040cb2",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookCommandRead.swift",
+      "sha256": "1c5d5d26e43e1f595c2b84cce72567212feb62d3ff75f2dff7a166b784f14fdc",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookComputation.swift",
+      "sha256": "deb3d6207272e52a150a9f51d69222f268a67a6c311510abc6077ad46b8cf4fa",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookComputationStore.swift",
+      "sha256": "3647f92a63db5b7c0bdcb73228e245c41c3b39661061b636d8a090b599d7d721",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookComputerStore.swift",
+      "sha256": "ee2313885c9892b4c092db9dcb286706d5702ddc821fb46803a34ade11c9570c",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookContentRead.swift",
+      "sha256": "24f157963d482575006cb2dbce178278da8dc8ff788df5150c3341dfe05f14ee",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookDeletedItemRestoration.swift",
+      "sha256": "282cedc9b5165e908e903da20f6866f67123b949f3dd7003721deb1f9a0af811",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookDictation.swift",
+      "sha256": "87d859101f611dfb312e3f3bd565548f59d3e27cff84ee26b10a3f3b7768f68c",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookDocumentFileRead.swift",
+      "sha256": "6bdbc1d722e38f6f96fe1a63d1a6cbb1018fbf93cfe13f0008e9a793134afe26",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookDocumentFormatMigration.swift",
+      "sha256": "4b0dec13911e87cf69dd35ffd623323e08a38a111ddda0e7484da6552734ff8d",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookDocumentImportRequest.swift",
+      "sha256": "bac25271983dbd30f68faf68aa7c5211c6da8affe629b545427fb301ed83180c",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookDocumentProgramRead.swift",
+      "sha256": "437ee2a3cc10f30a88c4518087068e688bf4c1bcbf9c3080685180025670fd2a",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookDocumentResourceTransfer.swift",
+      "sha256": "bdd0d457920d5466f5295f73c54b51e03d0d7c891c9b709ca6dc645f2617b165",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookDocumentStateCommand.swift",
+      "sha256": "0bc5bc02ffaa504a9651ad8ce1977102874ab9ae7a811de7ce44f723a133f358",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookDocumentZIP.swift",
+      "sha256": "721c6b0199f99786587ecd30b06397f35ce0893639f460d2e6f95c8d88c21860",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookElementAppearance.swift",
+      "sha256": "d3fc99ed7ba5693df5ee0dfd583ab91bae8052c307a80776f4b28a2cb22ddcf5",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookElementBasis.swift",
+      "sha256": "f68fc5665850c6824690cee7d230f1f647d27a1de8de94730683619e748b7221",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookElementErasureRead.swift",
+      "sha256": "18ee2e85cdc7e81e31431a9ed5d3927c8e36f162d7fc9fc7116b166756605731",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookElementGroupIndex.swift",
+      "sha256": "777c42e3af637ba5c43012a80e58caee2116c6f80717b11475db70d71dcf91e6",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookElementGrouping.swift",
+      "sha256": "9a1cdb83df3bd1fe2f259e507608a07771a0b9ee0a652754878ccaf6e6ec8ac8",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookElementPresentation.swift",
+      "sha256": "47faf4f7d73943c83cd1718ef8abae3313330f5808e9f609aa7c6e2f0ced8ee8",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookElementTransfer.swift",
+      "sha256": "5916b85c6a0ae2ecd423ab1981159c99954ccf62429a78a8cf2897259b454876",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookExportCutRead.swift",
+      "sha256": "58c7877a002da937d0901c58d763a02f78790f2b2ba727768d7e7c15f4300a46",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookExportFiles.swift",
+      "sha256": "62fde4068e9606e3a7c8d33d8e8c82385eccfc6298eefd2e7840baf860e21238",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookExportSVG.swift",
+      "sha256": "4afc2a675e1631e32a8994b48aeb88aedcef32573939f969f171b276f702beae",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookFieldRestoration.swift",
+      "sha256": "7dc758f7fece929ce665c5bd77a7cd68b2f514e03dc01c9f2f4a7a3b2fc2019f",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookFileStore.swift",
+      "sha256": "a9375657b9800cb137d73b28b40f6096ebaa8809a3473ae51d3d2a210269d661",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookFreehand.swift",
+      "sha256": "03544ecaad0725ad7801d2f8e954498821651650a16f10e9943d53fd4721b1b4",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookFreehandGeometry.swift",
+      "sha256": "e133cd81108285a7ce26e39ae4c539815f39ffa5d0091ad46f88777ecef26599",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookGraphic.swift",
+      "sha256": "2f6ef49aafeb983e92142e0863e4327e52880e7f39d467bf20317ceaf37c5dc7",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookGraphicCommand.swift",
+      "sha256": "2afd2b73b6d61703b0bf488406ae6163c188bc3a8e220351747b5812e9ff96d9",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookGraphicConnection.swift",
+      "sha256": "172fe8349eb1c7b27f9470566993df38af3869ab1d51322d2b52e6ad768ad415",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookGraphicContact.swift",
+      "sha256": "35377c8344b05247d7297e0e20cd83a6f989c3919d3c5caef9586eaea1d13923",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookGraphicCorners.swift",
+      "sha256": "b2b0044b5856b2b2bb13eeafbc6bb6cb48fd1094e2bacccf3aca163298f98234",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookGraphicGraphRead.swift",
+      "sha256": "13687fc7eed0c2aafc50e0c937c5db1bbe9fe9b588398d8b70e52210364507d2",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookGraphicIndex.swift",
+      "sha256": "23cc1d1edfde297b076eb5afb01954581ba7380e84cbdcc5ce5faf0754e3fb64",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookGraphicRead.swift",
+      "sha256": "8f5a35458e3af67dea800bd170331fd78d6562c8d43e602663bd7c66f062fa03",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookGraphicSelection.swift",
+      "sha256": "9b3f6616e38b0b0d512bd9c252e22d047f4c417129d5ad7afb466a8e8658167b",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookGraphicVisibility.swift",
+      "sha256": "46f18b8203aedba604c3e2c94a549faacbc34349a9a03dc0d1634dc4965c2b71",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookHexEncoding.swift",
+      "sha256": "17944b27f8a2c963c94fb6c086c257025794b0f3016828616e5d671bb935cca5",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookIPC.swift",
+      "sha256": "6dd3ad19b5e9096ba56e79a40ba76745fab412555a7746b7c4da372b8df273d5",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookIPCArtifacts.swift",
+      "sha256": "f1a062d5a63ab86556e661ffb92ae25919dd86b77eb611953756d7ad207455cc",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookIPCProcessLease.swift",
+      "sha256": "d2564d24d0a79a2188efe6c827901b4843b7178308f157738eabdd36799a4539",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookInkBodies.swift",
+      "sha256": "97d01fc74da0edc43af8821afb78b99c67a146065668b4347b4150265e4407e3",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookInkPaintKey.swift",
+      "sha256": "5d62468b4e0136d06a5b3909d681701aeb18ad13a0793372350bcb7b16f52324",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookInkReadProjection.swift",
+      "sha256": "b903f03e9a274f0753ab2b61f3207a23ff126c06e73d1e164ec2c31ac3f7d4f0",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookInkReadSet.swift",
+      "sha256": "f3f9ad6007c03b9092ffe4369db0a8302ce35a884d5fd6df0af0c0159caad072",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookInkRelationMigration.swift",
+      "sha256": "d0a27edcd704bfa04a543f8321e142421b148c4f5130022644d4c2c1fa3d900c",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookInputActivity.swift",
+      "sha256": "fef1ca368a044c96887d114453db3e3c902fa5b114fa85686ace2226e0606999",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookItemLifecycle.swift",
+      "sha256": "086b1f6de700b0c25bcf641f38d175c42499bc8a2e917817fa04dc5734dda563",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookJSONAdmission.swift",
+      "sha256": "a18de464e03ab436b9661cfbadd4d55293f6c528f03fdb0c95decacc9bfb1d1e",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookLifecycleAction.swift",
+      "sha256": "d8b1a8a1c1c97772121d296dee80f20390e5ba14b11b20b29083b47e3bc7a3c8",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookNativeCommand.swift",
+      "sha256": "ab7a55ff7de347330cfed1ae2dabcaa4ff3aded09c3ad60b98c8121955f24873",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookNativeElementCommand.swift",
+      "sha256": "b937ac9895523332fc528cfe868b7f4f391fac630fd06a6f6c1ab3433a74de05",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookNativeHistory.swift",
+      "sha256": "0b56e4f430c548bc7cd38a78785963926060bfd43acaf4b3ed4dddb408d2ac48",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookNativeItemDeletion.swift",
+      "sha256": "bdbdc8fe6097d60ebed9daf7995ca4a442c234b56084c9a45d4a1d0bf06bedc4",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookNativePlacementCommand.swift",
+      "sha256": "09e5ba546199ad339827e1990638c9c305cf4d0834e0faaa7f23a30bcec71879",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookNativeWriteAllowance.swift",
+      "sha256": "8dd671152c08e65a0659f99c402de85814de5dbb281e82b7cd7b6db8e5de4be5",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookObservation.swift",
+      "sha256": "8795e68ede656e9ab7fa6eb206e073124c538b7a102be50daa9c541e5ad943a8",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookObservationIndex.swift",
+      "sha256": "3f19a65b7a58a13dc22f305f27fada1f07d01d22a7fcc0099e7996a71066dcfc",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookOwnershipValidation.swift",
+      "sha256": "798c9f117291bf6c8c1d49f5f6c8a11f168c4f77b7269126388bbab69af746f3",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookPageInkOrder.swift",
+      "sha256": "0771a02e0321f4b0f5bf769c49c6b8066eb5e110f034b0824402fe48c7332afb",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookPageInkPersistence.swift",
+      "sha256": "8394c623afba3a008b4d5c0500182b64e1be12c19204e0d5d665e7a035052c99",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookPageInkRead.swift",
+      "sha256": "5880ef843c18947808b9011895a489a6b14b45a0569f31b66c29fa6f3ad148d2",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookPageOrder.swift",
+      "sha256": "501f9388fc7fa237517f2df13157749796cab26134054936cdbaea9c116cd479",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookPageOrderStore.swift",
+      "sha256": "fc9cc80dc95507c977943bdfe617469534332e0e3d89d3329a6b80f6ac8cc323",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookPageOrderVector.swift",
+      "sha256": "d2905d49dc5d77f1e2b650dd1edc7291280e3f14d88c36fec6c1b40fcab16d73",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookPageWindow.swift",
+      "sha256": "2e0ae9bd85b8038a23df47826debf2d8dd67c49ad419b9cf709a101c23e5b325",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookPanel.swift",
+      "sha256": "b1a945bc41a915215a7ea69bfbd0775389bcf22950d2b2439009694655a6a07b",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookPasteFragment.swift",
+      "sha256": "99656272b2d6e65667f4dca33cf996f5f5ad41627d01e851397ebee26daa2daf",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookPendingChanges.swift",
+      "sha256": "b91d9caeb7844ffc746177423a5940aeed89475c1406819e1e412f20b8651967",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookPendingOwners.swift",
+      "sha256": "64c9f89667c79638df21a5f87e4cd0b2a5b90acd4b006330bc6a4d73fad69338",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookPlacementAction.swift",
+      "sha256": "d10d3831a2849ad978e006c57030cad4f22b29c3bb1a161826e83c80f9263552",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookPlacementRead.swift",
+      "sha256": "d222ea12e49eb076f4b087a36241bfce8c0d81a35caac71f646864d649cccded",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookPortableDocument.swift",
+      "sha256": "72166cc78eed66f6940b3ecaf8a651038cb95873306df11d730ff2f2c77af387",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookPresentation.swift",
+      "sha256": "5ddd32930e4d1e583eeed9d1558d6789aeaf0f776e8e8898b79d423d1cf8f04e",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookProgramDependencies.swift",
+      "sha256": "b6f59a163432e0b5b86d98e19e478d92c93ca511cb67421a5f199554c351761e",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookProgramImport.swift",
+      "sha256": "c4587bf39d3b1fd576a95c16ed8de584b3a8d66b1ca39c737b7ed5442801ecab",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookProgramPackage.swift",
+      "sha256": "a3a4f9461c4b0afaa147bc047a21567de51f7bc4cfbfa4e5d40c6eb44dc558ed",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookProgramStateRead.swift",
+      "sha256": "8c1bbfb4c0b93847eab7d263a58ba476e819663ba13d9641cd4ed12a342cc558",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookProgramTransfer.swift",
+      "sha256": "5510fc336f73af397455c7cc461fe9c7589507c86480a746332ce6227c8c77ca",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookProjectFile.swift",
+      "sha256": "ea9bc473ff0e5572d30df841e5426efc10f2c3153d643cfef5ffaff63f5161da",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookProjectRun.swift",
+      "sha256": "e40c39d903ef6ce347ab8b732c242a20f5f86b6ac15d9d3e8e52a34d3ac72e16",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookQueryCut.swift",
+      "sha256": "63a537db691f3563f9561acdfb34790374b712af9a1a3e84f4f01e996ca186de",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookQuickShape.swift",
+      "sha256": "d74b51ed04e514d7f4a5fe9290ef7e15be5e0bdaa527f55237becef7311a1ced",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookReadBasis.swift",
+      "sha256": "3a87f051b0429830eaa9117b0a6144c204f2f1ff6d36c5402b6ba60d13bb0955",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookReadCoverage.swift",
+      "sha256": "476763eed17f142e67345721ca59fbda1341f4226a31d3a4b469ad49e70a102f",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookReadSession.swift",
+      "sha256": "851ddd4f4d83cba7ff5380c32b11b2ae26662f95f9fd87a054f0fcfb1812451f",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookReadSnapshot.swift",
+      "sha256": "b708445b69696f332738a2d04490943e2d12b82f119cd6516902f122505681fd",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookReferenceIndex.swift",
+      "sha256": "e0ff6040261907229e9b472cae73689a6033fdf6a7136b393817afe0d14c23af",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookReferenceLocation.swift",
+      "sha256": "193ad8c09eca96f4222e4727a57cfce5bb228063ae14306416d091f9b6d554b1",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookRelay.swift",
+      "sha256": "c7e2f1d31cdc46c74c1f2d608128af669f976be437fdefb3fa61d453b6882338",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookReplicationDelivery.swift",
+      "sha256": "bc1c73adf10cbd8d397465491db7739fe279858f4dd9525c086f1b65855763fd",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookReplicationRetirement.swift",
+      "sha256": "e29cb853f217c7eac9a447b84e366d9dfbdd55d94c3fb3b5ffb9cda870830d4e",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookReplicationStore.swift",
+      "sha256": "6fc12e275c00552798bc523d336516e6ac6a40f00242342d29be8cb0aafa23b7",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookRetiredBoardSource.swift",
+      "sha256": "bef73e8706d42650b2c5d7f3e9f117c8f0e4e41fc4b07e99a654ded836101180",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookRetiredDocumentSource.swift",
+      "sha256": "5d4405dd3e734cd05bce7f7025c2a8c179565fd556a2b617a84b80d06bfcefb5",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookRetiredPageSource.swift",
+      "sha256": "c2b9e37d6ca63268dab4f61d8ddaf5f095fbe79c682376d7d4a1d1c36d705810",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookRunStore.swift",
+      "sha256": "1a1cd931591a7ac49f388da54b3ca7fe19b6925b98a3a0708d853bc74c5cc8f1",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookRuntimeProtocol.swift",
+      "sha256": "7f240a79dde60745bd9e429c0c64077ceff4adf9e29f9a0d43fcdaf6db720e3c",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookSQLExecution.swift",
+      "sha256": "00afcf06224cb5b5dd958a89c8845762da3e1636ade84403018ad27feb302dc7",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookSQLite.swift",
+      "sha256": "02405f2cd1b95e2be67ce881580cfb26c1e5f787f8d65620e82b18cd96bd984d",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookSceneReadDependencies.swift",
+      "sha256": "47b290f7cfcb96816a800b4e47196f502af1637e3467e638ae9d095f390f8db2",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookScopedCommand.swift",
+      "sha256": "7b06730f4b4b8e24097e6ce70ca039724a93b668c4f39b2ce0762c7ec56d0e1a",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookScriptEffectOutcome.swift",
+      "sha256": "f66d8718f99eeae7bb7e7c69afb0386576af77a4ef18425892984cb8e887f832",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookScriptRun.swift",
+      "sha256": "85c11024a3f9916a27cae39b2f95a6bc1a889b7739b28aad2edc1e4ffc57688b",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookSearch.swift",
+      "sha256": "fa84b9711dfb6365d069e3eac4aaf53061463cc9178d9d8db62b801aafc9e874",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookSearchIndex.swift",
+      "sha256": "d5ba9e14365731a44cc4f9f09053110ba5afa09e1a65c51c09ce50fc5573a332",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookSelectionPublication.swift",
+      "sha256": "ebf70ba5bf90f7d15d76a3e4615ba87804b3aa4b4811b8073f72c92623e5a39e",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookSourceWitness.swift",
+      "sha256": "1bb5b50946e1dd8a22391ed02dd21e34a74d83c90b7e4a5209a6df3055777c4b",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookSpatialGroupQuery.swift",
+      "sha256": "8799cb839053fb705576fd6f2278defb9b2bbdb5214edee5d1524fe8cbdce6b2",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookSpatialInkCommand.swift",
+      "sha256": "6e3409b99585a2519f73554bd34bc32d5a8aaae15b4dd2fe6bb97c02cf2dc5b5",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookSpatialInkWindow.swift",
+      "sha256": "34cfbfaad20a7001c128eed8ebd5eea44b6d739ae9da0803c43e3aad19a68929",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookStorage.swift",
+      "sha256": "bce91474c96b73ea878848fe4f95740e4d0bc9fe0db3528224ab01298a083691",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookStore.swift",
+      "sha256": "358c1dbb93f6e9d9625f78a0517661c97b0eac195aaf68af6620514b07679b92",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookTextTypography.swift",
+      "sha256": "8ccc915a88e89fe9fc7b29301ace9b4eeb572a9e9889f9c8ba439d2703c5c695",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookTldrawClipboard.swift",
+      "sha256": "6859c1ca90f7042605735c2199de8e43b69fda5ff79eb18ec6c24ce15484a3eb",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookTldrawImport.swift",
+      "sha256": "6680a9d5ef748211b39099d6bb5a905c03fa170c4d5721bd4526cf2a2387e8fe",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookTldrawRecognition.swift",
+      "sha256": "c9a9b35ae91e881c1a746be4145c7b5b96d5cccd5f64408b620a19146e3308c3",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookTransientPresence.swift",
+      "sha256": "f341d70dad84edc03f56b0783f7edcbdb108f8450097d40db74ac7dc8902e56e",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookTransportProtocol.swift",
+      "sha256": "4378c1d121330993935ad669151063ea0785bccdfe39961ef3ece60b2db8c0cb",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookTransportStorage.swift",
+      "sha256": "3726b27eb216f63af0866d49aa0882a6a8e3642ce747712b3e7ff2c8b225d9dc",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookVectorPath.swift",
+      "sha256": "6e228f229ec34f117f1ec5929e49d92ced98e590e34c66c72d0a8cff63b65eea",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookVoice.swift",
+      "sha256": "18a691337b3e6f201ff315bbc03f40e90844b600fed67ad17ac99a4faca220f4",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookWakeAddress.swift",
+      "sha256": "36106c3a52d7646450d24af638f3605658da2710a2ef4ea21cda117ce0a2f0c1",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookWorkspaceCommand.swift",
+      "sha256": "df96efc6a940c282e614cae839127c81014fe594059a52b995a852b25c6902aa",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/PageDocument.swift",
+      "sha256": "89afe97275a8230076c9e4a39a725496066e15f2dfc09364a4958373fe04116c",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/PageElementProjection.swift",
+      "sha256": "a9ada9ac02a6af129c099a1439fc598d49cdaffe031a62e9d495e433c96fae63",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/PageInkDrawing.swift",
+      "sha256": "19b3fb14f7974f181c3bcd6d2be16a8ac04d033df1c4be14484fa0f72bbac146",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/PageInkVisibility.swift",
+      "sha256": "4b95d6cd5e33cf4135b5fbc268e25528926c9f7cd573407b85c000681112c2d0",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/PageReplication.swift",
+      "sha256": "066da69d86ed374d89fac89c225250aa49472e22f6d1fdfa2e185b5124a8cb8c",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/PageVisionArtifacts.swift",
+      "sha256": "1d9bb1e5b83f499a87aba6af6b8e3340c7ff9fbeadab4b85fe31e15175ffa0e0",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/PageVisionReceipt.swift",
+      "sha256": "5be7ddd35daaa8d368065f5664e59ec3adfb7df519bca157c4f7db760c47bd7d",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/PencilUndoHistory.swift",
+      "sha256": "52cf7f143ada57fb27835842fd3f13d79065e53190ef51a78fb7be580f7d8665",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/ProgramSemanticSelection.swift",
+      "sha256": "17759b0666aef03014a88a3785239d2e8dede3f1298c85693c074ca93b846a1c",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/ReferenceSourceFiles.swift",
+      "sha256": "b5cf207bfcfec0e04e5633185efdc12d5364fb9f50df00c1c71c7de1c0e7b03b",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/ReferenceVision.swift",
+      "sha256": "54b506cd3916b0e3ea9b8ecac7fd4143db935097e234359e51b5fb1463b73a15",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/SharedContext.swift",
+      "sha256": "0a04c53f600c16d06288cc269f22e6ad46f9554c48fdbc606d0d88665ce295c8",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/SharedContextOrder.swift",
+      "sha256": "c6c0dd726975626368e6849f49f36cafc0701cc6de26559330bea9754c45b3a0",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/SharedContextRead.swift",
+      "sha256": "1cf274a743b5adb79d3163ec221175c2111503d3f70e51f4e4c5edf8e240b2b8",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/SharedContextReferences.swift",
+      "sha256": "b1d347bddf4789d144f640912d5efeaa72418bcaf930e1043028964ba0d9674a",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/SharedContextReplication.swift",
+      "sha256": "17130979720ecdfbeea340a78b001c557789ab4bf0d0c6808b66e3228fd3cf86",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/SpatialInkActionStorage.swift",
+      "sha256": "e12b9bb0276288258ea5a9911c2bb80993959863e6ec4ba62ae5751e5269efef",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/SpatialInkGeometry.swift",
+      "sha256": "27e18b500beca96310359342945e29dd20ff259f4cb530279641d485416e7ed0",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/SpatialInkJournal.swift",
+      "sha256": "55a2df61d974920feeb84662fc1debfd33242d956c817cdb44534814857b1646",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/SpatialInkReplication.swift",
+      "sha256": "8f4f4a529b3f11ff0fd5510aaf32dded63c5f3486bd5fed13425bd331700b1e0",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/SpatialWorkspace.swift",
+      "sha256": "2f9dae0aabcae5ca8e2086709ef21eea26f45cfcb481db39119d4fdffc91aa6b",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/SurfaceExports.swift",
+      "sha256": "06a887c31f07aa2c0aff5ea6e9532ac287090fdd955b7d78c09f65bd88494bb1",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/VersionStamp.swift",
+      "sha256": "9a6141453070e9b7e08f1e3b4e147e60f5fbb3d86d046615bc7a6f502e8df158",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/WorkspaceIndex.swift",
+      "sha256": "dc303f469458c81e622cf5858f2db66ab3901c91aa1f8f66a1f5203306849e60",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/WorkspaceItemGeometry.swift",
+      "sha256": "80083e66cd05ff7728e4f067882f84e17641046e25cc09044417eef687eb30fd",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/WorkspacePlacement.swift",
+      "sha256": "910210e16d5fa57d9a3830a81c351e6ec083c5a8b73d33e9a98d1393643b1e67",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/WorkspaceReplication.swift",
+      "sha256": "e32aa816b78691948e5ef2f864511ac502e9961338e355f1edda7060cac41631",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookCore/WorkspaceSpatialIndex.swift",
+      "sha256": "ed216888b12c9cab1539b2558118fca3a9585dc78ff8c47d6a4cb30d260a6777",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookImageCompiler/Cargo.lock",
+      "sha256": "ef2565e5f7546a0650b58764b4a9dd6c3f85f855b5831f4060e2067ccc72bf28",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookImageCompiler/Cargo.toml",
+      "sha256": "8d6d65f6e3c4548b245fd9edb48960920e3bc60c338733fcaeaad41341dbfbc5",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookImageCompiler/licenses/krilla/LICENSE_APACHE",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookImageCompiler/licenses/krilla/LICENSE_MIT",
+      "sha256": "9d1eb142840c7acfd5511b4dd298cece3f0053f5809228906445cd8a3365592f",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookImageCompiler/licenses/krilla/NOTICE.md",
+      "sha256": "7aa87a70e18c9c160b5a14e24b46a8e407858b21fed635920c701657b4bd7976",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookImageCompiler/licenses/provenance.json",
+      "sha256": "5407def2c4ee5ffe420a552287ee70e755483a32d9285674c1c1dbdfe59e0728",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookImageCompiler/rust-toolchain.toml",
+      "sha256": "66adfa1f53d3a7491eb8c049f64f48757588e764cc0c3251efdf5d4ffbc72893",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookImageCompiler/src/main.rs",
+      "sha256": "ae3e093cc470cc183a7ffe3b33e3a60ae097d5d48e11bcaa19a93cd50acd2961",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookMarkupService/Info.plist",
+      "sha256": "cc99a269c4b33edd046da87fc20bedd2aa09f976f50b25be5b50b307d53528ae",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookMarkupService/Resources/marked-LICENSE.md",
+      "sha256": "8e3a3f82f59a60958f56ca08f445647c32a4733dc7ca6c2c46f6eb898471ab9c",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookMarkupService/Resources/notebook-markup.js",
+      "sha256": "c3b1513cba8abc6a5d1dd71fa35e84e8c8fb9e4493184bb75ee6a0037a0756be",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookMarkupService/TypeScriptResources.lock.json",
+      "sha256": "cecd52516b22a4e30fb24ae38e30fcbf637ba263df21be7a88d82b35658ef0cb",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookMarkupService/entitlements.plist",
+      "sha256": "baa050bc06d89900bed3bb4954acdf2f17c4f47e259b1870f889d4a301fbcaf4",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookMarkupService/main.swift",
+      "sha256": "fc4c21785fe88e9474806b0aa3ef7deb173eec9ea419cade25e993da762f8f6b",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookMarkupService/typescript-child.entitlements.plist",
+      "sha256": "cc1c612a4f9c046c8c43a0d098e05a31928d73da504b30f5c65bc0d8e43aad29",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookScriptHost/NotebookScriptCoordinator.swift",
+      "sha256": "f4c2178dccba4bac06d27b624eb9af1ed0f8a7ad006e9f6fabe05deba4a302f1",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookScriptHost/NotebookScriptEffects.swift",
+      "sha256": "648c88c5e2ec7a1cb606e7781cd2ed6dae37b7a280f70b3ea0f196cee1d35839",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookScriptHost/NotebookScriptExports.swift",
+      "sha256": "a7f1d8cdc0e9b662398c1d1899090847f6b12585671e76cc61112f867cec80bf",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookScriptHost/NotebookScriptObserve.swift",
+      "sha256": "b4c2b65534eaf17539c779ffcdf71edc231b4ca3e4a0357faec8f69403e42d0b",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookScriptHost/NotebookScriptReads.swift",
+      "sha256": "167840ff43c2f9cd479edc3d358caf7a4fd2f4011f574726d90a0507b4c2e361",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookScriptHost/NotebookTypeScriptPreparation.swift",
+      "sha256": "16f7f20643ae90fc8f1ac927157aa534de02789e3fdac55a4d469fed0d155bae",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookScriptHost/NotebookXPCWorker.swift",
+      "sha256": "78c4cc7bf0579771d0b2b2bfb6f60836bed70eca02d0adabfdfc12682e530c22",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookScriptHost/Resources/notebook-sdk.d.ts",
+      "sha256": "64f8c0cc507620bcf55c8899f41f02c401e96c31458f2973887b06d02f452e31",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookScriptHost/Resources/sdk-reference.json",
+      "sha256": "6ccabeab5938be84de95676423245455f1d9f9016f828af04680bfe778ef2bc0",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookScriptProtocol/NotebookScriptProtocol.swift",
+      "sha256": "6d3d2cfaa827b6e323a92c7beecf75eaf28a0e0a9da5484d044684323ddde21f",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookScriptProtocol/NotebookTypeScriptSourceMap.swift",
+      "sha256": "e1402fa5cfa05269424036e1f4b530c58c3fa30f4d6b988e15d7c50f366dea7f",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookScriptService/Info.plist",
+      "sha256": "5d21a03f46a4e6dd217e436bf6f634ee10a776ab6cc47baa0ebbb8b86828bf73",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookScriptService/entitlements.plist",
+      "sha256": "baa050bc06d89900bed3bb4954acdf2f17c4f47e259b1870f889d4a301fbcaf4",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookScriptService/main.swift",
+      "sha256": "8c2b6e9346d33af937667fc38d02a8aab632a90af5e1d239c073297c82250b2e",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookScriptWorker/NotebookCompilerMemory.swift",
+      "sha256": "b1cd69f9eb28f193e856c590512d8b4eee2c3365853660932c7f2d181cdaaf9c",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookScriptWorker/NotebookCompilerPipe.swift",
+      "sha256": "9736a51209cea392936eb396f1fc3f5d1c86c9522c439a9d4a240222246fb4e2",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookScriptWorker/NotebookCompilerProcess.swift",
+      "sha256": "a2940d7601986742038c98e42e6f48b177b69d9c846ede00db65d243ec20aec0",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookScriptWorker/NotebookQuickJSEngine.swift",
+      "sha256": "cb829f8ade21776fa43115493dab0cbb9116de3376f7eec59d50ed1090561c9f",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookScriptWorker/NotebookSandboxedTypeScriptCompiler.swift",
+      "sha256": "d2e86a62abade74ddda0112e5102fe220ee70d1853d7491cb334a5235aa8badc",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookScriptWorker/NotebookScriptService.swift",
+      "sha256": "9cd900e06cdcb185ca75c3856b2690d0bb91f5136477455932fcd5f635db08e1",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookScriptWorker/Resources/notebook-sdk.js",
+      "sha256": "0abd74c390aab5582ce42479db471e36209e86ebdef373dea0363f8b0780162c",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookSurface/CameraGestureTrajectory.swift",
+      "sha256": "97c7a6b7f433a045f350f9590d04a046d4433e1b648fe87649457e6587d0ee61",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookSurface/IncrementalInkGeometry.swift",
+      "sha256": "00833afbea429b9098362353f191c8210bfa9cb70314dafc2259ab2f6fec93fc",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookSurface/InkRenderGeometry.swift",
+      "sha256": "8d63656cfc0813fe5480fe72cfaef21e15a85b76dfaa1342659b53dba625ce5c",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookSurface/InkStrokeGeometry.swift",
+      "sha256": "96f916ed2574f4038ddc98ba8a449b90591103a80e8c03ec7a1435193467d174",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookSurface/PenStyle.swift",
+      "sha256": "c8d960c6977e89351cbda1173de505ec0852e7ad7f7c9b54823d4b6854a2fee2",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookSurface/PencilPressure.swift",
+      "sha256": "754ca896447d7d2d040254131fbec536f7be990ca260fdf595033583c878f9a9",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookSurface/PhysicalPaper.swift",
+      "sha256": "38c20d79f1c606bb91c506092532eed612637c4fef4a8bcc9490de2a1cfd8439",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookSurface/SpatialCoordinates.swift",
+      "sha256": "90baa171807d3b9eae0e230028db249f68b4261bb4679719db6c66b9a2e1b7f6",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookSurface/SurfaceFrameManipulation.swift",
+      "sha256": "7a5e033901b7c5c87b7d417d02b033934955b27a1758020faa8a8fabdc66a0e1",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookSurface/SurfaceVectors.swift",
+      "sha256": "cb9f1369491e57819e34b1068a475e8483a17db9ac8f1a424e5e72c149ba3607",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookSurfaceWasm/SurfaceABI.swift",
+      "sha256": "d0654e16c415452d366297d4502f4b1441f8843e6ca644b0168a05ad6437b721",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookTypesetter/NotebookPDFBuffer.swift",
+      "sha256": "26cb442e48b49d6214fc466e92ad114b3a52566e376c23474abb41745a403edb",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookTypesetter/NotebookPrintedArtifactCache.swift",
+      "sha256": "434e86900e9ddc2463704c7294cfd9db5b138528bd64f55e62591ae23c426624",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookTypesetter/NotebookPrintedDocument+Locations.swift",
+      "sha256": "8ff8d1042f2ab42243392f23384b32724ff761bd4585640e19e9c6763aa5b01b",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookTypesetter/NotebookPrintedDocumentStore.swift",
+      "sha256": "32992c17e94e9ebf997ccf0f119f44bc14d3b088fc5f23de1721a84799969659",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookTypesetter/NotebookTypesetter.swift",
+      "sha256": "e4802152d27dbd93c5a940605dfe3856ccf8cb0c78af7023c08756b2de5873f6",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookTypesetter/NotebookTypesetterAdmission.swift",
+      "sha256": "21267a80f8b232acbebc43727d1feff65e8c97598636523c7b480a05c7e7331b",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookTypesetter/NotebookTypesetterDemand.swift",
+      "sha256": "15cb59f8f53e11ab5cc763224dd417f0a287e445f0bbb15b55e28fd208849187",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookTypesetter/NotebookTypesetterInput.swift",
+      "sha256": "a12a8616f45ca0225c20da489e8bf7f29ee24569b3403e0537c8b828e5227f18",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookTypesetterRuntime/.gitignore",
+      "sha256": "306fd52e74fca6746e12acc750f232de15e71da917756a1270d74c91f5eb7368",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookTypesetterRuntime/Cargo.lock",
+      "sha256": "c1d6e7d0d753373929f16231b2a7738f4d27b8b5341aa1deae69f8e63c31a6be",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookTypesetterRuntime/Cargo.toml",
+      "sha256": "a110cd7da33f03bb4c640527ee7400c21c53910747ab407683711cb38c671a3d",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookTypesetterRuntime/Runtime.lock.json",
+      "sha256": "a1268e1cfb256cc8ef552d97d231640824c401263ad029ffe4e614dd94f6327b",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookTypesetterRuntime/build/font-index.py",
+      "sha256": "d4672b14e1ce07a34e10bd116116304e6a7b67bb2a929ed8b5445261273a06fb",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookTypesetterRuntime/build/fontmap-test.c",
+      "sha256": "9bdc20ddaa3388cdaff81b77a1ca2cd1ec7fc843434fba406ca845d764e2d030",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookTypesetterRuntime/build/generate.py",
+      "sha256": "4bbf15bf3e5d7a6afe901363bf40d26842352d5d580a428359bf9a071ddbe8f6",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookTypesetterRuntime/build/rebuild-tectonic.py",
+      "sha256": "ca3e25bf5984e226aea9d9ca3bedc363a4402a01f6736c1695486c76b2631efd",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookTypesetterRuntime/build/tectonic.patch",
+      "sha256": "36ced760204ebfa633694e98a0a25e6afddd7c45ae4a2cad60e4fddf13ac186e",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookTypesetterRuntime/build/test-supervisor.py",
+      "sha256": "f7f5701e660bfd182b84f0018d2f83f4e29fa7aa902b27fd535738d1c0680740",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookTypesetterRuntime/build.rs",
+      "sha256": "89e3e800cbd0a5b8da4305b5d4a87841d06f8f7cbe115f9a374628a9dfe46813",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookTypesetterRuntime/kernels/fonts.tsv.gz",
+      "sha256": "c743b164ae93a93ed17694cd2dfcb35ecd2eea1539e05bb29d98bb69bb3beaf5",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookTypesetterRuntime/kernels/image.wasm.gz",
+      "sha256": "585402894b24de4b7ad0316fa67eaca8eaa7d41ac35dbfbbfa0b75064c9cd514",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookTypesetterRuntime/kernels/latex.fmt.gz",
+      "sha256": "9d2102982032c880ae7cc3bfa6143466d3394641a12a722bd92518b502d6fac3",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookTypesetterRuntime/kernels/tectonic.wasm.gz",
+      "sha256": "26499c3a0d64d1ccb4b63861bf64f466c743cc7412724b39c47b56af3b2fe1e6",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookTypesetterRuntime/licenses/Brotli-1.1.0-LICENSE.txt",
+      "sha256": "3d180008e36922a4e8daec11c34c7af264fed5962d07924aea928c38e8663c94",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookTypesetterRuntime/licenses/Expat-2.7.3-COPYING.txt",
+      "sha256": "31b15de82aa19a845156169a17a5488bf597e561b2c318d159ed583139b25e87",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookTypesetterRuntime/licenses/FreeType-2.13.3-FTL.txt",
+      "sha256": "08c135755dd589039470f1fdbb400daaabaaa50d0b366d19cebff4d22986baa1",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookTypesetterRuntime/licenses/Graphite-1.3.14-COPYING.txt",
+      "sha256": "2c272829ff23f182c8bf7ea12fedea69b0ae148663123ed5240c117cb129c9c1",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookTypesetterRuntime/licenses/HarfBuzz-11.3.3-COPYING.txt",
+      "sha256": "ba8f810f2455c2f08e2d56bb49b72f37fcf68f1f4fade38977cfd7372050ad64",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookTypesetterRuntime/licenses/ICU-74.2-LICENSE.txt",
+      "sha256": "17510cf7a58b4879b887ec05a45d72cf1b73544dd9ec7e72f20110ed104229ee",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookTypesetterRuntime/licenses/LPPL-1.3c.txt",
+      "sha256": "3d262cdf34dafa6955f703c634a8c238ec44109bc8dd6ef34fb7aa54809f7e66",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookTypesetterRuntime/licenses/Rust-dependencies.txt",
+      "sha256": "b5263cddf1acfbbe50e5e4c9aa82da4e43ff39fe2552b4f3efe1e8514fa8376f",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookTypesetterRuntime/licenses/TeXLive-LICENSE.TL",
+      "sha256": "8147ff504e6d7d89a7c42d5c3dfbaa8705ad17f72c82a5c1bce5f4f0ee8b2fb7",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookTypesetterRuntime/licenses/Tectonic-LICENSE.txt",
+      "sha256": "814a258f76e420b25cb3c07172eb2b3956f34cefbf0a650413b78e65c425f306",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookTypesetterRuntime/licenses/Tectonic-WASI-LICENSE.txt",
+      "sha256": "814a258f76e420b25cb3c07172eb2b3956f34cefbf0a650413b78e65c425f306",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookTypesetterRuntime/licenses/WABT-LICENSE.txt",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookTypesetterRuntime/licenses/bzip2-1.0.8-LICENSE.txt",
+      "sha256": "c6dbbf828498be844a89eaa3b84adbab3199e342eb5cb2ed2f0d4ba7ec0f38a3",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookTypesetterRuntime/licenses/fontconfig-2.15.0-COPYING.txt",
+      "sha256": "51a51aa9823704fd90bccc616cdd17ebabb5b2b3e9cbde886ca02c7002288067",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookTypesetterRuntime/licenses/libpng-1.6.50-LICENSE.txt",
+      "sha256": "16d9daaafbf63a31a5bdc91d4600972548fef5aaa1244202393288dbd079c49a",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookTypesetterRuntime/licenses/zlib-1.3.1-LICENSE.txt",
+      "sha256": "845efc77857d485d91fb3e0b884aaa929368c717ae8186b66fe1ed2495753243",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookTypesetterRuntime/native/supervisor.c",
+      "sha256": "adb7ada63e8680b6c215aaa846fde236b1dfd9d12f1a617b7b8591cdb08b9fbf",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookTypesetterRuntime/native/supervisor.h",
+      "sha256": "23fbc5922cd59a6409e509992bd237bcfffb4c684281820eed3590fad90ae6b2",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookTypesetterRuntime/resources/notebook.sty",
+      "sha256": "b3a108a0f9b7303cd27b7ca952448242e67e902751de0175f168bac6f18c0269",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookTypesetterRuntime/src/ffi.rs",
+      "sha256": "e38590984c9f3249cf78e4940ab874f97f5c1f3b5d877746d123346a524a9d6f",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookTypesetterRuntime/src/files.rs",
+      "sha256": "bea7fb18e3d806bd88ce207d13ad54f0ad558995f6cf5eacba489a22e89fbed4",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookTypesetterRuntime/src/lib.rs",
+      "sha256": "b738de6dce9ededbd2f0e8a43bb76fc740273851f17969130e7e3c5c9334f9ef",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookTypesetterRuntime/src/main.rs",
+      "sha256": "302bc2f417d373a12287b6579d0b01249bf8d0e3cec27114970e2b8f370d6d47",
+      "executable": false
+    },
+    {
+      "path": "Sources/NotebookTypesetterRuntime/src/wasi.rs",
+      "sha256": "46b47ce709fd418c966593f029534ee699cb7b586f66b89b773a98e9b9b2645e",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookArchiveTransferFixture/generate.sh",
+      "sha256": "98fc3b3fe949c2c08f51a6a2e583503041f0a538ffda2de8a9e8fd97c00a77c1",
+      "executable": true
+    },
+    {
+      "path": "Tests/NotebookArchiveTransferTests/ArchiveComputerPreparationTests.swift",
+      "sha256": "e6263e5b328148c92a5ceac205fe96c76fe30733cea0819bc811d4ba07b2f8d7",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookArchiveTransferTests/ArchiveConsolidationTests.swift",
+      "sha256": "29b1cbda2e314441facbb6c5e3596f27ab0aafc9ff75e9dd58aeffcaf0b4c777",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookArchiveTransferTests/ArchivePairPreparationTests.swift",
+      "sha256": "c9ff397f5fa676d16b451e9bb4af1c220d7dcfae958e488bc54cb4932a4dff95",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookArchiveTransferTests/ArchiveTransferTests.swift",
+      "sha256": "3fa6cfb47995572e289b349342a79518362b1e35f4cb13f7fa6be82ac9dbf801",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookArchiveTransferTests/LegacyArchiveFixture.swift",
+      "sha256": "5524370eff39bc724f95c0ebef14d5535d69ba8b653720b824ee4a7747087033",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookArchiveTransferTests/LegacyDocumentAndBoardTests.swift",
+      "sha256": "22c7e06eebf9f544a514f8b75919589483479aab2002874fbe58953e047c0cac",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookArchiveTransferTests/Resources/one-stroke.pkd",
+      "sha256": "130483d871b564685f280ca9c73281b6557a6cd0ec88493d8337aa32281b55ba",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCameraAcceptance/NativeVideoDecoder.swift",
+      "sha256": "0b6622e91f51161e0ed5d5a85bb532fcf78d63da82e4e3f66e16546034263fb2",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCameraAcceptance/NotebookCameraAcceptanceFixture.swift",
+      "sha256": "554c12a8a515807dca455e9e7a0940f279a5dab92173a8e0e554b916a20eda5f",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCameraAcceptance/README.md",
+      "sha256": "d8b9153595676c2adb610c9795c7c0ee34abd7def13937787652a7fa7aa46259",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCameraAcceptance/component_centroid.py",
+      "sha256": "023ae567eb8adc65eda66a0dd3a53693a3f4e9d263d6d9e88d4618916c5a9abf",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCameraAcceptance/lossless.py",
+      "sha256": "bc112c70cb368303257e09de3bdce47f8b9f7812f093469d8a57f3b755a0c348",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCameraAcceptance/measure.py",
+      "sha256": "f55a87ffd6caef2e06b039d6e9e80b207c06d237880bfe2fc37157c20188b405",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCameraAcceptance/measure_joint.py",
+      "sha256": "383eff43ac9e2c9619bcad95d51dd08c79e8a964290d389605c60684142bac85",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCameraAcceptance/measure_lossless.py",
+      "sha256": "2b486dad687b425d31bfeb6cf5383811df768fe61fccc87ebd7edc04a01da5a7",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCameraAcceptance/native_video.py",
+      "sha256": "605e70f3f4fccd9fc09b94172939aa57fd345721ea7b55cee6e76f1a767028cd",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCameraAcceptance/pipeline.py",
+      "sha256": "f89476e3d6e99c86c7a1b45c7b957becc277567e5a6e8d0fde6b14defc7b726e",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCameraAcceptance/run.py",
+      "sha256": "eaa00e9b9cd812468d24bcee95c76abac598baaf9eaa5a9d3ecc19997809f489",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCameraAcceptance/temporal_provenance.py",
+      "sha256": "c8b4193f4caa112cfd846a84a08ae5e3d7223ab596bb214609c54334fc1cd4d9",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCameraAcceptance/test_joint.py",
+      "sha256": "f253b5d601ddcbbfbb81bec94d6537b2f81ec551084d473d8a86efb013237838",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCameraAcceptance/test_lossless.py",
+      "sha256": "a281e45693556b26d0a16614995dea1232ad6ee49c79e2bbe9c77c763198256d",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCameraAcceptance/test_measure.py",
+      "sha256": "5d6df83f589625ce3ccf90013a40bac1b82304bbb7a081933e3ca62f28f0b886",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCameraAcceptance/test_native_video.py",
+      "sha256": "8b4550b5b65f23f72ff39e819482ba6e4da5dca1d7ae9d459df675d4c9717d0d",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCameraAcceptance/test_temporal_provenance.py",
+      "sha256": "fa19c4ca72e362cb317d700029b32cf53f9bfca8b8e1829f896f207addf10c63",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCodexBridgeHarness/AccessProof.swift",
+      "sha256": "23048459f41c9671009964dd74f1541be3fe728c23045983af6d7fe88202a5ad",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCodexBridgeHarness/ComposerProof.swift",
+      "sha256": "59ffa1e15fe67ef1ae7df6016320dc4feab3bf19c8edea2fdb7e99fab30ffdf7",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCodexBridgeHarness/ProjectRunProof.swift",
+      "sha256": "0c717dd5c8ec9780dd7256d97632cb6e40a23b44370a0f9c4457ec46b9640b4a",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCodexBridgeHarness/RemoteProof.swift",
+      "sha256": "ebfff0e0626515d40c695b8312d3da59b3602765c1089b9ffc60968d9782ec62",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCodexBridgeHarness/main.swift",
+      "sha256": "1e6e738895271e0e8fc511efc5a20ca311195967fa046d932be781b0aa7e597f",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCodexBridgeHarness/receipt.json",
+      "sha256": "4d9527b1f495fb3e5911c991bb71328136bfa73d0b89dd760b282b1740376e15",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCodexTests/CodexAccessTests.swift",
+      "sha256": "3dfd40c0454a92a74b45d17df86ac32c6a6e3c07d88a9c33a5a13c135b5b4349",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCodexTests/CodexAccountTests.swift",
+      "sha256": "7f8aaec0c2f5e5bb5444b6146b942bf9383459b94f3e2a30b70990a463b60ab8",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCodexTests/CodexAppServerStateTests.swift",
+      "sha256": "536507d11df9a090d709ee376246c8fcadc4e5ae0b2f9c5a7f7d1ea873d6ab36",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCodexTests/CodexComposerTests.swift",
+      "sha256": "bf178ccd58d20b0597650ae106e14ed16f0fc0f1610fd16fc952fc4381559bb4",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCodexTests/CodexConnectionTests.swift",
+      "sha256": "8ae5b75bb8a42e70486fb58d9305f09ec75109826946c348e1a8c461574640d1",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCodexTests/CodexDictationTests.swift",
+      "sha256": "c1bfa216f937fa252b210750db612df5f0bf99a59b19290fa906b0d8c57e9b1b",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCodexTests/CodexDisplayProjectionTests.swift",
+      "sha256": "6091176c8d6a67464cbc6cb1fcde91f42181cebfd2639ce34cb3ebd09d557bb1",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCodexTests/CodexProtocolTests.swift",
+      "sha256": "ab33d199fdf49ef707d6809163e52d6b9b28403b6616f17a35724e7423cc5b04",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCodexTests/CodexRuntimeScopeTests.swift",
+      "sha256": "1a758ccc998215dbcb06d8e054ec7ece1a4e1cedb0d6d75545f785bd9c800c38",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCollaborationAcceptance/README.md",
+      "sha256": "f4fe6f03d7ff4d1009938e38e4650b574faab51acd759572f2f77046ff3f0283",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCollaborationAcceptance/typecheck.py",
+      "sha256": "618cda393d5e4cd40f66cb360203175c3f3e7f51fc580d189bf659dd67d6e5fd",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookComputationHarness/.gitignore",
+      "sha256": "32dae3052f331ee34d628ef535709b301259a45df7c7522c4d35dcf49873f00b",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookComputationHarness/index.html",
+      "sha256": "dfae022d2d263365ed89653d09b4eb22472aa6c5ea2c3762a537256389c027aa",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookComputationHarness/main.swift",
+      "sha256": "52baa28ff199b2a5af426d5323c5a229c52df3de981520ec3b870ebc51185b1b",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookComputationHarness/run.sh",
+      "sha256": "09bcbbed31203dba4f2f110777d0fefade52f9bf75ef6985a95c62b36bc13329",
+      "executable": true
+    },
+    {
+      "path": "Tests/NotebookComputationHarness/verify-resources.py",
+      "sha256": "21163913d0f52e90aa9b88ee917f1038c9daa63522373ab992e322420d09d007",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookComputationHarness/worker.mjs",
+      "sha256": "4e19ffb24e68e6413dc2685d3760a27d65cfd4632e5065d91c17cfb169bc7b18",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookComputationQueueHarness/main.swift",
+      "sha256": "01deb9bd9f88fa55a826ebd3edca37b2e573fcf5d46e08ea2553236b3d5f8c04",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookComputationQueueHarness/run.sh",
+      "sha256": "13f10a7946f32ac17de5a954b7750c3393ad705eaed2945e458073cb7fccae2e",
+      "executable": true
+    },
+    {
+      "path": "Tests/NotebookCoreTests/AddressedReplicationTests.swift",
+      "sha256": "145083202f35997ac2aaa416709055a3919c77c93c2238d0469aecbcb3becf53",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/AgentArchiveTests.swift",
+      "sha256": "d4f965fa5d16282683cef57d035371c3f329d21dee0641c0dbc098a8556de1bb",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/AgentInkTests.swift",
+      "sha256": "413a5a9e760337aed31be5b153999c00daa683e315ddf2f4a2ef28be61d7dd1f",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/AgentPinnedSourceTests.swift",
+      "sha256": "058d5715fe84a964c68358d87c4bc9c19f368648fb663ef17628e81b55a44a43",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/BoardElementLookupTests.swift",
+      "sha256": "aa015044600c3f3e58402cf84c375142e48f0b58681ac354bf8b89db15d0dfec",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/BoardHierarchyTests.swift",
+      "sha256": "eaebc40a6a5573d11dc79146bffe5c61df16f325a4a6c14e0168d997dc55d77e",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/BoardMergeOwnershipTests.swift",
+      "sha256": "83251c708ecb059a0127d99af62cfe6690a6eac77a7e3494b05ac3b6a4591546",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/BoardPlacementMigrationTests.swift",
+      "sha256": "9efd35661a807e718b013aea256b945ac01a4f5e65a449a3a3c9817b6b91f369",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/CameraGestureTrajectoryTests.swift",
+      "sha256": "fe69d56685b9e17063aadc3fe7c8ed595e0549bd56269e22bdab33d4427eca65",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/CausalContentMergeTests.swift",
+      "sha256": "d96ced13c059e7de8ca80b9ab3cdb5cb95deb454f561ecd5fcc4c924bcee9836",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/CodexReadProjectionTests.swift",
+      "sha256": "ee097e63cc2c33a024be7d152f4cd14dc73712fff5d262a127a63842296d71ff",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/CollaborationComparableTests.swift",
+      "sha256": "d61e79056e5e0bd4c35e7a5126961450589c7ac58c7274e852fc04e8c930ef5b",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/CollaborationCreationUndoTests.swift",
+      "sha256": "40ce1b6367754dddd05942f1c629f85c33c578e8770f341ada223b98501caf6e",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/CollaborationTests.swift",
+      "sha256": "a82727e752c32c44bcbcfe75d3a71acd1a1fbccbec7cc0e1e3dd7b7db1914695",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/CompositionTileTests.swift",
+      "sha256": "15fefeb0fd8f06cd30825557d99ca652b9e9db0c7cfa9e372e57bb559179b566",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/DocumentDocumentTests.swift",
+      "sha256": "d8e31437232e877a9cb021ce9779c97eebce35e7c3df8a07e22a91cdc9d3ee42",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/DocumentFileFixture.swift",
+      "sha256": "5e43e72a858b2d0df095678005722d5008b314ddf47a5e34f0a7bfb106e471d6",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/DocumentFilesTests.swift",
+      "sha256": "b5484f06cf1f15bb7de90fe17dbe648a137fa289a6c99dec4f2cb40ecc728746",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/DocumentFormatMigrationTests.swift",
+      "sha256": "f4ece820758bebeca274443f88a2f9b37f9acc4f105fd49a2dd513d495cfc64b",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/DocumentPrintDependenciesTests.swift",
+      "sha256": "fc5f661bf43ffffb15b59472159499d8b3e58322e64a11fd58ad039aa8692b47",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/DocumentPrintLocationsTests.swift",
+      "sha256": "e1d4fcd416e9ab1cac89bc0aed416b89125f88c9d49e71a522782078dfd97082",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/DocumentPrintSourceMapTests.swift",
+      "sha256": "5fa503cef25f1c95b7349e4f9b9528cf37906c8df86fb569ef7b088149411a1e",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/DocumentProgramStateTests.swift",
+      "sha256": "575cca16a1f425f10fc22dec90380345c300b8c1a78c09b76dcb07fe04e34fc6",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/DocumentReadingPositionTests.swift",
+      "sha256": "ac7fdef76a41a9955ca3b9664c3be3944b34ca6fc118de1b0e94520f6bb4a818",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/DocumentRenderRecipeTests.swift",
+      "sha256": "241a0f5c1297f4160d19dd0d928ec3aec7f17524b554d0c6c7b6d143ad0997cd",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/DocumentStateReplicationTests.swift",
+      "sha256": "9b50c188d0dd68c6b4c2cb7162c339c4a906a4fcb5e8bbbfde87e4f4381c53c0",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/FreehandMeshControl.swift",
+      "sha256": "328ba9584c4eeb5154078a1c77146fd327c6171a1a50b7c32f9703c63f026913",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/IncrementalInkGeometryTests.swift",
+      "sha256": "16677bafddeafa6cf28fa0bef9b431cd40a1f172383d39e61c90b7081e1d5ef8",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/InkAggregateDisplayTests.swift",
+      "sha256": "d39858d2035aa3b37590115af6351a66a365e1d6a7a896737a4016bb6d3c20c6",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/InkCurveSummaryTests.swift",
+      "sha256": "a3a27f7b8a66362d68074458ac101efd20b9856ff3fb5a9ac378ac741fc4b74c",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/InkDisplayNormalizationTests.swift",
+      "sha256": "47bb89010c981567d829570379cc2f8db334e4355a76eb19e43582c783a06cb0",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/InkElementContactTests.swift",
+      "sha256": "d296f3da4887fe3246c5b1e4f529116767639fbb220f3c36b23a3a447d7fa236",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/InkElementErasureTests.swift",
+      "sha256": "8cc9e06d936aba21eda3f3c0194280bba8e387c8145078fc356825d391a47511",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/InkErasureReference.swift",
+      "sha256": "c72c98f73cada5a423f93ba52e79e640cde6e9fecd959990aa8b6a6e2cc4085d",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/InkRelationCodecTests.swift",
+      "sha256": "3b516beb42803e4d423092addc6ea536793eaa77f90ba37eff4ad3dd829109c8",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/InkRelationMigrationTests.swift",
+      "sha256": "ae48f4bef55039436fd7f5de20b40a95f3fd6fec578cd7f461542ac725e1b6b8",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/InkRelationPersistenceTests.swift",
+      "sha256": "57547b4e1576721c8934b3792c802762d6329b7e13ec8a025cf1cabd91b46397",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/InkRelationSharingTests.swift",
+      "sha256": "2cd4264bbed900248579c8cf9312b02032099a7a53893df7bb800a063ff2996c",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/InkRenderGeometryTests.swift",
+      "sha256": "d32bef448f1c93e83e4e0db1a389f88a11e3aa6c08f901383f91e50b9eb986ff",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/InkShortBodyTests.swift",
+      "sha256": "a1e3e99b58d10a88115510012292b6408b8f119916fe4944d279668a8070283b",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/JSONValueTests.swift",
+      "sha256": "4c34165ef7a548f0e113601ba43ce27ede7807dc4b48a5b4a2bb5ab6c35b761b",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/MeasuredFreehandTests.swift",
+      "sha256": "cb6d29eb4682677cbfa6a9649c1c5d5d391996c74ebeb26868a4e7a6de6cf59c",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NativeTextFormatTests.swift",
+      "sha256": "2d94ef5e7a8502eda5955084d2a77f99fe85249a1bdbecf2a8ae64fcf33506b4",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookAcceptedWriteTests.swift",
+      "sha256": "ee94eecb903343ba28d7e99fd6b6971948bd3085b68a6e0b0e1098409f78d52d",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookAccountBootstrapTests.swift",
+      "sha256": "c8c7704693447543d700a4483379d062ff908b4a14b90a68eba40a81f76037de",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookAccountDirectoryTests.swift",
+      "sha256": "1d768c5b04cd62d894abd80f7529b2377840d71b3c392d0bc7779ebe7961444c",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookActionDeliveryPhaseTests.swift",
+      "sha256": "d05b30471d92686e8bf59386b6439edde8727cadea31567dc5d6eff5fa50b746",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookActionInverseScaleTests.swift",
+      "sha256": "d24c90fe76c65fd1d43631f60daa8d966384e67dac3f2fbc3ef0258913b7c24b",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookActionInverseTests.swift",
+      "sha256": "d540735007179b8ad897bde28ebdd3e5f3008b21f27acddbeb9930d2aa0fdf69",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookActionPublicationTests.swift",
+      "sha256": "120458de086f87586a0b76bd9231f3b066b410216b8c0419a94684a80d734b79",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookActionReadModelTests.swift",
+      "sha256": "db717c8abfc6cf51d5fa0108aa066b679b4e1db52bfddeadaf957c50386669d1",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookActionRecordCaptureTests.swift",
+      "sha256": "aaa4b0c5afd7dd2f771ddfa73500e6cefe1ba55dadf5312fa1b1d411f7fb6951",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookAgentCommandBudgetTests.swift",
+      "sha256": "d81e1116c68a431de8845c7ab87e62cf2c3596235a07a2f9194127a2785dec24",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookAgentFeedbackTests.swift",
+      "sha256": "111c07019423f421d6ba354770f4c19b948403ff0835fc4d8af49735b37fbe3a",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookAgentPersistenceTests.swift",
+      "sha256": "9b2fd8d127aa686d6a3452ba1254b8b3f966c7c404278472cbc8c38fbf13d71c",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookAgentSpatialProjectionTests.swift",
+      "sha256": "a6d7b00d4e815b71630df9e798deed217eea5bb3f5c5d69ac8326ef32f77307e",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookAppearanceComplexityTests.swift",
+      "sha256": "04b2b6e3d567cd06940abba9b233c1057edb992d1ed83e2af9b32350d185878f",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookAppendRestorationChainTests.swift",
+      "sha256": "0d3d3dba44bea5b45d24e44d104063afc8f75cc8e7943dc154a5275153d57d24",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookAppendedPageUndoTests.swift",
+      "sha256": "bcc982395c5a59b4b872a7d6ada057aeeef9e6fc69c2f03dc8987df078053a62",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookArchitectureDeliveryTests.swift",
+      "sha256": "9db5757e438055a4e93b5f10598a4461e7973efae85ca942aa20cb7e55465a98",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookArchiveActivationTests.swift",
+      "sha256": "ae87ed1413419d80376537a82da41f8b1674ba91e1bec891c60fa03db22f5a4e",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookArchiveUnionTests.swift",
+      "sha256": "c50c49c578cf2c4aade6bc4700e81e5b8c47cf2a64fbc8daf309dbc2b478e4c9",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookBoardContentRevisionTests.swift",
+      "sha256": "1411f04002660c4e0486786d747a1c8d8072fcc2868fee5c5d949ec80d4bd2d2",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookChatReadPositionTests.swift",
+      "sha256": "0a09ded877f86bf15bd16a0fa56bc222dd66ca4ff8ea6f1410be8625b4ae4cfa",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookChatStoreTests.swift",
+      "sha256": "bec5f4451a15f7ec6da125d60a0c69383110a327fb8d143a1ccb1a5c641c15bf",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookCheckpointTests.swift",
+      "sha256": "cb09b1ab129ffd2787a3bd0cd07357ab05f7659fc8b5e0a466dadba7dab7b30a",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookCloudDeliveryTests.swift",
+      "sha256": "0e120f478076ac519b7be17e300b790a2dd3cc87f37508d597897b6dbaa51a64",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookCloudPreparationFixture.swift",
+      "sha256": "9cfaf30b9bbbb6ad4dab1c0b504e4cbdedd7c3429ad4ffcef4faefc448a9e82d",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookCodeDiscussionTests.swift",
+      "sha256": "147e060517ab73da022a6deb9c842a9ae12bbf93b78e616795bef57ffb2d0ff3",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookCodeFragmentTests.swift",
+      "sha256": "a1f590f26b6ccaaf2ded99a258feb2888714a5ffe14d52538c2d63871d6c4344",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookCodeInkHistoryTests.swift",
+      "sha256": "cd9d095145583190a725e07d925300ea6b088ec2499dc4baa1b60ece673a5d1e",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookCodeStoreTests.swift",
+      "sha256": "93d3a5b54b8a7fe12ce31b7e61052ac6c1a5f9885287338c32923a65947aaa1e",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookComputationTests.swift",
+      "sha256": "54b06a7ce730fc6085519c97c2906efc132fd784d2438153822fc178e9402988",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookComputerStoreTests.swift",
+      "sha256": "f3380b44666a18c650c783ee223a0ab33d86e812001cbf9c48abb507beec6f0f",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookConnectorTests.swift",
+      "sha256": "e9593bb44f6a7be98dbc8b1eabed998cab1e66b581b960903e26d248c1ca63df",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookContentReadTests.swift",
+      "sha256": "78a707f2961de58194ad1c76df253b06ed7eab3d18b098f93b8a75cf22501753",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookDeletedBoardUndoTests.swift",
+      "sha256": "55b2da4c04f7d27a5c3a5db7946894533607372f239718973fa217ec7290251a",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookDeletedItemRestorationTests.swift",
+      "sha256": "8bde4f2339c1ac9fcad3d129d11e0908918a61cf126697dccb8bd83e9ebd363a",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookDictationTests.swift",
+      "sha256": "26cb3064dab2c1fe19149037993bf615be2fe2ed7bbf7191875eeeb722e89efe",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookDocumentResourceTransferTests.swift",
+      "sha256": "8c6ebfda419fcdbd08a914f172a705d7b926159ff5ce27e207400fc51f7391b7",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookDrawingToolsContentTests.swift",
+      "sha256": "453c0685e949ab5f8e11594aa154378d33665a9fec5a795a9dcecf371b9953bc",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookElementAppearanceTests.swift",
+      "sha256": "32266cd860a8eff4bfeb22dd30458b36e7ab26622e8067775a226eae1c520f30",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookElementGroupingTests.swift",
+      "sha256": "f53aa6383a0e4232fb733646e578aa4e9eda37ca288049db4cd45b6a09d4269f",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookElementIdentityLookupTests.swift",
+      "sha256": "76dd39725b93f205b74b6587818989bd5fdd546cb3d315b9032433f76e95e068",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookElementRestorationChainTests.swift",
+      "sha256": "4c64a8141ec4f235d5ce9dea0d2cc399f2717b67ebb2f7ea010e8f46051bc01c",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookElementTransferTests.swift",
+      "sha256": "54a5687778c9d089175a8297669bcf4ec8851d119c9d824e1d03a68a7db8ed44",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookExportPublicationTests.swift",
+      "sha256": "385be00112d3a1a43165efa03b6bc506b983fd0f291c77d8929495130917b7e8",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookFolderContentsTests.swift",
+      "sha256": "d83f012a869164e538e5605fc6a4b12ca0eb1b1849628038df569feee276f2d1",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookFreehandAppearanceTests.swift",
+      "sha256": "1bc001a2c9c970a4f27ff8f85d326526a412e11b8e079a9eb0cd62c0d561c752",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookFreehandEraserTests.swift",
+      "sha256": "c82cfe9ab10396ddf38153aa9129daa6b6059ada78cb68c971901f9f119586c8",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookGraphicAdmissionScaleTests.swift",
+      "sha256": "93de452b27f239469809ba21010cf0dddbc9475d60d8ec364734cbdd17f88bb4",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookGraphicCommandTests.swift",
+      "sha256": "5d0c8bab3c8701508d6842a86436c7c9fe1f913cbff0dbb7992803e092d359dc",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookGraphicConcurrencyTests.swift",
+      "sha256": "4ecc7f12c7bc817dbbca59de1c34c4f7ce4962c024f548b4bf0b87950ea5fbf5",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookGraphicSelectionTests.swift",
+      "sha256": "553382434319fa4c7aa0b8dcba6ed06f7ecbd84077f4cc1dbcdc058c25f1fe6f",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookGraphicVisibilityTests.swift",
+      "sha256": "0c6b5d26c7dd7f8f17ae27f91fb067784996eac0b1f233897bfe1acde9812149",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookGroupContactTests.swift",
+      "sha256": "b9017530416929c292168b4674caaffe2709a2ceb016586f1bb98b144a7e575b",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookGroupGeometryTests.swift",
+      "sha256": "5195805c8fb5d7ccd966d373d17d4c05367cbb71f2b470e7b0ccd4f1a522114a",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookGroupSpatialIndexTests.swift",
+      "sha256": "af3999c68197d4c3e9bd478d40ef22031e5ede148667b885129aa801a215e947",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookGroupSpatialScaleTests.swift",
+      "sha256": "671988cdbfb22b30f4d92286edf9d3e4164a77639fa8e08f45290e34c5467082",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookHexEncodingTests.swift",
+      "sha256": "df90651d71e5f08977b5c41dfcb9f44d0e16df1c144717e427d7c184ea9b90a9",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookIPCTests.swift",
+      "sha256": "3acadb3d958b3920ce749a9751bcd18685c6d49d0c99a5c31fb7425a30667906",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookInkReadSetTests.swift",
+      "sha256": "8b4d9454ff2e9be92af81e9eae01ad8c587ddff3f9450a941cbe8d32e65d6c26",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookItemDeletionFixture.swift",
+      "sha256": "ca3f6db5f30fe72630208c5996e1adcaf43ff38c3d28f6d365ca084c12ed704b",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookItemDeletionSourceTests.swift",
+      "sha256": "ee8d0e09bfae666cbb0b5c7be7017c996e3c8ed368d2377924a5b3f2e7376f55",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookItemIdentityRetirementTests.swift",
+      "sha256": "81f5ba4f42f0cbdda306b9c704bb0fe9c3ff6357454b8cd73168cd94c6652c49",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookItemLifecycleIndexTests.swift",
+      "sha256": "efc84a55c23c8803fe2de5e1692060a6170f6f58328c304ff95cbf16cc12bf02",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookItemLifecycleTests.swift",
+      "sha256": "58b72fc4b589690e262a8c9566dc5bdf83cf3a9e15b306f03264ebcf5b4d2849",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookJSONAdmissionTests.swift",
+      "sha256": "7606b07fde989ba1cb770ceebe4cba03d5ef8a44034cab7f7912f4d4a45c71e4",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookLegacyActionVersionTests.swift",
+      "sha256": "cd24d30e29e9c977d41cddcc6015d4b29733902fd310563e4b4879aee4fa60cf",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookLifecycleActionTests.swift",
+      "sha256": "b280c2cc973c676669f6e265bee7a03d3d0c95679bceadb1ad11dc3f3b376a00",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookLifecycleConcurrentPageTests.swift",
+      "sha256": "20081cc4865b38ee2f5d7afc29dbab08dc8f43baeb3f094017d1145586c6564a",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookLifecyclePlacementChainTests.swift",
+      "sha256": "50498e501949b02acf52c2557c9c3456bb20c01ddd0e253ba0f8761b6fc17722",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookLifecyclePublicationTests.swift",
+      "sha256": "e81548cba1540963e4a5e1967293acbf0d3ec4067f672c95b0b01913952db72e",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookLifecycleReceiptIdentityTests.swift",
+      "sha256": "6b43c955cf7e05a337f11ba87f8ab7a4fbaf061082d8844aa9da8739f5e40afb",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookLifecycleResultTests.swift",
+      "sha256": "e4685fd7f39b9c428cbd211a3942f0f64b8d209a91e696aaa929810e69abcb3b",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookMaskedPageFragmentTests.swift",
+      "sha256": "ed91e72c56c4fca0909a1d373dfa02a0e71c489134881b145c799c489afc10b8",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookMoveStackTests.swift",
+      "sha256": "11b1ac466f5019913650c9f8f9d68e503d9ca648e548d2eab74f42afa576df44",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookNativeDeletionTests.swift",
+      "sha256": "13e1275cbab4056b78f438fd460616726ce917f99718b773eebfbcf8aeca82e0",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookNativeElementTests.swift",
+      "sha256": "5beede691839b74c8c69b7612121d531da2241a3a500d25fdbe09d69cdfe6dfb",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookNativeHistoryTests.swift",
+      "sha256": "f02a1f5a4e67a091d8f5a6c835df2b142cb4049f9e23d1e3a35e14722a8f4a57",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookNativePlacementTests.swift",
+      "sha256": "0fd36c70c3d2b7f8f976cfb4168d151b8f9c2c7a6a330c28b9dd1faed3c2b548",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookNativeWriteAllowanceTests.swift",
+      "sha256": "61f43a46f39daaf3a30a2920554b7dce3240c90ac68c00beeac2879a5027994e",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookObservationAppearanceTests.swift",
+      "sha256": "d85419b960badcd4d25081ec788aa6fe74673bbbb4d4d61c8babd5eb806c6593",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookObservationReadTests.swift",
+      "sha256": "7ca2ae6c1437466cc1e69b9f33a785bcb2727ef472b4d6c99c8329d22e966859",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookPageAppendOwnerTests.swift",
+      "sha256": "4383c71891504352c0f23b9e0d096118c8376a2d2b88c505517c6c462d1ab4a9",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookPageAppendTests.swift",
+      "sha256": "3c60363e7782290ef90f1f6e3b69f4cbeaeb8425c1b8c29095971d9048382968",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookPageElementCommandTests.swift",
+      "sha256": "758bd7103431e4b6ece77ca562460412efe1cb586abc159304b350d7bff9f3da",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookPageInkPersistenceTests.swift",
+      "sha256": "383e13e3c996b37ad14f248d80a786d0717c7f045a6050a57e6af7064ebd2346",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookPageInkReadTests.swift",
+      "sha256": "301914c1ed55b3b564709495cb81874ad4d93a2ca32924566b919466c3126041",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookPageInkStorageTests.swift",
+      "sha256": "6caf71b3f6994577e8841769a0f5981cf6b2f160261dc83a071ad21ec4c90bb8",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookPageOrderTests.swift",
+      "sha256": "2e0bfd5b7185dd92365fd40ba47bf82dc3fd5aaed8140f7b85dc3009f3c2af09",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookPageOrderVectorTests.swift",
+      "sha256": "74d63974575fffd9d471049dbf6916b21d2145ffb3c23b0636a6de4ebdc76ca9",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookPageSourceOwnershipTests.swift",
+      "sha256": "4b1dc2ddfc02d10bc62590c615bb0a11a92c1d8c35989abf485894e6a1f4c222",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookPageWindowScaleTests.swift",
+      "sha256": "e40b861af106aa6c1d0705be7946aef159aa94f4bf9dd3ffed3f41198e5ba542",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookPageWindowTests.swift",
+      "sha256": "1b1847fa2154354c3ca420ea4a24d38da1e09fdc7a167fe466af9135b5eb590d",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookPanelInkTests.swift",
+      "sha256": "d4e8aa9ee26fc311097557eba7ef4895ffd4aed243a303ed3320063fb828d59a",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookPanelMaterialBoundsTests.swift",
+      "sha256": "3e1dd314292a8f18bd74c1f74068158151c2ae6b197a27d75ece1bfff4d0fcf3",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookPanelPlacementTests.swift",
+      "sha256": "0bec03b825ef79c58adc865733ecb846b0d7a75cad1858c7d4b098d525658fcc",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookPanelTests.swift",
+      "sha256": "df406ee17f9192da158107e7c303b54a1e14b858031938d37e0a4900764350b6",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookPanelUpgradeTests.swift",
+      "sha256": "6b1bf62a42e8ba2b8f808c295829d920b63ef2f8d62b49d4b9345f10eb435858",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookPasteFragmentTests.swift",
+      "sha256": "660f019b22d97b545dcc612dadf527c23524b7ec8906d7a3d3fd759d1c7a39bf",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookPasteTransferTests.swift",
+      "sha256": "0a3f84580f4ff6b251d42fbb9fcfbf1751472bfbc4c654043cadbc15de6c94a3",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookPendingChangesTests.swift",
+      "sha256": "36d8c8a8d56c7db6e9f69ab34f15a175a5777ac47bc2e6de63e576708dda2dc0",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookPlacementRestorationEvidenceTests.swift",
+      "sha256": "14db4ab92dd345280bab2a76762992d20965e73cd440de405d9dbc497b78c317",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookPlacementTests.swift",
+      "sha256": "a500aae790b544dcf245e1a8f79793ebcc3bcd445190f839bbc9423526263cd2",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookPortableDocumentTests.swift",
+      "sha256": "d5c8e411d1596d94d29cba6adb839cd65ebaa3a277f5c7890f6b5c02a40147b3",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookPresentationTests.swift",
+      "sha256": "21c7de33fb144dabe1d3f87ba15b905b7160358a9a965ef09b43a936bb6477b0",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookPreservedDeletionInkTests.swift",
+      "sha256": "1d5e013dfa71d84a41012e1789fb4f0b346f6d4aa4c06d27e32b8f3eeb60e0fe",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookProgramDeliveryTests.swift",
+      "sha256": "03fd299114edec88075eabe87f90e8d682a9e7b01f3a8116275e8e9d13de5f42",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookProgramPackageTests.swift",
+      "sha256": "2c4e0971a4b3ed533ea6ecf5a4c55b93eaea77550cfb024e4b8c2fd2ed4af28a",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookProgramStateReadTests.swift",
+      "sha256": "ee36d9a8b861fb773b6c74f1ffb34e030b6f4c0f558c648f2517ff0551f32fb3",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookProgramTransferTests.swift",
+      "sha256": "99be655c2d74fb4f6a068ebb691213a12f8c1616b8756486313b06e79cfb3306",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookProjectFileTests.swift",
+      "sha256": "f383ede0827bdb7c9888c1995456118f49436375a1795ee5cf1616d134ec0053",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookProjectionEditTests.swift",
+      "sha256": "4cedc2d632068eca017ae502bcafc184130944dc3b12b100139a360027d99c89",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookPublicProtocolTests.swift",
+      "sha256": "5d339cd632e3a10ee34e54b24065c7f1c2838ca719a686c9d0c6b3c0111f22b2",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookQueryCutTests.swift",
+      "sha256": "0a171dc6630bd118520aa96036f37a4ac80fe49e8b38bfaf1adad0a1d8f5a1af",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookQuickShapeTests.swift",
+      "sha256": "5a0cfddfd7fee1b17357ff129254599700f6d2386d560a7773b705854b35b538",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookReadOutputAllowanceTests.swift",
+      "sha256": "83a7babf5c2c39d810d55d48961462d006d5acd79d1c8add462b6ddcc2969a5d",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookReadRevisionTests.swift",
+      "sha256": "a321c3eb89a91476f18a8cd6723f7b4b58f1f76d5fa32794b12e20fcb9a572f6",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookReadSessionTests.swift",
+      "sha256": "4bbd618619b3ac9c7934e8da98577bb49ac81f42f69ca426e8d1ec8f2dbadc7e",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookReferenceIndexTests.swift",
+      "sha256": "cd4b94f7145118986467365f5fe7c89748638b5f258a6f1b8d8da2fcd7509a5a",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookReferenceInkTests.swift",
+      "sha256": "e0d62c6652542e821beb1996318da0ba9bc31c9f96a44fef1d165288563b8788",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookReferenceLiveSceneTests.swift",
+      "sha256": "4c446db8033a703433a498478216019f8ece680c79a7d6ba4fbc8d99ad2d0523",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookReferenceLocationTests.swift",
+      "sha256": "c8a8f82c52ec9f8037496dc34999c466f91baada20790f8562eb028a44d750ea",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookRemoteControlTests.swift",
+      "sha256": "3b6e3663ad1d69a9a18db1d3881b0fd0ed0b4d649781818cff64cbc58c732b1a",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookReplicationInputTests.swift",
+      "sha256": "136893fa8bb76da68cce50cd46b58249dfe72fe5c29e28a642b11f30edb24ebf",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookReplicationOwnerWindowTests.swift",
+      "sha256": "aeaecc1f743e0759f17cd3f1ec06140dd90956a5e640b5be5225c20e7e40108d",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookReplicationTests.swift",
+      "sha256": "40f401e2ebfaa25fd1fe1ff8be27eba261b42c8ab2b22c0ad1ca7e1cc4489b1d",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookRetainedContentMergeTests.swift",
+      "sha256": "1261f00d364a60fba166b454fd4dc188db6bab95e4b6bbd0bfada1e16d606e94",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookRetainedLifecycleUndoTests.swift",
+      "sha256": "008b02e39bcde6575c5ac7890b134267f4284f84302e62418387b573f5a3bad0",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookRetiredBoardAdmissionTests.swift",
+      "sha256": "0170a9e12d9950d8b2b32139c691f874df3cfa39c976641560235cdde7929767",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookRetiredContentDeliveryTests.swift",
+      "sha256": "f43267e254d81f6d87cf6127f9089d194193ab92fec1fb1109a34aa000b06445",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookRetiredDocumentSourceTests.swift",
+      "sha256": "e1ab548b27d17619aa80d756c831970cef4b6eb92220ee6f1c2a1a7dd56e13f3",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookRunStoreTests.swift",
+      "sha256": "5304e6d573388ebaa2bbd87bea633266d5a44b1c99287899705637278e2a1eaf",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookSDKV2Tests.swift",
+      "sha256": "8669340d903cde7d2067fe555aba63a0be63adbb98639faee3160383b1d93c73",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookSQLExecutionTests.swift",
+      "sha256": "6e114e65b87e9815c178b4182a2ce2ba60008ba0ebbdebb08b046d0ade069488",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookSQLScaleTests.swift",
+      "sha256": "bb4c6f1d0d484a40efbc585c3f047e01b331dda3d5fb409446d9ee2495a8dc11",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookSQLiteTests.swift",
+      "sha256": "2e11c9fc2465c7281f1544167693b647d7ac07e9bfd8d6a7f7b685ff41ef855d",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookScenePaintRevisionTests.swift",
+      "sha256": "b4519575f6922e7dc760a268f0315705375c1690eb4dc30cd02cdbf7ec0f3217",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookSceneReadDependencyTests.swift",
+      "sha256": "a61d7590ac50b66546c5a0c445b03248039589146774335c8e85fac03d231e8e",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookSceneSourceTests.swift",
+      "sha256": "be981446b833641bc54cc667e05f6d2336b4298fd5b3d12db1ca0d7e3e32d368",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookScriptAdmissionTests.swift",
+      "sha256": "ff606305b012d7b96b7940284ed52efe545e81376162e9339fd8c81b050bb013",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookScriptCancellationTests.swift",
+      "sha256": "80324632580dcb37bcdb2901e4911009f43fa373a5c4bdef837724694efd30e5",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookScriptEffectOutcomeTests.swift",
+      "sha256": "9a67463eb781e20c34712697b889c904d3a746bddef4eaa03dc4e2af7b3b7c00",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookScriptLanguageTests.swift",
+      "sha256": "8202de2857b6874265acd5f088c73244a064b55ec8e21efe7924b51e235afa7b",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookSearchIndexTests.swift",
+      "sha256": "ace9d5251fff2382a091b16ddd68097565674e95c34ef1999a6dc4c48eccdd7a",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookSelectionPublicationTests.swift",
+      "sha256": "82bcf5f738d043925cc59b5cf3a5d790e611d3e2ac73a966d22e9e926f4eb06c",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookSpatialInkCommandTests.swift",
+      "sha256": "da13cb67eda5542d01d9c726c3c1f859efd398f4efb46144f5e4a68d190e8fa9",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookSpatialInkWindowScalingTests.swift",
+      "sha256": "5935ebc1e032a73e237f86acca3daa47c2c9a6b5533ee8367a072177fdd8549f",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookSpatialInkWindowTests.swift",
+      "sha256": "6b4e9b5c2ef0c4ae843652823872a5590765784a2279d06145a999964cf1d846",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookTldrawImportTests.swift",
+      "sha256": "c3bd81b335608e7093a0821f588a0c45d7c58fc435d238de7a40fa1f6da8fdc6",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookTldrawRecognitionTests.swift",
+      "sha256": "72a14ac9df6e6ebf47d23626640b405c3d87d5ce9deef8546a72b8a78d5aa42d",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookTransportFramingTests.swift",
+      "sha256": "1966c8c55c50e4c07e6cad8ae5f4e2b1a78188a5f003171975b3e96d8ad63323",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookTransportStorageTests.swift",
+      "sha256": "e4496dbebadb574523d16f51c1ef55377922f5f6048c2852339a14ee6b611009",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookVectorPathTests.swift",
+      "sha256": "e0f691e977ebe5fcad7651b562963023799b9112e470cb905f7bb8565f44451b",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookWakeAddressTests.swift",
+      "sha256": "d91dd0d7f059d9b25a04679eca3e6ae87e9b6c5c97828aee609eac0e872c44b3",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/PageDrawingFixture.swift",
+      "sha256": "7f2c15f969fe006d3b653d1519346145d2c4de3075f10cfd3e7ab80ad7686439",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/PageInkConflictTests.swift",
+      "sha256": "d994f3f32b8b4f88a470145ca896f38bc3f212f569fe225c27384930273a3a1b",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/PageInkDrawingTests.swift",
+      "sha256": "f60fdb3a31f818fe8ae5b8f471769876b8293df7208426e2b1cd6f0eed549626",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/PageInkPublicationTests.swift",
+      "sha256": "2315a3742db11ea4b14b45c78ec4a9de8119ff32ea8ed21ead35460a63a19c66",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/PageInkVisibilityTests.swift",
+      "sha256": "873b9c5cdcc7bd1494362c88e4c0e5622cc4d0a85b4b7a3833d8eca4206cf483",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/PageVisionReceiptTests.swift",
+      "sha256": "cc2570f81770f0e2850afd0dfb1dc083a8af05c7a58de091a44305c7f21211e3",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/PageVisionRequestTests.swift",
+      "sha256": "65e9be18b9d4d1c39366060b5ae51cc1f96340ba58727bcca68063457a6aa9ef",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/PlacementActionOwnershipTests.swift",
+      "sha256": "a8beff71e94d87e210c351a0b64b5c61abf800ef0dee4f0f6b5d2ee2d8b0b351",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/PortalIntegrityTests.swift",
+      "sha256": "dfd2be65dae0f10f9fc393dd128c4e3e021df7621b01818cf3af7e46d007e98c",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/PublicationNoOpTests.swift",
+      "sha256": "91ae4096a1d5267bea293182e607c0809e689ed4da2d672ceb274ae81c39ede2",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/Resources/QuickShapeMeasured.json",
+      "sha256": "cd6bb2fb5da1bf4489b205c2e843e35fa1c3f625fc97822ff44c5121b760f5dc",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/SQLFixture.swift",
+      "sha256": "03ece0091dc4e5a64a0e7fd74d5883d2b8db928e6f95df14cd38afe0f0cc5f15",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/SequentialUndoTests.swift",
+      "sha256": "99430e41aab2b9568dcee5772f1cd320e280a7cb0991325c203db3671cabb2a7",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/SharedContextReadTests.swift",
+      "sha256": "fc09af7e768e9edc898028005f047a1ffa8575c77055343c42020ea8ef16204d",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/SharedContextReferenceTests.swift",
+      "sha256": "28fb089d6beb88745d6fde6bc79443a2fe4e4b97a57322c1c7cc2fe50bac0b33",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/SharedContextReplicationTests.swift",
+      "sha256": "8c2f7497102c9f511a263a58a1d34a70b237b91e39cb437d566dbd12df0315a5",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/SharedContextValidationTests.swift",
+      "sha256": "95936a8ff47deb2745760d82e3f6da74c12f34519ae94a69685ad63414372f7c",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/SpatialInkJournalTests.swift",
+      "sha256": "1c104015db7f19081572f31e6a6d8c8a2ca9931ec266ea4ed00c6e6924bb1324",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/SpatialInkReplicationTests.swift",
+      "sha256": "8b6d7a57246d27532b331b273ca9f40f95509b874a0cbfe8f0e93a0b13297558",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/SpatialWorkspaceTests.swift",
+      "sha256": "4d0752b34f4cb10b5598574f76a7170482c046bd352fc0b10331c20709a23a13",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/SurfaceFrameManipulationTests.swift",
+      "sha256": "f06e2e8984eaaadd31a9dbbc6b34ca14890191b015dab2453f11587a048284cc",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/VectorInkSourceTests.swift",
+      "sha256": "38da3cffae715a84cc7d6c22d40763ba92d0b5845f55531553a9fb0dc8989921",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/WorkspaceIndexTests.swift",
+      "sha256": "dbd16401ca1b30505943dd74a0c31ade73353fd670fc44e737b7751019b934ff",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/WorkspaceItemGeometryTests.swift",
+      "sha256": "c9240e4d483719981131ac14aa6b3a5c0a28f8f6e076ec8d37d262b9b922bd16",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/WorkspacePageOrderMutationTests.swift",
+      "sha256": "a04584ac4087214b7c7c5f6930629233cf6a8125105869e9232bbf0bfb02119a",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/WorkspacePublicationTests.swift",
+      "sha256": "ba641e9ddeb7c33d0f7b360ffdaf2f96f4f28d826a6694f80b92d5f1843613e2",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/WorkspaceSpatialIndexTests.swift",
+      "sha256": "9b0a5d182697d1f780293b390c1a8b3059b84bfff2bee5871c0947f69e2ee0e4",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookCoreTests/WorldPointCodingTests.swift",
+      "sha256": "c8dbd15ea2ae37cb037a459222032f045b4efc76e48d732f23323b9bd801f47f",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookDocumentAcceptance/README.md",
+      "sha256": "d54607112bb7026d6a76fdb392575ff306b2743f1939b59c94052b60f663d797",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookDocumentAcceptance/create-control.js",
+      "sha256": "3fb0cef64deec5207fba62c81bdbf15e2f0488e966556c2e373d8a749d1bf35e",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookDocumentAcceptance/export-control.js",
+      "sha256": "5ce6f1bc935b76ed105b957bd855eeadc629f5696aa9fadcfbf4574602ffffef",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookDocumentAcceptance/system_trace.py",
+      "sha256": "640d4cb82733839ba590cf49d83f8bd138fda68e0a0490313bf52c5ab0b4e672",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookDocumentAcceptance/test_link_activation.mjs",
+      "sha256": "85e17b9cb78ac86cbbb80b61cb3ea783359002cd2022c5cf3af20ef8edbad250",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookDocumentAcceptance/test_page_phase_observation.mjs",
+      "sha256": "8b0d190e19c8b1c94a5ad218646c4f2b30997937721eb641592148b075206edd",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookDocumentAcceptance/test_system_trace.py",
+      "sha256": "b3739aff93dc66ea05ba707f41ef4b2ad5e717590e30f7116d1bdfbc8e90ab9f",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookIPCTestHost/main.swift",
+      "sha256": "4ac524b9cc4b51342b965746fcffd280f6a57a40e31ab89cdfb5aedd4e0f430c",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookInteractionAcceptance/README.md",
+      "sha256": "7a9fb0ee22a5effb8da2aad4b8db619bfdf233034060269a6521e8d327b9a1e2",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookInteractionAcceptance/WindowCapture.swift",
+      "sha256": "3571f5c66b582f6d200fd7d11d109aeb95e26f2984b21648db5a0439b65e473f",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookInteractionAcceptance/analyze.py",
+      "sha256": "22509cedc924589190ca6dc4ee7db86a43dfe31cf91bbcc4740cafc606c8ad73",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookInteractionAcceptance/test_analyze.py",
+      "sha256": "2dd5b3ff50772036dc4d85292eda5d31c89e8f99e9cd6cd14a70d29b71729907",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookInteractionAcceptance/test_driver.py",
+      "sha256": "ba8a77ddfb5f2a61445c62ee53fb4ec4497863d63b56882513fb14223f894526",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookInteractionAcceptance/test_script.mjs",
+      "sha256": "39c4a7678821b429e782bb0b02ee265dbb4fffdec86584a24aec5bd49e20eea9",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookInteractionAcceptance/watch_capture.py",
+      "sha256": "09255595395d43f245a4ac65de268be05314fce56f955c2b9ad3bd814711b73b",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookNavigationObservation/README.md",
+      "sha256": "0d265c40e2fa04b3cc1efc0031af8ce1c748679269195bea20f74e8de142639a",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookNavigationObservation/test_driver.py",
+      "sha256": "151f9576a9ae96595c4433a02abbe06627839d113e8525f5ca2d7efd6c8a57c3",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookPersistenceFenceHarness/README.md",
+      "sha256": "3fd071fd500d3f16103abb786562ccf21af49483b76d2b1ac149acd6b14d9c39",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookPersistenceFenceHarness/main.swift",
+      "sha256": "4137603cd934365966d3a24ece56ec1aa0f9f19a92abb16c90b2aa498c87c230",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookRecognitionHarness/.gitignore",
+      "sha256": "2f21d2245886c2ee7c64b5b515976d29bad0baed47b5fb9e23ff8779179a4393",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookRecognitionHarness/LICENSE-UniMERNet",
+      "sha256": "974f8af8e77f0e7b3149a75e8b7870407abf760ca449ce3d792b76691887c271",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookRecognitionHarness/README.md",
+      "sha256": "8d507bfc4f09d78e91817da44aaf86391a0faa47f714258b8767c97519a6c297",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookRecognitionHarness/evaluate.mjs",
+      "sha256": "3883533f5c9057e624c6472700ccadebf8949d240090a1b6137324d5764772c9",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookRecognitionHarness/fixtures/hwe_0000001.png",
+      "sha256": "829742ff4be6fed18a7723e544cca70421da3cd1cd8e552958d9a4634167935f",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookRecognitionHarness/fixtures/hwe_0000047.png",
+      "sha256": "2ed28c8293055e1d26b290ab9b88297b9e01bdcaada42ae8c73dcf2746151f8c",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookRecognitionHarness/fixtures/hwe_0000050.png",
+      "sha256": "9701315deaa2308fce24bd92433b58d02dc0df4a81872e03841596b98af384e0",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookRecognitionHarness/fixtures/hwe_0000083.png",
+      "sha256": "e0289d9ed907a8c0635fbf7c6572be6dde102f0d2ac51b691265399eea1f89d8",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookRecognitionHarness/fixtures/hwe_0000135.png",
+      "sha256": "755a12a9ad06d661be80ca07cf1cfa3dd1d8d369e897ee64d0fa5c8772bb48e6",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookRecognitionHarness/fixtures.json",
+      "sha256": "e37685d65075d126f449cad49596365b313cbda62cbe2b6e718d3a8fe0b3c0fd",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookRecognitionHarness/model-lock.json",
+      "sha256": "7172c0b9f40b6c4f2e5aedf1313b27fbac7218a9a6c7cd95b22e99430a003533",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookRecognitionHarness/package-lock.json",
+      "sha256": "7849854a1ceea3f0addfa22a0ab9d955726bb8cd382ef66ac3262cdcab9b46c8",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookRecognitionHarness/package.json",
+      "sha256": "4d4ddf3c567cdf9fd3352b33dded09905c5770507adc54030561ba326858bd39",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookRecognitionHarness/prepare.py",
+      "sha256": "f5b9373f247a062039f01f5e7ac117aae7ec2e761a3c3275d0d868b41a74be6c",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookRecognitionHarness/preprocess.mjs",
+      "sha256": "7c31d52ebb6e715ad3283053b1c66bad1770cc83d3d208fb7ef914c7d5577b70",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookRecognitionHarness/preprocess.test.mjs",
+      "sha256": "392b0a17868f600281112c7774eb4bd5ec93bea7fd81e5dc99ab4957f08c38ba",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookRelease/cli_fixture.py",
+      "sha256": "9ea0da0109914cc6bdd4ddca959dce4ab2776c9b33eae19d20cdc43a0fb254ee",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookRelease/macho_fixture.py",
+      "sha256": "657f0a4b70c488b01d478455eb04d99334f59346244c45bb4bc60c573020ee67",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookRelease/run.py",
+      "sha256": "0f66ec6a61ab8fbb3b909802996894ad23710deda296b7e35afa97e41e3fa1fd",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookRelease/test_typesetter.py",
+      "sha256": "e89efc9ff8c0be296752e6cc525b009f48ebbb75ec08a0a606b66c64e1d1d756",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookRelease/typescript_fixture.py",
+      "sha256": "d4986d9886e685e700b6fb25c6bdba10420905bf645affa2692fcfa3c38d8d1e",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookRelease/typesetter_fixture.py",
+      "sha256": "7a56833f09eaca917d9cbbb3c2a32e338806b04bd78795fca13d275a9c4fca9a",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookSceneObservation/README.md",
+      "sha256": "f5f3821b06717c94c5b66ea306e370fdf3af6385cc8dcd15e977ab7face7b18b",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookSceneObservation/test_driver.py",
+      "sha256": "6dacc3ba5f9beb69170f99b580278818b5a0d875946eb17b3306bd95523fcc60",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookScriptHostTests/NotebookDocumentCheckTests.swift",
+      "sha256": "67b9a803ea96cf1d3192a7a594e640ed32525c6b66e3385b564e5c4f95f6f05b",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookScriptHostTests/NotebookMarkupQueueTests.swift",
+      "sha256": "faa0b6e1419006b5e4712080b5d7119902075943c7276cad53dee5277468a4df",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookScriptHostTests/NotebookSDKV2ReadTests.swift",
+      "sha256": "fbceaadf4582896f4686b03708f8906714158f408bc7f091505993196a806705",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookScriptHostTests/NotebookScriptAddressedReadTests.swift",
+      "sha256": "7901762f53bc5dbdbe648934a5c09049ea431278ffe672c693323b270682b86b",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookScriptHostTests/NotebookScriptCompletionWaitTests.swift",
+      "sha256": "b6e6d8b42de18697d8877dae89d59f48b044b8c9a1c04cf6069d080a40f19eda",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookScriptHostTests/NotebookScriptDeadlineTests.swift",
+      "sha256": "954a54d84dfe03272c9e4314b2f1a4b6f695d0cdc575f98ff1b253caacce93f8",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookScriptHostTests/NotebookScriptEffectRecoveryTests.swift",
+      "sha256": "7c0d3e9938c49548f76f7c8453650fd991b3bb58e312c1fc3f5560e265b5e431",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookScriptHostTests/NotebookScriptHelpTests.swift",
+      "sha256": "088d5f5c2afc8c80350009db4659627724ebb34d67ae07e361d98e8ef8544ad3",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookScriptHostTests/NotebookScriptReadCancellationTests.swift",
+      "sha256": "a032f13acd74c6dafe8db6c4f42b432e4b11127f4f24300206556154974a361d",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookScriptHostTests/NotebookScriptReaderTests.swift",
+      "sha256": "0198d4f8b0a6edd44b8af6d8bfec97d4cb6078f4038bf9030c49d7345f887b84",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookScriptHostTests/NotebookSelectionReadTests.swift",
+      "sha256": "f292d084f5bbd01ec59bd9d0a0ddcbe1ea3fcc830dd6087abba170953d506ef1",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookScriptHostTests/NotebookTldrawReadTests.swift",
+      "sha256": "f885b7b16317aebf9db77e1879e7a04a6ababda6af07db92963e7c19f8f7def4",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookScriptWorkerTests/NotebookCompilerMemoryTests.swift",
+      "sha256": "c14b0fdc843297080a0ba9bf97cb49d7ea97486b72025c3e88cdeb28fe2d6626",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookScriptWorkerTests/NotebookCompilerProcessTests.swift",
+      "sha256": "421330cea986a6847c8e2e26d8d1dc37375552f259984f5864dbc5eb8a67e278",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookScriptWorkerTests/NotebookQuickJSCancellationTests.swift",
+      "sha256": "4a97107202bdf5eab893341a432375b5bab897e079790359008b9483c7387082",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookScriptWorkerTests/NotebookTypeScriptCompilerTests.swift",
+      "sha256": "6df78703f154f90ba0cb361b98c18edde10bef9059035a0db4e350ba0ea6edec",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookTypesetterProbe/README.md",
+      "sha256": "d35879cd8f295d4ad5639265cdce702a8056ecd9bb91edc8e2bce615f671a0b3",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookTypesetterProbe/app/Probe.swift",
+      "sha256": "3e30f0d41da0554e3989530a8605a1979d930c700d0d255fffefc6c3cd2d0a36",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookTypesetterProbe/app/Typeset.h",
+      "sha256": "061bb7bc0b923ade58720ab373c3d3effef152c7acf85b257c7d62c88864295f",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookTypesetterProbe/bridge/Cargo.lock",
+      "sha256": "56d00050d345bbcf4c672a342cba358a9ad3cf011bca2eea6f75866d27f73f37",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookTypesetterProbe/bridge/Cargo.toml",
+      "sha256": "1cea275852c80b60d8f4d83546ecd1eb19cbf1c64a0e9bf2c604109c7d462aa4",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookTypesetterProbe/bridge/src/lib.rs",
+      "sha256": "28f8364577f71e2dd377fcd2b09c3c079f6a5936408150608ac129a486c65349",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookTypesetterProbe/project.yml",
+      "sha256": "7ef94dee436bcd7a29a02b27adc7dcf25c5369b2c5bddd1640158292a2aaee47",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookTypesetterProbe/run.py",
+      "sha256": "bb77aeba95c4336717a1324172fe6501b8ed742b6042a58088758d9ffb5f85b5",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookTypesetterProbe/tectonic.patch",
+      "sha256": "dcd243e980447fb349903cce7ffd1492f1a459ebadf9a0dd044c677d60f2bf14",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookTypesetterProbe/vcpkg.patch",
+      "sha256": "8058f2753a9222ae2a7dba16e91680d6a103789d3835a2ee58807bfa50c876b3",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookVerification/distribution_contracts.py",
+      "sha256": "2329bac2f6a8b88157aa630f179fc22595310f67c5cc91c0bb8e03879732ff84",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookVerification/full.sh",
+      "sha256": "9bb285481e3df6f06b46da9fe935658d19aee1d775b9f46aa6d1f08487bc9e70",
+      "executable": true
+    },
+    {
+      "path": "Tests/NotebookVerification/run.py",
+      "sha256": "91068c7657673f27f93a16b4215fa7df2c0566030ae9a42cb2ab72e9c04441f0",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookVerification/test_registry.py",
+      "sha256": "2ae6dab44ec4965d958ed5f38e03bc06cb79d37771a67bfe8e446353379eb31e",
+      "executable": false
+    },
+    {
+      "path": "Tests/NotebookVoiceHarness/audio.test.mjs",
+      "sha256": "a587e21efc4c5c0f43e637093d0be3ff7e4a007ae677aaf86df04febb2e83024",
+      "executable": false
+    },
+    {
+      "path": "Tests/PencilKitIntegration/EraserPathProof.swift",
+      "sha256": "e361583556cda7ff27a64ea80dcbb1b2f53678ce472b8f6e0594ade7cb696c00",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/CameraPipeline.swift",
+      "sha256": "d7e908442a4e7dd07a4e9c47d48117049c6a2e33ca2d7d54eca70f3799607661",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/CompactInk/README.md",
+      "sha256": "dc348ee81fbf40fe3714cd693aea97f66a1308368d0f72e5fb559b5b301bd348",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/CompactInk/Results/ipad-m1.json",
+      "sha256": "8fcad61842089500d55e1e431aff588ae7ff71471ec39bd558ea0a6f805bc182",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/CompactInk/main.swift",
+      "sha256": "6e9564f83e7131351fc8c1ddd0eabcd2efe571a8483c7aa10dea6f8a8839862a",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/CompactInk/run.sh",
+      "sha256": "3b0044a36e667d6a0e67ab434f0317e216cd96cf13d9daeb9cba47f484f2cc8f",
+      "executable": true
+    },
+    {
+      "path": "Tests/Performance/RelationalInk/Codec.swift",
+      "sha256": "bb29e17aac4f8dddc32915607ec5675b438022d62a0f02e3df9b2f3418d935fd",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/RelationalInk/README.md",
+      "sha256": "80c87e124b47d2df009760c0cac665d9f1d4f2cd92739ee94b24eace8e9c12f8",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/RelationalInk/Results/contours.png",
+      "sha256": "7677d5d5e5e536cd58675e85c9d4f7e7f04045fba5b43224b14b82b1da9574b5",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/RelationalInk/Results/environment.txt",
+      "sha256": "3e59b170ce0d065f2507d921d2a5d29c35866fb9e76e4b8ec80f6665c39aac5b",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/RelationalInk/Results/runs.json",
+      "sha256": "6eb4f460e407566346b18814696b18d10ffa8d5dfa3e0606cde85d856d0fdefe",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/RelationalInk/main.swift",
+      "sha256": "fdf369ccc283253f47ce0e64b6c33510ed223e960a96d360d803a46228418afd",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/RelationalInk/run.sh",
+      "sha256": "4645ed14f55fad0f36ee9155bbfa49fc306aecfb69603f00835a84eb84200c00",
+      "executable": true
+    },
+    {
+      "path": "Tests/Performance/TensorGPU/README.md",
+      "sha256": "39297edb92c11c1c432395911ca157405b66e7eadd954e07bdd1228f87fb44a5",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/TensorGPU/Results/comparison.png",
+      "sha256": "05e03f99b460a3c19eef5860aedf2b14627287b33883ffe8494e285448dfdce3",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/TensorGPU/Results/environment.txt",
+      "sha256": "5d1f3d4535d41dd0ca5d2e5ffadc13a9a9121b832a1e5a90895501dd0a19209f",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/TensorGPU/Results/runs.json",
+      "sha256": "d89bd447d5d1bad528096ddb18ec4aea852ed938f06e91b6780b231cb64d15d0",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/TensorGPU/Support.swift",
+      "sha256": "0bcbd22d1449877dc67c8fce9ad53c26028fd8bf6d7c4b9daf13437882d6da67",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/TensorGPU/TensorInk.metal",
+      "sha256": "919f7af0edaba4a090ae30019edd43458f8a8aff634cd02c16f982ba6af5cc38",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/TensorGPU/main.swift",
+      "sha256": "e499f7e74e4f38f597b2226ef9d0f03177d225aced0b03bcb6be3646953caf5d",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/TensorGPU/run.sh",
+      "sha256": "cd44cf03d35844c4086792575eb5a53899978c6090ca4a096d438c1fcd3afdf1",
+      "executable": true
+    },
+    {
+      "path": "Tests/Performance/TensorTiles/README.md",
+      "sha256": "297042ff5da62cc80b76658ce3b96bcfa224fb4955a5dd048d7a5477138210b6",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/TensorTiles/Results/before.png",
+      "sha256": "c0e9b7d8f43190da157873886e5d54a511916bcfdb44659860a9dbb4bb4a6491",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/TensorTiles/Results/binary-hashes-precleanup.txt",
+      "sha256": "76c72b7ee8f820508fabb07f3a3cc095e7843cc4be700148ae3ed7a91f69a3ba",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/TensorTiles/Results/binary-hashes.txt",
+      "sha256": "64b88503f42cfbe928aa0c429ed10d7577ba1a7f2359e754b62db4078132d27b",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/TensorTiles/Results/direct-regression-environment.txt",
+      "sha256": "d9eb85cb626045c2e08ac554e7f348c2fc572c8d03df43f45c0161f411dd0060",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/TensorTiles/Results/direct-regression.json",
+      "sha256": "b504f3f70f954a327f88cce8ce71f317846868c8eb460720f8fe4dd5fdf2f4d6",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/TensorTiles/Results/environment-precleanup.txt",
+      "sha256": "a8474cdbcc4dc7012ad625e78946c35f0aa9959cad46e23ac1ad5dc4e7c34d33",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/TensorTiles/Results/environment.txt",
+      "sha256": "8cb14e1f76ed6377e682e07137b485ebf08eb1b2504431c552708d4a336bc414",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/TensorTiles/Results/expanded-full.png",
+      "sha256": "a5b136ef9f9d029ba45194116b74b35257f38d2b3464063ccbeb38938aa096e6",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/TensorTiles/Results/expanded-tiles.png",
+      "sha256": "a5b136ef9f9d029ba45194116b74b35257f38d2b3464063ccbeb38938aa096e6",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/TensorTiles/Results/restored.png",
+      "sha256": "c0e9b7d8f43190da157873886e5d54a511916bcfdb44659860a9dbb4bb4a6491",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/TensorTiles/Results/run1.json",
+      "sha256": "9d3da105f2af37153aa22e89aef428567b435e04d1d8aaa7687bbad09366f2fb",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/TensorTiles/Results/run2.json",
+      "sha256": "4d0c40090443523d759ad6af93f94c33a7816e6803a0ac94cda678a9761ae8c3",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/TensorTiles/Results/run3.json",
+      "sha256": "236dd408c80b9c70a87b9847672a90962936d2f5e9405b5b40db81724a00fb3a",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/TensorTiles/Results/run4.json",
+      "sha256": "42ea0eefb44227c8ba086d0cb9336c6ff165e62afdda33b406fe5629cfa2651a",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/TensorTiles/Results/run5.json",
+      "sha256": "c49800aee6f33ac0f51057b883824b576958133920b24d10f67a80da413c818a",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/TensorTiles/Results/run6.json",
+      "sha256": "86c5fa64ce98c2da89b62b3893096a34944dcf52d6837d97c0383cfd8432c70b",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/TensorTiles/TileIndex.swift",
+      "sha256": "b38901dbe73477f9080bb7d02abddc3a0c39f40aae8d8092f03d5b088609d585",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/TensorTiles/main.swift",
+      "sha256": "3df99c6fce812f611c13f5a35e83deb29b6a3f35721f34ae146646e51b9d8532",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/TensorTiles/run.sh",
+      "sha256": "4c00350205eca907b660d94469e99c7c19016431282b2e438b1fc4ee9780837d",
+      "executable": true
+    },
+    {
+      "path": "Tests/Performance/TensorWhole/README.md",
+      "sha256": "7090b3f3d5c43bfaedfc4a5e6f00a8ddab1d4e2cb36895969541fd8b63a19c7a",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/TensorWhole/Results/before.png",
+      "sha256": "38e8e48ba51a784d4c51d7b02f161118bd63f146d7f0fcda0b9522b09d5761d7",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/TensorWhole/Results/binary-hashes.txt",
+      "sha256": "66c349707b82ca89f07e8082151ca466573aefdaaea88da1d80fa49d40fdfd03",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/TensorWhole/Results/direct-regression-environment.txt",
+      "sha256": "1bc09b3081763530f2ca40f45bb17d05ea263da0e953fd0819401f948fc3f624",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/TensorWhole/Results/direct-regression.json",
+      "sha256": "e0b05406023bfcec3256a847e26fcf282e9afc234a91eab2c0608f95f2e97647",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/TensorWhole/Results/environment.txt",
+      "sha256": "369057b595e8c6aa620d46976de9aca71680279f055bb8f19df4eb91c5ec1486",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/TensorWhole/Results/restored.png",
+      "sha256": "38e8e48ba51a784d4c51d7b02f161118bd63f146d7f0fcda0b9522b09d5761d7",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/TensorWhole/Results/rotate-then-stretch.png",
+      "sha256": "4239696eccfb822a57dc6a31c217b287ca398f079419dc3724da1a775df22f2e",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/TensorWhole/Results/run1.json",
+      "sha256": "3b32b3e885f8b873dd66a103af6f86aa6df95635528b9eb03a299a4043ff3a20",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/TensorWhole/Results/run2.json",
+      "sha256": "ecfeeb5cde6eaf730b2d3a1bbd6e7831a118ad8634570bcf12488e1cd41409b4",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/TensorWhole/Results/run3.json",
+      "sha256": "739ba73935c0004464becb54e0857e57712c3dfaf4b57f3e091fc22e8cdd7a0e",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/TensorWhole/Results/stretch-then-rotate.png",
+      "sha256": "73035e3b8acf139cb11dbe0711d1369cd8102008cd1a268f063c90be52127281",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/TensorWhole/Results/tiles-regression-environment.txt",
+      "sha256": "b6fec4d7f8f41537e33afdfdafc4b64672f62ee68641f8d192d9fa7d480cc7f1",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/TensorWhole/Results/tiles-regression.json",
+      "sha256": "0a36c7e2363b8b9a2fc48372fde10c5e88e1eb83895f1231e896e84bf13b72a5",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/TensorWhole/WholeInk.metal",
+      "sha256": "e837bccee8c8a3d7b9eafdc87273f46343ed1ffee027ceadbc8cd6824fca996d",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/TensorWhole/main.swift",
+      "sha256": "28416bf692718c5ad86d47358f316a31381435964ea0af9b7241718734fc7c29",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/TensorWhole/run.sh",
+      "sha256": "ed7179130e590f2388223876c0a34eb3c33fd38b50989e01d39be0342185b2af",
+      "executable": true
+    },
+    {
+      "path": "Tests/Performance/TriangleReference.metal",
+      "sha256": "669c794e94d8e8e6e3d04608bc6c79b1afd46674d20f9667026d3a80bcd11857",
+      "executable": false
+    },
+    {
+      "path": "Tests/Performance/run.sh",
+      "sha256": "9c24715ca376d406ea950f70ff8af94d3465f32500fefbd46c7b8264bd8f3d28",
+      "executable": true
+    }
+  ]
+}

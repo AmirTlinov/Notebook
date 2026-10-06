@@ -54,6 +54,52 @@ enum NotebookScriptAPI {
 }
 
 extension NotebookScriptCoordinator {
+  /// These handles belong to one worker lifetime; they do not enqueue work or
+  /// own persistence. Accepted effects and emitted events have their own drain.
+  func registerHostRead(runID: UUID, method: String, arguments: JSONValue) -> (id: UUID, task: Task<JSONValue, Error>) {
+    let id = UUID()
+    let task = Task<JSONValue, Error> { [self] in
+      try Task.checkCancellation()
+      return try await read(method: method, arguments: arguments)
+    }
+    hostReadTasks[runID, default: [:]][id] = task
+    return (id, task)
+  }
+
+  func hostReadValue(_ read: (id: UUID, task: Task<JSONValue, Error>), runID: UUID) async throws -> JSONValue {
+    let task = read.task
+    defer {
+      hostReadTasks[runID]?.removeValue(forKey: read.id)
+      if hostReadTasks[runID]?.isEmpty == true { hostReadTasks[runID] = nil }
+    }
+    return try await withTaskCancellationHandler {
+      // Always join actual completion, including when this caller was already
+      // cancelled. Removing a still-running SQL task would lose its owner.
+      let value = try await task.value
+      try Task.checkCancellation()
+      return value
+    } onCancel: { task.cancel() }
+  }
+
+  func cancelHostReads(_ runID: UUID) {
+    guard let reads = hostReadTasks[runID] else { return }
+    for task in reads.values { task.cancel() }
+  }
+
+  func drainHostReads(_ runID: UUID) async {
+    guard let reads = hostReadTasks[runID] else { return }
+    let tasks = Array(reads.values)
+    for task in tasks { task.cancel() }
+    for task in tasks { _ = await task.result }
+  }
+
+  func finishWorkerReads(_ runID: UUID) async {
+    // The XPC exchange also ends on its wall deadline. Close admission before
+    // the first join, so a late broker callback cannot create another read.
+    finishedWorkers.insert(runID)
+    await drainHostReads(runID)
+  }
+
   func send(_ fields: [String: JSONValue]) async throws -> JSONValue {
     try await command(NotebookIPC.decodeCommand(JSONEncoder().encode(JSONValue.object(fields))))
   }
@@ -83,8 +129,8 @@ extension NotebookScriptCoordinator {
   }
 
   private func evidenceSnapshot(_ data: JSONValue) async throws -> JSONValue {
-    try await persistence { store in
-      try .encode(NotebookSnapshot(data: data, basis: store.readBasis(targets: []), cursor: String(store.currentReadCursor())))
+    try await reader { cut in
+      try .encode(NotebookSnapshot(data: data, basis: cut.readBasis(targets: []), cursor: String(cut.currentReadCursor())))
     }
   }
 
@@ -191,8 +237,8 @@ extension NotebookScriptCoordinator {
       request["actionID"] = args["id"]; return try await evidenceSnapshot(send(request))
     case "exportStatus":
       guard let id = args.string("jobID").flatMap(UUID.init(uuidString:)) else { throw CollaborationError("invalid_export", "Нужен jobID.") }
-      return try await persistence { store in
-        try .encode(NotebookSnapshot(data: store.scriptExportJob(id) ?? .object(["status": .string("missing")]), basis: store.readBasis(targets: []), cursor: String(store.currentReadCursor())))
+      return try await reader { cut in
+        try .encode(NotebookSnapshot(data: cut.scriptExportJob(id) ?? .object(["status": .string("missing")]), basis: cut.readBasis(targets: []), cursor: String(cut.currentReadCursor())))
       }
     default: throw CollaborationError("unknown_sdk_method", "Метод отсутствует в API v2.")
     }
@@ -218,8 +264,8 @@ extension NotebookScriptCoordinator {
       let referenceID = args.string("referenceID").flatMap(UUID.init(uuidString:)) else {
       throw CollaborationError("invalid_reference", "Нужны contextID и referenceID из вопроса.")
     }
-    return try await persistence { store in
-      guard let source = try store.attentionEvidence(contextID: contextID, referenceID: referenceID) else {
+    return try await reader { cut in
+      guard let source = try cut.attentionEvidence(contextID: contextID, referenceID: referenceID) else {
         return .object(["status": .string("pending"), "code": .string("attention_not_delivered")])
       }
       let raw = try JSONValue.encode(source)
@@ -258,7 +304,7 @@ extension NotebookScriptCoordinator {
 
   private func pageVision(method: String, arguments args: JSONValue) async throws -> JSONValue {
     let id = try await selectedID(args, page: true)
-    let page = try await persistence { try .encode($0.readContentHeader(target: .init(kind: .page, id: id))) }.decode(NotebookContentHeader.self)
+    let page = try await reader { try .encode($0.readContentHeader(target: .init(kind: .page, id: id))) }.decode(NotebookContentHeader.self)
     guard let drawing = page.inkStamp, let size = page.size else { throw CollaborationError("target_missing", "Нет метаданных листа.") }
     if let expected = args.string("drawingRevision"), expected != drawing.revision {
       throw CollaborationError("revision_conflict", "Чернила изменились; прочитайте новую карту.")

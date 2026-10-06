@@ -36,6 +36,11 @@ final class CurrentViewPublicationPermit: @unchecked Sendable {
 }
 
 enum CurrentViewPreviewWriter {
+  #if DEBUG
+    /// Acceptance may hold this exact joined page worker before its revocable
+    /// output enters the shared FIFO. Normal publication leaves this nil.
+    @MainActor static var onPageVisionPrepared: (@MainActor (UUID) async -> Void)?
+  #endif
   /// Revalidate the already published pixels, then advance only their general
   /// workspace metadata. Script readers can keep their strict receipt fence
   /// without making an unrelated edit render the same image again.
@@ -194,6 +199,11 @@ enum CurrentViewPreviewWriter {
           inkRegions: vision.regions.map(\.contentPoints))
       }
       let receipt = try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
+      #if DEBUG
+        await onPageVisionPrepared?(request.id)
+      #endif
+      try Task.checkCancellation()
+      guard model.permitsBackgroundPreparation else { throw PreviewError.inputActive }
       try await model.performStoreCommand { store in
         try Task.checkCancellation()
         guard try NotebookStore.pageVisionSourceRevision(store.loadPage(request.target.id)) == request.sourceRevision else { throw PreviewError.sourceChanged }

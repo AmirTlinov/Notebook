@@ -8,13 +8,13 @@ extension Proof {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("notebook-run-proof-\(UUID())")
     defer { try? FileManager.default.removeItem(at: directory) }
     let store = NotebookStore(root: directory.appendingPathComponent("archive")), author = UUID()
-    _ = try store.initializeWorkspace(actor: author, pageSize: .init(width: 834, height: 1194))
+    let workspaceID = try store.initializeWorkspace(actor: author, pageSize: .init(width: 834, height: 1194)).workspaceID
     guard let canonical = realpath(directory.path, nil) else { throw CocoaError(.fileReadUnknown) }
     let physicalDirectory = String(cString: canonical); free(canonical)
     let root = NotebookFileAddress(computer: UUID(), project: "isolated-proof", root: directory.path, path: ""), id = UUID()
     let request = NotebookRunRequest(root: root, command: "printf '\\033[32mREADY\\033[0m\\n'; read answer; printf 'ANSWER:%s\\n' \"$answer\"; read finish; printf 'DONE\\n'", columns: 80, rows: 24)
     try store.admitRun(.init(id: id, author: author, request: request))
-    try await bridge.startProcess(id: id, request: request) { try store.receiveRunEvent(id, $0) }
+    try await bridge.startProcess(id: id, workspaceID: workspaceID, request: request) { try store.receiveRunEvent(id, $0) }
     var observedRun: UUID?, cursor = "0", transcript = Data()
     func readOutput() throws -> NotebookRunRecord? {
       var page: NotebookRunOutput
@@ -55,12 +55,12 @@ extension Proof {
       guard try store.runRecord(id)?.exitCode == 0 else { throw CodexBridgeError.invalidResponse }
       let stopped = UUID(), second = NotebookRunRequest(root: root, command: "printf 'STOP_READY\\n'; sleep 60")
       try store.admitRun(.init(id: stopped, author: author, request: second))
-      try await bridge.startProcess(id: stopped, request: second) { try store.receiveRunEvent(stopped, $0) }
+      try await bridge.startProcess(id: stopped, workspaceID: workspaceID, request: second) { try store.receiveRunEvent(stopped, $0) }
       _ = try await until("STOP_READY"); try await bridge.stopProcess(id: stopped)
       guard try store.runRecord(stopped)?.isActive == false else { throw CodexBridgeError.invalidResponse }
       let shellID = UUID(), shell = NotebookRunRequest(root: root)
       try store.admitRun(.init(id: shellID, author: author, request: shell))
-      try await bridge.startProcess(id: shellID, request: shell) { try store.receiveRunEvent(shellID, $0) }
+      try await bridge.startProcess(id: shellID, workspaceID: workspaceID, request: shell) { try store.receiveRunEvent(shellID, $0) }
       let shellDeadline = ContinuousClock.now + .seconds(5)
       while try store.runRecord(shellID)?.phase != .running, .now < shellDeadline { try await Task.sleep(for: .milliseconds(30)) }
       try await bridge.writeProcess(id: shellID, data: Data("printf 'SHELL_READY:%s\\n' \"$PWD\"\r".utf8))

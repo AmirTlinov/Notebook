@@ -198,8 +198,10 @@ struct SpatialInkCanvas: UIViewRepresentable {
     private var activePen: ActiveInkStroke?
     private var activeEraser: ActiveEraserStroke?
     private var capturedMeasurementCount = 0
+    private var capturedWorldMeasurementCount = 0
     private var closedTargetCount = 0
     private var closedTargetBytes = 0
+    private var closedTargetWriteAllowance = InkElementTarget.WriteAllowance.zero
     private var changedElementTargets: [Int:Set<String>] = [:]
     private var currentSurface: SurfaceID?
     private var touchedSurfaces: Set<SurfaceID> = []
@@ -522,7 +524,8 @@ struct SpatialInkCanvas: UIViewRepresentable {
       touchedSurfaces = []
       previousFilteredForce = nil
       previousTimestamp = nil
-      capturedMeasurementCount = 0; closedTargetCount = 0; closedTargetBytes = 0
+      capturedMeasurementCount = 0; capturedWorldMeasurementCount = 0
+      closedTargetCount = 0; closedTargetBytes = 0; closedTargetWriteAllowance = .zero
       actionStartTimestamp = touch.timestamp
       appendSamples(touch: touch, event: event)
       if actionTool == .pen, guideConstraint == nil, currentSurface == boardSurface, let point = lastActionPoint?.location {
@@ -808,7 +811,14 @@ struct SpatialInkCanvas: UIViewRepresentable {
       guard capturedMeasurementCount < NotebookInkWriteAllowance.maximumMeasurements else {
         sealAction(at: NotebookInkWriteAllowance.Limit.measurements); return false
       }
+      let worldMeasurements = capturedWorldMeasurementCount + (sample.worldPoint == nil ? 0 : 1)
       if let activePen {
+        if let limit = NotebookInkWriteAllowance.contactLimit(measurements: capturedMeasurementCount + 1,
+          worldMeasurements: worldMeasurements, targetCount: closedTargetCount,
+          targetPayloadBytes: closedTargetBytes, targetWriteAllowance: closedTargetWriteAllowance,
+          spans: actionSpans.count + 1) {
+          sealAction(at: limit); return false
+        }
         activePen.replaceMeasuredTail(
           from:activePen.measured.count,
           with:[sample]
@@ -820,27 +830,34 @@ struct SpatialInkCanvas: UIViewRepresentable {
         var proposed = activeEraser.measured
         proposed.replaceTail(from: start, with: [sample])
         var proposedContact = elementContact
+        var queriedTargetIDs: [String] = []
         if let source = actionGeometry?.eraserSource,
           let bounds = eraserBounds(source: proposed, from: start, surface: currentSurface) {
           do {
             let query = try source.query(surface: currentSurface, bounds: bounds)
             proposedContact.update(proposed, from: start,
               queried: query.targets, visitedNodes: query.visitedNodes)
-            if let limit = NotebookInkWriteAllowance.targetLimit(proposedContact.selected,
-              priorCount: closedTargetCount, priorBytes: closedTargetBytes) {
-              sealAction(at: limit); return false
-            }
-            changedElementTargets[actionSpans.count,default:[]].formUnion(query.targets.map(\.elementID))
+            queriedTargetIDs = query.targets.map(\.elementID)
           } catch {
             sealAction(at: error); return false
           }
         }
+        let targets = proposedContact.selected
+        var metadata = closedTargetWriteAllowance; metadata.add(proposedContact.writeAllowance)
+        if let limit = NotebookInkWriteAllowance.contactLimit(measurements: capturedMeasurementCount + 1,
+          worldMeasurements: worldMeasurements, targetCount: closedTargetCount + targets.count,
+          targetPayloadBytes: closedTargetBytes + NotebookInkWriteAllowance.targetBytes(targets),
+          targetWriteAllowance: metadata, spans: actionSpans.count + 1) {
+          sealAction(at: limit); return false
+        }
         activeEraser.acceptMeasured(proposed, from: start)
         elementContact = proposedContact
+        changedElementTargets[actionSpans.count,default:[]].formUnion(queriedTargetIDs)
         surfaceRegistry.canvas(for: currentSurface)?
           .displayActiveEraser(activeEraser)
       }
       capturedMeasurementCount += 1
+      capturedWorldMeasurementCount = worldMeasurements
       return true
     }
 
@@ -899,6 +916,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
         let targets = span.elementTargets ?? []
         closedTargetCount += targets.count
         closedTargetBytes += NotebookInkWriteAllowance.targetBytes(targets)
+        closedTargetWriteAllowance.add(elementContact.writeAllowance)
       }
       activePen?.replacePredictions(with: [])
       surfaceRegistry.canvas(for: currentSurface)?

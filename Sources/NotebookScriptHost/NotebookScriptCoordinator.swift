@@ -7,10 +7,12 @@ import NotebookScriptProtocol
 @MainActor
 public final class NotebookScriptCoordinator {
   public typealias Command = @Sendable (NotebookCommand) async throws -> JSONValue
+  public typealias Reader = @Sendable (@escaping @Sendable (NotebookQueryCut) throws -> JSONValue) async throws -> JSONValue
   public typealias Persistence = @Sendable (@escaping @Sendable (NotebookStore) throws -> JSONValue) async throws -> JSONValue
   public typealias CanonicalExport = @MainActor (NotebookExportCut, NotebookExportOptions, UUID) async throws -> NotebookExportReceipt
   let canonicalExport: CanonicalExport
   let command: Command
+  let reader: Reader
   let persistence: Persistence
   let markup: NotebookMarkupQueue
   let userServiceName: String
@@ -24,6 +26,7 @@ public final class NotebookScriptCoordinator {
   var cancelled = Set<UUID>()
   var finishedWorkers = Set<UUID>()
   var acceptedCalls = 0
+  var hostReadTasks: [UUID: [UUID: Task<JSONValue, Error>]] = [:]
   var effectTasks: [UUID: Task<JSONValue, Error>] = [:]
   var inFlightEffects = 0
   var effectDrainWaiters: [CheckedContinuation<Void, Never>] = []
@@ -54,12 +57,12 @@ public final class NotebookScriptCoordinator {
   }
   var completionWaiters: [UUID: [UUID: RunCompletionWaiter]] = [:]
 
-  public init(command: @escaping Command, persistence: @escaping Persistence, workingDirectory: URL,
+  public init(command: @escaping Command, reader: @escaping Reader, persistence: @escaping Persistence, workingDirectory: URL,
     canonicalExport: @escaping CanonicalExport = { _, _, _ in throw CollaborationError("print_owner_unavailable", "Владелец печатного макета недоступен.") },
     userServiceName: String = NotebookScriptServiceNames.user,
     markupServiceName: String = NotebookScriptServiceNames.markup) {
     self.canonicalExport = canonicalExport
-    self.command = command; self.persistence = persistence; self.workingDirectory = workingDirectory
+    self.command = command; self.reader = reader; self.persistence = persistence; self.workingDirectory = workingDirectory
     self.userServiceName = userServiceName; self.markupServiceName = markupServiceName
     markup = NotebookMarkupQueue(serviceName: markupServiceName)
   }
@@ -91,6 +94,7 @@ public final class NotebookScriptCoordinator {
       waiting.removeAll { $0.id == request.runID }
       if active == request.runID {
         cancelled.insert(request.runID); worker?.cancel(request.runID)
+        cancelHostReads(request.runID)
         await markup.endRun(request.runID)
       }
       try await cancelRun(request.runID)
@@ -101,7 +105,7 @@ public final class NotebookScriptCoordinator {
   private func readRunAfterCompletion(_ request: NotebookScriptRequest, deadline: ContinuousClock.Instant) async throws -> JSONValue {
     try Task.checkCancellation()
     guard ContinuousClock.now < deadline else {
-      return try await persistence { try $0.scriptRunPage(request.runID, after: request.afterSequence ?? 0) }
+      return try await reader { try $0.scriptRunPage(request.runID, after: request.afterSequence ?? 0) }
     }
     let token = UUID(), waiter = RunCompletionWaiter(), runID = request.runID
     completionWaiters[runID, default: [:]][token] = waiter
@@ -113,11 +117,11 @@ public final class NotebookScriptCoordinator {
     return try await withTaskCancellationHandler {
       defer { releaseCompletionWaiter(runID, token: token, result: .success(())) }
       try Task.checkCancellation()
-      let page = try await persistence { try $0.scriptRunPage(runID, after: request.afterSequence ?? 0) }
+      let page = try await reader { try $0.scriptRunPage(runID, after: request.afterSequence ?? 0) }
       guard ["queued", "running"].contains(page.string("status") ?? "") else { return page }
       try await waiter.value()
       try Task.checkCancellation()
-      return try await persistence { try $0.scriptRunPage(runID, after: request.afterSequence ?? 0) }
+      return try await reader { try $0.scriptRunPage(runID, after: request.afterSequence ?? 0) }
     } onCancel: {
       Task { @MainActor [weak self] in
         self?.releaseCompletionWaiter(runID, token: token, result: .failure(CancellationError()))
@@ -158,6 +162,7 @@ public final class NotebookScriptCoordinator {
 
   public func shutdown() async {
     closing = true
+    for runID in hostReadTasks.keys { cancelHostReads(runID) }
     let pending = waiting; waiting.removeAll()
     for run in pending {
       try? await cancelRun(run.id)
@@ -171,6 +176,7 @@ public final class NotebookScriptCoordinator {
       await withCheckedContinuation { admissionWaiters.append($0) }
     }
     await runningTask?.value
+    for runID in Array(hostReadTasks.keys) { await drainHostReads(runID) }
     for task in exportTasks.values { await task.value }
     worker?.invalidate(); worker = nil
   }
@@ -207,12 +213,12 @@ public final class NotebookScriptCoordinator {
       var after: UUID?
       while true {
         let cursor = after
-        let page = try await access { try .encode($0.unfinishedScriptEffects(after: cursor)) }.decode([NotebookScriptEffectAddress].self)
+        let page = try await reader { try .encode($0.unfinishedScriptEffects(after: cursor)) }.decode([NotebookScriptEffectAddress].self)
         for address in page { _ = try await reconcileEffect(runID: address.runID, id: address.effectID) }
         guard let last = page.last, page.count == 64 else { break }
         after = last.effectID
       }
-      let runs = try await access { try .encode($0.unfinishedScriptRuns()) }.decode([NotebookScriptRun].self)
+      let runs = try await reader { try .encode($0.unfinishedScriptRuns()) }.decode([NotebookScriptRun].self)
       for run in runs {
         // No JavaScript continuation or source replay is inferred after an
         // owner restart. Existing native effects remain inspectable by ID.
@@ -272,7 +278,7 @@ public final class NotebookScriptCoordinator {
       }
       worker = service
       let reply = await service.execute(.init(id: run.id, code: code, arguments: try JSONEncoder().encode(admitted.arguments)), deadline: deadline)
-      finishedWorkers.insert(run.id)
+      await finishWorkerReads(run.id)
       await markup.endRun(run.id)
       // Accepted commits outlive cancellation/disconnection of the worker.
       await drainAcceptedEffects()
@@ -284,6 +290,7 @@ public final class NotebookScriptCoordinator {
       try await finishRun(run.id, state: state, result: result, error: error)
       service.invalidate()
     } catch {
+      await finishWorkerReads(run.id)
       let value = Self.error(error)
       let state: NotebookScriptRun.State = cancelled.contains(run.id) ? .cancelled : .failed
       try? await finishRun(run.id, state: state, error: value)
@@ -308,7 +315,7 @@ public final class NotebookScriptCoordinator {
 
   func host(_ call: NotebookWorkerCall) async -> NotebookWorkerReply {
     do {
-      guard active == call.runID, !cancelled.contains(call.runID), !finishedWorkers.contains(call.runID) else { throw CollaborationError("run_cancelled", "Новые операции после завершения не принимаются.") }
+      guard !closing, active == call.runID, !cancelled.contains(call.runID), !finishedWorkers.contains(call.runID) else { throw CollaborationError("run_cancelled", "Новые операции после завершения не принимаются.") }
       acceptedCalls += 1
       guard acceptedCalls <= 1024 else { throw CollaborationError("sdk_call_limit", "Одна программа делает до 1024 вызовов SDK.") }
       let arguments = try JSONDecoder().decode(JSONValue.self, from: call.arguments)
@@ -337,7 +344,9 @@ public final class NotebookScriptCoordinator {
         value = try await effect(runID: call.runID, method: call.method, arguments: arguments, trackedByHost: true)
       default:
         guard NotebookScriptAPI.readMethods.contains(call.method) else { throw CollaborationError("unknown_sdk_method", "Используйте методы из notebook_context(help).") }
-        value = try await read(method: call.method, arguments: arguments)
+        try Task.checkCancellation()
+        let read = registerHostRead(runID: call.runID, method: call.method, arguments: arguments)
+        value = try await hostReadValue(read, runID: call.runID)
       }
       return .init(value: try JSONEncoder().encode(value))
     } catch { return .init(value: try? JSONEncoder().encode(Self.error(error)), code: (error as? CollaborationError)?.code ?? "operation_failed", message: error.localizedDescription) }

@@ -9,7 +9,7 @@ extension NotebookStore {
     guard (1...NotebookTransportLimits.maximumBlobRequests).contains(blobs.count), Set(blobs.map(\.hash)).count == blobs.count else {
       throw NotebookTransportError.invalidBlob
     }
-    try commandTransaction {
+    try commandTransaction(advancesReadRevision: false) {
       for blob in blobs {
         switch blob {
         case .bytes(let hash, let data):
@@ -25,7 +25,7 @@ extension NotebookStore {
   /// material publication and needs no separate fsync between these operations.
   public func prepareIncomingBlobs(_ delivery: NotebookReplicationDelivery,
     staging blobs: [NotebookTransportCompletedBlob]) throws -> [String] {
-    try commandTransaction {
+    try commandTransaction(advancesReadRevision: false) {
       if !blobs.isEmpty { try stageBlobs(blobs) }
       return try deliveryNeedsContent(delivery)
         ? discoverMissingBlobHashes(for: delivery.change, limit: NotebookTransportLimits.maximumBlobRequests) : []
@@ -38,7 +38,7 @@ extension NotebookStore {
     guard range.map({ $0.lowerBound >= 0 && $0.upperBound - $0.lowerBound == byteCount }) ?? true else {
       throw NotebookStorageError.invalidTransaction("blob file range")
     }
-    try commandTransaction {
+    try commandTransaction(advancesReadRevision: false) {
       let database = currentSQL!
       if let size = try database.rows("SELECT length(data) FROM blobs WHERE hash=?", [.text(expectedHash)]).first?[0].integer {
         guard size == byteCount else { throw NotebookStorageError.blobHashMismatch }; return
@@ -102,7 +102,7 @@ extension NotebookStore {
   /// A large atomic change is described by bounded immutable manifest parts.
   /// Their SQL index is filled once, then dependency requests are indexed pages.
   public func missingBlobHashes(for change: NotebookDurableChange, limit: Int = 16, after: String? = nil) throws -> [String] {
-    try commandTransaction {
+    try commandTransaction(advancesReadRevision: false) {
       let missing = try discoverMissingBlobHashes(for: change, limit: limit, after: after)
       if missing.isEmpty { try validateLifecycleInverseDependencies(manifestHash: change.manifestHash) }
       return missing
@@ -113,7 +113,7 @@ extension NotebookStore {
   /// the material commit rechecks their immutable proof through missingBlobHashes.
   private func discoverMissingBlobHashes(for change: NotebookDurableChange, limit: Int, after: String? = nil) throws -> [String] {
     guard (1...16).contains(limit) else { throw NotebookStorageError.limitExceeded("blob_dependencies") }
-    return try commandTransaction {
+    return try commandTransaction(advancesReadRevision: false) {
       let database = currentSQL!
       guard try !database.rows("SELECT 1 FROM blobs WHERE hash=?", [.text(change.manifestHash)]).isEmpty else { return [change.manifestHash] }
       if try database.rows("SELECT 1 FROM manifests WHERE hash=?", [.text(change.manifestHash)]).isEmpty {
@@ -163,7 +163,7 @@ extension NotebookStore {
   @discardableResult
   public func applyDelivery(_ delivery: NotebookReplicationDelivery, protectingInputOn targets: [CollaborationTarget] = []) throws -> UInt64 {
     let change = delivery.change, source = delivery.source
-    try commandTransaction {
+    try commandTransaction(advancesReadRevision: false) {
       let database = currentSQL!, peer = source.cursorKey, transaction = change.transactionID.uuidString.lowercased()
       guard database.receivedChange == nil, database.pendingChangeCount == 0 else { throw NotebookStorageError.invalidTransaction("one delivery owns its commit") }
       let cursor = try incomingCursor(source: source)
@@ -344,6 +344,9 @@ extension NotebookStore {
         throw CollaborationError("input_active", "Изменение затрагивает поверхность текущего касания.")
       }
       try coverReplicationPrefix(delivery)
+      // Source publication owns the material frontier. Receiving an old echo,
+      // validating dependencies or advancing a peer cursor does not change it.
+      if database.pendingChangeCount > 0 { database.acceptedWriteAdvancesReadRevision = true }
       database.receivedChange = change
       try database.run("INSERT INTO received_transactions(transaction_id,manifest_hash,peer_id,sequence) VALUES(?,?,?,?)", [.text(transaction), .text(change.manifestHash), .text(peer), .integer(Int64(change.sequence))])
       try database.run("INSERT INTO peer_cursors(peer_id,direction,sequence) VALUES(?,'incoming',?) ON CONFLICT(peer_id,direction) DO UPDATE SET sequence=MAX(sequence,excluded.sequence)", [.text(peer), .integer(Int64(change.sequence))])

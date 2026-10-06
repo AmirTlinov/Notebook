@@ -7,7 +7,7 @@ import NotebookCodex
 private actor NativeOwner: NotebookCodexConversationOwner, NotebookCodexCatalogueOwner, NotebookCodexProcessOwner, NotebookCodexVoiceOwner {
   enum AttachFailure { case requestRejected, externalOwner, unavailable }
   var processStarts = 0, voiceStarts = 0
-  func startProcess(id: UUID, request: NotebookRunRequest, publish: @escaping @Sendable (NotebookProcessEvent) async throws -> Void) async throws { processStarts += 1; try await publish(.running) }
+  func startProcess(id: UUID, workspaceID: UUID, request: NotebookRunRequest, publish: @escaping @Sendable (NotebookProcessEvent) async throws -> Void) async throws { processStarts += 1; try await publish(.running) }
   func writeProcess(id: UUID, data: Data) async throws { }
   func resizeProcess(id: UUID, columns: Int, rows: Int) async throws { }
   func stopProcess(id: UUID) async throws { }

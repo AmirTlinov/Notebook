@@ -14,6 +14,12 @@ device/workspace identities and keys. An old activation receipt cannot replace
 later content. See [preservation](current-mac-preservation.md),
 [archive transfer](archive-transfer.md) and [release procedure](release-build-contract.md).
 
+All accepted versions of authored content are retained indefinitely, as Amir
+explicitly chose for [NB11](https://linear.app/main-cluster/issue/GUI-504). Cleanup
+may remove only proven unowned data and derived caches. Age, memory pressure and
+the local Undo window do not retire history. Active reads, exports, accepted writes
+and pending delivery keep their source leases until actual completion.
+
 ## Current ownership
 
 | Behavior | Contract |

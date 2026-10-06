@@ -36,7 +36,7 @@ export function editable(element:PanelElement):boolean {
     &&!graphic.connection?.start?.binding&&!graphic.connection?.end?.binding;
 }
 
-type Asset={url:string;image:HTMLImageElement;width:number;height:number};
+type Asset={url:string;image:HTMLImageElement;width:number;height:number;released:boolean};
 type Hit={selection:PanelSelection;frame:Frame;label:string;editable:boolean;order:number};
 type Group={node:SVGGElement;origin:Point;frame:Frame};
 type Cohort={snapshot:PanelSnapshot;fragment:DocumentFragment;assets:Map<string,Asset>;
@@ -51,7 +51,9 @@ export class Surface {
   private motion:{selection:PanelSelection;dx:number;dy:number}|null=null;
   private accepted:Cohort|null=null;
   private prepared:Cohort|null=null;
+  private preparing:Promise<void>|null=null;
   private generation=0;
+  private disposed=false;
   private readonly hitPlane=node('g',{'data-notebook-hits':'true'});
   private readonly hits=new Map<string,SVGRectElement>();
   get ready(){return this.accepted!==null;}
@@ -97,11 +99,23 @@ export class Surface {
     return coverage(snapshot)+width*height*1e-6>=coverage(previous);
   }
   async prepare(snapshot:PanelSnapshot,view:PanelView):Promise<boolean>{
-    const generation=++this.generation,a=snapshot.appearance;
+    if(this.disposed)return false;
+    const generation=++this.generation,previous=this.preparing;
+    this.discardPrepared();
+    if(previous)await previous;
+    if(this.disposed||generation!==this.generation)return false;
+    let finish!:()=>void;
+    const preparing=new Promise<void>(resolve=>{finish=resolve;});
+    this.preparing=preparing;
+    try{return await this.prepareCandidate(snapshot,view,generation);}
+    finally{if(this.preparing===preparing)this.preparing=null;finish();}
+  }
+  private async prepareCandidate(snapshot:PanelSnapshot,view:PanelView,generation:number):Promise<boolean>{
+    const a=snapshot.appearance;
     if(a?.status!=='ready')throw new Error('Notebook ещё готовит изображение поверхности.');
     if(!this.useful(snapshot))return false;
     if(a.layers.length>96)throw new Error('Слишком большая область. Приблизьте нужный участок.');
-    const assets=new Map<string,Asset>(),decode:Asset[]=[];let encoded=0,pixels=0;
+    const assets=new Map<string,Asset>(),decode:Promise<void>[]=[];let encoded=0,pixels=0;
     try{
       for(const layer of a.layers){
         if(!validFrame(layer.frame)||!validPoint(layer.worldOrigin)||!Number.isSafeInteger(layer.pixelWidth)||!Number.isSafeInteger(layer.pixelHeight)
@@ -121,14 +135,17 @@ export class Surface {
         if(encoded>maximumEncodedBytes||pixels>maximumDecodedPixels||assets.size>=96)throw new Error('Видимая поверхность превышает предел изображений. Приблизьте нужный участок.');
         const bytes=Uint8Array.from(atob(layer.pngBase64),character=>character.charCodeAt(0));
         const url=URL.createObjectURL(new Blob([bytes],{type:'image/png'})),image=new Image();
-        const asset={url,image,width:layer.pixelWidth,height:layer.pixelHeight};assets.set(id,asset);decode.push(asset);image.src=url;
+        const asset={url,image,width:layer.pixelWidth,height:layer.pixelHeight,released:false};assets.set(id,asset);image.src=url;
+        decode.push((async()=>{
+          await image.decode();
+          if(image.naturalWidth!==asset.width||image.naturalHeight!==asset.height)throw new Error('Размер изображения Notebook изменился.');
+        })());
       }
       if([...assets.values()].reduce((sum,asset)=>sum+asset.width*asset.height,0)>maximumDecodedPixels)throw new Error('Слишком большая область. Приблизьте нужный участок.');
-      await Promise.all(decode.map(async asset=>{
-        await asset.image.decode();
-        if(asset.image.naturalWidth!==asset.width||asset.image.naturalHeight!==asset.height)throw new Error('Размер изображения Notebook изменился.');
-      }));
+      const decoded=await Promise.allSettled(decode);
       if(generation!==this.generation||!this.useful(snapshot)){this.release(assets);return false;}
+      const failure=decoded.find(result=>result.status==='rejected');
+      if(failure?.status==='rejected')throw failure.reason;
       const fragment=document.createDocumentFragment(),groups=new Map<string,Group[]>(),frames=new Map<string,Frame>(),hits=new Map<string,Hit>();
       let backdrop:Cohort['backdrop']=null;const origin=snapshot.worldOrigin??zero,orders=new Map<string,number>();
       const cardOrder=Math.max(0,...a.layers.filter(layer=>!layer.elementID).map(layer=>layer.order))+1;
@@ -164,7 +181,14 @@ export class Surface {
           editable:groups.has(id)&&editable(element)&&!snapshot.unsupportedElements.some(value=>value.id===selection.id),order:orders.get(id)??-1});
       }
       this.discardPrepared();this.prepared={snapshot,fragment,assets,groups,frames,hits,backdrop,view:{...view,camera:a.camera}};return true;
-    }catch(error){this.release(assets);throw error;}
+    }catch(error){
+      // A failed or withdrawn candidate owns every started decoder until all
+      // have completed. Neither its credits nor URLs pass to the next cohort.
+      await Promise.allSettled(decode);
+      this.release(assets);
+      if(generation!==this.generation)return false;
+      throw error;
+    }
   }
   render(snapshot:PanelSnapshot){
     const next=this.prepared;if(!next||next.snapshot!==snapshot)throw new Error('Изображение поверхности ещё не подготовлено.');
@@ -182,12 +206,20 @@ export class Surface {
       hit.setAttribute('aria-label',value.label);hit.setAttribute('class',value.editable?'editable':'readonly');
     }
     if(focusedID&&this.hits.has(focusedID)&&document.activeElement!==focused)(this.hits.get(focusedID)! as unknown as HTMLElement).focus({preventScroll:true});
-    if(previous)for(const [id,asset]of previous.assets)if(!next.assets.has(id))URL.revokeObjectURL(asset.url);
+    if(previous)for(const [id,asset]of previous.assets)if(!next.assets.has(id))this.releaseAsset(asset);
     this.setCamera(this.camera);
   }
-  private release(assets:Map<string,Asset>){for(const [id,asset]of assets)if(this.accepted?.assets.get(id)!==asset)URL.revokeObjectURL(asset.url);}
+  private releaseAsset(asset:Asset){if(!asset.released){asset.released=true;URL.revokeObjectURL(asset.url);}}
+  private release(assets:Map<string,Asset>){for(const [id,asset]of assets)if(this.accepted?.assets.get(id)!==asset)this.releaseAsset(asset);}
   private discardPrepared(){if(this.prepared){this.release(this.prepared.assets);this.prepared=null;}}
-  dispose(){++this.generation;this.discardPrepared();if(this.accepted)for(const asset of this.accepted.assets.values())URL.revokeObjectURL(asset.url);this.accepted=null;this.material.replaceChildren();this.hitPlane.replaceChildren();this.hits.clear();this.selection.replaceChildren();}
+  cancelPreparation():Promise<void>{++this.generation;this.discardPrepared();return this.preparing??Promise.resolve();}
+  async dispose(){
+    this.disposed=true;
+    const joined=this.cancelPreparation(),accepted=this.accepted;this.accepted=null;
+    this.material.replaceChildren();this.hitPlane.replaceChildren();this.hits.clear();this.selection.replaceChildren();
+    await joined;
+    if(accepted)for(const asset of accepted.assets.values())this.releaseAsset(asset);
+  }
   hasSubject(id:string){return this.accepted?.groups.has(`element:${id}`)===true;}
   hasItemSubject(id:string){return this.accepted?.groups.has(`item:${id}`)===true;}
   selectionFrame(selection:PanelSelection):Frame|undefined{const frame=this.accepted?.frames.get(key(selection));return frame?{...frame}:undefined;}

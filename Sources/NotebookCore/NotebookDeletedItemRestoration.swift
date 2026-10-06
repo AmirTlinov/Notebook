@@ -117,7 +117,7 @@ fileprivate final class DeletedItemRestoration {
     // not just the records later selected by a convenient prefix.
     try store.visitLifecycleInverse(reference: inverse, actionID: receipt.id) { record in
       let hash = record.beforeHash ?? record.afterHash!
-      let fragment = try store.readLifecycleInverseFragment(hash: hash, address: record.address)
+      let fragment = try store.readLifecycleInverseFragment(hash: hash, address: record.address, expandingInk: false)
       try database.run("INSERT INTO notebook_restore_inverse VALUES(?,?,?,?,?,?,?)", [
         .text(record.address), .text(fragment.file), fragment.parent.map(NotebookSQLValue.text) ?? .null,
         .text(fragment.collection), .text(fragment.member), record.beforeHash.map(NotebookSQLValue.text) ?? .null,
@@ -134,11 +134,44 @@ fileprivate final class DeletedItemRestoration {
   private func image(_ address: String, before: Bool) throws -> NotebookStoredFragment? {
     let column = before ? "before_hash" : "after_hash"
     guard let hash = try database.rows("SELECT " + column + " FROM notebook_restore_inverse WHERE address=?", [.text(address)]).first?[0].text else { return nil }
-    return try store.readLifecycleInverseFragment(hash: hash, address: address)
+    let fragment = try store.readLifecycleInverseFragment(hash: hash, address: address, expandingInk: false)
+    try database.admitNativeJSONPhase(fragment.value, copies: 2)
+    return fragment
   }
 
   private func current(_ address: String) throws -> NotebookStoredFragment? {
-    try store.storedFragments(address: address, descendants: false).first
+    guard let data = try database.rows("SELECT b.data FROM records r JOIN blobs b ON b.hash=r.hash WHERE r.address=?", [.text(address)]).first?[0].blob else { return nil }
+    let fragment = try database.decodedStoredFragment(from: data, expandingInk: false)
+    guard fragment.address == address else { throw NotebookStorageError.corruptRecord(address) }
+    try database.admitNativeJSONPhase(fragment.value, copies: 2)
+    return fragment
+  }
+
+  private func restoreSourceImage(_ address: String) throws {
+    guard let hash = try database.rows("SELECT before_hash FROM notebook_restore_inverse WHERE address=?", [.text(address)]).first?[0].text else {
+      throw NotebookStorageError.invalidTransaction("missing restored source image")
+    }
+    let data = try store.lifecycleInverseBlob(hash, maximumBytes: 256 * 1_024 * 1_024)
+    // Only actual source publication needs the typed paint for its indexes.
+    // Keep the original physical envelope/hash; metadata preflight never
+    // hydrates every historical body or encodes paint merely to restore it.
+    let fragment = try database.decodedStoredFragment(from: data)
+    guard fragment.address == address else { throw NotebookStorageError.invalidTransaction("restored source address") }
+    try database.admitNativeJSONPhase(fragment.value, copies: 3)
+    try store.writeFragment(fragment, data: data, hash: hash, database: database)
+  }
+
+  private func writeMetadata(_ fragment: NotebookStoredFragment, value: JSONValue? = nil,
+    position: Int? = nil) throws {
+    let updated = NotebookStoredFragment(address: fragment.address, file: fragment.file,
+      parent: fragment.parent, collection: fragment.collection, member: fragment.member,
+      position: position ?? fragment.position, value: value ?? fragment.value,
+      collections: fragment.collections, inkBodies: fragment.inkBodies)
+    try database.admitNativeJSONPhase(updated.value, copies: 2)
+    // The unchanged descriptor paths still belong to these opaque values.
+    // `replacing` is for expanded source and intentionally clears those paths.
+    let data = try NotebookStore.storageEncoder.encode(updated)
+    try store.writeFragment(updated, data: data, database: database)
   }
 
   private func visit(_ predicate: String, arguments: [NotebookSQLValue] = [],
@@ -147,7 +180,7 @@ fileprivate final class DeletedItemRestoration {
     while true {
       let rows = try database.rows("SELECT address FROM notebook_restore_inverse WHERE (" + predicate + ") AND address>? ORDER BY address LIMIT 64", arguments + [.text(after)])
       guard let last = rows.last?[0].text else { return }
-      for row in rows { try Task.checkCancellation(); try body(row[0].text!) }
+      for row in rows { try body(row[0].text!) }
       after = last
     }
   }
@@ -230,14 +263,15 @@ fileprivate final class DeletedItemRestoration {
       // frontier is not invented from the capture: the retained typed register
       // and every authenticated original membership must agree exactly.
       var position = 0
-      func walk(_ hash: String) throws {
+      func walk(_ hash: String, height: Int? = nil) throws {
         let node = try store.readPageOrderNode(hash)
+        guard height == nil || node.height == height else { throw NotebookStorageError.invalidTransaction("pre-action page order height") }
         for page in node.pages {
           guard let found = try database.rows("SELECT page_id FROM notebook_restore_pages WHERE item_id=? AND position=?", [.text(id), .integer(Int64(position))]).first?[0].text,
             found == page.uuidString.lowercased() else { throw NotebookStorageError.invalidTransaction("pre-action page order membership") }
           position += 1
         }
-        for child in node.children { try walk(child) }
+        for child in node.children { try walk(child, height: node.height - 1) }
       }
       try walk(oldOrder.visibleRoot)
       guard position == pageCount else { throw NotebookStorageError.invalidTransaction("pre-action page order extent") }
@@ -373,7 +407,7 @@ fileprivate final class DeletedItemRestoration {
     else {
       position = Int(try database.rows("SELECT COALESCE(MAX(position),-1)+1 FROM records WHERE parent='workspace.json#' AND collection='items'").first![0].integer!)
     }
-    try store.writeFragment(plan.item.replacing(value: plan.item.value, position: position), database: database)
+    try writeMetadata(plan.item, position: position)
     try authorField(key: fieldKey(["items", id, "exists"]), stamp: stamp)
     if restoreCatalogOrder { try authorField(key: "items/order", stamp: stamp) }
     for key in ["title", "kind"] {
@@ -384,7 +418,7 @@ fileprivate final class DeletedItemRestoration {
     if let notebook = plan.notebook {
       try visit("parent=? AND collection='pageIDs' AND before_hash IS NOT NULL", arguments: [.text(plan.item.address)]) { address in
         let row = try image(address, before: true)!
-        try store.writeFragment(row, database: database)
+        try writeMetadata(row)
         try authorField(key: fieldKey(["items", id, "pageIDs", row.member]), stamp: stamp)
       }
       var restoredRoot = notebook.order.visibleRoot
@@ -417,7 +451,7 @@ fileprivate final class DeletedItemRestoration {
       for row in rows {
         let address = row[0].text!, member = row[1].text!
         try visit("(address=? OR (address>=? AND address<?)) AND before_hash IS NOT NULL", arguments: [.text(address), .text(address + "/"), .text(address + "0")]) { source in
-          try store.writeFragment(image(source, before: true)!, database: database)
+          try restoreSourceImage(source)
         }
         _ = try store.validateStoredSourceAtom(address: address) { value in
           let source = try value.decode(SpatialElement.self)
@@ -442,9 +476,9 @@ fileprivate final class DeletedItemRestoration {
     let placement = try WorkspacePlacement.authored(itemID: plan.change.target.id, pose: plan.previousPose,
       stamp: stamp, human: true, previous: plan.currentPlacement)
     try store.writeFragment(plan.placement.replacing(value: .encode(placement)), database: database)
-    try store.writeFragment(board.replacing(value: board.value.setting("board", board.value["board"]!.setting("stamp", .encode(stamp)))), database: database)
-    try store.writeFragment(tree.replacing(value: tree.value.setting("stamp", .encode(stamp))), database: database)
-    try store.writeFragment(workspace.replacing(value: workspace.value.setting("stamp", .encode(stamp))), database: database)
+    try writeMetadata(board, value: board.value.setting("board", board.value["board"]!.setting("stamp", .encode(stamp))))
+    try writeMetadata(tree, value: tree.value.setting("stamp", .encode(stamp)))
+    try writeMetadata(workspace, value: workspace.value.setting("stamp", .encode(stamp)))
     guard let item = try store.readItemHeader(plan.change.target.id) else { throw NotebookStorageError.invalidTransaction("restored item header") }
     return item
   }

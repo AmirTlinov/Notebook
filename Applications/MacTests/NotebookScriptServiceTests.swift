@@ -17,6 +17,7 @@ final class NotebookScriptServiceTests: XCTestCase {
   private static var checkedSandboxSignatures = false
   @MainActor private final class Owner {
     let store: NotebookStore
+    private lazy var querySession = NotebookReadSession(store: store)
     let persistence: NotebookPersistenceQueue
     var commitAccepted = false
     var holdCommit = false
@@ -52,6 +53,9 @@ final class NotebookScriptServiceTests: XCTestCase {
       }
       return result
     }
+    func observe(_ operation: @Sendable (NotebookQueryCut) throws -> JSONValue) throws -> JSONValue {
+      try querySession.observe(operation)
+    }
     func persist(_ operation: @Sendable (NotebookStore) throws -> JSONValue) async throws -> JSONValue {
       let result = try operation(store)
       if holdAdmission, result.string("state") == "queued" {
@@ -69,6 +73,7 @@ final class NotebookScriptServiceTests: XCTestCase {
   private func coordinator(_ owner: Owner) async throws -> NotebookScriptCoordinator {
     try await requireRestrictedServiceSignatures()
     return NotebookScriptCoordinator(command: { try await owner.command($0) },
+      reader: { try await owner.observe($0) },
       persistence: { operation in try await owner.persist(operation) },
       workingDirectory: owner.store.root.appendingPathComponent("derived/script-runtime"),
       canonicalExport: { cut, options, id in
@@ -1276,6 +1281,7 @@ final class NotebookScriptServiceTests: XCTestCase {
       await host.shutdown()
       // Unavailable executors must not matter when attaching to an existing run.
       let restarted = NotebookScriptCoordinator(command: { try await owner.command($0) },
+        reader: { try await owner.observe($0) },
         persistence: { operation in try await owner.persist(operation) }, workingDirectory: owner.store.root,
         userServiceName: "unavailable.user.service", markupServiceName: "unavailable.compiler.service")
       let retry = try await restarted.handle(request)

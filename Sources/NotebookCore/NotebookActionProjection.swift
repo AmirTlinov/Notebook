@@ -275,6 +275,7 @@ extension NotebookStore {
         additionalElementIDs: elementIDs[id] ?? [])
     }
     rows += try storedFragments(address: "board.json#", descendants: false)
+    try currentSQL!.admitNativeFragmentCodec(rows, copies: 2)
     var files = ["workspace.json": try JSONValue.encode(workspace), "board.json": try NotebookRecordCodec.decode(rows, root: "board.json#")]
     for id in codeIDs { files[codeFragmentFile(id)] = try storedValue(codeFragmentFile(id)) }
     // Retired PAGE rows are a replication baseline, not a public command
@@ -312,7 +313,9 @@ extension NotebookStore {
           }
           return row
         }
+        try currentSQL!.admitNativeFragmentCodec(rows, copies: 2)
         let value = try NotebookRecordCodec.decode(rows, root: file + "#")
+        try currentSQL!.admitNativeJSONPhase(value, copies: 3)
         let projection = try value.decode(NotebookPageCommandProjection.self)
         guard projection.id == id, projection.isValid,
           value["computations"] == nil else {
@@ -350,7 +353,9 @@ extension NotebookStore {
       } else {
         let rows = sourceRows[file] ?? []
         if !rows.isEmpty {
+          try currentSQL!.admitNativeFragmentCodec(rows, copies: 2)
           let value = try NotebookRecordCodec.decode(rows, root: file + "#")
+          try currentSQL!.admitNativeJSONPhase(value, copies: 2)
           let stored = Dictionary(uniqueKeysWithValues: rows.map { ($0.address, $0) })
           let canonical = try NotebookRecordCodec.encode(value, file: file)
           guard canonical.count == stored.count, canonical.allSatisfy({ row in
@@ -370,7 +375,10 @@ extension NotebookStore {
           for id in (stateProgramIDs[item.id] ?? []).sorted() {
             rows += try storedFragments(address: file + "#/records/@" + fieldKey([id]))
           }
-          if !rows.isEmpty { files[file] = try NotebookRecordCodec.decode(rows, root: file + "#") }
+          if !rows.isEmpty {
+            try currentSQL!.admitNativeFragmentCodec(rows, copies: 2)
+            files[file] = try NotebookRecordCodec.decode(rows, root: file + "#")
+          }
         }
       }
     }
@@ -391,6 +399,7 @@ extension NotebookStore {
         inkRows += try storedFragments(address: row[0].text!)
       }
     }
+    try currentSQL!.admitNativeFragmentCodec(inkRows, copies: 2)
     files["spatial-ink.json"] = try NotebookRecordCodec.decode(inkRows, root: "spatial-ink.json#")
     return CollaborationWorkspace(files: files, projectedPageIDs: projectedPageIDs,
       pageGraphicSources: pageGraphicSources, pageInkFrontiers: pageInkFrontiers)

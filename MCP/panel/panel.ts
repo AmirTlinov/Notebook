@@ -125,12 +125,14 @@ session.view=(navigation,restoredCamera)=>{
     supplied,!navigation&&session.hasAppearance);
 };
 session.onPrepareSnapshot=async(snapshot,view)=>await geometryReady&&!closed&&surface.prepare(snapshot,view);
+session.onCancelSnapshotPreparation=()=>surface.cancelPreparation();
 session.onClose=()=>{
   const inkPointer=ink.pointer;
   closed=true;lifetime.abort();resizeObserver.disconnect();
   if(inkPointer!==undefined&&paper.hasPointerCapture(inkPointer))paper.releasePointerCapture(inkPointer);
   if(gesture&&paper.hasPointerCapture(gesture.pointer))paper.releasePointerCapture(gesture.pointer);
-  gesture=null;draft=null;editor.hidden=true;surface.dispose();if(geometryLoaded)geometry.dispose();
+  gesture=null;draft=null;editor.hidden=true;
+  const disposed=surface.dispose();if(geometryLoaded)geometry.dispose();return disposed;
 };
 let first=true;
 let priorTarget:string|undefined;
@@ -239,6 +241,7 @@ paper.addEventListener("pointerdown",event=>{
   const subject:PanelSelection|null=resizing?selected:itemID?{kind:"item",id:itemID}:elementID?{kind:"element",id:elementID}:null;
   const wantsPan=tool==="hand"||space||event.button===1||event.altKey||(tool==="select"&&!subject);
   if(!wantsPan&&!session.mutationReady)return;
+  if(wantsPan)session.beginCameraInteraction();
   if(draft){void finishEditor();if(!wantsPan)return;}
   const point=surface.point(event.clientX,event.clientY);
   if(tool==="pen"&&!wantsPan){
@@ -378,10 +381,11 @@ paper.addEventListener("dblclick",event=>{
 paper.addEventListener("wheel",event=>{
   if(draft||gesture||ink.pointer!==undefined||!session.hasAppearance)return;event.preventDefault();
   if(event.ctrlKey||event.metaKey){const bounds=paper.getBoundingClientRect();zoom(Math.exp(-event.deltaY*.008),{x:event.clientX-bounds.left,y:event.clientY-bounds.top});}
-  else publishCamera(transformPanelCamera(geometry,worldCamera,viewport(),{x:0,y:0},{x:-event.deltaX,y:-event.deltaY},1));
+  else{session.beginCameraInteraction();publishCamera(transformPanelCamera(geometry,worldCamera,viewport(),{x:0,y:0},{x:-event.deltaX,y:-event.deltaY},1));}
 },{passive:false,...events});
 function zoom(factor:number,point:Point={x:workspace.clientWidth/2,y:workspace.clientHeight/2}){
   if(closed||ink.pointer!==undefined||!session.hasAppearance)return;
+  session.beginCameraInteraction();
   publishCamera(transformPanelCamera(geometry,worldCamera,viewport(),point,point,factor));
 }
 function toolButtons(){document.querySelectorAll<HTMLButtonElement>("[data-tool]").forEach(button=>button.setAttribute("aria-pressed",String(button.dataset.tool===tool)));buttons();}

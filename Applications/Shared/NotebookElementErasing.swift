@@ -78,12 +78,14 @@ struct NotebookSpatialEraserSource {
     }
     ids.formUnion(moved.ids)
     ids.formUnion(delta.ids)
-    let targets = ids.sorted().compactMap { target(id: $0, surface: surface) }.filter {
-      targetBounds($0).intersects(bounds)
-    }
-    guard targets.count <= limit else {
-      throw CollaborationError("eraser_limit",
-        "Сотрите меньший участок: в нём слишком много объектов.")
+    var targets: [InkElementTarget] = []
+    for id in ids.sorted() {
+      guard let next = target(id: id, surface: surface), targetBounds(next).intersects(bounds) else { continue }
+      guard targets.count < limit else {
+        throw CollaborationError("eraser_limit",
+          "Сотрите меньший участок: в нём слишком много объектов.")
+      }
+      targets.append(next)
     }
     return .init(targets: targets, visitedNodes: indexed.statistics.visitedNodes + moved.visitedNodes)
   }
@@ -125,24 +127,27 @@ struct NotebookPageEraserSource {
     }
     var ids=Set(visible.layouts.keys);ids.formUnion(visible.placements.keys)
     ids.formUnion(changedTargets.keys)
-    let targets=ids.sorted().compactMap { id -> InkElementTarget? in
-      guard !excludedElementIDs.contains(id) else { return nil }
-      if let changed=changedTargets[id] { return changed }
-      if let node=graph.node(id),node.shown,let layout=visible.layouts[id] ?? graph.resolve(id).layout {
-        return .init(elementID:id,frame:layout.frame,graphicTransform:node.graphic.transform,
+    var targets: [InkElementTarget] = []
+    for id in ids.sorted() {
+      guard !excludedElementIDs.contains(id) else { continue }
+      let next: InkElementTarget
+      if let changed=changedTargets[id] { next=changed }
+      else if let node=graph.node(id),node.shown,let layout=visible.layouts[id] ?? graph.resolve(id).layout {
+        next = .init(elementID:id,frame:layout.frame,graphicTransform:node.graphic.transform,
           elementTransform:layout.elementTransform)
+      } else {
+        guard let element=page.element(id:id),element.kind != .group,element.graphic == nil,
+          let placement=visible.placements[id] ?? graph.placement(id) else { continue }
+        next = NotebookElementPresentation(element,placement:placement)
+          .eraserTarget(id:id,wholeElement:element.kind == .web)
       }
-      guard let element=page.element(id:id),element.kind != .group,element.graphic == nil,
-        let placement=visible.placements[id] ?? graph.placement(id) else { return nil }
-      return NotebookElementPresentation(element,placement:placement)
-        .eraserTarget(id:id,wholeElement:element.kind == .web)
-    }.filter { target in
-      let frame=target.frame
-      return CGRect(x:frame.x,y:frame.y,width:frame.width,height:frame.height).intersects(bounds)
-    }
-    guard targets.count <= limit else {
-      throw CollaborationError("eraser_limit",
-        "Сотрите меньший участок: в нём слишком много объектов.")
+      let frame=next.frame
+      guard CGRect(x:frame.x,y:frame.y,width:frame.width,height:frame.height).intersects(bounds) else { continue }
+      guard targets.count < limit else {
+        throw CollaborationError("eraser_limit",
+          "Сотрите меньший участок: в нём слишком много объектов.")
+      }
+      targets.append(next)
     }
     return .init(targets:targets,visitedNodes:visible.visitedIndexNodes)
   }

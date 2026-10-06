@@ -122,6 +122,128 @@ final class NotebookPersistenceAdmissionTests: XCTestCase {
     XCTAssertEqual(cost.payloadBytes, action.samples.payloadBytes + MemoryLayout<PageInkAction>.stride)
     XCTAssertLessThanOrEqual(cost.bytes, NotebookInkWriteAllowance.maximumCost.bytes)
     XCTAssertThrowsError(try NotebookInkWriteAllowance.cost(PageInkAction(tool: .pen, samples: samples + [samples.last!])))
+    XCTAssertEqual(NotebookInkWriteAllowance.stateCost(entries: 1).completionBytes,
+      NotebookNativeWriteAllowance.maximumExecutionBytes,
+      "A visibility-only command still owns the old eraser header's decode and history work")
+  }
+
+  func testWorldContactAndEraserMetadataShareARealDecodeAndFinishBudget() throws {
+    let origin=WorldPoint(tileX:99_999,tileY:-99_999,localX:21,localY:43)
+    let samples=(0..<NotebookInkWriteAllowance.maximumMeasurements).map { index in
+      SpatialInkSample(point:.zero,worldPoint:origin.offsetBy(x:Double(index).squareRoot(),y:sin(Double(index))),
+        timeOffset:Double(index)/120,width:2.5,opacity:1,force:Double(index%97)/100,azimuth:0.4,altitude:1.1)
+    }
+    let span=SpatialInkSpan(surface:.board(UUID()),samples:samples)
+    let cost=try NotebookInkWriteAllowance.cost([span])
+    XCTAssertLessThanOrEqual(cost.bytes,NotebookInkWriteAllowance.maximumCost.bytes)
+    let wire=try JSONEncoder().encode(span)
+    _=try NotebookJSONAdmission.allocationCost(wire,maximumBytes:NotebookInkWriteAllowance.maximumJSONDecodeBytes)
+    XCTAssertNil(NotebookInkWriteAllowance.contactLimit(measurements:samples.count,worldMeasurements:samples.count,
+      targetCount:0,targetPayloadBytes:0,targetWriteAllowance:.zero,spans:1))
+
+    var targets:[InkElementTarget]=[],metadata=InkElementTarget.WriteAllowance.zero
+    var sealedCount:Int?
+    for index in 0..<NotebookInkWriteAllowance.maximumTargets {
+      let target=InkElementTarget(elementID:"target-\(index)",frame:.init(x:0,y:0,width:100,height:100),
+        worldOrigin:origin,graphicTransform:.identity,elementTransform:.identity)
+      var proposed=metadata;proposed.add(target.writeAllowance)
+      targets.append(target)
+      if NotebookInkWriteAllowance.contactLimit(measurements:1,worldMeasurements:1,
+        targetCount:targets.count,targetPayloadBytes:NotebookInkWriteAllowance.targetBytes(targets),
+        targetWriteAllowance:proposed,spans:1) != nil {
+        targets.removeLast()
+        sealedCount=targets.count;break
+      }
+      metadata=proposed
+    }
+    XCTAssertNotNil(sealedCount)
+    XCTAssertGreaterThan(targets.count,1)
+    XCTAssertLessThan(targets.count,NotebookInkWriteAllowance.maximumTargets,
+      "Optional target metadata reaches its memory boundary before the independent object-count cap")
+    let accepted=SpatialInkSpan(surface:span.surface,samples:[samples[0]],elementTargets:targets)
+    let acceptedCost=try NotebookInkWriteAllowance.cost([accepted])
+    XCTAssertLessThanOrEqual(acceptedCost.bytes,NotebookInkWriteAllowance.maximumCost.bytes)
+    let acceptedWire=try JSONEncoder().encode(accepted)
+    _=try NotebookJSONAdmission.allocationCost(acceptedWire,
+      maximumBytes:NotebookInkWriteAllowance.maximumJSONDecodeBytes)
+  }
+
+  @MainActor
+  func testItemAndHistoryAdmissionRejectBeforeDraftDeletionOrSourceWork() async throws {
+    let root=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let store=NotebookStore(root:root),actor=UUID()
+    var (workspace,_)=try store.loadOrCreate(actor:actor,pageSize:NotebookAppModel.defaultPageSize)
+    _=try store.loadOrCreateSpatialInk(actor:actor)
+    let before=workspace,beforeBoard=try store.loadBoard(items:workspace.items)
+    let created=try XCTUnwrap(workspace.createNotebook(title:"Second",actor:actor,
+      pageSize:NotebookAppModel.defaultPageSize))
+    var hierarchy=beforeBoard
+    XCTAssertTrue(hierarchy.addItem(created.item.id,to:workspace.rootBoardID,near:.zero,actor:actor))
+    _=try store.saveWorkspaceEdits(before:before,after:workspace,
+      boardBefore:beforeBoard,boardAfter:hierarchy,pages:[created.page])
+    let queue=NotebookPersistenceQueue(store:store,
+      admissionLimits:.init(maximumBytes:NotebookItemWriteAllowance.maximumCost.bytes,maximumOperations:16))
+    let model=NotebookAppModel(store:store,startsNearbySync:false,
+      preferences:UserDefaults(suiteName:UUID().uuidString)!,persistenceQueue:queue)
+    addTeardownBlock { @MainActor in
+      let stopped=await model.shutdown();XCTAssertTrue(stopped)
+      if stopped { try FileManager.default.removeItem(at:root) }
+    }
+    await model.start(pageSize:NotebookAppModel.defaultPageSize)
+    let started=await model.finishPendingPersistence();XCTAssertTrue(started)
+    let item=created.item.id
+    XCTAssertTrue(model.inputGate.permitsNewContact)
+    XCTAssertNil(model.selectionSession.manipulation)
+    let baseline=try XCTUnwrap(model.moveItem(item,to:.init(x:100,y:200)))
+    let moved=await model.finishPendingPersistence();XCTAssertTrue(moved)
+    let accepted=await baseline.task.value;XCTAssertNotNil(accepted)
+    let cursor=try store.currentChangeCursor(),generation=queue.acceptedMutationGeneration
+    let board=try XCTUnwrap(model.presence?.boardID)
+    let history=try store.nativeHistory(domain:.board(board),actor:model.actorID)
+    let deleted=await model.deleteItem(item)
+    XCTAssertFalse(deleted,"Delete reserves both source and execution before publishing pending removal")
+    XCTAssertFalse(model.isItemBeingDeleted(item))
+    XCTAssertEqual(queue.reservedWriteBytes,0)
+    XCTAssertEqual(queue.acceptedMutationGeneration,generation)
+    XCTAssertEqual(try store.currentChangeCursor(),cursor)
+
+    let cost=NotebookItemWriteAllowance.maximumCost
+    let work=try XCTUnwrap(queue.reserveWrite(cost))
+    defer { queue.releaseWriteReservation(work) }
+    XCTAssertNil(model.moveItem(item,to:.init(x:800,y:600)))
+    model.undoCollaboration(baseline.id)
+    XCTAssertEqual(queue.reservedWriteBytes,cost.bytes)
+    XCTAssertEqual(queue.acceptedMutationGeneration,generation,
+      "A refused draft or Undo cannot create a prepared Task/FIFO slot")
+    XCTAssertEqual(try store.currentChangeCursor(),cursor)
+    XCTAssertEqual(try store.nativeHistory(domain:.board(board),actor:model.actorID),history)
+  }
+
+  func testPlacementReserveBoundsActualSuccessorAndCodecAndShrinksOnlyAfterPreparation() throws {
+    let actor=UUID(),item=UUID(),target=CollaborationTarget(kind:.board,id:UUID())
+    let source=try WorkspacePlacement.authored(itemID:item,pose:.init(center:.zero,zIndex:0),
+      stamp:.init(counter:1,actor:actor),human:true,previous:nil)
+    let successor=try WorkspacePlacement.authored(itemID:item,pose:.init(center:.init(x:300,y:200),zIndex:1),
+      stamp:.init(counter:2,actor:actor),human:true,previous:source)
+    let summary=String(repeating:"цель/\"\\\u{0000}",count:80)
+    let reserved=try NotebookItemWriteAllowance.placementReservationCost(captured:[source],
+      operationCount:1,summary:summary)
+    let operations:[CollaborationOperation]=[.init(kind:.moveItem,target:target,id:item.uuidString,
+      values:["center":try .encode(successor.pose!.center)])]
+    let prepared=try NotebookItemWriteAllowance.placementCost(captured:[source],resolved:[successor],
+      operations:operations,summary:summary)
+    XCTAssertLessThanOrEqual(prepared.payloadBytes,reserved.payloadBytes)
+    XCTAssertLessThanOrEqual(prepared.completionBytes,reserved.completionBytes)
+    XCTAssertLessThan(prepared.bytes,reserved.bytes)
+    XCTAssertGreaterThanOrEqual(prepared.payloadBytes,source.retainedPayloadBytes+successor.retainedPayloadBytes)
+    let data=try JSONEncoder().encode(successor),footprint=try successor.writeFootprint()
+    let decoded=try NotebookJSONAdmission.allocationCost(data,
+      maximumBytes:NotebookNativeWriteAllowance.maximumExecutionBytes)
+    XCTAssertLessThanOrEqual(data.count,footprint.wireBytes)
+    XCTAssertLessThanOrEqual(decoded,footprint.decodingBytes)
+    XCTAssertLessThanOrEqual(decoded,prepared.completionBytes/5*4)
+    XCTAssertThrowsError(try NotebookItemWriteAllowance.placementReservationCost(captured:[source],
+      operationCount:1,summary:String(repeating:"x",count:100_000)))
   }
 
   func testElementAdmissionCountsSemanticStateInsteadOfOnlyItsWireTokens() throws {

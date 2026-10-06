@@ -34,6 +34,55 @@ struct NotebookNativeHistoryTests {
     }
   }
 
+  @Test func tightenedUndoAndRedoMemoryRefusalLeavesTheSameSourceAndHistoryCut() throws {
+    let f = try Fixture()
+    defer { try? FileManager.default.removeItem(at: f.root) }
+    let receipt = try f.shape(), before = try f.store.loadPage(f.pageID)
+    let cursor = try f.store.currentChangeCursor(), domain = PencilUndoHistory.Domain.page(f.pageID)
+    do {
+      _ = try f.store.undoNativeAction(receipt.id, actor: f.actor, allowance: .init(executionBytes: 1))
+      Issue.record("Undo must enforce its native memory allowance")
+    } catch let error as CollaborationError { #expect(error.code == "resource_limit") }
+    #expect(try f.store.currentChangeCursor() == cursor)
+    #expect(try f.store.loadPage(f.pageID) == before)
+    #expect(try f.store.collaborationAction(receipt.id).undo == nil)
+    #expect(try f.store.nativeHistory(domain: domain, actor: f.actor) == [.command(receipt.id)])
+    _ = try f.store.undoNativeAction(receipt.id, actor: f.actor)
+    let undone = try f.store.loadPage(f.pageID), undoCursor = try f.store.currentChangeCursor(), repeatedID = UUID()
+    do {
+      _ = try f.store.redoNativeAction(receipt.id, actionID: repeatedID, actor: f.actor,
+        allowance: .init(executionBytes: 1))
+      Issue.record("Redo must enforce its native memory allowance")
+    } catch let error as CollaborationError { #expect(error.code == "resource_limit") }
+    #expect(try f.store.currentChangeCursor() == undoCursor)
+    #expect(try f.store.loadPage(f.pageID) == undone)
+    #expect(try f.store.collaborationActionIfPresent(repeatedID) == nil)
+    #expect(try f.store.nativeRedoHistory(domain: domain, actor: f.actor) == [.command(receipt.id)])
+    let repeated = try f.store.redoNativeAction(receipt.id, actionID: repeatedID, actor: f.actor)
+    #expect(repeated.redoOf == receipt.id)
+    #expect(try f.store.loadPage(f.pageID).elements.map(\.id) == before.elements.map(\.id))
+  }
+
+  @Test func retainedPreparedReceiptRecoveryUsesTheInstancesTightenedAllowance() throws {
+    let f = try Fixture()
+    defer { try? FileManager.default.removeItem(at: f.root) }
+    let receipt = try f.shape(), cursor = try f.store.currentChangeCursor()
+    var attempts = 0
+    // Isolate the recovery seam with a real durable receipt. The failed
+    // callback retains this output without doing another source allocation.
+    let retained = NotebookNativeCommand<NotebookItemLifecycle>(allowance: .init(executionBytes: 1)) { _, prepared in
+      attempts += 1; prepared((receipt, [])); throw Failure.disk
+    }
+    #expect(throws: Failure.self) { try retained.apply(to: f.store) }
+    do {
+      _ = try retained.apply(to: NotebookStore(root: f.root))
+      Issue.record("Cold recovery must not escape the accepted instance's allowance")
+    } catch let error as CollaborationError { #expect(error.code == "resource_limit") }
+    #expect(attempts == 1)
+    #expect(try f.store.currentChangeCursor() == cursor)
+    #expect(try f.store.collaborationAction(receipt.id) == receipt)
+  }
+
   @Test func mixedOrderAndItsInversesSurviveReopeningWithoutPrioritizingCommands() throws {
     let f = try Fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
     let first = UUID(), last = UUID()

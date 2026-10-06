@@ -7,14 +7,24 @@ public final class NotebookNativeCommand<Source: Sendable>: @unchecked Sendable 
   public typealias Output = (receipt: CollaborationReceipt, sources: [Source])
   private let lock = NSLock()
   private var prepared: Output?
+  private let allowance: NotebookNativeWriteAllowance?
   private let operation: (NotebookStore, (Output) -> Void) throws -> Output
 
-  init(operation: @escaping (NotebookStore, (Output) -> Void) throws -> Output) {
+  init(allowance: NotebookNativeWriteAllowance? = nil,
+    operation: @escaping (NotebookStore, (Output) -> Void) throws -> Output) {
+    self.allowance = allowance
     self.operation = operation
   }
 
   public func apply(to store: NotebookStore) throws -> Output {
     lock.lock(); defer { lock.unlock() }
+    if let allowance {
+      return try store.withNativeWriteAllowance(allowance) { try applyRetained(to: store) }
+    }
+    return try applyRetained(to: store)
+  }
+
+  private func applyRetained(to store: NotebookStore) throws -> Output {
     if let prepared {
       // Absence proves rollback. An unreadable receipt keeps the same command
       // pending; current material is never evidence of its own earlier commit.

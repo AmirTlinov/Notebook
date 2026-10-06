@@ -393,6 +393,40 @@ public struct BoardDocument: Codable, Equatable, Sendable {
 
   public var itemIDs: [UUID] { placements.compactMap { $0.pose == nil ? nil : $0.id } }
 
+  /// The addressed placement cut uses one item and its five winning siblings.
+  /// A capacity overflow also keeps its own exact row, as the SQL owner does.
+  /// Projecting accepted poses changes geometry only, never causal witnesses.
+  public func placementContactSources(of itemID: UUID,
+    projecting pose: (UUID) -> WorkspacePlacementPose? = { _ in nil }) -> [WorkspacePlacement] {
+    guard let original = placements.first(where: { $0.id == itemID }),
+      let sourcePose = pose(itemID) ?? original.pose else { return [] }
+    func projected(_ source: WorkspacePlacement) -> WorkspacePlacement {
+      guard let value = pose(source.id) else { return source }
+      let winner = source.winner.version
+      return .init(itemID: source.id, heads: source.heads.map {
+        $0.version == winner ? .init(pose: value, version: $0.version) : $0
+      })
+    }
+    guard let stack = sourcePose.stackID else { return [projected(original)] }
+    var winning: [(source: WorkspacePlacement, pose: WorkspacePlacementPose)] = []
+    for source in placements {
+      guard let value = pose(source.id) ?? source.pose, value.stackID == stack else { continue }
+      let candidate = (source, value)
+      let position = winning.firstIndex { other in
+        if value.stackOrder != other.pose.stackOrder { return value.stackOrder < other.pose.stackOrder }
+        if source.stamp != other.source.stamp { return source.stamp > other.source.stamp }
+        return source.id.uuidString < other.source.id.uuidString
+      } ?? winning.count
+      if position < WorkspaceItemStack.maximumItemCount {
+        winning.insert(candidate, at: position)
+        if winning.count > WorkspaceItemStack.maximumItemCount { winning.removeLast() }
+      }
+    }
+    var sources = winning.map { projected($0.source) }
+    if !sources.contains(where: { $0.id == itemID }) { sources.append(projected(original)) }
+    return sources.sorted { $0.id.uuidString < $1.id.uuidString }
+  }
+
   public func element(id:String)->SpatialElement? {
     elementLookupCache.value(for:elements).position(of:id).map { elements[$0] }
   }
@@ -470,9 +504,7 @@ public struct BoardDocument: Codable, Equatable, Sendable {
     return true
   }
 
-  public var highestZIndex: Int {
-    placements.compactMap { $0.pose?.zIndex }.max() ?? 0
-  }
+  public var highestZIndex: Int { layout.highestZIndex }
 
   public func placement(of itemID: UUID) -> FreeItemPlacement? { freeItems.first { $0.id == itemID } }
   public func stack(containing itemID: UUID) -> WorkspaceItemStack? { stacks.first { $0.itemIDs.contains(itemID) } }
@@ -540,35 +572,30 @@ public struct BoardDocument: Codable, Equatable, Sendable {
 
   @discardableResult
   public mutating func moveItem(_ itemID: UUID, to center: WorldPoint, actor: UUID) -> Bool {
-    guard center.isValid, placement(of: itemID) != nil else { return false }
-    return author([itemID: .init(center: center, zIndex: highestZIndex + 1)], actor: actor)
+    guard placement(of: itemID) != nil,
+      let pose = WorkspacePlacementDrop.movingPose(to: center, highestZIndex: highestZIndex) else { return false }
+    return author([itemID: pose], actor: actor)
   }
 
   @discardableResult
   public mutating func createStack(moving movingID: UUID, onto targetID: UUID,
     actor: UUID, stackID: UUID = UUID()) -> UUID? {
     guard movingID != targetID, let moving = placement(of: movingID) else { return nil }
-    if let stack = stack(containing: targetID) {
-      guard stack.itemIDs.count < WorkspaceItemStack.maximumItemCount else { return nil }
-      let order = placements.filter { $0.pose?.stackID == stack.id }.compactMap { $0.pose?.stackOrder }.max() ?? 0
-      guard order < Int.max, author([movingID: .init(center: stack.center, zIndex: stack.zIndex,
-        stackID: stack.id, stackOrder: order + 1)], actor: actor) else { return nil }
-      return stack.id
-    }
-    guard let target = placement(of: targetID),
-      !placements.contains(where: { $0.pose?.stackID == stackID }) else { return nil }
-    let z = max(moving.zIndex, target.zIndex) + 1
-    guard author([
-      targetID: .init(center: target.center, zIndex: z, stackID: stackID, stackOrder: 0),
-      movingID: .init(center: target.center, zIndex: z, stackID: stackID, stackOrder: 1)
-    ], actor: actor) else { return nil }
-    return stackID
+    let stack = stack(containing: targetID)
+    let order = stack.map { stack in placements.filter { $0.pose?.stackID == stack.id }.compactMap { $0.pose?.stackOrder }.max() ?? 0 } ?? 0
+    guard let poses = WorkspacePlacementDrop.stackPoses(moving: movingID,
+      movingPose: .init(center: moving.center, zIndex: moving.zIndex), onto: targetID,
+      target: placement(of: targetID), stack: stack, maximumStackOrder: order,
+      stackID: stackID, stackIDIsAvailable: !placements.contains { $0.pose?.stackID == stackID }),
+      author(poses, actor: actor) else { return nil }
+    return stack?.id ?? stackID
   }
 
   @discardableResult
   public mutating func unstackItem(_ itemID: UUID, at center: WorldPoint, actor: UUID) -> Bool {
-    guard center.isValid, placements.contains(where: { $0.id == itemID && $0.pose?.stackID != nil }) else { return false }
-    return author([itemID: .init(center: center, zIndex: highestZIndex + 1)], actor: actor)
+    guard placements.contains(where: { $0.id == itemID && $0.pose?.stackID != nil }),
+      let pose = WorkspacePlacementDrop.movingPose(to: center, highestZIndex: highestZIndex) else { return false }
+    return author([itemID: pose], actor: actor)
   }
 
   @discardableResult

@@ -1,0 +1,103 @@
+{
+  "route": "production panel DOM, Session, Surface and WASM; controlled App transport and Image.decode completion",
+  "browser": "Chrome, CUA actual pointer/wheel/toolbar input",
+  "observedUTC": "2026-10-06 02:38:24 through 02:42:19",
+  "frozenUTC": "2026-10-06 02:43:58",
+  "wasmSHA256": "d80e3691f2e3c58e355146c968ccfc86eafcbd62c52dfd38f6e8d889db292b4d",
+  "sourceSHA256": {
+    "MCP/panel/session.ts": "2e7400aec06738a6db1d34d83c48cd95f6431241f61ed2bf014fdbff226a6829",
+    "MCP/panel/surface.ts": "338bf26567da6fb96a07c7adfd841cf1e029e7f55c33367073e85e9ba166ec23",
+    "MCP/panel/panel.ts": "9cd2bb3b8006c9a6bdb4a0e4f736d31a579bce3a5f66c5f236ca7c6c704abdd7",
+    "MCP/test/panel.test.ts": "6cd49f73b7f24abe29c854ed76e8e1138293caa754c4a6943f5e31db93c516dd",
+    "MCP/test/panel-gesture-host/client.ts": "1b410fd071226945713340a6513708f36dae434f3aaaf97b8e3f24100fc5d9aa",
+    "MCP/test/panel-gesture-host/build.mjs": "249e0dd15148df03e212f8c40afbd618ded6cbe9adb4d0f3b6c848256ab6ae07"
+  },
+  "pan": {
+    "beforeLateReply": {
+      "aborted": true,
+      "viewBox": "-687 -468.5 2014 1337"
+    },
+    "afterLateReply": {
+      "installed": "A",
+      "BRequests": 1,
+      "BInstalls": 0,
+      "viewBox": "-687 -468.5 2014 1337",
+      "status": "Подключено"
+    }
+  },
+  "wheel": {
+    "afterLateError": {
+      "installed": "A",
+      "BInstalls": 0,
+      "viewBox": "-687 912.5 2014 1337",
+      "errorVisible": false
+    }
+  },
+  "zoom": {
+    "afterLateReply": {
+      "installed": "A",
+      "BRequests": 1,
+      "BInstalls": 0,
+      "zoom": "120%",
+      "viewBox": "-519.1666666666667 -357.08333333333337 1678.3333333333335 1114.1666666666667"
+    }
+  },
+  "withdrawnDecoder": {
+    "afterFirstFailed": {
+      "held": 1,
+      "resourcesReleased": 0,
+      "installed": "A"
+    },
+    "afterAllJoined": {
+      "held": 0,
+      "resourcesReleased": 2,
+      "allReleasesJoined": true,
+      "installed": "A",
+      "errorVisible": false
+    }
+  },
+  "resize": {
+    "widthBefore": 2014,
+    "widthAfter": 1450,
+    "heldDecoders": 2,
+    "afterJoined": {
+      "installed": "B",
+      "BInstalls": 2,
+      "entryProjectionCount": 1,
+      "refiningProjectionCount": 1,
+      "center": {
+        "tileX": 0,
+        "tileY": 0,
+        "localX": 240,
+        "localY": 150
+      },
+      "scale": 0.7199602780536246
+    }
+  },
+  "back": {
+    "installed": "A",
+    "zoom": "120%",
+    "viewBox": "-284.16666666666674 -357.08333333333337 1208.3333333333335 1114.1666666666667"
+  },
+  "teardown": {
+    "beforeJoin": {
+      "held": 2,
+      "resourcesReleased": 0,
+      "closedReported": false
+    },
+    "afterJoin": {
+      "held": 0,
+      "resourcesReleased": 3,
+      "allReleasesJoined": true,
+      "closedReported": true
+    }
+  },
+  "earlyResourceReleases": 0,
+  "checks": {
+    "typescriptNoEmit": "PASS",
+    "diffCheck": "PASS",
+    "finalJSRegressionRoute": "pending Root",
+    "installedCodexPanel": "not exercised",
+    "nativeRunner": "not run"
+  }
+}

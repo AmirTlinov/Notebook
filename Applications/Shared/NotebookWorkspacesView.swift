@@ -38,7 +38,13 @@ struct NotebookWorkspacesView: View {
   private var workspaceList: some View {
       List {
         if let error = launch.workspaceError ?? launch.catalogError {
-          Section { Text(error).font(.callout).foregroundStyle(.secondary).accessibilityIdentifier("workspace-error") }
+          Section {
+            Text(error).font(.callout).foregroundStyle(.secondary).accessibilityIdentifier("workspace-error")
+            if launch.canRetryWorkspaceTransition {
+              Button("Повторить сохранение") { Task { await launch.retryWorkspaceTransition() } }
+                .accessibilityIdentifier("workspace-retry-save")
+            }
+          }
         }
         if launch.workspaceList.isEmpty {
           ContentUnavailableView("Ваши пространства", systemImage: "square.stack.3d.up",

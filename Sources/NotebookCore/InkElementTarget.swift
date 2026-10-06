@@ -5,6 +5,50 @@ import Foundation
 /// The erase stays in its ink action, not in a second
 /// document or an element field with a competing last-writer-wins history.
 public struct InkElementTarget: Codable, Equatable, Sendable {
+  public struct WriteAllowance: Equatable, Sendable {
+    public var retainedBytes: Int
+    public var wireBytes: Int
+    public var jsonTokens: Int
+    public static let zero = Self(retainedBytes: 0, wireBytes: 0, jsonTokens: 0)
+    public init(retainedBytes: Int, wireBytes: Int, jsonTokens: Int) {
+      self.retainedBytes = retainedBytes; self.wireBytes = wireBytes; self.jsonTokens = jsonTokens
+    }
+    public mutating func add(_ next: Self) {
+      retainedBytes += next.retainedBytes; wireBytes += next.wireBytes; jsonTokens += next.jsonTokens
+    }
+  }
+
+  /// The target's actual optional schema owns this footprint. Counting does
+  /// not construct JSON or encode another target. Doubles need at most 32 wire
+  /// bytes; dictionary capacity and string backing are conservatively doubled.
+  public var writeAllowance: WriteAllowance {
+    func stringBytes(_ text: String) -> Int {
+      2 + text.utf8.reduce(0) { $0 + ($1 < 0x20 ? 6 : $1 == 0x22 || $1 == 0x5c || $1 == 0x2f ? 2 : 1) }
+    }
+    func object(_ keys: [String], scalarBytes: Int) -> WriteAllowance {
+      .init(retainedBytes: MemoryLayout<JSONValue>.stride
+        + (keys.count * 2 + 1) * (MemoryLayout<String>.stride + MemoryLayout<JSONValue>.stride + 32)
+        + keys.reduce(0) { $0 + $1.utf8.count * 2 },
+        wireBytes: 2 + keys.reduce(0) { $0 + stringBytes($1) + 2 } + scalarBytes,
+        jsonTokens: 1 + keys.count * 2)
+    }
+    var keys = ["elementID", "frame"]
+    if worldOrigin != nil { keys.append("worldOrigin") }
+    if graphicTransform != nil { keys.append("graphicTransform") }
+    if elementTransform != nil { keys.append("elementTransform") }
+    if wholeElement { keys.append("wholeElement") }
+    var result = object(keys, scalarBytes: stringBytes(elementID) + (wholeElement ? 4 : 0))
+    result.retainedBytes += elementID.utf8.count * 2
+    // Nested objects replace the scalar token already counted for their field.
+    result.add(object(["x", "y", "width", "height"], scalarBytes: 4 * 32)); result.jsonTokens -= 1
+    if worldOrigin != nil {
+      result.add(object(["tileX", "tileY", "localX", "localY"], scalarBytes: 4 * 32)); result.jsonTokens -= 1
+    }
+    for transform in [graphicTransform, elementTransform] where transform != nil {
+      result.add(object(["a", "b", "c", "d", "tx", "ty"], scalarBytes: 6 * 32)); result.jsonTokens -= 1
+    }
+    return result
+  }
   public let elementID: String
   public let frame: PageRect
   public let worldOrigin: WorldPoint?

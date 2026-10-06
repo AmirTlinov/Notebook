@@ -5,13 +5,15 @@ import NotebookCodex
 
 private actor RunOwner: NotebookCodexProcessOwner, NotebookCodexCatalogueOwner {
   var starts = 0, writes: [Data] = [], stops = 0
+  var workspaces: [UUID: UUID] = [:]
   var unknownWrite = false
   var outputs: [UUID: @Sendable (NotebookProcessEvent) async throws -> Void] = [:]
   func setUnknownWrite() { unknownWrite = true }
   func counts() -> (Int, Int, Int) { (starts, writes.count, stops) }
-  func startProcess(id: UUID, request: NotebookRunRequest, publish: @escaping @Sendable (NotebookProcessEvent) async throws -> Void) async throws {
-    starts += 1; outputs[id] = publish; try await publish(.output(Data("ready\r\n".utf8)))
+  func startProcess(id: UUID, workspaceID: UUID, request: NotebookRunRequest, publish: @escaping @Sendable (NotebookProcessEvent) async throws -> Void) async throws {
+    starts += 1; workspaces[id] = workspaceID; outputs[id] = publish; try await publish(.output(Data("ready\r\n".utf8)))
   }
+  func workspace(of process: UUID) -> UUID? { workspaces[process] }
   func writeProcess(id: UUID, data: Data) async throws {
     writes.append(data); try await outputs[id]?(.output(data))
     if unknownWrite { throw CodexBridgeError.acceptanceUnknown }
@@ -47,7 +49,8 @@ private actor RunOwner: NotebookCodexProcessOwner, NotebookCodexCatalogueOwner {
   }
   func testReplayLostInputAcknowledgementAndMacRestartNeverExecuteTwice() async throws {
     try await fixture { store, queue, native, root, author in
-      let service = MacNotebookProjectRuns(persistence: queue, executor: native, metadata: native, computer: root.computer)
+      let service = MacNotebookProjectRuns(persistence: queue, executor: native, metadata: native,
+        workspaceID: try store.storedWorkspaceID(), computer: root.computer)
       let start = NotebookChatInput(author: author, action: .startRun(.init(root: root, command: "read answer")))
       let accepted = try await receive(service, queue, start); XCTAssertEqual(accepted.result, .run(start.id))
       _ = try await receive(service, queue, start)
@@ -56,7 +59,8 @@ private actor RunOwner: NotebookCodexProcessOwner, NotebookCodexCatalogueOwner {
       let input = NotebookChatInput(author: author, action: .writeRun(start.id, Data("hello\r".utf8)))
       let receipt = try await receive(service, queue, input); XCTAssertEqual(receipt.state, .uncertain)
       _ = try await receive(service, queue, input)
-      let cold = MacNotebookProjectRuns(persistence: queue, executor: native, metadata: native, computer: root.computer)
+      let cold = MacNotebookProjectRuns(persistence: queue, executor: native, metadata: native,
+        workspaceID: try store.storedWorkspaceID(), computer: root.computer)
       let recovered = try await cold.read(.init(root: root)); XCTAssertEqual(recovered.record?.phase, .interrupted)
       _ = try await receive(cold, queue, start); _ = try await receive(cold, queue, input)
       let counts = await native.counts(); XCTAssertEqual(counts.0, 1); XCTAssertEqual(counts.1, 1)
@@ -65,7 +69,8 @@ private actor RunOwner: NotebookCodexProcessOwner, NotebookCodexCatalogueOwner {
   }
   func testRestartWaitsForPreviousExitAndIdenticalPathsOnOtherMacAreRejected() async throws {
     try await fixture { store, queue, native, root, author in
-      let service = MacNotebookProjectRuns(persistence: queue, executor: native, metadata: native, computer: root.computer)
+      let service = MacNotebookProjectRuns(persistence: queue, executor: native, metadata: native,
+        workspaceID: try store.storedWorkspaceID(), computer: root.computer)
       let start = NotebookChatInput(author: author, action: .startRun(.init(root: root, command: "read answer")))
       _ = try await receive(service, queue, start)
       let restart = NotebookChatInput(author: author, action: .startRun(.init(root: root, command: "echo finished", replacing: start.id)))
@@ -78,5 +83,34 @@ private actor RunOwner: NotebookCodexProcessOwner, NotebookCodexCatalogueOwner {
       XCTAssertEqual(rejected.state, .rejected)
       let final = await native.counts(); XCTAssertEqual(final.0, 2)
     }
+  }
+
+  func testIdenticalProjectRootsKeepTheAdmittedWorkspaceIdentity() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("workspace-runs-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let first = NotebookStore(root: directory.appendingPathComponent("first"))
+    let second = NotebookStore(root: directory.appendingPathComponent("second"))
+    let author = UUID(), native = RunOwner()
+    let firstID = try first.initializeWorkspace(actor: author, pageSize: NotebookAppModel.defaultPageSize).workspaceID
+    let secondID = try second.initializeWorkspace(actor: author, pageSize: NotebookAppModel.defaultPageSize).workspaceID
+    let firstQueue = NotebookPersistenceQueue(store: first), secondQueue = NotebookPersistenceQueue(store: second)
+    let root = NotebookFileAddress(computer: UUID(), project: "demo", root: "/tmp/demo", path: "")
+    let firstRuns = MacNotebookProjectRuns(persistence: firstQueue, executor: native, metadata: native,
+      workspaceID: firstID, computer: root.computer)
+    let secondRuns = MacNotebookProjectRuns(persistence: secondQueue, executor: native, metadata: native,
+      workspaceID: secondID, computer: root.computer)
+    let a = NotebookChatInput(author: author, action: .startRun(.init(root: root, command: "echo first")))
+    let b = NotebookChatInput(author: author, action: .startRun(.init(root: root, command: "echo second")))
+    _ = try await receive(firstRuns, firstQueue, a)
+    _ = try await receive(secondRuns, secondQueue, b)
+    let aWorkspace = await native.workspace(of: a.id), bWorkspace = await native.workspace(of: b.id)
+    XCTAssertEqual(aWorkspace, firstID); XCTAssertEqual(bWorkspace, secondID)
+    XCTAssertNotEqual(aWorkspace, bWorkspace)
+    _ = try await receive(firstRuns, firstQueue, .init(author: author, action: .stopRun(a.id)))
+    XCTAssertEqual(try first.runRecord(a.id)?.phase, .exited)
+    XCTAssertEqual(try second.runRecord(b.id)?.phase, .running)
+    _ = try await receive(secondRuns, secondQueue, .init(author: author, action: .stopRun(b.id)))
+    let firstSaved = await firstQueue.flush(), secondSaved = await secondQueue.flush()
+    XCTAssertTrue(firstSaved); XCTAssertTrue(secondSaved)
   }
 }

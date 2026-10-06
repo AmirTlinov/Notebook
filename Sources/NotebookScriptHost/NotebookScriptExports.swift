@@ -4,7 +4,7 @@ import NotebookScriptProtocol
 
 extension NotebookScriptCoordinator {
   func startExport(id: UUID, arguments: JSONValue) async throws -> JSONValue {
-    if let previous = try await persistence({ try $0.scriptExportJob(id) ?? .null }).optionalValue { return previous }
+    if let previous = try await reader({ try $0.scriptExportJob(id) ?? .null }).optionalValue { return previous }
     guard exportTasks.count + exportAdmissions < 2, let documentID = arguments.string("documentID").flatMap(UUID.init(uuidString:)) else {
       throw CollaborationError("export_limit", "Нужен documentID; на Mac одновременно собираются до двух экспортов.")
     }
@@ -14,7 +14,7 @@ extension NotebookScriptCoordinator {
     try options.validate()
     exportAdmissions += 1
     defer { exportAdmissions -= 1 }
-    let cut = try await persistence { try .encode($0.readDocumentExportCut(documentID: documentID, options: options)) }.decode(NotebookExportCut.self)
+    let cut = try await reader { try .encode($0.readDocumentExportCut(documentID: documentID, options: options)) }.decode(NotebookExportCut.self)
     let document = cut.document, cutHash = try cut.sha256
     let accepted = JSONValue.object(["status": .string("queued"), "jobID": .string(id.uuidString.lowercased()),
       "documentID": .string(documentID.uuidString.lowercased()), "contentRevision": .string(document.contentStamp.revision),

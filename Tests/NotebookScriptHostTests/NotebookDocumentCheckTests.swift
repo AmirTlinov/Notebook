@@ -9,6 +9,7 @@ import Testing
 struct NotebookDocumentCheckTests {
   @MainActor private final class Owner {
     let store: NotebookStore
+    private lazy var querySession = NotebookReadSession(store: store)
     let documentID = UUID(), renderID = UUID()
     var requests: [NotebookCommand] = []
     var programs: [DocumentProgramCheck] = []
@@ -20,8 +21,11 @@ struct NotebookDocumentCheckTests {
     }
     deinit { try? FileManager.default.removeItem(at: store.root) }
     func host() -> NotebookScriptCoordinator {
-      NotebookScriptCoordinator(command: { try await self.command($0) }, persistence: { try await self.persist($0) },
+      NotebookScriptCoordinator(command: { try await self.command($0) }, reader: { try await self.observe($0) }, persistence: { try await self.persist($0) },
         workingDirectory: store.root.appendingPathComponent("derived/script-runtime"))
+    }
+    func observe(_ operation: @Sendable (NotebookQueryCut) throws -> JSONValue) throws -> JSONValue {
+      try querySession.observe(operation)
     }
     func persist(_ operation: @Sendable (NotebookStore) throws -> JSONValue) throws -> JSONValue { try operation(store) }
     func command(_ command: NotebookCommand) throws -> JSONValue {

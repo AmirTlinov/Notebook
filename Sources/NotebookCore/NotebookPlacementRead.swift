@@ -1,4 +1,3 @@
-import CSQLite
 import Foundation
 
 /// A proposal has a finite read and packing allowance. Reaching it is not an
@@ -6,37 +5,22 @@ import Foundation
 final class NotebookPlacementBudget {
   static let maximumObstacles = 4_096
   static let maximumSourceBytes = 16 * 1_024 * 1_024
-  private let maximumSQLSteps: Int
+  private let sqlBudget: NotebookSQLExecutionBudget
   private let maximumComparisons: Int
-  private(set) var sqlSteps = 0
+  var sqlSteps: Int { sqlBudget.steps }
   private(set) var comparisons = 0
   private(set) var inspectedObstacles = 0
   private var metadataBytes = 0
-  private var interrupted = false
-  private var cancelled = false
 
   init(sqlSteps: Int = 500_000, comparisons: Int = 4_000_000) {
-    maximumSQLSteps = sqlSteps; maximumComparisons = comparisons
+    sqlBudget = .init(steps: sqlSteps, reason: "placement_sql_work"); maximumComparisons = comparisons
   }
 
   func withSQL<T>(_ database: NotebookSQLConnection, _ operation: () throws -> T) throws -> T {
     try Task.checkCancellation()
-    // SQLite resets the progress interval for short statements. Interval one
-    // counts their total too; a sequence of indexed point reads cannot evade
-    // the allowance simply because each individual statement is inexpensive.
-    sqlite3_progress_handler(database.handle, 1, { pointer in
-      guard let pointer else { return 1 }
-      let budget = Unmanaged<NotebookPlacementBudget>.fromOpaque(pointer).takeUnretainedValue()
-      budget.sqlSteps += 1
-      if budget.sqlSteps & 255 == 0 { budget.cancelled = withUnsafeCurrentTask { $0?.isCancelled ?? false } }
-      budget.interrupted = budget.sqlSteps > budget.maximumSQLSteps
-      return budget.cancelled || budget.interrupted ? 1 : 0
-    }, Unmanaged.passUnretained(self).toOpaque())
-    defer { sqlite3_progress_handler(database.handle, 0, nil, nil) }
-    do { return try operation() }
+    do { return try database.withSQLExecution(sqlBudget, operation) }
     catch {
-      if cancelled { throw CancellationError() }
-      if interrupted { throw Self.exceeded("sql_work") }
+      if sqlBudget.exhausted { throw Self.exceeded("sql_work") }
       throw error
     }
   }

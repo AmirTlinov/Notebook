@@ -27,6 +27,7 @@ public actor CodexAppServer {
   private var attaching: [String: Attachment] = [:]
   private var starting: Set<String> = []
   private struct RunningProcess {
+    let workspaceID: UUID
     let output: CodexProcessOutput
     var finishing = false
     var task: Task<Void, Never>?
@@ -61,10 +62,16 @@ public actor CodexAppServer {
     threadWorkspaces[threadID] = workspace
   }
   public func hasActiveWork(workspace: UUID) -> Bool {
-    !processes.isEmpty || starting.contains { threadWorkspaces[$0] == workspace }
+    activeProcessCount(workspace: workspace) > 0 || starting.contains { threadWorkspaces[$0] == workspace }
       || attaching.keys.contains { threadWorkspaces[$0] == workspace }
       || (voice?.isActive == true && voice.map { threadWorkspaces[$0.threadID] == workspace } == true)
       || states.contains { threadWorkspaces[$0.key] == workspace && ($0.value.view.busy || !$0.value.requests.isEmpty) }
+  }
+
+  /// Counts resident output owners, including a process whose PTY has exited
+  /// while its accepted output is still draining to the workspace writer.
+  public func activeProcessCount(workspace: UUID) -> Int {
+    processes.values.reduce(0) { $0 + ($1.workspaceID == workspace ? 1 : 0) }
   }
 
   private var answeringRequests: Set<String> = []
@@ -398,14 +405,11 @@ public actor CodexAppServer {
 
   /// The durable Mac run record is admitted before this adapter is called.
   /// A request remains pending until the actual PTY exits, not for 12 seconds.
-  public func startProcess(id: UUID, request: NotebookRunRequest,
+  public func startProcess(id: UUID, workspaceID: UUID, request: NotebookRunRequest,
     publish: @escaping @Sendable (NotebookProcessEvent) async throws -> Void) async throws {
     guard request.isValid, processes[id] == nil, processes.count < 4 else { throw CodexBridgeError.invalidInput }
     let rpc = try await connect()
-    guard processes[id] == nil, processes.count < 4 else { throw CodexBridgeError.busy }
-    processes[id] = .init(output: CodexProcessOutput(publish: publish,
-      stop: { [weak self] in await self?.stopFailedProcess(id) },
-      completed: { [weak self] in await self?.releaseProcess(id) }))
+    _ = try admitProcess(id: id, workspaceID: workspaceID, publish: publish)
     processes[id]?.task = Task { [weak self] in
       do {
         let result = try await rpc.request("command/exec", params: .object([
@@ -428,6 +432,18 @@ public actor CodexAppServer {
         } catch { if Task.isCancelled { return } }
       }
     }
+  }
+
+  /// The official executor and its four slots are global. Each admitted
+  /// output owner keeps the exact workspace UUID supplied by its durable run.
+  func admitProcess(id: UUID, workspaceID: UUID,
+    publish: @escaping @Sendable (NotebookProcessEvent) async throws -> Void) throws -> CodexProcessOutput {
+    guard processes[id] == nil, processes.count < 4 else { throw CodexBridgeError.busy }
+    let output = CodexProcessOutput(publish: publish,
+      stop: { [weak self] in await self?.stopFailedProcess(id) },
+      completed: { [weak self] in await self?.releaseProcess(id) })
+    processes[id] = .init(workspaceID: workspaceID, output: output)
+    return output
   }
   private func processNeedsProbe(_ id: UUID) -> Bool { processes[id]?.running == false }
   private func markProcessRunning(_ id: UUID) async {

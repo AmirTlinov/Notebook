@@ -8,7 +8,8 @@ final class NotebookItemPlacementTests: XCTestCase {
 
   func testDropChainsUseOneSavedSourceAndColdUndoRedoPerLift() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    let model = try await makeModel(root: root)
+    let store = NotebookStore(root: root), queue = NotebookPersistenceQueue(store: store)
+    let model = try await makeModel(root: root, store: store, queue: queue)
     let boardID = try XCTUnwrap(model.presence?.boardID), a = try XCTUnwrap(model.workspace?.selectedItemID)
     let b = try XCTUnwrap(model.createNotebook(at: .init(x: 1500, y: 0)))
     await save(model)
@@ -16,15 +17,21 @@ final class NotebookItemPlacementTests: XCTestCase {
     let lock = try NotebookSQLWriteBlocker(store: model.store)
     defer { try? lock.release() }
     let first = try XCTUnwrap(model.moveItem(a, to: .init(x: 300, y: 100)))
+    let firstBytes = queue.reservedWriteBytes
     let second = try XCTUnwrap(model.moveItem(a, to: .init(x: 1400, y: 0), onto: b))
+    XCTAssertGreaterThan(queue.reservedWriteBytes, firstBytes)
+    XCTAssertLessThanOrEqual(queue.reservedWriteBytes + NotebookItemWriteAllowance.maximumCost.bytes,
+      256 * 1_024 * 1_024, "Both rapid drops leave the same finite credit for their exact Undo")
     let stack = try XCTUnwrap(model.board?.stack(containing: a))
     XCTAssertEqual(stack.id, NotebookStore.submissionID(second.id, suffix: "stack:1"))
     XCTAssertEqual(model.boardHierarchy?.board(boardID), before,
       "A visible draft cannot manufacture canonical movement heads")
     XCTAssertNil(second.accepted)
     model.undoLastSurfaceAction() // Reserve the inverse before the writer is free.
+    XCTAssertGreaterThanOrEqual(queue.reservedWriteBytes, NotebookItemWriteAllowance.maximumCost.bytes)
     try lock.release()
     await save(model)
+    XCTAssertEqual(queue.reservedWriteBytes, 0)
     XCTAssertEqual(try model.store.nativeHistory(domain: .board(boardID), actor: model.actorID), [.command(first.id)])
     XCTAssertEqual(model.board?.placement(of: a)?.center, WorldPoint(x: 300, y: 100))
     XCTAssertNil(model.board?.stack(containing: a))
@@ -104,8 +111,9 @@ final class NotebookItemPlacementTests: XCTestCase {
     }
   }
 
-  private func makeModel(root: URL, store: NotebookStore? = nil) async throws -> NotebookAppModel {
-    let model = NotebookAppModel(store: store ?? .init(root: root), startsNearbySync: false)
+  private func makeModel(root: URL, store: NotebookStore? = nil,
+    queue: NotebookPersistenceQueue? = nil) async throws -> NotebookAppModel {
+    let model = NotebookAppModel(store: store ?? .init(root: root), startsNearbySync: false, persistenceQueue: queue)
     retainNotebookUntilTeardown(model, removing: root)
     await model.start(pageSize: NotebookAppModel.defaultPageSize)
     let boardID = try XCTUnwrap(model.presence?.boardID)

@@ -40,7 +40,9 @@ extension NotebookStore {
     let data = try Self.storageEncoder.encode(value)
     if let existing = try database.rows("SELECT value FROM action_field_restorations WHERE address=? AND field=?",
       [.text(receiptAddress), .text(key)]).first?[0].blob {
+      try database.admitJSONDecode(existing)
       let previous = try JSONDecoder().decode(JSONValue.self, from: existing)
+      try database.admitNativeJSONPhase(previous, copies: 2)
       guard try previous.decode(CollaborationFieldRestoration.self) == restoration,
         try previous["condition"]?.decode(CapturedFieldRestorationCondition.self) == condition else {
         throw NotebookStorageError.invalidTransaction("inconsistent field restoration")
@@ -162,6 +164,7 @@ extension NotebookStore {
         // Compare that shared form before reconstructing any source again.
         func stored(_ hash: String) throws -> NotebookStoredFragment {
           let data = try lifecycleInverseBlob(hash, maximumBytes: 256 * 1_024 * 1_024)
+          try database.admitJSONDecode(data)
           let value = try JSONDecoder().decode(NotebookStoredFragment.self, from: data)
           guard value.address == sourceAddress else { throw NotebookStorageError.invalidTransaction("restoration source address") }
           return value
@@ -184,9 +187,10 @@ extension NotebookStore {
       // placement records contribute ownership; geometry cannot add an edge.
       guard let after = change.afterHash else { return }
       let data = try lifecycleInverseBlob(after, maximumBytes: 256 * 1_024 * 1_024)
+      try database.admitJSONDecode(data)
       let stored = try JSONDecoder().decode(NotebookStoredFragment.self, from: data)
       guard ["collaboration/fields", "board/collaboration/fields", "board/placements"].contains(stored.collection) else { return }
-      let row = try readLifecycleInverseFragment(hash: after, address: change.address)
+      let row = try readLifecycleInverseFragment(hash: after, address: change.address, expandingInk: false)
       if row.collection == "board/placements" {
         let target = targets.first(where: { target in
           target.boardID.map { placementRecordAddress(boardID: $0, itemID: target.id) == row.address } == true
@@ -293,15 +297,22 @@ extension NotebookStore {
   }
 
   private func fieldVersionIsOwned(_ current: ContentFieldVersion, expected: ContentFieldVersion?,
-    field: String, requiringExactVersion: Bool, ancestors: Set<String>) throws -> Bool {
+    field: String, requiringExactVersion: Bool, ancestors: Set<String>, depth: Int = 0) throws -> Bool {
+    guard depth < NotebookJSONAdmission.maximumDepth else {
+      try currentSQL!.admitJSONAllocation(bytes: NotebookNativeWriteAllowance.maximumExecutionBytes + 1)
+      throw NotebookStorageError.limitExceeded("resource_limit")
+    }
     var version = current, visited = ancestors
     while visited.insert(version.restorationIdentity).inserted {
+      try currentSQL!.admitJSONAllocation(bytes: 256)
       if let expected,requiringExactVersion ? version == expected : (version.stamp == expected.stamp && version.human == expected.human) { return true }
       let rows = try currentSQL!.rows("SELECT value FROM action_field_restorations WHERE field=? AND version=? LIMIT 2",
         [.text(field), .text(version.restorationIdentity)])
       // Two claims about one inverse dot are not evidence of restored ownership.
       guard rows.count == 1, let data = rows[0][0].blob else { return false }
+      try currentSQL!.admitJSONDecode(data)
       let value = try JSONDecoder().decode(JSONValue.self, from: data)
+      try currentSQL!.admitNativeJSONPhase(value, copies: 2)
       let restoration = try value.decode(CollaborationFieldRestoration.self)
       let condition = try value["condition"]?.decode(CapturedFieldRestorationCondition.self)
       // Delivery may bind an implicit single head to its nil payload. This is
@@ -311,8 +322,9 @@ extension NotebookStore {
         : version == restoration.writtenVersion
       guard !(requiringExactVersion || condition != nil) || exact else { return false }
       if let condition {
+        try currentSQL!.admitJSONAllocation(bytes: visited.count * 128)
         guard try fieldVersionIsOwned(condition.current, expected: condition.expected, field: field,
-          requiringExactVersion: true, ancestors: visited) else { return false }
+          requiringExactVersion: true, ancestors: visited, depth: depth + 1) else { return false }
       }
       guard let prior=restoration.restoredVersion else { return expected == nil }
       version = prior
@@ -324,6 +336,8 @@ extension NotebookStore {
   /// heads. Only an attested inverse can bridge a freshly authored undo dot.
   func placementIsOwned(_ current: JSONValue?, after: JSONValue?,
     file: String, path: [CollaborationPathComponent]) throws -> Bool {
+    if let current { try currentSQL!.admitNativeJSONPhase(current) }
+    if let after { try currentSQL!.admitNativeJSONPhase(after) }
     guard let address = placementAddress(file, path),
       let value = try current?.decode(WorkspacePlacement.self),
       let expected = try after?.decode(WorkspacePlacement.self),
@@ -333,23 +347,30 @@ extension NotebookStore {
   }
 
   private func placementVersionIsOwned(_ current: WorkspacePlacement, expected: WorkspacePlacement,
-    boardID: UUID, itemID: UUID, ancestors: Set<String>) throws -> Bool {
+    boardID: UUID, itemID: UUID, ancestors: Set<String>, depth: Int = 0) throws -> Bool {
+    guard depth < NotebookJSONAdmission.maximumDepth else {
+      try currentSQL!.admitJSONAllocation(bytes: NotebookNativeWriteAllowance.maximumExecutionBytes + 1)
+      throw NotebookStorageError.limitExceeded("resource_limit")
+    }
     let field = "placement:" + placementRecordAddress(boardID: boardID, itemID: itemID)
     var value = current, visited = ancestors
     while true {
       if value == expected { return true }
       let identity = try placementIdentity(value)
       guard visited.insert(identity).inserted else { return false }
+      try currentSQL!.admitJSONAllocation(bytes: 256)
       let rows = try currentSQL!.rows("SELECT value FROM action_field_restorations WHERE field=? AND version=? LIMIT 2",
         [.text(field), .text(identity)])
       guard rows.count == 1, let bytes = rows[0][0].blob else { return false }
+      try currentSQL!.admitJSONDecode(bytes)
       let proof = try JSONDecoder().decode(LifecyclePlacementRestoration.self, from: bytes)
       let written = try restoredPlacement(hash: proof.writtenHash, boardID: boardID, itemID: itemID)
       guard written == value else { return false }
       if let beforeHash = proof.requiredBeforeHash, let afterHash = proof.originalAfterHash {
         let before = try restoredPlacement(hash: beforeHash, boardID: boardID, itemID: itemID)
         let after = try restoredPlacement(hash: afterHash, boardID: boardID, itemID: itemID)
-        guard try placementVersionIsOwned(before, expected: after, boardID: boardID, itemID: itemID, ancestors: visited) else { return false }
+        try currentSQL!.admitJSONAllocation(bytes: visited.count * 128)
+        guard try placementVersionIsOwned(before, expected: after, boardID: boardID, itemID: itemID, ancestors: visited, depth: depth + 1) else { return false }
       } else if proof.requiredBeforeHash != nil || proof.originalAfterHash != nil { return false }
       value = try restoredPlacement(hash: proof.restoredHash, boardID: boardID, itemID: itemID)
     }
@@ -369,6 +390,7 @@ extension NotebookStore {
     let field = "placement:" + placementRecordAddress(boardID: boardID, itemID: itemID)
     guard let data = try currentSQL!.rows("SELECT value FROM action_field_restorations WHERE address=? AND field=?",
       [.text(address), .text(field)]).first?[0].blob else { return nil }
+    try currentSQL!.admitJSONDecode(data)
     let proof = try JSONDecoder().decode(LifecyclePlacementRestoration.self, from: data)
     return try (restoredPlacement(hash: proof.restoredHash, boardID: boardID, itemID: itemID),
       restoredPlacement(hash: proof.writtenHash, boardID: boardID, itemID: itemID))
@@ -380,12 +402,13 @@ extension NotebookStore {
 
   private func restoredPlacement(hash: String, boardID: UUID, itemID: UUID) throws -> WorkspacePlacement {
     let address = placementRecordAddress(boardID: boardID, itemID: itemID)
-    let row = try readLifecycleInverseFragment(hash: hash, address: address)
+    let row = try readLifecycleInverseFragment(hash: hash, address: address, expandingInk: false)
     guard row.file == "board.json", row.parent == "board.json#/boards/@" + boardID.uuidString.lowercased(),
       row.collection == "board/placements", row.member == itemID.uuidString.lowercased(),
       row.collections.isEmpty, row.position == 0 else {
       throw NotebookStorageError.invalidTransaction("lifecycle placement restoration address")
     }
+    try currentSQL!.admitNativeJSONPhase(row.value, copies: 2)
     let value = try row.value.decode(WorkspacePlacement.self)
     guard value.itemID == itemID, try row.value == .encode(value) else {
       throw NotebookStorageError.invalidTransaction("lifecycle placement restoration identity")

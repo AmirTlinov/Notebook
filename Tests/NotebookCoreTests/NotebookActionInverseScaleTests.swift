@@ -22,7 +22,7 @@ struct NotebookActionInverseScaleTests {
     return count
   }
 
-  @Test func seventeenThousandRawChangesProduceTwoBoundedPartsAndOneOrderedStream() throws {
+  @Test func seventeenThousandRawChangesProduceSmallPartsAndOneOrderedStream() throws {
     try fixture { store, index, _ in
       let actionID = UUID(), total = 17_001, file = pageFile(index.selectedPageID!)
       try store.commandTransaction {
@@ -44,10 +44,18 @@ struct NotebookActionInverseScaleTests {
         }
         let reference = try #require(try store.saveLifecycleInverse(actionID: actionID))
         let root = try store.readLifecycleInverseRoot(reference: reference, actionID: actionID)
-        #expect(reference.recordCount == total && root.parts.count == 2)
+        #expect(reference.recordCount == total && root.parts.count >= 5)
+        var partRecords = 0
+        for (ordinal, hash) in root.parts.enumerated() {
+          let part = try store.readLifecycleInversePart(hash: hash, actionID: actionID, ordinal: ordinal)
+          #expect(part.records.count <= 4_096)
+          #expect(try db.blob(hash).count <= 1_024 * 1_024)
+          partRecords += part.records.count
+        }
+        #expect(partRecords == total)
         let first = try store.readLifecycleInversePart(hash: root.parts[0], actionID: actionID, ordinal: 0)
-        let last = try store.readLifecycleInversePart(hash: root.parts[1], actionID: actionID, ordinal: 1)
-        #expect(first.records.count == 16_384 && last.records.count == total - 16_384)
+        let ordinal = root.parts.count - 1
+        let last = try store.readLifecycleInversePart(hash: root.parts[ordinal], actionID: actionID, ordinal: ordinal)
         #expect(first.records.last!.address < last.records.first!.address)
         var count = 0, after = ""
         try store.visitLifecycleInverse(reference: reference, actionID: actionID) { row in

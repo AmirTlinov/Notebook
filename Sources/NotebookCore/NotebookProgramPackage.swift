@@ -124,7 +124,7 @@ extension NotebookStore {
   /// Publishing a scene still belongs to the normal causal transaction.
   public func stageProgramPackage(_ package: NotebookProgramPackage) throws -> String {
     let data = try package.canonicalData()
-    return try commandTransaction {
+    return try commandTransaction(advancesReadRevision: false) {
       for part in package.files.flatMap(\.parts) {
         guard try blobSize(hash: part.sha256) == part.byteCount else { throw NotebookStorageError.blobHashMismatch }
       }

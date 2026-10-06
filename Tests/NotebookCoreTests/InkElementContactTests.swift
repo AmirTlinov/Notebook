@@ -17,9 +17,15 @@ struct InkElementContactTests {
     contact.update(measured,from:0)
     #expect(!contact.isEmpty)
     #expect(contact.selected == Array(targets.prefix(3)))
+    var expectedAllowance=InkElementTarget.WriteAllowance.zero
+    for target in targets.prefix(3) { expectedAllowance.add(target.writeAllowance) }
+    #expect(contact.writeAllowance == expectedAllowance)
     measured.replaceTail(from:2,with:[sample(100,0)])
     contact.update(measured,from:2)
     #expect(contact.selected == Array(targets.prefix(2)))
+    expectedAllowance = .zero
+    for target in targets.prefix(2) { expectedAllowance.add(target.writeAllowance) }
+    #expect(contact.writeAllowance == expectedAllowance)
     measured.replaceTail(from:1,with:[sample(300,110)])
     contact.update(measured,from:1)
     #expect(contact.selected == targets, "The new crossing includes its preceding sample")
@@ -27,6 +33,7 @@ struct InkElementContactTests {
     contact.update(measured,from:0)
     #expect(contact.isEmpty)
     #expect(contact.selected.isEmpty)
+    #expect(contact.writeAllowance == .zero)
   }
 
   @Test func incrementalSelectionMatchesFullOracleAcrossFarWorldOrigins() {
@@ -69,14 +76,33 @@ struct InkElementContactTests {
     contact.update(measured,from:0,queried:[first],visitedNodes:7)
     #expect(!contact.isEmpty)
     #expect(contact.selected == [first])
+    #expect(contact.writeAllowance == first.writeAllowance)
     measured.replaceTail(from:2,with:[sample(200,100)])
     contact.update(measured,from:2,queried:[second],visitedNodes:5)
     #expect(contact.selected == [first,second])
+    var allowance=first.writeAllowance;allowance.add(second.writeAllowance)
+    #expect(contact.writeAllowance == allowance)
     #expect(contact.visitedNodes == 12)
     measured.replaceTail(from:1,with:[sample(0,0)])
     contact.update(measured,from:1,queried:[],visitedNodes:1)
     #expect(contact.isEmpty)
     #expect(contact.selected.isEmpty, "A corrected suffix retracts hits without retaining all queried targets")
+    #expect(contact.writeAllowance == .zero)
+  }
+
+  @Test func targetOptionalSchemaBoundsActualResidentJSONAndDecodeWork() throws {
+    for world in [false,true] {
+      for transformed in [false,true] {
+        let target=InkElementTarget(elementID:"quoted\\\"/\n🧩",frame:.init(x:-1.7e308,y:1.7e308,width:100,height:100),
+          worldOrigin:world ? .zero : nil,wholeElement:transformed,
+          graphicTransform:transformed ? .identity : nil,elementTransform:transformed ? .identity : nil)
+        let allowance=target.writeAllowance,data=try JSONEncoder().encode(target)
+        #expect(data.count <= allowance.wireBytes)
+        #expect(try JSONValue.encode(target).retainedPayloadBytes <= allowance.retainedBytes)
+        #expect(try NotebookJSONAdmission.allocationCost(data,maximumBytes:1_048_576)
+          <= allowance.wireBytes * 8 + allowance.jsonTokens * 512)
+      }
+    }
   }
 }
 

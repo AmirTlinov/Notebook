@@ -329,7 +329,9 @@ struct InkRelationPersistenceTests {
       let paper=try #require(try a.readPageInkAction(pageID:page,actionID:source.sourceID)).action
       #expect(try paper.samples.encodedRelations() == source.measurements.encodedRelations())
       let observed=try #require(try a.readPageInkAction(pageID:page,actionID:source.sourceID))
-      #expect(throws:NotebookStorageError.limitExceeded("ink_measurement_read")) { try observed.measuredReadProjection() }
+      #expect(throws:NotebookStorageError.limitExceeded("ink_measurement_read")) {
+        try a.sqlRead { try observed.measuredReadProjection(in: $0) }
+      }
       let through=try a.currentChangeCursor(),transferStart=ContinuousClock.now
       try receiveFixtureChanges(from:a,to:b,peerID:actor)
       let transfer=transferStart.duration(to:.now)

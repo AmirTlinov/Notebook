@@ -3,6 +3,19 @@
 Срез: **6 октября 2026**. Каждый результат относится к своим исходникам и scope.
 Функциональная проверка, установка и полная приёмка учитываются отдельно.
 
+Срез observation/accepted-write/workspace: **127 Core/Codex/ScriptHost функций,
+167 исполнений; 54 native Mac; 27 panel Node — PASS**, без пропусков; native runtime
+warnings отсутствуют. Core-свидетельство связано с итоговым срезом точным совпадением
+всех 797 входов SwiftPM; native source `9ec8381009e7` неизменен во время проверки.
+Проверены COUNT/sort до первой строки, сохранение accepted COMMIT при отмене чтения,
+общий decode/output budget, fixed writer prefix, два drop с Undo, source-retaining
+workspace Retry и поздний page worker после отзыва derived admission. Production
+panel DOM/Session/Surface/pinned WASM проверены жестами в отдельном Chrome host;
+installed Codex и физический iPad этого среза ещё ожидают проверки.
+[Точные scopes, hashes и результаты](audit-evidence/2026-10-06/observations-and-workspace-cuts/results.json).
+Scoped owner frontiers, полный admission остальных producer путей и новая модель
+Undo остаются в Linear; весь реестр 104 позиций этим срезом не закрыт.
+
 Runtime Codex, срез `7e5ac349beed`: **6 native Mac PASS**, без пропусков
 и runtime warnings. После отказа обнаружения Codex два одновременных IPC Retry
 восстанавливают одно подключение, сохраняя владельца и адрес пространства.

@@ -199,13 +199,16 @@ final class PageVisionDemandTests: XCTestCase {
     // preliminary content read.
     let release = DispatchSemaphore(value: 0)
     let entered = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
-    let preparation = Task<@Sendable (NotebookStore) throws -> Void, Error> {
-      return { _ in
+    let cost=NotebookPersistenceAdmission.Cost(payloadBytes:MemoryLayout<DispatchSemaphore>.stride
+      + MemoryLayout<AsyncStream<Void>.Continuation>.stride,completionBytes:8 * 1_024 * 1_024)
+    let reservation=try XCTUnwrap(queue.reserveWrite(cost))
+    let preparation = Task<NotebookPersistenceQueue.PreparedCommand<Void>, Error> {
+      return .init(cost:cost,operation:{ _ in
         entered.continuation.yield(()); entered.continuation.finish()
         guard release.wait(timeout: .now() + 10) == .success else { throw PreviewBarrierTimeout() }
-      }
+      })
     }
-    let blocked = queue.enqueuePreparedCommand(preparation)
+    let blocked = try queue.enqueuePreparedCommand(reservation:reservation,preparation)
     defer { release.signal() }
     for await _ in entered.stream { break }
     model.selectItem(firstItemID)
@@ -268,13 +271,16 @@ final class PageVisionDemandTests: XCTestCase {
     XCTAssertGreaterThan(queue.pendingCount, 0, "The normal publisher must reach its content read", file: file, line: line)
     let release = DispatchSemaphore(value: 0)
     let entered = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
-    let preparation = Task<@Sendable (NotebookStore) throws -> Void, Error> {
-      return { _ in
+    let cost=NotebookPersistenceAdmission.Cost(payloadBytes:MemoryLayout<DispatchSemaphore>.stride
+      + MemoryLayout<AsyncStream<Void>.Continuation>.stride,completionBytes:8 * 1_024 * 1_024)
+    let reservation=try XCTUnwrap(queue.reserveWrite(cost))
+    let preparation = Task<NotebookPersistenceQueue.PreparedCommand<Void>, Error> {
+      return .init(cost:cost,operation:{ _ in
         entered.continuation.yield(()); entered.continuation.finish()
         guard release.wait(timeout: .now() + 10) == .success else { throw PreviewBarrierTimeout() }
-      }
+      })
     }
-    let blocked = queue.enqueuePreparedCommand(preparation)
+    let blocked = try queue.enqueuePreparedCommand(reservation:reservation,preparation)
     defer { release.signal() }
     for await _ in entered.stream { break }
     try await waitUntil { queue.pendingCount >= 2 }

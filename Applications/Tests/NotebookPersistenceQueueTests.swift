@@ -241,18 +241,24 @@ final class NotebookPersistenceQueueTests: XCTestCase {
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     let ready = root.appendingPathComponent("ready")
     let queue = NotebookPersistenceQueue(store: .init(root: root))
-    let accepted = queue.enqueuePreparedCommand(Task { () throws -> @Sendable (NotebookStore) throws -> Int in
-      { _ in
+    let cost=NotebookPersistenceAdmission.Cost(payloadBytes:ready.path.utf8.count*2+MemoryLayout<Int>.stride,
+      completionBytes:8 * 1_024 * 1_024)
+    let reservation=try XCTUnwrap(queue.reserveWrite(cost))
+    let accepted = try queue.enqueuePreparedCommand(reservation:reservation,
+      Task { () throws -> NotebookPersistenceQueue.PreparedCommand<Int> in
+      .init(cost:cost,operation:{ _ in
         guard FileManager.default.fileExists(atPath: ready.path) else { throw StorageUnavailable.unavailable }
         return 11
-      }
+      })
     }, publishesChanges: true)
     let blocked = await queue.flush()
     XCTAssertFalse(blocked)
     accepted.cancel()
-    let dependent = queue.enqueuePreparedCommand(Task { () throws -> @Sendable (NotebookStore) throws -> Int in
+    let nextReservation=try XCTUnwrap(queue.reserveWrite(cost))
+    let dependent = try queue.enqueuePreparedCommand(reservation:nextReservation,
+      Task { () throws -> NotebookPersistenceQueue.PreparedCommand<Int> in
       let exactPredecessor = try await accepted.value
-      return { _ in exactPredecessor + 1 }
+      return .init(cost:cost,operation:{ _ in exactPredecessor + 1 })
     }, publishesChanges: true)
     try Data().write(to: ready)
     queue.retry()
@@ -341,11 +347,16 @@ final class NotebookPersistenceQueueTests: XCTestCase {
       if phase == .afterCommit,!FileManager.default.fileExists(atPath:ready.path) { throw StorageUnavailable.unavailable }
     })
     let queue=NotebookPersistenceQueue(store:store)
-    let accepted=queue.enqueuePreparedCommand(Task { () throws -> @Sendable (NotebookStore) throws -> Int in
-      { store in
-        try store.publishRecords(writes:["prepared-state.json":.object(["state":.number(1)])])
+    let body=JSONValue.object(["state":.number(1)])
+    let cost=NotebookPersistenceAdmission.Cost(payloadBytes:body.retainedPayloadBytes,
+      completionBytes:8 * 1_024 * 1_024)
+    let reservation=try XCTUnwrap(queue.reserveWrite(cost))
+    let accepted=try queue.enqueuePreparedCommand(reservation:reservation,
+      Task { () throws -> NotebookPersistenceQueue.PreparedCommand<Int> in
+      .init(cost:cost,operation:{ store in
+        try store.publishRecords(writes:["prepared-state.json":body])
         return 1
-      }
+      })
     },publishesChanges:true)
     let blocked=await queue.flush()
     XCTAssertFalse(blocked)

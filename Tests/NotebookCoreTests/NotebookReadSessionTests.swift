@@ -9,15 +9,18 @@ struct NotebookReadSessionTests {
       try fixture { store, actor in
         let pageID = try #require(store.loadIndex().selectedPageID)
         let reader = NotebookReadSession(store: store)
-        try reader.read { store in
-          let database = try #require(store.currentSQL)
-          _ = try store.loadPage(pageID)
-          withUnsafeCurrentTask { $0?.cancel() }
-          #expect(throws: CancellationError.self) {
-            _ = try database.decodeFragmentEnvelope(Data("not JSON; must not be decoded".utf8))
+        do {
+          try reader.read { store in
+            let database = try #require(store.currentSQL)
+            _ = try store.loadPage(pageID)
+            withUnsafeCurrentTask { $0?.cancel() }
+            #expect(throws: CancellationError.self) {
+              _ = try database.decodeFragmentEnvelope(Data("not JSON; must not be decoded".utf8))
+            }
+            #expect(throws: CancellationError.self) { _ = try store.loadPage(pageID) }
           }
-          #expect(throws: CancellationError.self) { _ = try store.loadPage(pageID) }
-        }
+          Issue.record("A caught envelope cancellation still withdraws its enclosing read cut")
+        } catch is CancellationError { }
         // This caller is still cancelled. An already accepted write must read
         // its causal base and commit normally rather than inherit UI lifetime.
         try store.commandTransaction {

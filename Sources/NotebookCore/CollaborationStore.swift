@@ -34,8 +34,10 @@ extension NotebookStore {
   public func collaborationActionIfPresent(_ id: UUID) throws -> CollaborationReceipt? {
     try prepare()
     return try readTransaction { _ in
-      try currentSQL!.limitReads(.nativeCommand)
-      return try storedValue(actionFile(id))?.decode(CollaborationReceipt.self)
+      try currentSQL!.limitReads(NotebookNativeWriteAllowance().readAllowance())
+      guard let value = try storedValue(actionFile(id)) else { return nil }
+      try currentSQL!.admitNativeJSONPhase(value, copies: 2)
+      return try value.decode(CollaborationReceipt.self)
     }
   }
 
@@ -55,6 +57,7 @@ extension NotebookStore {
     guard let value = try storedValue(actionFile(id)) else {
       throw CollaborationError("target_missing", "Ход не найден: \(id)")
     }
+    try currentSQL!.admitNativeJSONPhase(value, copies: 2)
     return try value.decode(CollaborationReceipt.self)
   }
 
@@ -314,17 +317,21 @@ extension NotebookStore {
   /// Its own contact release may follow it; a peer's contact still protects
   /// that peer's surface. The public agent entry point never borrows this rule.
   @discardableResult
-  public func undoNativeAction(_ id: UUID, actor: UUID) throws -> CollaborationReceipt {
-    try undoCollaborationActionImmediately(id, actor: actor, nativeInputOwner: actor)
+  public func undoNativeAction(_ id: UUID, actor: UUID,
+    allowance: NotebookNativeWriteAllowance = .init()) throws -> CollaborationReceipt {
+    try withNativeWriteAllowance(allowance) {
+      try undoCollaborationActionImmediately(id, actor: actor, nativeInputOwner: actor)
+    }
   }
 
   /// Redo is a new causal action over the fields the inverse actually restored.
   /// The original receipt remains immutable; a peer edit after Undo invalidates
   /// this cut instead of letting an old request replay against new material.
   @discardableResult
-  public func redoNativeAction(_ id:UUID,actionID:UUID,actor:UUID) throws -> CollaborationReceipt {
+  public func redoNativeAction(_ id:UUID,actionID:UUID,actor:UUID,
+    allowance: NotebookNativeWriteAllowance = .init()) throws -> CollaborationReceipt {
     try prepare()
-    return try commandTransaction(readAllowance:.agentCommand) {
+    return try withNativeWriteAllowance(allowance) {
       if try hasStoredValue(actionFile(actionID)) {
         let saved=try loadAction(actionID)
         guard saved.redoOf == id,saved.author == .human else {
@@ -357,6 +364,7 @@ extension NotebookStore {
         references:original.action.references,expected:expected,
         operations:original.action.operations)
       let before=try actionSourceProjection(action,receipt:original)
+      try currentSQL!.admitNativeJSONPhase(.object(before.files), copies: 4)
       try requireIdleInput(for:action.operations.map(\.target),excludingDevice:actor)
       try validateCollaborationExpectations(action,projection:before)
       for change in original.changes where change.path.suffix(2) == [.field("graphic"),.field("representation")] {
@@ -448,6 +456,7 @@ extension NotebookStore {
         let migratedMove = try receipt.changes.contains(where: usesRetiredPlacementOwner)
           ? MigratedPlacementUndo(receipt) : nil
         let before = try actionSourceProjection(receipt.action, receipt: receipt)
+        try currentSQL!.admitNativeJSONPhase(.object(before.files), copies: 4)
         var after = before
         var preserved: [CollaborationFieldChange] = []
         var restoredFields: [CollaborationFieldChange] = []

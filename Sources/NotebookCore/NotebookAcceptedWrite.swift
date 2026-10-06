@@ -103,7 +103,7 @@ public final class NotebookAcceptedWriteWitnesses: @unchecked Sendable {
     try store.storageFault?(.beforeAcceptedWitnessRead)
     let database = try NotebookSQLConnection(url: store.databaseURL, writable: false)
     try database.limitReads(.init(rows: 2, bytes: 16_384, valueBytes: 8_192, reason: "accepted_write_witness"))
-    return try store.readTransaction(using: database) { _ in
+    return try store.readTransaction(using: database, observesCancellation: false) { _ in
       try bindWorkspace(database: database)
       guard let row = try database.rows("SELECT accepted,workspace,lease,generation FROM accepted_write_witnesses WHERE writer=?", [.text(id.uuidString)]).first else { return nil }
       guard let accepted = row[0].text.flatMap(UUID.init(uuidString:)),
@@ -119,7 +119,7 @@ public final class NotebookAcceptedWriteWitnesses: @unchecked Sendable {
   fileprivate func requireWorkspace(in store: NotebookStore) throws {
     let database = try NotebookSQLConnection(url: store.databaseURL, writable: false)
     try database.limitReads(.init(rows: 1, bytes: 128, valueBytes: 128, reason: "accepted_workspace_identity"))
-    try store.readTransaction(using: database) { _ in try bindWorkspace(database: database) }
+    try store.readTransaction(using: database, observesCancellation: false) { _ in try bindWorkspace(database: database) }
   }
 
   /// Called at an actual FIFO flush/retirement cut. Failure keeps this scope

@@ -127,8 +127,8 @@ public struct NotebookReadQuery: Codable, Sendable {
   }
 }
 
-/// Invoked by the application's existing persistence queue, never a second writer thread.
-/// A synchronous read batch owns one SQLite snapshot; its cursor also fences staged MCP reads.
+/// Dispatches to the content owners. Accepted mutations use the writer queue;
+/// typed observations borrow the reader's already admitted snapshot.
 public struct NotebookCommandDispatcher: Sendable {
   public let store: NotebookStore
   private let nativeActor: UUID?
@@ -138,7 +138,7 @@ public struct NotebookCommandDispatcher: Sendable {
     if request.command == .runtimeStatus || request.command == .runtimeWorkspace {
       throw invalid("runtime_owner_required", "Запуском и пространствами управляет владелец Notebook runtime.")
     }
-    do {
+    return try handlingErrors(command: request.command) {
       if request.changesStore {
         return try store.commandTransaction(readAllowance: .agentCommand) { try execute(request) }
       }
@@ -147,9 +147,21 @@ public struct NotebookCommandDispatcher: Sendable {
         return try NotebookCommandDispatcher(store: snapshot, nativeActor: nativeActor).execute(request)
       }
     }
+  }
+
+  func handleRead(_ command: NotebookReadCommand) throws -> JSONValue {
+    try handlingErrors(command: command.requestForDispatch.command) { try execute(command.requestForDispatch) }
+  }
+
+  private func handlingErrors(command: NotebookCommand.Kind, _ operation: () throws -> JSONValue) throws -> JSONValue {
+    do { return try operation() }
     catch let error as NotebookStorageError {
       switch error {
-      case .limitExceeded: throw CollaborationError("resource_limit", "Запрос превышает конечное окно чтения Notebook.")
+      case .limitExceeded:
+        let continuation = command == .read
+          ? " Читайте меньшими группами адресов; для больших источников используйте observation с next, pageInkActions с after или documentFileBytes с offset/maxBytes."
+          : ""
+        throw CollaborationError("resource_limit", "Запрос превышает конечное окно чтения Notebook." + continuation)
       case .transactionConflict: throw CollaborationError("read_conflict", "Содержание изменилось во время чтения.")
       case .legacyStoreRequiresConversion: throw CollaborationError("conversion_required", "Старое хранилище требует явного преобразования до запуска Notebook.")
       case .unsupportedFormat: throw CollaborationError("unsupported_format", "Обновите согласованную пару Notebook.")
@@ -308,9 +320,6 @@ public struct NotebookCommandDispatcher: Sendable {
           + (query.itemIDs ?? []) + (query.boardIDs ?? [])
       })
       let windowPages = queries.filter { $0.kind == .notebookPages }.reduce(0) { $0 + ($1.pages?.count ?? 0) }
-      guard queries.filter({ [.documentFile, .pageElement, .pageInkAction].contains($0.kind) }).count <= 4 else {
-        throw invalid("resource_limit", "Один срез читает до четырёх адресных элементов, файлов или штрихов по 4 МиБ каждый.")
-      }
       guard pages.count + windowPages <= 4, heavy.count <= 8, queries.filter({ $0.kind == .attentionEvidence }).count <= 4 else { throw invalid("resource_limit", "Один срез удерживает до четырёх листов и восьми тяжёлых владельцев.") }
       return try store.readTransaction { snapshot in
         let cursor = String(try snapshot.currentReadCursor())
@@ -344,7 +353,7 @@ public struct NotebookCommandDispatcher: Sendable {
         boardIDs: query.boardIDs ?? [], surfaces: query.surfaces ?? [])
       return .object(["header": try .encode(set.header), "items": try .encode(set.items), "boards": .array(try set.boards.map(boardReadProjection)),
         "pages": .object(try Dictionary(uniqueKeysWithValues:set.pages.map { ($0.key.uuidString.lowercased(),try $0.value.graphicReadProjection()) })),
-        "documents": try keyed(set.documents), "states": try keyed(set.states), "ink": try set.ink.measuredReadProjection()])
+        "documents": try keyed(set.documents), "states": try keyed(set.states), "ink": try set.ink.measuredReadProjection(in: store.currentSQL!)])
     case .sceneWindow:
       guard let bounds = query.bounds else { throw invalid("invalid_region", "Нужна физическая область сцены.") }
       let window = try store.readSceneWindow(boardID: required(query.id), bounds: bounds.validated(),
@@ -373,7 +382,7 @@ public struct NotebookCommandDispatcher: Sendable {
         "nextCursor": try page.next.map { .string(try JSONEncoder().encode($0).base64EncodedString()) } ?? .null])
     case .codeFragment:
       guard let annotation = try store.codeAnnotation(required(query.id)) else { return .null }
-      return try JSONValue.encode(annotation).setting("ink", annotation.ink.measuredReadProjection())
+      return try JSONValue.encode(annotation).setting("ink", annotation.ink.measuredReadProjection(in: store.currentSQL!))
     case .codeFragments:
       guard let file = query.file else { throw invalid("invalid_reference", "Нужен адрес файла на компьютере.") }
       return try .encode(store.codeFragments(file: file, after: query.after, limit: query.limit ?? 64))
@@ -392,7 +401,7 @@ public struct NotebookCommandDispatcher: Sendable {
       guard let rawID = query.elementID, let actionID = UUID(uuidString: rawID) else {
         throw invalid("invalid_reference", "Нужен UUID исходного штриха листа.")
       }
-      return try store.readPageInkAction(pageID: required(query.id), actionID: actionID)?.measuredReadProjection() ?? .null
+      return try store.readPageInkAction(pageID: required(query.id), actionID: actionID)?.measuredReadProjection(in: store.currentSQL!) ?? .null
     case .document: return try .encode(store.loadDocument(required(query.id)))
     case .documentState: return try .encode(store.loadDocumentState(required(query.id)))
     case .documentFile:
@@ -430,7 +439,7 @@ public struct NotebookCommandDispatcher: Sendable {
       let pageID = try required(query.id)
       guard let itemID = try query.itemID ?? store.ownerItemID(ofPage: pageID) else { return .null }
       return try .encode(store.resolveNotebookPage(pageID, in: itemID, expectedVisibleRoot: query.visibleRoot))
-    case .spatialInk: return try store.readSpatialInk(surfaces: query.surfaces ?? []).measuredReadProjection()
+    case .spatialInk: return try store.readSpatialInk(surfaces: query.surfaces ?? []).measuredReadProjection(in: store.currentSQL!)
     case .presence: return try .encode(store.readObservedPresenceIfAvailable())
     case .selection: return try .encode(store.readSelectionPublication())
     case .attentionEvidence: return try .encode(store.attentionEvidence(contextID: required(query.id), referenceID: required(query.referenceID)))

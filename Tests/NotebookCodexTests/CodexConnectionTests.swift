@@ -61,6 +61,43 @@ struct CodexConnectionTests {
     #expect(await output.queuedBytes == 0)
   }
 
+  @Test func processActivityKeepsItsWorkspaceThroughOutputDrainAndUsesOneGlobalCap() async throws {
+    // Exercise the actual actor admission boundary without starting an executor.
+    let server = CodexAppServer(installation: .init(binary: URL(fileURLWithPath: "/unused-codex"),
+      node: URL(fileURLWithPath: "/unused-node")))
+    let first = UUID(), second = UUID(), unrelated = UUID(), heldID = UUID(), gate = OutputGate()
+    let held = try await server.admitProcess(id: heldID, workspaceID: first) { try await gate.publish($0) }
+    var others: [CodexProcessOutput] = []
+    for workspace in [first, second, second] {
+      others.append(try await server.admitProcess(id: UUID(), workspaceID: workspace, publish: { _ in }))
+    }
+    #expect(await server.activeProcessCount(workspace: first) == 2)
+    #expect(await server.activeProcessCount(workspace: second) == 2)
+    #expect(await server.hasActiveWork(workspace: first))
+    #expect(!(await server.hasActiveWork(workspace: unrelated)))
+    await server.invalidateAccountPresentation()
+    #expect(await server.activeProcessCount(workspace: first) == 2)
+    await held.append(Data([120]))
+    await gate.waitUntilHeld()
+    await held.finish(.exited(0))
+    #expect(await server.activeProcessCount(workspace: first) == 2)
+    do {
+      _ = try await server.admitProcess(id: UUID(), workspaceID: unrelated, publish: { _ in })
+      Issue.record("A fifth workspace process bypassed the global cap")
+    } catch { #expect(error as? CodexBridgeError == .busy) }
+    do {
+      _ = try await server.admitProcess(id: heldID, workspaceID: unrelated, publish: { _ in })
+      Issue.record("An existing process changed its admitted workspace")
+    } catch { #expect(error as? CodexBridgeError == .busy) }
+    await gate.release(); await held.waitForDrain()
+    #expect(await server.activeProcessCount(workspace: first) == 1)
+    let admitted = try await server.admitProcess(id: UUID(), workspaceID: unrelated, publish: { _ in })
+    #expect(await server.activeProcessCount(workspace: unrelated) == 1)
+    for output in others + [admitted] { await output.finish(.exited(0)); await output.waitForDrain() }
+    #expect(!(await server.hasActiveWork()))
+    await server.close()
+  }
+
   @Test func receivedRefusalKeepsItsCodeAndIsNotAnUnknownAcceptance() async throws {
     let fixture = try RPCFixture("q=read()\nwrite({'id':q['id'],'error':{'code':-32602,'message':'private request content'}})\nsys.stdin.read()\n")
     defer { fixture.remove() }
@@ -210,14 +247,25 @@ private actor OutputGate {
   var done = false
   private var open = false
   private var waiter: CheckedContinuation<Void, Never>?
+  private var heldWaiters: [CheckedContinuation<Void, Never>] = []
   func publish(_ event: NotebookProcessEvent) async throws {
     switch event {
     case .output(let data):
-      if !open { await withCheckedContinuation { waiter = $0 } }
+      if !open {
+        await withCheckedContinuation { continuation in
+          waiter = continuation
+          let waiters = heldWaiters; heldWaiters.removeAll()
+          for waiting in waiters { waiting.resume() }
+        }
+      }
       bytes += data.count
     case .interrupted(let message): failure = message
     default: break
     }
+  }
+  func waitUntilHeld() async {
+    if waiter != nil { return }
+    await withCheckedContinuation { heldWaiters.append($0) }
   }
   func release() { open = true; waiter?.resume(); waiter = nil }
   func stopped() { stops += 1 }

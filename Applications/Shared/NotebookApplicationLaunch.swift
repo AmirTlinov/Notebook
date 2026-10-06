@@ -27,15 +27,41 @@ final class NotebookApplicationLaunch {
   private let catalogCloud = NotebookAccountCloud()
   typealias Workspace = NotebookRuntimeWorkspace
   private var library: NotebookWorkspaceLibrary { .init(originalRoot: root) }
-  var selectedWorkspaceID: UUID? { try? model?.store.storedWorkspaceID() }
+  var selectedWorkspaceID: UUID? { model?.admittedWorkspaceID }
   private var runtimeLease: NotebookIPCProcessLease?
   private let runtimeSocketURL: URL?
   private struct WorkspaceOpening {
+    enum Stage { case opening, retiring(NotebookAppModel, discardCandidate: Bool) }
     let id: UUID
     let model: NotebookAppModel
+    let previous: NotebookAppModel?
+    let transition: NotebookAppModel.AutomaticWorkspaceTransition?
+    let creating: Bool
     let task: Task<Void, Never>
+    var stage: Stage = .opening
+
+    var retirementOwner: NotebookAppModel? {
+      if case .retiring(let owner, _) = stage { owner } else { nil }
+    }
   }
   @ObservationIgnored private var workspaceOpening: WorkspaceOpening?
+  var hasPendingWorkspaceRetirement: Bool { workspaceOpening?.retirementOwner != nil }
+  var canRetryWorkspaceTransition: Bool { workspaceOpening != nil && !isChecking }
+
+  /// Every lifecycle operation visits the same retained model owners, even
+  /// before a candidate is selected or after its source starts retirement.
+  private var ownedWorkspaceModels: [NotebookAppModel] {
+    var owners = model.map { [$0] } ?? []
+    #if os(macOS)
+      owners.append(contentsOf: retainedModels.values)
+    #endif
+    if let opening = workspaceOpening {
+      owners.append(opening.model)
+      if let retiring = opening.retirementOwner { owners.append(retiring) }
+    }
+    var seen = Set<ObjectIdentifier>()
+    return owners.filter { seen.insert(ObjectIdentifier($0)).inserted }
+  }
 
   #if os(macOS)
     private let workspaceWriters = NotebookWorkspaceWriters()
@@ -146,7 +172,8 @@ final class NotebookApplicationLaunch {
         let store = NotebookStore(root: selectedRoot)
         let fresh = !FileManager.default.fileExists(atPath: store.databaseURL.path)
         model = try makeWorkspaceModel(store: store,
-          opensDefaultAccountWorkspace: fresh, requiresExistingAccountContent: selectedRoot != root)
+          opensDefaultAccountWorkspace: fresh, requiresExistingAccountContent: selectedRoot != root,
+          expectedWorkspaceID: try library.catalog().selectedID)
         installWorkspaceSelection()
       case .waitingForPair: break
       }
@@ -226,9 +253,16 @@ final class NotebookApplicationLaunch {
               if selectedModel == nil { error = workspaceError ?? failure ?? "Не удалось открыть пространство." }
             } else if !(await renameWorkspace(id, name: request.name!)) { error = workspaceError ?? "Не удалось переименовать пространство." }
           case .retry:
+            let originalOpeningID = workspaceOpening?.id
             await retryRuntimeWorkspace()
             if let id = request.id {
               if workspaceModel(id) == nil {
+                if originalOpeningID == id {
+                  // The retained automatic attempt can roll back after new
+                  // source input. Its Retry must not create a manual successor.
+                  selectedModel = model
+                  break
+                }
                 guard mayAccessWorkspace, try library.catalog().entries.contains(where: { $0.id == id }) else {
                   throw CollaborationError("workspace_missing", "Пространство этой панели недоступно.")
                 }
@@ -256,12 +290,12 @@ final class NotebookApplicationLaunch {
 
     private func workspaceModel(_ id: UUID) -> NotebookAppModel? {
       if workspaceOpening?.id == id { return workspaceOpening?.model }
-      if model?.workspaceHeader?.workspaceID == id { return model }
+      if model?.admittedWorkspaceID == id { return model }
       return retainedModels[id]
     }
 
     private var persistenceRecoveryMessage: String? {
-      model?.persistenceFailure ?? retainedModels.values.lazy.compactMap(\.persistenceFailure).first
+      ownedWorkspaceModels.lazy.compactMap(\.persistenceFailure).first
         ?? workspaceWriters.persistenceQueues.lazy.compactMap(\.failure).first
     }
 
@@ -283,15 +317,15 @@ final class NotebookApplicationLaunch {
       else { state = .opening; detail = message }
       return .init(ready: !runtimeIsStopping, pid: Int(ProcessInfo.processInfo.processIdentifier),
         build: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown", state: state,
-        workspaceID: model?.workspaceHeader?.workspaceID, socketKey: model?.runtimeSocketKey, message: detail)
+        workspaceID: model?.admittedWorkspaceID, socketKey: model?.runtimeSocketKey, message: detail)
     }
 
     private func retryRuntimeWorkspace() async {
       workspaceError = nil
+      guard await retryRetiringWorkspace() else { return }
       if runtimeNeedsRecovery {
         isChecking = true; catalogGeneration = UUID()
-        model?.retryPendingPersistence()
-        for retained in retainedModels.values { retained.retryPendingPersistence() }
+        for owner in ownedWorkspaceModels { owner.retryPendingPersistence() }
         for writer in workspaceWriters.persistenceQueues { writer.retry() }
         let drained = await drainWorkspaceOwners()
         if drained {
@@ -311,7 +345,8 @@ final class NotebookApplicationLaunch {
       // before joining startup or completing the addressed workspace selection.
       guard await retrySavedWork() else { return }
       if let opening = workspaceOpening {
-        guard case .completed = await opening.model.waitForPersistenceLifecycle(opening.task) else { return }
+        guard case .completed = await opening.model.waitForPersistenceLifecycle(opening.task),
+          await retryRetiringWorkspace() else { return }
       }
       let needsRestart = model.map { model in
         if case .failed = model.loadState { return true }
@@ -335,9 +370,7 @@ final class NotebookApplicationLaunch {
     }
 
     private func retrySavedWork() async -> Bool {
-      var owners = Array(retainedModels.values)
-      if let model, !owners.contains(where: { $0 === model }) { owners.append(model) }
-      owners = owners.filter { $0.persistenceFailure != nil }
+      let owners = ownedWorkspaceModels.filter { $0.persistenceFailure != nil }
       let writers = workspaceWriters.persistenceQueues.filter { $0.failure != nil }
       guard !owners.isEmpty || !writers.isEmpty else { return true }
       isChecking = true
@@ -367,9 +400,8 @@ final class NotebookApplicationLaunch {
     /// Recovery runs inside IPC, so only the process termination path may
     /// drain the default server. Both paths retire the same workspace owners.
     private func drainWorkspaceOwners() async -> Bool {
-      guard await model?.shutdown() ?? true else { return false }
+      guard await drainWorkspaceModels() else { return false }
       if let owner = model?.codexHost, owner !== codexHost { await owner.shutdown() }
-      for retained in retainedModels.values { guard await retained.shutdown() else { return false } }
       await codexHost.shutdown()
       return await workspaceWriters.shutdown()
     }
@@ -435,8 +467,12 @@ final class NotebookApplicationLaunch {
   }
 
   private func makeWorkspaceModel(store: NotebookStore, opensDefaultAccountWorkspace: Bool = false,
-    requiresExistingAccountContent: Bool = false) throws -> NotebookAppModel {
-    if let makeModel { return try makeModel(store, pairingActivationID) }
+    requiresExistingAccountContent: Bool = false, expectedWorkspaceID: UUID? = nil) throws -> NotebookAppModel {
+    if let makeModel {
+      let model = try makeModel(store, pairingActivationID)
+      if let expectedWorkspaceID { try model.admitWorkspaceIdentity(expectedWorkspaceID) }
+      return model
+    }
     #if os(macOS)
       let writer: NotebookPersistenceQueue? = workspaceWriters.persistence(for: store)
       let socketID = SHA256.hash(data: Data(store.root.standardizedFileURL.path.utf8)).prefix(12).map { String(format: "%02x", $0) }.joined()
@@ -447,11 +483,13 @@ final class NotebookApplicationLaunch {
     #if os(macOS)
       let model = NotebookAppModel(store: store, commandSocketURL: socket, allowsCodexRegistration: allowsCodexRegistration,
         pairingActivationID: pairingActivationID, opensDefaultAccountWorkspace: opensDefaultAccountWorkspace,
-        requiresExistingAccountContent: requiresExistingAccountContent, persistenceQueue: writer)
+        requiresExistingAccountContent: requiresExistingAccountContent, expectedWorkspaceID: expectedWorkspaceID,
+        persistenceQueue: writer)
     #else
     let model = NotebookAppModel(store: store, allowsCodexRegistration: allowsCodexRegistration,
       pairingActivationID: pairingActivationID, opensDefaultAccountWorkspace: opensDefaultAccountWorkspace,
-      requiresExistingAccountContent: requiresExistingAccountContent, persistenceQueue: writer)
+      requiresExistingAccountContent: requiresExistingAccountContent, expectedWorkspaceID: expectedWorkspaceID,
+      persistenceQueue: writer)
     #endif
     #if os(macOS)
       model.codexHost = codexHost
@@ -474,21 +512,29 @@ final class NotebookApplicationLaunch {
       // launch/catalog call still retains this owner; ARC/process exit releases
       // its lease only after that lifetime ends.
     #else
-      guard await model?.shutdown() ?? true else { return false }
+      guard await drainWorkspaceModels() else { return false }
     #endif
     return true
+  }
+
+  private func drainWorkspaceModels() async -> Bool {
+    for owner in ownedWorkspaceModels { guard await owner.shutdown() else { return false } }
+    if let opening = workspaceOpening {
+      guard case .completed = await opening.model.waitForPersistenceLifecycle(opening.task) else { return false }
+    }
+    return await finishRetiringWorkspace()
   }
 
   private func installWorkspaceSelection() {
     guard let model else { return }
     model.openWorkspaceLibrary = { [weak self] tab in self?.workspaceTab = tab; self?.showsWorkspaces = true }
     guard !isFixture else { return }
-    if let id = try? model.store.storedWorkspaceID(), let entry = try? library.catalog().entries.first(where: { $0.id == id }) {
+    if let id = model.admittedWorkspaceID, let entry = try? library.catalog().entries.first(where: { $0.id == id }) {
       model.workspaceName = entry.name
       model.publishesWorkspaceName = entry.needsNamePublication
     }
     model.accountWorkspaceNameSaved = { [weak self, weak model] name, deleted in
-      guard let self, let model, let id = try? model.store.storedWorkspaceID() else { return }
+      guard let self, let model, let id = model.admittedWorkspaceID else { return }
       do {
         for entry in try self.library.catalog().entries where deleted.contains(entry.id) { self.retireWorkspace(entry.id) }
         try self.library.acknowledgeName(id, name: name)
@@ -497,7 +543,7 @@ final class NotebookApplicationLaunch {
       } catch { self.workspaceError = error.localizedDescription }
     }
     model.workspaceDeleted = { [weak self, weak model] in
-      guard let self, let model, let id = try? model.store.storedWorkspaceID() else { return }
+      guard let self, let model, let id = model.admittedWorkspaceID else { return }
       self.retireWorkspace(id)
     }
     model.openDefaultAccountWorkspace = { [weak self] id in
@@ -510,115 +556,173 @@ final class NotebookApplicationLaunch {
     guard mayAccessWorkspace, !isChecking else { return }
     let previous = model
     isChecking = true; catalogGeneration = UUID()
-    var retired = false
-    defer { finishOperation() }
+    var transition: NotebookAppModel.AutomaticWorkspaceTransition?
+    var openingOwnsTransition = false
+    defer {
+      if !openingOwnsTransition, let transition { previous?.rollbackAutomaticWorkspaceSwitch(transition) }
+      finishOperation()
+    }
     do {
       guard try library.catalog().pendingCloudDeletion[id] == nil else {
         throw NotebookStorageError.invalidTransaction("Удаление этого пространства ещё не завершено.")
       }
-      let currentID = try previous?.store.storedWorkspaceID()
+      let currentID = previous?.admittedWorkspaceID
       guard currentID != id else { showsWorkspaces = false; return }
       if let previous, automatically {
-        guard await previous.prepareAutomaticWorkspaceSwitch() else { previous.refreshDeviceConnection(); return }
+        guard let prepared = await previous.prepareAutomaticWorkspaceSwitch() else {
+          previous.refreshDeviceConnection(); return
+        }
+        transition = prepared
       } else if let previous {
-        guard await previous.finishPendingInteraction() else { throw NotebookTransportError.storageUnavailable }
+        guard await previous.finishPendingInteraction(boundary: .acceptedInput) else { throw NotebookTransportError.storageUnavailable }
       }
       #if os(macOS)
-      if let previous, let currentID {
-        // Closing a workspace removes its view, not the accepted Mac owner.
-        // Keep a bounded set; never evict an owner that is still working.
-        if retainedModels.count >= 7, retainedModels[id] == nil {
-          var evicted = false
-          for (candidate, retained) in retainedModels where !(await codexHost.hasActiveWork(workspace: candidate)) {
-            guard await retained.shutdown() else { throw NotebookTransportError.storageUnavailable }
-            try await codexHost.removeWorkspace(candidate)
-            try await workspaceWriters.remove(root: retained.store.root)
-            retainedModels.removeValue(forKey: candidate); evicted = true; break
-          }
-          guard evicted else { throw NotebookTransportError.resourceLimit }
+      if previous != nil, currentID != nil, retainedModels.count >= 7, retainedModels[id] == nil {
+        var evicted = false
+        for (candidate, retained) in retainedModels where !(await codexHost.hasActiveWork(workspace: candidate)) {
+          guard await retained.shutdown() else { throw NotebookTransportError.storageUnavailable }
+          try await codexHost.removeWorkspace(candidate)
+          try await workspaceWriters.remove(root: retained.store.root)
+          retainedModels.removeValue(forKey: candidate); evicted = true; break
         }
-        retainedModels[currentID] = previous
+        guard evicted else { throw NotebookTransportError.resourceLimit }
       }
-      #else
-      guard await previous?.shutdown() ?? true else { throw NotebookTransportError.storageUnavailable }
       #endif
-      retired = true
-      if let previous, automatically, !(try previous.automaticWorkspaceCutIsUnchanged()) { throw SwitchCancellation.acceptedLocalWork }
       let library = NotebookWorkspaceLibrary(originalRoot: root)
       let destination = try await Task.detached { try library.prepare(id) }.value
       #if os(macOS)
-      let next = try retainedModels.removeValue(forKey: id) ?? makeWorkspaceModel(store: NotebookStore(root: destination),
-        requiresExistingAccountContent: creatingName == nil && destination != root)
+      let wasRetained = retainedModels[id] != nil
+      let next = try retainedModels[id] ?? makeWorkspaceModel(store: NotebookStore(root: destination),
+        requiresExistingAccountContent: creatingName == nil && destination != root, expectedWorkspaceID: id)
       #else
+      let wasRetained = false
       let next = try makeWorkspaceModel(store: NotebookStore(root: destination),
-        requiresExistingAccountContent: creatingName == nil && destination != root)
+        requiresExistingAccountContent: creatingName == nil && destination != root, expectedWorkspaceID: id)
       #endif
       next.workspaceName = creatingName ?? workspaceList.first(where: { $0.id == id })?.name
         ?? (try? library.catalog().entries.first(where: { $0.id == id })?.name) ?? "Моё пространство"
       next.publishesWorkspaceName = creatingName != nil || ((try? library.catalog().entries.first(where: { $0.id == id })?.needsNamePublication) ?? false)
-      // The transition owns its candidate and original address through a
-      // blocked bootstrap. Releasing its observer cannot create a second owner
-      // or discard the accepted startup result.
+      let preparedTransition = transition
+      // One retained startup task owns this selection through a storage fault.
+      // The previous source stays live until the final synchronous commit.
       let task = Task { [self] in
-        defer { workspaceOpening = nil }
         await next.start(pageSize: NotebookAppModel.defaultPageSize)
         await next.finishStartup()
         do {
           guard next.loadState == .ready || next.awaitingAccountContent else { throw NotebookTransportError.storageUnavailable }
-          _ = try library.select(id, name: next.workspaceName, publishName: next.publishesWorkspaceName)
-          // First enrollment may finish before the catalog entry exists.
-          if next.accountConnection?.spaces.first(where: { $0.id == id })?.name == next.workspaceName {
-            try library.acknowledgeName(id, name: next.workspaceName)
+          if let preparedTransition, let previous {
+            guard try previous.freezeAutomaticWorkspaceSwitch(preparedTransition) else { throw SwitchCancellation.acceptedLocalWork }
           }
+          _ = try library.select(id, name: next.workspaceName, publishName: next.publishesWorkspaceName)
+          #if os(macOS)
+            if let previous, let currentID { retainedModels[currentID] = previous }
+            retainedModels.removeValue(forKey: id)
+          #endif
           model = next; failure = nil; workspaceError = nil
-          hasNoWorkspace = false; showsWorkspaces = false; installWorkspaceSelection()
+          hasNoWorkspace = false; showsWorkspaces = false
+          if let preparedTransition { previous?.commitAutomaticWorkspaceSwitch(preparedTransition) }
+          installWorkspaceSelection()
+          if next.accountConnection?.spaces.first(where: { $0.id == id })?.name == next.workspaceName {
+            do { try library.acknowledgeName(id, name: next.workspaceName) }
+            catch { workspaceError = error.localizedDescription }
+          }
           let row = Workspace(id: id, name: next.workspaceName, local: true,
             remote: workspaceList.contains(where: { $0.id == id && $0.remote }) || next.accountConnection?.spaces.contains(where: { $0.id == id }) == true,
             deleting: false)
           if let index = workspaceList.firstIndex(where: { $0.id == id }) { workspaceList[index] = row }
           else { workspaceList.append(row) }
+          #if !os(macOS)
+            if let previous {
+              workspaceOpening?.stage = .retiring(previous, discardCandidate: false)
+              _ = await finishRetiringWorkspace()
+              return
+            }
+          #endif
+          clearWorkspaceOpening(next)
         } catch {
-          await restoreAfterFailedWorkspaceOpening(error, previous: previous, replacement: next,
-            id: id, creating: creatingName != nil)
+          if let preparedTransition { previous?.rollbackAutomaticWorkspaceSwitch(preparedTransition) }
+          workspaceError = error is SwitchCancellation || error is CancellationError ? nil : error.localizedDescription
+          if previous == nil { failure = workspaceError }
+          // A failed destination never replaces or reconstructs the source.
+          // Its accepted startup is joined before discarding its owner.
+          if !wasRetained {
+            workspaceOpening?.stage = .retiring(next, discardCandidate: true)
+            _ = await finishRetiringWorkspace()
+          } else { clearWorkspaceOpening(next) }
         }
       }
-      workspaceOpening = .init(id: id, model: next, task: task)
-      model = next; hasNoWorkspace = false
+      workspaceOpening = .init(id: id, model: next, previous: previous, transition: preparedTransition,
+        creating: creatingName != nil, task: task)
+      openingOwnsTransition = true
       guard case .completed = await next.waitForPersistenceLifecycle(task) else {
         workspaceError = next.persistenceFailure ?? "Открытие ожидает восстановления сохранения."
         return
       }
     } catch {
-      if !retired { failure = error.localizedDescription; workspaceError = failure; return }
-      await restoreAfterFailedWorkspaceOpening(error, previous: previous, replacement: nil,
-        id: id, creating: creatingName != nil)
+      workspaceError = error is SwitchCancellation || error is CancellationError ? nil : error.localizedDescription
+      if previous == nil { failure = workspaceError }
     }
   }
 
-  private func restoreAfterFailedWorkspaceOpening(_ error: Error, previous: NotebookAppModel?,
-    replacement: NotebookAppModel?, id: UUID, creating: Bool) async {
-    Logger(subsystem: "com.amirtlinov.notebook", category: "WorkspaceLifecycle").error("Space switch failed: \(String(reflecting: error), privacy: .public)")
-    failure = error is SwitchCancellation ? nil : error.localizedDescription
-    workspaceError = failure
-    if let replacement, !(await replacement.shutdown()) {
-      model = replacement
-      workspaceError = "Не удалось завершить открытие пространства. Изменения остаются на этом устройстве."
-      #if os(macOS)
-        runtimeNeedsRecovery = true
-      #endif
-      installWorkspaceSelection()
-      return
+  private func clearWorkspaceOpening(_ candidate: NotebookAppModel) {
+    guard workspaceOpening?.model === candidate else { return }
+    workspaceOpening = nil
+  }
+
+  /// The same transition retains a committed source or a failed destination
+  /// until its accepted tail actually drains. Retry never constructs a model.
+  @discardableResult
+  func finishRetiringWorkspace() async -> Bool {
+    guard let opening = workspaceOpening,
+      case .retiring(let owner, let discardCandidate) = opening.stage else { return true }
+    guard await owner.shutdown() else {
+      workspaceError = "Сохранение прежнего владельца ещё не завершено. Повторите сохранение."
+      return false
     }
-    if creating { try? library.remove(id) }
-    guard let previous else { model = nil; hasNoWorkspace = true; return }
+    if discardCandidate {
+      #if os(macOS)
+        do {
+          try await codexHost.removeWorkspace(opening.id)
+          try await workspaceWriters.remove(root: owner.store.root)
+        } catch { workspaceError = error.localizedDescription; return false }
+      #endif
+      if opening.creating {
+        do { try library.remove(opening.id) }
+        catch { workspaceError = error.localizedDescription; return false }
+      }
+    }
+    clearWorkspaceOpening(opening.model)
+    return true
+  }
+
+  @discardableResult
+  func retryRetiringWorkspace() async -> Bool {
+    workspaceOpening?.retirementOwner?.retryPendingPersistence()
+    let finished = await finishRetiringWorkspace()
+    if finished { workspaceError = nil }
+    return finished
+  }
+
+  /// A user retry attaches to the accepted transition. It opens no new model,
+  /// task or writer, including when the destination has not published a scene.
+  @discardableResult
+  func retryWorkspaceTransition() async -> Bool {
+    guard canRetryWorkspaceTransition, let opening = workspaceOpening else { return false }
     #if os(macOS)
-      if let previousID = try? previous.store.storedWorkspaceID() { retainedModels.removeValue(forKey: previousID) }
-      model = previous
+      await retryRuntimeWorkspace()
+      return workspaceOpening == nil
     #else
-      model = try? makeWorkspaceModel(store: previous.store, requiresExistingAccountContent: previous.store.root != root)
+      isChecking = true; workspaceError = nil
+      defer { finishOperation() }
+      if opening.retirementOwner != nil { return await retryRetiringWorkspace() }
+      opening.model.retryPendingPersistence()
+      guard await opening.model.finishPendingInteraction(boundary: .acceptedInput),
+        case .completed = await opening.model.waitForPersistenceLifecycle(opening.task) else {
+        workspaceError = opening.model.persistenceFailure ?? "Открытие ожидает восстановления сохранения."
+        return false
+      }
+      return await retryRetiringWorkspace()
     #endif
-    installWorkspaceSelection()
-    await model?.start(pageSize: NotebookAppModel.defaultPageSize)
   }
 
   /// A confirmed offline deletion resumes on connectivity, not a timer or a

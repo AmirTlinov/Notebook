@@ -141,13 +141,19 @@ struct NotebookPageInkReadTests {
     }
   }
 
-  @Test func exactBodiesShareTheExistingFourBodyBatchCapAndDirectoryLimit() throws {
+  @Test func fiveSmallExactBodiesShareOneCutAndTheDirectoryKeepsItsLimit() throws {
     let f = try Fixture()
     var command = NotebookCommand(command: .read)
     command.readSnapshots = true
     command.queries = try f.actions.map { try f.query("pageInkAction", elementID: $0.id.uuidString) }
-    do { _ = try NotebookCommandDispatcher(store: f.store).handle(command); Issue.record("Five addressed ink bodies were accepted") }
-    catch let error as CollaborationError { #expect(error.code == "resource_limit") }
+    let snapshots = try NotebookCommandDispatcher(store: f.store).handle(command).array
+    #expect(snapshots.count == f.actions.count)
+    #expect(Set(snapshots.compactMap { $0["cursor"]?.string }).count == 1)
+    for (snapshot, action) in zip(snapshots, f.actions) {
+      let raw = try #require(snapshot["data"]?["action"])
+      let decoded = try raw.setting("samples", raw["relations"]).decode(PageInkAction.self)
+      #expect(decoded == action)
+    }
     do { _ = try f.read(f.query("pageInkActions", limit: 65)); Issue.record("An unbounded metadata directory was accepted") }
     catch let error as CollaborationError { #expect(error.code == "resource_limit") }
   }

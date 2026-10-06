@@ -94,9 +94,13 @@ final class NotebookCollaborationLatencyTests: XCTestCase {
     let change = try XCTUnwrap(store.changeJournal(after: 0).last)
     let pause = AsyncStream<Void>.makeStream()
     defer { pause.continuation.finish() }
-    let later = queue.enqueuePreparedCommand(Task { () throws -> @Sendable (NotebookStore) throws -> Int in
+    let cost=NotebookPersistenceAdmission.Cost(payloadBytes:MemoryLayout<AsyncStream<Void>>.stride
+      + MemoryLayout<Int>.stride,completionBytes:8 * 1_024 * 1_024)
+    let reservation=try XCTUnwrap(queue.reserveWrite(cost))
+    let later = try queue.enqueuePreparedCommand(reservation:reservation,
+      Task { () throws -> NotebookPersistenceQueue.PreparedCommand<Int> in
       for await _ in pause.stream { break }
-      return { _ in 1 }
+      return .init(cost:cost,operation:{ _ in 1 })
     })
     await Task.yield()
     XCTAssertGreaterThan(queue.pendingCount, 0)

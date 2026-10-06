@@ -119,6 +119,7 @@ final class NotebookPersistenceQueue {
   private let admission: NotebookPersistenceAdmission
   private var task: Task<Void, Never>?
   private var lifecycleWaiters: [AnyHashable: [UUID: WaitCompletion<Bool>]] = [:]
+  private(set) var acceptedMutationGeneration: UInt64 = 0
   private(set) var failure: String?
   var onFailureChange: ((String?) -> Void)?
   var onContentMerged: (() -> Void)?
@@ -191,6 +192,7 @@ final class NotebookPersistenceQueue {
     admissionCharge: UUID? = nil,
     onRejected: (@MainActor @Sendable (CollaborationError) -> Void)? = nil,
     _ operation: @escaping @Sendable (NotebookStore) throws -> Change) {
+    acceptedMutationGeneration &+= 1
     let accepted = NotebookAcceptedWrite(witnesses: acceptedWitnesses, operation)
     let write = Write(owner: owner, isOrderingFence: isOrderingFence, admissionCharge: admissionCharge, operation: { store in
       do {
@@ -218,6 +220,7 @@ final class NotebookPersistenceQueue {
   /// Coalesced deltas keep the first unsaved baseline. Replacing that baseline
   /// with the next visible frame would lose an earlier insertion or deletion.
   func enqueueBoardEdit(before: BoardHierarchy, after: BoardHierarchy) {
+    acceptedMutationGeneration &+= 1
     let index = coalescingIndex(for: .board)
     let baseline = index.flatMap { pending[$0].boardBaseline } ?? before
     let accepted = NotebookAcceptedWrite(witnesses: acceptedWitnesses) {
@@ -295,6 +298,33 @@ final class NotebookPersistenceQueue {
     }
     guard finished else { return .blocked }
     return .completed(await work.value)
+  }
+
+  /// Capture the already accepted prefix synchronously, before the reader
+  /// suspends. Only this empty ordering slot enters the writer; SQL decoding
+  /// runs on the workspace reader after it completes.
+  struct ReadFence: Sendable {
+    fileprivate let result: AcceptedResult<Void>
+    func wait() async throws {
+      try await withTaskCancellationHandler {
+        try Task.checkCancellation()
+        try await result.value()
+        try Task.checkCancellation()
+      } onCancel: { result.resolve(.failure(CancellationError())) }
+    }
+  }
+
+  func captureReadFence() -> ReadFence {
+    let result = AcceptedResult<Void>()
+    if let failure { result.resolve(.failure(Failure(message: failure))) }
+    else {
+      pending.append(Write(owner: nil, lifetime: .observation,
+        operation: { _ in .init(merged: false, succeeded: true, changed: false) },
+        onBlocked: { result.resolve(.failure(Failure(message: $0))) },
+        notifiesCommit: false, onCompleted: { result.resolve(.success(())) }))
+      startIfNeeded()
+    }
+    return .init(result: result)
   }
 
   /// A mutation keeps this result waiter across storage failure; Retry resumes
@@ -377,6 +407,7 @@ final class NotebookPersistenceQueue {
     let lifetime: Write.Lifetime = writesStore ? .accepted : .observation
     let write = Write(owner: owner, lifetime: lifetime, admissionCharge: admissionCharge,
       operation: execute, onBlocked: onBlocked, notifiesCommit: notifiesCommit)
+    if writesStore { acceptedMutationGeneration &+= 1 }
     pending.append(write)
     startIfNeeded()
   }
@@ -406,13 +437,7 @@ final class NotebookPersistenceQueue {
     return enqueuePreparedCommand(admissionCharge: charge, publishesChanges: publishesChanges) { try await measured.value }
   }
 
-  func enqueuePreparedCommand<Value:Sendable>(
-    _ preparation:Task<@Sendable (NotebookStore) throws -> Value,Error>,
-    publishesChanges:Bool = false) -> Task<Value,Error> {
-    enqueuePreparedCommand(admissionCharge: nil, publishesChanges: publishesChanges) { try await preparation.value }
-  }
-
-  private func enqueuePreparedCommand<Value: Sendable>(admissionCharge: UUID?, publishesChanges: Bool,
+  private func enqueuePreparedCommand<Value: Sendable>(admissionCharge: UUID, publishesChanges: Bool,
     _ prepare: @escaping @Sendable () async throws -> (@Sendable (NotebookStore) throws -> Value)) -> Task<Value, Error> {
     let channel = AcceptedResult<Value>()
     let witnesses = acceptedWitnesses
@@ -421,6 +446,7 @@ final class NotebookPersistenceQueue {
     let accepted = Task {
       NotebookAcceptedWrite(witnesses: witnesses, try await prepare())
     }
+    acceptedMutationGeneration &+= 1
     pending.append(Write(owner:nil, admissionCharge: admissionCharge, operation:{ store in
       let command: NotebookAcceptedWrite<Value>
       do { command=try await accepted.value }
@@ -506,7 +532,7 @@ final class NotebookPersistenceQueue {
     }
   }
 
-  private final class AcceptedResult<Value: Sendable>: @unchecked Sendable {
+  fileprivate final class AcceptedResult<Value: Sendable>: @unchecked Sendable {
     private let lock = NSLock()
     private var result: Result<Value, Error>?
     private var continuation: CheckedContinuation<Value, Error>?

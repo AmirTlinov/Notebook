@@ -4,14 +4,14 @@ import Foundation
 /// This scan allocates no value tree and leaves syntax validation to the decoder.
 public enum NotebookJSONAdmission {
   static let maximumDepth = 256
-  public static func allocationCost(_ data:Data,maximumBytes:Int) throws -> Int {
+  public static func allocationCost(_ data:Data,maximumBytes:Int, observesCancellation:Bool = true) throws -> Int {
     guard maximumBytes >= 0,data.count <= maximumBytes/8 else {
       throw NotebookStorageError.limitExceeded("json_decode_memory")
     }
     var cost=data.count*8,depth=0,inString=false,escaped=false,inScalar=false
     try data.withUnsafeBytes { (bytes:UnsafeRawBufferPointer) in
       for (index,byte) in bytes.enumerated() {
-        if index & 4095 == 0 { try Task.checkCancellation() }
+        if observesCancellation && index & 4095 == 0 { try Task.checkCancellation() }
         if inString {
           if escaped { escaped=false }
           else if byte == 92 { escaped=true }

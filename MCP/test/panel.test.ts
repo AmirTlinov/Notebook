@@ -85,11 +85,12 @@ function sessionSnapshot(cursor = '1'): PanelSnapshot {
 async function controlledSession() {
   const session = new NotebookSession(), events: string[] = [];
   const calls: {name: string; arguments: Value;
+    signal: AbortSignal | undefined;
     resolve: (value: Awaited<ReturnType<typeof session.app.callServerTool>>) => void}[] = [];
   let disposed = false, retry: (() => Promise<void>) | null = null;
   const observe = (event: string) => {assert.equal(disposed, false, `Callback after disposal: ${event}`); events.push(event);};
   session.app.connect = async () => {};
-  session.app.callServerTool = async input => new Promise(resolve => calls.push({name: input.name, arguments: input.arguments!, resolve}));
+  session.app.callServerTool = async (input, options) => new Promise(resolve => calls.push({name: input.name, arguments: input.arguments!, signal: options?.signal, resolve}));
   session.app.updateModelContext = async () => ({});
   session.needsPresentation = () => {observe('coverage'); return true;};
   session.onPrepareSnapshot = async () => {observe('prepare'); return true;};
@@ -109,6 +110,76 @@ async function controlledSession() {
     sources: [{id: 'text'}]};
   return {session, calls, events, close, mutation, retry: () => retry};
 }
+
+test('first camera intent revokes navigation before a sample and ignores late pixels or errors', async t => {
+  for (const outcome of ['pixels', 'error'] as const) await t.test(outcome, async t => {
+    t.mock.timers.enable({apis: ['setTimeout', 'setInterval']});
+    const {session, calls, events, close} = await controlledSession();
+    session.needsPresentation = () => false;
+    let cancellations = 0;
+    session.onCancelSnapshotPreparation = async () => {cancellations++;};
+    const destination = {...target, kind: 'board' as const, id: randomUUID()};
+    const opened = session.openSurface(destination);
+    assert.equal(calls[1]!.signal?.aborted, false);
+    session.beginCameraInteraction();
+    assert.equal(calls[1]!.signal?.aborted, true, 'Pointer admission cancels before any move or wheel delta');
+    for (let i = 0; i < 1000; i++) session.beginCameraInteraction();
+    assert.equal(cancellations, 2, 'One previous preparation and one withdrawn navigation have one owner each');
+    calls[1]!.resolve(outcome === 'pixels'
+      ? {content: [], structuredContent: {...sessionSnapshot('2'), target: destination}}
+      : {content: [], isError: true, structuredContent: {status: 'error', code: 'ipc_timeout', message: 'Late navigation'}});
+    assert.equal(await opened, false);
+    assert.deepEqual(session.snapshot!.target, sessionSnapshot().target);
+    assert.equal(events.filter(value => value === 'snapshot').length, 1);
+    assert.equal(events.filter(value => value === 'prepare').length, 1);
+    assert.equal(events.includes('Проверьте связь'), false);
+    assert.equal(calls.length, 2, 'Withdrawn navigation never replays its target');
+    assert.equal(session.mutationReady, true);
+    await close();
+  });
+});
+
+test('resize during navigation decode installs its destination and coalesces the latest projection', async t => {
+  t.mock.timers.enable({apis: ['setTimeout', 'setInterval']});
+  const {session, calls, close} = await controlledSession();
+  const destination = {...target, kind: 'board' as const, id: randomUUID()};
+  let width = 800, needsProjection = false;
+  let camera = sessionSnapshot().appearance!.camera;
+  const navigationViews: boolean[] = [];
+  session.view = navigation => {
+    navigationViews.push(navigation);
+    return {viewport: {x: width, y: 600}, pixelScale: 1, ...(navigation ? {} : {camera})};
+  };
+  session.needsPresentation = () => needsProjection;
+  let decoded!: (value: boolean) => void;
+  const preparation = new Promise<boolean>(resolve => {decoded = resolve;});
+  session.onPrepareSnapshot = async () => preparation;
+  session.onSnapshot = value => {camera = {...value.appearance!.camera,
+    scale: value.appearance!.camera.scale * width / value.appearance!.viewport.x};};
+  const opened = session.openSurface(destination);
+  const next = {...sessionSnapshot('2'), target: destination,
+    appearance: {...sessionSnapshot().appearance!, camera: {center: {...origin, localX: 500}, scale: 1.25}}};
+  calls[1]!.resolve({content: [], structuredContent: next});
+  await new Promise<void>(resolve => setImmediate(resolve));
+  for (const size of [840, 920, 1000]) {width = size; needsProjection = true; session.viewportChanged();}
+  t.mock.timers.tick(80);
+  assert.equal(calls.length, 2, 'Resize cannot start a second destination read during decode');
+  assert.equal(calls[1]!.signal?.aborted, false, 'Viewport layout preserves the requested destination');
+  decoded(true);
+  assert.equal(await opened, true);
+  assert.deepEqual(session.snapshot!.target, destination);
+  assert.equal(calls.length, 3);
+  assert.deepEqual(calls[2]!.arguments.target, destination);
+  assert.deepEqual((calls[2]!.arguments.appearance as Value).viewport, {x: 1000, y: 600});
+  assert.deepEqual((calls[2]!.arguments.appearance as Value).camera, camera);
+  assert.equal(navigationViews.filter(value => value).length, 1, 'The native entry projection runs once');
+  needsProjection = false;
+  calls[2]!.resolve({content: [], structuredContent: {...next, cursor: '3',
+    appearance: {...next.appearance, camera, viewport: {x: width, y: 600}}}});
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(session.mutationReady, true);
+  await close();
+});
 
 test('session teardown releases readers and ignores late read and write completions', async t => {
   for (const outcome of ['read', 'saved', 'conflict', 'uncertain'] as const) await t.test(outcome, async t => {

@@ -3,7 +3,7 @@ import NotebookCore
 import NotebookCodex
 
 protocol NotebookCodexProcessOwner: Sendable {
-  func startProcess(id: UUID, request: NotebookRunRequest, publish: @escaping @Sendable (NotebookProcessEvent) async throws -> Void) async throws
+  func startProcess(id: UUID, workspaceID: UUID, request: NotebookRunRequest, publish: @escaping @Sendable (NotebookProcessEvent) async throws -> Void) async throws
   func writeProcess(id: UUID, data: Data) async throws
   func resizeProcess(id: UUID, columns: Int, rows: Int) async throws
   func stopProcess(id: UUID) async throws
@@ -16,14 +16,20 @@ extension CodexAppServer: NotebookCodexProcessOwner { }
   private let persistence: NotebookPersistenceQueue
   private let executor: any NotebookCodexProcessOwner
   private let metadata: any NotebookCodexCatalogueOwner
+  private let workspaceID: UUID
   private let computer: UUID
   private let recovery: Task<Void, Error>
   private var executing = Set<UUID>()
   private var failedEvents: [UUID: String] = [:]
-  init(persistence: NotebookPersistenceQueue, executor: any NotebookCodexProcessOwner, metadata: any NotebookCodexCatalogueOwner, computer: UUID) {
+  init(persistence: NotebookPersistenceQueue, executor: any NotebookCodexProcessOwner,
+    metadata: any NotebookCodexCatalogueOwner, workspaceID: UUID, computer: UUID) {
     self.persistence = persistence; self.executor = executor; self.metadata = metadata; self.computer = computer
+    self.workspaceID = workspaceID
     recovery = Task {
-      try await persistence.submit { store in
+      try await persistence.submit(writesStore: true) { store in
+        guard try store.storedWorkspaceID() == workspaceID else {
+          throw NotebookStorageError.invalidTransaction("project run workspace identity")
+        }
         for run in try store.activeRuns() { try store.receiveRunEvent(run.id, .interrupted("Mac-помощник перезапущен. Прежний процесс не запускается повторно.")) }
       }
     }
@@ -31,7 +37,7 @@ extension CodexAppServer: NotebookCodexProcessOwner { }
   func read(_ query: NotebookRunRead) async throws -> NotebookRunOutput {
     try await recovery.value; try await validate(query.root)
     for (id, message) in failedEvents {
-      try await persistence.submit { try $0.receiveRunEvent(id, .interrupted(message)) }
+      try await persistence.submit(writesStore: true) { try $0.receiveRunEvent(id, .interrupted(message)) }
       failedEvents.removeValue(forKey: id)
     }
     return try await persistence.submit { try $0.readRun(query) }
@@ -45,7 +51,7 @@ extension CodexAppServer: NotebookCodexProcessOwner { }
   private func consume(_ id: UUID, event: NotebookProcessEvent) async throws {
     let accepted = failedEvents[id].map(NotebookProcessEvent.interrupted) ?? event
     do {
-      try await persistence.submit { try $0.receiveRunEvent(id, accepted) }
+      try await persistence.submit(writesStore: true) { try $0.receiveRunEvent(id, accepted) }
       failedEvents.removeValue(forKey: id)
     } catch {
       failedEvents[id] = "Не удалось сохранить вывод. Процесс остановлен без повторного запуска: \(error.localizedDescription)"
@@ -66,10 +72,10 @@ extension CodexAppServer: NotebookCodexProcessOwner { }
     defer { executing.remove(input.id) }
     if job.state == .attempting || job.state == .uncertain {
       if case .startRun = input.action, try await persistence.submit({ try $0.runRecord(input.id) }) != nil {
-        return try await persistence.submit { try $0.advanceChatJob(input.id, from: job.state, to: .accepted, result: .run(input.id)) }
+        return try await persistence.submit(writesStore: true) { try $0.advanceChatJob(input.id, from: job.state, to: .accepted, result: .run(input.id)) }
       }
       if job.state == .attempting {
-        return try await persistence.submit { try $0.advanceChatJob(input.id, from: .attempting, to: .uncertain, error: "Принятие терминального ввода неизвестно. Ввод не повторён.") }
+        return try await persistence.submit(writesStore: true) { try $0.advanceChatJob(input.id, from: .attempting, to: .uncertain, error: "Принятие терминального ввода неизвестно. Ввод не повторён.") }
       }
       return job
     }
@@ -86,16 +92,16 @@ extension CodexAppServer: NotebookCodexProcessOwner { }
           if previous.isActive { try await executor.stopProcess(id: previousID) }
         }
         let record = NotebookRunRecord(id: input.id, author: input.author, request: request)
-        try await persistence.submit { try $0.admitRun(record) }
+        try await persistence.submit(writesStore: true) { try $0.admitRun(record) }
         dispatched = true
         let id = input.id
         do {
-          try await executor.startProcess(id: id, request: request) { [weak self] event in
+          try await executor.startProcess(id: id, workspaceID: workspaceID, request: request) { [weak self] event in
             guard let self else { throw CodexBridgeError.disconnected }
             try await self.consume(id, event: event)
           }
         } catch {
-          try await persistence.submit { try $0.receiveRunEvent(id, .interrupted("Запуск не подтверждён: \(error.localizedDescription)")) }
+          try await persistence.submit(writesStore: true) { try $0.receiveRunEvent(id, .interrupted("Запуск не подтверждён: \(error.localizedDescription)")) }
         }
         result = .run(input.id)
       case .writeRun(let id, let data):
@@ -109,12 +115,12 @@ extension CodexAppServer: NotebookCodexProcessOwner { }
         result = .acknowledged
       default: throw CodexBridgeError.invalidInput
       }
-      return try await persistence.submit { try $0.advanceChatJob(input.id, from: .attempting, to: .accepted, result: result) }
+      return try await persistence.submit(writesStore: true) { try $0.advanceChatJob(input.id, from: .attempting, to: .accepted, result: result) }
     } catch {
       let unknown = dispatched && !(error is CodexRequestRejection)
       let state: NotebookChatJob.State = unknown ? .uncertain : .rejected
       let message = unknown ? "Принятие команды неизвестно; она не повторена." : error.localizedDescription
-      return try await persistence.submit { try $0.advanceChatJob(input.id, from: .attempting, to: state, error: message) }
+      return try await persistence.submit(writesStore: true) { try $0.advanceChatJob(input.id, from: .attempting, to: state, error: message) }
     }
   }
 }

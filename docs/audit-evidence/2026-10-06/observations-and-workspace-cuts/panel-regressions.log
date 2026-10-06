@@ -1,0 +1,38 @@
+✔ Retina projection preserves screen density through transport scaling and overscan (1.745125ms)
+✔ large displays and collapsed panels keep a finite admitted projection (0.069792ms)
+▶ session coalesces viewport demand against accepted pixels without delaying required reads
+  ✔ covered (4.9265ms)
+  ✔ needed (0.482416ms)
+  ✔ forced (0.343416ms)
+  ✔ fit (0.653792ms)
+✔ session coalesces viewport demand against accepted pixels without delaying required reads (6.875416ms)
+▶ first camera intent revokes navigation before a sample and ignores late pixels or errors
+  ✔ pixels (0.553209ms)
+  ✔ error (0.146ms)
+✔ first camera intent revokes navigation before a sample and ignores late pixels or errors (0.830209ms)
+✔ resize during navigation decode installs its destination and coalesces the latest projection (0.565875ms)
+▶ session teardown releases readers and ignores late read and write completions
+  ✔ read (0.422625ms)
+  ✔ saved (0.501875ms)
+  ✔ conflict (0.245375ms)
+  ✔ uncertain (0.202208ms)
+✔ session teardown releases readers and ignores late read and write completions (1.570167ms)
+✔ a confirmed pen contact replaces an in-flight old scene before the next polling tick (0.354208ms)
+✔ error Retry repairs ipc_timeout before repeating the same text action (0.310416ms)
+✔ error Retry repairs operation_failed before repeating the same text action (0.178875ms)
+✔ workspace recovery preserves an uncertain action and its panel address (0.243208ms)
+✔ session closed during handshake suppresses the late connection failure (0.108208ms)
+✔ Notebook exposes one HTML app resource, a model opener and app-only gesture tools (19.4255ms)
+✔ native presentation stays pinned, bounds pixels and avoids duplicating PNG bytes in text (9.770208ms)
+✔ panel gestures keep the admitted endpoint and exact native sources (7.345625ms)
+✔ panel rejects caller routing/authorship fields and preserves the native conflict detail (4.660709ms)
+✔ workspace bootstrap opens in the same panel without a content owner or desktop window (5.814125ms)
+✔ workspace switching retires an old in-flight read and preserves accepted edit ownership (0.30325ms)
+ℹ tests 27
+ℹ suites 0
+ℹ pass 27
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 280.601333

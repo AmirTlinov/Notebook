@@ -1,11 +1,30 @@
 import Foundation
 
+extension CollaborationOperation {
+  /// Only the native move/stack owner consumes this exact Codable footprint.
+  public func nativePlacementWriteFootprint() throws -> ContentFieldVersion.WriteFootprint {
+    guard [.moveItem, .stackItems].contains(kind) else {
+      throw NotebookStorageError.invalidTransaction("native placement schema")
+    }
+    var owner = ContentFieldVersion.WriteFootprint.object
+    try owner.field("kind", .string(target.kind.rawValue)); try owner.field("id", .uuid)
+    if target.boardID != nil { try owner.field("boardID", .uuid) }
+    var operation = ContentFieldVersion.WriteFootprint.object
+    try operation.field("kind", .string(kind.rawValue)); try operation.field("target", owner)
+    if let id { try operation.field("id", .string(id)) }
+    try operation.field("values", .json(.object(values)))
+    return operation
+  }
+}
+
 extension NotebookNativeCommand where Source == WorkspacePlacement {
   /// One drop may move out of a stack and into another. Both operations share
   /// one accepted source cut, action identity and mixed Undo/Redo entry.
   public convenience init(_ operations: [CollaborationOperation], summary: String,
-    placements: [WorkspacePlacement], actionID: UUID = UUID(), actor: UUID, requestFingerprint: String? = nil) {
-    self.init { store, didPrepare in
+    placements: [WorkspacePlacement], actionID: UUID = UUID(), actor: UUID, requestFingerprint: String? = nil,
+    maximumExecutionBytes: Int = NotebookNativeWriteAllowance.maximumExecutionBytes) {
+    let allowance = NotebookNativeWriteAllowance(executionBytes: maximumExecutionBytes)
+    self.init(allowance: allowance) { store, didPrepare in
       try store.commitNativePlacements(operations, summary: summary, sources: placements,
         actionID: actionID, actor: actor, requestFingerprint: requestFingerprint, didPrepare: didPrepare)
     }
@@ -14,10 +33,12 @@ extension NotebookNativeCommand where Source == WorkspacePlacement {
 
 extension NotebookStore {
   public func applyNativePlacementEdits(_ operations: [CollaborationOperation], summary: String,
-    sources: [WorkspacePlacement], actionID: UUID = UUID(), actor: UUID, requestFingerprint: String? = nil
+    sources: [WorkspacePlacement], actionID: UUID = UUID(), actor: UUID, requestFingerprint: String? = nil,
+    maximumExecutionBytes: Int = NotebookNativeWriteAllowance.maximumExecutionBytes
   ) throws -> NotebookNativeCommand<WorkspacePlacement>.Output {
     try NotebookNativeCommand(operations, summary: summary, placements: sources,
-      actionID: actionID, actor: actor, requestFingerprint: requestFingerprint).apply(to: self)
+      actionID: actionID, actor: actor, requestFingerprint: requestFingerprint,
+      maximumExecutionBytes: maximumExecutionBytes).apply(to: self)
   }
 
   fileprivate func commitNativePlacements(_ operations: [CollaborationOperation], summary: String,
@@ -31,19 +52,22 @@ extension NotebookStore {
         Set(sources.map(\.id)).count == sources.count else {
         throw CollaborationError("invalid_operation", "Перенос меняет одну доску и не более двух стопок.")
       }
-      var addressed = Set<UUID>()
+      var addressed = Set<UUID>(), authored = Set<UUID>(), moving = Set<UUID>()
+      var stackAuthorship: [(target: UUID, afterMoving: Set<UUID>)] = []
       for operation in operations {
         if operation.kind == .moveItem {
           guard let id = operation.id.flatMap(UUID.init(uuidString:)) else {
             throw CollaborationError("invalid_operation", "Перенос называет предмет.")
           }
-          addressed.insert(id)
+          addressed.insert(id); authored.insert(id); moving.insert(id)
         } else {
           guard let ids = try operation.values["itemIDs"]?.decode([UUID].self),
             (2...5).contains(ids.count), Set(ids).count == ids.count else {
             throw CollaborationError("invalid_operation", "Стопка называет от двух до пяти разных предметов.")
           }
           addressed.formUnion(ids)
+          authored.formUnion(ids.dropLast())
+          stackAuthorship.append((ids.last!, moving))
         }
       }
       var current: [UUID: WorkspacePlacement] = [:]
@@ -58,6 +82,9 @@ extension NotebookStore {
       guard current == Dictionary(uniqueKeysWithValues: sources.map { ($0.id, $0) }) else {
         throw CollaborationError("revision_conflict", "Предмет или участники его стопки изменились во время переноса.")
       }
+      for stack in stackAuthorship where WorkspacePlacementDraft.requiresTargetAuthorship(stack.target,
+        afterMoving: stack.afterMoving, sources: sources) { authored.insert(stack.target) }
+      for id in authored { try current[id]?.requireAuthoredActorRoom(actor) }
       let revision = try targetContentRevision(target: target)
       let receipt = try applyNativeAction(.init(id: actionID,
         additionalOwners: sources.map { .init(kind: .cover, id: $0.id, boardID: target.id) },

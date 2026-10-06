@@ -27,9 +27,13 @@ struct NotebookLifecycleInversePart: Codable {
 
 enum NotebookLifecycleInverseLimits {
   static let records = 8_388_608
+  // Format 1 admission stays unchanged. New writers keep a smaller working
+  // part; old valid parts still borrow the caller's finite decode allowance.
   static let partRecords = 16_384
   static let parts = 512
   static let bytes = 64 * 1_024 * 1_024
+  static let writtenPartRecords = 4_096
+  static let writtenPartBytes = 1_024 * 1_024
 }
 
 extension NotebookStore {
@@ -49,28 +53,44 @@ extension NotebookStore {
       guard parts.count < NotebookLifecycleInverseLimits.parts else { throw NotebookStorageError.limitExceeded("lifecycle_inverse_parts") }
       let part = NotebookLifecycleInversePart(format: 1, workspaceID: workspaceID, actionID: actionID,
         ordinal: parts.count, records: records)
+      try database.admitJSONAllocation(bytes: bytes * 4 + records.count * 256 + 4_096)
       let data = try Self.storageEncoder.encode(part)
-      guard data.count <= NotebookLifecycleInverseLimits.bytes else { throw NotebookStorageError.limitExceeded("lifecycle_inverse_part_bytes") }
+      guard data.count <= NotebookLifecycleInverseLimits.writtenPartBytes else { throw NotebookStorageError.limitExceeded("lifecycle_inverse_part_bytes") }
       parts.append(try database.putBlob(data)); records.removeAll(keepingCapacity: true); bytes = 0
     }
     while true {
-      try Task.checkCancellation()
       let page = try database.actionRecordCapturePage(actionID: capturedActionID, after: after, limit: 256)
       if page.isEmpty { break }
       for record in page {
         try validateLifecycleInverseRecord(record)
-        let size = try Self.storageEncoder.encode(record).count + 1
+        let size = try lifecycleInverseRecordBytes(record)
         // Reserve bounded framing/identity bytes without ever encoding an
         // oversized part. Address strings, too, are charged before appending.
-        guard size <= NotebookLifecycleInverseLimits.bytes - 1_024 else { throw NotebookStorageError.limitExceeded("lifecycle_inverse_record_bytes") }
-        if records.count == NotebookLifecycleInverseLimits.partRecords || bytes + size > NotebookLifecycleInverseLimits.bytes - 1_024 { try flush() }
+        guard size <= NotebookLifecycleInverseLimits.writtenPartBytes - 1_024 else { throw NotebookStorageError.limitExceeded("lifecycle_inverse_record_bytes") }
+        if records.count == NotebookLifecycleInverseLimits.writtenPartRecords || bytes + size > NotebookLifecycleInverseLimits.writtenPartBytes - 1_024 { try flush() }
         records.append(record); bytes += size; after = record.address; visited += 1
       }
     }
     try flush()
     guard visited == count else { throw NotebookStorageError.invalidTransaction("lifecycle capture count") }
     let root = NotebookLifecycleInverseRoot(format: 1, workspaceID: workspaceID, actionID: actionID, recordCount: count, parts: parts)
+    try database.admitJSONAllocation(bytes: 4_096 + parts.count * 1_024)
     return try .init(rootHash: database.putBlob(Self.storageEncoder.encode(root)), recordCount: count)
+  }
+
+  private func lifecycleInverseRecordBytes(_ record: NotebookActionRecordChange) throws -> Int {
+    // Keys, optional hashes, separators and framing. Count escaped addresses
+    // before encoding, so one oversized scalar cannot allocate a giant buffer.
+    var bytes = 192
+    for (index, byte) in record.address.utf8.enumerated() {
+      if currentSQL?.writable != true, index & 4095 == 0 { try Task.checkCancellation() }
+      let amount = byte < 0x20 ? 6 : byte == 34 || byte == 92 || byte == 47 ? 2 : 1
+      guard bytes <= NotebookLifecycleInverseLimits.writtenPartBytes - amount else {
+        throw NotebookStorageError.limitExceeded("lifecycle_inverse_record_bytes")
+      }
+      bytes += amount
+    }
+    return bytes
   }
 
   /// Bounded parts and individual immutable bodies, never a full owner JSON or
@@ -82,7 +102,7 @@ extension NotebookStore {
       let root = try store.readLifecycleInverseRoot(reference: reference, actionID: actionID)
       var previous = "", count = 0
       for (ordinal, hash) in root.parts.enumerated() {
-        try Task.checkCancellation()
+        if store.currentSQL?.writable != true { try Task.checkCancellation() }
         let part = try store.readLifecycleInversePart(hash: hash, actionID: actionID, ordinal: ordinal)
         for record in part.records {
           guard previous.utf8.lexicographicallyPrecedes(record.address.utf8), count < root.recordCount else { throw NotebookStorageError.invalidTransaction("lifecycle inverse stream order") }
@@ -125,7 +145,9 @@ extension NotebookStore {
 
   func readLifecycleInverseRoot(reference: NotebookLifecycleInverseReference, actionID: UUID) throws -> NotebookLifecycleInverseRoot {
     let data = try lifecycleInverseBlob(reference.rootHash, maximumBytes: NotebookLifecycleInverseLimits.bytes)
+    try currentSQL!.admitJSONDecode(data)
     let root = try JSONDecoder().decode(NotebookLifecycleInverseRoot.self, from: data)
+    try currentSQL!.admitJSONAllocation(bytes: data.count * 2)
     guard root.format == 1, root.workspaceID == (try lifecycleInverseWorkspaceID()), root.actionID == actionID,
       (1...NotebookLifecycleInverseLimits.records).contains(root.recordCount), root.recordCount == reference.recordCount,
       (1...NotebookLifecycleInverseLimits.parts).contains(root.parts.count), root.parts.count <= root.recordCount,
@@ -137,7 +159,9 @@ extension NotebookStore {
 
   func readLifecycleInversePart(hash: String, actionID: UUID, ordinal: Int) throws -> NotebookLifecycleInversePart {
     let data = try lifecycleInverseBlob(hash, maximumBytes: NotebookLifecycleInverseLimits.bytes)
+    try currentSQL!.admitJSONDecode(data)
     let part = try JSONDecoder().decode(NotebookLifecycleInversePart.self, from: data)
+    try currentSQL!.admitJSONAllocation(bytes: data.count * 2)
     guard part.format == 1, part.workspaceID == (try lifecycleInverseWorkspaceID()), part.actionID == actionID,
       part.ordinal == ordinal, (1...NotebookLifecycleInverseLimits.partRecords).contains(part.records.count),
       try Self.storageEncoder.encode(part) == data else { throw NotebookStorageError.invalidTransaction("lifecycle inverse part identity") }
@@ -189,11 +213,13 @@ extension NotebookStore {
         UUID(uuidString: fragment.member)?.uuidString.lowercased() == fragment.member,
         fragment.address == "workspace.json#/pageOrders/@" + fragment.member,
         fragment.collections.isEmpty else { throw NotebookStorageError.invalidTransaction("inverse page order address") }
+      try currentSQL!.admitNativeJSONPhase(fragment.value)
       let order = try fragment.value.decode(NotebookPageOrderRegister.self)
       try order.validate()
       return Array(Set([order.visibleRoot] + order.heads.map(\.valueRoot))).sorted()
     }
     if fragment.collection == "pageOrderNodes" {
+      try currentSQL!.admitNativeJSONPhase(fragment.value)
       let node = try fragment.value.decode(NotebookPageOrderNode.self)
       guard fragment.parent == "workspace.json#", fragment.position == 0, fragment.collections.isEmpty,
         fragment.address == "workspace.json#/pageOrderNodes/@" + fragment.member,
@@ -224,7 +250,7 @@ extension NotebookStore {
     try database.run("DELETE FROM lifecycle_inverse_order_pages")
     var nodes = 0, bytes = 0
     func walk(_ hash: String, height: Int? = nil) throws -> Int {
-      try Task.checkCancellation()
+      if !database.writable { try Task.checkCancellation() }
       let node = try height == nil ? rootNode : readPageOrderNode(hash)
       nodes += 1; bytes += try node.canonicalData().count
       guard nodes <= NotebookPageOrderVector.maximumNodes, bytes <= NotebookPageOrderVector.maximumBytes,

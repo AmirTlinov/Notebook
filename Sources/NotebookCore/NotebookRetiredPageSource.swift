@@ -163,7 +163,10 @@ extension NotebookStore {
     let rows = try boundedStoredFragments([(address, true)], maximumCount: NotebookSQLReadAllowance.agentCommand.rows,
       maximumBytes: maximumBytes, budget: "lifecycle_restore_source")
     guard let root = rows.first(where: { $0.address == address }) else { throw NotebookStorageError.corruptRecord(address) }
-    let value = try canonical(NotebookRecordCodec.decode(rows, root: address))
+    try currentSQL!.admitNativeFragmentCodec(rows, copies: 2)
+    let decoded = try NotebookRecordCodec.decode(rows, root: address)
+    try currentSQL!.admitNativeJSONPhase(decoded, copies: 3)
+    let value = try canonical(decoded)
     let encoded = try NotebookRecordCodec.encode(value, file: root.file, address: address,
       parent: root.parent, collection: root.collection, member: root.member, position: root.position)
     guard Dictionary(uniqueKeysWithValues: encoded.map { ($0.address, $0) })

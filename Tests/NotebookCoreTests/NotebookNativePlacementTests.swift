@@ -152,6 +152,137 @@ struct NotebookNativePlacementTests {
     #expect(try f.placement(moving).pose == accepted)
   }
 
+  @Test func compactDropPreviewMatchesTheExactStackResultAndKeepsUntouchedHeads() throws {
+    let f=try Fixture();defer { f.clean() }
+    let a=f.items[0],b=f.items[1],c=f.items[2]
+    _=try f.command([f.stack(a,onto:b)],ids:[a,b]).apply(to:f.store)
+    _=try f.command([f.move(c,to:.init(x:8_000,y:8_000))],ids:[c],actor:UUID()).apply(to:f.store)
+    let original=try f.sources([a,c]),board=try f.store.loadBoard(items:f.store.loadIndex().items)
+      .board(f.boardID)
+    let highest=try #require(board).highestZIndex,actionID=UUID(),destination=WorldPoint(x:500,y:300)
+    let draft=try WorkspacePlacementDraft(placements:original,moving:a,to:destination,onto:c,
+      highestZIndex:highest,stackID:NotebookStore.submissionID(actionID,suffix:"stack:1"))
+    let saved=try f.command([f.move(a,to:destination),f.stack(a,onto:c)],ids:[a,c],actionID:actionID)
+      .apply(to:f.store)
+    #expect(Dictionary(uniqueKeysWithValues:saved.sources.compactMap { source in source.pose.map { (source.id,$0) } })
+      == draft.poses)
+    #expect(try f.placement(b) == original.first { $0.id == b },
+      "A remaining singleton keeps its latent stack and exact causal heads")
+    #expect(draft.poses[a]?.zIndex == highest+2)
+    #expect(draft.poses[c]?.stackID == draft.poses[a]?.stackID)
+    #expect(try f.store.readBoardItem(a)?.board.highestZIndex == highest+2)
+  }
+
+  @Test func compactPlacementPreviewUsesTheCachedPainterMaximumAmongOneHundredThousandItems() throws {
+    let actor=UUID(),count=100_000
+    let items=(0..<count).map { index in
+      FreeItemPlacement(itemID:UUID(),center:.init(x:Double(index),y:0),zIndex:index,
+        stamp:.init(counter:UInt64(index),actor:actor))
+    }
+    let construct=ContinuousClock.now
+    let board=BoardDocument(freeItems:items,stamp:.init(counter:UInt64(count),actor:actor))
+    print("PLACEMENT_CONSTRUCT items=\(count) elapsed=\(construct.duration(to:.now))")
+    #expect(board.highestZIndex == count-1)
+    let captured=Array(board.placements.prefix(10)),moving=try #require(captured.first?.id)
+    let started=ContinuousClock.now
+    var last:[UUID:WorkspacePlacementPose]=[:]
+    for _ in 0..<1_000 {
+      let draft=try WorkspacePlacementDraft(placements:captured,moving:moving,to:.zero,onto:nil,
+        highestZIndex:board.highestZIndex,stackID:UUID())
+      last=draft.poses
+    }
+    print("PLACEMENT_PREVIEW items=\(count) captured=10 repetitions=1000 elapsed=\(started.duration(to:.now))")
+    #expect(last.count == captured.count)
+    #expect(last[moving]?.zIndex == count)
+    let projected=board.projecting(placements:captured,elements:[])
+    #expect(projected.highestZIndex == captured.compactMap { $0.pose?.zIndex }.max(),
+      "A changed source rebuilds the existing layout cache")
+    #expect(board.highestZIndex == count-1,"A projection cannot alter its retained parent cache")
+    let lastID = try #require(board.placements.last?.id), contactStarted = ContinuousClock.now
+    var contact: [WorkspacePlacement] = []
+    for _ in 0..<100 { contact = board.placementContactSources(of: lastID) }
+    print("PLACEMENT_SOURCE_CUT items=\(count) repetitions=100 elapsed=\(contactStarted.duration(to:.now))")
+    #expect(contact.count == 1 && contact.first?.id == lastID,
+      "The worst lookup keeps only its source instead of projecting a 100k-item board")
+  }
+
+  @Test func authoredObserversRefuseADisjoint257thActorAndAllowAnExistingActorAtCapacity() throws {
+    let f = try Fixture(); defer { f.clean() }
+    var actors = (0..<257).map { _ in UUID() }
+    actors[0] = f.actor
+    let id = f.items[0]
+    func head(_ range: Range<Int>) -> WorkspacePlacementHead {
+      .init(pose: .init(center: .zero, zIndex: 0), version: .init(
+        stamp: .init(counter: 1, actor: actors[range.lowerBound]), human: true,
+        observed: Dictionary(uniqueKeysWithValues: range.map { (actors[$0].uuidString.lowercased(), UInt64(1)) })))
+    }
+    let original = WorkspacePlacement(itemID: id, heads: [head(0..<128), head(128..<256)].sorted { $0.version.stamp < $1.version.stamp })
+    try original.validate()
+    let present = try WorkspacePlacement.authored(itemID: id, pose: original.pose,
+      stamp: .init(counter: 2, actor: actors[0]), human: true, previous: original)
+    #expect(present.heads.count == 1 && present.winner.version.observed.count == 256)
+    let bound = try original.authoredResultWriteBound()
+    #expect(present.retainedPayloadBytes <= bound.retainedBytes)
+    let encoded = try NotebookStore.storageEncoder.encode(present)
+    #expect(encoded.count <= bound.footprint.wireBytes)
+    #expect(try NotebookJSONAdmission.allocationCost(encoded,
+      maximumBytes: NotebookNativeWriteAllowance.maximumExecutionBytes) <= bound.footprint.decodingBytes)
+    #expect(throws: NotebookStorageError.self) {
+      try WorkspacePlacement.authored(itemID: id, pose: original.pose,
+        stamp: .init(counter: 2, actor: actors[256]), human: true, previous: original)
+    }
+    let disjoint = WorkspacePlacement(itemID: id,
+      heads: (original.heads + [head(256..<257)]).sorted { $0.version.stamp < $1.version.stamp })
+    try disjoint.validate()
+    #expect(throws: NotebookStorageError.self) {
+      try WorkspacePlacement.authored(itemID: id, pose: disjoint.pose,
+        stamp: .init(counter: 2, actor: actors[0]), human: true, previous: disjoint)
+    }
+    #expect(disjoint.heads.count == 3 && disjoint.heads.reduce(0) { $0 + $1.version.observed.count } == 257,
+      "Refusal keeps every received source clock; it never truncates the causal witness")
+    try f.publish(disjoint)
+    #expect(try f.placement(id) == disjoint)
+    let cursor = try f.store.currentChangeCursor(), read = try f.store.currentReadCursor()
+    let history = try f.store.nativeHistory(domain: .board(f.boardID), actor: f.actor)
+    do {
+      _ = try f.command([f.move(id, to: .init(x: 90, y: 80))], ids: [id]).apply(to: f.store)
+      Issue.record("A native drop cannot swallow a causal resource refusal into invalid_operation")
+    } catch let error as CollaborationError { #expect(error.code == "resource_limit") }
+    #expect(try f.placement(id) == disjoint)
+    #expect(try f.store.currentChangeCursor() == cursor)
+    #expect(try f.store.currentReadCursor() == read)
+    #expect(try f.store.nativeHistory(domain: .board(f.boardID), actor: f.actor) == history)
+  }
+
+  @Test func placementSchemaFootprintIncludesHiddenAuthoredValuesAndActualOperationEncoding() throws {
+    let actor = UUID(), peer = UUID(), id = UUID()
+    let first = ContentFieldVersion(stamp: .init(counter: 2, actor: actor), human: true)
+    let second = ContentFieldVersion(stamp: .init(counter: 2, actor: peer), human: true)
+    let body = JSONValue.object(["short": .array([.null, .number(1e-307), .object([:])]),
+      "escaped": .string("цель/\"\\\u{0000}\n")])
+    let joined = try first.resolving(value: body, with: second, incomingValue: .array([.bool(false), body])).version
+    let source = WorkspacePlacement(itemID: id, heads: [.init(
+      pose: .init(center: .init(tileX: WorldPoint.maximumTileIndex, tileY: -WorldPoint.maximumTileIndex,
+        localX: 0.1, localY: 0.2), zIndex: Int.max, stackID: UUID(), stackOrder: Int.max), version: joined)])
+    try source.validate()
+    let footprint = try source.writeFootprint(), data = try NotebookStore.storageEncoder.encode(source)
+    #expect(joined.retainedHeadsBytes > 0)
+    #expect(data.count <= footprint.wireBytes)
+    #expect(try NotebookJSONAdmission.allocationCost(data,
+      maximumBytes: NotebookNativeWriteAllowance.maximumExecutionBytes) <= footprint.decodingBytes)
+    let target = CollaborationTarget(kind: .board, id: UUID())
+    let operations: [CollaborationOperation] = [
+      .init(kind: .moveItem, target: target, id: id.uuidString, values: ["center": try .encode(source.pose!.center)]),
+      .init(kind: .stackItems, target: target, values: ["itemIDs": try .encode([id, UUID()])])
+    ]
+    for operation in operations {
+      let footprint = try operation.nativePlacementWriteFootprint(), data = try NotebookStore.storageEncoder.encode(operation)
+      #expect(data.count <= footprint.wireBytes && footprint.wireBytes <= 4_096 && footprint.tokens <= 128)
+      #expect(try NotebookJSONAdmission.allocationCost(data,
+        maximumBytes: NotebookNativeWriteAllowance.maximumExecutionBytes) <= footprint.decodingBytes)
+    }
+  }
+
   @Test func painterOrderIndexAdmissionPreservesMaterialAndCursor() throws {
     let f = try Fixture(); defer { f.clean() }
     let before = try f.sources(f.items), cursor = try f.store.currentChangeCursor()

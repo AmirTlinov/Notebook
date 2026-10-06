@@ -52,7 +52,7 @@ extension NotebookScriptCoordinator {
         else { bases = [try supplied.decode(NotebookReadBasis.self)] }
         let base = try NotebookReadBasis.merging(bases)
         let operations = try (fields["operations"] ?? .null).decode([CollaborationOperation].self)
-        fields["expected"] = try await persistence { try .encode($0.expectations(base: base, operations: operations)) }
+        fields["expected"] = try await reader { try .encode($0.expectations(base: base, operations: operations)) }
 
         let admission = try await send(["command": .string("admitAction"), "action": .object(fields)])
         if admission.string("state") == "saved" {

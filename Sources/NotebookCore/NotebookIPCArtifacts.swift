@@ -303,14 +303,22 @@ extension NotebookStore {
   }
 
   private func readDerivative<T: Decodable>(_ url: URL, maximum: Int = 8 * 1_024 * 1_024) throws -> T? {
+    let database = currentSQL?.writable == false ? currentSQL : nil
     let data: Data
-    do { data = try boundedArtifactData(url, maximum: maximum) }
+    do { data = try boundedArtifactData(url, maximum: maximum, borrowing: database) }
     catch let error as CollaborationError where error.code == "artifact_missing" { return nil }
+    // Typed receipt decoding and its foreign JSON projection are two actual
+    // allocation phases. Both borrow this cut's remaining credit; repeated
+    // addresses cannot renew a per-file budget. Native writers keep their
+    // independently admitted publication lifetime.
+    try database?.admitJSONDecode(data)
+    try database?.admitJSONDecode(data)
     do { return try JSONDecoder().decode(T.self, from: data) }
     catch { throw CollaborationError("invalid_artifact", "Производная квитанция повреждена: \(url.lastPathComponent).") }
   }
 
-  private func boundedArtifactData(_ url: URL, maximum: Int = 64 * 1_024 * 1_024) throws -> Data {
+  private func boundedArtifactData(_ url: URL, maximum: Int = 64 * 1_024 * 1_024,
+    borrowing database: NotebookSQLConnection? = nil) throws -> Data {
     let resolved = url.resolvingSymlinksInPath().standardizedFileURL
     guard resolved.path.hasPrefix(root.resolvingSymlinksInPath().standardizedFileURL.path + "/") else {
       throw CollaborationError("invalid_artifact", "Производный файл вышел за корень своего владельца.")
@@ -325,10 +333,12 @@ extension NotebookStore {
     guard fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFREG, info.st_size >= 0, info.st_size <= maximum else {
       throw CollaborationError("resource_limit", "Производный файл превышает допустимый размер.")
     }
+    try database?.admitExpandedRead(bytes: Int(info.st_size), valueBytes: Int(info.st_size))
     var result = Data(count: Int(info.st_size))
-    let count = result.withUnsafeMutableBytes { buffer -> Int in
+    let count = try result.withUnsafeMutableBytes { buffer -> Int in
       var offset = 0
       while offset < buffer.count {
+        try database?.checkReadAllowance()
         let n = Darwin.read(fd, buffer.baseAddress!.advanced(by: offset), buffer.count - offset)
         if n < 0 && errno == EINTR { continue }
         if n <= 0 { return -1 }

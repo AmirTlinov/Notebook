@@ -11,10 +11,17 @@ public struct InkElementContact {
   private let index: InkBoundsIndex
   private let homogeneous: Bool
   private var firstHits: [Int: Int] = [:]
-  private var queriedHits: [String: (target: InkElementTarget, sample: Int)] = [:]
+  private var queriedHits: [String: (target: InkElementTarget, sample: Int, allowance: InkElementTarget.WriteAllowance)] = [:]
+  private var firstHitAllowances: [Int: InkElementTarget.WriteAllowance] = [:]
   private(set) var testedSegments = 0
   private(set) var visitedNodes = 0
   public var isEmpty: Bool { firstHits.isEmpty && queriedHits.isEmpty }
+  public var writeAllowance: InkElementTarget.WriteAllowance {
+    var total = InkElementTarget.WriteAllowance.zero
+    for id in firstHits.keys { if let value = firstHitAllowances[id] { total.add(value) } }
+    for value in queriedHits.values { total.add(value.allowance) }
+    return total
+  }
   public var selected: [InkElementTarget] {
     firstHits.keys.sorted().map { targets[$0] }
       + queriedHits.values.sorted {
@@ -39,6 +46,7 @@ public struct InkElementContact {
     queriedHits = queriedHits.filter { $0.value.sample < changedIndex }
     guard !targets.isEmpty else { return }
     firstHits = firstHits.filter { $0.value < changedIndex }
+    firstHitAllowances = firstHitAllowances.filter { firstHits[$0.key] != nil }
     var previous = changedIndex > 0 ? source.sample(at: changedIndex - 1) : nil
     var position = changedIndex
     source.forEach(in: changedIndex..<source.count) { sample in
@@ -61,7 +69,9 @@ public struct InkElementContact {
       } else { candidates = Array(targets.indices) }
       for id in candidates where firstHits[id] == nil {
         testedSegments += 1
-        if targets[id].intersects([first, sample]) { firstHits[id] = position }
+        if targets[id].intersects([first, sample]) {
+          firstHits[id] = position; firstHitAllowances[id] = targets[id].writeAllowance
+        }
       }
       previous = sample
       position += 1
@@ -86,7 +96,7 @@ public struct InkElementContact {
       for target in candidates where queriedHits[target.elementID] == nil {
         testedSegments += 1
         if target.intersects([first, sample]) {
-          queriedHits[target.elementID] = (target, position)
+          queriedHits[target.elementID] = (target, position, target.writeAllowance)
         }
       }
       previous = sample

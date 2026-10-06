@@ -129,7 +129,9 @@ final class NotebookCodexSidecar {
     self.workspaceID = workspaceID; self.computerID = computerID; self.directory = directory
     voice = (bridge as? any NotebookCodexVoiceOwner).map { .init(persistence: persistence, executor: $0) }
     dictation = (bridge as? any NotebookCodexDictationOwner).map { .init(executor: $0, computer: computerID) }
-    runs = (bridge as? any NotebookCodexProcessOwner).map { .init(persistence: persistence, executor: $0, metadata: metadata, computer: computerID) }
+    runs = (bridge as? any NotebookCodexProcessOwner).map {
+      .init(persistence: persistence, executor: $0, metadata: metadata, workspaceID: workspaceID, computer: computerID)
+    }
   }
 
   func start() {

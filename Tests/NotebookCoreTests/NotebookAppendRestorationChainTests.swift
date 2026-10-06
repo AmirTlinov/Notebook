@@ -23,7 +23,7 @@ struct NotebookAppendRestorationChainTests {
           values: ["title": .string("Appended notebook"), "center": try .encode(WorldPoint.zero), "pageID": try .encode(firstPageID)]),
         .init(kind: .createDocument, target: board, id: documentID.uuidString,
           values: ["title": .string("Sibling document"), "center": try .encode(WorldPoint(x: 800, y: 0)),
-            "paperSize": .string("a4"), "blocks": .array([])])
+            "files": try .encode([DocumentFile(id: "body", path: "body.tex", source: "Unadopted sibling document")])])
       ], on: board)
     }
 

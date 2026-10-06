@@ -2,28 +2,61 @@ import Foundation
 
 extension NotebookNativeCommand where Source == NotebookItemLifecycle {
   public convenience init(deleting source: NotebookItemLifecycle, placement: WorkspacePlacement,
-    actionID: UUID = UUID(), actor: UUID) {
-    self.init { store, didPrepare in
-      try store.commandTransaction(readAllowance: .agentCommand) {
-        guard let boardID = source.target.boardID,
-          let node = try store.readBoardItem(source.item.id), node.id == boardID,
-          node.board.placements.first(where: { $0.id == source.item.id }) == placement,
-          try store.readItemLifecycle(source.item.id) == source else {
-          throw CollaborationError("revision_conflict", "Предмет изменился после принятого удаления.")
-        }
-        let operation = CollaborationOperation(kind: .deleteItem, target: source.target)
-        let expected = try store.nativeDeletionExpectations(operation, lifecycleRevision: source.revision)
-        let receipt = try store.applyNativeAction(.init(id: actionID, additionalOwners: [source.target],
-          summary: "Удаление предмета", expected: expected, operations: [operation]), actor: actor)
-        let output: Output = (receipt, [])
-        didPrepare(output)
-        return output
+    actionID: UUID = UUID(), actor: UUID, allowance: NotebookNativeWriteAllowance = .init()) {
+    self.init(allowance: allowance) { store, didPrepare in
+      guard let boardID = source.target.boardID,
+        try store.nativeDeletionSource(itemID: source.item.id, boardID: boardID,
+          placement: placement, kind: source.item.kind, title: source.item.title) == source else {
+        throw CollaborationError("revision_conflict", "Предмет изменился после принятого удаления.")
       }
+      let operation = CollaborationOperation(kind: .deleteItem, target: source.target)
+      let expected = try store.nativeDeletionExpectations(operation, lifecycleRevision: source.revision)
+      let receipt = try store.applyNativeAction(.init(id: actionID, additionalOwners: [source.target],
+        summary: "Удаление предмета", expected: expected, operations: [operation]), actor: actor)
+      let output: Output = (receipt, [])
+      didPrepare(output)
+      return output
     }
   }
 }
 
 extension NotebookStore {
+  /// A separate accepted read cut retains a compact header and extent digest.
+  /// It never materializes the board, cover graphics or notebook page bodies.
+  public func readNativeDeletionSource(itemID: UUID, boardID: UUID, placement: WorkspacePlacement,
+    kind: WorkspaceItemKind, title: String) throws -> NotebookItemLifecycle {
+    do {
+      return try readTransaction { _ in
+        try currentSQL!.limitReads(NotebookNativeWriteAllowance(
+          executionBytes: NotebookNativeWriteAllowance.maximumSourceBytes).readAllowance())
+        return try nativeDeletionSource(itemID: itemID, boardID: boardID, placement: placement,
+          kind: kind, title: title)
+      }
+    } catch NotebookStorageError.limitExceeded { throw NotebookNativeWriteAllowance.refusal() }
+  }
+
+  fileprivate func nativeDeletionSource(itemID: UUID, boardID: UUID, placement: WorkspacePlacement,
+    kind: WorkspaceItemKind, title: String) throws -> NotebookItemLifecycle {
+    guard placement.retainedPayloadBytes <= NotebookNativeWriteAllowance.maximumSourceBytes,
+      title.utf16.count <= WorkspaceIndex.maximumTitleLength else { throw NotebookNativeWriteAllowance.refusal() }
+    try placement.validate()
+    let address = "board.json#/boards/@" + boardID.uuidString.lowercased()
+      + "/board/placements/@" + itemID.uuidString.lowercased()
+    guard placement.itemID == itemID, try ownerBoardID(of: itemID) == boardID,
+      let row = try currentSQL!.rows("SELECT b.data FROM records r JOIN blobs b ON b.hash=r.hash WHERE r.address=?", [.text(address)]).first?[0].blob else {
+      throw CollaborationError("revision_conflict", "Предмет изменился после принятого удаления.")
+    }
+    let fragment = try currentSQL!.decodedStoredFragment(from: row, expandingInk: false)
+    try currentSQL!.admitNativeJSONPhase(fragment.value, copies: 2)
+    let current = try fragment.value.decode(WorkspacePlacement.self)
+    guard fragment.address == address, current == placement,
+      let source = try readItemLifecycle(itemID), source.target.boardID == boardID,
+      source.item.kind == kind, source.item.title == title else {
+      throw CollaborationError("revision_conflict", "Предмет изменился после принятого удаления.")
+    }
+    return source
+  }
+
   fileprivate func nativeDeletionExpectations(_ operation: CollaborationOperation, lifecycleRevision: String) throws
     -> [CollaborationExpectation] {
     let header = try workspaceHeader()

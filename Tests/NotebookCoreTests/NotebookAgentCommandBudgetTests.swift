@@ -184,6 +184,50 @@ struct NotebookAgentCommandBudgetTests {
     }
   }
 
+  @Test func fiveSmallAddressedReadsShareOneCutAndTheAggregateRefusesWithoutAPartialReply() throws {
+    try fixture { store, actor, initial in
+      var page = initial
+      let ids = (0..<5).map { "small-\($0)" }
+      page.replaceElements(ids.map { .init(id: $0, kind: .markdown,
+        frame: .init(x: 10, y: 10, width: 100, height: 100),
+        source: String(repeating: "source", count: 180), html: "<p>source</p>") }, actor: actor)
+      _ = try store.savePage(page)
+      var command = NotebookCommand(command: .read)
+      command.queries = ids.map { id in
+        var query = NotebookReadQuery(kind: .pageElement, id: page.id)
+        query.elementID = id; return query
+      }
+      command.readSnapshots = true
+      let request = try NotebookReadCommand(command), reader = NotebookReadSession(store: store)
+      let baseline = try store.currentReadCursor()
+      let response = try reader.observe { try $0.handle(request) }
+      #expect(response.array.count == 5, "Small addressed bodies use the shared budget instead of a four-body proxy")
+      #expect(Set(response.array.compactMap { $0["cursor"]?.string }) == [String(baseline)])
+      var single = command; single.queries = Array(command.queries!.prefix(1))
+      let singleRequest = try NotebookReadCommand(single)
+      let tight = NotebookSQLReadAllowance(rows: 65_536, bytes: 8 * 1_024,
+        valueBytes: 8 * 1_024, reason: "one_aggregate")
+      let one = try reader.read { snapshot in
+        try snapshot.currentSQL!.limitReads(tight)
+        return try reader.observe { try $0.handle(singleRequest) }
+      }
+      #expect(one.array.count == 1)
+      do {
+        _ = try reader.read { snapshot in
+          try snapshot.currentSQL!.limitReads(tight)
+          return try reader.observe { try $0.handle(request) }
+        }
+        Issue.record("A combined reply cannot renew the budget for its next addressed owner")
+      } catch let error as CollaborationError {
+        #expect(error.code == "resource_limit")
+        #expect(error.message.contains("observation") && error.message.contains("documentFileBytes"))
+      }
+      #expect(try store.currentReadCursor() == baseline)
+      #expect(try reader.observe { try $0.handle(request) } == response,
+        "The failed aggregate closes its cut and preserves every source for a fresh bounded request")
+    }
+  }
+
   @Test func placementEnqueuesItsRenderThroughTheExistingCommandQueue() throws {
     try fixture { store, _, page in
       let target = CollaborationTarget(kind: .page, id: page.id)

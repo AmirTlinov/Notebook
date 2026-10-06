@@ -8,6 +8,7 @@ import Testing
 struct NotebookScriptCompletionWaitTests {
   @MainActor private final class Owner {
     let store: NotebookStore
+    private lazy var querySession = NotebookReadSession(store: store)
     var pageReads = 0
     var pageObservers: [(Int, CheckedContinuation<Void, Never>)] = []
     var holdNextPage = false
@@ -22,8 +23,8 @@ struct NotebookScriptCompletionWaitTests {
     }
     deinit { try? FileManager.default.removeItem(at: store.root) }
 
-    func persist(_ operation: @Sendable (NotebookStore) throws -> JSONValue) async throws -> JSONValue {
-      let value = try operation(store)
+    func observe(_ operation: @Sendable (NotebookQueryCut) throws -> JSONValue) async throws -> JSONValue {
+      let value = try querySession.observe(operation)
       if value["status"] != nil, value["run_id"] != nil {
         pageReads += 1
         let ready = pageObservers.filter { $0.0 <= pageReads }
@@ -34,6 +35,11 @@ struct NotebookScriptCompletionWaitTests {
           await withCheckedContinuation { heldPage = $0 }
         }
       }
+      return value
+    }
+
+    func persist(_ operation: @Sendable (NotebookStore) throws -> JSONValue) async throws -> JSONValue {
+      let value = try operation(store)
       if holdNextTerminal, ["completed", "cancelled", "failed", "interrupted"].contains(value.string("state") ?? "") {
         holdNextTerminal = false
         await withCheckedContinuation { heldTerminal = $0; terminalObserver?.resume(); terminalObserver = nil }
@@ -43,7 +49,7 @@ struct NotebookScriptCompletionWaitTests {
 
     func host() async throws -> NotebookScriptCoordinator {
       let host = NotebookScriptCoordinator(command: { _ in throw CollaborationError("unexpected_command", "No native effect is dispatched") },
-        persistence: { try await self.persist($0) }, workingDirectory: store.root)
+        reader: { try await self.observe($0) }, persistence: { try await self.persist($0) }, workingDirectory: store.root)
       try await host.start()
       return host
     }

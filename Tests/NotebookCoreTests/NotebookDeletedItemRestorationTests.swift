@@ -235,6 +235,43 @@ struct NotebookDeletedItemRestorationTests {
     #expect(try PageInkDrawing.decode(f.store.loadPage(f.pageID).drawingData) == drawing)
   }
 
+  @Test func coldMeasuredCoverRestorationPreservesTheOriginalPhysicalBodyReferences() throws {
+    let f = try Fixture(), frame = PageRect(x: 0, y: 0, width: 400, height: 400)
+    let samples = InkMeasurements((0..<256).map { index in
+      SpatialInkSample(point: .init(x: 100, y: Double(index)), timeOffset: Double(index) / 240,
+        width: 3, opacity: 1, force: 1, azimuth: 0, altitude: 1)
+    })
+    let mask = NotebookGraphicMask().capturing([.init(
+      target: .init(elementID: "measured-cover", frame: frame), measurements: samples)], transform: nil)
+    let graphic = NotebookGraphic(shape: .rectangle, style: .init(fill: .black), mask: mask)
+    let basis = try f.store.readBasis(targets: [f.target])
+    _ = try f.store.applyCollaborationAction(.init(additionalOwners: [f.target], summary: "Measured cover source",
+      expected: basis.owners, operations: [.init(kind: .insertElement, target: f.target,
+        id: "measured-cover", values: ["kind": .string("graphic"), "source": .string(""),
+          "frame": try .encode(frame), "graphic": try .encode(graphic)])]), actor: f.actor)
+    let source = try #require(try f.store.readSpatialElement(boardID: f.target.boardID!, elementID: "measured-cover"))
+    let address = "board.json#/boards/@" + f.target.boardID!.uuidString.lowercased()
+      + "/board/elements/@measured-cover"
+    func physical(_ store: NotebookStore) throws -> (String, NotebookStoredFragment) {
+      try store.readTransaction { _ in
+        let row = try #require(try store.currentSQL!.rows(
+          "SELECT r.hash,b.data FROM records r JOIN blobs b ON b.hash=r.hash WHERE r.address=?", [.text(address)]).first)
+        return try (row[0].text!, JSONDecoder().decode(NotebookStoredFragment.self, from: row[1].blob!))
+      }
+    }
+    let original = try physical(f.store)
+    #expect(!original.1.inkBodies.isEmpty)
+    let extent = try #require(try f.store.readItemLifecycle(f.itemID))
+    let placement = try #require(try f.store.readBoardItem(f.itemID)?.board.placements.first { $0.id == f.itemID })
+    let deleted = try NotebookNativeCommand(deleting: extent, placement: placement, actor: f.actor).apply(to: f.store).receipt
+    let cold = NotebookStore(root: f.store.root)
+    _ = try cold.undoNativeAction(deleted.id, actor: f.actor)
+    #expect(try cold.readSpatialElement(boardID: f.target.boardID!, elementID: "measured-cover") == source)
+    let restored = try physical(cold)
+    #expect(restored.0 == original.0)
+    #expect(restored.1.inkBodies == original.1.inkBodies)
+  }
+
   @Test func forgedDeletedKindRefusesBeforeAnyContentEffect() throws {
     let f = try Fixture(), receipt = try f.deletion()
     var unsupported = receipt
