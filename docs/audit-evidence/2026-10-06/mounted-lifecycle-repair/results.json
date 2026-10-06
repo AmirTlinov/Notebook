@@ -1,0 +1,69 @@
+{
+  "format": 1,
+  "date": "2026-10-06",
+  "status": "five-native-regressions-passed-one-separate-journey-failure",
+  "baseCommit": "a5b1a5cf6cb285ab3239461ab006436cc6353c11",
+  "sourceSHA256": "95ce75b749f3ff7429451b3bc0a1c993a4508d5bc43f6e306a049197c499c339",
+  "scope": "Physical iPad isolated native and system UI hosts; production252 unchanged. All7 files in the repair commit are byte-identical to tested sources. Full verification source also contains optional Undo/navigation diagnostics.",
+  "passed": 5,
+  "failed": 1,
+  "skipped": 0,
+  "runtimeWarnings": [],
+  "ownerFiles": [
+    {
+      "path": "Applications/Shared/InkCanvasView.swift",
+      "sha256": "9e44d231191f66b70ef77d7e97b494350ff776b433da0c288dcbfcbf9d4f5ce1"
+    },
+    {
+      "path": "Applications/Shared/NotebookActionsMenu.swift",
+      "sha256": "4b8bbe51d560cffe4f5031735135209daf97b0c906fdcd3b15a66b805a8baed0"
+    },
+    {
+      "path": "Applications/Tests/NotebookElementManipulationTests.swift",
+      "sha256": "f3c0f5dc8b9a9e6f521db75f5a510f13fea22ce0f5b23d2b609071b1493257ef"
+    },
+    {
+      "path": "Applications/Tests/SpatialInkHandoffTests.swift",
+      "sha256": "a24e498a62c9aece42827478a4b48b285afb590a10e202012c35cc2599e95837"
+    },
+    {
+      "path": "Applications/iPad/NotebookContextMenus.swift",
+      "sha256": "381765fcf26862d0347eff5fe4866efe5968e46d63ec46d1f45c70b9c414cf43"
+    },
+    {
+      "path": "Applications/iPad/SpatialBoardInkHandoff.swift",
+      "sha256": "804c557739f5caaf4210d70b60404d4a70d0786cf503b6dcc704fe3d79f51582"
+    },
+    {
+      "path": "Applications/iPad/WorkspaceItemPose.swift",
+      "sha256": "6364730dc01c348c580057986d1a7f018fa622bea85abc2b985f6690dcdc4e6b"
+    }
+  ],
+  "passedScenarios": [
+    "NotebookElementManipulationTests/testToolbarActionsUseTheirNativeAnchorAndRetireWithTheirPresentedSheet",
+    "NotebookElementManipulationTests/testLateClipboardCompositionCannotReplaceANewerMenuOrCloseItsPresentation",
+    "SpatialInkContactResizeTests/testReadyCandidateCannotReplaceAnUntouchedLeasedSurfaceUntilItsFinalRelease",
+    "SpatialInkHandoffTests/testAcceptedPencilRevokesThePreparedResizeWithoutLosingItsFirstSampleOrInstalledTarget",
+    "SpatialInkHandoffTests/testTwoSmallCoversReserveProjectedPixelsAndRefineTheSameOwnersAfterZoom"
+  ],
+  "separateFailure": {
+    "scenario": "NotebookWorkspaceJourneyUITests/testFirstSelectionMoveDeleteAndColdReopenPreserveTheWholeComposition",
+    "boundary": "Back-to-board",
+    "evidence": "Physical down in the presented Back control calls onNewAcceptedContact→cancelRequestedNavigation. The expected canvas_back_tap callback is not reached. Its presentation context retires before button action; native presentation input boundary repair follows. Cold reopen not reached."
+  },
+  "review": "Independent menu/diagnostic and GPU lifetime reviews completed; root reviewed final owner diff.",
+  "receipts": [
+    {
+      "path": ".build/runtime-253-mounted-lifecycle-repair/source-before.json",
+      "sha256": "78b1f88575937fc82646facd81e7ad438c023a8097a85a2eeafa0ba8833c81cd"
+    },
+    {
+      "path": ".build/runtime-253-mounted-lifecycle-repair/ipad-summary.json",
+      "sha256": "e11a8764ff44c600a26810c9b78cc021a076d93b71b58c10ff850bbd5a0943ab"
+    },
+    {
+      "path": ".build/runtime-253-mounted-lifecycle-repair/ipad-tests.json",
+      "sha256": "4b1294a967ea06eb3b9afdb1f5f48941dc77967a78a9dfb42cdbeb477a10a9bf"
+    }
+  ]
+}

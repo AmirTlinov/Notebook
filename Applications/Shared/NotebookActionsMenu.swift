@@ -1,66 +1,72 @@
 #if os(iOS)
 import SwiftUI
+import UIKit
 import NotebookCore
 
 /// Opening actions captures a context. Its paste gesture shares the workspace
 /// menu owner with selection/canvas menus and retains its physical destination.
-struct NotebookActionsMenu: View {
+struct NotebookActionsMenu: UIViewRepresentable {
   let destination: NotebookPasteDestination
   @Environment(NotebookAppModel.self) private var model
   @Environment(\.notebookContextMenus) private var contextMenus
-  @State private var opened: Opened?
-  private struct Opened: Identifiable {
-    let destination: NotebookPasteDestination
-    let intent: NotebookContextMenus.PresentationIntent
-    var id: UUID { intent.id }
-  }
-  private var opening: Binding<Opened?> {
-    .init(get: { opened }, set: { value in
-      if let previous=opened,previous.id != value?.id {
-        contextMenus?.finishContentPresentation(previous.intent)
-      }
-      opened=value
-    })
-  }
-
-  var body: some View {
-    Button {
-      guard let contextMenus else { return }
-      opened = .init(destination:destination,intent:contextMenus.beginContentPresentation(in:model))
-    } label: {
-      Image(systemName: "wrench")
-        .font(NotebookChrome.iconFont)
-        .frame(width: NotebookChrome.controlSize, height: NotebookChrome.controlSize)
-        .background {
-          Circle().fill(opened == nil ? Color.clear : NotebookChrome.selectionSurface).padding(5)
-        }
-        .contentShape(Rectangle())
+  func makeUIView(context: Context) -> UIButton { NotebookActionsButton(frame:.zero) }
+  func updateUIView(_ view: UIButton, context: Context) {
+    guard let button=view as? NotebookActionsButton else { return }
+    if button.presentationOwner !== contextMenus {
+      button.presentationOwner?.detachContentAnchor(button)
+      button.presentationOwner=contextMenus
     }
-    .buttonStyle(.plain).foregroundStyle(.primary).disabled(contextMenus == nil)
-    .accessibilityLabel("Действия").accessibilityIdentifier("notebook-actions-open")
-    .popover(item: opening, arrowEdge: .top) { captured in
-      if let contextMenus {
-        NotebookActionsContent(destination:captured.destination,contextMenus:contextMenus,
-          presentationIntent:captured.intent)
+    button.isEnabled=contextMenus != nil
+    button.open={ [weak button,weak contextMenus,weak model,destination] in
+      guard let button,let contextMenus,let model else { return }
+      contextMenus.presentContent(in:model,from:button) { intent in
+        NotebookActionsContent(destination:destination,contextMenus:contextMenus,presentationIntent:intent)
           .environment(model)
-          .presentationCompactAdaptation(.popover)
-          .presentationBackground(NotebookChrome.surface)
       }
     }
-    .onDisappear {
-      if let opened { contextMenus?.finishContentPresentation(opened.intent) }
-      opened=nil
-    }
   }
+  func sizeThatFits(_ proposal: ProposedViewSize, uiView: UIButton, context: Context) -> CGSize? {
+    .init(width:NotebookChrome.controlSize,height:NotebookChrome.controlSize)
+  }
+  static func dismantleUIView(_ view: UIButton, coordinator: ()) {
+    guard let button=view as? NotebookActionsButton else { return }
+    button.presentationOwner?.detachContentAnchor(button)
+    button.presentationOwner=nil;button.open=nil
+  }
+}
+
+/// The button carries only its native anchor. Menu identity, dismissal and its
+/// selected appearance belong to the workspace presentation owner.
+private final class NotebookActionsButton: UIButton {
+  weak var presentationOwner: NotebookContextMenus?
+  var open: (() -> Void)?
+  override init(frame: CGRect) {
+    super.init(frame:frame)
+    var configuration=UIButton.Configuration.plain()
+    configuration.image=UIImage(systemName:"wrench")
+    configuration.preferredSymbolConfigurationForImage = .init(pointSize:NotebookChrome.iconSize,weight:.regular)
+    configuration.baseForegroundColor = .label
+    configuration.contentInsets = .zero
+    configuration.background.backgroundInsets = .init(top:5,leading:5,bottom:5,trailing:5)
+    configuration.background.cornerRadius=(NotebookChrome.controlSize-10)/2
+    self.configuration=configuration
+    configurationUpdateHandler={ button in
+      var configuration=button.configuration
+      configuration?.background.backgroundColor=button.isSelected ? UIColor(NotebookChrome.selectionSurface) : .clear
+      button.configuration=configuration
+    }
+    accessibilityLabel="Действия";accessibilityIdentifier="notebook-actions-open"
+    addAction(UIAction { [weak self] _ in self?.open?() },for:.touchUpInside)
+  }
+  required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 }
 
 struct NotebookActionsContent: View {
   let destination: NotebookPasteDestination
-  @ObservedObject var contextMenus: NotebookContextMenus
+  let contextMenus: NotebookContextMenus
   let presentationIntent: NotebookContextMenus.PresentationIntent
   var onClose: (() -> Void)? = nil
   @Environment(NotebookAppModel.self) private var model
-  @Environment(\.dismiss) private var dismiss
   @State private var presentation: Composition?
   @State private var failure: String?
   @State private var loading = false
@@ -71,7 +77,7 @@ struct NotebookActionsContent: View {
   }
   private func close() {
     guard contextMenus.isCurrent(presentationIntent,in:model) else { return }
-    if let onClose { onClose() } else { dismiss() }
+    onClose?()
     contextMenus.finishContentPresentation(presentationIntent)
   }
 
@@ -109,9 +115,6 @@ struct NotebookActionsContent: View {
           guard contextMenus.isCurrent(value.intent,in:model) else { return }
           close()
         }
-    }
-    .onChange(of:contextMenus.isCurrent(presentationIntent,in:model)) { _,current in
-      if !current { presentation=nil;dismiss() }
     }
   }
 }

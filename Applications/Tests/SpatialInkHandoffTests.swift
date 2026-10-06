@@ -111,6 +111,15 @@ final class SpatialInkHandoffTests: XCTestCase {
   private func assertProjectedCovers(onPhase: @escaping (String) -> Void) async throws {
     onPhase("Foreground window")
     try await WorkspaceInkFixture.waitForForegroundWindow()
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+      .first { $0.activationState == .foregroundActive })
+    let previousWindow = scene.keyWindow, window = UIWindow(windowScene: scene)
+    let host = UIViewController()
+    window.rootViewController = host
+    host.view.backgroundColor = .white
+    window.makeKeyAndVisible(); host.view.layoutIfNeeded()
+    defer { window.isHidden = true; window.rootViewController = nil; previousWindow?.makeKey() }
+    let viewport = SpatialPoint(x: window.bounds.width, y: window.bounds.height)
     let actor = UUID(), stamp = VersionStamp(counter: 0, actor: actor)
     let items = ["Left", "Right"].map { WorkspaceItem.notebook(title: $0, pageIDs: [UUID()]) }
     let workspace = WorkspaceIndex(items: items, selectedItemID: items[0].id,
@@ -137,7 +146,7 @@ final class SpatialInkHandoffTests: XCTestCase {
     defer { tiles.onPreparationPhase = nil }
     func presence(_ scale: Double) -> SessionPresence {
       .init(boardID: workspace.rootBoardID, mode: .board,
-        camera: .init(scale: scale), viewport: .init(x: 834, y: 1194))
+        camera: .init(scale: scale), viewport: viewport)
     }
     func frame(_ presence: SessionPresence) -> WorkspaceSceneFrame {
       .init(index: index, presence: presence, portalCamera: { _ in nil })
@@ -207,10 +216,12 @@ final class SpatialInkHandoffTests: XCTestCase {
     try deepCandidate.install()
     let visible = canvases[0], hidden = canvases[1]
     XCTAssertEqual(visible.bounds.size, paperBounds)
-    XCTAssertEqual(visible.drawableSize, CGSize(width: 2048, height: 2560))
+    let landscape = viewport.x > viewport.y
+    XCTAssertEqual(visible.drawableSize, landscape ? CGSize(width: 2560, height: 2048) : CGSize(width: 2048, height: 2560))
     XCTAssertEqual(visible.spatialTilePoolIDs.count, 20, "Maximum zoom reserves one finite viewport")
     let region = try XCTUnwrap(visible.spatialBackingRegion)
-    XCTAssertEqual(region, CGRect(x: 289, y: 437, width: 256, height: 320))
+    XCTAssertEqual(region, landscape ? CGRect(x: 257, y: 469, width: 320, height: 256)
+      : CGRect(x: 289, y: 437, width: 256, height: 320))
     XCTAssertEqual(visible.drawableSize.width / region.width, 8, accuracy: 0.00001)
     XCTAssertEqual(hidden.spatialBackingRegion, .zero)
     XCTAssertEqual(hidden.spatialDrawableAccountedBytes, 0)
@@ -219,16 +230,12 @@ final class SpatialInkHandoffTests: XCTestCase {
       displayScale: 2, refinesDetails: true))
 
     onPhase("Deep cover physical mount")
-    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
-    let previousWindow = scene.keyWindow, window = UIWindow(windowScene: scene)
-    let host = UIViewController(), mount = SpatialInkPhysicalMountView(frame: .zero)
-    window.rootViewController = host
-    host.view.backgroundColor = .white
+    let mount = SpatialInkPhysicalMountView(frame: .zero)
     mount.bounds = CGRect(origin: .zero, size: paperBounds)
     mount.transform = CGAffineTransform(scaleX: 4, y: 4)
     mount.center = CGPoint(x: small.viewport.x / 2, y: small.viewport.y / 2)
-    host.view.addSubview(mount); window.makeKeyAndVisible()
-    defer { mount.unmount(); window.isHidden = true; window.rootViewController = nil; previousWindow?.makeKey() }
+    host.view.addSubview(mount)
+    defer { mount.unmount() }
     mount.update(lease: deepCandidate, surface: .cover(items[0].id), boardID: workspace.rootBoardID,
       camera: deep.camera, active: true)
     try await Self.waitUntil { visible.isStableFramePresented }
@@ -242,9 +249,12 @@ final class SpatialInkHandoffTests: XCTestCase {
     let paperFrame = PageRect(x: 0, y: 0, width: 834, height: 1194)
     let graphic = NotebookGraphic(shape: .freehand, sourceInkIDs: [action.id],
       freehand: .init(layers: [.init(tool: .pen, color: .black,
-        measured: .init(sourceID: action.id, measurements: measurements, frame: paperFrame))]),
-      transform: .init(a: 1, b: 0, c: 0, d: 1, tx: 0, ty: 40.0 / 1194))
-    let node = NotebookGraphicGraph.Node(id: "moved-cover-ink", graphic: graphic, frame: paperFrame,
+        measured: .init(sourceID: action.id, measurements: measurements, frame: paperFrame))]))
+    // Moving an element changes its physical placement. Its normalized
+    // contour basis stays inside the unit square, including at eraser capture.
+    let movedFrame = PageRect(x: paperFrame.x, y: paperFrame.y + 40,
+      width: paperFrame.width, height: paperFrame.height)
+    let node = NotebookGraphicGraph.Node(id: "moved-cover-ink", graphic: graphic, frame: movedFrame,
       surface: surface, shown: true)
     let layout = try XCTUnwrap(NotebookGraphicGraph([node]).resolve(node.id).layout)
     let ordered = NotebookOrderedInkPlan(bodies: [.init(elementID: node.id,
@@ -258,7 +268,9 @@ final class SpatialInkHandoffTests: XCTestCase {
     onPhase("Ordered cover installation")
     try movedCandidate.install()
     func shown(_ points: [(CGPoint, NotebookUXObservation.Color)]) -> Bool {
-      (try? NotebookUXObservation.Pixels(window: window).matches(points.map { (visible.convert($0.0, to: window), $0.1) })) == true
+      let probes = points.map { (visible.convert($0.0, to: window), $0.1) }
+      guard probes.allSatisfy({ window.bounds.contains(CGRect(x: $0.0.x.rounded(), y: $0.0.y.rounded(), width: 1, height: 1)) }) else { return false }
+      return (try? NotebookUXObservation.Pixels(window: window).matches(probes)) == true
     }
     try await Self.waitUntil {
       shown([(.init(x: 417, y: 597), .paper), (.init(x: 417, y: 637), .black)])
@@ -302,6 +314,10 @@ final class SpatialInkHandoffTests: XCTestCase {
     let pose = try XCTUnwrap(physical.poses[items[0].id])
     onPhase("Cover drag and reverse")
     pose.beginLift(); physical.publish(items[0].id)
+    XCTAssertTrue(pose.isEngaged)
+    let inWindow = try XCTUnwrap(pose.backingSurface(in: window), "The window is the physical projection's coordinate root")
+    XCTAssertEqual(inWindow.localBounds.size, paperBounds)
+    XCTAssertNotNil(registry.movingCoverProjection(on: .cover(items[0].id)))
     pose.changeTranslation(.init(width: 120, height: 60))
     pose.changeTranslation(.init(width: 240, height: 120))
     try await Self.waitUntil {
@@ -476,7 +492,16 @@ final class SpatialInkHandoffTests: XCTestCase {
     XCTAssertGreaterThan(fixture.resources.reservedBytes, reserved,
       "The private target and the displayed target are both actual allocations")
     candidate = nil
-    XCTAssertEqual(fixture.resources.reservedBytes, reserved)
+    XCTAssertEqual(canvas.bounds, bounds)
+    XCTAssertEqual(try Self.inkPixelCount(fixture.canvas), before)
+    // Ready means GPU-scheduled. Revocation frees the staging slot now, while
+    // submitted work keeps its real allocations charged through completion.
+    let deadline = ContinuousClock.now + .seconds(1)
+    while fixture.resources.reservedBytes != reserved, ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(5))
+    }
+    XCTAssertEqual(fixture.resources.reservedBytes, reserved,
+      "An abandoned lease must release every private tile after the submitted GPU work drains")
     XCTAssertEqual(canvas.bounds, bounds)
     XCTAssertEqual(try Self.inkPixelCount(fixture.canvas), before)
   }

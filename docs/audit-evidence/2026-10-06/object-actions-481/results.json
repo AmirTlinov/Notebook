@@ -1,0 +1,46 @@
+{
+  "format": 1,
+  "date": "2026-10-06",
+  "issue": "GUI-481",
+  "status": "installed-and-focused-gesture-verified",
+  "installedBuild": 252,
+  "installedVersion": "0.3.182",
+  "installedSourceCommit": "c96f9ea6",
+  "verificationSourceSHA256": "688c6f900f9b49df098349ca0ac099937934d9e7626678c3574a84a0f850bdf1",
+  "verificationBaseCommit": "7a5d69082aad9db9134373c51df1ef530e4091ae",
+  "passed": 1,
+  "failed": 0,
+  "skipped": 0,
+  "runtimeWarnings": [],
+  "gesture": "NotebookUITests/DrawingResponsivenessTests/testSelectionMenuFollowsTheObjectAtBothEdgesAndOpensOnShortRepeatTap",
+  "ownerFilesEqualToInstalledSource": [
+    "Applications/iPad/NotebookContextMenus.swift",
+    "Applications/iPad/NotebookElementControls.swift",
+    "Applications/iPad/SpatialWorkspaceView.swift",
+    "Applications/UITests/DrawingResponsivenessTests.swift",
+    "Applications/UITests/NotebookInteractionActions.swift"
+  ],
+  "scope": "Physical iPad isolated UI test host. Menu owners and gesture source match installed build 252 byte-for-byte; verification source also contains unrelated follow-up repairs. Both edge positions and direct drag checked; gap 14 pt. No whole-build acceptance or physical display-latency claim.",
+  "receipt": {
+    "path": ".build/object-actions-481/integrated-252-run/verification.json",
+    "sha256": "2a87d906ed5a0c547c494830ab5ef21b6847e8bc5d9a39932987703aa05ad95c"
+  },
+  "summary": {
+    "path": ".build/object-actions-481/integrated-252-run/ipad-summary.json",
+    "sha256": "1305ed42d1596d328f17b87df0422829cdc5158b9fb6a9cdee7522a8c01a39c1"
+  },
+  "placement": {
+    "path": ".build/object-actions-481/installed-252-attachments/F264C6D2-F7AD-4823-A894-54F45A3DDC18.txt",
+    "sha256": "0d2345a5e6728bd0fffa5c5b1f3bb3ff3d565ff143f040a5bbb067170c0e9a4a"
+  },
+  "reviewedScreenshots": [
+    {
+      "path": ".build/object-actions-481/installed-252-attachments/543A5B15-E4E8-4FD8-9D7B-703A13148258.png",
+      "sha256": "bcae51ca3d5fe41012627ba75bc27c005fbd8c335d39dcc2b71c10e4eb8e0ce1"
+    },
+    {
+      "path": ".build/object-actions-481/installed-252-attachments/B69BC745-2828-44EA-BF7B-87E05FF44304.png",
+      "sha256": "f68c3d396efc487b2423b4890540a8f28e089bae97934737b94816be1436aabf"
+    }
+  ]
+}

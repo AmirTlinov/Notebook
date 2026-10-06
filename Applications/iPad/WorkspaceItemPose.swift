@@ -298,7 +298,7 @@ final class WorkspaceItemPoseController: UIViewController, NotebookScenePresenta
 
   private func screenSurface(in coordinateView: UIView, pose: Pose) -> SpatialScreenSurface? {
     guard installed, let rendered, let host,
-      view.window != nil, view.window === coordinateView.window else { return nil }
+      view.window != nil, view.window === (coordinateView as? UIWindow ?? coordinateView.window) else { return nil }
     func convert(_ p: CGPoint) -> CGPoint {
       let local = CGPoint(x: p.x - host.view.bounds.midX, y: p.y - host.view.bounds.midY).applying(pose.transform)
       return view.convert(.init(x: local.x + pose.center.x, y: local.y + pose.center.y), to: coordinateView)

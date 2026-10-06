@@ -567,6 +567,62 @@ import XCTest
     }
   }
 
+  func testToolbarActionsUseTheirNativeAnchorAndRetireWithTheirPresentedSheet() async throws {
+    try await fixture { model,reference in
+      let scene=try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+      let previous=scene.windows.first(where:\.isKeyWindow),window=UIWindow(windowScene:scene)
+      let menus=NotebookContextMenus(),destination=clipboardDestination(reference,model:model)
+      model.selectElement(reference)
+      let controller=UIHostingController(rootView:ZStack(alignment:.topLeading) {
+        NotebookContextMenuHost(owner:menus,gate:model.inputGate)
+          .frame(maxWidth:.infinity,maxHeight:.infinity)
+        NotebookActionsMenu(destination:destination).padding(.leading,80).padding(.top,100)
+      }.environment(model).environment(\.notebookContextMenus,menus))
+      window.rootViewController=controller;window.makeKeyAndVisible()
+      defer { menus.uninstall();window.isHidden=true;window.rootViewController=nil;previous?.makeKey() }
+      @MainActor func descendants(_ view:UIView)->[UIView] { [view]+view.subviews.flatMap(descendants) }
+      @MainActor func actionsButton()->UIButton? {
+        descendants(window).compactMap { $0 as? UIButton }.first { $0.accessibilityIdentifier == "notebook-actions-open" }
+      }
+      try await assertUX("toolbar-actions-anchor-mounted",since:.now,budget:.seconds(2),window:window) {
+        actionsButton()?.window === window && actionsButton()?.bounds.size == CGSize(width:44,height:44)
+      }
+      let button=try XCTUnwrap(actionsButton())
+      button.sendActions(for:.touchUpInside)
+      let presented=try XCTUnwrap(controller.presentedViewController)
+      await settlePresentation(presented)
+      XCTAssertTrue(presented.popoverPresentationController?.sourceView === button)
+      XCTAssertEqual(presented.popoverPresentationController?.sourceRect,button.bounds)
+      XCTAssertEqual(presented.popoverPresentationController?.permittedArrowDirections,.up)
+      XCTAssertTrue(button.isSelected)
+      XCTAssertTrue(menus.blocksCanvasInput)
+      // A composition sheet is presented by this content controller. Retiring
+      // its captured context must close the whole UIKit presentation chain.
+      let sheet=UIHostingController(rootView:Text("Composition"));sheet.modalPresentationStyle = .pageSheet
+      presented.present(sheet,animated:false)
+      await settlePresentation(sheet)
+      XCTAssertTrue(sheet.presentingViewController === presented)
+      model.clearSelection()
+      try await assertUX("toolbar-context-retires-parent-and-sheet",since:.now,budget:.seconds(2),window:window) {
+        presented.presentingViewController == nil && sheet.presentingViewController == nil
+          && !menus.hasPresentedMenu && !button.isSelected
+      }
+      XCTAssertTrue(model.inputGate.permitsSceneContact(at:.init(x:30,y:600),kind:.finger))
+      XCTAssertTrue(model.inputGate.permitsSceneContact(at:.init(x:30,y:600),kind:.pencil))
+      button.sendActions(for:.touchUpInside)
+      let replacement=try XCTUnwrap(controller.presentedViewController)
+      await settlePresentation(replacement)
+      XCTAssertFalse(replacement === presented)
+      XCTAssertTrue(button.isSelected)
+      menus.detachContentAnchor(button)
+      try await assertUX("toolbar-anchor-detach-completes",since:.now,budget:.seconds(2),window:window) {
+        replacement.presentingViewController == nil && !menus.hasPresentedMenu
+      }
+      XCTAssertNil(replacement.presentingViewController)
+      XCTAssertFalse(button.isSelected)
+    }
+  }
+
   func testLateClipboardCompositionCannotReplaceANewerMenuOrCloseItsPresentation() async throws {
     try await fixture { model,reference in
       let window=UIWindow(windowScene:try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
@@ -576,7 +632,8 @@ import XCTest
       model.selectElement(reference)
       var oldIntent:NotebookContextMenus.PresentationIntent?
       menus.presentContent(in:model,at:.init(x:100,y:200)) { intent in oldIntent=intent;return Text("Old menu") }
-      await settlePresentation(try XCTUnwrap(controller.presentedViewController))
+      let originalController=try XCTUnwrap(controller.presentedViewController)
+      await settlePresentation(originalController)
       let original=try XCTUnwrap(oldIntent),destination=clipboardDestination(reference,model:model)
       var callbacks=0
       let task=try XCTUnwrap(menus.pasteClipboard([],at:destination,in:model,presentation:original,
@@ -586,9 +643,17 @@ import XCTest
         })
       await reader.waitUntilStarted()
       model.clearSelection()
+      var supersededIntent:NotebookContextMenus.PresentationIntent?
+      menus.presentContent(in:model,at:.init(x:120,y:210)) { intent in supersededIntent=intent;return Text("Superseded menu") }
       var nextIntent:NotebookContextMenus.PresentationIntent?
       menus.presentContent(in:model,at:.init(x:160,y:220)) { intent in nextIntent=intent;return Text("New menu") }
-      let next=try XCTUnwrap(nextIntent),presented=try XCTUnwrap(controller.presentedViewController)
+      let next=try XCTUnwrap(nextIntent)
+      XCTAssertFalse(menus.isCurrent(try XCTUnwrap(supersededIntent),in:model))
+      try await assertUX("latest-menu-follows-dismissal-completion",since:.now,budget:.seconds(2),window:window) {
+        originalController.presentingViewController == nil && controller.presentedViewController != nil
+          && controller.presentedViewController !== originalController && menus.isCurrent(next,in:model)
+      }
+      let presented=try XCTUnwrap(controller.presentedViewController)
       await settlePresentation(presented)
       reader.finish(.composition("late structured source"))
       await task.value

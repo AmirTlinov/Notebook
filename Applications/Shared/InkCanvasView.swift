@@ -1015,6 +1015,17 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       }
       return
     }
+    if spatialHandoffRetains > 0, !isStableFramePresented, let target = spatialTarget,
+      var drawn = drawnTiles, drawn.target == ObjectIdentifier(target), drawn.revision == stableContentRevision {
+      // A private frame may have been presented before its layer joined a
+      // window. Its missing OS receipt cannot authorize reusing those pending
+      // submissions forever. This mount resubmits only unconfirmed visible
+      // tiles; the old GPU flight keeps its own buffers and drawable slots.
+      for index in drawn.tiles.indices where drawn.tiles[index].presented == nil {
+        drawn.tiles[index].presented = false
+      }
+      drawnTiles = drawn
+    }
     if spatialHandoffRetains > 0, isStableFramePresented, hasRevealedFirstFrame,
       activeInkStroke == nil, activeEraserStroke == nil {
       // Moving the retained layer out of its preparation window does not
