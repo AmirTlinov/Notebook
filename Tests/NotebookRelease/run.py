@@ -11,6 +11,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -681,6 +682,8 @@ class InstallationCLI(PairCLI):
         self.__dict__.update(built.__dict__)
         self.calls = []
         self.mac = build / "plugin/notebook/runtime/NotebookRuntime.app"
+        self.publication = build.parent / "published-marketplace"
+        self.published_plugin = self.publication / "releases/0.2.0/notebook"
         self.cache = build.parent / "codex-cache/notebook/0.2.0/runtime/NotebookRuntime.app"
         self.preview = {**self.preview, "bundleVersion": "16", "version": "0.3.13"}
         self.existing_preview = True
@@ -706,7 +709,12 @@ class InstallationCLI(PairCLI):
         return {"resources": {"isDirectory": directory, "isSymbolicLink": False, "isReadable": True},
                 "metadata": {"size": len(content) if content is not None else size}, "content": content}
 
-    def __call__(self, argv, cwd=None, stdout=None, stderr=None, timeout=None):
+    def __call__(self, argv, cwd=None, stdout=None, stderr=None, timeout=None, pass_fds=()):
+        if pass_fds:
+            assert argv[-2:] == ["--publication-fd", str(pass_fds[0])]
+            assert len(pass_fds) == 1
+            os.fstat(pass_fds[0])
+            argv = argv[:-2]
         label = Path(stdout.name).name.removesuffix(".stdout.log")
         output, exit_code = b"", 0
         if argv[1:5] == ["devicectl", "device", "info", "files"]:
@@ -731,8 +739,9 @@ class InstallationCLI(PairCLI):
             if self.on_preinstall:
                 self.on_preinstall()
             return super().__call__(argv, cwd=cwd, stdout=stdout, stderr=stderr, timeout=timeout)
-        elif label == "primary-checkout":
-            output = ("worktree " + str(self.source) + "\0\0").encode()
+        elif label == "plugin-publication-preflight":
+            assert argv == ["/fixture/node", str(self.mac.parents[3] / "source/MCP/install-plugin.mjs"), "preflight"]
+            output = json.dumps({"root": str(self.publication), "plugin": None}).encode()
         elif label == "plugins-before":
             output = json.dumps({"installed": [{"pluginId": "notebook@notebook-local", "version": "0.1.6"}]}).encode()
         elif label == "connected-before":
@@ -740,12 +749,13 @@ class InstallationCLI(PairCLI):
             output = json.dumps({"enabled": True, "transport": {"type": "stdio", "command": previous, "args": []}}).encode()
         elif label == "owners-before-install":
             pass
-        elif label == "package-plugin":
-            assert Path(argv[2]) == self.mac
-            assert Path(argv[3]) == self.source / "MCP/plugin/notebook"
-            shutil.copytree(self.mac, Path(argv[3]) / "runtime/NotebookRuntime.app", symlinks=True)
+        elif label == "publish-plugin":
+            assert Path(argv[1]) == self.mac.parents[3] / "source/MCP/install-plugin.mjs"
+            assert argv[2:] == ["publish", str(self.mac.parents[2])]
+            shutil.copytree(self.mac.parent.parent, self.published_plugin, symlinks=True)
+            output = json.dumps({"root": str(self.publication), "plugin": str(self.published_plugin), "version": "0.2.0"}).encode()
         elif label == "install-plugin":
-            assert argv == ["/fixture/node", str(self.source / "MCP/install-plugin.mjs"), "install"]
+            assert argv == ["/fixture/node", str(self.mac.parents[3] / "source/MCP/install-plugin.mjs"), "install"]
             if self.plugin_fail:
                 exit_code = 1
             else:
@@ -759,6 +769,9 @@ class InstallationCLI(PairCLI):
             output = json.dumps({"enabled": True, "transport": {"type": "stdio",
                 "command": str(runtime / "Contents/Resources/CodexRuntime/node"),
                 "args": [str(runtime / "Contents/Resources/NotebookTools/dist" / ("index.mjs" if self.wrong_launcher_args else "launch-runtime.mjs"))]}}).encode()
+        elif label == "prune-plugin-publications":
+            assert argv == ["/fixture/node", str(self.mac.parents[3] / "source/MCP/install-plugin.mjs"), "prune"]
+            assert len(self.install_calls) == 1, "Old publication stays available until the full pair has installed"
         elif label == "install-ipad":
             result = super().__call__(argv, cwd=cwd, stdout=stdout, stderr=stderr, timeout=timeout)
             if self.on_install:
@@ -926,11 +939,11 @@ class InstallationTests(unittest.TestCase):
         self.assertEqual(self.cli.install_calls, [])
         self.assertFalse((self.source / "MCP/plugin/notebook/runtime").exists())
 
-    def test_changed_primary_metadata_refuses_before_install(self):
+    def test_changed_authored_metadata_cannot_replace_the_verified_publication(self):
         (self.source / "MCP/plugin/notebook/plugin.json").write_text('{"name":"notebook","version":"9.0.0"}')
-        with self.assertRaisesRegex(release.ReleaseError, "metadata"):
-            self.install()
-        self.assertEqual(self.cli.install_calls, [])
+        receipt = self.install()
+        self.assertEqual(receipt["status"], "installed")
+        self.assertEqual(json.loads((self.cli.published_plugin / "plugin.json").read_text())["version"], "0.2.0")
         self.assertFalse((self.source / "MCP/plugin/notebook/runtime").exists())
 
     def test_newer_cached_runtime_refuses_before_plugin_or_device_mutation(self):
@@ -979,7 +992,7 @@ class InstallationTests(unittest.TestCase):
             self.install()
         self.assertEqual(self.cli.install_calls, [])
         self.assertEqual(release.read_json(self.evidence / "installation.json")["status"], "incomplete")
-        self.assertTrue((self.source / "MCP/plugin/notebook/runtime/NotebookRuntime.app").is_dir())
+        self.assertTrue((self.cli.published_plugin / "runtime/NotebookRuntime.app").is_dir())
 
     def test_uncertain_ipad_install_is_not_retried_or_claimed_installed(self):
         self.cli.missing_installation_url = True
@@ -988,6 +1001,119 @@ class InstallationTests(unittest.TestCase):
         self.assertEqual(len(self.cli.install_calls), 1)
         receipt = release.read_json(self.evidence / "installation.json")
         self.assertEqual((receipt["status"], receipt["step"]), ("incomplete", "install-ipad"))
+
+
+class PluginPublicationOwnershipTests(unittest.TestCase):
+    def test_migration_uses_the_release_lease_and_records_the_adapter_result(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory).resolve()
+            source, publication, evidence = base / "source", base / "publication", base / "evidence"
+            source.mkdir()
+
+            def runner(argv, cwd=None, stdout=None, stderr=None, timeout=None, pass_fds=()):
+                if argv[2] == "location":
+                    self.assertEqual(pass_fds, ())
+                    stdout.write(json.dumps({"root": str(publication)}).encode())
+                else:
+                    self.assertEqual(argv[2], "migrate-source")
+                    self.assertEqual(argv[-2:], ["--publication-fd", str(pass_fds[0])])
+                    os.fstat(pass_fds[0])
+                    with self.assertRaisesRegex(release.ReleaseError, "Другая публикация"):
+                        with release.plugin_publication_lease(publication):
+                            self.fail("Migration must hold the release lease")
+                    stdout.write(json.dumps({"root": str(publication), "cachePreserved": True}).encode())
+                return subprocess.CompletedProcess(argv, 0)
+
+            result = release.migrate_plugin_source(source, evidence, runner)
+            self.assertEqual(result["status"], "migrated")
+            self.assertTrue(result["result"]["cachePreserved"])
+            self.assertEqual(release.read_json(evidence / "source-migration.json"), result)
+
+    def test_exception_releases_the_same_persistent_lease_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve() / "publication"
+            with self.assertRaisesRegex(RuntimeError, "interrupted"):
+                with release.plugin_publication_lease(root) as descriptor:
+                    inode = os.fstat(descriptor).st_ino
+                    with self.assertRaisesRegex(release.ReleaseError, "Другая публикация"):
+                        with release.plugin_publication_lease(root):
+                            self.fail("A second publisher cannot enter")
+                    raise RuntimeError("interrupted")
+            with release.plugin_publication_lease(root) as descriptor:
+                self.assertEqual(os.fstat(descriptor).st_ino, inode)
+
+    def test_inherited_child_retains_lease_after_parent_close_and_kill_releases_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve() / "publication"
+            child = None
+            try:
+                with release.plugin_publication_lease(root) as descriptor:
+                    child = subprocess.Popen([shutil.which("node"), "--input-type=module", "-e",
+                        "import {fstatSync} from 'node:fs'; fstatSync(Number(process.argv[1])); console.log('ready'); process.stdin.resume();",
+                        str(descriptor)],
+                        pass_fds=(descriptor,), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                    self.assertEqual(child.stdout.readline().strip(), "ready")
+                with self.assertRaisesRegex(release.ReleaseError, "Другая публикация"):
+                    with release.plugin_publication_lease(root):
+                        self.fail("The surviving publication child still owns the lease")
+                child.kill()  # This test-created, data-free child only.
+                child.communicate(timeout=5)
+                with release.plugin_publication_lease(root):
+                    self.assertTrue((root / ".publication.owner").is_file())
+            finally:
+                if child is not None:
+                    if child.poll() is None:
+                        child.kill()
+                    child.communicate(timeout=5)
+
+    def test_codex_cli_retains_lease_after_the_adapter_exits(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory).resolve()
+            root, endpoint = base / "publication", base / "ready.sock"
+            cli = base / "codex-fixture"
+            cli.write_text(f"#!{sys.executable}\n"
+                "import json, os, socket\n"
+                "lease = os.fstat(3)\n"
+                "with socket.socket(socket.AF_UNIX) as peer:\n"
+                f"    peer.connect({str(endpoint)!r})\n"
+                "    peer.sendall(json.dumps({'pid': os.getpid(), 'inode': lease.st_ino}).encode())\n"
+                "    peer.recv(1)\n")
+            cli.chmod(0o700)
+            adapter, peer = None, None
+            with socket.socket(socket.AF_UNIX) as listener:
+                listener.bind(str(endpoint)); listener.listen(); listener.settimeout(5)
+                try:
+                    with release.plugin_publication_lease(root) as descriptor:
+                        adapter = subprocess.Popen([shutil.which("node"), ROOT / "MCP/install-plugin.mjs",
+                            "preflight", "--publication-fd", str(descriptor)],
+                            env={**os.environ, "CODEX_BIN": str(cli)}, pass_fds=(descriptor,),
+                            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                        peer, _ = listener.accept(); peer.settimeout(5)
+                        ready = json.loads(peer.recv(1024))
+                        self.assertEqual(ready["inode"], os.fstat(descriptor).st_ino)
+                    adapter.kill()  # Only the adapter spawned by this isolated test.
+                    adapter.communicate(timeout=5)
+                    with self.assertRaisesRegex(release.ReleaseError, "Другая публикация"):
+                        with release.plugin_publication_lease(root):
+                            self.fail("The surviving Codex operation still owns the lease")
+                    peer.sendall(b"x")  # The data-free CLI fixture now completes normally.
+                    self.assertEqual(peer.recv(1), b"")
+                    deadline = time.monotonic() + 2
+                    while True:
+                        try:
+                            with release.plugin_publication_lease(root):
+                                break
+                        except release.ReleaseError:
+                            if time.monotonic() >= deadline:
+                                raise
+                            time.sleep(0.01)
+                finally:
+                    if peer is not None:
+                        peer.close()
+                    if adapter is not None:
+                        if adapter.poll() is None:
+                            adapter.kill()
+                        adapter.communicate(timeout=5)
 
 
 class RuntimeInstallationOwnershipTests(unittest.TestCase):

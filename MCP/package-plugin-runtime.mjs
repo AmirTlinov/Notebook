@@ -2,19 +2,8 @@ import assert from 'node:assert/strict';
 import { access, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { dirname, join, resolve, sep } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-
-const repository = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-
-/** A worktree release updates the existing marketplace in the primary checkout. */
-export function defaultPluginRoot() {
-  const result = spawnSync('git', ['-C', repository, 'worktree', 'list', '--porcelain', '-z'], { encoding: 'utf8' });
-  assert.equal(result.status, 0, result.stderr || 'Cannot locate the primary Notebook checkout.');
-  const first = result.stdout.split('\0')[0];
-  assert(first.startsWith('worktree '), 'Git did not identify the primary checkout.');
-  return join(first.slice('worktree '.length), 'MCP/plugin/notebook');
-}
 
 function run(command, args) {
   const result = spawnSync(command, args, { encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 });
@@ -86,8 +75,8 @@ export async function packageRuntime(app, pluginRoot, { inspect = inspectRuntime
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  assert(process.argv.length >= 3 && process.argv.length <= 4,
-    'Usage: node MCP/package-plugin-runtime.mjs <signed NotebookRuntime.app> [plugin-root]');
-  const result = await packageRuntime(resolve(process.argv[2]), resolve(process.argv[3] ?? defaultPluginRoot()));
+  assert.equal(process.argv.length, 4,
+    'Usage: node MCP/package-plugin-runtime.mjs <signed NotebookRuntime.app> <build-plugin-root>');
+  const result = await packageRuntime(resolve(process.argv[2]), resolve(process.argv[3]));
   console.log(JSON.stringify(result, null, 2));
 }

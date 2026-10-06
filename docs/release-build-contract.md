@@ -196,9 +196,8 @@ python3 -B Applications/notebook_release.py install-pair \
 
 Before installation, finish the serving runtime through ordinary quit and wait
 for its process to exit. On the first plugin transition, unregister the former
-Notebook login item. The installer refuses a live owner, stale plugin metadata,
-downgrades and changed signed bytes. It packages the runtime into the primary
-checkout's plugin source, installs the plugin, checks its actual cached payload,
+Notebook login item. The installer refuses a live owner, downgrades and changed
+signed bytes. It publishes the complete verified plugin, installs it, checks its actual cached payload,
 then updates iPad in place and reads back the installed identity. Unknown outcomes
 remain `incomplete`; it never restores data or retries an uncertain installation.
 
@@ -210,10 +209,35 @@ without a provable catalog refuses installation. App-group IDs stay unchanged;
 iPadOS container paths and SQLite/WAL sizes are diagnostic. The installer reads
 only the small catalog and file metadata, never copies SQLite or archives.
 
-Bump the plugin manifest version together with each native pair release: Codex
-caches plugin payloads by that version. Commit the matching static plugin files
-and installation scripts into the primary checkout before installing a worktree
-build. Verify the live IPC peer and current data/trust separately after delivery.
+`MCP/plugin` is authored input. `install-pair` publishes its frozen metadata and
+signed runtime together into `~/Library/Application Support/NotebookPlugin/marketplace`.
+The publisher validates the copied package before atomically changing the catalog
+pointer to `releases/<version>/notebook`. A version binds all metadata and runtime
+bytes; reusing it for changed content is refused. Installation scripts come from
+the verified snapshot. Edits in the primary checkout cannot change a published pair.
+After the complete installed pair is confirmed, obsolete published packages are
+removed; Codex's own cache and active connections remain host-owned.
+
+Before the next authored version change, migrate an existing source registration once:
+
+```sh
+python3 -B Applications/notebook_release.py migrate-plugin-source \
+  --source-root "$PWD" --evidence-dir /absolute/new-migration-directory
+```
+
+This adopts the currently installed signed cache as the first immutable publication,
+then uses official `codex plugin marketplace remove/add` commands to retain the
+`notebook@notebook-local` identity, version and enabled state at the new source.
+It does not reinstall the plugin or change its cache. A failed registration restores
+the previous source; an unfinished transition keeps a pinned receipt for the next
+invocation with a new evidence directory. The catalog can briefly
+disappear between the two CLI commands. Existing chats reconnect through the host's
+normal lifecycle. Complete this transition before bumping the manifest; each later
+native pair receives a new plugin version and is released only by `install-pair`.
+The release owner holds an OS `flock` shared with its Node adapter and Codex CLI
+through an inherited descriptor. The last process exit releases it; the next admitted attempt discards unpublished
+copy stages. There is no persistent directory lock to remove after a crash.
+Verify the live IPC peer and current data/trust separately after delivery.
 
 Ordinary in-place updates preserve containers, identities and keys.
 Historical archive conversion is a separate explicitly authorized operation, not

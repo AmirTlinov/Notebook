@@ -260,7 +260,7 @@ def release_commands(evidence, runner=None):
     commands = json.loads(log.read_bytes()) if log.exists() else []
     require(isinstance(commands, list) and all(isinstance(entry, dict) for entry in commands),
             "Журнал команд повреждён.")
-    def command(label, arguments, cwd=None, timeout=60, read_output=False, pipe_stdout=False):
+    def command(label, arguments, cwd=None, timeout=60, read_output=False, pipe_stdout=False, pass_fds=()):
         require(not any(entry.get("label") == label for entry in commands), "Команда с этой меткой уже записана: " + label)
         entry = {"label": label, "argv": [str(value) for value in arguments], "cwd": str(cwd) if cwd else None}
         if pipe_stdout:
@@ -269,7 +269,7 @@ def release_commands(evidence, runner=None):
         write_json(evidence / "commands.json", commands)
         with (evidence / (label + ".stdout.log")).open("wb") as out, (evidence / (label + ".stderr.log")).open("wb") as err:
             result = command_runner(entry["argv"], cwd=cwd, stdout=subprocess.PIPE if pipe_stdout else out,
-                                    stderr=err, timeout=timeout)
+                                    stderr=err, timeout=timeout, **({"pass_fds": pass_fds} if pass_fds else {}))
             if pipe_stdout:
                 require(isinstance(result.stdout, bytes) and len(result.stdout) <= 64 * 1024 * 1024,
                         "Машинный поток runner отсутствует или превысил бюджет.")
@@ -745,6 +745,29 @@ def plugin_metadata(root):
 
 
 @contextlib.contextmanager
+def plugin_publication_lease(root):
+    """The release owner and its inherited child FD share one OS-released lease."""
+    require(root.is_absolute() and root == root.resolve(), "Нужен прямой адрес каталога публикации.")
+    root.mkdir(parents=True, mode=0o700, exist_ok=True)
+    info = root.lstat()
+    require(stat.S_ISDIR(info.st_mode) and info.st_uid == os.geteuid(), "Каталог публикации должен принадлежать пользователю.")
+    path = root / ".publication.owner"
+    descriptor = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    try:
+        info, current = os.fstat(descriptor), path.lstat()
+        require(stat.S_ISREG(info.st_mode) and info.st_uid == os.geteuid() and stat.S_IMODE(info.st_mode) == 0o600
+                and info.st_nlink == 1 and (info.st_dev, info.st_ino) == (current.st_dev, current.st_ino),
+                "Файл владельца публикации должен принадлежать пользователю с правами 0600.")
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise ReleaseError("Другая публикация Notebook ещё выполняется.") from error
+        yield descriptor
+    finally:
+        os.close(descriptor)
+
+
+@contextlib.contextmanager
 def stopped_runtime(command, root=None):
     """Share the production writer lease while replacing only plugin binaries."""
     root = root or Path("/tmp") / ("notebook-" + str(os.geteuid()))
@@ -914,15 +937,21 @@ def install_verified_pair(source, build, evidence, runner=None):
                     "workspaceIDs": sorted(ids), "activeSQLite": active},
                 "sqliteMetadata": sqlite_metadata}
 
+    leases = contextlib.ExitStack()
     try:
-        output = command("primary-checkout", ["git", "-C", source, "worktree", "list", "--porcelain", "-z"], read_output=True)[0].decode().split("\0")[0]
-        require(output.startswith("worktree "), "Git не назвал primary checkout для установленного plugin marketplace.")
-        primary = Path(output.removeprefix("worktree ")).resolve()
-        stable = primary / "MCP/plugin"
-        require(metadata == plugin_metadata(stable), "Сначала перенесите проверенные plugin metadata в primary checkout.")
-        for script in ("install-plugin.mjs", "package-plugin-runtime.mjs"):
-            require(file_digest(primary / "MCP" / script) == file_digest(snapshot / "MCP" / script),
-                    "Установщик плагина в primary checkout отличается от release snapshot.")
+        node, codex = shutil.which("node"), os.environ.get("CODEX_BIN") or shutil.which("codex")
+        require(node and codex, "Для установки нужны node и Codex CLI.")
+        installer = snapshot / "MCP/install-plugin.mjs"
+        publication_before = json.loads(command("plugin-publication-preflight", [node, installer, "preflight"], read_output=True)[0])
+        stable = Path(publication_before["root"])
+        require(stable.is_absolute() and not below(stable, source) and not below(stable, build),
+                "Опубликованный marketplace должен жить отдельно от исходников и сборки.")
+        publication_fd = leases.enter_context(plugin_publication_lease(stable))
+
+        def plugin_command(label, arguments, **options):
+            return command(label, [node, installer, *arguments, "--publication-fd", publication_fd],
+                           pass_fds=(publication_fd,), **options)
+
         device_path = evidence / "device.json"
         command("device", ["/usr/bin/xcrun", "devicectl", "device", "info", "details", "--device", DEVICE,
             "--timeout", "30", "--json-output", device_path, "--omit-deprecated-fields-in-json"])
@@ -945,9 +974,9 @@ def install_verified_pair(source, build, evidence, runner=None):
             current = info.get("bundleVersion")
             require(isinstance(current, str) and current.isdecimal() and int(current) <= int(build_number),
                     "Установленный iPad новее этой пары; downgrade запрещён.")
-        node, codex = shutil.which("node"), os.environ.get("CODEX_BIN") or shutil.which("codex")
-        require(node and codex, "Для установки нужны node и Codex CLI.")
-        current_apps = [stable / "notebook/runtime/NotebookRuntime.app", CANONICAL_MAC]
+        current_apps = [CANONICAL_MAC]
+        if publication_before["plugin"]:
+            current_apps.append(Path(publication_before["plugin"]) / "runtime/NotebookRuntime.app")
         plugins = json.loads(command("plugins-before", [codex, "plugin", "list", "--json"], read_output=True)[0])
         installed = [item for item in plugins.get("installed", []) if item.get("pluginId") == "notebook@notebook-local"]
         require(len(installed) <= 1, "Codex назвал несколько установок плагина Notebook.")
@@ -971,14 +1000,17 @@ def install_verified_pair(source, build, evidence, runner=None):
         receipt.update({"ipadBefore": before, "ipadWorkspaceBefore": workspace_before,
                         "canonicalBefore": canonical, "marketplace": str(stable)})
         with stopped_runtime(command):
-            receipt.update({"status": "incomplete", "installationAttempted": True, "step": "package-plugin"})
+            receipt.update({"status": "incomplete", "installationAttempted": True, "step": "publish-plugin"})
             write_json(evidence / "installation.json", receipt)
-            command("package-plugin", [node, snapshot / "MCP/package-plugin-runtime.mjs", mac, stable / "notebook"], timeout=600)
-            require(app_manifest(stable / "notebook/runtime/NotebookRuntime.app") == read_json(build / "mac-manifest.json"),
+            publication = json.loads(plugin_command("publish-plugin", ["publish", plugin], read_output=True, timeout=600)[0])
+            require(publication["root"] == str(stable) and publication["version"] == manifest["version"],
+                    "Публикация назвала другую версию или marketplace.")
+            require(app_manifest(Path(publication["plugin"]) / "runtime/NotebookRuntime.app") == read_json(build / "mac-manifest.json"),
                     "Подписанный runtime изменился при переносе в marketplace.")
+            receipt["publication"] = publication
         # Releasing the lease allows Codex's new connection to start its owner.
         receipt["step"] = "install-plugin"; write_json(evidence / "installation.json", receipt)
-        command("install-plugin", [node, primary / "MCP/install-plugin.mjs", "install"], cwd=primary, timeout=120)
+        plugin_command("install-plugin", ["install"], cwd=snapshot, timeout=120)
         connected = json.loads(command("installed-plugin", [codex, "mcp", "get", "notebook", "--json"], read_output=True)[0])
         transport = connected.get("transport", {})
         executable = Path(transport.get("command", ""))
@@ -1019,6 +1051,8 @@ def install_verified_pair(source, build, evidence, runner=None):
         require(workspace_before is None or workspace_after["identity"] == workspace_before["identity"],
                 "Каталог или выбранное пространство iPad изменились при установке; требуется readback без повторной установки.")
         require(device_apps("canonical-after", CANONICAL) == canonical, "Историческая установка iPad изменилась.")
+        receipt["step"] = "prune-plugin-publications"; write_json(evidence / "installation.json", receipt)
+        plugin_command("prune-plugin-publications", ["prune"], cwd=snapshot, timeout=120)
         receipt.update({"status": "installed", "step": "complete", "ipadAfter": after, "runtime": str(cached)})
         write_json(evidence / "installation.json", receipt)
         return receipt
@@ -1026,12 +1060,40 @@ def install_verified_pair(source, build, evidence, runner=None):
         receipt.update({"status": "incomplete" if receipt["installationAttempted"] else "refused", "error": str(error)})
         write_json(evidence / "installation.json", receipt)
         raise
+    finally:
+        leases.close()
+
+
+def migrate_plugin_source(source, evidence, runner=None):
+    """Adopt the installed immutable payload without reinstalling either product."""
+    source = source.resolve()
+    require(evidence.is_absolute() and evidence == evidence.resolve() and not evidence.exists(),
+            "Для миграции нужен новый прямой каталог доказательств.")
+    evidence.mkdir(parents=True, mode=0o700)
+    command = release_commands(evidence, runner)
+    node = shutil.which("node")
+    require(node is not None, "Для миграции нужен node.")
+    installer = source / "MCP/install-plugin.mjs"
+    root = Path(json.loads(command("publication-location", [node, installer, "location"], read_output=True)[0])["root"])
+    receipt = {"format": 1, "status": "migrating", "publicationRoot": str(root)}
+    write_json(evidence / "source-migration.json", receipt)
+    try:
+        with plugin_publication_lease(root) as descriptor:
+            result = json.loads(command("migrate-source", [node, installer, "migrate-source", "--publication-fd", descriptor],
+                                        pass_fds=(descriptor,), read_output=True, timeout=600)[0])
+        receipt.update({"status": "migrated", "result": result})
+        write_json(evidence / "source-migration.json", receipt)
+        return receipt
+    except Exception as error:
+        receipt.update({"status": "incomplete", "error": str(error)})
+        write_json(evidence / "source-migration.json", receipt)
+        raise
 
 
 def main():
     parser = argparse.ArgumentParser(description="Проверка, сборка и установка пары Notebook iPad + Codex plugin без переноса содержания.")
     actions = parser.add_subparsers(dest="action", required=True)
-    for name in ("fingerprint", "build-pair", "install-pair"):
+    for name in ("fingerprint", "build-pair", "install-pair", "migrate-plugin-source"):
         action = actions.add_parser(name)
         action.add_argument("--source-root", type=Path, required=True)
         action.add_argument("--evidence-dir", type=Path, required=True)
@@ -1045,6 +1107,9 @@ def main():
     elif args.action == "build-pair":
         build_verified_pair(args.source_root, args.verification_dir, args.evidence_dir)
         print("Подписанная пара собрана из проверенного среза. Приложения НЕ установлены, архивы НЕ изменены.")
+    elif args.action == "migrate-plugin-source":
+        migrate_plugin_source(args.source_root, args.evidence_dir)
+        print("Источник Notebook перенесён с сохранением установленного плагина и кеша. Квитанция: " + str(args.evidence_dir / "source-migration.json"))
     else:
         install_verified_pair(args.source_root, args.build_dir, args.evidence_dir)
         print("Плагин Notebook и iPad установлены из проверенной пары. Квитанция: " + str(args.evidence_dir / "installation.json"))

@@ -48,7 +48,9 @@ Business subjects are read again at the completed source revision; PNG bytes
 remain in the app-only response and never enter model context. The installed
 runtime and the iPad keep one saved workspace and the same delivery path.
 
-`MCP/plugin` is the `notebook-local` marketplace; `notebook/` contains the plugin.
+`MCP/plugin` contains authored metadata for `notebook-local`; it is build input.
+The release owner publishes complete packages into the dedicated generated
+marketplace described in the [release contract](release-build-contract.md#build-versus-installation).
 Its root `plugin.json` selects the portable Agent Plugins format. Codex resolves
 the contained `./runtime/.../node` executable and expands `${PLUGIN_ROOT}` in
 the launcher argument from `mcp.json`. A legacy manifest would leave that argument
@@ -58,14 +60,14 @@ to the same local owner, which survives their closure.
 
 ```sh
 node MCP/install-plugin.mjs check
-node MCP/install-plugin.mjs install
 node MCP/install-plugin.mjs uninstall
 ```
 
-`check` validates source packaging without changing Codex. Installation requires
-the signed runtime already packaged by the verified pair builder, registers this source with
-`codex plugin marketplace add`, and installs `notebook@notebook-local` with
-`codex plugin add`. An enabled global `notebook` MCP must first be migrated to
+`check` validates authored packaging without changing Codex. The one-time
+release-owner `migrate-plugin-source` command preserves the current installed payload and switches its
+marketplace source before any new version is authored. New pairs use
+`Applications/notebook_release.py install-pair`; its helper installs only an
+already published immutable package. An enabled global `notebook` MCP must first be migrated to
 the plugin to keep one tool provider. Existing unrelated configuration is preserved.
 Uninstall removes this plugin and its dedicated marketplace; saved Notebook
 content remains in its existing container. The pair installer reads back the
