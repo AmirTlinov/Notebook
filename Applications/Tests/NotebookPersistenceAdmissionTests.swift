@@ -111,6 +111,29 @@ final class NotebookPersistenceAdmissionTests: XCTestCase {
     XCTAssertEqual(first.occupiedBytes, 0)
   }
 
+  @MainActor
+  func testPreparationGrowthKeepsOneSlotAndCannotRenewAcceptedCredit() throws {
+    let admission = NotebookPersistenceAdmission(limits: .init(maximumBytes: 1_024, maximumOperations: 2))
+    let other = NotebookPersistenceAdmission(limits: .init(maximumBytes: 1_024, maximumOperations: 2))
+    let preparing = try XCTUnwrap(admission.reserve(.init(payloadBytes: 128, completionBytes: 64)))
+    let contact = try XCTUnwrap(admission.reserve(.init(payloadBytes: 256)))
+    try admission.extendPreparation(preparing, to: .init(payloadBytes: 384, completionBytes: 128))
+    XCTAssertEqual(admission.operationCount, 2)
+    XCTAssertEqual(admission.occupiedBytes, 768)
+    XCTAssertThrowsError(try other.extendPreparation(preparing, to: .init(payloadBytes: 768)))
+    XCTAssertThrowsError(try admission.extendPreparation(preparing, to: .init(payloadBytes: 769)))
+    XCTAssertEqual(admission.occupiedBytes, 768, "A failed next phase owns no extra bytes or slot")
+    admission.release(contact)
+    try admission.extendPreparation(preparing, to: .init(payloadBytes: 768, completionBytes: 256))
+    let charge = try admission.transfer(preparing)
+    XCTAssertEqual(admission.operationCount, 1)
+    XCTAssertThrowsError(try admission.extendPreparation(preparing, to: .init(payloadBytes: 768, completionBytes: 256)))
+    admission.release(preparing)
+    XCTAssertEqual(admission.occupiedBytes, 1_024)
+    admission.releaseCharge(charge)
+    XCTAssertEqual(admission.occupiedBytes, 0)
+  }
+
   func testLiveInkWorstLiteralBodyFitsItsFinishReserveAndRejectsTheNextMeasurement() throws {
     let samples = (0..<NotebookInkWriteAllowance.maximumMeasurements).map { index in
       SpatialInkSample(point: .init(x: Double(index).squareRoot(), y: sin(Double(index))),

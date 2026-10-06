@@ -31,14 +31,14 @@ public struct NotebookPortableDocument: Sendable {
       return .init(pdf: pdf, syncTeX: syncTeX, interactiveMap: interactiveMap, sourceMap: map)
     }
   }
-  private struct Entry: Codable {
+  struct Entry: Codable, Sendable {
     let id: String
     let path: String
     let text: Bool
     let byteCount: Int
     let sha256: String
   }
-  private struct Manifest: Codable {
+  struct Manifest: Codable, Sendable {
     let format: String
     let documentID: UUID
     let entrypoint: String
@@ -53,50 +53,91 @@ public struct NotebookPortableDocument: Sendable {
   /// Authored paths, without the transport's files/ prefix.
   public let files: [String: Data]
   public let derived: Derived?
-  private static let derivedNames: Set<String> = ["derived/document.pdf", "derived/document.synctex.gz", "derived/document.nbmap", "derived/source-map.json"]
+  static let derivedNames: Set<String> = ["derived/document.pdf", "derived/document.synctex.gz", "derived/document.nbmap", "derived/source-map.json"]
 
   public init(data: Data, compilerRevision: String? = nil) throws {
-    let archive = try NotebookDocumentZIP.decode(data)
-    guard let metadata = archive["manifest.json"], let stateBytes = archive["state.json"] else { throw Self.invalid("В архиве нет описания или состояния документа.") }
-    guard metadata.count <= Self.maximumMetadataBytes, stateBytes.count <= Self.maximumStateBytes else { throw Self.limit("Описание и история либо состояние документа превышают 8 МиБ.") }
+    let archive = try NotebookDocumentZIP.Archive(data: data)
+    guard let metadataEntry = archive.entry("manifest.json"), let stateEntry = archive.entry("state.json"),
+      metadataEntry.size <= Self.maximumMetadataBytes, stateEntry.size <= Self.maximumStateBytes else {
+      throw Self.invalid("В архиве нет допустимого описания или состояния документа.")
+    }
+    let metadata = try archive.data(metadataEntry, maximumBytes: Self.maximumMetadataBytes)
+    let stateBytes = try archive.data(stateEntry, maximumBytes: Self.maximumStateBytes)
+    let maximum = NotebookPortableDocumentImport.maximumPreparationBytes
+    let buffers = data.count + archive.retainedDirectoryBytes + metadata.count + stateBytes.count + 2*1_048_576
+    let metadataDecode = try NotebookJSONAdmission.allocationCost(metadata, maximumBytes: maximum-buffers)
+    let stateDecode = try NotebookJSONAdmission.allocationCost(stateBytes, maximumBytes: maximum-buffers-metadataDecode)
     let manifest = try JSONDecoder().decode(Manifest.self, from: metadata)
     guard manifest.format == "NotebookDocument/1", manifest.files.count <= DocumentDocument.maximumFileCount,
       Set(manifest.files.map(\.path)).count == manifest.files.count,
       manifest.stateSHA256 == Self.hash(stateBytes) else { throw Self.invalid("Описание или состояние документа повреждено.") }
     let expected = Set(manifest.files.map { "files/"+$0.path }).union(["manifest.json", "state.json"])
-    guard expected.isSubset(of: Set(archive.keys)), Set(archive.keys).subtracting(expected).isSubset(of: Self.derivedNames) else {
+    guard expected.isSubset(of: Set(archive.entries.map(\.path))),
+      Set(archive.entries.map(\.path)).subtracting(expected).isSubset(of: Self.derivedNames) else {
       throw Self.invalid("Состав ZIP не совпадает с описанием документа.")
     }
-    var sourceFiles: [DocumentFile] = [], sourceBytes: [String: Data] = [:], total = 0
+    var total = 0, largest = 0
     for entry in manifest.files {
-      try Task.checkCancellation()
-      guard DocumentFile.validPath(entry.path), let bytes = archive["files/"+entry.path], bytes.count == entry.byteCount,
-        bytes.count <= DocumentDocument.maximumSourceBytes-total, Self.hash(bytes) == entry.sha256 else {
+      guard entry.byteCount >= 0, entry.byteCount <= DocumentDocument.maximumSourceBytes-total,
+        !entry.text || entry.byteCount <= DocumentFile.maximumSourceLength,
+        DocumentFile.validPath(entry.path), archive.entry("files/"+entry.path)?.size == entry.byteCount else {
         throw Self.invalid("Файл повреждён или превышает предел: \(entry.path)")
       }
-      total += bytes.count; sourceBytes[entry.path] = bytes
+      total += entry.byteCount; largest = max(largest,entry.byteCount)
+    }
+    let sourceBudget = buffers+metadataDecode+stateDecode+total*3+largest*2
+    guard sourceBudget <= maximum else { throw NotebookPortableDocumentImport.refusal() }
+    var sourceFiles: [DocumentFile] = [], sourceBytes: [String: Data] = [:], textWire = 0
+    for entry in manifest.files {
+      try Task.checkCancellation()
+      let bytes = try archive.data(archive.entry("files/"+entry.path)!, maximumBytes: DocumentDocument.maximumSourceBytes)
+      guard Self.hash(bytes) == entry.sha256 else { throw Self.invalid("SHA-256 файла не совпадает: \(entry.path)") }
+      sourceBytes[entry.path] = bytes
       if entry.text {
-        guard bytes.count <= DocumentFile.maximumSourceLength, let source = String(data: bytes, encoding: .utf8) else { throw Self.invalid("Текст файла не является UTF-8.") }
+        guard let source = String(data: bytes, encoding: .utf8) else { throw Self.invalid("Текст файла не является UTF-8.") }
+        // Only an optional source-map hash needs this encoded buffer. A text
+        // source itself remains raw UTF-8, including controls and embedded NUL.
+        textWire += source.utf8.reduce(2) { bytes, byte in
+          bytes + (byte < 0x20 ? 6 : byte == 34 || byte == 92 || byte == 47 ? 2 : 1)
+        }
         sourceFiles.append(.init(id: entry.id, path: entry.path, source: source))
       } else { sourceFiles.append(.init(id: entry.id, path: entry.path, resource: Self.resource(path: entry.path, bytes: bytes))) }
     }
-    var value: JSONValue = .object(["format": .number(Double(DocumentDocument.formatVersion)), "id": .string(manifest.documentID.uuidString),
-      "entrypoint": .string(manifest.entrypoint), "contentStamp": try .encode(manifest.contentStamp), "files": try .encode(sourceFiles)])
-    if let collaboration = manifest.collaboration { value = value.setting("collaboration", try .encode(collaboration)) }
-    let document = try value.decode(DocumentDocument.self), state = try JSONDecoder().decode(DocumentStateJournal.self, from: stateBytes)
+    let document = try DocumentDocument(importedID: manifest.documentID, entrypoint: manifest.entrypoint,
+      files: sourceFiles, contentStamp: manifest.contentStamp, collaboration: manifest.collaboration)
+    let state = try JSONDecoder().decode(DocumentStateJournal.self, from: stateBytes)
     let exactCut = try NotebookExportCut(document: document, state: state, presented: manifest.presented)
     try Self.validateCutBudget(exactCut)
     cut = exactCut; files = sourceBytes
-    // Derived bytes are optional and disposable. An older compiler never makes
-    // the received source unreadable or turns a stale cache into current proof.
+    let cacheEntries = archive.entries.filter { Self.derivedNames.contains($0.path) }
+    let derivedBytes = cacheEntries.reduce(0) { $0+$1.size }, codec = 2*(metadata.count*2+textWire)
+    var candidates: [String: Data] = [:]
+    var candidateAllowed = compilerRevision != nil && Set(manifest.derived?.keys.map { $0 } ?? []) == Self.derivedNames
+      && cacheEntries.count == Self.derivedNames.count
+      && (archive.entry("derived/document.pdf")?.size ?? Int.max) <= 16*1_048_576
+      && (archive.entry("derived/document.synctex.gz")?.size ?? Int.max) <= 4*1_048_576
+      && (archive.entry("derived/document.nbmap")?.size ?? Int.max) <= 4*1_048_576
+      && (archive.entry("derived/source-map.json")?.size ?? Int.max) <= Self.maximumMetadataBytes
+      && sourceBudget+derivedBytes*2+codec <= maximum
+    for entry in cacheEntries {
+      if candidateAllowed {
+        let value = try archive.data(entry, maximumBytes: entry.size)
+        if Self.hash(value) == manifest.derived?[entry.path] { candidates[entry.path] = value }
+        else { candidateAllowed = false; candidates.removeAll() }
+      } else { try archive.consume(entry) { _ in } }
+    }
     var accepted: Derived?
-    if let compilerRevision, let hashes = manifest.derived, Set(hashes.keys) == Self.derivedNames,
-      Self.derivedNames.allSatisfy({ name in archive[name].map { Self.hash($0) == hashes[name] } ?? false }),
-      archive["derived/source-map.json"]!.count <= Self.maximumMetadataBytes,
-      let map = try? JSONDecoder().decode(DocumentPrintSourceMap.self, from: archive["derived/source-map.json"]!) {
-      let candidate = Derived(pdf: archive["derived/document.pdf"]!, syncTeX: archive["derived/document.synctex.gz"]!,
-        interactiveMap: archive["derived/document.nbmap"]!, sourceMap: map)
-      if (try? candidate.validate(document: document, compilerRevision: compilerRevision)) != nil { accepted = candidate }
+    if candidateAllowed, let compilerRevision, let mapBytes = candidates["derived/source-map.json"] {
+      do {
+        _ = try NotebookJSONAdmission.allocationCost(mapBytes,
+          maximumBytes: maximum-sourceBudget-derivedBytes-codec)
+        let map = try JSONDecoder().decode(DocumentPrintSourceMap.self, from: mapBytes)
+        let candidate = Derived(pdf: candidates["derived/document.pdf"]!, syncTeX: candidates["derived/document.synctex.gz"]!,
+          interactiveMap: candidates["derived/document.nbmap"]!, sourceMap: map)
+        try candidate.validate(document: document, compilerRevision: compilerRevision)
+        accepted = candidate
+      } catch is CancellationError { throw CancellationError() }
+      catch { /* A derived cache cannot make the authored source unavailable. */ }
     }
     derived = accepted
   }
@@ -165,51 +206,15 @@ public struct NotebookPortableDocument: Sendable {
   fileprivate static func encode<T: Encodable>(_ value: T) throws -> Data {
     let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]; return try encoder.encode(value)
   }
-  fileprivate static func hash(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
+  static func hash(_ data: Data) -> String { NotebookHexEncoding.encode(SHA256.hash(data: data)) }
   fileprivate static func invalid(_ message: String) -> CollaborationError { .init("invalid_portable_document", message) }
   private static func limit(_ message: String) -> CollaborationError { .init("resource_limit", message) }
 }
 
-public struct NotebookPortableImportResult: Sendable {
-  public let documentID: UUID
-  public let receipt: CollaborationReceipt
-  public let derived: NotebookPortableDocument.Derived?
-}
 extension NotebookStore {
   public func exportPortableDocument(cut: NotebookExportCut, derived: NotebookPortableDocument.Derived? = nil) throws -> Data {
     var files: [String: Data] = [:]
     for file in cut.document.files { try Task.checkCancellation(); files[file.path] = try readDocumentFileBytes(file) }
     return try NotebookPortableDocument.encode(cut: cut, files: files, derived: derived)
-  }
-  /// Decode before acquiring the writer. The one existing create action owns
-  /// content, state, catalogue, board placement, delivery and Undo together.
-  public func importPortableDocument(data: Data, targetBoardID: UUID, center: WorldPoint, actor: UUID,
-    compilerRevision: String? = nil, requestID: UUID = UUID()) throws -> NotebookPortableImportResult {
-    let archive = try NotebookPortableDocument(data: data, compilerRevision: compilerRevision)
-    let id = Self.submissionID(requestID, suffix: "document")
-    let fingerprint = try collaborationHash(JSONValue.object(["domain": .string("NotebookDocumentImport/1"),
-      "archive": .string(NotebookPortableDocument.hash(data)), "boardID": .string(targetBoardID.uuidString.lowercased()), "center": try .encode(center)]))
-    let original = archive.cut.document
-    var state = DocumentStateJournal(id: id, actor: actor)
-    for record in archive.cut.state.records { _ = state.commit(instanceID: record.id, value: record.value, actor: actor) }
-    let target = CollaborationTarget(kind: .board, id: targetBoardID)
-    let operation = CollaborationOperation(kind: .createDocument, target: target, id: id.uuidString.lowercased(),
-      values: ["title": .string("Импортированный документ"), "center": try .encode(center), "entrypoint": .string(original.entrypoint),
-        "files": try .encode(original.files), "state": try .encode(state)])
-    let receipt = try commandTransaction(readAllowance: .agentCommand) {
-      for file in original.files where file.resource != nil {
-        let bytes = archive.files[file.path]!
-        for offset in stride(from: 0, to: bytes.count, by: NotebookProgramPackage.partBytes) {
-          _ = try currentSQL!.putBlob(bytes.subdata(in: offset..<min(offset+NotebookProgramPackage.partBytes, bytes.count)))
-        }
-      }
-      let saved = try hasStoredValue("collaboration/actions/"+requestID.uuidString.lowercased()+".json")
-      let expected: [CollaborationExpectation] = try saved ? [] : readBasis(targets: [target,
-        .init(kind: .workspace, id: workspaceHeader().rootBoardID)]).owners
-      return try applyCollaborationActionImmediately(.init(id: requestID, summary: "Импорт документа", expected: expected, operations: [operation]),
-        actor: actor, requestFingerprint: fingerprint, human: true)
-    }
-    let imported = try loadDocument(id)
-    return .init(documentID: id, receipt: receipt, derived: archive.derived.flatMap { try? $0.rebinding(to: imported) })
   }
 }

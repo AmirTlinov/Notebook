@@ -2074,6 +2074,14 @@ final class NotebookAppModel {
   }
 
   /// File picker, Files/Finder and MCP converge on the same import owner.
+  @ObservationIgnored private var documentImportOwner: NotebookDocumentImportOwner?
+  private func portableDocumentImporter() -> NotebookDocumentImportOwner {
+    if let documentImportOwner { return documentImportOwner }
+    let owner = NotebookDocumentImportOwner(persistence: persistence, actor: actorID)
+    documentImportOwner = owner
+    return owner
+  }
+
   func importDocumentFile(_ url: URL) async throws -> UUID {
     guard loadState == .ready, !isClosing, let header = workspaceHeader else {
       throw CollaborationError("owner_unavailable", "Хранилище Notebook ещё не открыто.")
@@ -2082,14 +2090,14 @@ final class NotebookAppModel {
     defer { if scoped { url.stopAccessingSecurityScopedResource() } }
     let boardID = presence?.boardID ?? header.rootBoardID
     let center = presence?.camera.center ?? WorldPoint(x: 0, y: 0)
-    let request = try await Task.detached {
-      try NotebookDocumentImportRequest.inspect(url, targetBoardID: boardID, center: center)
-    }.value
-    return try await importDocument(request).documentID
+    let result = try await portableDocumentImporter().run(file: url, targetBoardID: boardID, center: center)
+    pencilUndoHistory.recordCommand(domain: .document(result.documentID), actionID: result.actionID)
+    reloadExternalChanges()
+    return result.documentID
   }
 
   private func importDocument(_ request: NotebookDocumentImportRequest) async throws -> NotebookDocumentImportOwner.Result {
-    let result = try await NotebookDocumentImportOwner.run(request, persistence: persistence, actor: actorID)
+    let result = try await portableDocumentImporter().run(request)
     pencilUndoHistory.recordCommand(domain: .document(result.documentID), actionID: result.actionID)
     reloadExternalChanges()
     return result
@@ -6757,6 +6765,7 @@ final class NotebookAppModel {
     if shutdownPhase == .running { shutdownPhase = .closing }
     let task = Task { [self] in
       defer { shutdownTask = nil }
+      documentImportOwner?.stop()
       commandReader.stop()
       drawingTools.cancel()
       cancelRequestedNavigation()
@@ -6802,6 +6811,7 @@ final class NotebookAppModel {
       // refresh owner available to the explicit repair/retry action. Terminal
       // teardown would otherwise make publicationFailure impossible to clear.
       guard agentStopped && inputSaved && programsSaved else { return false }
+      await documentImportOwner?.close(); documentImportOwner = nil
       if let documentSaveObserver { DocumentRenderRegistry.shared.removeLiveObserver(documentSaveObserver) }
       documentSaveObserver = nil
       #if os(iOS)

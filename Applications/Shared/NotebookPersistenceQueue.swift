@@ -152,6 +152,11 @@ final class NotebookPersistenceQueue {
     try admission.resize(reservation, to: cost)
   }
 
+  func extendPreparationReservation(_ reservation: NotebookPersistenceAdmission.Reservation,
+    to cost: NotebookPersistenceAdmission.Cost) throws {
+    try admission.extendPreparation(reservation, to: cost)
+  }
+
   /// All preparation runs before this synchronous transfer. A valid admitted
   /// contact can enqueue even while storage is blocked, using its own reserve.
   func enqueueReserved(owner: Owner, reservation: NotebookPersistenceAdmission.Reservation,

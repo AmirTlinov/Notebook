@@ -5,7 +5,9 @@ import overviewURL from './overview.bin';
 import metadata from './data.json';
 import {sampleRate,count,binSize,seed,impulseIndex,selection,sampleWindow,type Selection} from './model.ts';
 
-declare global {interface Window {MathJax: {startup: {promise: Promise<void>; document: {reset(): void; updateDocument(): void}}; tex2svgPromise(tex: string, options: {display: boolean}): Promise<HTMLElement>}}}
+type SignalMath = {startup: {document: {reset(): void; updateDocument(): void}};
+  tex2svgPromise(tex: string, options: {display: boolean}): Promise<HTMLElement>};
+declare global {interface Window {signalMathReady: Promise<SignalMath>}}
 const get = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const canvas = get<HTMLCanvasElement>('overview'), detail = get<HTMLDivElement>('detail');
 const centerInput = get<HTMLInputElement>('center'), spanInput = get<HTMLSelectElement>('span');
@@ -81,15 +83,15 @@ function updateFormula() {
   formulaWanted = true;
   if (formulaWork) return formulaWork;
   formulaWork = (async () => {
-    await window.MathJax.startup.promise;
+    const math = await window.signalMathReady;
     while (formulaWanted && active() && data) {
       formulaWanted = false; const observed = data;
       let min = Infinity, max = -Infinity;
       for (const value of observed.values) {min = Math.min(min,value);max = Math.max(max,value);}
-      const node = await window.MathJax.tex2svgPromise(`\\min_{i\\in W} x_i = ${min.toFixed(3)},\\qquad \\max_{i\\in W} x_i = ${max.toFixed(3)}`, {display:true});
+      const node = await math.tex2svgPromise(`\\min_{i\\in W} x_i = ${min.toFixed(3)},\\qquad \\max_{i\\in W} x_i = ${max.toFixed(3)}`, {display:true});
       if (active() && data === observed) {
         get('formula').replaceChildren(node);
-        window.MathJax.startup.document.reset();window.MathJax.startup.document.updateDocument();
+        math.startup.document.reset();math.startup.document.updateDocument();
       }
     }
   })().finally(() => {formulaWork = undefined;});
@@ -137,7 +139,9 @@ function onResize() {
   if (!active() || frame) return;
   frame = requestAnimationFrame(() => {frame = 0;drawOverview();drawDetail();});
 }
-const resize = new ResizeObserver(onResize);resize.observe(canvas);resize.observe(detail);
+// Both plots borrow the same column width. The CSS-sized canvas is its input;
+// observing the Plot output's auto height feeds rendering back into layout.
+const resize = new ResizeObserver(onResize);resize.observe(canvas);
 centerInput.addEventListener('input',() => change({center:centerInput.valueAsNumber},false),{signal:events.signal});
 centerInput.addEventListener('change',() => change({},true),{signal:events.signal});
 spanInput.addEventListener('change',() => change({span:Number(spanInput.value)},true),{signal:events.signal});

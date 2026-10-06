@@ -40,6 +40,14 @@ public struct AgentPinnedImage: Codable, Equatable, Sendable {
   public let png: Data
   public let sha256: String
 
+  public var retainedPayloadBytes: Int {
+    MemoryLayout<Self>.stride + png.count + (sourceRevision.utf8.count + sha256.utf8.count) * 2
+      + (presentation?.program.map { program in
+        (program.instanceID.utf8.count + program.programPath.utf8.count + program.sourceBasis.utf8.count) * 2
+          + program.state.retainedPayloadBytes
+      } ?? 0)
+  }
+
   public init(referenceID: UUID, sourceRevision: String, region: PageRect,
     worldOrigin: WorldPoint?, pageIndex: Int?, pixelWidth: Int, pixelHeight: Int,
     pixelsPerPoint: Double, png: Data, sha256: String, presentation: Presentation? = nil) throws {

@@ -67,13 +67,23 @@ public struct DocumentPrintLineIndex: Sendable {
 }
 
 public enum DocumentPrintLocations {
+  public static let maximumAllocationBytes = 64 * 1_048_576
   /// A single ordered shipout stream owns both source and program geometry.
-  public static func decode(_ text: String, files: [DocumentPrintSourceFile], pages: [DocumentPrintPage]) throws -> DocumentPrintProjection {
+  public static func decode(_ text: String, files: [DocumentPrintSourceFile], pages: [DocumentPrintPage],
+    allocationBytes: Int = maximumAllocationBytes) throws -> DocumentPrintProjection {
     guard text.utf8.count <= 16*1024*1024, text.hasPrefix("SyncTeX Version:1\nNotebook Shipout:1\n"),
       (1...4096).contains(pages.count), pages.allSatisfy({
         [0, 90, 180, 270].contains($0.rotation) && [$0.width, $0.height].allSatisfy { $0.isFinite && $0 > 0 && $0 <= 1_000_000 }
       }), files.count <= 4096, Set(files.map(\.path)).count == files.count,
       files.allSatisfy({ $0.lineCount > 0 }) else { throw invalid() }
+    var remaining = allocationBytes
+    func charge(_ bytes: Int) throws {
+      guard bytes >= 0, bytes <= remaining else {
+        throw CollaborationError("resource_limit", "Печатная карта превышает резерв подготовки.")
+      }
+      remaining -= bytes
+    }
+    try charge(1_048_576 + files.count * (MemoryLayout<DocumentPrintSourceFile>.stride * 2 + 128))
     let filesByPath = Dictionary(uniqueKeysWithValues: files.map { ($0.path, $0) })
     var inputs: [Int: DocumentPrintSourceFile] = [:]
     var page = -1, unit = 1.0, magnification = 1000.0, xOffset = 0.0, yOffset = 0.0
@@ -101,17 +111,42 @@ public enum DocumentPrintLocations {
     func append(_ file: DocumentPrintSourceFile, _ line: Int, _ box: LineBox) throws {
       guard result.count < 524_288 else { throw invalid() }
       let rect = try project(box)
+      try charge(MemoryLayout<DocumentPrintLocation>.stride * 2 + 64)
       result.append(.init(fileID: file.fileID, path: file.path, line: line, pageIndex: page,
         x: rect.x, y: rect.y, width: rect.width, height: rect.height))
     }
-    for (ordinal, record) in text.split(separator: "\n").enumerated() {
+    let utf8 = text.utf8
+    var cursor = utf8.startIndex, ordinal = 0
+    func nextLine() throws -> Substring? {
+      while cursor < utf8.endIndex {
+        let start = cursor
+        var bytes = 0
+        while cursor < utf8.endIndex && utf8[cursor] != 10 {
+          if bytes & 1023 == 0 { try Task.checkCancellation() }
+          guard bytes < 8_192 else {
+            throw CollaborationError("resource_limit", "Строка печатной карты превышает резерв подготовки.")
+          }
+          cursor = utf8.index(after: cursor); bytes += 1
+        }
+        guard let begin = String.Index(start, within: text), let end = String.Index(cursor, within: text) else { throw invalid() }
+        let record = text[begin..<end]
+        if cursor < utf8.endIndex { cursor = utf8.index(after: cursor) }
+        if !record.isEmpty { return record }
+      }
+      return nil
+    }
+    while let record = try nextLine() {
       if ordinal % 1024 == 0 { try Task.checkCancellation() }
+      ordinal += 1
       if record.hasPrefix("Input:") {
         let fields = record.dropFirst(6).split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
         guard fields.count == 2, let tag = Int(fields[0]), tag > 0 else { throw invalid() }
         var path = String(fields[1]); if path.hasPrefix("/input/") { path.removeFirst(7) }
         if path.hasPrefix("./") { path.removeFirst(2) }
-        if let file = filesByPath[path] { inputs[tag] = file }
+        if let file = filesByPath[path] {
+          if inputs[tag] == nil { try charge(MemoryLayout<DocumentPrintSourceFile>.stride * 2 + 128) }
+          inputs[tag] = file
+        }
         continue
       }
       if record.hasPrefix("Unit:") { unit = Double(record.dropFirst(5)) ?? 0; continue }
@@ -131,6 +166,7 @@ public enum DocumentPrintLocations {
       if record.hasPrefix("N+"), page >= 0 {
         let (point, payload) = try special(record, page: pages[page])
         guard transforms.count < 256 else { throw invalid() }
+        try charge(MemoryLayout<PrintTransform>.stride * 2)
         transforms.append(transform)
         transform = try transform.concatenating(.shipout(payload, pivot: point)); continue
       }
@@ -162,6 +198,8 @@ public enum DocumentPrintLocations {
         let rect = geometry.projectedBounds(x: point.x, y: point.y, width: width*scale, height: height*scale, content: transform)
         let yScale = (origin.y-vertical.y)/(height*scale)
         guard [rect.x, rect.y, rect.width, rect.height].allSatisfy({ $0.isFinite && abs($0) <= 1_000_000 }) else { throw invalid() }
+        try charge(MemoryLayout<DocumentPrintInteractiveRegion>.stride * 2
+          + (fields[0].utf8.count + fields[1].utf8.count) * 2 + 128)
         regions.append(.init(instanceID: String(fields[0]), programPath: String(fields[1]), pageIndex: page,
           x: rect.x, y: rect.y, width: rect.width, height: rect.height, viewportY: offset*scale*yScale, viewportHeight: total*scale*yScale))
         continue
@@ -169,9 +207,14 @@ public enum DocumentPrintLocations {
       if record.first == ")" { if !boxes.isEmpty { boxes.removeLast() }; continue }
       // Glyphs inherit a real line box and the current shipout transformation.
       if record.first == "g", page >= 0, let index = boxes.lastIndex(where: { $0 != nil }),
-        let (file, line) = address(record.dropFirst().prefix { $0 != ":" }), var box = boxes[index],
-        box.addresses.insert("\(file.fileID):\(line)").inserted {
-        try append(file, line, box); boxes[index] = box; continue
+        let (file, line) = address(record.dropFirst().prefix { $0 != ":" }), var box = boxes[index] {
+        let key = "\(file.fileID):\(line)"
+        if !box.addresses.contains(key) {
+          try charge(key.utf8.count * 2 + 128)
+          box.addresses.insert(key)
+          try append(file, line, box); boxes[index] = box
+        }
+        continue
       }
       guard page >= 0, let kind = record.first, ["(", "h", "v", "r"].contains(kind) else { continue }
       let fields = record.dropFirst().split(separator: ":", omittingEmptySubsequences: false)
@@ -184,12 +227,15 @@ public enum DocumentPrintLocations {
         addresses: source.map { ["\($0.0.fileID):\($0.1)"] } ?? [])
       if kind == "(" {
         guard boxes.count < 4096 else { throw invalid() }
+        try charge(MemoryLayout<LineBox?>.stride * 2 + 128
+          + (source.map { ($0.0.fileID.utf8.count+20)*2 } ?? 0))
         boxes.append(w > 0 && h+depth > 0 ? box : nil)
       }
       guard let (file, line) = source, w > 0, h+depth > 0 else { continue }
       try append(file, line, box)
     }
     guard page == -1, transforms.isEmpty else { throw invalid() }
+    try charge(regions.count * (MemoryLayout<DocumentPrintInteractiveRegion>.stride * 2 + 128))
     for group in Dictionary(grouping: regions, by: \.instanceID).values {
       let fragments = group.sorted { $0.viewportY < $1.viewportY }
       var offset = 0.0

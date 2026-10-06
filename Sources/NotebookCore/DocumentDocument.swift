@@ -60,6 +60,16 @@ public struct DocumentDocument: Codable, Equatable, Identifiable, Sendable {
     precondition(isValid)
   }
 
+  /// The portable parser already owns the bounded typed files and metadata.
+  /// Preserve that exact authored cut without another JSON encode/decode tree.
+  init(importedID: UUID, entrypoint: String, files: [DocumentFile], contentStamp: VersionStamp,
+    collaboration: CollaborativeContent?) throws {
+    format = Self.formatVersion; id = importedID; self.entrypoint = entrypoint
+    self.files = files.sorted { collaborationIdentity($0.id) < collaborationIdentity($1.id) }
+    self.contentStamp = contentStamp; self.collaboration = collaboration
+    guard isValid else { throw NotebookPortableDocumentImport.sourceChanged() }
+  }
+
   public var isValid: Bool {
     format == Self.formatVersion && DocumentFile.validPath(entrypoint)
       && files.count <= Self.maximumFileCount && files.allSatisfy(\.isValid)
@@ -227,6 +237,11 @@ public struct DocumentStateJournal: Codable, Equatable, Identifiable, Sendable {
     self.records = records.sorted { $0.id < $1.id }
     stamp = VersionStamp(counter: 0, actor: actor)
     precondition(isValid)
+  }
+
+  init(importedID: UUID, records: [DocumentStateRecord], stamp: VersionStamp) throws {
+    format = Self.formatVersion; id = importedID; self.records = records; self.stamp = stamp
+    guard isValid else { throw NotebookPortableDocumentImport.sourceChanged() }
   }
 
   private enum CodingKeys: String, CodingKey { case format, id, records, stamp }

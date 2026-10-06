@@ -1,13 +1,26 @@
 <script>
-window.MathJax = {
-  startup: {typeset: false},
-  loader: {load: ['a11y/assistive-mml']},
-  output: {fontPath: new URL('node_modules/@mathjax/%%FONT%%-font', document.baseURI).href},
-  options: {enableMenu: false, menuOptions: {settings: {enrich: false, speech: false, braille: false, assistiveMml: true}}},
-  svg: {fontCache: 'local'}
-};
+// The configuration exists before the bundle. Its startup.promise does not.
+// One gate owns the offline bundle, its components and MathJax's page startup.
+window.signalMathReady = new Promise((resolve, reject) => {
+  window.MathJax = {
+    startup: {typeset: false, ready() {
+      try {
+        const math = window.MathJax;
+        math.startup.defaultReady();
+        math.startup.promise.then(() => resolve(math), reject);
+      } catch (error) { reject(error); }
+    }},
+    loader: {load: ['a11y/assistive-mml'], failed(error) { reject(new Error(`MathJax ${error.package}: ${error.message}`)); }},
+    output: {fontPath: new URL('node_modules/@mathjax/%%FONT%%-font', document.baseURI).href},
+    options: {enableMenu: false, menuOptions: {settings: {enrich: false, speech: false, braille: false, assistiveMml: true}}},
+    svg: {fontCache: 'local'}
+  };
+  const script = document.createElement('script');
+  script.src = 'node_modules/mathjax/tex-svg-nofont.js';
+  script.onerror = event => reject(new Error(`Не удалось загрузить включённый в пакет MathJax: ${event.target.src}`));
+  document.head.append(script);
+});
 </script>
-<script src="node_modules/mathjax/tex-svg-nofont.js"></script>
 <main class="science signal" tabindex="0" aria-label="Исследование сигнала, прокручиваемая область">
   <header>
     <p class="eyebrow">100 000 отсчётов · 100 секунд</p>

@@ -158,6 +158,76 @@ final class ProgramAssetTests: XCTestCase {
   }
 
   #if os(macOS)
+  private struct OpenedSignal: Equatable {
+    let frame: JSONValue
+    let checkpoint: JSONValue
+  }
+
+  private func openScientificSignal(store: NotebookStore, package: String, state: JSONValue,
+    label: String) async throws -> OpenedSignal {
+    let resources = SceneRenderResources(), lease = try await resources.acquireWebSurface(priority: .input)
+    var ready = false, commits = 0
+    let owner = AgentWebCoordinator(lease: lease, resources: resources, onInteractionReady: { ready = $0 }, onState: { _, completion in commits += 1; completion(nil); return true })
+    var terminalFailures: [RenderDiagnostic] = []
+    owner.use(onFailure: { failure in terminalFailures.append(failure.diagnostic) })
+    #if DEBUG
+    var resourceReads: [String] = []
+    owner.programAssets.onResourceRead = { record in
+      if resourceReads.count == 64 { resourceReads.removeFirst() }
+      resourceReads.append(String(record.prefix(2048)))
+    }
+    #endif
+    owner.programStore = store
+    let web = AgentWebCoordinator.makeWebView(coordinator: owner), close = try mount(web)
+    defer { owner.invalidate(); lease.release(); close() }
+    let opened = AgentElement(id: "signal", kind: .web, frame: .init(x: 0, y: 0, width: 760, height: 1050), source: "", html: "", programPackage: package, state: state)
+    owner.load(opened, policy: .exact(scale: 1), in: web)
+    try await wait { ready || owner.snapshotFailure != nil }
+    let recorded = resources.diagnostics(for: [opened])
+    var details = label + ": " + (recorded + terminalFailures).suffix(6).map { "\($0.kind): \($0.message) [\($0.fileID ?? "-"),\($0.path ?? "-"),\($0.line.map(String.init) ?? "-")]" }.joined(separator: "\n")
+    if !ready || owner.snapshotFailure != nil {
+      let runtime = try? await web.evaluateJavaScript("""
+        JSON.stringify({url:location.href,origin:location.origin,ready:document.readyState,
+          viewport:[innerWidth,innerHeight],body:document.body?.innerText.slice(0,600),
+          boxes:['overview','detail','formula'].map(id=>{const node=document.getElementById(id),r=node.getBoundingClientRect();
+            return {id,width:r.width,height:r.height,children:node.childElementCount,css:getComputedStyle(node).height}}),
+          mathVersion:window.MathJax?.version??null,mathAPI:typeof window.MathJax?.tex2svgPromise,
+          mathStartup:typeof window.MathJax?.startup?.promise?.then,programError:window.packageError??null})
+        """) as? String
+      details += "\nowner=\(owner.preparationDiagnostic().prefix(1600)); runtime=\(String((runtime ?? "unavailable").prefix(2048)))"
+      var evidence = details + "\npackage=" + package
+      #if DEBUG
+      evidence += "\nresource reads:\n" + resourceReads.joined(separator: "\n")
+      #endif
+      let attachment = XCTAttachment(string: String(evidence.prefix(32_768)))
+      attachment.name = label + " scientific-signal-owner"; attachment.lifetime = .keepAlways; add(attachment)
+    }
+    XCTAssertTrue(ready, details); XCTAssertNil(owner.snapshotFailure, details); XCTAssertEqual(commits, 0, label)
+    let manifest = try store.readProgramPackage(package)
+    let htmlDirectory = manifest.html.flatMap { path in path.lastIndex(of: "/").map { String(path[...$0]) } } ?? ""
+    let navigationPath = try await web.evaluateJavaScript("location.pathname") as? String
+    XCTAssertEqual(navigationPath, "/" + htmlDirectory, label)
+    let frameValue = try await web.evaluateJavaScript("""
+      JSON.stringify({caption:document.getElementById('detail-caption').textContent,
+        mathText:document.getElementById('formula').textContent,
+        mathSVG:document.querySelectorAll('#formula svg').length,
+        paths:[...document.querySelectorAll('#formula svg path')].map(node=>node.getAttribute('d')),
+        mathVersion:window.MathJax.version,mathAPI:typeof window.MathJax.tex2svgPromise})
+      """)
+    let frameJSON = try XCTUnwrap(frameValue as? String)
+    let frame = try JSONDecoder().decode(JSONValue.self, from: Data(frameJSON.utf8))
+    XCTAssertTrue(frame["caption"]?.stringValue?.contains("37125") == true, label)
+    XCTAssertEqual(frame["mathVersion"], .string("4.1.3"), label)
+    XCTAssertEqual(frame["mathAPI"], .string("function"), label)
+    XCTAssertEqual(frame["mathSVG"], .number(1), label)
+    XCTAssertTrue(frame["mathText"]?.stringValue?.contains("0.273") == true, label)
+    XCTAssertTrue(frame["mathText"]?.stringValue?.contains("0.558") == true, label)
+    let checkpoint = try await NotebookProgramBridge.lifecycle("checkpoint", controller: "notebookProgram", in: web)
+    XCTAssertEqual(checkpoint, state, label)
+    owner.invalidate(); lease.release(); try await wait { resources.activeWebSurfaceCount == 0 }
+    return OpenedSignal(frame: frame, checkpoint: checkpoint)
+  }
+
   func testPortableArchiveImportsRealScientificResourcesWithoutExecutingBeforeOpen() async throws {
     let f = try compiledFixture("signal-program"); defer { f.close() }
     let actor = UUID()
@@ -170,6 +240,9 @@ final class ProgramAssetTests: XCTestCase {
     XCTAssertTrue(state.commit(instanceID: "signal", value: .object(["center": .number(37.125), "span": .number(0.05), "sample": .number(37125)]), actor: actor))
     try f.store.saveDocumentWorkspaceBundle(index: index, document: document, state: state, board: board)
     let cut = try f.store.readTransaction { try NotebookExportCut(document: $0.loadDocument(item.id), state: $0.loadDocumentState(item.id)) }
+    let savedSignal = try XCTUnwrap(cut.state.value(for: "signal"))
+    let originalFrame = try await openScientificSignal(store: f.store, package: f.hash,
+      state: savedSignal, label: "Before portable import")
     let surfaces = SceneRenderResources.shared.activeWebSurfaceCount, before = try f.store.currentChangeCursor()
     let receipt = try await DocumentCanonicalExport.publish(cut: cut, options: .init(format: .package), jobID: UUID(), store: f.store, persistence: NotebookPersistenceQueue(store: f.store))
     XCTAssertEqual(SceneRenderResources.shared.activeWebSurfaceCount, surfaces)
@@ -183,31 +256,40 @@ final class ProgramAssetTests: XCTestCase {
     defer { try? FileManager.default.removeItem(at: importedRoot) }
     let store = NotebookStore(root: importedRoot)
     let workspace = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
-    let selection = workspace.selectedItemID
-    let imported = try store.importPortableDocument(data: bytes, targetBoardID: workspace.rootBoardID, center: .zero, actor: actor)
+    // initializeWorkspace has no local presence; loadIndex's first item is a
+    // nonoptional projection fallback, rather than that durable selection.
+    XCTAssertNil(workspace.selectedItemID)
+    let initial = try store.loadIndex(), viewport = SpatialPoint(x: 834, y: 1194)
+    let presence = SessionPresence(boardID: workspace.rootBoardID, mode: .board,
+      camera: .init(center: .zero, scale: 0.22), viewport: viewport,
+      selectedItemID: initial.selectedItemID, notebookPageID: initial.selectedPageID)
+    try store.savePresence(presence)
+    let beforeImport = try store.workspaceHeader()
+    let preparedImport = try NotebookPortableImportFixture.prepare(bytes, targetBoardID: workspace.rootBoardID, actor: actor)
+    let imported = try preparedImport.command().apply(to: store)
     let copy = try store.loadDocument(imported.documentID)
     XCTAssertNotEqual(copy.id, document.id)
     XCTAssertEqual(copy.files, document.files)
     for file in copy.files { XCTAssertEqual(try store.readDocumentFileBytes(file), try f.store.readDocumentFileBytes(file)) }
-    XCTAssertEqual(try store.loadIndex().selectedItemID, selection, "Import cannot select or execute the new document")
+    let afterImport = try store.workspaceHeader()
+    XCTAssertEqual(afterImport.selectedItemID, beforeImport.selectedItemID)
+    XCTAssertEqual(afterImport.selectedPageID, beforeImport.selectedPageID)
+    XCTAssertEqual(try store.loadPresence(), presence, "Import cannot author a camera, focus or selection change")
+    XCTAssertEqual(try store.loadIndex().selectedItemID, initial.selectedItemID)
+    let scene = try NotebookSceneState.read(store: store, presence: nil, viewport: viewport, loadsLiveContent: false)
+    XCTAssertEqual(scene.presence.selectedItemID, presence.selectedItemID)
+    XCTAssertEqual(scene.workspace.selectedItemID, initial.selectedItemID)
+    XCTAssertEqual(scene.presence.mode, .board); XCTAssertNil(scene.presence.focusedItemID)
+    XCTAssertEqual(scene.presence.openProgress, 0)
+    XCTAssertTrue(scene.documents.isEmpty, "The same scene owner used by native UI does not open the imported source")
     XCTAssertEqual(SceneRenderResources.shared.activeWebSurfaceCount, surfaces)
     let importedProgram = try store.documentProgramSource(document: copy, instanceID: "signal", path: packagePath(f))
-    // Only the explicit open below obtains a WebKit owner and executes the
-    // unchanged asset program against the imported, saved scientific state.
-    let resources = SceneRenderResources(), lease = try await resources.acquireWebSurface(priority: .input)
-    var ready = false, commits = 0
-    let owner = AgentWebCoordinator(lease: lease, resources: resources, onInteractionReady: { ready = $0 }, onState: { _, completion in commits += 1; completion(nil); return true })
-    owner.programStore = store
-    let web = AgentWebCoordinator.makeWebView(coordinator: owner), close = try mount(web)
-    defer { owner.invalidate(); lease.release(); close() }
-    owner.load(.init(id: "signal", kind: .web, frame: .init(x: 0, y: 0, width: 760, height: 1050), source: "", html: "", programPackage: importedProgram.programPackage,
-      state: try XCTUnwrap(portable.cut.state.value(for: "signal"))), policy: .exact(scale: 1), in: web)
-    try await wait { ready || owner.snapshotFailure != nil }
-    XCTAssertTrue(ready); XCTAssertNil(owner.snapshotFailure); XCTAssertEqual(commits, 0)
-    let caption = try await web.evaluateJavaScript("document.getElementById('detail-caption').textContent") as? String
-    XCTAssertTrue(caption?.contains("37125") == true, caption ?? "missing")
-    let restored = try await NotebookProgramBridge.lifecycle("checkpoint", controller: "notebookProgram", in: web)
-    XCTAssertEqual(restored["sample"], .number(37125)); XCTAssertEqual(restored["center"], .number(37.125))
+    // Import creates no runtime. The explicit open must reproduce the original
+    // package's exact raw-sample caption, MathJax vectors and saved checkpoint.
+    let importedFrame = try await openScientificSignal(store: store,
+      package: XCTUnwrap(importedProgram.programPackage),
+      state: XCTUnwrap(portable.cut.state.value(for: "signal")), label: "After portable import")
+    XCTAssertEqual(importedFrame, originalFrame)
   }
 
   func testSignalExportsTheExactSavedSampleWindowAsOfflineVectors() async throws {
@@ -702,6 +784,11 @@ final class ProgramAssetTests: XCTestCase {
     let f = try fixture(); defer { f.close() }
     let assets = NotebookProgramAssets(), web = WKWebView()
     let url = assets.register(store: f.store, package: f.package) { _ in .init(before: "<head></head><body>", after: "</body>") }
+    let html = Request(url.appendingPathComponent("view.html"), range: "bytes=0-3")
+    assets.webView(web, start: html); try await wait { html.finished || html.error != nil }
+    XCTAssertNil(html.error); XCTAssertEqual(html.bytes, Data("<!--".utf8))
+    XCTAssertEqual(html.response?.value(forHTTPHeaderField: "Content-Type"), "text/html",
+      "The authored HTML file remains exact source bytes, separate from its execution wrapper")
     let file = url.appendingPathComponent("large.bin")
     let range = Request(file, range: "bytes=310378494-310378497")
     assets.webView(web, start: range); try await wait { range.finished || range.error != nil }

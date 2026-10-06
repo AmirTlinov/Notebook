@@ -94,11 +94,15 @@ public actor NotebookPrintedDocumentStore {
     String(decoding: try read(resources.appendingPathComponent("revision.txt"), limit: 256), as: UTF8.self)
       .trimmingCharacters(in: .whitespacesAndNewlines)
   }
-  public func adopt(_ derived: NotebookPortableDocument.Derived, for document: DocumentDocument, input: NotebookTypesetterInput) throws {
+  public func adopt(_ derived: NotebookPortableDocument.Derived, for document: DocumentDocument, input: NotebookTypesetterInput,
+    allowance: NotebookPrintedDocument.CacheAdoptionCost) throws {
+    try Task.checkCancellation()
+    try allowance.validate(derived)
     try input.validate(document: document)
     try derived.validate(document: document, compilerRevision: compilerRevision())
     let pages = try NotebookTypesetter.pages(derived.pdf)
-    let projection = try NotebookPrintedDocument.projection(syncTeX: derived.syncTeX, files: derived.sourceMap.files, pages: pages)
+    let projection = try NotebookPrintedDocument.projection(syncTeX: derived.syncTeX, files: derived.sourceMap.files, pages: pages,
+      allocationBytes: allowance.projectionBytes)
     guard try NotebookPrintedDocument.regionMap(projection.interactiveRegions) == derived.interactiveMap else { throw NotebookTypesetterError("print_cache_invalid") }
     var indexedSource = DocumentPrintDependencies.Source(document)
     let source = indexedSource.file(at: document.entrypoint)!.source

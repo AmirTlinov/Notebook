@@ -94,7 +94,7 @@ struct NotebookSearchIndexCostTests {
   }
 
   private enum RollbackProbe: Error { case measured }
-  private struct IndexOnlyResult: Codable {
+  private struct IndexOnlyResult: Encodable {
     let sourceBytes: Int, updateSearchIndexMilliseconds: Double
     let ownerVMSteps: Int64, topLevelSQLProfileMilliseconds: Double, nonSQLOrProfileResolutionMilliseconds: Double
     let sql: [String: Trace.SQL]
@@ -166,7 +166,7 @@ struct NotebookSearchIndexCostTests {
     print("SEARCH_INDEX_ONLY_COST \(String(decoding: data, as: UTF8.self))")
   }
 
-  private struct Result: Codable {
+  private struct Result: Encodable {
     let sourceBytes: Int, writerHoldMilliseconds: Double, coordinationMilliseconds: Double
     let writerVMSteps: Int64, writerStatements: Int
     let mallocLiveBlocksAtSQLPeak: UInt32, mallocLiveBytesAtSQLPeak: UInt64

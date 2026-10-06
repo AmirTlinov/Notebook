@@ -16,6 +16,7 @@ final class NotebookProgramAssets: NSObject, WKURLSchemeHandler {
   private struct Scope: Sendable {
     let store: NotebookStore
     let files: [String: NotebookProgramPackage.File]
+    let documentPath: String
     let document: [Segment]
     func read(_ segments: [Segment], offset: Int64, count: Int) throws -> Data {
       var position: Int64 = 0, output = Data()
@@ -39,6 +40,15 @@ final class NotebookProgramAssets: NSObject, WKURLSchemeHandler {
   private var reads: [ObjectIdentifier: Read] = [:]
   var activeReadCount: Int { reads.count }
   var scopeCount: Int { scopes.count }
+  #if DEBUG
+  var onResourceRead: ((String) -> Void)?
+  #endif
+
+  private func observeResource(_ message: @autoclosure () -> String) {
+    #if DEBUG
+    onResourceRead?(message())
+    #endif
+  }
 
   func register(store: NotebookStore, package: NotebookProgramPackage, document: (URL) throws -> Document) rethrows -> URL {
     let host = UUID().uuidString.lowercased(), url = URL(string: "\(Self.scheme)://\(host)/")!
@@ -46,8 +56,13 @@ final class NotebookProgramAssets: NSObject, WKURLSchemeHandler {
     var segments: [Segment] = [.bytes(Data(wrapper.before.utf8))]
     if let path = package.html, let file = package.files.first(where: { $0.path == path }) { segments.append(.file(file)) }
     segments.append(.bytes(Data(wrapper.after.utf8)))
-    scopes[host] = Scope(store: store, files: Dictionary(uniqueKeysWithValues: package.files.map { ($0.path, $0) }), document: segments)
-    return url
+    let documentPath = package.html.flatMap { path in
+      path.lastIndex(of: "/").map { String(path[...$0]) }
+    } ?? ""
+    scopes[host] = Scope(store: store, files: Dictionary(uniqueKeysWithValues: package.files.map { ($0.path, $0) }), documentPath: documentPath, document: segments)
+    // The wrapper lives beside the authored HTML. File URLs keep their exact
+    // immutable bytes; relative markup resolves within its authored directory.
+    return documentPath.isEmpty ? url : url.appendingPathComponent(documentPath, isDirectory: true)
   }
 
   func revoke(_ url: URL) { if let host = url.host { revoke(host: host) } }
@@ -75,12 +90,16 @@ final class NotebookProgramAssets: NSObject, WKURLSchemeHandler {
       components.user == nil, components.password == nil, components.port == nil, components.query == nil,
       components.fragment == nil, !components.percentEncodedPath.contains("%"),
       ["GET", "HEAD"].contains(request.httpMethod ?? "GET") else {
+      observeResource("refused capability: \(request.url?.absoluteString ?? "-"); reads=\(reads.count)")
       urlSchemeTask.didFailWithError(URLError(.noPermissionsToReadFile)); return
     }
     let path = String(components.percentEncodedPath.dropFirst()), segments: [Segment], mime: String
-    if path.isEmpty { segments = scope.document; mime = "text/html" }
+    if path == scope.documentPath { segments = scope.document; mime = "text/html" }
     else if NotebookProgramPackage.validPath(path), let file = scope.files[path] { segments = [.file(file)]; mime = file.mimeType }
-    else { urlSchemeTask.didFailWithError(URLError(.fileDoesNotExist)); return }
+    else {
+      observeResource("missing namespace path: \(url.absoluteString); document=\(scope.documentPath)")
+      urlSchemeTask.didFailWithError(URLError(.fileDoesNotExist)); return
+    }
     let size = segments.reduce(Int64(0)) { $0 + $1.count }
     let rangeHeader = request.value(forHTTPHeaderField: "Range")
     guard let range = Self.range(rangeHeader, length: size) else {
@@ -93,6 +112,7 @@ final class NotebookProgramAssets: NSObject, WKURLSchemeHandler {
       "Content-Security-Policy": Self.policy(origin: URL(string: "\(Self.scheme)://\(host)/")!)]
     if rangeHeader != nil { headers["Content-Range"] = "bytes \(range.lowerBound)-\(range.upperBound - 1)/\(size)" }
     let response = HTTPURLResponse(url: url, statusCode: rangeHeader == nil ? 200 : 206, httpVersion: "HTTP/1.1", headerFields: headers)!
+    observeResource("accepted \(url.absoluteString); status=\(response.statusCode); mime=\(mime); bytes=\(size); range=\(range); parts=\(scope.files[path]?.parts.prefix(3).map(\.sha256).joined(separator: ",") ?? "document")")
     let task = Task { @MainActor [weak self] in
       guard let self, reads[id] != nil else { return }
       do {
@@ -103,12 +123,15 @@ final class NotebookProgramAssets: NSObject, WKURLSchemeHandler {
           let count = Int(min(1_048_576, range.upperBound - offset)), position = offset
           let data = try await Task.detached(priority: .userInitiated) { try scope.read(segments, offset: position, count: count) }.value
           guard !Task.isCancelled, reads[id] != nil, scopes[host] != nil else { return }
+          observeResource("read \(url.absoluteString); offset=\(position); count=\(data.count)")
           urlSchemeTask.didReceive(data); offset += Int64(data.count)
         }
         guard !Task.isCancelled, reads[id] != nil else { return }
         reads[id] = nil; urlSchemeTask.didFinish()
+        observeResource("finished \(url.absoluteString)")
       } catch {
         guard !Task.isCancelled, reads[id] != nil else { return }
+        observeResource("failed \(url.absoluteString); error=\(String(describing: error))")
         reads[id] = nil; urlSchemeTask.didFailWithError(error)
       }
     }

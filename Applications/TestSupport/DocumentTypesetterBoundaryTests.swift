@@ -1,7 +1,8 @@
 import CoreGraphics
 import Foundation
+import CZlib
 import NotebookCore
-import NotebookTypesetter
+@testable import NotebookTypesetter
 import XCTest
 
 @MainActor
@@ -244,5 +245,79 @@ final class DocumentTypesetterBoundaryTests: XCTestCase {
       do { _ = try await compiler.convertSVG(Data(svg.utf8)); XCTFail("Unsupported image was silently accepted: \(body)") }
       catch { XCTAssertFalse(error.localizedDescription.contains(marker)) }
     }
+  }
+
+  func testMalformedTinyGzipWithSixteenMiBISIZERefusesCreditBeforeInputOrInflate() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("print-adopt-credit-\(UUID())")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let resources = root.appendingPathComponent("resources"), revision = String(repeating: "a", count: 64)
+    try FileManager.default.createDirectory(at: resources, withIntermediateDirectories: true)
+    try Data((revision + "\n").utf8).write(to: resources.appendingPathComponent("revision.txt"))
+    let source = document("Source stays authored. Жёлтый 😀 e\u{301}.")
+    let text = try XCTUnwrap(source.files.first?.source)
+    // The PDF/map are valid. The inner gzip is deliberately unusable: a credit
+    // failure must dominate inflate, which would allocate its claimed16MiB first.
+    let pdf = try blankPDF()
+    var gzip = Data([0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 3, 0xff, 0xff])
+    gzip.append(contentsOf: [0, 0, 0, 0, 0, 0, 0, 1]) // CRC0; little-endian ISIZE0x01000000.
+    let map = try DocumentPrintSourceMap(document: source, source: text, pdf: pdf, compilerRevision: revision)
+    let derived = NotebookPortableDocument.Derived(pdf: pdf, syncTeX: gzip, interactiveMap: Data("[]".utf8), sourceMap: map)
+    let directory = root.appendingPathComponent("cache")
+    let store = NotebookPrintedDocumentStore(resources: resources, directory: directory)
+    let allowance = NotebookPrintedDocument.CacheAdoptionCost(decodedBytes: 32, projectionBytes: 2 * 1_048_576)
+    do {
+      try await store.adopt(derived, for: source, input: NotebookTypesetterInput(document: source), allowance: allowance)
+      XCTFail("The gzip's claimed16MiB must be refused before allocating its decode buffer")
+    } catch let error as NotebookTypesetterError {
+      XCTAssertTrue(error.localizedDescription.contains("print_cache_admission_limit"), error.localizedDescription)
+    }
+    XCTAssertFalse(FileManager.default.fileExists(atPath: directory.path), "Refusal must not initialize the compiler/cache or alter the source")
+    XCTAssertEqual(source.files.first?.source, text)
+  }
+
+  func testARealTinyGzipWithManyIgnoredLinesUsesSmallProjectionCreditAndPreservesUnicodeSource() throws {
+    let source = DocumentDocument(actor: UUID(), files: [.init(id: "selected/a~😀", path: "main.tex", source: "Жёлтый 😀\ne\u{301} source\n尾🖋️\n")])
+    let file = try XCTUnwrap(source.files.first)
+    let pdf = Data("%PDF-1.7\nfixture".utf8)
+    let map = try DocumentPrintSourceMap(document: source, source: file.source, pdf: pdf, compilerRevision: String(repeating: "a", count: 64))
+    let text = "SyncTeX Version:1\nNotebook Shipout:1\n" + String(repeating: "x\n", count: 1_000_000)
+      + "Input:1:/input/main.tex\nUnit:1\n{1\nh1,3:655360,1310720:1966080,655360,327680\n}1\n"
+    let packed = try gzip(Data(text.utf8))
+    XCTAssertLessThan(packed.count, 65_536, "The real inner gzip must exercise compression, not a large raw input")
+    let projection = try NotebookPrintedDocument.projection(syncTeX: packed, files: map.files,
+      pages: [.init(width: 300, height: 400)], allocationBytes: 2 * 1_048_576)
+    XCTAssertEqual(projection.locations.count, 1)
+    XCTAssertEqual(projection.locations.first?.fileID, file.id)
+    XCTAssertEqual(projection.locations.first?.path, file.path)
+    XCTAssertEqual(projection.locations.first?.line, 3)
+    XCTAssertEqual(source.files.first?.source, "Жёлтый 😀\ne\u{301} source\n尾🖋️\n")
+    XCTAssertTrue(projection.interactiveRegions.isEmpty)
+  }
+
+  private func gzip(_ input: Data) throws -> Data {
+    var stream = z_stream()
+    guard deflateInit2_(&stream, Z_DEFAULT_COMPRESSION, Z_DEFLATED, MAX_WBITS + 16, 8, Z_DEFAULT_STRATEGY,
+      zlibVersion(), Int32(MemoryLayout<z_stream>.size)) == Z_OK else { throw NotebookTypesetterError("fixture_gzip_init") }
+    defer { deflateEnd(&stream) }
+    var output = Data(count: Int(compressBound(uLong(input.count))) + 64)
+    let status = output.withUnsafeMutableBytes { destination in
+      input.withUnsafeBytes { source in
+        stream.next_in = UnsafeMutablePointer(mutating: source.bindMemory(to: UInt8.self).baseAddress)
+        stream.avail_in = uInt(source.count)
+        stream.next_out = destination.bindMemory(to: UInt8.self).baseAddress; stream.avail_out = uInt(destination.count)
+        return CZlib.deflate(&stream, Z_FINISH)
+      }
+    }
+    guard status == Z_STREAM_END else { throw NotebookTypesetterError("fixture_gzip_finish") }
+    output.count = Int(stream.total_out)
+    return output
+  }
+
+  private func blankPDF() throws -> Data {
+    let sink = NotebookPDFBuffer(limit: 1_048_576), consumer = try XCTUnwrap(sink.consumer())
+    var box = CGRect(x: 0, y: 0, width: 300, height: 400)
+    let context = try XCTUnwrap(CGContext(consumer: consumer, mediaBox: &box, nil))
+    context.beginPDFPage(nil); context.endPDFPage(); context.closePDF()
+    return try sink.result()
   }
 }

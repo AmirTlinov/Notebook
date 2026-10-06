@@ -293,14 +293,18 @@ final class DocumentCanonicalPrintTests: XCTestCase {
     let cut = try NotebookExportCut(document: document, state: state)
     let data = try store.exportPortableDocument(cut: cut, derived: .init(pdf: original.pdf, syncTeX: original.syncTeX,
       interactiveMap: original.interactiveMap, sourceMap: original.sourceMap))
-    let imported = try store.importPortableDocument(data: data, targetBoardID: store.loadIndex().rootBoardID,
-      center: .zero, actor: actor, compilerRevision: original.sourceMap.compilerRevision)
-    let received = try store.loadDocument(imported.documentID), derived = try XCTUnwrap(imported.derived)
+    let preparedImport = try NotebookPortableImportFixture.prepare(data, targetBoardID: store.loadIndex().rootBoardID, actor: actor)
+    let imported = try preparedImport.command().apply(to: store)
+    let received = try store.loadDocument(imported.documentID)
+    let cacheRead = try XCTUnwrap(preparedImport.cache?.readDerivedBytes(document: received))
+    let derived = try XCTUnwrap(cacheRead.decode(compilerRevision: original.sourceMap.compilerRevision))
     let resources = root.appendingPathComponent("compiler-identity-only"), cache = root.appendingPathComponent("pages")
     try FileManager.default.createDirectory(at: resources, withIntermediateDirectories: true)
     try Data(original.sourceMap.compilerRevision.utf8).write(to: resources.appendingPathComponent("revision.txt"))
     let receiver = NotebookPrintedDocumentStore(resources: resources, directory: cache)
-    try await receiver.adopt(derived, for: received, input: .init(document: received, readResource: { try store.readDocumentFileBytes($0) }))
+    try await receiver.adopt(derived, for: received,
+      input: .init(document: received, readResource: { try store.readDocumentFileBytes($0) }),
+      allowance: NotebookPrintedDocument.cacheAdoptionCost(derived))
     // A second store proves disk reuse. There is no TeX distribution/format and
     // no binary resolver on this request: recompilation cannot succeed here.
     let reopened = try await NotebookPrintedDocumentStore(resources: resources, directory: cache).artifact(for: received)

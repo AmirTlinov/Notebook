@@ -1,4 +1,6 @@
 import XCTest
+import Testing
+import Foundation
 @testable import NotebookCore
 
 final class DocumentPrintLocationsTests: XCTestCase {
@@ -93,5 +95,58 @@ final class DocumentPrintLocationsTests: XCTestCase {
       XCTAssertEqual(bounds.x, 0); XCTAssertEqual(bounds.y, 0)
       XCTAssertEqual(bounds.width, page.width); XCTAssertEqual(bounds.height, page.height)
     }
+  }
+}
+
+@Suite("Print-map allocation and lazy input ownership", .serialized)
+struct DocumentPrintLocationsBudgetTests {
+  private let header = "SyncTeX Version:1\nNotebook Shipout:1\n"
+  private let page = DocumentPrintPage(width: 300, height: 400)
+
+  @Test func aSingleExtendedGraphemeCannotBypassTheWireLineBound() throws {
+    let grapheme = "e" + String(repeating: "\u{301}", count: 5_000)
+    #expect(grapheme.count == 1 && grapheme.utf8.count > 8_192)
+    // Unknown records still pay their real wire-line scan. Counting Characters
+    // would mistake this entire oversized record for one harmless glyph.
+    do {
+      _ = try DocumentPrintLocations.decode(header + "ignored:" + grapheme + "\n", files: [], pages: [page])
+      Issue.record("An ignored long grapheme bypassed the finite line parser")
+    } catch let error as CollaborationError { #expect(error.code == "resource_limit") }
+  }
+
+  @Test func actualLocationsShareTheOuterCreditAndKeepUnicodeAddressesAndUTF16SourceOffsets() throws {
+    let id = "selected/a~😀", path = "chapters/Текст e\u{301}😀.tex", count = 7_000
+    let file = DocumentPrintSourceFile(fileID: id, path: path, sha256: String(repeating: "a", count: 64), lineCount: count)
+    let records = (1...count).map { "h1,\($0):655360,1310720:1966080,655360,327680\n" }.joined()
+    let stream = header + "Input:1:/input/" + path + "\nUnit:1\n{1\n" + records + "}1\n"
+    let admitted = try DocumentPrintLocations.decode(stream, files: [file], pages: [page])
+    #expect(admitted.locations.count == count)
+    #expect(admitted.locations.first?.fileID == id && admitted.locations.last?.path == path)
+    #expect(admitted.locations.last?.line == count)
+    do {
+      _ = try DocumentPrintLocations.decode(stream, files: [file], pages: [page], allocationBytes: 2 * 1_048_576)
+      Issue.record("Real retained locations renewed their caller's smaller allocation credit")
+    } catch let error as CollaborationError { #expect(error.code == "resource_limit") }
+    let source = "A😀e\u{301}\n\n尾🖋️\n"
+    let index = DocumentPrintLineIndex(source), exact = (source as NSString).range(of: "尾🖋️").location
+    #expect(index.sourceOffset(line: 3) == exact && index.line(sourceOffset: exact) == 3)
+  }
+
+  @Test func cancellationBeforeParsingDoesNotFirstMaterializeMillionsOfIgnoredLines() async throws {
+    let stream = header + String(repeating: "x\n", count: 4_000_000)
+    let page = page
+    let elapsed = try await Task.detached { () throws -> Duration in
+      withUnsafeCurrentTask { $0?.cancel() }
+      let start = ContinuousClock.now
+      do {
+        _ = try DocumentPrintLocations.decode(stream, files: [], pages: [page])
+        Issue.record("A withdrawn parser returned its ignored-line projection")
+      } catch is CancellationError { }
+      return start.duration(to: .now)
+    }.value
+    // The old eager split walked and retained four million Substrings before
+    // reaching its first cancellation point. This is the actual joined body.
+    #expect(elapsed < .milliseconds(500), "The cancelled observer must stop before building the whole line directory")
+    print("PRINT_MAP_CANCEL ignored_lines=4000000 actual_join=\(elapsed)")
   }
 }

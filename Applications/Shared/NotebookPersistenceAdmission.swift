@@ -78,6 +78,17 @@ final class NotebookPersistenceAdmission {
     allocations[reservation.id] = .init(cost: cost)
   }
 
+  /// Optional preparation learns the expanded source before allocating its
+  /// next phase. Only this still-unaccepted lease may grow, immediately or not
+  /// at all; neither a FIFO slot nor a completed contact can renew its finish.
+  func extendPreparation(_ reservation: Reservation, to cost: Cost) throws {
+    guard reservation.owner == id, let allocation = allocations[reservation.id], !allocation.accepted,
+      cost.bytes >= allocation.cost.bytes,
+      cost.bytes - allocation.cost.bytes <= limits.maximumBytes - occupiedBytes else { throw capacityFailure() }
+    occupiedBytes += cost.bytes - allocation.cost.bytes
+    allocations[reservation.id] = .init(cost: cost)
+  }
+
   /// Preparation may shrink its pessimistic credit only after its temporary
   /// bodies have left the worker. Accepted payload and finish credit stay owned
   /// by the FIFO until commit, rollback-attested refusal, or receipt recovery.

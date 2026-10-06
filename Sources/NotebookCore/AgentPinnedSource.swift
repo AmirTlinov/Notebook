@@ -9,6 +9,11 @@ public struct AgentPinnedSource: Codable, Equatable, Sendable, Identifiable {
   public let payload: JSONValue
   public var image: AgentPinnedImage?
 
+  public var retainedPayloadBytes: Int {
+    MemoryLayout<Self>.stride + payload.retainedPayloadBytes + (image?.retainedPayloadBytes ?? 0)
+      + ((reference.elementID?.utf8.count ?? 0) + reference.revision.utf8.count + reference.label.utf8.count) * 2
+  }
+
   public func withVisual(_ image: AgentPinnedImage?, unavailable: String? = nil) throws -> Self {
     var content = payload.object
     content["visual"] = .object(["status": .string(image == nil ? "unavailable" : "source_pixels"),
