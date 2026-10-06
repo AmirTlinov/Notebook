@@ -180,6 +180,47 @@ Release validates the inventory in both apps. `--check` neither downloads nor
 builds. TypeScript uses its separate signed child of the markup XPC service and
 inherits its sandbox. The current print route has no native TeX/image helper.
 
+## Pinned Codex build inputs
+
+`Applications/NotebookCodexRuntime.lock.json` is the reviewed source pin, derived
+from the complete, SHA-verified official Codex archive and the exact Node binary
+and license members. It specifies every payload path, file hash, byte count,
+type and mode. A cache's `runtime.json` is only an identity receipt, never an
+alternative trust source. Updating these inputs requires reviewing the archive
+pins and their complete inventory together.
+
+The existing `prepare_notebook_codex.py --prepare --stage-root <root>` owner
+returns the exact immutable `<root>/<manifestSHA256>` stage. The default root is
+`.build/notebook-codex-runtimes`. Each admission checks the complete payload,
+official Codex/Node signatures and both actual executable versions. Reuse makes
+one full payload SHA pass, without downloading, extracting or copying. This adds
+hashing cost compared with the old marker-only reuse; it is not a startup speed
+claim. The preparer is a build prerequisite, not a live-runtime startup path.
+
+Admission holds every parent directory by descriptor, opens leaf files relative
+to those parents without following links, and rejects hardlinked payload files.
+Root/name bindings and all file/directory fingerprints must remain unchanged
+through the complete hash and use operation, including already-hashed files.
+The streaming hash works without Python 3.11-only APIs.
+
+A bounded per-manifest OS lease serializes writers. Only a complete, checked
+private temporary stage is atomically renamed into its final name. A published
+stage is never overwritten or deleted by this owner, including when invalid:
+invalid/partial stages fail closed. This is cooperative-owner immutability, not
+an OS immutable flag or protection against arbitrary same-user changes after
+admission. Changes during the checked operation are detected. Cancelled attempts clean their own temporary
+files; process-death leftovers are ignored. The former flat
+`.build/notebook-codex-runtime` is neither read nor removed, so an older active
+build can finish using its own input. There is no fallback to its old marker.
+
+The same returned stage is supplied explicitly to release, selected native checks
+and acceptance Xcode builds. Xcode has no default cache lookup. Bundling checks
+the source and copied output against the same lock; release rechecks the final
+bundle and records the identity in `build.json` and signature evidence. Selected
+verification records that identity only when it actually admits Codex, and binds
+the command, stage and receipt to the source pin. Existing final plugin
+publication and installer owners remain unchanged.
+
 ## Build versus installation
 
 A `build.json` with `verified-build` records signatures, binary UUIDs and bundle

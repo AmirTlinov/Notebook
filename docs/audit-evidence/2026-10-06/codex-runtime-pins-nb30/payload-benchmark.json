@@ -1,0 +1,44 @@
+{
+  "scope": "Linux payload admission only, local archives; includes cold extraction and fsync; warm OS page cache; no network timing or native performance claim",
+  "manifestSHA256": "2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a",
+  "payloadBytes": 439213968,
+  "nativeChecks": "Apple codesign, actual Codex/Node execution, Xcode sandbox and final signed app not run",
+  "results": [
+    {
+      "phase": "cold-local-archives",
+      "seconds": 5.837523,
+      "payloadSHABytes": 439214291,
+      "payloadSHAFiles": 45,
+      "payloadCopyBytes": 439213968,
+      "archiveReadHashCopyBytes": 175822039,
+      "archiveOpens": 2
+    },
+    {
+      "phase": "reuse-1",
+      "seconds": 0.591125,
+      "payloadSHABytes": 439214291,
+      "payloadSHAFiles": 45,
+      "payloadCopyBytes": 0,
+      "archiveReadHashCopyBytes": 0,
+      "archiveOpens": 0
+    },
+    {
+      "phase": "reuse-2",
+      "seconds": 0.568603,
+      "payloadSHABytes": 439214291,
+      "payloadSHAFiles": 45,
+      "payloadCopyBytes": 0,
+      "archiveReadHashCopyBytes": 0,
+      "archiveOpens": 0
+    },
+    {
+      "phase": "reuse-3",
+      "seconds": 0.657355,
+      "payloadSHABytes": 439214291,
+      "payloadSHAFiles": 45,
+      "payloadCopyBytes": 0,
+      "archiveReadHashCopyBytes": 0,
+      "archiveOpens": 0
+    }
+  ]
+}

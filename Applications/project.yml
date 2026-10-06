@@ -24,7 +24,7 @@ settings:
     NOTEBOOK_IPAD_ENTITLEMENTS: ""
     NOTEBOOK_CLOUD_CONTAINER: ""
     NOTEBOOK_TYPESETTER_RUNTIME: $(SRCROOT)/../.build/notebook-typesetter-runtime
-    NOTEBOOK_CODEX_RUNTIME: $(SRCROOT)/../.build/notebook-codex-runtime
+    NOTEBOOK_CODEX_RUNTIME: ""
     NOTEBOOK_SURFACE_STAGE: $(SRCROOT)/../.build/surface
 
 targets:
@@ -197,6 +197,7 @@ targets:
           /usr/bin/python3 "$SRCROOT/prepare_notebook_codex.py" --stage "$NOTEBOOK_CODEX_RUNTIME" --bundle "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/CodexRuntime"
         inputFiles:
           - $(SRCROOT)/prepare_notebook_codex.py
+          - $(SRCROOT)/NotebookCodexRuntime.lock.json
           - $(SRCROOT)/NotebookCodexResources.xcfilelist
           - $(NOTEBOOK_CODEX_RUNTIME)
         outputFileLists:
