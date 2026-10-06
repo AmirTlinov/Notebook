@@ -1,0 +1,234 @@
+{
+  "date": "2026-10-06",
+  "scope": "test-only capability-discovery fixture isolation; production prerequisite enforcement unchanged",
+  "baseline": "7274f6c193b264fccd3c84a15a474a31b35b657a",
+  "source": {
+    "path": "Tests/NotebookVerification/test_registry.py",
+    "sha256": "ee8ca01a5f2f548f02034ab32712aad24d9a14aacedc1ab1c6f3c2cd7ac42c41"
+  },
+  "standalone": {
+    "command": "python -B Tests/NotebookVerification/run.py",
+    "passed": 113,
+    "failed": 0
+  },
+  "baselineIntegrationAttempt": {
+    "tests": 115,
+    "passed": 108,
+    "failures": 2,
+    "errors": 5,
+    "reason": "seven fabricated-runner tests incorrectly require host Swift before reaching their contract assertions"
+  },
+  "initialCandidateAttempt": {
+    "tests": 113,
+    "passed": 112,
+    "errors": 1,
+    "reason": "compiler-prerequisite fixture additionally requires declared fake Node/npm; explicit fixture allowlist corrected before final checks"
+  },
+  "negativeContracts": [
+    "fake runner works with empty host discovery and restores the outer discovery function",
+    "production selected_toolchain rejects missing Swift before invoking it"
+  ],
+  "integration": {
+    "status": "portable checks passed",
+    "publishedCommits": [
+      "acddfb63bea118eab5f21cde0d96fdb29aa66e82",
+      "7f9da5fd02b1490eb2ccb5efefa8442deea3ceac",
+      "6a93ed3abcde72ae7cc3b6a47ba498913a496703"
+    ],
+    "additionalLocalPatch": "Tests/NotebookVerification/test_registry.py",
+    "localTreeSHA": "07497f8fc2261c1bbe564f80d39c0f9042db2f48",
+    "published": false,
+    "overlap": "only docs/verification.md; both additive published blocks retained and separated under headings; all nonshared published bytes identical",
+    "checks": [
+      {
+        "command": "node --import ./MCP/node_modules/tsx/dist/loader.mjs --test MCP/test/chat-render.test.ts MCP/test/chat-mathjax-state.test.ts MCP/test/program-bridge.test.ts",
+        "passed": 54
+      },
+      {
+        "command": "node MCP/node_modules/typescript/bin/tsc --project MCP/tsconfig.json --noEmit",
+        "exitCode": 0
+      },
+      {
+        "command": "python -B Tests/NotebookRelease/run.py CodexPackagingTests ReleaseTests CloudRightsTests TypesetterPackagingTests",
+        "passed": 101
+      },
+      {
+        "command": "python -B Tests/NotebookVerification/run.py",
+        "passed": 117
+      },
+      {
+        "command": "git diff --cached --check && git diff --check",
+        "exitCode": 0
+      }
+    ],
+    "changedFiles": [
+      {
+        "path": "Applications/NotebookCodexRuntime.lock.json",
+        "sha256": "f0dae42f2076040e6fe827e9e50f411c7f17e90c348fda00644e9433896f4596"
+      },
+      {
+        "path": "Applications/TestSupport/NotebookChatRenderingTests.swift",
+        "sha256": "3a187451814d54f64cfa6d26c1e320722e99ab5685cb2e020f5528c8d6d3d4d1"
+      },
+      {
+        "path": "Applications/WebResources/chat-shell.html",
+        "sha256": "76829f77a13e10463485a353bdd8bf4f970523ce950efebef84b7cfe6fad565d"
+      },
+      {
+        "path": "Applications/WebResources/notebook-program.js",
+        "sha256": "de19e0a96b465bf5c08fb84a4fb2f4189bb92b584b01e868a4ceafce534bee19"
+      },
+      {
+        "path": "Applications/notebook_acceptance.py",
+        "sha256": "f5e084f049ba9b7e67a4d05474a4becfda4d651f728f38da0b4fdad2964489ed"
+      },
+      {
+        "path": "Applications/notebook_release.py",
+        "sha256": "246fc7150b1d3a8c93527589740031eb759714bcc97714d03f968dbe0ed61ccf"
+      },
+      {
+        "path": "Applications/notebook_verification.py",
+        "sha256": "761e682302e9cd4e2bf0f859c0eee695842cccbdca340bbf216f5fd00d5cd544"
+      },
+      {
+        "path": "Applications/prepare_notebook_codex.py",
+        "sha256": "f0d082e1e914c2149a858790dc4814a580513d3e5b64d7e8fe6b4c165d41a95e"
+      },
+      {
+        "path": "Applications/project.yml",
+        "sha256": "4e80187ff0855db5d7b9492a8911621ef12211407d48eb0cdeb28df35260f353"
+      },
+      {
+        "path": "MCP/package-lock.json",
+        "sha256": "620df9f40bbac09d59f4695c5365571715152bb1b520970d3c383b4e2fd6881e"
+      },
+      {
+        "path": "MCP/package.json",
+        "sha256": "dceb22ba169e33c1e4f19894f4f3fdad5a9657a1610ad468137b13a108b37058"
+      },
+      {
+        "path": "MCP/test/chat-mathjax-state.test.ts",
+        "sha256": "57224e39106c07e779354aeefe1e5b3b0c8ba46eb1fb5aab7b8ac0c11eafc6cd"
+      },
+      {
+        "path": "MCP/test/chat-render.test.ts",
+        "sha256": "76bdce1b6d749c20f170ef4c27cc78a0fb819e718cf7535e532991ff059b124a"
+      },
+      {
+        "path": "MCP/test/program-bridge.test.ts",
+        "sha256": "b6986cb3b7b3e7d2d0329f0bc319d792c4e3b8beb5a9fe77f260628cf1822687"
+      },
+      {
+        "path": "Tests/NotebookRelease/codex_fixture.py",
+        "sha256": "2ac1910977aace4b1495779e3c3c030c8e207c59630025e5d4c7aa00a21ef490"
+      },
+      {
+        "path": "Tests/NotebookRelease/run.py",
+        "sha256": "55ccb8d165d67d5db584e091cd59d206fd5f5eb94c12aef415d100e34e136cbe"
+      },
+      {
+        "path": "Tests/NotebookRelease/test_codex.py",
+        "sha256": "b5e79be6a693a58951dbe1aeb91462a24d1a77b9d46c8700cab50890d2ec362d"
+      },
+      {
+        "path": "Tests/NotebookVerification/run.py",
+        "sha256": "253e7f6a0799b8e21879b84dbe274316c1a959605e0c5d5f56205dd8c86d3457"
+      },
+      {
+        "path": "Tests/NotebookVerification/test_registry.py",
+        "sha256": "ee8ca01a5f2f548f02034ab32712aad24d9a14aacedc1ab1c6f3c2cd7ac42c41"
+      },
+      {
+        "path": "docs/audit-evidence/2026-10-06/chat-math-publication-dp19/baseline-regression-v2.txt",
+        "sha256": "2be1d93797109113e39359a82ae32ed6fcd711b813f152de0f67f23a31e16471"
+      },
+      {
+        "path": "docs/audit-evidence/2026-10-06/chat-math-publication-dp19/baseline-regression-v3.txt",
+        "sha256": "0e4820100265a2a30bf0d0ec288d39f6c14c803fba78c0579a4a7efed7d17bd5"
+      },
+      {
+        "path": "docs/audit-evidence/2026-10-06/chat-math-publication-dp19/baseline-regression.txt",
+        "sha256": "8cd7d2a05acec3dd2ed0c74652daf68659bd929baa85d5aa8cfcccf10e6c22f0"
+      },
+      {
+        "path": "docs/audit-evidence/2026-10-06/chat-math-publication-dp19/node-tests.txt",
+        "sha256": "948c4c28e63d12d7f37752cbc4c3dfc2517811a07ef1f995cf13662ffc92d24e"
+      },
+      {
+        "path": "docs/audit-evidence/2026-10-06/chat-math-publication-dp19/results.json",
+        "sha256": "123be84f1d841aa0540c5ac1948e17f578abf4bb12dc6b21d64e4c3057d2c7f5"
+      },
+      {
+        "path": "docs/audit-evidence/2026-10-06/checkpoint-generation-nb13/baseline-regression.txt",
+        "sha256": "c9b9e4a0f07ca642e7cce8413103814f5a3f55514caa8412f4402f1d0339e10f"
+      },
+      {
+        "path": "docs/audit-evidence/2026-10-06/checkpoint-generation-nb13/results.json",
+        "sha256": "b9bc610e9263baef1eb57a75480d62404c6e7edce30c606cef65573a4096fd24"
+      },
+      {
+        "path": "docs/audit-evidence/2026-10-06/checkpoint-generation-nb13/tests.txt",
+        "sha256": "3e54cc9972937b07a338837ac4b7066a658fa1e96da5164214a07747d27933e7"
+      },
+      {
+        "path": "docs/audit-evidence/2026-10-06/codex-runtime-pins-nb30/baseline-regression.json",
+        "sha256": "41e32474f9ed5d52b3686e0e253a467449a64d921cfcabdb57c608b960510c60"
+      },
+      {
+        "path": "docs/audit-evidence/2026-10-06/codex-runtime-pins-nb30/benchmark.py",
+        "sha256": "80b6c7b534cb5c84b4da1fd17e5c66926d2210f5669770ba3e25cd3a1cd48544"
+      },
+      {
+        "path": "docs/audit-evidence/2026-10-06/codex-runtime-pins-nb30/payload-benchmark.json",
+        "sha256": "af10717bfa887b9683e6ed83bce5e3ab2e114fbd0713d3cb236818e331519382"
+      },
+      {
+        "path": "docs/audit-evidence/2026-10-06/codex-runtime-pins-nb30/results.json",
+        "sha256": "a37529a5bbd84cff2b0a242687ac2ee1fe208828a15d686d7faaa53483a03434"
+      },
+      {
+        "path": "docs/document-program-fragments.md",
+        "sha256": "62d0d28d327a96a86b9443fdbdf872a6ba0e16954b5a86553c15dbda93de0cd6"
+      },
+      {
+        "path": "docs/release-build-contract.md",
+        "sha256": "6368713c39c76a70ea7429a399586313053b55db756bb61d44f8c098f4925dd2"
+      },
+      {
+        "path": "docs/verification.md",
+        "sha256": "e50cd5fe9410514f253594b0a4bbd32aa3f59a877889370d5e2567692780881e"
+      }
+    ]
+  },
+  "notRun": [
+    "native Apple codesign and real pinned Apple executables",
+    "Swift compiler / native AppKit RuntimeLifecycleTests",
+    "AF_UNIX-dependent installation and publication tests (environment denies sockets)",
+    "WebKit font/selection/rendering and physical iPad gates",
+    "complete verify.sh acceptance",
+    "main merge or deployment"
+  ],
+  "review": {
+    "status": "approved",
+    "scope": "fixture isolation and combined portable implementation checks only",
+    "candidatePatchSHA256": "bb5e002cfb6a0b4a4724fd6d86a281b5826f1bf80cd22853e6a0e0c2787fd14b",
+    "independentChecks": {
+      "standaloneVerification": 113,
+      "combinedVerification": 117,
+      "combinedReleaseResources": 101,
+      "combinedNode": 54,
+      "strictTypeScript": "passed",
+      "diffChecks": "passed",
+      "publishedBytesModesAndEvidenceHashes": "verified",
+      "integrationTree": "verified"
+    },
+    "extraProbes": [
+      "partial/skipped/unrelated fake Swift reports reach real parser and fail for intended contract reasons",
+      "no receipt on parser refusal",
+      "which and release_commands restore after exceptions",
+      "real selected_toolchain refuses absent Swift before invoking it",
+      "production selected_toolchain AST unchanged from baseline in both trees"
+    ],
+    "nativeOrPhysicalAcceptance": "not established"
+  }
+}

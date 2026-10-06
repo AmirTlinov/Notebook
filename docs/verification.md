@@ -9,6 +9,14 @@
 подписанный кеш и работающий владелец проверены. [Сборка](audit-evidence/2026-10-06/plugin-recovery-253/results.json),
 [установка и readback](audit-evidence/2026-10-06/plugin-recovery-253/installation.json).
 
+Переносимый подпункт NB13: повторный вход из `toJSON`/getter больше не позволяет
+отменённому checkpoint установить frozen. На исходном JS три регрессии FAIL;
+с исправлением **34 Node tests PASS**, строгий MCP TypeScript и diff-check PASS.
+Основной admission-before-copy и native WebKit/physical проверка остаются открыты;
+native owner/credit/writer не менялись. Независимое ревью принято: 34/34, tsc и
+diff повторены; отдельные 64 варианта повторного входа и credit/ACK probes PASS.
+[Контрпримеры и точный scope](audit-evidence/2026-10-06/checkpoint-generation-nb13/results.json).
+
 ## Установленная пара
 
 Самостоятельные Mac-окна, ввод и установщик удалены из исходников; старые bundles
@@ -111,6 +119,63 @@ InkInput проверяется отдельно внутри этого же н
 не проверены этим кандидатом; установленная пара 252 не обновлялась.
 [Точные исходники, команды, RED→GREEN и границы](audit-evidence/2026-10-06/panel-contact-ownership/results.json).
 
+## Переносимый срез DP19: публикация чата
+
+Отдельный срез подготовлен поверх `7274f6c1`: transcript delta принимается без
+ожидания MathJax. Один producer готовит активную batch в скрытом подключённом
+контейнере той же ширины. До typesetting фиксируются точные source nodes/UTF-16
+ranges; готовый результат синхронно заменяет только найденные TeX spans.
+Prose, links и disclosure nodes сохраняют идентичность, selection и focus;
+последующее streaming использует исходные координаты известных math spans.
+Старые source bodies и пересекающиеся ranges не принимаются. MathJax records
+освобождаются до переноса output; failed jobs оставляют plain text и не удерживают
+очередь. Прежняя блокирующая очередь и whole-body math replacement удалены.
+**20 Node regressions и полный строгий MCP TypeScript PASS** на Linux.
+Проверки используют настоящий DOM Range/Selection; три также проверяют bundled
+MathJax4.1.3, включая assistive MathML, rejected-job cleanup и сохранение SVG.
+Baseline renderer даёт ожидаемый FAIL на финальном regression.
+Два прохода независимого ревью выявили lifecycle/selection/focus замечания;
+они исправлены. Третье ревью принято в границах кода и переносимых проверок:
+20/20 повторены независимо; отдельные math/selection probes также прошли. Native visual fixture явно ждёт math
+readiness. WebKit/font metrics, физические жесты, сборка и установка не выполнялись;
+GUI-498/DP19 ещё не имеет физической приёмки.
+[Точные исходники, результаты и ограничения](audit-evidence/2026-10-06/chat-math-publication-dp19/results.json).
+
+Переносимый срез NB30 связывает весь Codex/Node payload с manifest из закреплённых
+официальных архивов. Подмены bytes/type/mode, symlink, частичный cache, поддельный
+marker/receipt и неверная фактическая версия отклоняются. Content-addressed stage
+атомарно публикуется одним preparer и проходит через существующие build/verification
+receipts; старый flat cache и действующий254 не менялись. **95 release/admission +
+95 selection/receipt Python PASS** в Linux, включая реальные конкурентные fixture
+процессы. Подписи Apple и версии проверялись только тестовыми fixtures: настоящие
+codesign, Xcode sandbox, signed pair и установка **не исполнены**. Полный aggregate
+здесь не пройден: Swift отсутствует, Unix sockets запрещены средой.
+На официальном payload 439 213 968 байт измерены только Linux I/O: cold из локальных
+архивов 5,838 с; reuse 0,569–0,657 с с полным SHA-проходом, без копирования/распаковки.
+Это не сравнение с прежним кешем и не Mac performance gate. Первое независимое
+ревью выявило гонки подмены каталогов/уже проверенных файлов, hardlink alias и
+зависимость нового Xcode-пути от Python3.11 API. Исправлены anchored-дескрипторами,
+проверкой всех fingerprints до/после операции, nlink=1 и потоковым SHA; добавлены
+7 регрессий. Повторное независимое ревью принято в переносимой области: обе серии
+95/95 проверены независимо; дополнительные race/extra-entry/Python API probes PASS. [Границы и результаты](audit-evidence/2026-10-06/codex-runtime-pins-nb30/results.json).
+
+## Объединённая переносимая проверка
+
+Поверх `96e00928` совместно проверены панель и PR #1–#4. Найденная при
+интеграционном ревью ошибка NB30 исправлена: диагностический stderr больше не
+подменяет stdout версии. Обе трубы ограничены общим лимитом и timeout; exact
+version и ненулевой exit остаются отказом. Три новые регрессии включают настоящий
+hash-matching fixture с предупреждением при prepare/reuse/bundle. Исправлена
+устаревшая команда подготовки runtime. Независимый повтор: 29 packaging tests
+и дополнительные stream/boundary probes PASS.
+
+Общий результат: **54 chat/program + 44 panel CPU + 104 release/resource +
+117 verifier PASS**, строгий TypeScript и script-services PASS. В более широком
+пятифайловом Node-прогоне 94 PASS и 4 отказа AF_UNIX (`EPERM`); он не объявляется
+полным PASS. Native Xcode/WebKit, signing, физический iPad и установка не
+выполнялись. Незакоммиченный Swift-кандидат в этот срез не включён.
+[Точные исходники, исходный отказ и повторные проверки](audit-evidence/2026-10-06/main-consolidation/results.json).
+
 ## Условия завершения
 
 | Срез | Подтверждено | Осталось |
@@ -161,6 +226,7 @@ GUI-196, GUI-197, GUI-183 и длительная GUI-250 остаются от�
 
 | Срез | Результат и свидетельство |
 | --- | --- |
+| Portable integration | PR #1–#3 совместно: 54 Node + 101 release/resource + 117 verifier PASS, strict MCP TypeScript PASS. Исправлена только host discovery в fabricated-runner tests; отдельный base suite 113 PASS. Production Swift prerequisite сохранён. Local integration tree не опубликован; native/physical/install gates открыты. [Точные исходники и результаты](audit-evidence/2026-10-06/verification-fixture-discovery/results.json). |
 | Runtime 252 | 4 native Mac + 89 release + 111 verifier PASS; 8 подписанных lifecycle/integrity сценариев PASS. [Receipt](audit-evidence/2026-10-06/plugin-runtime-lifecycle/results.json). |
 | Первый iPad 252 | 4 PASS / 5 FAIL: раннее лассо, Undo/первый кадр и cancellation. 100 000 объектов, текст, cold launch и чужая замена PASS. [Исходные отказы](audit-evidence/2026-10-06/plugin-cutover-252/results.json). |
 | Ремонт 252 | [Первичная диагностика](audit-evidence/2026-10-06/scene-lifecycle-diagnostic/results.json), [Undo/menu](audit-evidence/2026-10-06/menu-and-ink-diagnostic/results.json), [mounted lifecycle](audit-evidence/2026-10-06/mounted-lifecycle-repair/results.json). Ошибки GPU fixtures lifetime/unit transform исправлены. |

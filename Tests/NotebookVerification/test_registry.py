@@ -74,8 +74,32 @@ class RegistryReportTests(unittest.TestCase):
 
     def run_route(self):
         recorder = release.release_commands
-        with patch.object(release, "release_commands", side_effect=lambda evidence: recorder(evidence, self.fake_runner)):
+        # This runner fabricates command results, including tool versions. Its
+        # available commands belong to the same fixture, not the host's PATH.
+        available = {sys.executable, "swift", "node", "npm"}
+        with patch.object(verify.shutil, "which", side_effect=lambda executable: executable if executable in available else None), \
+             patch.object(release, "release_commands", side_effect=lambda evidence: recorder(evidence, self.fake_runner)):
             return verify.run_selected(self.root, self.plan, self.evidence)
+
+    def test_fabricated_runner_discovery_is_independent_of_and_restores_the_host(self):
+        original = verify.shutil.which
+        with patch.object(verify.shutil, "which", return_value=None) as host:
+            receipt = self.run_route()
+            self.assertEqual(receipt["status"], "passed")
+            host.assert_not_called()
+            self.assertIs(verify.shutil.which, host)
+        self.assertIs(verify.shutil.which, original)
+
+    def test_production_toolchain_still_refuses_missing_swift_before_invoking_it(self):
+        calls = []
+        def command(label, argv, **options):
+            calls.append((label, argv, options))
+            return b"fixture Python version", b""
+        with patch.object(verify.shutil, "which", side_effect=lambda executable: executable if executable == sys.executable else None):
+            with self.assertRaisesRegex(release.ReleaseError, "Не найден prerequisite: swift"):
+                verify.selected_toolchain(command, self.plan)
+        self.assertEqual([label for label, _, _ in calls], ["toolchain-python"])
+        self.assertFalse(any("swift" in argv for _, argv, _ in calls))
 
     def changed_receipt(self, receipt):
         return {**receipt, "artifacts": release.verification_artifacts(self.evidence, full=False)}

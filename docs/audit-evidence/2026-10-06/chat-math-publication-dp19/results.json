@@ -1,0 +1,83 @@
+{
+  "scope": "GUI-498 / DP19: transcript acceptance and asynchronous MathJax publication",
+  "baseCommit": "fa24bca5400c7ce6a38eca1c443bf35541158842",
+  "platform": "Linux x86_64; Node v24.19.0",
+  "sources": {
+    "Applications/WebResources/chat-shell.html": "76829f77a13e10463485a353bdd8bf4f970523ce950efebef84b7cfe6fad565d",
+    "MCP/test/chat-render.test.ts": "76bdce1b6d749c20f170ef4c27cc78a0fb819e718cf7535e532991ff059b124a",
+    "MCP/test/chat-mathjax-state.test.ts": "57224e39106c07e779354aeefe1e5b3b0c8ba46eb1fb5aab7b8ac0c11eafc6cd",
+    "Applications/TestSupport/NotebookChatRenderingTests.swift": "3a187451814d54f64cfa6d26c1e320722e99ab5685cb2e020f5528c8d6d3d4d1",
+    "MCP/package.json": "dceb22ba169e33c1e4f19894f4f3fdad5a9657a1610ad468137b13a108b37058",
+    "MCP/package-lock.json": "620df9f40bbac09d59f4695c5365571715152bb1b520970d3c383b4e2fd6881e"
+  },
+  "checks": [
+    {
+      "command": "node --experimental-transform-types --test --test-name-pattern=\"plain text and conversation reset publish before MathJax startup\" MCP/test/chat-render.test.ts",
+      "source": "base chat-shell with candidate regression test",
+      "result": "expected failure",
+      "executed": 1,
+      "failed": 1,
+      "evidence": "baseline-regression.txt"
+    },
+    {
+      "command": "node --import ./MCP/node_modules/tsx/dist/loader.mjs --test --test-name-pattern=\"plain text and reset publish before startup\" MCP/test/chat-render.test.ts",
+      "source": "base chat-shell with final regression test",
+      "result": "expected failure",
+      "executed": 1,
+      "failed": 1,
+      "evidence": "baseline-regression-v2.txt"
+    },
+    {
+      "command": "node --import ./MCP/node_modules/tsx/dist/loader.mjs --test --test-name-pattern=\"plain text and reset publish before startup\" MCP/test/chat-render.test.ts",
+      "source": "7274f6c base renderer with final regression test",
+      "result": "expected failure",
+      "executed": 1,
+      "failed": 1,
+      "evidence": "baseline-regression-v3.txt"
+    },
+    {
+      "command": "node --import ./MCP/node_modules/tsx/dist/loader.mjs --test MCP/test/chat-render.test.ts MCP/test/chat-mathjax-state.test.ts",
+      "result": "passed",
+      "executed": 20,
+      "failed": 0,
+      "skipped": 0,
+      "evidence": "node-tests.txt"
+    },
+    {
+      "command": "MCP/node_modules/.bin/tsc --noEmit --project MCP/tsconfig.json",
+      "result": "passed",
+      "exitCode": 0
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed",
+      "exitCode": 0
+    }
+  ],
+  "limits": [
+    "17 scheduler regressions execute production JavaScript with real jsdom DOM/Range/Selection and deterministic MathJax scheduling. No selection helpers are stubbed. Three additional tests use the bundled MathJax 4.1.3: its Node lite adaptor and actual chat-shell resources with assistive MathML in jsdom.",
+    "Native WebKit rendering, selection, accessibility, physical iPad gestures, signed builds and installation were not run.",
+    "No full verify.sh receipt or physical/performance acceptance is claimed.",
+    "Chromium launch was blocked by local socket permission; no browser assertions ran.",
+    "The first npm attempt failed because its default cache path was unavailable. Locked dependency installation succeeded using an isolated workspace cache.",
+    "An interrupted sparse checkout caused an incomplete-source typecheck failure. After the checkout completed, full MCP strict typecheck passed.",
+    "The tsx CLI cannot open its IPC socket here. Tests passed through the package-supported Node loader entrypoint, which needs no socket.",
+    "The real MathJax fault-injection test records only the exact deliberately rejected async-load readiness error in an isolated child process; all unrelated rejections fail. No ordinary execution warning is suppressed.",
+    "The initial diff check omitted then-untracked evidence. Its two trailing-whitespace failures were fixed without changing failure text; the final check includes every new evidence file.",
+    "jsdom supplies DOM/Range behavior, not native font measurement or WebKit layout. Hidden staging metrics, physical gestures, signed build and installation remain unverified.",
+    "The first multi-node fixture placed an HTML em element inside TeX; baseline MathJax also found zero expressions. The corrected fixture uses supported adjacent Text nodes (baseline one expression) and passed without a production source change.",
+    "MathJax find(10)/compile(20) render-action coupling is checked against pinned 4.1.3. Capture at15 records exact input nodes, UTF-16 boundaries and text; live edits are validated and checked for overlap before mutation.",
+    "Only matched TeX ranges are replaced. Native Range adjustment preserves outside prose; selection wholly inside replaced TeX follows ordinary DOM Range collapse rather than being moved onto unrelated text.",
+    "jsdom26.1.0 is a pinned test-only dependency; its declared Node>=18 engine is compatible with this project Node>=20. No production dependency or installed runtime changed."
+  ],
+  "review": {
+    "firstPass": "changes requested: status-only viewport, same-text selection, retained failed MathJax items",
+    "secondPass": "changes requested: whole-body text-offset selection loss and focused interactive-node replacement",
+    "repair": "single prepared math producer captures exact source ranges before typesetting; synchronous math-only live Range edits retain prose and interactive nodes. Known rendered math roots retain exact original source lengths for later streamed updates. No async selection/focus heuristic or whole-body math replacement remains.",
+    "thirdPass": "accepted: no blocking findings at code/portable-test scope; reviewer independently passed20/20, strict MCP TypeScript and full diff check",
+    "additionalProbes": "Production resources: inline/display/bracket math, escaped dollar, code skipping, adjacent/multiple/multibyte expressions and backward prose selection through a later source update passed; no console errors, retained stages or registered MathItems. Exploratory review probes, not additional registered test counts."
+  },
+  "installation": "not performed",
+  "baselineInitialTestSHA256": "f3298f887c8b60325ac990494f2e84ba5befd33b4d46dfbeb807cf4bd1735530",
+  "integrationBaseCommit": "7274f6c193b264fccd3c84a15a474a31b35b657a"
+}

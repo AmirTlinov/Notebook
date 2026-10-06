@@ -1,0 +1,191 @@
+✔ clearing a settled staged MathJax job permits later math and retains prepared SVG (265.690961ms)
+✔ real MathJax assistive output preserves current duplicate-word selection, link focus and next streamed source (978.886677ms)
+✔ real MathJax maps multi-node UTF-16 source ranges without replacing focused disclosure or selected prose (211.480381ms)
+✔ chat delta retains unchanged nodes and prepares only changed message bodies (393.320019ms)
+✔ plain text and reset publish before startup and only current bodies are cloned (106.31522ms)
+✔ delayed math cannot overwrite a reset conversation with a reused message ID (21.145354ms)
+✔ streaming coalesces the latest source while preserving the current article and actions (207.903522ms)
+✔ removal and conversion to activity retire pending math without delaying the transcript (15.691211ms)
+✔ a failed live math source does not poison another body in the same conversation (17.221342ms)
+✔ startup failure cannot retain or reject transcript acceptance (16.757399ms)
+✔ status-only delta preserves tail intent when prepared math changes height (15.899609ms)
+✔ controls-only delta preserves tail intent when prepared math changes height (17.048981ms)
+✔ math commit preserves newer human scroll, prose selection and focused link (25.829105ms)
+✔ raw HTML mixed prose/math retains duplicate-word endpoints and details focus through exact Range edits (14.784975ms)
+✔ subsequent source update preserves selected prose after previously rendered math (15.861169ms)
+✔ cleared human selection stays cleared while multiple UTF-16 math ranges commit (16.444284ms)
+✔ staging is inert, suppresses duplicate IDs, matches width and retries a resized source (18.21437ms)
+✔ cleanup failure removes the active staging host and leaves plain source (12.202037ms)
+✔ selection inside replaced TeX follows native Range collapse without selecting unrelated prose (11.082724ms)
+✔ overlapping engine source matches are rejected before any live mutation (12.737138ms)
+▶ keyboard undo and delete cannot admit another action during a dragged contact
+  ✔ z (13.120741ms)
+  ✔ Delete (2.134387ms)
+✔ keyboard undo and delete cannot admit another action during a dragged contact (16.473104ms)
+▶ Enter and double-click cannot open a nested editor or release the current contact
+  ✔ select: Enter (3.443213ms)
+  ✔ select: dblclick (3.665645ms)
+  ✔ pen: Enter (1.841186ms)
+  ✔ pen: dblclick (2.086657ms)
+✔ Enter and double-click cannot open a nested editor or release the current contact (11.857165ms)
+✔ an idle editor still opens, cancels and saves one completed edit (3.912504ms)
+✔ the text tool still admits and saves a new element (1.927185ms)
+▶ lost pointer capture cancels the unfinished preview and resumes the same projection
+  ✔ select (3.929769ms)
+  ✔ pen (1.877958ms)
+✔ lost pointer capture cancels the unfinished preview and resumes the same projection (6.791888ms)
+▶ Escape still cancels an unfinished contact without admitting a competing write
+  ✔ select (2.423631ms)
+  ✔ pen (1.804111ms)
+✔ Escape still cancels an unfinished contact without admitting a competing write (4.664186ms)
+▶ late lost-capture events preserve a completed ink contact and a newer pointer
+  ✔ select: pointer 1 (2.418237ms)
+  ✔ select: pointer 2 (2.209322ms)
+  ✔ pen: pointer 1 (1.562046ms)
+  ✔ pen: pointer 2 (1.436618ms)
+✔ late lost-capture events preserve a completed ink contact and a newer pointer (8.47273ms)
+✔ real pen input retains measured samples through completion and discards only cancelled contact (5.22923ms)
+▶ session coalesces viewport demand against accepted pixels without delaying required reads
+  ✔ covered (23.165566ms)
+  ✔ needed (1.514905ms)
+  ✔ forced (0.962226ms)
+  ✔ fit (1.831915ms)
+✔ session coalesces viewport demand against accepted pixels without delaying required reads (28.993894ms)
+▶ session teardown releases readers and ignores late read and write completions
+  ✔ read (4.539613ms)
+  ✔ saved (2.13257ms)
+  ✔ conflict (1.008542ms)
+  ✔ uncertain (0.649719ms)
+✔ session teardown releases readers and ignores late read and write completions (9.492103ms)
+✔ a confirmed pen contact replaces an in-flight old scene before the next polling tick (1.450163ms)
+✔ an unfinished contact owns mutation admission until completion or cancellation (1.294918ms)
+✔ error Retry repairs ipc_timeout before repeating the same text action (1.197736ms)
+✔ error Retry repairs operation_failed before repeating the same text action (1.610155ms)
+✔ workspace recovery preserves an uncertain action and its panel address (0.92414ms)
+✔ session closed during handshake suppresses the late connection failure (0.557756ms)
+✔ Notebook exposes one HTML app resource, a model opener and app-only gesture tools (65.323018ms)
+✖ native presentation stays pinned, bounds pixels and avoids duplicating PNG bytes in text (8.629303ms)
+✖ panel gestures keep the admitted endpoint and exact native sources (5.289283ms)
+✖ panel rejects caller routing/authorship fields and preserves the native conflict detail (1.430219ms)
+✖ workspace bootstrap opens in the same panel without a content owner or desktop window (5.590372ms)
+✔ workspace switching retires an old in-flight read and preserves accepted edit ownership (1.740113ms)
+✔ one API owns canonical commits, copied JSON state and revision-guarded external state (4.573641ms)
+✔ native focus admission rejects timers before true and preserves every already accepted snapshot (1.9234ms)
+✔ missing, rejected and hung ready never complete as ready; static markup needs no declaration (35.404024ms)
+✔ ready waits for every declared setup and the paint boundary (1.091021ms)
+✔ checkpoint stops the author before reading its actual playhead; no optimistic writer commit (1.725172ms)
+✔ a parked program checkpoints without waiting for a hidden viewport paint (1.319216ms)
+✔ a completed frozen checkpoint is idempotent until resume (1.849675ms)
+✔ failed checkpoint retains last explicit state and permits owner-controlled recovery (1.434765ms)
+✔ timeout aborts the author request; late completion cannot change state (34.475105ms)
+✔ dispose or return supersedes an in-flight checkpoint, without a late state publication (7.277341ms)
+✔ a failed program cannot serialize checkpoints or block an independent program (32.822613ms)
+✔ invalid lifecycle registration and non-JSON state are rejected before mutation (3.433913ms)
+✔ LC uses one analytic model: quarter-period signs, SI units and conserved energy (2.310338ms)
+✔ semantic selection is copied only after a successful pause and never read from a running scene (2.582479ms)
+✔ unbounded, asynchronous and throwing author semantics never fail the saved checkpoint or become late evidence (7.37058ms)
+✔ author vector export pauses the isolated executor and receives the exact saved state without commits (1.920339ms)
+✔ missing, throwing, unbounded or cancelled author SVG is an error, never a raster fallback (41.704297ms)
+✔ raster export waits for the authored saved frame at exact scale and never checkpoints or commits (5.991182ms)
+✔ video requires explicit author timeline, receives absolute times and never advances the saved state (4.988031ms)
+✔ PDF vectors are opt-in, bounded copied replacement regions; declared author failures never fall back (12.919433ms)
+✔ explicit retry continues the failed stage without running resume or replaying a completed pause (2.632455ms)
+✔ native-timeout retry revokes the old generation before its browser watchdog fires (5.843769ms)
+✔ resume failure keeps the accepted frozen model and retry never checkpoints it again (1.312523ms)
+✔ admitted snapshots are immutable FIFO and overload refuses before true without changing state (2.745586ms)
+✔ large-to-small writes borrow old-state admission until the addressed merge completes (92.964745ms)
+✔ a model larger than 4MiB acquires credit and transfers exact surrogate-safe bounded windows (174.757847ms)
+✔ native timeout cancels lifecycle immediately, even while accepted commits drain (5.801861ms)
+✔ external state windows publish atomically and stale or replaced presentation never rolls back a commit (110.508553ms)
+✔ a lost ACK reply retries idempotently without double credit or removing the next snapshot (1.487961ms)
+✔ reentrant author serialization cannot freeze after cancellation, resume or disposal (12.865413ms)
+✔ a reentrant checkpoint retry owns the new generation without the old result or failure overwriting it (1.034203ms)
+✔ serialization errors remain the original failure and a retry can freeze normally (1.327565ms)
+✔ reentrant cancellation preserves accepted snapshot acknowledgement and grants no extra credit (1.647202ms)
+✔ an original serialization error is preserved even when its callback supersedes the lifecycle (8.136216ms)
+ℹ tests 98
+ℹ suites 0
+ℹ pass 94
+ℹ fail 4
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1855.491916
+
+✖ failing tests:
+
+test at MCP/test/panel.test.ts:1:18515
+✖ native presentation stays pinned, bounds pixels and avoids duplicating PNG bytes in text (8.629303ms)
+  Error: listen EPERM: operation not permitted /tmp/nb-panel-oFerwF/bridge.sock
+      at Server.setupListenHandle [as _listen2] (node:net:2145:21)
+      at listenInCluster (node:net:2224:12)
+      at Server.listen (node:net:2361:5)
+      at <anonymous> (/workspace/scratch/3c9061d33fe2/notebook-pr-review-20261006/MCP/test/panel.test.ts:326:44)
+      at new Promise (<anonymous>)
+      at nativeFixture (/workspace/scratch/3c9061d33fe2/notebook-pr-review-20261006/MCP/test/panel.test.ts:325:11)
+      at async TestContext.<anonymous> (/workspace/scratch/3c9061d33fe2/notebook-pr-review-20261006/MCP/test/panel.test.ts:376:15)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    code: 'EPERM',
+    errno: -1,
+    syscall: 'listen',
+    address: '/tmp/nb-panel-oFerwF/bridge.sock',
+    port: -1
+  }
+
+test at MCP/test/panel.test.ts:1:20366
+✖ panel gestures keep the admitted endpoint and exact native sources (5.289283ms)
+  Error: listen EPERM: operation not permitted /tmp/nb-panel-HvtjhK/bridge.sock
+      at Server.setupListenHandle [as _listen2] (node:net:2145:21)
+      at listenInCluster (node:net:2224:12)
+      at Server.listen (node:net:2361:5)
+      at <anonymous> (/workspace/scratch/3c9061d33fe2/notebook-pr-review-20261006/MCP/test/panel.test.ts:326:44)
+      at new Promise (<anonymous>)
+      at nativeFixture (/workspace/scratch/3c9061d33fe2/notebook-pr-review-20261006/MCP/test/panel.test.ts:325:11)
+      at async TestContext.<anonymous> (/workspace/scratch/3c9061d33fe2/notebook-pr-review-20261006/MCP/test/panel.test.ts:411:17)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    code: 'EPERM',
+    errno: -1,
+    syscall: 'listen',
+    address: '/tmp/nb-panel-HvtjhK/bridge.sock',
+    port: -1
+  }
+
+test at MCP/test/panel.test.ts:1:23993
+✖ panel rejects caller routing/authorship fields and preserves the native conflict detail (1.430219ms)
+  Error: listen EPERM: operation not permitted /tmp/nb-panel-J977fj/bridge.sock
+      at Server.setupListenHandle [as _listen2] (node:net:2145:21)
+      at listenInCluster (node:net:2224:12)
+      at Server.listen (node:net:2361:5)
+      at <anonymous> (/workspace/scratch/3c9061d33fe2/notebook-pr-review-20261006/MCP/test/panel.test.ts:326:44)
+      at new Promise (<anonymous>)
+      at nativeFixture (/workspace/scratch/3c9061d33fe2/notebook-pr-review-20261006/MCP/test/panel.test.ts:325:11)
+      at async TestContext.<anonymous> (/workspace/scratch/3c9061d33fe2/notebook-pr-review-20261006/MCP/test/panel.test.ts:459:17)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    code: 'EPERM',
+    errno: -1,
+    syscall: 'listen',
+    address: '/tmp/nb-panel-J977fj/bridge.sock',
+    port: -1
+  }
+
+test at MCP/test/panel.test.ts:1:25256
+✖ workspace bootstrap opens in the same panel without a content owner or desktop window (5.590372ms)
+  Error: listen EPERM: operation not permitted /tmp/nb-panel-6QWElQ/bridge.sock
+      at Server.setupListenHandle [as _listen2] (node:net:2145:21)
+      at listenInCluster (node:net:2224:12)
+      at Server.listen (node:net:2361:5)
+      at <anonymous> (/workspace/scratch/3c9061d33fe2/notebook-pr-review-20261006/MCP/test/panel.test.ts:326:44)
+      at new Promise (<anonymous>)
+      at nativeFixture (/workspace/scratch/3c9061d33fe2/notebook-pr-review-20261006/MCP/test/panel.test.ts:325:11)
+      at async TestContext.<anonymous> (/workspace/scratch/3c9061d33fe2/notebook-pr-review-20261006/MCP/test/panel.test.ts:481:15)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    code: 'EPERM',
+    errno: -1,
+    syscall: 'listen',
+    address: '/tmp/nb-panel-6QWElQ/bridge.sock',
+    port: -1
+  }

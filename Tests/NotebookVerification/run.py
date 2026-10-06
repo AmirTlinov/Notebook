@@ -23,6 +23,8 @@ import notebook_acceptance as acceptance
 import notebook_check_reports as reports
 from notebook_check_registry import full_checks
 from test_registry import RegistryReportTests
+sys.path.insert(0, str(ROOT / "Tests/NotebookRelease"))
+import codex_fixture
 
 
 def device_receipt():
@@ -154,6 +156,73 @@ class NativeIPadUIArtifactTests(unittest.TestCase):
                 self.assertIn("test-without-building", test)
                 self.assertTrue(test[test.index("-xctestrun") + 1].endswith("/Build/Products/Notebook_iphoneos27.0-arm64.xctestrun"))
                 self.assertIn("-only-testing:" + selector, test)
+
+
+class CodexReceiptTests(unittest.TestCase):
+    """Real receipt validation with fabricated portable execution plus Codex admission."""
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(); self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name).resolve()
+        for name in ("Sources", "Tests", "MCP", "Applications"):
+            (self.root / name).mkdir()
+        for name in ("Package.swift", "verify.sh", "Applications/project.yml", "Applications/test-load-fixture.sh"):
+            (self.root / name).write_text("fixture\n")
+        self.runtime, _, files = codex_fixture.source(self.root)
+        self.stage = self.root / ".build/notebook-codex-runtimes" / release.notebook_codex.identity(self.runtime)["manifestSHA256"]
+        codex_fixture.stage(self.stage, self.runtime, files)
+        self.evidence = self.root / ".build/evidence"; self.evidence.mkdir()
+        self.plan = {"format": 2, "sourceRoot": str(self.root), "selectionMode": "explicit-only", "profiles": [],
+                     "unclassified": [], "manualSelection": True, "codexRuntimeStage": str(self.stage),
+                     "checks": {"core": [], "mac": [], "ipad": [], "commands": ["load-fixture"]}}
+        execution = {"format": 1, "planned": ["load-fixture"], "executed": ["load-fixture"], "skipped": [], "failed": []}
+        self.commands = [
+            {"label": "load-fixture", "argv": [str(self.root / "Applications/test-load-fixture.sh")], "cwd": str(self.root), "exitCode": 0},
+            {"label": "codex-resources", "argv": [sys.executable, "-B", str(self.root / "Applications/prepare_notebook_codex.py"),
+                "--prepare", "--stage-root", str(self.root / ".build/notebook-codex-runtimes")], "cwd": str(self.root), "exitCode": 0}]
+        for name, value in {"selection.json": self.plan, "commands.json": self.commands,
+                "completed.json": {"format": 2, "checks": {"load-fixture": execution}},
+                "load-fixture-inventory.json": {"format": 1, "tests": ["load-fixture"]},
+                "load-fixture-execution.json": execution,
+                "codex-resources.stdout.log": codex_fixture.report(self.stage, self.runtime),
+                "source-before.json": release.source_inputs(self.root),
+                "toolchain.json": {"python": "fixture"}, "toolchain-after.json": {"python": "fixture"}}.items():
+            release.write_json(self.evidence / name, value)
+        required = patch.object(verify, "prerequisites", return_value={"codex"})
+        required.start(); self.addCleanup(required.stop)
+
+    def test_source_manifest_binds_preparation_native_arguments_and_final_receipt(self):
+        receipt = release.finish_verification(self.root, self.evidence)
+        self.assertEqual(receipt["codexRuntime"], release.notebook_codex.identity(self.runtime))
+        self.assertEqual(verify.validate_selected(self.root, self.evidence, receipt), receipt)
+        self.plan["typesetterRuntime"] = str(self.root / "typesetter")
+        argv = verify.native_arguments(self.root, self.evidence, self.plan, "mac", [], "build-for-testing")
+        self.assertIn("NOTEBOOK_CODEX_RUNTIME=" + str(self.stage), argv)
+
+    def test_forged_report_cannot_pass_even_when_all_generic_evidence_hashes_are_recomputed(self):
+        receipt = release.finish_verification(self.root, self.evidence)
+        report = release.read_json(self.evidence / "codex-resources.stdout.log")
+        report["identity"]["manifestSHA256"] = "0" * 64
+        release.write_json(self.evidence / "codex-resources.stdout.log", report)
+        receipt["codexRuntime"] = report["identity"]
+        receipt["artifacts"] = release.verification_artifacts(self.evidence, full=False)
+        with self.assertRaisesRegex(release.ReleaseError, "source pin"):
+            verify.validate_selected(self.root, self.evidence, receipt)
+
+    def test_another_stage_or_old_flat_cache_command_cannot_supply_the_prerequisite(self):
+        verify.validate_prerequisites(self.plan, self.evidence, self.commands)
+        self.plan["codexRuntimeStage"] = str(self.root / ".build/notebook-codex-runtimes" / ("0" * 64))
+        with self.assertRaisesRegex(release.ReleaseError, "another native build stage"):
+            verify.validate_prerequisites(self.plan, self.evidence, self.commands)
+        self.plan["codexRuntimeStage"] = str(self.stage)
+        self.commands[-1]["argv"][-3:] = ["--stage", str(self.root / ".build/notebook-codex-runtime")]
+        with self.assertRaisesRegex(release.ReleaseError, "codex-resources"):
+            verify.validate_prerequisites(self.plan, self.evidence, self.commands)
+
+    def test_receipt_cannot_drop_or_change_the_admitted_identity(self):
+        receipt = release.finish_verification(self.root, self.evidence)
+        for value in (None, {**receipt["codexRuntime"], "node": "v0.0.0"}):
+            with self.subTest(value=value), self.assertRaisesRegex(release.ReleaseError, "verification receipt"):
+                verify.validate_selected(self.root, self.evidence, {**receipt, "codexRuntime": value})
 
 
 class SelectionTests(unittest.TestCase):
@@ -434,6 +503,8 @@ class SelectionTests(unittest.TestCase):
             (self.root / path).mkdir()
         for path in ("Package.swift", "verify.sh", "Applications/project.yml"):
             (self.root / path).write_text("fixture\n")
+        self.codex_runtime, _, self.codex_files = codex_fixture.source(self.root)
+        self.codex_stage = self.root / ".build/notebook-codex-runtimes" / release.notebook_codex.identity(self.codex_runtime)["manifestSHA256"]
         self.git("init", "-q"); self.git("config", "user.name", "test"); self.git("config", "user.email", "test@example.test")
         self.git("add", "."); self.git("commit", "-qm", "initial")
 
@@ -861,6 +932,9 @@ class SelectionTests(unittest.TestCase):
                     calls.append((label, argv, kwargs))
                     if label == "mac-build-for-testing": raise BuildReached()
                     if label == "ipc-binpath": return str(self.root / ".build/debug").encode(), b""
+                    if label == "codex-resources":
+                        if not self.codex_stage.exists(): codex_fixture.stage(self.codex_stage, self.codex_runtime, self.codex_files)
+                        return json.dumps(codex_fixture.report(self.codex_stage, self.codex_runtime)).encode(), b""
                     return b"", None
                 plan = {"checks": {"core": [], "ipad": [], "mac": ["NotebookMacTests/DocumentRenderSessionTests"],
                                     "commands": commands}}
@@ -890,11 +964,13 @@ class SelectionTests(unittest.TestCase):
                 self.assertEqual(release.read_json(evidence / "selection.json")["typesetterRuntime"], str(self.root / "typesetter"))
                 self.assertIn("NOTEBOOK_TYPESETTER_RUNTIME=" + str(self.root / "typesetter"), build)
                 self.assertIn("NOTEBOOK_TYPESCRIPT_RUNTIME=" + str(self.root / "typescript"), build)
+                self.assertIn("NOTEBOOK_CODEX_RUNTIME=" + str(self.codex_stage), build)
+                self.assertEqual(release.read_json(evidence / "selection.json")["codexRuntimeStage"], str(self.codex_stage))
                 self.assertIn("NOTEBOOK_SURFACE_STAGE=" + str(self.root.resolve() / ".build/surface"), build)
 
     def test_native_receipt_binds_the_prepared_typesetter_stage_after_environment_changes(self):
         stage = self.root / "shared runtime"
-        plan = {"sourceRoot": str(self.root), "typesetterRuntime": str(stage),
+        plan = {"sourceRoot": str(self.root), "typesetterRuntime": str(stage), "codexRuntimeStage": str(self.codex_stage),
                 "checks": {"core": [], "ipad": [], "mac": ["NotebookMacTests/NotebookArchiveLaunchTests"], "commands": []}}
         argv = [sys.executable, "-B", str(self.root / "Applications/prepare_notebook_typesetter.py"),
                 "--prepare", "--platform", "macosx", "--stage", str(stage)]

@@ -18,6 +18,7 @@ import stat
 import tempfile
 import prepare_notebook_typesetter as notebook_typesetter
 import prepare_notebook_typescript as notebook_typescript
+import prepare_notebook_codex as notebook_codex
 
 sys.dont_write_bytecode = True
 
@@ -401,7 +402,7 @@ def read_toolchain(command, prefix="toolchain-"):
 
 
 def finish_verification(source, evidence):
-    from notebook_verification import validate_selected
+    from notebook_verification import validate_selected, prerequisites, prepared_codex
     require(not (evidence / "verification.json").exists(), "Этот проход уже завершён.")
     before = read_json(evidence / "source-before.json")
     after = source_inputs(source)
@@ -413,6 +414,8 @@ def finish_verification(source, evidence):
     receipt = {"format": 2, "route": "./verify.sh" if plan.get("selectionMode") == "full-registry" else "./verify.sh:selected",
                "scope": "registry-contracts", "physicalAcceptance": False, "status": "passed",
                "source": before, "artifacts": verification_artifacts(evidence, full=False)}
+    if "codex" in prerequisites(plan):
+        receipt["codexRuntime"] = prepared_codex(evidence, Path(plan["sourceRoot"]))["identity"]
     validate_selected(source, evidence, receipt)
     write_json(evidence / "verification.json", receipt)
     return receipt
@@ -437,11 +440,21 @@ def prepare_typesetter_runtime(source, command, platform, stage=None):
     return stage
 
 
-def prepare_codex_runtime(source, command, stage=None):
-    stage = Path(stage or Path(source) / ".build/notebook-codex-runtime").resolve()
-    command("codex-resources", [sys.executable, "-B", Path(source) / "Applications/prepare_notebook_codex.py",
-        "--stage", stage], cwd=source, timeout=1800)
-    return stage
+def validate_codex_report(report, source, stage_root=None):
+    try:
+        return notebook_codex.validate_report(report,
+            lock_path=Path(source) / "Applications/NotebookCodexRuntime.lock.json", stage_root=stage_root)
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError) as error:
+        raise ReleaseError("Codex runtime contract failed: " + str(error)) from error
+
+
+def prepare_codex_runtime(source, command, stage_root=None):
+    root = Path(stage_root or Path(source) / ".build/notebook-codex-runtimes").resolve()
+    output = command("codex-resources", [sys.executable, "-B", Path(source) / "Applications/prepare_notebook_codex.py",
+        "--prepare", "--stage-root", root], cwd=source, timeout=1800, read_output=True)[0]
+    report = json.loads(output)
+    validate_codex_report(report, source, root)
+    return Path(report["stage"])
 
 
 def prepare_surface_stage(source, command):
@@ -494,9 +507,9 @@ def restrict_test_script_services(app, source, command, *, bundle_identifier, si
     command("test-host-seal-verify", ["/usr/bin/codesign", "--verify", "--deep", "--strict", app])
 
 
-def build_mac(snapshot, evidence, command, typesetter_runtime, codex_runtime, surface_stage):
+def build_mac(snapshot, evidence, command, typesetter_runtime, codex_stage_root, surface_stage):
     typescript_runtime = prepare_typescript_runtime(snapshot, command)
-    codex_runtime = prepare_codex_runtime(snapshot, command, stage=codex_runtime)
+    codex_runtime = prepare_codex_runtime(snapshot, command, stage_root=codex_stage_root)
     entitlements = evidence / "mac.entitlements"
     entitlements.write_bytes(plistlib.dumps({"com.apple.security.get-task-allow": True, **cloud_entitlements(mac=True)}))
     command("build-mac", ["/usr/bin/xcrun", "xcodebuild", "-project",
@@ -515,7 +528,7 @@ def build_mac(snapshot, evidence, command, typesetter_runtime, codex_runtime, su
     return evidence / ("derived-mac/Build/Products/" + CONFIGURATION + "/NotebookRuntime.app")
 
 
-def inspect_mac(app, command):
+def inspect_mac(app, command, source):
     bundle = app_manifest(app)
     info = plistlib.loads((app / "Contents/Info.plist").read_bytes())
     require(info.get("CFBundleIdentifier") == MAC_BUNDLE and info.get("LSUIElement") is True
@@ -580,6 +593,12 @@ def inspect_mac(app, command):
     signature["entitlements"] = entitlements
     signature["services"] = inspect_script_services(app, info, command)
     signature["typesetter"] = inspect_typesetter_resources(app / "Contents/Resources/NotebookTypesetter")
+    codex_stage = app / "Contents/Resources/CodexRuntime"
+    report = json.loads(command("codex-runtime-check", [sys.executable, "-B",
+        Path(source) / "Applications/prepare_notebook_codex.py", "--check", "--stage", codex_stage],
+        cwd=source, timeout=120, read_output=True)[0])
+    signature["codexRuntime"] = validate_codex_report(report, source)
+    require(report["stage"] == str(codex_stage.resolve()), "Codex receipt names another bundle.")
     architectures = command("mac-binary-architectures", ["/usr/bin/xcrun", "lipo", "-archs", executable], read_output=True)[0].decode().split()
     require(architectures == ["arm64"], "Нужен arm64 helper согласованного Mac.")
     output = command("mac-binary-platform", ["/usr/bin/xcrun", "vtool", "-show-build", executable], read_output=True)[0].decode()
@@ -693,8 +712,10 @@ def build_verified_pair(source, verification, evidence, runner=None):
         ipad = build_ipad(snapshot, evidence, command, runtime)
         ipad_info, ipad_signature, ipad_uuids, ipad_manifest = inspect_ipad(ipad, device, evidence, command)
         surface_stage = prepare_surface_stage(source, command)
-        mac = build_mac(snapshot, evidence, command, runtime, source / ".build/notebook-codex-runtime", surface_stage)
-        mac_info, mac_signature, mac_uuids, mac_manifest = inspect_mac(mac, command)
+        mac = build_mac(snapshot, evidence, command, runtime, source / ".build/notebook-codex-runtimes", surface_stage)
+        mac_info, mac_signature, mac_uuids, mac_manifest = inspect_mac(mac, command, snapshot)
+        require("codexRuntime" not in proof or proof["codexRuntime"] == mac_signature["codexRuntime"],
+                "Codex runtime differs from the verified prerequisite.")
         plugin = evidence / "plugin"
         shutil.copytree(snapshot / "MCP/plugin", plugin)
         command("package-plugin", [shutil.which("node"), snapshot / "MCP/package-plugin-runtime.mjs",
@@ -716,6 +737,7 @@ def build_verified_pair(source, verification, evidence, runner=None):
             apps[role] = {"path": app.relative_to(evidence).as_posix(), "manifestSHA256": manifest["sha256"],
                           "signature": signature, "binaryUUIDs": uuids.strip()}
         receipt.update({"status": "verified-build", "device": device, "apps": apps,
+                        "codexRuntime": mac_signature["codexRuntime"],
                         "plugin": {"path": plugin.relative_to(evidence).as_posix(),
                                    "version": json.loads((plugin / "notebook/plugin.json").read_text())["version"]},
                         "version": ipad_info["CFBundleShortVersionString"], "build": ipad_info["CFBundleVersion"]})
@@ -959,7 +981,8 @@ def install_verified_pair(source, build, evidence, runner=None):
         require(device == release["device"], "Физический iPad или его система изменились после сборки пары.")
         ipad, mac = (build / paths[role] for role in ("iPad", "mac"))
         ipad_info, ipad_signature, _, _ = inspect_ipad(ipad, device, evidence, command)
-        mac_info, mac_signature, _, _ = inspect_mac(mac, command)
+        mac_info, mac_signature, _, _ = inspect_mac(mac, command, snapshot)
+        require(release.get("codexRuntime") == mac_signature["codexRuntime"], "Codex release identity changed.")
         require(ipad_signature == release["apps"]["iPad"]["signature"] and mac_signature == release["apps"]["mac"]["signature"],
                 "Подпись release пары изменилась.")
         require(all(info["CFBundleVersion"] == release["build"] and info["CFBundleShortVersionString"] == release["version"]

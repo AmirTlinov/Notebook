@@ -22,6 +22,8 @@ import notebook_release as release
 import notebook_verification as verify
 import typesetter_fixture
 import typescript_fixture
+import codex_fixture
+from test_codex import CodexPackagingTests
 from cli_fixture import FakeCLI
 from test_typesetter import TypesetterPackagingTests
 from test_runtime_lifecycle import RuntimeLifecycleTests
@@ -34,6 +36,8 @@ class PairCLI(FakeCLI):
     def __init__(self, source, verification):
         super().__init__(source)
         self.verification = verification
+        self.codex_runtime = release.notebook_codex.admitted_runtime("arm64", self.source / "Applications/NotebookCodexRuntime.lock.json")
+        self.codex_files = codex_fixture.payload()
         self.mac = None
         self.mac_info = {"CFBundleIdentifier": release.MAC_BUNDLE, "LSUIElement": True,
             "NotebookPluginRuntime": True, "CFBundleName": "NotebookRuntime",
@@ -58,6 +62,8 @@ class PairCLI(FakeCLI):
         self.package_fail = False
         self.mutate_packaged_runtime = False
         self.codex_prepare_fail = False
+        self.changed_codex_helper = False
+        self.forged_codex_report = False
         self.xpc_rights = {"com.apple.security.app-sandbox": True}
         self.missing_xpc = False
         self.missing_tex = False
@@ -83,8 +89,20 @@ class PairCLI(FakeCLI):
         elif label == "codex-resources":
             snapshot = Path(cwd)
             assert argv == [sys.executable, "-B", str(snapshot / "Applications/prepare_notebook_codex.py"),
-                            "--stage", str(self.source / ".build/notebook-codex-runtime")]
+                            "--prepare", "--stage-root", str(self.source / ".build/notebook-codex-runtimes")]
             exit_code = 1 if self.codex_prepare_fail else 0
+            if not exit_code:
+                stage = self.source / ".build/notebook-codex-runtimes" / release.notebook_codex.identity(self.codex_runtime)["manifestSHA256"]
+                if not stage.exists(): codex_fixture.stage(stage, self.codex_runtime, self.codex_files)
+                report = codex_fixture.report(stage, self.codex_runtime)
+                if self.forged_codex_report: report["identity"]["manifestSHA256"] = "0" * 64
+                output = json.dumps(report).encode()
+        elif label == "codex-runtime-check":
+            assert argv[:4] == [sys.executable, "-B", str(Path(cwd) / "Applications/prepare_notebook_codex.py"), "--check"]
+            try:
+                output = json.dumps(codex_fixture.report(Path(argv[-1]), self.codex_runtime)).encode()
+            except (OSError, RuntimeError) as failure:
+                exit_code, error = 1, str(failure).encode()
         elif label == "typescript-resources":
             assert "--prepare" in argv and "--stage-root" in argv
             output = json.dumps({"status": "ready", "stage": str(self.source / ".build/fixture-typescript-runtime")}).encode()
@@ -92,7 +110,7 @@ class PairCLI(FakeCLI):
             assert Path(cwd) == self.source
             assert argv == ["node", str(self.source / "MCP/build-surface.mjs"), "--stage", str(self.source / ".build/surface")]
         elif label == "build-mac":
-            assert "NOTEBOOK_CODEX_RUNTIME=" + str(self.source / ".build/notebook-codex-runtime") in argv
+            assert "NOTEBOOK_CODEX_RUNTIME=" + str(self.source / ".build/notebook-codex-runtimes" / release.notebook_codex.identity(self.codex_runtime)["manifestSHA256"]) in argv
             assert "NOTEBOOK_SURFACE_STAGE=" + str(self.source / ".build/surface") in argv
             if self.mac_fail:
                 exit_code = 1
@@ -132,10 +150,10 @@ class PairCLI(FakeCLI):
                     (tools / "dist/index.mjs").write_text("// bundled fixture MCP\n")
                     (tools / "dist/launch-runtime.mjs").write_text("// bundled fixture launcher\n")
                     (tools / "package.json").write_text('{"type":"module"}\n')
-                    node = self.mac / "Contents/Resources/CodexRuntime/node"
-                    node.parent.mkdir()
-                    node.write_bytes(b"fixture bundled node")
-                    node.chmod(0o755)
+                    codex_fixture.stage(self.mac / "Contents/Resources/CodexRuntime", self.codex_runtime, self.codex_files)
+                    if self.changed_codex_helper:
+                        helper = self.mac / "Contents/Resources/CodexRuntime/codex/codex-resources/helper.dat"
+                        helper.write_bytes(b"x" + helper.read_bytes()[1:])
                 if self.mutate_proof:
                     (self.verification / "core.log").write_text("changed proof\n")
                 if self.mutate_ipad:
@@ -285,6 +303,7 @@ class ReleaseTests(unittest.TestCase):
         for key, value in typescript_fixture.inputs(self.source).items():
             type_patch = patch.object(release.notebook_typescript, key, value)
             type_patch.start(); self.addCleanup(type_patch.stop)
+        codex_fixture.source(self.source)
         self.verification = self.root / "verification"
         self.verification.mkdir()
         # This is a selected, fabricated contract for release guard tests.
@@ -356,6 +375,8 @@ class ReleaseTests(unittest.TestCase):
                 self.cli.existing_preview = True
                 receipt = self.build()
                 self.assertEqual(receipt["status"], "verified-build")
+                self.assertEqual(receipt["codexRuntime"], release.notebook_codex.identity(self.cli.codex_runtime))
+                self.assertEqual(receipt["apps"]["mac"]["signature"]["codexRuntime"], receipt["codexRuntime"])
                 self.assertFalse(receipt["installationAttempted"])
                 self.assertEqual(set(receipt["apps"]), {"iPad", "mac"})
                 self.assertEqual(receipt["plugin"], {"path": "plugin", "version": "0.2.0"})
@@ -374,7 +395,7 @@ class ReleaseTests(unittest.TestCase):
                 typesetter = [call for call in self.cli.calls if any(str(arg).endswith("/prepare_notebook_typesetter.py") for arg in call)]
                 self.assertEqual([(argv[argv.index("--platform") + 1], argv[argv.index("--stage") + 1]) for argv in typesetter],
                                  [("iphoneos", expected_stage), ("macosx", expected_stage)])
-                preparation = [call for call in self.cli.calls if any(str(arg).endswith("/prepare_notebook_codex.py") for arg in call)]
+                preparation = [call for call in self.cli.calls if "--prepare" in call and any(str(arg).endswith("/prepare_notebook_codex.py") for arg in call)]
                 self.assertEqual(len(preparation), 1)
                 self.assertLess(self.cli.calls.index(preparation[0]), self.cli.calls.index(builds[1]))
                 packaging = [call for call in self.cli.calls if any(str(arg).endswith("/package-plugin-runtime.mjs") for arg in call)]
@@ -393,6 +414,22 @@ class ReleaseTests(unittest.TestCase):
                 device_calls = [call for call in self.cli.calls if "devicectl" in call]
                 self.assertEqual(len(device_calls), 1)
                 self.assertEqual(device_calls[0][1:5], ["devicectl", "device", "info", "details"])
+
+    def test_changed_codex_helper_refuses_verified_pair_even_with_valid_fixture_signature(self):
+        self.cli.changed_codex_helper = True
+        self.refused("codex-runtime-check")
+
+    def test_forged_preparation_receipt_stops_before_mac_build(self):
+        self.cli.forged_codex_report = True
+        self.refused("Codex runtime contract failed")
+        self.assertIsNone(self.cli.mac)
+
+    def test_portable_only_verification_cannot_claim_native_codex_admission(self):
+        receipt = release.read_json(self.verification / "verification.json")
+        self.assertNotIn("codexRuntime", receipt)
+        receipt["codexRuntime"] = release.notebook_codex.identity(self.cli.codex_runtime)
+        with self.assertRaisesRegex(release.ReleaseError, "did not admit"):
+            verify.validate_selected(self.source, self.verification, receipt)
 
     def test_failed_codex_preparation_stops_before_mac_build_or_verified_pair(self):
         self.cli.codex_prepare_fail = True

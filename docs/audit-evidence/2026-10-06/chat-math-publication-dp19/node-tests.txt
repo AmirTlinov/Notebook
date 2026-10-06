@@ -1,0 +1,28 @@
+✔ clearing a settled staged MathJax job permits later math and retains prepared SVG (628.126899ms)
+✔ real MathJax assistive output preserves current duplicate-word selection, link focus and next streamed source (1222.967393ms)
+✔ real MathJax maps multi-node UTF-16 source ranges without replacing focused disclosure or selected prose (239.925748ms)
+✔ chat delta retains unchanged nodes and prepares only changed message bodies (744.546716ms)
+✔ plain text and reset publish before startup and only current bodies are cloned (142.305138ms)
+✔ delayed math cannot overwrite a reset conversation with a reused message ID (24.855397ms)
+✔ streaming coalesces the latest source while preserving the current article and actions (287.397306ms)
+✔ removal and conversion to activity retire pending math without delaying the transcript (38.744091ms)
+✔ a failed live math source does not poison another body in the same conversation (16.346041ms)
+✔ startup failure cannot retain or reject transcript acceptance (18.935308ms)
+✔ status-only delta preserves tail intent when prepared math changes height (21.571056ms)
+✔ controls-only delta preserves tail intent when prepared math changes height (19.296029ms)
+✔ math commit preserves newer human scroll, prose selection and focused link (276.038804ms)
+✔ raw HTML mixed prose/math retains duplicate-word endpoints and details focus through exact Range edits (21.789795ms)
+✔ subsequent source update preserves selected prose after previously rendered math (191.958107ms)
+✔ cleared human selection stays cleared while multiple UTF-16 math ranges commit (21.312464ms)
+✔ staging is inert, suppresses duplicate IDs, matches width and retries a resized source (17.577943ms)
+✔ cleanup failure removes the active staging host and leaves plain source (13.589873ms)
+✔ selection inside replaced TeX follows native Range collapse without selecting unrelated prose (14.538606ms)
+✔ overlapping engine source matches are rejected before any live mutation (10.909696ms)
+ℹ tests 20
+ℹ suites 0
+ℹ pass 20
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 3711.514446

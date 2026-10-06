@@ -1,0 +1,59 @@
+▶ keyboard undo and delete cannot admit another action during a dragged contact
+  ✔ z (15.392029ms)
+  ✔ Delete (2.438479ms)
+✔ keyboard undo and delete cannot admit another action during a dragged contact (19.087146ms)
+▶ Enter and double-click cannot open a nested editor or release the current contact
+  ✔ select: Enter (2.382546ms)
+  ✔ select: dblclick (1.929823ms)
+  ✔ pen: Enter (1.854672ms)
+  ✔ pen: dblclick (1.719035ms)
+✔ Enter and double-click cannot open a nested editor or release the current contact (8.668264ms)
+✔ an idle editor still opens, cancels and saves one completed edit (2.282223ms)
+✔ the text tool still admits and saves a new element (1.792707ms)
+▶ lost pointer capture cancels the unfinished preview and resumes the same projection
+  ✔ select (2.30375ms)
+  ✔ pen (1.890324ms)
+✔ lost pointer capture cancels the unfinished preview and resumes the same projection (4.859524ms)
+▶ Escape still cancels an unfinished contact without admitting a competing write
+  ✔ select (1.656977ms)
+  ✔ pen (1.117406ms)
+✔ Escape still cancels an unfinished contact without admitting a competing write (3.184014ms)
+▶ late lost-capture events preserve a completed ink contact and a newer pointer
+  ✔ select: pointer 1 (2.0477ms)
+  ✔ select: pointer 2 (1.721555ms)
+  ✔ pen: pointer 1 (1.558058ms)
+  ✔ pen: pointer 2 (1.52926ms)
+✔ late lost-capture events preserve a completed ink contact and a newer pointer (7.535615ms)
+✔ real pen input retains measured samples through completion and discards only cancelled contact (4.660816ms)
+✔ Retina projection preserves screen density through transport scaling and overscan (8.469808ms)
+✔ large displays and collapsed panels keep a finite admitted projection (0.414535ms)
+▶ session coalesces viewport demand against accepted pixels without delaying required reads
+  ✔ covered (29.14216ms)
+  ✔ needed (8.081745ms)
+  ✔ forced (2.555277ms)
+  ✔ fit (3.106369ms)
+✔ session coalesces viewport demand against accepted pixels without delaying required reads (45.987634ms)
+▶ session teardown releases readers and ignores late read and write completions
+  ✔ read (3.065178ms)
+  ✔ saved (2.566645ms)
+  ✔ conflict (1.437513ms)
+  ✔ uncertain (1.469618ms)
+✔ session teardown releases readers and ignores late read and write completions (10.525725ms)
+✔ a confirmed pen contact replaces an in-flight old scene before the next polling tick (2.453011ms)
+✔ an unfinished contact owns mutation admission until completion or cancellation (2.934399ms)
+✔ error Retry repairs ipc_timeout before repeating the same text action (2.280686ms)
+✔ error Retry repairs operation_failed before repeating the same text action (1.660194ms)
+✔ workspace recovery preserves an uncertain action and its panel address (2.097416ms)
+✔ session closed during handshake suppresses the late connection failure (0.705983ms)
+✔ Notebook exposes one HTML app resource, a model opener and app-only gesture tools (67.787834ms)
+✔ workspace switching retires an old in-flight read and preserves accepted edit ownership (1.380024ms)
+✔ startup timeout is bounded and launches at most once per client (168.533734ms)
+✔ runtime staging preserves the previous package until the copied product validates (17.653402ms)
+ℹ tests 44
+ℹ suites 0
+ℹ pass 44
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1448.976949

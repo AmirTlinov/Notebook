@@ -1,0 +1,66 @@
+test_pinned_stdout_version_survives_codex_startup_diagnostics (test_codex.CodexPackagingTests.test_pinned_stdout_version_survives_codex_startup_diagnostics) ... ERROR
+test_stderr_cannot_supply_or_disguise_the_pinned_stdout_version (test_codex.CodexPackagingTests.test_stderr_cannot_supply_or_disguise_the_pinned_stdout_version) ...
+  test_stderr_cannot_supply_or_disguise_the_pinned_stdout_version (test_codex.CodexPackagingTests.test_stderr_cannot_supply_or_disguise_the_pinned_stdout_version) (stdout='') ... FAIL
+  test_stderr_cannot_supply_or_disguise_the_pinned_stdout_version (test_codex.CodexPackagingTests.test_stderr_cannot_supply_or_disguise_the_pinned_stdout_version) (stdout='wrong-version') ... FAIL
+  test_stderr_cannot_supply_or_disguise_the_pinned_stdout_version (test_codex.CodexPackagingTests.test_stderr_cannot_supply_or_disguise_the_pinned_stdout_version) (stdout='codex-cli 0.155.0\nextra output') ... FAIL
+test_version_probe_bounds_both_streams_and_waits_for_stderr (test_codex.CodexPackagingTests.test_version_probe_bounds_both_streams_and_waits_for_stderr) ... ok
+
+======================================================================
+ERROR: test_pinned_stdout_version_survives_codex_startup_diagnostics (test_codex.CodexPackagingTests.test_pinned_stdout_version_survives_codex_startup_diagnostics)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/scratch/3c9061d33fe2/notebook-pr-review-20261006/Tests/NotebookRelease/test_codex.py", line 178, in test_pinned_stdout_version_survives_codex_startup_diagnostics
+    stage, receipt = self.admitted()
+                     ^^^^^^^^^^^^^^^
+  File "/workspace/scratch/3c9061d33fe2/notebook-pr-review-20261006/Tests/NotebookRelease/test_codex.py", line 42, in admitted
+    report = self.prepare()
+             ^^^^^^^^^^^^^^
+  File "/workspace/scratch/3c9061d33fe2/notebook-pr-review-20261006/Tests/NotebookRelease/test_codex.py", line 39, in prepare
+    return codex.prepare(self.cache, self.runtime)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/scratch/3c9061d33fe2/notebook-pr-review-20261006/Applications/prepare_notebook_codex.py", line 362, in prepare
+    report = check_stage(prepared, runtime)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/scratch/3c9061d33fe2/notebook-pr-review-20261006/Applications/prepare_notebook_codex.py", line 251, in check_stage
+    fail("Unexpected pinned Codex/Node executable version")
+  File "/workspace/scratch/3c9061d33fe2/notebook-pr-review-20261006/Applications/prepare_notebook_codex.py", line 34, in fail
+    raise RuntimeError(message)
+RuntimeError: Unexpected pinned Codex/Node executable version
+
+======================================================================
+FAIL: test_stderr_cannot_supply_or_disguise_the_pinned_stdout_version (test_codex.CodexPackagingTests.test_stderr_cannot_supply_or_disguise_the_pinned_stdout_version) (stdout='')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/scratch/3c9061d33fe2/notebook-pr-review-20261006/Tests/NotebookRelease/test_codex.py", line 193, in test_stderr_cannot_supply_or_disguise_the_pinned_stdout_version
+    self.assertEqual(codex.executable_version(script), stdout)
+AssertionError: 'codex-cli 0.155.0' != ''
+- codex-cli 0.155.0
+
+
+======================================================================
+FAIL: test_stderr_cannot_supply_or_disguise_the_pinned_stdout_version (test_codex.CodexPackagingTests.test_stderr_cannot_supply_or_disguise_the_pinned_stdout_version) (stdout='wrong-version')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/scratch/3c9061d33fe2/notebook-pr-review-20261006/Tests/NotebookRelease/test_codex.py", line 193, in test_stderr_cannot_supply_or_disguise_the_pinned_stdout_version
+    self.assertEqual(codex.executable_version(script), stdout)
+AssertionError: 'codex-cli 0.155.0\nwrong-version' != 'wrong-version'
+- codex-cli 0.155.0
+  wrong-version
+
+
+======================================================================
+FAIL: test_stderr_cannot_supply_or_disguise_the_pinned_stdout_version (test_codex.CodexPackagingTests.test_stderr_cannot_supply_or_disguise_the_pinned_stdout_version) (stdout='codex-cli 0.155.0\nextra output')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/scratch/3c9061d33fe2/notebook-pr-review-20261006/Tests/NotebookRelease/test_codex.py", line 193, in test_stderr_cannot_supply_or_disguise_the_pinned_stdout_version
+    self.assertEqual(codex.executable_version(script), stdout)
+AssertionError: 'codex-cli 0.155.0\ncodex-cli 0.155.0\nextra output' != 'codex-cli 0.155.0\nextra output'
+- codex-cli 0.155.0
+  codex-cli 0.155.0
+  extra output
+
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.184s
+
+FAILED (failures=3, errors=1)

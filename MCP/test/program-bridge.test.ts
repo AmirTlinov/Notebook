@@ -408,3 +408,89 @@ test('a lost ACK reply retries idempotently without double credit or removing th
   program.acknowledgeSnapshot('2');program.acknowledgeSnapshot('1');program.acknowledgeSnapshot('3');
   await program.drainCommits();assert.equal(descriptors.length,3);
 });
+
+test('reentrant author serialization cannot freeze after cancellation, resume or disposal', async () => {
+  for (const serialized of [false, true]) for (const mechanism of ['toJSON', 'getter']) {
+    for (const operation of ['cancelLifecycle', 'resume', 'dispose']) {
+      const {program, api, commits} = fixture();
+      let interrupted: unknown;
+      const interrupt = () => { interrupted = program[operation](); return {phase:99}; };
+      const candidate = mechanism === 'toJSON' ? {toJSON:interrupt} :
+        Object.defineProperty({}, 'phase', {enumerable:true, get:() => interrupt().phase});
+      api.lifecycle({checkpoint:() => candidate});
+      await assert.rejects(program.checkpoint({serialized}),
+        operation === 'dispose' ? /program_disposed/ : /program_superseded/,
+        `${mechanism} ${operation} must revoke the old freeze`);
+      await interrupted;
+      assert.equal(api.state.phase, 0, `${mechanism} ${operation} retains the accepted state`);
+      assert.equal(program.revision, '0');
+      assert.equal(commits.length, 0);
+      assert.throws(() => program.readSnapshot({revision:'frozen'}), /program_state_snapshot_missing/);
+      assert.equal(program.lifecycleState.phase, operation === 'cancelLifecycle' ? 'failed' : operation === 'dispose' ? 'disposed' : 'running');
+    }
+  }
+});
+
+test('a reentrant checkpoint retry owns the new generation without the old result or failure overwriting it', async () => {
+  const {program, api, commits} = fixture();
+  let calls = 0, pauses = 0, replacement: Promise<unknown> | undefined;
+  api.lifecycle({pause:() => { pauses++; }, checkpoint:() => ++calls === 1 ? {
+    toJSON() { replacement = program.checkpoint({retry:true,serialized:true}); return {phase:99}; }
+  } : {phase:.75}});
+  await assert.rejects(program.checkpoint({serialized:true}), /program_superseded/);
+  assert.ok(replacement);
+  const descriptor: any = await replacement;
+  assert.equal(JSON.parse(program.readSnapshot({revision:descriptor.revision})).phase, .75);
+  assert.equal(api.state.phase, .75);
+  assert.equal(program.lifecycleState.phase, 'frozen');
+  assert.equal(calls, 2); assert.equal(pauses, 1); assert.equal(commits.length, 0);
+});
+
+test('serialization errors remain the original failure and a retry can freeze normally', async () => {
+  const {program, api} = fixture();
+  const failure = new Error('author serialization failed'); let calls = 0;
+  api.lifecycle({checkpoint:() => ++calls === 1 ? {toJSON() { throw failure; }} : {phase:.5}});
+  await assert.rejects(program.checkpoint({serialized:true}), reason => reason === failure);
+  assert.equal(api.state.phase, 0);
+  assert.equal(program.lifecycleState.phase, 'failed');
+  assert.equal(program.lifecycleState.failedStage, 'checkpointing');
+  const descriptor = await program.checkpoint({retry:true,serialized:true});
+  assert.equal(JSON.parse(program.readSnapshot({revision:descriptor.revision})).phase, .5);
+});
+
+test('reentrant cancellation preserves accepted snapshot acknowledgement and grants no extra credit', async () => {
+  const snapshots: any[] = [], requests: number[] = [];
+  const {program, api, events} = fixture({stateTransport:{credit:512,
+    onSnapshot:(snapshot:unknown) => snapshots.push(snapshot), requestCredit:(bytes:number) => requests.push(bytes)}});
+  assert.equal(api.commit({phase:1}), true);
+  program.acknowledgeSnapshot('1');
+  const capacity = events.filter(event => event.type === 'notebookcapacity').length;
+  let aborts = 0;
+  api.lifecycle({checkpoint:({signal}: {signal: AbortSignal}) => {
+    signal.addEventListener('abort', () => { aborts++; });
+    return {toJSON() { program.cancelLifecycle(); return {phase:99}; }};
+  }});
+  await assert.rejects(program.checkpoint({serialized:true}), /program_superseded/);
+  assert.equal(api.state.phase, 1); assert.equal(program.revision, '1');
+  assert.equal(aborts, 1, 'Revocation and failure cleanup abort the old request once');
+  assert.equal(snapshots.length, 1); assert.deepEqual(requests, []);
+  await program.resume();
+  assert.equal(api.commit({phase:2}), true);
+  program.acknowledgeSnapshot('2'); program.acknowledgeSnapshot('2');
+  assert.equal(events.filter(event => event.type === 'notebookcapacity').length, capacity);
+  assert.deepEqual(snapshots.map(snapshot => snapshot.revision), ['1','2']);
+});
+
+
+test('an original serialization error is preserved even when its callback supersedes the lifecycle', async () => {
+  for (const operation of ['cancelLifecycle', 'resume', 'dispose']) {
+    const {program, api} = fixture(); const failure = new Error('original author error');
+    let interrupted: unknown;
+    api.lifecycle({checkpoint:() => ({toJSON() { interrupted = program[operation](); throw failure; }})});
+    await assert.rejects(program.checkpoint({serialized:true}), reason => reason === failure);
+    await interrupted;
+    assert.equal(api.state.phase, 0);
+    assert.throws(() => program.readSnapshot({revision:'frozen'}), /program_state_snapshot_missing/);
+    assert.equal(program.lifecycleState.phase, operation === 'cancelLifecycle' ? 'failed' : operation === 'dispose' ? 'disposed' : 'running');
+  }
+});
