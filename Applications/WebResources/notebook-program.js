@@ -296,6 +296,10 @@ function createNotebookProgram({state = null, onCommit = () => {}, report = () =
         alive();
         if (expected !== generation) throw error('program_superseded');
         const encoded = serialize(next), accepted = JSON.parse(encoded.json);
+        // JSON conversion can reenter the owner through authored toJSON/getters.
+        // Only the still-current lifecycle may commit the resulting freeze.
+        alive();
+        if (request.signal.aborted || expected !== generation) throw error('program_superseded');
         // Do not wait for rAF here: WebKit may already have parked this
         // viewport. The author has finished its model/DOM update; the existing
         // native snapshot owner establishes the pixel boundary afterwards.

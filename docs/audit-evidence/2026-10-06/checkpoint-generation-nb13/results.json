@@ -1,0 +1,70 @@
+{
+  "date": "2026-10-06",
+  "registry": "GUI-492 / NB13 cancellation-before-freeze sub-slice",
+  "baseline": "7274f6c193b264fccd3c84a15a474a31b35b657a",
+  "scope": "reentrant generation/cancellation validation before checkpoint freeze commit only",
+  "baselineRegression": {
+    "tests": 34,
+    "passed": 31,
+    "failed": 3,
+    "reason": "obsolete checkpoint accepted after authored JSON reentrancy"
+  },
+  "checks": [
+    {
+      "command": "node --experimental-strip-types --test MCP/test/program-bridge.test.ts",
+      "passed": 34,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "command": "node MCP/node_modules/typescript/bin/tsc --project MCP/tsconfig.json --noEmit",
+      "exitCode": 0
+    },
+    {
+      "command": "git diff --check",
+      "exitCode": 0
+    }
+  ],
+  "covered": [
+    "toJSON and getter reentrancy, serialized and copied return modes",
+    "cancel/resume/dispose preserve the previous accepted state and refuse a frozen descriptor",
+    "new checkpoint retry alone owns the next generation",
+    "original serialization error preserved including concurrent lifecycle replacement",
+    "AbortController old request aborts once",
+    "accepted FIFO revision and idempotent ACK remain intact; no additional credit request"
+  ],
+  "review": {
+    "status": "approved",
+    "scope": "cancellation-before-freeze code and portable checks only",
+    "candidatePatchSHA256": "b2a62e146710572502c4cadaf50da412841732fc05f462bba04e7bb18b0bd091",
+    "independentChecks": {
+      "focusedTests": 34,
+      "strictMCPTypeScript": "passed",
+      "stagedAndUnstagedDiffCheck": "passed",
+      "baselineCurrentTests": {
+        "passed": 31,
+        "failed": 3
+      },
+      "additionalReadonlyProbes": "64 sync/async, both-return-mode, getter/nested/proxy/toJSON, joined-caller and lifecycle-replacement cases; one-snapshot-credit and duplicate-ACK bounds passed"
+    },
+    "nativeAcceptance": "not established"
+  },
+  "openNB13": "Admission before immutable serialization and retention of completed author checkpoint across admission/retry still require the existing native CheckpointPreparation two-phase protocol; not implemented in this sub-slice. No native ledger, writer or lifecycle adapter changed.",
+  "notRun": [
+    "native WebKit",
+    "native Swift suites",
+    "Xcode signed pair",
+    "physical iPad acceptance",
+    "installation"
+  ],
+  "files": [
+    {
+      "path": "Applications/WebResources/notebook-program.js",
+      "sha256": "de19e0a96b465bf5c08fb84a4fb2f4189bb92b584b01e868a4ceafce534bee19"
+    },
+    {
+      "path": "MCP/test/program-bridge.test.ts",
+      "sha256": "b6986cb3b7b3e7d2d0329f0bc319d792c4e3b8beb5a9fe77f260628cf1822687"
+    }
+  ]
+}

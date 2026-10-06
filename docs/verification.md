@@ -9,6 +9,14 @@
 подписанный кеш и работающий владелец проверены. [Сборка](audit-evidence/2026-10-06/plugin-recovery-253/results.json),
 [установка и readback](audit-evidence/2026-10-06/plugin-recovery-253/installation.json).
 
+Переносимый подпункт NB13: повторный вход из `toJSON`/getter больше не позволяет
+отменённому checkpoint установить frozen. На исходном JS три регрессии FAIL;
+с исправлением **34 Node tests PASS**, строгий MCP TypeScript и diff-check PASS.
+Основной admission-before-copy и native WebKit/physical проверка остаются открыты;
+native owner/credit/writer не менялись. Независимое ревью принято: 34/34, tsc и
+diff повторены; отдельные 64 варианта повторного входа и credit/ACK probes PASS.
+[Контрпримеры и точный scope](audit-evidence/2026-10-06/checkpoint-generation-nb13/results.json).
+
 ## Установленная пара
 
 Самостоятельные Mac-окна, ввод и установщик удалены из исходников; старые bundles
