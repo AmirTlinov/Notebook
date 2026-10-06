@@ -1,0 +1,225 @@
+▶ keyboard undo and delete cannot admit another action during a dragged contact
+  ✔ z (18.78966ms)
+  ✔ Delete (4.545465ms)
+✔ keyboard undo and delete cannot admit another action during a dragged contact (24.848378ms)
+▶ Enter and double-click cannot open a nested editor or release the current contact
+  ✔ select: Enter (4.590351ms)
+  ✔ select: dblclick (4.004231ms)
+  ✔ pen: Enter (2.452481ms)
+  ✔ pen: dblclick (2.121872ms)
+✔ Enter and double-click cannot open a nested editor or release the current contact (14.818001ms)
+✔ an idle editor still opens, cancels and saves one completed edit (2.704981ms)
+✔ the text tool still admits and saves a new element (2.135876ms)
+▶ lost pointer capture cancels the unfinished preview and resumes the same projection
+  ✔ select (2.08269ms)
+  ✔ pen (2.470046ms)
+✔ lost pointer capture cancels the unfinished preview and resumes the same projection (5.383518ms)
+▶ Escape still cancels an unfinished contact without admitting a competing write
+  ✔ select (2.481776ms)
+  ✔ pen (1.479575ms)
+✔ Escape still cancels an unfinished contact without admitting a competing write (4.617249ms)
+▶ late lost-capture events preserve a completed ink contact and a newer pointer
+  ✔ select: pointer 1 (2.173925ms)
+  ✔ select: pointer 2 (2.273007ms)
+  ✔ pen: pointer 1 (1.813967ms)
+  ✔ pen: pointer 2 (1.663002ms)
+✔ late lost-capture events preserve a completed ink contact and a newer pointer (8.62119ms)
+✔ real pen input retains measured samples through completion and discards only cancelled contact (4.374767ms)
+✔ Retina projection preserves screen density through transport scaling and overscan (11.02297ms)
+✔ large displays and collapsed panels keep a finite admitted projection (0.351633ms)
+▶ session coalesces viewport demand against accepted pixels without delaying required reads
+  ✔ covered (22.145422ms)
+  ✔ needed (2.339785ms)
+  ✔ forced (1.432191ms)
+  ✔ fit (2.261806ms)
+✔ session coalesces viewport demand against accepted pixels without delaying required reads (30.201994ms)
+▶ session teardown releases readers and ignores late read and write completions
+  ✔ read (6.974348ms)
+  ✔ saved (1.58378ms)
+  ✔ conflict (0.897944ms)
+  ✔ uncertain (0.77369ms)
+✔ session teardown releases readers and ignores late read and write completions (11.412472ms)
+✔ a confirmed pen contact replaces an in-flight old scene before the next polling tick (1.404461ms)
+✔ an unfinished contact owns mutation admission until completion or cancellation (1.063906ms)
+✔ error Retry repairs ipc_timeout before repeating the same text action (1.206248ms)
+✔ error Retry repairs operation_failed before repeating the same text action (0.765485ms)
+✔ workspace recovery preserves an uncertain action and its panel address (1.102999ms)
+✔ session closed during handshake suppresses the late connection failure (0.628867ms)
+✔ Notebook exposes one HTML app resource, a model opener and app-only gesture tools (66.316259ms)
+✖ native presentation stays pinned, bounds pixels and avoids duplicating PNG bytes in text (3.770651ms)
+✖ panel gestures keep the admitted endpoint and exact native sources (4.957258ms)
+✖ panel rejects caller routing/authorship fields and preserves the native conflict detail (1.739687ms)
+✖ workspace bootstrap opens in the same panel without a content owner or desktop window (1.268632ms)
+✔ workspace switching retires an old in-flight read and preserves accepted edit ownership (1.594896ms)
+✖ MCP clients join the ready owner even before a workspace exists (7.341477ms)
+✖ cold clients wait for bundled runtime admission on one isolated endpoint (10.777209ms)
+✖ an incompatible or unsafe owner cannot trigger a second runtime (3.754795ms)
+✔ startup timeout is bounded and launches at most once per client (156.384148ms)
+✖ a live MCP connection recovers its crashed runtime before an addressed retry without replaying uncertain writes (3.049239ms)
+✔ runtime staging preserves the previous package until the copied product validates (19.661323ms)
+ℹ tests 52
+ℹ suites 0
+ℹ pass 44
+ℹ fail 8
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 885.6501
+
+✖ failing tests:
+
+test at test/panel.test.ts:1:18515
+✖ native presentation stays pinned, bounds pixels and avoids duplicating PNG bytes in text (3.770651ms)
+  Error: listen EPERM: operation not permitted /tmp/nb-panel-o2Ueho/bridge.sock
+      at Server.setupListenHandle [as _listen2] (node:net:2145:21)
+      at listenInCluster (node:net:2224:12)
+      at Server.listen (node:net:2361:5)
+      at <anonymous> (/workspace/scratch/3c9061d33fe2/notebook-consolidation/MCP/test/panel.test.ts:326:44)
+      at new Promise (<anonymous>)
+      at nativeFixture (/workspace/scratch/3c9061d33fe2/notebook-consolidation/MCP/test/panel.test.ts:325:11)
+      at async TestContext.<anonymous> (/workspace/scratch/3c9061d33fe2/notebook-consolidation/MCP/test/panel.test.ts:376:15)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    code: 'EPERM',
+    errno: -1,
+    syscall: 'listen',
+    address: '/tmp/nb-panel-o2Ueho/bridge.sock',
+    port: -1
+  }
+
+test at test/panel.test.ts:1:20366
+✖ panel gestures keep the admitted endpoint and exact native sources (4.957258ms)
+  Error: listen EPERM: operation not permitted /tmp/nb-panel-ak7Gx7/bridge.sock
+      at Server.setupListenHandle [as _listen2] (node:net:2145:21)
+      at listenInCluster (node:net:2224:12)
+      at Server.listen (node:net:2361:5)
+      at <anonymous> (/workspace/scratch/3c9061d33fe2/notebook-consolidation/MCP/test/panel.test.ts:326:44)
+      at new Promise (<anonymous>)
+      at nativeFixture (/workspace/scratch/3c9061d33fe2/notebook-consolidation/MCP/test/panel.test.ts:325:11)
+      at async TestContext.<anonymous> (/workspace/scratch/3c9061d33fe2/notebook-consolidation/MCP/test/panel.test.ts:411:17)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    code: 'EPERM',
+    errno: -1,
+    syscall: 'listen',
+    address: '/tmp/nb-panel-ak7Gx7/bridge.sock',
+    port: -1
+  }
+
+test at test/panel.test.ts:1:23993
+✖ panel rejects caller routing/authorship fields and preserves the native conflict detail (1.739687ms)
+  Error: listen EPERM: operation not permitted /tmp/nb-panel-R6RAOB/bridge.sock
+      at Server.setupListenHandle [as _listen2] (node:net:2145:21)
+      at listenInCluster (node:net:2224:12)
+      at Server.listen (node:net:2361:5)
+      at <anonymous> (/workspace/scratch/3c9061d33fe2/notebook-consolidation/MCP/test/panel.test.ts:326:44)
+      at new Promise (<anonymous>)
+      at nativeFixture (/workspace/scratch/3c9061d33fe2/notebook-consolidation/MCP/test/panel.test.ts:325:11)
+      at async TestContext.<anonymous> (/workspace/scratch/3c9061d33fe2/notebook-consolidation/MCP/test/panel.test.ts:459:17)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    code: 'EPERM',
+    errno: -1,
+    syscall: 'listen',
+    address: '/tmp/nb-panel-R6RAOB/bridge.sock',
+    port: -1
+  }
+
+test at test/panel.test.ts:1:25256
+✖ workspace bootstrap opens in the same panel without a content owner or desktop window (1.268632ms)
+  Error: listen EPERM: operation not permitted /tmp/nb-panel-4dDTVS/bridge.sock
+      at Server.setupListenHandle [as _listen2] (node:net:2145:21)
+      at listenInCluster (node:net:2224:12)
+      at Server.listen (node:net:2361:5)
+      at <anonymous> (/workspace/scratch/3c9061d33fe2/notebook-consolidation/MCP/test/panel.test.ts:326:44)
+      at new Promise (<anonymous>)
+      at nativeFixture (/workspace/scratch/3c9061d33fe2/notebook-consolidation/MCP/test/panel.test.ts:325:11)
+      at async TestContext.<anonymous> (/workspace/scratch/3c9061d33fe2/notebook-consolidation/MCP/test/panel.test.ts:481:15)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    code: 'EPERM',
+    errno: -1,
+    syscall: 'listen',
+    address: '/tmp/nb-panel-4dDTVS/bridge.sock',
+    port: -1
+  }
+
+test at test/runtime-launcher.test.ts:1:2149
+✖ MCP clients join the ready owner even before a workspace exists (7.341477ms)
+  Error: listen EPERM: operation not permitted /tmp/notebook-launch-D3WKj2/bridge.sock
+      at Server.setupListenHandle [as _listen2] (node:net:2145:21)
+      at listenInCluster (node:net:2224:12)
+      at Server.listen (node:net:2361:5)
+      at <anonymous> (/workspace/scratch/3c9061d33fe2/notebook-consolidation/MCP/test/runtime-launcher.test.ts:37:42)
+      at new Promise (<anonymous>)
+      at <anonymous> (/workspace/scratch/3c9061d33fe2/notebook-consolidation/MCP/test/runtime-launcher.test.ts:36:11)
+      at Object.start (/workspace/scratch/3c9061d33fe2/notebook-consolidation/MCP/test/runtime-launcher.test.ts:40:3)
+      at TestContext.<anonymous> (/workspace/scratch/3c9061d33fe2/notebook-consolidation/MCP/test/runtime-launcher.test.ts:55:14)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    code: 'EPERM',
+    errno: -1,
+    syscall: 'listen',
+    address: '/tmp/notebook-launch-D3WKj2/bridge.sock',
+    port: -1
+  }
+
+test at test/runtime-launcher.test.ts:1:2638
+✖ cold clients wait for bundled runtime admission on one isolated endpoint (10.777209ms)
+  Error: listen EPERM: operation not permitted /tmp/notebook-launch-qVy5Kq/bridge.sock
+      at Server.setupListenHandle [as _listen2] (node:net:2145:21)
+      at listenInCluster (node:net:2224:12)
+      at Server.listen (node:net:2361:5)
+      at <anonymous> (/workspace/scratch/3c9061d33fe2/notebook-consolidation/MCP/test/runtime-launcher.test.ts:37:42)
+      at new Promise (<anonymous>)
+      at <anonymous> (/workspace/scratch/3c9061d33fe2/notebook-consolidation/MCP/test/runtime-launcher.test.ts:36:11)
+      at Object.start (/workspace/scratch/3c9061d33fe2/notebook-consolidation/MCP/test/runtime-launcher.test.ts:40:3)
+      at launch (/workspace/scratch/3c9061d33fe2/notebook-consolidation/MCP/test/runtime-launcher.test.ts:65:92)
+      at ensureRuntime (/workspace/scratch/3c9061d33fe2/notebook-consolidation/MCP/src/runtime-launcher.ts:65:34)
+      at async Promise.all (index 0) {
+    code: 'EPERM',
+    errno: -1,
+    syscall: 'listen',
+    address: '/tmp/notebook-launch-qVy5Kq/bridge.sock',
+    port: -1
+  }
+
+test at test/runtime-launcher.test.ts:1:3252
+✖ an incompatible or unsafe owner cannot trigger a second runtime (3.754795ms)
+  Error: listen EPERM: operation not permitted /tmp/notebook-launch-nvk9YR/bridge.sock
+      at Server.setupListenHandle [as _listen2] (node:net:2145:21)
+      at listenInCluster (node:net:2224:12)
+      at Server.listen (node:net:2361:5)
+      at <anonymous> (/workspace/scratch/3c9061d33fe2/notebook-consolidation/MCP/test/runtime-launcher.test.ts:37:42)
+      at new Promise (<anonymous>)
+      at <anonymous> (/workspace/scratch/3c9061d33fe2/notebook-consolidation/MCP/test/runtime-launcher.test.ts:36:11)
+      at Object.start (/workspace/scratch/3c9061d33fe2/notebook-consolidation/MCP/test/runtime-launcher.test.ts:40:3)
+      at TestContext.<anonymous> (/workspace/scratch/3c9061d33fe2/notebook-consolidation/MCP/test/runtime-launcher.test.ts:76:14)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    code: 'EPERM',
+    errno: -1,
+    syscall: 'listen',
+    address: '/tmp/notebook-launch-nvk9YR/bridge.sock',
+    port: -1
+  }
+
+test at test/runtime-launcher.test.ts:1:4552
+✖ a live MCP connection recovers its crashed runtime before an addressed retry without replaying uncertain writes (3.049239ms)
+  Error: listen EPERM: operation not permitted /tmp/notebook-launch-h66zhB/bridge.sock
+      at Server.setupListenHandle [as _listen2] (node:net:2145:21)
+      at listenInCluster (node:net:2224:12)
+      at Server.listen (node:net:2361:5)
+      at <anonymous> (/workspace/scratch/3c9061d33fe2/notebook-consolidation/MCP/test/runtime-launcher.test.ts:37:42)
+      at new Promise (<anonymous>)
+      at <anonymous> (/workspace/scratch/3c9061d33fe2/notebook-consolidation/MCP/test/runtime-launcher.test.ts:36:11)
+      at Object.start (/workspace/scratch/3c9061d33fe2/notebook-consolidation/MCP/test/runtime-launcher.test.ts:40:3)
+      at TestContext.<anonymous> (/workspace/scratch/3c9061d33fe2/notebook-consolidation/MCP/test/runtime-launcher.test.ts:120:30)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    code: 'EPERM',
+    errno: -1,
+    syscall: 'listen',
+    address: '/tmp/notebook-launch-h66zhB/bridge.sock',
+    port: -1
+  }

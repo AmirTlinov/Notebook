@@ -1,0 +1,92 @@
+▶ keyboard undo and delete cannot admit another action during a dragged contact
+  ✔ z (21.797971ms)
+  ✔ Delete (7.007482ms)
+✔ keyboard undo and delete cannot admit another action during a dragged contact (30.377789ms)
+▶ Enter and double-click cannot open a nested editor or release the current contact
+  ✖ select: Enter (6.035205ms)
+  ✖ select: dblclick (3.342589ms)
+  ✔ pen: Enter (2.283104ms)
+  ✖ pen: dblclick (1.979191ms)
+✖ Enter and double-click cannot open a nested editor or release the current contact (15.127462ms)
+✔ an idle editor still opens, cancels and saves one completed edit (2.945569ms)
+▶ lost pointer capture cancels the unfinished preview and resumes the same projection
+  ✔ select (3.322698ms)
+  ✔ pen (1.848502ms)
+✔ lost pointer capture cancels the unfinished preview and resumes the same projection (5.835317ms)
+▶ Escape still cancels an unfinished contact without admitting a competing write
+  ✔ select (2.509774ms)
+  ✔ pen (1.851362ms)
+✔ Escape still cancels an unfinished contact without admitting a competing write (4.787461ms)
+▶ late lost-capture events preserve a completed ink contact and a newer pointer
+  ✔ select: pointer 1 (1.679777ms)
+  ✔ select: pointer 2 (2.778547ms)
+  ✔ pen: pointer 1 (1.993639ms)
+  ✔ pen: pointer 2 (2.13357ms)
+✔ late lost-capture events preserve a completed ink contact and a newer pointer (9.49441ms)
+ℹ tests 20
+ℹ suites 0
+ℹ pass 16
+ℹ fail 4
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 818.450222
+
+✖ failing tests:
+
+test at test/panel-input.test.ts:1:7261
+✖ select: Enter (6.035205ms)
+  AssertionError [ERR_ASSERTION]: Editor dismissal cannot admit undo while the original contact survives
+  
+  1 !== 0
+  
+      at TestContext.<anonymous> (/workspace/scratch/3c9061d33fe2/notebook-consolidation/MCP/test/panel-input.test.ts:129:14)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async TestContext.<anonymous> (/workspace/scratch/3c9061d33fe2/notebook-consolidation/MCP/test/panel-input.test.ts:123:80)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test/panel-input.test.ts:1:7261
+✖ select: dblclick (3.342589ms)
+  AssertionError [ERR_ASSERTION]: Editor dismissal cannot admit undo while the original contact survives
+  
+  1 !== 0
+  
+      at TestContext.<anonymous> (/workspace/scratch/3c9061d33fe2/notebook-consolidation/MCP/test/panel-input.test.ts:129:14)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async TestContext.<anonymous> (/workspace/scratch/3c9061d33fe2/notebook-consolidation/MCP/test/panel-input.test.ts:123:80)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test/panel-input.test.ts:1:7261
+✖ pen: dblclick (1.979191ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  false !== true
+  
+      at TestContext.<anonymous> (/workspace/scratch/3c9061d33fe2/notebook-consolidation/MCP/test/panel-input.test.ts:130:14)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async TestContext.<anonymous> (/workspace/scratch/3c9061d33fe2/notebook-consolidation/MCP/test/panel-input.test.ts:123:80)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

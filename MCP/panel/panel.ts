@@ -171,6 +171,7 @@ function newElement(point:Point,kind:string):PanelElement {
     textStyle:{fontSize:24,weight:.4,red:.1,green:.1,blue:.1,alpha:1}}};
 }
 function openEditor(element:PanelElement,isNew=false){
+  if(!session.mutationReady||gesture||ink.hasPreview)return;
   if(!isNew&&!canEdit(element))return;
   draft={element,isNew};
   const font=element.source.kind==="nativeText"?element.source.textStyle?.fontSize??34:24;
@@ -356,6 +357,11 @@ async function finishGesture(event:PointerEvent,cancel=false){
 }
 paper.addEventListener("pointerup",event=>{void finishGesture(event);},events);
 paper.addEventListener("pointercancel",event=>{void finishGesture(event,true);},events);
+paper.addEventListener("lostpointercapture",event=>{
+  // A newer contact can reuse the same pointer ID before an old release is
+  // observed. Only the contact which no longer owns capture is cancelled.
+  if(!paper.hasPointerCapture(event.pointerId))void finishGesture(event,true);
+},events);
 async function openCard(id:string){
   if(ink.hasPreview||gesture||session.busy||session.hasPending||!(await finishEditor())||closed)return;
   const card=session.snapshot?.cards.find(c=>c.item.id===id);if(!card)return;
@@ -386,7 +392,7 @@ function zoom(factor:number,point:Point={x:workspace.clientWidth/2,y:workspace.c
 }
 function toolButtons(){document.querySelectorAll<HTMLButtonElement>("[data-tool]").forEach(button=>button.setAttribute("aria-pressed",String(button.dataset.tool===tool)));buttons();}
 document.querySelectorAll<HTMLButtonElement>("[data-tool]").forEach(button=>button.addEventListener("click",()=>{void(async()=>{if(ink.pointer===undefined&&!gesture&&await finishEditor()){tool=button.dataset.tool!;toolButtons();workspace.focus();}})();},events));
-async function remove(){const element=active();if(ink.pointer===undefined&&element&&canEdit(element)&&!draft)await save(mutation("Удалить элемент",operation("removeElement",element.source.id,{}),element));}
+async function remove(){if(!session.mutationReady)return;const element=active();if(ink.pointer===undefined&&element&&canEdit(element)&&!draft)await save(mutation("Удалить элемент",operation("removeElement",element.source.id,{}),element));}
 el("delete").addEventListener("click",()=>{void remove();},events);
 el("undo").addEventListener("click",()=>{if(ink.pointer===undefined)void session.undo().catch(()=>{});},events);
 el("zoom-in").addEventListener("click",()=>zoom(1.2),events);el("zoom-out").addEventListener("click",()=>zoom(1/1.2),events);

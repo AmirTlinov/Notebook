@@ -191,6 +191,27 @@ test('a confirmed pen contact replaces an in-flight old scene before the next po
   await close();
 });
 
+test('an unfinished contact owns mutation admission until completion or cancellation',async t=>{
+  t.mock.timers.enable({apis:['setTimeout','setInterval']});
+  const {session,calls,close,mutation}=await controlledSession();
+  session.snapshot!.history.undoActionID=randomUUID();
+  session.suspended=true;
+  assert.equal(session.mutationReady,false);
+  await assert.rejects(session.save(mutation),/Дождитесь/);
+  await assert.rejects(session.undo(),/Дождитесь/);
+  assert.equal(calls.length,1,'No competing action reaches the runtime');
+  assert.equal(session.hasPending,false);
+  session.suspended=false;
+  assert.equal(session.mutationReady,true);
+  const saved=session.save(mutation);
+  assert.equal(calls[1]!.name,'notebook_panel_edit');
+  calls[1]!.resolve({content:[],structuredContent:{status:'saved'}});await saved;
+  calls[2]!.resolve({content:[],structuredContent:sessionSnapshot('2')});
+  await new Promise<void>(resolve=>setImmediate(resolve));
+  assert.equal(session.mutationReady,true);
+  await close();
+});
+
 for(const code of ['ipc_timeout','operation_failed'])test(`error Retry repairs ${code} before repeating the same text action`, async t => {
   t.mock.timers.enable({apis: ['setTimeout', 'setInterval']});
   const {session, calls, close, mutation, retry} = await controlledSession();

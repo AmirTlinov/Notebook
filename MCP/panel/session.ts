@@ -33,7 +33,7 @@ export class NotebookSession {
   private contextTimer:ReturnType<typeof setTimeout>|undefined;
   private contextWriting=false;
   private contextDirty=false;
-  get mutationReady(){return this.presented&&!this.busy&&!this.pending&&!this.synchronizing;}
+  get mutationReady(){return this.presented&&!this.suspended&&!this.busy&&!this.pending&&!this.synchronizing;}
   get hasPending(){return !!this.pending;}
   suspended=false;
   onSnapshot:(snapshot:PanelSnapshot)=>void=()=>{};
