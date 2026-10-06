@@ -39,6 +39,13 @@ Use `--base HEAD^`, for example, to describe the last committed slice.
   Explicit selection retains them in the receipt; unresolved automatic selection
   stops. A shared UI fixture requires a named gesture.
 
+Registry/parser unit tests with explicitly fabricated command runners also own
+an explicit fixture capability inventory. That discovery replacement is scoped
+to the fake-runner call and restored afterwards; it never changes production
+prerequisite checks. A separate negative test requires production to reject a
+missing Swift toolchain before invoking it. These portable contracts are not
+Swift compilation or native-execution evidence.
+
 An empty selection, unexecuted selector, failure, skip, runtime warning or tool
 version change prevents PASS. UI changes require the affected gesture; Node and
 native unit checks do not substitute for it. A 100,000-item load is relevant when

@@ -144,6 +144,7 @@ GUI-196, GUI-197, GUI-183 и длительная GUI-250 остаются от�
 
 | Срез | Результат и свидетельство |
 | --- | --- |
+| Portable integration | PR #1–#3 совместно: 54 Node + 101 release/resource + 117 verifier PASS, strict MCP TypeScript PASS. Исправлена только host discovery в fabricated-runner tests; отдельный base suite 113 PASS. Production Swift prerequisite сохранён. Local integration tree не опубликован; native/physical/install gates открыты. [Точные исходники и результаты](audit-evidence/2026-10-06/verification-fixture-discovery/results.json). |
 | Runtime 252 | 4 native Mac + 89 release + 111 verifier PASS; 8 подписанных lifecycle/integrity сценариев PASS. [Receipt](audit-evidence/2026-10-06/plugin-runtime-lifecycle/results.json). |
 | Первый iPad 252 | 4 PASS / 5 FAIL: раннее лассо, Undo/первый кадр и cancellation. 100 000 объектов, текст, cold launch и чужая замена PASS. [Исходные отказы](audit-evidence/2026-10-06/plugin-cutover-252/results.json). |
 | Ремонт 252 | [Первичная диагностика](audit-evidence/2026-10-06/scene-lifecycle-diagnostic/results.json), [Undo/menu](audit-evidence/2026-10-06/menu-and-ink-diagnostic/results.json), [mounted lifecycle](audit-evidence/2026-10-06/mounted-lifecycle-repair/results.json). Ошибки GPU fixtures lifetime/unit transform исправлены. |
