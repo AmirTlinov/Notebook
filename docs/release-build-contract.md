@@ -202,6 +202,14 @@ checkout's plugin source, installs the plugin, checks its actual cached payload,
 then updates iPad in place and reads back the installed identity. Unknown outcomes
 remain `incomplete`; it never restores data or retries an uncertain installation.
 
+The iPad preservation check uses its bundle domain. It compares the bounded
+workspace catalog bytes and IDs before preparation, immediately before the iPad
+update, and afterward; the selected SQLite must remain a readable nonempty file.
+An installed app with neither a catalog nor a store has an empty baseline. Data
+without a provable catalog refuses installation. App-group IDs stay unchanged;
+iPadOS container paths and SQLite/WAL sizes are diagnostic. The installer reads
+only the small catalog and file metadata, never copies SQLite or archives.
+
 Bump the plugin manifest version together with each native pair release: Codex
 caches plugin payloads by that version. Commit the matching static plugin files
 and installation scripts into the primary checkout before installing a worktree

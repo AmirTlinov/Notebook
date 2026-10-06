@@ -782,7 +782,7 @@ def stopped_runtime(command, root=None):
 
 
 def install_verified_pair(source, build, evidence, runner=None):
-    """Install one verified plugin/iPad pair in place; never open or copy content."""
+    """Install one verified pair; compare the small catalog, never copy a store."""
     source, build = source.resolve(), build.resolve()
     raw_evidence = evidence.absolute()
     evidence = raw_evidence.resolve()
@@ -822,17 +822,97 @@ def install_verified_pair(source, build, evidence, runner=None):
             "--include-container-paths", "--include-app-group-identifiers", "--timeout", "30", "--json-output", target])
         return app_rows(successful_json(target, "devicectl.device.info.apps"), bundle)
 
-    def ipad_containers(info):
-        data = info.get("dataContainerPath")
+    def ipad_groups(info):
         groups = info.get("appGroupIdentifiers")
-        paths = info.get("groupContainerPaths")
-        absolute = lambda value: isinstance(value, str) and value.startswith("/") and "\0" not in value
-        require(absolute(data) and isinstance(groups, list)
+        require(isinstance(groups, list)
                 and all(isinstance(group, str) and group for group in groups)
-                and len(groups) == len(set(groups)) and isinstance(paths, dict)
-                and all(isinstance(group, str) and group and absolute(path) for group, path in paths.items()),
-                "CLI не подтвердил dataContainerPath, appGroupIdentifiers и groupContainerPaths установленного iPad.")
-        return {"dataContainerPath": data, "appGroupIdentifiers": groups, "groupContainerPaths": paths}
+                and len(groups) == len(set(groups)), "CLI не подтвердил appGroupIdentifiers установленного iPad.")
+        return sorted(groups)
+
+    def ipad_workspace(label):
+        # Resolve every path inside the bundle domain: iPadOS may relocate the
+        # data container during an update. The catalog owns logical selection.
+        def files(suffix, relative=""):
+            target = evidence / (label + "-" + suffix + ".json")
+            argv = ["/usr/bin/xcrun", "devicectl", "device", "info", "files", "--device", DEVICE,
+                "--domain-type", "appDataContainer", "--domain-identifier", BUNDLE, "--no-recurse"]
+            if relative:
+                argv += ["--subdirectory", relative]
+            command(label + "-" + suffix, argv + ["--timeout", "30", "--json-output", target])
+            result = successful_json(target, "devicectl.device.info.files")
+            require(result.get("deviceIdentifier") == DEVICE and result.get("domain") == "appDataContainer"
+                    and result.get("domainIdentifier") == BUNDLE, "Список файлов относится к другому iPad или приложению.")
+            rows = result.get("files")
+            require(isinstance(rows, list) and all(isinstance(row, dict) and isinstance(row.get("name"), str)
+                    and row["name"] not in ("", ".", "..") and "/" not in row["name"]
+                    and row.get("relativePath") == row["name"] for row in rows)
+                    and len({row["name"] for row in rows}) == len(rows), "CLI не подтвердил однозначный список файлов iPad.")
+            return {row["name"]: row for row in rows}
+
+        def admitted(row, directory):
+            resources = row.get("resources", {})
+            require(resources.get("isDirectory") is directory and resources.get("isSymbolicLink") is False
+                    and resources.get("isReadable") is True, "Файл пространства iPad недоступен или имеет неизвестный тип.")
+            size = row.get("metadata", {}).get("size")
+            require(type(size) is int and size >= 0, "CLI не подтвердил размер файла пространства iPad.")
+            return size
+
+        def directory(parent, name, relative, suffix):
+            if name not in parent:
+                return {}
+            admitted(parent[name], True)
+            return files(suffix, relative)
+
+        root = files("root")
+        library = directory(root, "Library", "Library", "library")
+        support_path = "Library/Application Support"
+        support = directory(library, "Application Support", support_path, "support")
+        catalog_path = support_path + "/Notebook.spaces.json"
+        catalog = support.get("Notebook.spaces.json")
+        if catalog is None:
+            original = directory(support, "Notebook", support_path + "/Notebook", "original")
+            managed = directory(support, "Notebook.spaces", support_path + "/Notebook.spaces", "managed")
+            require(not original and not managed,
+                    "На iPad есть данные Notebook без подтверждённого каталога пространств; сохранность не подтверждена.")
+            return {"identity": {"state": "empty"}}
+
+        size = admitted(catalog, False)
+        require(0 < size <= 262_144, "Каталог пространств iPad пуст или превышает допустимый размер.")
+        with tempfile.TemporaryDirectory(prefix=label + "-catalog-", dir=evidence) as temporary:
+            local = Path(temporary) / "Notebook.spaces.json"
+            command(label + "-catalog", ["/usr/bin/xcrun", "devicectl", "device", "copy", "from", "--device", DEVICE,
+                "--domain-type", "appDataContainer", "--domain-identifier", BUNDLE, "--source", catalog_path,
+                "--destination", local, "--timeout", "30"])
+            require(local.is_file() and not local.is_symlink() and local.stat().st_size == size,
+                    "CLI не подтвердил чтение неизменного каталога пространств iPad.")
+            data = local.read_bytes()
+        value = json.loads(data)
+        uuid = lambda item: isinstance(item, str) and re.fullmatch(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", item)
+        require(isinstance(value, dict) and type(value.get("format")) is int and value["format"] == 1 and isinstance(value.get("entries"), list)
+                and len(value["entries"]) <= 32 and all(isinstance(entry, dict) and uuid(entry.get("id")) for entry in value["entries"]),
+                "Каталог пространств iPad не имеет поддерживаемой идентичности.")
+        ids = [entry["id"].lower() for entry in value["entries"]]
+        original, selected = value.get("originalID"), value.get("selectedID")
+        require(len(ids) == len(set(ids)) and (original is None or uuid(original))
+                and (selected is None or uuid(selected) and selected.lower() in ids),
+                "Каталог iPad не подтвердил выбранное пространство.")
+        active = None
+        sqlite_metadata = None
+        if selected is not None:
+            name = "Notebook" if original is not None and original.lower() == selected.lower() else "Notebook.spaces/" + selected.lower()
+            if name == "Notebook":
+                listing = directory(support, name, support_path + "/" + name, "active")
+            else:
+                managed = directory(support, "Notebook.spaces", support_path + "/Notebook.spaces", "managed")
+                listing = directory(managed, selected.lower(), support_path + "/" + name, "active")
+            require("notebook.sqlite" in listing, "Выбранное пространство iPad потеряло notebook.sqlite.")
+            require(admitted(listing["notebook.sqlite"], False) > 0, "SQLite выбранного пространства iPad пуста.")
+            active = support_path + "/" + name + "/notebook.sqlite"
+            sqlite_metadata = listing["notebook.sqlite"]["metadata"]
+        return {"identity": {"state": "catalog", "catalogSHA256": digest(data), "catalogBytes": size,
+                    "originalID": original.lower() if original else None, "selectedID": selected.lower() if selected else None,
+                    "workspaceIDs": sorted(ids), "activeSQLite": active},
+                "sqliteMetadata": sqlite_metadata}
 
     try:
         output = command("primary-checkout", ["git", "-C", source, "worktree", "list", "--porcelain", "-z"], read_output=True)[0].decode().split("\0")[0]
@@ -857,7 +937,8 @@ def install_verified_pair(source, build, evidence, runner=None):
                     for info in (ipad_info, mac_info)), "Release версия не совпала с подписанными bundles.")
         before = device_apps("ipad-before", BUNDLE)
         canonical = device_apps("canonical-before", CANONICAL)
-        containers_before = ipad_containers(before[0]) if before else None
+        groups_before = ipad_groups(before[0]) if before else None
+        workspace_before = ipad_workspace("ipad-storage-before") if before else None
         build_number = release["build"]
         require(isinstance(build_number, str) and build_number.isdecimal(), "Build пары должен быть числом.")
         for info in before:
@@ -887,7 +968,8 @@ def install_verified_pair(source, build, evidence, runner=None):
                 require(current.get("CFBundleIdentifier") == MAC_BUNDLE and isinstance(number, str)
                         and number.isdecimal() and int(number) <= int(build_number),
                         "Установленный runtime новее этой пары или имеет другую идентичность; downgrade запрещён.")
-        receipt.update({"ipadBefore": before, "canonicalBefore": canonical, "marketplace": str(stable)})
+        receipt.update({"ipadBefore": before, "ipadWorkspaceBefore": workspace_before,
+                        "canonicalBefore": canonical, "marketplace": str(stable)})
         with stopped_runtime(command):
             receipt.update({"status": "incomplete", "installationAttempted": True, "step": "package-plugin"})
             write_json(evidence / "installation.json", receipt)
@@ -908,7 +990,16 @@ def install_verified_pair(source, build, evidence, runner=None):
                 "Codex подключил неверные аргументы запуска Notebook runtime.")
         require(app_manifest(cached) == read_json(build / "mac-manifest.json"),
                 "Нарушена целостность подписанного runtime в кеше Codex: состав или содержимое файлов не совпадает с проверенной сборкой.")
-        require(device_apps("ipad-preinstall", BUNDLE) == before, "Установленный iPad изменился во время подготовки.")
+        preinstall = device_apps("ipad-preinstall", BUNDLE)
+        fields = ("bundleIdentifier", "bundleVersion", "version", "url")
+        require([{key: info.get(key) for key in fields} for info in preinstall]
+                == [{key: info.get(key) for key in fields} for info in before]
+                and (not preinstall or ipad_groups(preinstall[0]) == groups_before),
+                "Установленный iPad изменился во время подготовки.")
+        if workspace_before is not None:
+            workspace_preinstall = ipad_workspace("ipad-storage-preinstall")
+            require(workspace_preinstall["identity"] == workspace_before["identity"],
+                    "Каталог пространств iPad изменился во время подготовки; установка iPad не начата.")
         receipt["step"] = "install-ipad"; write_json(evidence / "installation.json", receipt)
         installed_path = evidence / "install-ipad.json"
         command("install-ipad", ["/usr/bin/xcrun", "devicectl", "device", "install", "app", "--device", DEVICE,
@@ -917,12 +1008,16 @@ def install_verified_pair(source, build, evidence, runner=None):
         require(isinstance(installed, list) and len(installed) == 1 and installed[0].get("bundleID") == BUNDLE,
                 "CLI не подтвердил единственную установку iPad; автоматического повтора нет.")
         after = device_apps("ipad-after", BUNDLE)
+        receipt["ipadAfter"] = after
         require(len(after) == 1 and after[0].get("name") == DISPLAY_NAME and after[0].get("version") == release["version"]
                 and after[0].get("bundleVersion") == build_number and isinstance(after[0].get("url"), str)
                 and after[0]["url"] == installed[0].get("installationURL"), "iPad не подтвердил установленные build и bundle URL.")
-        containers_after = ipad_containers(after[0])
-        require(containers_before is None or containers_after == containers_before,
-                "Контейнер iPad изменился при inplace установке.")
+        groups_after = ipad_groups(after[0])
+        require(groups_before is None or groups_after == groups_before, "Идентификаторы app groups iPad изменились при установке.")
+        workspace_after = ipad_workspace("ipad-storage-after")
+        receipt["ipadWorkspaceAfter"] = workspace_after
+        require(workspace_before is None or workspace_after["identity"] == workspace_before["identity"],
+                "Каталог или выбранное пространство iPad изменились при установке; требуется readback без повторной установки.")
         require(device_apps("canonical-after", CANONICAL) == canonical, "Историческая установка iPad изменилась.")
         receipt.update({"status": "installed", "step": "complete", "ipadAfter": after, "runtime": str(cached)})
         write_json(evidence / "installation.json", receipt)
