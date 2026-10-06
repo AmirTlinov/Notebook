@@ -1,0 +1,81 @@
+{
+  "id": 2,
+  "result": {
+    "plugin": {
+      "marketplaceName": "notebook-local",
+      "marketplacePath": "/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/MCP/plugin/.agents/plugins/marketplace.json",
+      "summary": {
+        "id": "notebook@notebook-local",
+        "remotePluginId": null,
+        "version": null,
+        "localVersion": "0.2.2",
+        "name": "notebook",
+        "shareContext": null,
+        "source": {
+          "type": "local",
+          "path": "/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/MCP/plugin/notebook"
+        },
+        "installed": true,
+        "installedAt": null,
+        "enabled": true,
+        "installPolicy": "AVAILABLE",
+        "installPolicySource": null,
+        "mustShowInstallationInterstitial": null,
+        "authPolicy": "ON_INSTALL",
+        "availability": "AVAILABLE",
+        "disabledReason": null,
+        "eligiblePlanTypes": null,
+        "interface": {
+          "displayName": "Notebook",
+          "shortDescription": "Think and draw together",
+          "longDescription": "Open your saved Notebook material beside a Codex conversation. Continue the same board or page with your agent and your iPad.",
+          "developerName": "Amir Tlinov",
+          "category": "Productivity",
+          "capabilities": [
+            "Interactive",
+            "Read",
+            "Write"
+          ],
+          "websiteUrl": null,
+          "privacyPolicyUrl": null,
+          "termsOfServiceUrl": null,
+          "defaultPrompt": [
+            "Open my Notebook",
+            "Help me develop this drawing",
+            "Continue the material I selected"
+          ],
+          "brandColor": null,
+          "composerIcon": "/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/MCP/plugin/notebook/assets/notebook.png",
+          "composerIconUrl": null,
+          "logo": "/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/MCP/plugin/notebook/assets/notebook.png",
+          "logoDark": null,
+          "logoUrl": null,
+          "logoUrlDark": null,
+          "screenshots": [],
+          "screenshotUrls": []
+        },
+        "keywords": []
+      },
+      "shareUrl": null,
+      "description": "Work with your agent on shared Notebook boards and pages inside Codex.",
+      "skills": [
+        {
+          "name": "notebook:notebook",
+          "description": "Work together on the user's saved Notebook boards and pages beside a Codex conversation; read selected material, draw, and continue ideas through Notebook tools.",
+          "shortDescription": null,
+          "interface": null,
+          "path": "/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/MCP/plugin/notebook/skills/notebook/SKILL.md",
+          "enabled": true
+        }
+      ],
+      "onboardingSkill": null,
+      "hooks": [],
+      "apps": [],
+      "appTemplates": [],
+      "mcpServers": [
+        "notebook"
+      ],
+      "scheduledTasks": null
+    }
+  }
+}

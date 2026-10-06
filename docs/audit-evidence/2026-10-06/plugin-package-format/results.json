@@ -1,0 +1,62 @@
+{
+  "date": "2026-10-06",
+  "sourceSHA256": "1d4a30edd30ea59070a75580f4649398b33490037ede05e37c805fde0a5a44e4",
+  "pluginVersion": "0.2.2",
+  "defect": {
+    "installationReceipt": ".build/runtime-install-250-r4/installation.json",
+    "oldPluginVersion": "0.2.1",
+    "status": "incomplete",
+    "step": "install-plugin",
+    "reason": "Legacy-only manifest left PLUGIN_ROOT literal in command and arguments. iPad installation did not begin."
+  },
+  "change": "One Agent Plugins 1.0 root manifest with a contained relative executable and PLUGIN_ROOT expansion in its argument; legacy manifest removed.",
+  "verification": {
+    "command": "./verify.sh --only --profile verification --evidence-dir .build/plugin-format-022-verification",
+    "receipt": ".build/plugin-format-022-verification/verification.json",
+    "status": "passed",
+    "scope": "registry-contracts",
+    "physicalAcceptance": false,
+    "checks": {
+      "release": {
+        "executed": 83,
+        "failed": [],
+        "skipped": []
+      },
+      "verification": {
+        "executed": 111,
+        "failed": [],
+        "skipped": []
+      }
+    }
+  },
+  "runtimeLauncherChecks": {
+    "command": "node --import ./MCP/node_modules/tsx/dist/loader.mjs --test MCP/test/runtime-launcher.test.ts",
+    "passed": 6,
+    "failed": 0,
+    "skipped": 0,
+    "scope": "Local runtime admission and atomic signed bundle staging against isolated owners."
+  },
+  "hostRead": {
+    "appServerVersion": "0.160.1",
+    "method": "plugin/read",
+    "source": "worktree marketplace",
+    "result": "Root manifest 0.2.2, MCP name, skill, presentation and assets admitted.",
+    "scope": "Read only. API returns MCP names, not resolved transport paths. Installed command readback is still pending."
+  },
+  "nativeSourceComparison": {
+    "referenceSourceSHA256": "7e5ac349beedcfb78f77add312351b5d8fe416b27edd9fba7a695a34149e026c",
+    "changedInputs": [
+      "Applications/notebook_release.py",
+      "MCP/install-plugin.mjs",
+      "MCP/package-plugin-runtime.mjs",
+      "MCP/plugin/notebook/.codex-plugin/plugin.json",
+      "MCP/plugin/notebook/mcp.json",
+      "MCP/plugin/notebook/plugin.json",
+      "MCP/test/runtime-launcher.test.ts",
+      "Tests/NotebookRelease/run.py"
+    ],
+    "scope": "Swift, Objective-C, Metal, Web resources and runtime launcher inputs are unchanged from the six native Mac checks and signed pair 250; native checks were not repeated for this packaging correction."
+  },
+  "independentReview": "No new findings; actual installed command/args and sealed runtime remain an installation gate.",
+  "installation": "Pending new signed receipt and readback. Existing iPad build 248 and current data/keychain are preserved."
+}

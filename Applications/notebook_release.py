@@ -728,7 +728,7 @@ def build_verified_pair(source, verification, evidence, runner=None):
                           "signature": signature, "binaryUUIDs": uuids.strip()}
         receipt.update({"status": "verified-build", "device": device, "apps": apps,
                         "plugin": {"path": plugin.relative_to(evidence).as_posix(),
-                                   "version": json.loads((plugin / "notebook/.codex-plugin/plugin.json").read_text())["version"]},
+                                   "version": json.loads((plugin / "notebook/plugin.json").read_text())["version"]},
                         "version": ipad_info["CFBundleShortVersionString"], "build": ipad_info["CFBundleVersion"]})
         write_json(evidence / "build.json", receipt)
         return receipt
@@ -818,7 +818,7 @@ def install_verified_pair(source, build, evidence, runner=None):
     plugin = build / "plugin"
     metadata = plugin_metadata(plugin)
     require(metadata == plugin_metadata(snapshot / "MCP/plugin"), "Release plugin metadata изменилось.")
-    manifest = read_json(plugin / "notebook/.codex-plugin/plugin.json")
+    manifest = read_json(plugin / "notebook/plugin.json")
     require(release.get("plugin") == {"path": "plugin", "version": manifest.get("version")}, "Release plugin version не совпала.")
     evidence.mkdir(mode=0o700)
     command = release_commands(evidence, runner)

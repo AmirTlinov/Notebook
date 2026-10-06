@@ -143,7 +143,7 @@ class PairCLI(FakeCLI):
             plugin = snapshot.parent / "plugin/notebook"
             assert argv == ["/fixture/node", str(snapshot / "MCP/package-plugin-runtime.mjs"),
                             str(self.mac), str(plugin)]
-            assert json.loads((plugin / ".codex-plugin/plugin.json").read_text())["name"] == "notebook"
+            assert json.loads((plugin / "plugin.json").read_text())["name"] == "notebook"
             if self.package_fail:
                 exit_code = 1
             else:
@@ -269,7 +269,7 @@ class ReleaseTests(unittest.TestCase):
             (self.source / file).write_text("// fixture input " + file + "\n")
         (self.source / "Applications/project.yml").write_text((ROOT / "Applications/project.yml").read_text())
         (self.source / "Applications/notebook_release.py").write_bytes((ROOT / "Applications/notebook_release.py").read_bytes())
-        manifest = self.source / "MCP/plugin/notebook/.codex-plugin/plugin.json"
+        manifest = self.source / "MCP/plugin/notebook/plugin.json"
         manifest.parent.mkdir(parents=True)
         manifest.write_text(json.dumps({"name": "notebook", "version": "0.2.0"}))
         (self.source / "MCP/package-plugin-runtime.mjs").write_text("// fixture runtime packager\n")
@@ -675,6 +675,7 @@ class InstallationCLI(PairCLI):
         self.existing_preview = True
         self.plugin_fail = False
         self.stale_cache = False
+        self.literal_plugin_root = False
         self.previous_runtime = None
 
     def __call__(self, argv, cwd=None, stdout=None, stderr=None, timeout=None):
@@ -702,9 +703,10 @@ class InstallationCLI(PairCLI):
                 if self.stale_cache:
                     (self.cache / "Contents/MacOS/NotebookRuntime").write_bytes(b"old cached runtime")
         elif label == "installed-plugin":
+            runtime = Path("${PLUGIN_ROOT}/runtime/NotebookRuntime.app") if self.literal_plugin_root else self.cache
             output = json.dumps({"enabled": True, "transport": {"type": "stdio",
-                "command": str(self.cache / "Contents/Resources/CodexRuntime/node"),
-                "args": [str(self.cache / "Contents/Resources/NotebookTools/dist/launch-runtime.mjs")]}}).encode()
+                "command": str(runtime / "Contents/Resources/CodexRuntime/node"),
+                "args": [str(runtime / "Contents/Resources/NotebookTools/dist/launch-runtime.mjs")]}}).encode()
         else:
             return super().__call__(argv, cwd=cwd, stdout=stdout, stderr=stderr, timeout=timeout)
         self.calls.append(list(argv))
@@ -751,7 +753,7 @@ class InstallationTests(unittest.TestCase):
         self.assertFalse((self.source / "MCP/plugin/notebook/runtime").exists())
 
     def test_changed_primary_metadata_refuses_before_install(self):
-        (self.source / "MCP/plugin/notebook/.codex-plugin/plugin.json").write_text('{"name":"notebook","version":"9.0.0"}')
+        (self.source / "MCP/plugin/notebook/plugin.json").write_text('{"name":"notebook","version":"9.0.0"}')
         with self.assertRaisesRegex(release.ReleaseError, "metadata"):
             self.install()
         self.assertEqual(self.cli.install_calls, [])
@@ -770,6 +772,14 @@ class InstallationTests(unittest.TestCase):
     def test_stale_codex_cache_is_incomplete_and_does_not_install_ipad(self):
         self.cli.stale_cache = True
         with self.assertRaisesRegex(release.ReleaseError, "другую сборку runtime"):
+            self.install()
+        self.assertEqual(self.cli.install_calls, [])
+        receipt = release.read_json(self.evidence / "installation.json")
+        self.assertEqual((receipt["status"], receipt["step"]), ("incomplete", "install-plugin"))
+
+    def test_unresolved_plugin_root_does_not_install_ipad(self):
+        self.cli.literal_plugin_root = True
+        with self.assertRaisesRegex(release.ReleaseError, "Codex не подключил bundled Notebook runtime"):
             self.install()
         self.assertEqual(self.cli.install_calls, [])
         receipt = release.read_json(self.evidence / "installation.json")

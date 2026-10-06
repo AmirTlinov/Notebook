@@ -3,7 +3,7 @@
   "mcpServers": {
     "notebook": {
       "type": "stdio",
-      "command": "${PLUGIN_ROOT}/runtime/NotebookRuntime.app/Contents/Resources/CodexRuntime/node",
+      "command": "./runtime/NotebookRuntime.app/Contents/Resources/CodexRuntime/node",
       "args": [
         "${PLUGIN_ROOT}/runtime/NotebookRuntime.app/Contents/Resources/NotebookTools/dist/launch-runtime.mjs"
       ]

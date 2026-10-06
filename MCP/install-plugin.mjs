@@ -38,22 +38,23 @@ async function bundledRuntime() {
 
 await inspect(packageRoot);
 const [manifest, mcp, marketplace] = await Promise.all([
-  json(join(packageRoot, '.codex-plugin/plugin.json')),
+  json(join(packageRoot, 'plugin.json')),
   json(join(packageRoot, 'mcp.json')), json(join(source, '.agents/plugins/marketplace.json')),
 ]);
 assert.equal(manifest.name, 'notebook');
+assert.equal(manifest.$schema, 'https://agent-plugins.org/schemas/1.0.0/plugin.schema.json');
 assert.match(manifest.version, /^\d+\.\d+\.\d+$/);
-const presentation = manifest.interface;
+const presentation = manifest.extensions['com.openai'].interface;
 assert(presentation.shortDescription.length <= 30);
-assert.equal(manifest.mcpServers, './mcp.json');
-assert.equal(manifest.skills, './skills/');
+// Portable packages discover mcp.json and skills/ at their fixed locations.
+assert(!['mcpServers', 'skills', 'interface'].some(key => key in manifest));
 assert.equal(marketplace.name, 'notebook-local');
 assert.equal(marketplace.plugins.length, 1);
 assert.equal(marketplace.plugins[0].source.path, './notebook');
 const startup = mcp.mcpServers.notebook;
 const resources = '${PLUGIN_ROOT}/runtime/NotebookRuntime.app/Contents/Resources';
 assert.equal(startup.type, 'stdio');
-assert.equal(startup.command, resources + '/CodexRuntime/node');
+assert.equal(startup.command, './runtime/NotebookRuntime.app/Contents/Resources/CodexRuntime/node');
 assert.deepEqual(startup.args, [resources + '/NotebookTools/dist/launch-runtime.mjs']);
 await access(join(packageRoot, presentation.logo));
 const skill = await readFile(join(packageRoot, 'skills/notebook/SKILL.md'), 'utf8');
