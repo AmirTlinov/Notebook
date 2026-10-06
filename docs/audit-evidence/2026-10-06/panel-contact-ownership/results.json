@@ -1,0 +1,96 @@
+{
+  "scope": "C1 panel contact ownership repair; CPU TypeScript/controller/session checks only; not installed host/device acceptance",
+  "recorded_at_utc": "2026-10-06T05:59:11.656208+00:00",
+  "base_commit": "ccd2d51021375b3f59137f61d08f91f399046f8f",
+  "source_sha256": {
+    "MCP/panel/panel.ts": "f3b0be93cb15e4c8e8fc90a0e664019bc38893d4f14e0b3f619f372678194f48",
+    "MCP/panel/session.ts": "852941e75436ba1336e433ff124fb6dc2db573541bb5b11e5ac7893a97f44cc5",
+    "MCP/test/panel.test.ts": "23b6083fe9de87fa55d99a97c48e413e214cdf1725f03d03267579d6fbd21c2b",
+    "MCP/test/panel-input.test.ts": "bec2d17f9ec09eb71c3d2e23da4c3ffee6d212c2b98139007e90aef512f42c05",
+    "MCP/package.json": "972eb90536fc7618d6c35593445da4f6d0d5b5e7b211afb75181d3768454d7cc",
+    "MCP/package-lock.json": "6e332548b71373180267f9f987b5e3fdf2829a0e1bacd1abe09698ccc276b10f"
+  },
+  "checks": {
+    "typescript_and_script_services": {
+      "status": "PASS",
+      "command": [
+        "npm",
+        "run",
+        "check"
+      ],
+      "cwd": "MCP",
+      "note": "npm emitted a host environment http-proxy configuration warning; not a product runtime result"
+    },
+    "selected_cpu": {
+      "status": "PASS",
+      "passed": 44,
+      "failed": 0,
+      "skipped": 0,
+      "command": [
+        "node",
+        "--import",
+        "tsx",
+        "--test",
+        "--test-name-pattern=session |confirmed pen|unfinished contact|error Retry|workspace recovery|workspace switching|Notebook exposes|Retina projection|large displays|startup timeout|runtime staging|keyboard undo|lost pointer|late lost|Escape still|Enter and|an idle editor|the text tool|real pen",
+        "test/panel.test.ts",
+        "test/panel-input.test.ts",
+        "test/panel-projection.test.ts",
+        "test/runtime-launcher.test.ts"
+      ],
+      "cwd": "MCP",
+      "environment": "isolated temporary NOTEBOOK_HOME"
+    },
+    "full_four_file_selection": {
+      "status": "NOT PASS",
+      "passed": 44,
+      "environment_failures": 8,
+      "reason": "listen EPERM for Unix-socket fixtures on this executor; no alternate transport or skip conversion",
+      "scope": "same four test files, not entire MCP suite",
+      "source_note": "recorded on01c8a64 with identical six MCP source/lock hashes before fresh44-case run onccd2d51"
+    },
+    "baseline_red": {
+      "base_commit": "01c8a645976494d7c2335cd76bd6aa33c4afaa74",
+      "passed": 11,
+      "failed_including_parent_aggregates": 11,
+      "failing_leaf_cases": 8,
+      "note": "final new controller tests against unchanged baseline panel/session; includes aggregate suite failures, not11 independent defects"
+    },
+    "independent_review": {
+      "status": "completed after fixes",
+      "resolved_findings": [
+        "Rejected Delete must not clear active preview",
+        "Editor admission must not release an unfinished drag owner"
+      ],
+      "final_product_hashes_match": true
+    },
+    "native_swift_metal": "NOT RUN",
+    "installed_codex_host": "NOT RUN",
+    "physical_ipad": "NOT RUN",
+    "ime_offline": "NOT ACCEPTED",
+    "full_acceptance": "OPEN"
+  },
+  "behavior": [
+    "Suspended contact owns mutation admission",
+    "Lost pointer capture cancels only unfinished contact without capture",
+    "Normal release and reused pointer IDs preserve accepted pen write",
+    "Enter/double-click cannot nest editor inside an active gesture",
+    "Idle editor and text tool remain functional",
+    "Measured coalesced/up samples preserve precision; predictions do not persist"
+  ],
+  "unchanged": [
+    "No wire/storage/trust migration",
+    "Native owner remains authority for durability and sync",
+    "Package manifests and dependency lock unchanged",
+    "No installation or restored archives"
+  ],
+  "related_issue": "https://linear.app/main-cluster/issue/GUI-475",
+  "linear_update": "BLOCKED: connector requires reauthentication; no issue state changed",
+  "logs_sha256": {
+    "baseline-final-regression-red.log": "8e65f6f078eca5649c0e840acf8625fb2b61f1a2e9fa36d9d3d773a457a0bb20",
+    "final-selected.log": "169b3f6262c09c65052e687896505d5dec3c07ac5d3d0b1f42a45b65492fa51c",
+    "review-editor-red.log": "ae2dbc2776b7a09d2a281aa40198820a45298d69738f5fdf1befff475e3b13f7",
+    "review-real-save-red.log": "fda0357d53219f19ee52837bada52f0302c844a6e9403379329b26585aeea78d",
+    "typecheck.log": "897ad2eb0934a42a1a0b2d0955338f4b66e21defed0269cea7508fdb91ba3698",
+    "full-selected-files.log": "ee43af79cc83db37e17a7f6f61bddb73113b3bcf819c9b8b85f52d607f09405c"
+  }
+}
