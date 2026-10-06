@@ -1,0 +1,58 @@
+{
+  "date": "2026-10-06",
+  "sourceSHA256": "59e93ecbdc731dd9a99598aa64b552d09e631a1c149567473489e4b09958a659",
+  "sourceFiles": 1645,
+  "release": {
+    "build": "251",
+    "version": "0.3.181",
+    "pluginVersion": "0.2.3"
+  },
+  "defect": {
+    "receipt": ".build/runtime-install-250-portable/installation.json",
+    "status": "incomplete",
+    "step": "install-plugin",
+    "reason": "Installed Codex cache omitted the sealed Helpers/lib.d.ts symlink. Command and arguments were correctly expanded. Strict bundle comparison stopped before iPad installation."
+  },
+  "change": "One individually signed compiler and the canonical declarations share Resources/NotebookTypeScript. Bundles contain no symlinks. Installation compares actual devicectl dataContainerPath, appGroupIdentifiers and groupContainerPaths before and after in-place update.",
+  "verification": {
+    "command": "./verify.sh --only --profile verification --test NotebookMacTests/NotebookScriptServiceTests/testPinnedTypeScriptCLICompilesInsideTheSignedSandboxBeforePublicAdmission --test NotebookMacTests/NotebookScriptServiceTests/testTypeScriptTypeFailurePreventsEvenEarlierNativeEffects --evidence-dir .build/runtime-251-typescript-verification",
+    "receipt": ".build/runtime-251-typescript-verification/verification.json",
+    "receiptSHA256": "d424c6188c52c889bbe4e5fe9f245939b6f45ab74b6b8920a1c54d4b650c84b5",
+    "status": "passed",
+    "physicalAcceptance": false,
+    "unchangedSource": true,
+    "checks": {
+      "mac": {
+        "executed": 2,
+        "failed": [],
+        "skipped": []
+      },
+      "release": {
+        "executed": 87,
+        "failed": [],
+        "skipped": []
+      },
+      "verification": {
+        "executed": 111,
+        "failed": [],
+        "skipped": []
+      }
+    },
+    "nativeSelectors": [
+      "NotebookMacTests/NotebookScriptServiceTests/testPinnedTypeScriptCLICompilesInsideTheSignedSandboxBeforePublicAdmission",
+      "NotebookMacTests/NotebookScriptServiceTests/testTypeScriptTypeFailurePreventsEvenEarlierNativeEffects"
+    ],
+    "runtimeWarnings": []
+  },
+  "independentReview": {
+    "agent": "runtime_review",
+    "result": "No findings after removing undeclared stale Helpers cleanup from the sandboxed bundle hook.",
+    "scope": "Source review; two native tests separately confirm real signed XPC compilation and rejection before effects."
+  },
+  "experiments": {
+    "regularDiscoveryCopyInHelpers": "Rejected by codesign as unsigned nested code.",
+    "standaloneInheritedChild": "Not a valid production launch path; actual signed XPC tests passed.",
+    "cleanBundleHook": "63 regular files, all declared; separate unsandboxed shell check."
+  },
+  "installation": "Pending signed build 251, full installed-cache comparison, workspace/trust readback and physical iPad scenarios."
+}

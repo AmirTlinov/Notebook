@@ -17,7 +17,8 @@ struct NotebookTypeScriptCompilerTests {
         let manifest = try JSONDecoder().decode(NotebookSandboxedTypeScriptCompiler.Manifest.self,
           from: Data(contentsOf: stage.appendingPathComponent("Resources/NotebookTypeScript/manifest.json")))
         let metadata = try JSONSerialization.jsonObject(with: Data(contentsOf: stage.appendingPathComponent("Resources/NotebookTypeScript/manifest.json"))) as? [String: Any]
-        guard manifest.format == 2, metadata?["sourceLockSHA256"] as? String == lockHash else { continue }
+        guard manifest.format == 2, metadata?["sourceLockSHA256"] as? String == lockHash,
+          metadata?["compilerPath"] as? String == "Resources/NotebookTypeScript/notebook-typescript" else { continue }
         return (stage, manifest.sdkVersion)
       }
     }

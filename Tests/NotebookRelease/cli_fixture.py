@@ -46,7 +46,9 @@ class FakeCLI:
         self.canonical = {"bundleIdentifier": release.CANONICAL, "name": "Notebook", "version": "0.3.14", "bundleVersion": "17",
             "url": "file:///private/var/containers/Bundle/Application/CANONICAL/Notebook.app/"}
         self.preview = {"bundleIdentifier": release.BUNDLE, "name": release.DISPLAY_NAME, "version": "0.3.14", "bundleVersion": "17",
-            "url": "file:///private/var/containers/Bundle/Application/PREVIEW/Notebook.app/"}
+            "url": "file:///private/var/containers/Bundle/Application/PREVIEW/Notebook.app/",
+            "dataContainerPath": "/private/var/mobile/Containers/Data/Application/PREVIEW",
+            "appGroupIdentifiers": [], "groupContainerPaths": {}}
         self.existing_preview = False
         self.change_source = False
         self.fail_signature = False

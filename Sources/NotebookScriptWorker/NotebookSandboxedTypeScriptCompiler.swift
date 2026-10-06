@@ -41,7 +41,8 @@ enum NotebookSandboxedTypeScriptCompiler {
   /// Internal injection is used only by compiler tests. The RPC has no paths.
   static func compileSource(_ request: NotebookTypeScriptRequest, contents: URL, limits: Limits = .init()) async throws -> NotebookTypeScriptResult {
     guard request.source.utf8.count <= maximumSourceBytes else { throw Failure(code: "resource_limit", message: "Исходник TypeScript превышает 256 КиБ.") }
-    let resources = contents.appendingPathComponent("Resources/NotebookTypeScript"), executable = contents.appendingPathComponent("Helpers/notebook-typescript")
+    let resources = contents.appendingPathComponent("Resources/NotebookTypeScript")
+    let executable = resources.appendingPathComponent("notebook-typescript")
     guard FileManager.default.isExecutableFile(atPath: executable.path),
       let bytes = try? Data(contentsOf: resources.appendingPathComponent("manifest.json")),
       let manifest = try? JSONDecoder().decode(Manifest.self, from: bytes), manifest.format == 2,

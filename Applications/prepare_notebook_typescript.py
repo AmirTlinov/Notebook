@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Pinned build input. No package manager, paths or network reach the runtime.
 
-The upstream CLI realpaths its executable and requires sibling lib.d.ts even
-with noLib. Apple requires real data in Resources, not Helpers. One exact,
-bundle-internal relative symlink provides discovery; it grants no extra path.
+The individually signed compiler and its declarations share one Resources
+directory. The upstream CLI requires sibling lib.d.ts even with noLib; this
+ordinary resource survives plugin cache copying and the bundle signature.
 """
 import argparse, hashlib, json, os, shutil
 from pathlib import Path
@@ -13,10 +13,8 @@ ROOT = Path(__file__).resolve().parents[1]
 LOCK = ROOT / 'Sources/NotebookMarkupService/TypeScriptResources.lock.json'
 SDK = ROOT / 'Sources/NotebookScriptHost/Resources/notebook-sdk.d.ts'
 PACKAGE = ROOT / 'MCP/node_modules/@typescript/typescript-darwin-arm64'
-BINARY = 'Helpers/notebook-typescript'
 RESOURCES = 'Resources/NotebookTypeScript'
-DISCOVERY = 'Helpers/lib.d.ts'
-DISCOVERY_TARGET = '../Resources/NotebookTypeScript/lib.d.ts'
+BINARY = RESOURCES+'/notebook-typescript'
 
 def sha(data): return hashlib.sha256(data).hexdigest()
 def pin(path):
@@ -24,16 +22,16 @@ def pin(path):
     data=path.read_bytes();return {'bytes':len(data),'sha256':sha(data)}
 def identity(lock):
     return {'format':2,'compilerVersion':lock['version'],'sdkVersion':pin(SDK)['sha256'],
-            'sourceLockSHA256':sha(LOCK.read_bytes())}
+            'sourceLockSHA256':sha(LOCK.read_bytes()),'compilerPath':BINARY}
 def outputs(lock):
-    paths={BINARY,DISCOVERY,RESOURCES,RESOURCES+'/manifest.json',RESOURCES+'/notebook-sdk.d.ts'}
+    paths={BINARY,RESOURCES,RESOURCES+'/manifest.json',RESOURCES+'/notebook-sdk.d.ts'}
     paths.update(RESOURCES+'/'+name for name in lock['resources'])
     for name in tuple(paths):
         paths.update(str(p) for p in Path(name).parents if str(p) not in ('.','Resources'))
     return ''.join('$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/'+p+'\n' for p in sorted(paths))
 def check(stage, *, signed=False):
     stage=Path(stage);lock=json.loads(LOCK.read_text());expected=identity(lock)
-    if stage.is_symlink() or any((stage/name).is_symlink() for name in ('Helpers','Resources')):
+    if stage.is_symlink() or (stage/'Resources').is_symlink():
         raise RuntimeError('TypeScript stage must not traverse symlink directories')
     resources=stage/RESOURCES
     if resources.is_symlink():raise RuntimeError('TypeScript resources must not be a symlink')
@@ -41,13 +39,10 @@ def check(stage, *, signed=False):
     if any(manifest.get(k)!=v for k,v in expected.items()):raise RuntimeError('TypeScript compiler/SDK identity changed')
     pins={**lock['resources'],'notebook-sdk.d.ts':pin(SDK)}
     members=list(resources.rglob('*'))
-    if any(p.is_symlink() for p in members) or {p.relative_to(resources).as_posix() for p in members if p.is_file()} != set(pins)|{'manifest.json'}:
+    if any(p.is_symlink() for p in members) or {p.relative_to(resources).as_posix() for p in members if p.is_file()} != set(pins)|{'manifest.json','notebook-typescript'}:
         raise RuntimeError('TypeScript bundle has missing or unexpected resources')
     if any(pin(resources/name)!=value for name,value in pins.items()):raise RuntimeError('TypeScript resource hash mismatch')
     if manifest.get('libraries')!=sorted(name for name in pins if (name.startswith('lib.es') or name.startswith('lib.decorators'))):raise RuntimeError('Standard declarations changed')
-    discovery=stage/DISCOVERY
-    if not discovery.is_symlink() or os.readlink(discovery)!=DISCOVERY_TARGET or discovery.resolve()!=(resources/'lib.d.ts').resolve():
-        raise RuntimeError('TypeScript discovery link must target its own sealed resource')
     binary=stage/BINARY
     if binary.is_symlink() or not os.access(binary,os.X_OK):raise RuntimeError('TypeScript compiler is not executable')
     if macho(binary.read_bytes(),minimum_os='12.0')!=lock['compiler']['macho']:raise RuntimeError('Pinned TypeScript executable changed')
@@ -68,7 +63,6 @@ def prepare(stage):
             source=PACKAGE/('lib/'+name if name.startswith('lib.') else name)
             if pin(source)!=value:raise RuntimeError('TypeScript dependency pin mismatch: '+name)
             shutil.copyfile(source,target/name)
-        (stage/DISCOVERY).symlink_to(DISCOVERY_TARGET)
         shutil.copyfile(SDK,target/'notebook-sdk.d.ts')
         expected['libraries']=sorted(name for name in lock['resources'] if (name.startswith('lib.es') or name.startswith('lib.decorators')))
         (target/'manifest.json').write_text(json.dumps(expected,sort_keys=True,indent=2)+'\n')

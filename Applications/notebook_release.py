@@ -146,18 +146,7 @@ def app_manifest(app):
     require(app.is_dir() and not app.is_symlink(), "Нужен обычный каталог подписанного bundle.")
     files = []
     for path in sorted(app.rglob("*")):
-        if path.is_symlink():
-            # The pinned upstream CLI requires a sibling discovery declaration.
-            # Seal the alias itself, not a dereferenced copy. No other links,
-            # directory aliases or external resources belong to this bundle.
-            contents = app / "Contents/XPCServices/NotebookMarkupService.xpc/Contents"
-            require(path == contents / notebook_typescript.DISCOVERY
-                    and os.readlink(path) == notebook_typescript.DISCOVERY_TARGET
-                    and path.resolve() == contents / notebook_typescript.RESOURCES / "lib.d.ts"
-                    and path.is_file(),
-                    "TypeScript discovery link must target its own sealed resource; other bundle links are forbidden.")
-            files.append({"path": path.relative_to(app).as_posix(), "symlink": os.readlink(path)})
-            continue
+        require(not path.is_symlink(), "Ссылки не входят в подписанный bundle: " + str(path))
         require(not (path.is_dir() and path.suffix in (".app", ".appex")), "Вложенные приложения/расширения не входят в preview-контракт.")
         require(path.is_dir() or stat.S_ISREG(path.lstat().st_mode), "Специальный файл не входит в подписанный bundle.")
         if path.is_file():
@@ -488,7 +477,7 @@ def restrict_test_script_services(app, source, command, *, bundle_identifier, si
     require(root.is_dir() and {path.name for path in root.iterdir()}
             == {"NotebookScriptService.xpc", "NotebookMarkupService.xpc"},
             "Тестовый Mac должен содержать ровно два исполнителя.")
-    targets = [(root / "NotebookMarkupService.xpc/Contents/Helpers/notebook-typescript",
+    targets = [(root / "NotebookMarkupService.xpc/Contents" / notebook_typescript.BINARY,
                 source / "Sources/NotebookMarkupService/typescript-child.entitlements.plist", "com.amirtlinov.notebook.typescript-compiler")]
     targets += [(root / (name + ".xpc"), source / "Sources" / name / "entitlements.plist", info.get(name))
                 for name in ("NotebookScriptService", "NotebookMarkupService")]
@@ -649,7 +638,7 @@ def inspect_typescript_runtime(service, command):
         manifest = notebook_typescript.check(service / "Contents", signed=True)
     except (RuntimeError, OSError, ValueError, KeyError) as error:
         raise ReleaseError("TypeScript compiler resource/source contract failed: " + str(error)) from error
-    executable = service / "Contents/Helpers/notebook-typescript"
+    executable = service / "Contents" / notebook_typescript.BINARY
     bundle_id = "com.amirtlinov.notebook.typescript-compiler"
     requirement = '=anchor apple generic and identifier "' + bundle_id + '" and certificate leaf[subject.OU] = "' + TEAM + '"'
     command("typescript-signature-verify", ["/usr/bin/codesign", "--verify", "--strict", "-R", requirement, executable])
@@ -833,6 +822,18 @@ def install_verified_pair(source, build, evidence, runner=None):
             "--include-container-paths", "--include-app-group-identifiers", "--timeout", "30", "--json-output", target])
         return app_rows(successful_json(target, "devicectl.device.info.apps"), bundle)
 
+    def ipad_containers(info):
+        data = info.get("dataContainerPath")
+        groups = info.get("appGroupIdentifiers")
+        paths = info.get("groupContainerPaths")
+        absolute = lambda value: isinstance(value, str) and value.startswith("/") and "\0" not in value
+        require(absolute(data) and isinstance(groups, list)
+                and all(isinstance(group, str) and group for group in groups)
+                and len(groups) == len(set(groups)) and isinstance(paths, dict)
+                and all(isinstance(group, str) and group and absolute(path) for group, path in paths.items()),
+                "CLI не подтвердил dataContainerPath, appGroupIdentifiers и groupContainerPaths установленного iPad.")
+        return {"dataContainerPath": data, "appGroupIdentifiers": groups, "groupContainerPaths": paths}
+
     try:
         output = command("primary-checkout", ["git", "-C", source, "worktree", "list", "--porcelain", "-z"], read_output=True)[0].decode().split("\0")[0]
         require(output.startswith("worktree "), "Git не назвал primary checkout для установленного plugin marketplace.")
@@ -856,6 +857,7 @@ def install_verified_pair(source, build, evidence, runner=None):
                     for info in (ipad_info, mac_info)), "Release версия не совпала с подписанными bundles.")
         before = device_apps("ipad-before", BUNDLE)
         canonical = device_apps("canonical-before", CANONICAL)
+        containers_before = ipad_containers(before[0]) if before else None
         build_number = release["build"]
         require(isinstance(build_number, str) and build_number.isdecimal(), "Build пары должен быть числом.")
         for info in before:
@@ -902,9 +904,10 @@ def install_verified_pair(source, build, evidence, runner=None):
         require(connected.get("enabled") is True and transport.get("type") == "stdio" and executable.is_absolute()
                 and executable.parts[-4:] == suffix, "Codex не подключил bundled Notebook runtime.")
         cached = executable.parents[3]
-        require(transport.get("args") == [str(cached / "Contents/Resources/NotebookTools/dist/launch-runtime.mjs")]
-                and app_manifest(cached) == read_json(build / "mac-manifest.json"),
-                "Codex сохранил другую сборку runtime; обновите plugin version перед выпуском.")
+        require(transport.get("args") == [str(cached / "Contents/Resources/NotebookTools/dist/launch-runtime.mjs")],
+                "Codex подключил неверные аргументы запуска Notebook runtime.")
+        require(app_manifest(cached) == read_json(build / "mac-manifest.json"),
+                "Нарушена целостность подписанного runtime в кеше Codex: состав или содержимое файлов не совпадает с проверенной сборкой.")
         require(device_apps("ipad-preinstall", BUNDLE) == before, "Установленный iPad изменился во время подготовки.")
         receipt["step"] = "install-ipad"; write_json(evidence / "installation.json", receipt)
         installed_path = evidence / "install-ipad.json"
@@ -917,9 +920,9 @@ def install_verified_pair(source, build, evidence, runner=None):
         require(len(after) == 1 and after[0].get("name") == DISPLAY_NAME and after[0].get("version") == release["version"]
                 and after[0].get("bundleVersion") == build_number and isinstance(after[0].get("url"), str)
                 and after[0]["url"] == installed[0].get("installationURL"), "iPad не подтвердил установленные build и bundle URL.")
-        for key in ("dataContainer", "dataContainerURL", "appGroups"):
-            if before and key in before[0]:
-                require(after[0].get(key) == before[0][key], "Контейнер iPad изменился при inplace установке.")
+        containers_after = ipad_containers(after[0])
+        require(containers_before is None or containers_after == containers_before,
+                "Контейнер iPad изменился при inplace установке.")
         require(device_apps("canonical-after", CANONICAL) == canonical, "Историческая установка iPad изменилась.")
         receipt.update({"status": "installed", "step": "complete", "ipadAfter": after, "runtime": str(cached)})
         write_json(evidence / "installation.json", receipt)
