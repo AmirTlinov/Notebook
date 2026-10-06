@@ -869,7 +869,7 @@ class SelectionTests(unittest.TestCase):
                 with patch.object(release, "release_commands", return_value=command), \
                      patch.object(release, "source_inputs", return_value={"source": "fixture"}), \
                      patch.object(release, "read_toolchain", return_value={"toolchain": "fixture"}), \
-                     patch.object(release, "prepare_typesetter_runtime", return_value=self.root / "typesetter"), \
+                     patch.object(release, "prepare_typesetter_runtime", return_value=self.root / "typesetter") as typesetter, \
                      patch.object(release, "prepare_typescript_runtime", return_value=self.root / "typescript"), \
                      patch.object(verify, "portable_arguments", return_value=(["node", "--test"], self.root, [])), \
                      patch.object(reports, "rows", return_value=[]), \
@@ -877,6 +877,7 @@ class SelectionTests(unittest.TestCase):
                      self.assertRaises(BuildReached):
                     verify.run_selected(self.root, plan, evidence)
                 labels = [item[0] for item in calls]
+                typesetter.assert_called_once_with(self.root, command, "macosx", stage=None)
                 self.assertEqual(labels.count("mcp-dependencies"), 1)
                 self.assertLess(labels.index("mcp-dependencies"), labels.index("mac-build-for-testing"))
                 self.assertEqual(labels.count("surface-resources"), 1)
@@ -886,9 +887,29 @@ class SelectionTests(unittest.TestCase):
                 self.assertEqual(dependency[2]["cwd"], self.root / "MCP")
                 self.assertEqual("mcp" in labels, bool(commands))
                 build = next(item[1] for item in calls if item[0] == "mac-build-for-testing")
-                self.assertIn("NOTEBOOK_TYPESETTER_RUNTIME=" + str(self.root / ".build/notebook-typesetter-runtime"), build)
+                self.assertEqual(release.read_json(evidence / "selection.json")["typesetterRuntime"], str(self.root / "typesetter"))
+                self.assertIn("NOTEBOOK_TYPESETTER_RUNTIME=" + str(self.root / "typesetter"), build)
                 self.assertIn("NOTEBOOK_TYPESCRIPT_RUNTIME=" + str(self.root / "typescript"), build)
                 self.assertIn("NOTEBOOK_SURFACE_STAGE=" + str(self.root.resolve() / ".build/surface"), build)
+
+    def test_native_receipt_binds_the_prepared_typesetter_stage_after_environment_changes(self):
+        stage = self.root / "shared runtime"
+        plan = {"sourceRoot": str(self.root), "typesetterRuntime": str(stage),
+                "checks": {"core": [], "ipad": [], "mac": ["NotebookMacTests/NotebookArchiveLaunchTests"], "commands": []}}
+        argv = [sys.executable, "-B", str(self.root / "Applications/prepare_notebook_typesetter.py"),
+                "--prepare", "--platform", "macosx", "--stage", str(stage)]
+        commands = [{"label": "typesetter-resources-macosx", "argv": argv, "cwd": str(self.root), "exitCode": 0}]
+        with patch.dict(release.os.environ, {"NOTEBOOK_TYPESETTER_RUNTIME": str(self.root / "unrelated")}), \
+             patch.object(verify, "prerequisites", return_value={"typesetter"}):
+            verify.validate_prerequisites(plan, self.root / "evidence", commands)
+            build = verify.native_arguments(self.root, self.root / "evidence", plan, "mac", [], "build-for-testing")
+            self.assertIn("NOTEBOOK_TYPESETTER_RUNTIME=" + str(stage), build)
+            commands[0]["argv"] = [*argv[:-1], str(self.root / "unrelated")]
+            with self.assertRaisesRegex(release.ReleaseError, "typesetter-resources-macosx"):
+                verify.validate_prerequisites(plan, self.root / "evidence", commands)
+            del plan["typesetterRuntime"]
+            with self.assertRaisesRegex(release.ReleaseError, "Typesetter runtime"):
+                verify.validate_prerequisites(plan, self.root / "evidence", commands)
 
     def test_submitted_pixel_owner_selects_native_display_and_immutable_attention_contracts(self):
         self.change("Applications/Shared/NotebookWorkspacePresentation.swift")

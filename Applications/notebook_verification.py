@@ -498,6 +498,14 @@ def check_ipad_lock(root, evidence, command, phase=""):
     validate_ipad_lock_state(release.successful_json(Path(argv[-1]), "devicectl.device.info.lockState"))
 
 
+def prepared_typesetter_stage(plan):
+    value = plan.get("typesetterRuntime")
+    release.require(isinstance(value, str) and Path(value).is_absolute()
+                    and str(Path(value).resolve()) == value,
+                    "Нет точного подготовленного Typesetter runtime в плане проверки.")
+    return Path(value)
+
+
 def validate_prerequisites(plan, evidence, commands):
     origin = Path(plan["sourceRoot"])
     required = prerequisites(plan)
@@ -529,7 +537,7 @@ def validate_prerequisites(plan, evidence, commands):
         if plan["checks"][platform]:
             check_command(commands, "typesetter-resources-" + sdk,
                           [sys.executable, "-B", str(origin / "Applications/prepare_notebook_typesetter.py"),
-                           "--prepare", "--platform", sdk, "--stage", str(origin / ".build/notebook-typesetter-runtime")], origin)
+                           "--prepare", "--platform", sdk, "--stage", str(prepared_typesetter_stage(plan))], origin)
     if "physical-ipad" in required:
         release.validate_device(release.successful_json(evidence / "physical-ipad.json", "devicectl.device.info.details"))
     if "unlocked-ipad" in required:
@@ -557,7 +565,7 @@ def native_arguments(root, evidence, plan, platform, selectors, action, typescri
         if plan.get("optimized", False):
             argv.extend(("SWIFT_OPTIMIZATION_LEVEL=-O", "GCC_OPTIMIZATION_LEVEL=s"))
         argv.extend(native_mac_signing_settings() if platform == "mac" else native_ipad_signing_settings())
-        argv.append("NOTEBOOK_TYPESETTER_RUNTIME=" + str(root / ".build/notebook-typesetter-runtime"))
+        argv.append("NOTEBOOK_TYPESETTER_RUNTIME=" + str(prepared_typesetter_stage(plan)))
         if platform == "mac":
             argv.extend(("NOTEBOOK_SURFACE_STAGE=" + str(root / ".build/surface"), "NOTEBOOK_TYPESCRIPT_RUNTIME=" + str(typescript)))
     argv.extend("-only-testing:" + selector for selector in selectors)
@@ -833,7 +841,12 @@ def run_selected(root, plan, evidence):
         if not checks[platform]:
             continue
         sdk = "macosx" if platform == "mac" else "iphoneos"
-        release.prepare_typesetter_runtime(root, command, sdk, stage=root / ".build/notebook-typesetter-runtime")
+        # The release owner resolves an explicit stage or NOTEBOOK_TYPESETTER_RUNTIME.
+        # Capture it once: both platforms and later receipt validation use these
+        # exact prepared bytes, independently of the caller's current environment.
+        typesetter = release.prepare_typesetter_runtime(root, command, sdk, stage=plan.get("typesetterRuntime"))
+        plan["typesetterRuntime"] = str(typesetter)
+        release.write_json(evidence / "selection.json", plan)
         if platform == "mac":
             release.prepare_codex_runtime(root, command)
             release.prepare_surface_stage(root, command)
