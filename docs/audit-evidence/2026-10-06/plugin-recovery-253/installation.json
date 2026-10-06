@@ -1,0 +1,145 @@
+{
+  "format": 1,
+  "date": "2026-10-06",
+  "status": "installed-and-read-back",
+  "build": "253",
+  "version": "0.3.183",
+  "pluginVersion": "0.2.5",
+  "sourceSHA256": "1a1f3f25190c916318d25552b92ad3a072a3c112cc76ef2ef4d16868ef664054",
+  "releaseCommit": "d2bffd0c",
+  "installation": {
+    "status": "installed",
+    "step": "complete",
+    "runtime": "/Users/amir/.codex/plugins/cache/notebook-local/notebook/0.2.5/runtime/NotebookRuntime.app",
+    "signedCachedBytesMatchedBuild": true,
+    "iPadWorkspaceIdentityPreserved": true,
+    "iPadSQLiteMetadataPreserved": true
+  },
+  "oldRuntime": {
+    "at": "2026-10-06T07:10:45.564001+00:00",
+    "pid": 74380,
+    "processIdentity": "Tue Oct  6 07:28:47 2026     /Users/amir/.codex/plugins/cache/notebook-local/notebook/0.2.4/runtime/NotebookRuntime.app/Contents/MacOS/NotebookRuntime",
+    "sigtermSent": true,
+    "sigkillSent": true,
+    "oldProcessExited": true,
+    "unsavedTailPreservationConfirmed": false,
+    "authorization": "User explicitly authorized restart with unsaved-memory risk on 2026-10-06",
+    "liveDebuggerUsed": false
+  },
+  "servingRuntime": {
+    "cdhash": "ef82c3187459024a4ab53c97fc97859777a24868",
+    "dynamicValidityChecked": true,
+    "executable": "/Users/amir/.codex/plugins/cache/notebook-local/notebook/0.2.5/runtime/NotebookRuntime.app/Contents/MacOS/NotebookRuntime",
+    "identifier": "com.amirtlinov.notebook.mac",
+    "pid": 41679,
+    "team": "M94V58FCVP"
+  },
+  "contentReadback": {
+    "status": "passed",
+    "toolCount": 10,
+    "workspaceID": "54349F3B-9E0A-4DEA-B990-40CAE04EF45E",
+    "headerFieldsPreserved": [
+      "workspaceID",
+      "itemCount",
+      "rootBoardID",
+      "boardRevision",
+      "boardStamp",
+      "selectedItemID",
+      "selectedPageID",
+      "spatialInkStamp"
+    ],
+    "runtimeAdapterStatus": "connected",
+    "wholeDatabaseByteIdentityClaimed": false,
+    "currentSceneImageAfterIPadLaunch": "ready",
+    "imageScope": "Image returned through installed MCP; Codex panel display and OS presentation are not asserted."
+  },
+  "nearby": {
+    "authenticated": true,
+    "interface": "awdl0",
+    "firstAuthenticationUTC": "2026-10-06T07:15:25.634Z",
+    "routeStabilityAccepted": false,
+    "observed": "Repeated authenticated generations and two POSIX60 timeouts in the captured two-minute window."
+  },
+  "physicalAcceptance": false,
+  "hostPanel": {
+    "status": "awaiting-current-chat-MCP-refresh",
+    "observed": "Existing tool connection still expects build252; new installed launcher successfully admits253. Previous MCP App tab became unavailable after the plugin update.",
+    "userRefreshRequested": true
+  },
+  "earlierAttempts": [
+    {
+      "check": "Installed smoke with current-scene image before launching iPad",
+      "status": "failed",
+      "detail": "current_scene_unknown; this did not verify a displayed image. Focused installed resource/header/no-image reads subsequently passed."
+    },
+    {
+      "check": "iPad launch with CLI-provided persistent identifier",
+      "status": "refused-before-launch",
+      "detail": "devicectl rejected its supplied identifier as invalid base64. Launch by admitted bundleID then succeeded; no reinstall."
+    },
+    {
+      "check": "Live debugger recovery proposal",
+      "status": "stopped-before-live-use",
+      "detail": "Automatic review flagged possible cybersecurity risk. No live debugger access occurred. User subsequently authorized ordinary forced restart with unsaved-memory risk."
+    }
+  ],
+  "receipts": [
+    {
+      "path": ".build/runtime-install-253/installation.json",
+      "sha256": "8828e3d0bed5ef12a1f4b61aa98e47b2a671e23e00687089a2d01bd906ef9087"
+    },
+    {
+      "path": ".build/runtime-253-live/termination.json",
+      "sha256": "9a218328bd305fc95544e81e56c36d8bf4d385457f0a5375d203fe9c5844dc2f"
+    },
+    {
+      "path": ".build/runtime-253-live/saved-before.json",
+      "sha256": "b1597b5896d2417a3c5a12beffe74de2d9bec0b94ec67e295f14b3dcf735f0d7"
+    },
+    {
+      "path": ".build/runtime-253-live/saved-after.json",
+      "sha256": "61f9bb51a82b43554fc7f4ed3058f9330b8684444d040a1b55fb6586ca543bd9"
+    },
+    {
+      "path": ".build/runtime-253-live/serving-signature.json",
+      "sha256": "8aa58b1432fd32bf7156c87fe89b7e1dc2c3d327f1a876336a0fb60f1d96b0b8"
+    },
+    {
+      "path": ".build/runtime-253-live/serving-process.json",
+      "sha256": "2f03025e298f29fe67f24c27a57a2eccd69b87fed6aeba8f3be09076be0a62d4"
+    },
+    {
+      "path": ".build/runtime-253-live/mcp-after-install.json",
+      "sha256": "db932b22cae063624f74213f1ddf9acd41d578904dd7c89541a964587865378d"
+    },
+    {
+      "path": ".build/runtime-253-live/workspace-preservation.json",
+      "sha256": "f8c8bfbbec3be9a7111c835c9f44924d934a0f6b5ab5346b9ac6e485424815db"
+    },
+    {
+      "path": ".build/runtime-253-live/ipad-launch-by-bundle.json",
+      "sha256": "48dca5e3f0edc6307de2a55b9c0d4b6e827d63f28ecde859da8d5c737bc5c9b3"
+    },
+    {
+      "path": ".build/runtime-253-live/connection-info-after-ipad-launch.log",
+      "sha256": "830b57b1384b216af8bb445e6303442a34d964cf5007a4410c8e1ad03accfb7c"
+    },
+    {
+      "path": ".build/runtime-253-live/installed-smoke.log",
+      "sha256": "6cd3637cd0129352d78a6848ebe9b68e69476f7d7101f3c6cf5d2b9717ebb2d6"
+    },
+    {
+      "path": ".build/runtime-253-live/ipad-launch.log",
+      "sha256": "917c5ba872010f03805ce4e0001abd6fb0189f434c8048bd53d299ec59a8a72b"
+    },
+    {
+      "path": ".build/runtime-253-live/installed-smoke-after-ipad-launch.log",
+      "sha256": "fc482f0863c3024f9d639d4f335473d298c9d42a25e21768bcb86b6362113ab1"
+    }
+  ],
+  "review": {
+    "independent": true,
+    "findings": 0,
+    "scope": "All 13 receipt hashes, installed status, signed serving process, eight preserved header fields, iPad storage metadata and actual smoke/host/physical limits checked."
+  }
+}
