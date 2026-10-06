@@ -5,7 +5,7 @@ import NotebookCore
 /// One workspace presentation owner. Features supply actions and their anchor;
 /// this owner supplies the surface, placement, native-menu lifetime and input boundary.
 @MainActor
-final class NotebookContextMenus: NSObject, ObservableObject, UIPopoverPresentationControllerDelegate {
+final class NotebookContextMenus: NSObject, UIPopoverPresentationControllerDelegate {
   let view = HostView()
   // This small control surface must not filter the entire live ink backdrop
   // whenever selection changes. Keep the same native buttons and geometry.
@@ -20,6 +20,8 @@ final class NotebookContextMenus: NSObject, ObservableObject, UIPopoverPresentat
   // adaptive-presentation delegate; retaining it here would leave an invisible
   // full-canvas input exclusion after the menu has gone.
   private weak var popover: UIViewController?
+  private var retiringPopover: UIViewController?
+  private var pendingPopover: UIViewController?
   private weak var gate: NotebookInputGate?
   private let controlSource = UUID()
   private let selectionMore = NotebookContextMenuButton(type:.system)
@@ -85,7 +87,7 @@ final class NotebookContextMenus: NSObject, ObservableObject, UIPopoverPresentat
   /// The gesture owns admission; a reader borrows that lease through its actual
   /// callback/worker completion and returns only decoded content.
   typealias ClipboardReader = @MainActor ([NSItemProvider], SpatialPoint, NotebookClipboardWorkLease) async throws -> NotebookClipboard.Content
-  @Published private var presentationIntent: PresentationIntent?
+  private var presentationIntent: PresentationIntent?
   private var clipboardIntentID: UUID?
   private var presentationUsesPopover = false
 
@@ -93,7 +95,7 @@ final class NotebookContextMenus: NSObject, ObservableObject, UIPopoverPresentat
     clipboardExports.copySelection(model, owner: self, selection: selection, cut: cut)
   }
 
-  /// One context token covers UIKit palettes and the SwiftUI actions popover.
+  /// One context token covers palettes and hosted canvas/toolbar actions.
   /// Geometry repaint does not create a new user intent.
   func beginContentPresentation(in model: NotebookAppModel) -> PresentationIntent {
     dismissCurrent();selectionModel=model
@@ -110,7 +112,7 @@ final class NotebookContextMenus: NSObject, ObservableObject, UIPopoverPresentat
   func isCurrent(_ intent: PresentationIntent, in model: NotebookAppModel) -> Bool {
     presentationIntent?.id == intent.id && selectionModel === model && model.shutdownPhase == .running
       && intent.context == PresentationContext(model)
-      && (!presentationUsesPopover || popover?.presentingViewController != nil)
+      && (!presentationUsesPopover || pendingPopover != nil || popover?.presentingViewController != nil)
   }
   func isCurrent(_ intent: ClipboardIntent, in model: NotebookAppModel) -> Bool {
     clipboardIntentID == intent.id && isCurrent(intent.presentation,in:model)
@@ -304,7 +306,8 @@ final class NotebookContextMenus: NSObject, ObservableObject, UIPopoverPresentat
     buttons = []; surface.isHidden = true
   }
   var hasPresentedMenu: Bool { selectionActionsVisible || blocksCanvasInput }
-  var blocksCanvasInput: Bool { selectionMore.isMenuPresented || popover?.presentingViewController != nil || buttons.contains { ($0 as? NotebookContextMenuButton)?.isMenuPresented == true } }
+  var blocksCanvasInput: Bool { selectionMore.isMenuPresented || popover?.presentingViewController != nil
+    || retiringPopover?.presentingViewController != nil || buttons.contains { ($0 as? NotebookContextMenuButton)?.isMenuPresented == true } }
   private func permitsSelectionMenu(_ selection:UUID) -> Bool {
     guard let model=selectionModel else { return true }
     return model.selectionSession.id == selection && model.selectionSession.count > 0
@@ -420,36 +423,80 @@ final class NotebookContextMenus: NSObject, ObservableObject, UIPopoverPresentat
     let intent=beginContentPresentation(in:model)
     installContent(content(intent),at:point)
   }
+  func presentContent<Content: View>(in model: NotebookAppModel, from button: UIButton,
+    content: (PresentationIntent) -> Content) {
+    guard button.window != nil,button.window === view.window else { return }
+    let intent=beginContentPresentation(in:model)
+    installContent(content(intent),from:button,rect:button.bounds,arrows:.up)
+  }
+  func detachContentAnchor(_ button: UIButton) {
+    guard popover?.popoverPresentationController?.sourceView === button else { return }
+    dismissCurrent();pendingSelection=nil
+  }
   func presentContent<Content: View>(for intent: ClipboardIntent, in model: NotebookAppModel,
     at point: CGPoint, content: (PresentationIntent) -> Content) {
     guard isCurrent(intent,in:model) else { return }
     presentContent(in:model,at:point,content:content)
   }
   private func installContent<Content: View>(_ content: Content, at point: CGPoint) {
+    installContent(content,from:view,rect:.init(x:point.x,y:point.y,width:1,height:1))
+  }
+  private func installContent<Content: View>(_ content: Content, from anchor: UIView, rect: CGRect,
+    arrows: UIPopoverArrowDirection = .any) {
     source=nil;anchorView=nil
     let controller=UIHostingController(rootView:content)
     controller.modalPresentationStyle = .popover
     controller.sizingOptions = [.preferredContentSize]
-    presentPopover(controller,from:view,rect:.init(x:point.x,y:point.y,width:1,height:1))
+    controller.view.backgroundColor=UIColor(NotebookChrome.surface)
+    presentPopover(controller,from:anchor,rect:rect,arrows:arrows)
   }
   func dismissPresentedContent() { dismissCurrent(); pendingSelection=nil }
   private func dismissPopover(endingPresentation:Bool = true) {
     if endingPresentation { invalidatePresentation() }
-    let old = popover;popover = nil;selectionPopover=nil;old?.dismiss(animated:false)
+    (popover?.popoverPresentationController?.sourceView as? UIButton)?.isSelected=false
+    pendingPopover=nil
+    let old = popover;popover = nil;selectionPopover=nil
+    // Dismiss from the captured presenter: the content may itself present a
+    // composition sheet, and dismissing that content would close only its child.
+    if let old,let presenter=old.presentingViewController,presenter.presentedViewController === old {
+      retiringPopover=old
+      presenter.dismiss(animated:false) { [weak self,weak old] in
+        guard let self,let old,retiringPopover === old else { return }
+        retiringPopover=nil
+        presentPendingPopover()
+      }
+    }
   }
-  private func presentPopover(_ controller:UIViewController,from anchor:UIView,rect:CGRect) {
+  private func presentPopover(_ controller:UIViewController,from anchor:UIView,rect:CGRect,
+    arrows: UIPopoverArrowDirection = .any) {
+    controller.popoverPresentationController?.delegate = self
+    controller.popoverPresentationController?.sourceView = anchor
+    controller.popoverPresentationController?.sourceRect = rect
+    controller.popoverPresentationController?.permittedArrowDirections = arrows
+    popover=controller;pendingPopover=controller;presentationUsesPopover=true
+    presentPendingPopover()
+  }
+  private func presentPendingPopover() {
+    guard retiringPopover == nil,let controller=pendingPopover,popover === controller else { return }
+    if let intent=presentationIntent,let model=selectionModel,!isCurrent(intent,in:model) {
+      dismissPopover();return
+    }
     var responder: UIResponder? = view
     while responder != nil && !(responder is UIViewController) { responder = responder?.next }
-    guard let owner = responder as? UIViewController else { return }
-    controller.popoverPresentationController?.delegate = self
-    controller.popoverPresentationController?.sourceView = view
-    controller.popoverPresentationController?.sourceRect = anchor.convert(rect,to:view)
-    controller.popoverPresentationController?.permittedArrowDirections = .any
-    popover = controller;presentationUsesPopover=true;owner.present(controller,animated:true)
+    guard let owner=responder as? UIViewController,owner.presentedViewController == nil,
+      let anchor=controller.popoverPresentationController?.sourceView,
+      anchor.window != nil,anchor.window === view.window else { dismissPopover();return }
+    // UIKit keeps its outgoing controller during dismissal, even without an
+    // animation. Only that completion admits the latest captured replacement.
+    owner.present(controller,animated:true)
+    guard popover === controller else { return }
+    pendingPopover=nil
+    (anchor as? UIButton)?.isSelected=true
   }
   func presentationControllerDidDismiss(_ presentationController: UIPresentationController) {
     if popover === presentationController.presentedViewController {
-      popover = nil;selectionPopover=nil;invalidatePresentation()
+      (popover?.popoverPresentationController?.sourceView as? UIButton)?.isSelected=false
+      popover = nil;pendingPopover=nil;selectionPopover=nil;invalidatePresentation()
     }
   }
   func popoverPresentationControllerDidDismissPopover(_ controller: UIPopoverPresentationController) { presentationControllerDidDismiss(controller) }

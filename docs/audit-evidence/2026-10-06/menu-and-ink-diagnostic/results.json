@@ -1,0 +1,59 @@
+{
+  "format": 1,
+  "date": "2026-10-06",
+  "status": "physical-diagnostic-failed",
+  "baseCommit": "a5b1a5cf6cb285ab3239461ab006436cc6353c11",
+  "sourceSHA256": "da90323574c18f0e8711c7b6408b13e77c147f0e79b69bf14dbba2da42858c1f",
+  "scope": "Seven isolated tests on the physical iPad. Production252 was not replaced. Directory name253 is a candidate diagnostic, not a release. Diagnostic Undo PASS does not establish a functional performance repair.",
+  "passed": 3,
+  "failed": 4,
+  "skipped": 0,
+  "runtimeWarnings": [],
+  "passedScenarios": [
+    "NotebookItemDropUXTests/testInstalledDeleteControlAndRepeatedHistoryPreserveActualCoverInk",
+    "SpatialInkHandoffTests/testReadyPrivateResizeDoesNotChangeInstalledBoundsOrPixelsAndCancellationReleasesItsTargets",
+    "NotebookElementManipulationTests/testClipboardFragmentStillCommitsToItsCapturedPageAfterTheMenuLeaves"
+  ],
+  "failedScenarios": [
+    "NotebookElementManipulationTests/testLateClipboardCompositionCannotReplaceANewerMenuOrCloseItsPresentation()",
+    "NotebookElementManipulationTests/testToolbarActionsUseTheirNativeAnchorAndRetireWithTheirPresentedSheet()",
+    "SpatialInkHandoffTests/testTwoSmallCoversReserveProjectedPixelsAndRefineTheSameOwnersAfterZoom()",
+    "NotebookWorkspaceJourneyUITests/testFirstSelectionMoveDeleteAndColdReopenPreserveTheWholeComposition()"
+  ],
+  "undo": {
+    "caCommitMilliseconds": [
+      90.566,
+      95.681
+    ],
+    "inverseBodyMilliseconds": [
+      31.71,
+      31.88
+    ],
+    "mainActorDeliveryMilliseconds": [
+      0.31,
+      2.98
+    ],
+    "firstPostReadinessPixels": "passed",
+    "boundary": "CA commit and mounted owner; physical scanout not measured"
+  },
+  "findings": [
+    "No runtime warning remained after removal of Combine publication during native view update.",
+    "UIKit dismissal completes asynchronously even when animated=false; replacement presentation and detach tests require that actual completion.",
+    "Cover handoff no longer crashes in the ordered-eraser fixture. First native mount, motion crop and actual-window coordinates remain under repair.",
+    "Back-to-board still failed after selection/move/delete/Undo/Redo/page navigation. No warning remained; no causal claim ties this failure to the former publication warning."
+  ],
+  "receipts": [
+    {
+      "path": ".build/runtime-253-menu-and-ink-repair/source-before.json",
+      "sha256": "abbcfe7718a1b7fb5b91f79da022e06dfbd2e6cfaf226cad5f3d8036228d7467"
+    },
+    {
+      "path": ".build/runtime-253-menu-and-ink-repair/ipad-summary.json",
+      "sha256": "c604d1854f8332e2d0581de0c10b153f0b42e32c1bd286e2c5b7c2b74511c341"
+    },
+    {
+      "path": ".build/runtime-253-menu-and-ink-repair/ipad-tests.json",
+      "sha256": "fc385d76fb28c7941c1d7cddbbc015a71021d1cc3ecfa1ddb402f08f41c89bf1"
+    }
+  ]
+}

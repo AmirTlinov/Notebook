@@ -30,7 +30,6 @@ final class SpatialInkSceneLease {
     guard !registry.sceneInkIsStopped,
       updates.allSatisfy({ update in
         update.owner.canvas.spatialSourceGeneration == update.generation
-          && !registry.hasActiveAction(on: update.owner.surface) && !registry.hasContact(on: update.owner.surface)
           && (update.frame?.isValid ?? true)
       }) else {
       // A superseded source/preparation cannot keep a staging slot. Revocation
@@ -38,6 +37,11 @@ final class SpatialInkSceneLease {
       for update in updates { update.frame?.cancel() }
       throw CancellationError()
     }
+    // A retained contact can outlive its last sample. It postpones this valid
+    // candidate without revoking it; the same caller may install after release.
+    guard updates.allSatisfy({
+      !registry.hasActiveAction(on: $0.owner.surface) && !registry.hasContact(on: $0.owner.surface)
+    }) else { throw CancellationError() }
     guard updates.allSatisfy({ update in
         // Native motion can reverse while the private GPU candidate prepares.
         // Keep the shown crop until a candidate covers the current destination;
@@ -70,6 +74,13 @@ final class SpatialInkSceneLease {
       }
     }
     updates.removeAll(); isInstalled = true
+  }
+
+  isolated deinit {
+    // GPU completion retains PreparedFrame, not this lease. Abandoning a
+    // candidate must free its staging slot immediately while submitted GPU
+    // resources remain charged until their existing completion callback.
+    for update in updates { update.frame?.cancel() }
   }
 
   func containsProjectionWindows(presence: SessionPresence, frame: WorkspaceSceneFrame,

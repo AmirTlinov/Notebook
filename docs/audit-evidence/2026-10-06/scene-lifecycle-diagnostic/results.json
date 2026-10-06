@@ -1,0 +1,61 @@
+{
+  "format": 1,
+  "date": "2026-10-06",
+  "status": "physical-diagnostic-failed",
+  "baseCommit": "7a5d69082aad9db9134373c51df1ef530e4091ae",
+  "scope": "Isolated native and system UI tests on the physical iPad. Production pair 252 was not replaced. Diagnostic directory name 253 does not identify a released build. Source was frozen for execution; GPU-fixture and menu-owner repairs followed this result.",
+  "sourceSHA256": "688c6f900f9b49df098349ca0ac099937934d9e7626678c3574a84a0f850bdf1",
+  "passed": 2,
+  "failed": 4,
+  "skipped": 0,
+  "runtimeWarnings": [
+    {
+      "issueType": "Runtime Warning",
+      "message": "Publishing changes from within view updates is not allowed, this will cause undefined behavior."
+    }
+  ],
+  "receiptFiles": [
+    {
+      "path": ".build/runtime-253-scene-lifecycle-diagnostic/source-before.json",
+      "sha256": "1a0dff1861408c95dfd20ee3e7778b6fe9c7be421cfc6975244f1aaf3d758dba"
+    },
+    {
+      "path": ".build/runtime-253-scene-lifecycle-diagnostic/ipad-summary.json",
+      "sha256": "8e3aa7345caa2276de7e01ba33db470466b7814c6d2523e0d95a1bc045d7e1d6"
+    },
+    {
+      "path": ".build/runtime-253-scene-lifecycle-diagnostic/ipad-tests.json",
+      "sha256": "570a224ad773f91e3ad7c421847324ce572a6c0cf83c379b25e810bc2f19628d"
+    }
+  ],
+  "outcomes": [
+    {
+      "scenario": "SpatialInkContactResizeTests/testReadyCandidateCannotReplaceAnUntouchedLeasedSurfaceUntilItsFinalRelease",
+      "result": "passed"
+    },
+    {
+      "scenario": "SpatialInkHandoffTests/testAcceptedPencilRevokesThePreparedResizeWithoutLosingItsFirstSampleOrInstalledTarget",
+      "result": "passed"
+    },
+    {
+      "scenario": "NotebookItemDropUXTests/testInstalledDeleteControlAndRepeatedHistoryPreserveActualCoverInk",
+      "result": "failed",
+      "reason": "First Undo exceeded unchanged 100 ms CA-commit boundary: 102.008208 ms. Mounted-pixel restoration passed. Physical scanout is not measured."
+    },
+    {
+      "scenario": "SpatialInkHandoffTests/testReadyPrivateResizeDoesNotChangeInstalledBoundsOrPixelsAndCancellationReleasesItsTargets",
+      "result": "failed",
+      "reason": "Fixture checked budget immediately while two submitted GPU tile pools still owned 6389760 bytes. Repair awaits bounded completion before exact budget equality."
+    },
+    {
+      "scenario": "SpatialInkHandoffTests/testTwoSmallCoversReserveProjectedPixelsAndRefineTheSameOwnersAfterZoom",
+      "result": "failed",
+      "reason": "After initial handoff passed, ordered-eraser fixture crashed with an invalid graphic unit transform. Fixture repair moves its spatial frame instead."
+    },
+    {
+      "scenario": "NotebookWorkspaceJourneyUITests/testFirstSelectionMoveDeleteAndColdReopenPreserveTheWholeComposition",
+      "result": "failed",
+      "reason": "Selection, move, delete, Undo, Redo and page return passed. Back-to-board left the notebook open. Cold reopen was not reached; cause under investigation."
+    }
+  ]
+}
