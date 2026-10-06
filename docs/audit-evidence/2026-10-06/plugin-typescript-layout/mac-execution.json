@@ -1,0 +1,13 @@
+{
+  "executed": [
+    "NotebookMacTests/NotebookScriptServiceTests/testPinnedTypeScriptCLICompilesInsideTheSignedSandboxBeforePublicAdmission",
+    "NotebookMacTests/NotebookScriptServiceTests/testTypeScriptTypeFailurePreventsEvenEarlierNativeEffects"
+  ],
+  "failed": [],
+  "format": 1,
+  "planned": [
+    "NotebookMacTests/NotebookScriptServiceTests/testPinnedTypeScriptCLICompilesInsideTheSignedSandboxBeforePublicAdmission",
+    "NotebookMacTests/NotebookScriptServiceTests/testTypeScriptTypeFailurePreventsEvenEarlierNativeEffects"
+  ],
+  "skipped": []
+}

@@ -104,7 +104,7 @@ final class NotebookScriptServiceTests: XCTestCase {
     let entries: [(URL, [String: Bool])] = [
       (root.appendingPathComponent("NotebookScriptService.xpc"), ["com.apple.security.app-sandbox": true]),
       (root.appendingPathComponent("NotebookMarkupService.xpc"), ["com.apple.security.app-sandbox": true]),
-      (root.appendingPathComponent("NotebookMarkupService.xpc/Contents/Helpers/notebook-typescript"),
+      (root.appendingPathComponent("NotebookMarkupService.xpc/Contents/Resources/NotebookTypeScript/notebook-typescript"),
         ["com.apple.security.app-sandbox": true, "com.apple.security.inherit": true]),
     ]
     // Security verifies the signed files and communicates with system services.

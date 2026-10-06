@@ -24,5 +24,3 @@ def stage(contents):
     with tempfile.TemporaryDirectory() as temporary:
         source=Path(temporary)/'stage';ts.prepare(source)
         shutil.copytree(source/ts.RESOURCES,Path(contents)/ts.RESOURCES,dirs_exist_ok=True)
-        helper=Path(contents)/ts.BINARY;helper.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(source/ts.BINARY,helper);helper.chmod(0o755)
-        (Path(contents)/ts.DISCOVERY).symlink_to(ts.DISCOVERY_TARGET)

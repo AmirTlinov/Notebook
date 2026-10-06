@@ -63,7 +63,7 @@ class PairCLI(FakeCLI):
         self.typescript_rights = {"com.apple.security.app-sandbox": True, "com.apple.security.inherit": True}
         self.missing_typescript = False
         self.changed_typescript = False
-        self.external_typescript_discovery = False
+        self.linked_typescript_declaration = False
         self.mutate_proof = False
         self.mutate_ipad = False
         self.mutate_mac = False
@@ -118,8 +118,8 @@ class PairCLI(FakeCLI):
                                 typescript_fixture.stage(xpc / "Contents")
                                 if self.changed_typescript:
                                     (xpc / "Contents" / release.notebook_typescript.RESOURCES / "lib.es5.d.ts").write_text("changed declaration")
-                            if self.external_typescript_discovery:
-                                link = xpc / "Contents" / release.notebook_typescript.DISCOVERY
+                            if self.linked_typescript_declaration:
+                                link = xpc / "Contents" / release.notebook_typescript.RESOURCES / "lib.d.ts"
                                 link.unlink(); link.symlink_to("/tmp/foreign-lib.d.ts")
                 tex = typesetter_fixture.stage(self.mac / "Contents/Resources/NotebookTypesetter")
                 if self.missing_tex: (tex / "texlive.zip").unlink()
@@ -334,9 +334,9 @@ class ReleaseTests(unittest.TestCase):
         self.cli.changed_typescript = True
         self.refused("TypeScript resource hash mismatch")
 
-    def test_typescript_discovery_cannot_point_outside_the_sealed_bundle(self):
-        self.cli.external_typescript_discovery = True
-        self.refused("TypeScript discovery link must target its own sealed resource")
+    def test_typescript_declarations_cannot_be_symlinks(self):
+        self.cli.linked_typescript_declaration = True
+        self.refused("Ссылки не входят в подписанный bundle")
 
     def test_typescript_child_cannot_gain_network_rights(self):
         self.cli.typescript_rights["com.apple.security.network.client"] = True
@@ -360,6 +360,11 @@ class ReleaseTests(unittest.TestCase):
                 self.assertEqual(receipt["apps"]["mac"]["path"], "plugin/notebook/runtime/NotebookRuntime.app")
                 self.assertEqual(release.app_manifest(self.evidence / receipt["apps"]["mac"]["path"]),
                                  release.app_manifest(self.cli.mac))
+                markup = self.cli.mac / "Contents/XPCServices/NotebookMarkupService.xpc/Contents"
+                compiler = markup / release.notebook_typescript.BINARY
+                self.assertTrue(compiler.is_file())
+                self.assertFalse((compiler.parent / "lib.d.ts").is_symlink())
+                self.assertFalse((markup / "Helpers").exists())
                 self.assertEqual(release.source_inputs(self.evidence / "source"), self.before)
                 self.assertEqual(release.source_inputs(self.source), self.before)
                 builds = [call for call in self.cli.calls if "xcodebuild" in call and "build" == call[-1]]
@@ -671,10 +676,13 @@ class InstallationCLI(PairCLI):
         self.calls = []
         self.mac = build / "plugin/notebook/runtime/NotebookRuntime.app"
         self.cache = build.parent / "codex-cache/notebook/0.2.0/runtime/NotebookRuntime.app"
-        self.preview = {**self.preview, "bundleVersion": "16", "version": "0.3.13", "dataContainerURL": "file:///Data/Existing"}
+        self.preview = {**self.preview, "bundleVersion": "16", "version": "0.3.13"}
         self.existing_preview = True
         self.plugin_fail = False
         self.stale_cache = False
+        self.missing_cached_typescript_library = False
+        self.wrong_launcher_args = False
+        self.changed_ipad_container = False
         self.literal_plugin_root = False
         self.previous_runtime = None
 
@@ -702,11 +710,18 @@ class InstallationCLI(PairCLI):
                 shutil.copytree(self.mac, self.cache, symlinks=True)
                 if self.stale_cache:
                     (self.cache / "Contents/MacOS/NotebookRuntime").write_bytes(b"old cached runtime")
+                if self.missing_cached_typescript_library:
+                    (self.cache / "Contents/XPCServices/NotebookMarkupService.xpc/Contents" / release.notebook_typescript.RESOURCES / "lib.d.ts").unlink()
         elif label == "installed-plugin":
             runtime = Path("${PLUGIN_ROOT}/runtime/NotebookRuntime.app") if self.literal_plugin_root else self.cache
             output = json.dumps({"enabled": True, "transport": {"type": "stdio",
                 "command": str(runtime / "Contents/Resources/CodexRuntime/node"),
-                "args": [str(runtime / "Contents/Resources/NotebookTools/dist/launch-runtime.mjs")]}}).encode()
+                "args": [str(runtime / "Contents/Resources/NotebookTools/dist" / ("index.mjs" if self.wrong_launcher_args else "launch-runtime.mjs"))]}}).encode()
+        elif label == "install-ipad":
+            result = super().__call__(argv, cwd=cwd, stdout=stdout, stderr=stderr, timeout=timeout)
+            if self.changed_ipad_container:
+                self.preview["dataContainerPath"] = "/private/var/mobile/Containers/Data/Application/REPLACED"
+            return result
         else:
             return super().__call__(argv, cwd=cwd, stdout=stdout, stderr=stderr, timeout=timeout)
         self.calls.append(list(argv))
@@ -740,10 +755,27 @@ class InstallationTests(unittest.TestCase):
         receipt = self.install()
         self.assertEqual(receipt["status"], "installed")
         self.assertEqual(receipt["runtime"], str(self.cli.cache))
-        self.assertEqual(receipt["ipadAfter"][0]["dataContainerURL"], before["dataContainerURL"])
+        for key in ("dataContainerPath", "appGroupIdentifiers", "groupContainerPaths"):
+            self.assertEqual(receipt["ipadAfter"][0][key], before[key])
         self.assertEqual(receipt["ipadAfter"][0]["bundleVersion"], self.build_receipt["build"])
         self.assertEqual(len(self.cli.install_calls), 1)
         self.assertFalse(any({"kill", "terminate", "uninstall", "--remove-existing-content"}.intersection(call) for call in self.cli.calls))
+
+    def test_missing_container_identity_refuses_before_plugin_or_device_mutation(self):
+        del self.cli.preview["dataContainerPath"]
+        with self.assertRaisesRegex(release.ReleaseError, "CLI не подтвердил dataContainerPath"):
+            self.install()
+        self.assertEqual(self.cli.install_calls, [])
+        self.assertFalse((self.source / "MCP/plugin/notebook/runtime").exists())
+        self.assertEqual(release.read_json(self.evidence / "installation.json")["status"], "refused")
+
+    def test_replaced_data_container_cannot_be_claimed_installed_or_retried(self):
+        self.cli.changed_ipad_container = True
+        with self.assertRaisesRegex(release.ReleaseError, "Контейнер iPad изменился"):
+            self.install()
+        self.assertEqual(len(self.cli.install_calls), 1)
+        receipt = release.read_json(self.evidence / "installation.json")
+        self.assertEqual((receipt["status"], receipt["step"]), ("incomplete", "install-ipad"))
 
     def test_newer_ipad_refuses_before_plugin_or_device_mutation(self):
         self.cli.preview["bundleVersion"] = "999"
@@ -771,11 +803,25 @@ class InstallationTests(unittest.TestCase):
 
     def test_stale_codex_cache_is_incomplete_and_does_not_install_ipad(self):
         self.cli.stale_cache = True
-        with self.assertRaisesRegex(release.ReleaseError, "другую сборку runtime"):
+        with self.assertRaisesRegex(release.ReleaseError, "Нарушена целостность подписанного runtime"):
             self.install()
         self.assertEqual(self.cli.install_calls, [])
         receipt = release.read_json(self.evidence / "installation.json")
         self.assertEqual((receipt["status"], receipt["step"]), ("incomplete", "install-plugin"))
+
+    def test_missing_cached_typescript_library_is_reported_as_integrity_failure_before_ipad(self):
+        self.cli.missing_cached_typescript_library = True
+        with self.assertRaisesRegex(release.ReleaseError, "Нарушена целостность подписанного runtime"):
+            self.install()
+        self.assertEqual(self.cli.install_calls, [])
+        receipt = release.read_json(self.evidence / "installation.json")
+        self.assertEqual((receipt["status"], receipt["step"]), ("incomplete", "install-plugin"))
+
+    def test_wrong_launcher_arguments_are_reported_before_ipad(self):
+        self.cli.wrong_launcher_args = True
+        with self.assertRaisesRegex(release.ReleaseError, "неверные аргументы запуска"):
+            self.install()
+        self.assertEqual(self.cli.install_calls, [])
 
     def test_unresolved_plugin_root_does_not_install_ipad(self):
         self.cli.literal_plugin_root = True

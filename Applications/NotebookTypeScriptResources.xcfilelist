@@ -1,6 +1,3 @@
-$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers
-$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers/lib.d.ts
-$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers/notebook-typescript
 $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/NotebookTypeScript
 $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/NotebookTypeScript/LICENSE
 $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/NotebookTypeScript/NOTICE.txt
@@ -64,3 +61,4 @@ $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/NotebookTypeScript/lib.es2
 $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/NotebookTypeScript/lib.es5.d.ts
 $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/NotebookTypeScript/manifest.json
 $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/NotebookTypeScript/notebook-sdk.d.ts
+$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/NotebookTypeScript/notebook-typescript

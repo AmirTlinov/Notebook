@@ -8,7 +8,7 @@ esac
 /usr/bin/env python3 -B "$SRCROOT/prepare_notebook_typescript.py" --check --stage "$NOTEBOOK_TYPESCRIPT_RUNTIME" \
   --output-list "$SRCROOT/NotebookTypeScriptResources.xcfilelist"
 destination="$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH"
-compiler="$NOTEBOOK_TYPESCRIPT_RUNTIME/Helpers/notebook-typescript"
+compiler="$NOTEBOOK_TYPESCRIPT_RUNTIME/Resources/NotebookTypeScript/notebook-typescript"
 if [ "${CODE_SIGNING_ALLOWED:-YES}" = YES ]; then
   : "${EXPANDED_CODE_SIGN_IDENTITY:?The TypeScript compiler requires the service signing identity}"
   : "${TARGET_TEMP_DIR:?The TypeScript compiler must be signed in the target temporary directory}"
@@ -24,14 +24,12 @@ if [ "${CODE_SIGNING_ALLOWED:-YES}" = YES ]; then
     "$temporary/notebook-typescript"
   compiler="$temporary/notebook-typescript"
 fi
-/bin/mkdir -p "$destination/Helpers"
 /usr/bin/env python3 -B - "$NOTEBOOK_TYPESCRIPT_RUNTIME/Resources/NotebookTypeScript" "$destination/Resources/NotebookTypeScript" <<'PYTHON'
 import pathlib,shutil,sys
 source,destination=map(pathlib.Path,sys.argv[1:])
 destination.mkdir(parents=True,exist_ok=True)
 for path in source.iterdir():
     if not path.is_file() or path.is_symlink(): raise RuntimeError("Unexpected TypeScript resource")
-    shutil.copyfile(path,destination/path.name)
+    if path.name!='notebook-typescript':shutil.copyfile(path,destination/path.name)
 PYTHON
-/bin/cp "$compiler" "$destination/Helpers/notebook-typescript"
-/bin/ln -sfn ../Resources/NotebookTypeScript/lib.d.ts "$destination/Helpers/lib.d.ts"
+/bin/cp "$compiler" "$destination/Resources/NotebookTypeScript/notebook-typescript"
