@@ -1,0 +1,8 @@
+{
+  "mode": "task-recover-repeat",
+  "pid": 61112,
+  "timeout": false,
+  "exitCode": 0,
+  "elapsedSeconds": 1.0363945420249365,
+  "log": "ready 61112 task-recover-repeat\ndelegate entered\ndelegate returning terminateLater\nrunloop cancelling nested quit\nrunloop cancelled nested quit\ntermination Task started\naccepted save began\naccepted save finished\nreply true\nrunloop second ordinary quit\ndelegate entered\ndelegate returning terminateLater\ntermination Task started\nsaved boundary reused\nreply true\n"
+}

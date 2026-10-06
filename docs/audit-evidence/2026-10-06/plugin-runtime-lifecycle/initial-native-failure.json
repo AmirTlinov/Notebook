@@ -1,0 +1,25 @@
+{
+  "status": "failed-and-interrupted",
+  "sourceReceipt": ".build/runtime-252-admission-verification/mac.xcresult",
+  "sourceIdentitySHA256": "3ba02a028994deab45bba48f6f6e82989fcaf34665f8cdda7a476fda244363d1",
+  "scope": "Debug Mac test host; selected four native tests. The first test failed and then suspended until the runner was interrupted.",
+  "passed": 0,
+  "failed": 1,
+  "remainingSelectedTestsNotCompleted": 3,
+  "test": "MacShutdownTests/testAcceptedInkSurvivesWriteFailureRefusedShutdownAndExplicitRetry()",
+  "failure": {
+    "file": "Applications/MacTests/MacShutdownTests.swift",
+    "line": 90,
+    "message": "XCTAssertNotNil(model.persistenceFailure) failed"
+  },
+  "durationUntilInterruptionSeconds": 328.54299998283386,
+  "causes": [
+    "reloadExternalChanges retained publicationFailure privately but no longer projected it to persistenceFailure, hiding the existing UI/runtime Retry route.",
+    "The old test used performStoreCommand as a read-only queue probe. It now admits an accepted write and retains its result until Retry; the same test awaited it before requesting Retry."
+  ],
+  "repair": [
+    "Restore aggregate failure projection without discarding accepted outputs.",
+    "Inject the same persistence queue through the existing fixture seam and use submit with its read-only default for the two observation probes. All assertions and selectors remain."
+  ],
+  "startupObservation": "The XCTest body ran and recorded the assertion before suspension. Fixture construction order was not established as the cause."
+}

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Execute release guards against fabricated tools/evidence, never a real device."""
+"""Execute release guards and an isolated AppKit lifecycle, never live content or a device."""
 import contextlib
 import io
 import json
@@ -23,6 +23,7 @@ import typesetter_fixture
 import typescript_fixture
 from cli_fixture import FakeCLI
 from test_typesetter import TypesetterPackagingTests
+from test_runtime_lifecycle import RuntimeLifecycleTests
 
 TOOLCHAIN = {name: "fixture " + name + " version" for name in
              ("python", "xcode", "swift", "iphoneosSDK", "macosSDK", "xcodegen", "node", "npm")}

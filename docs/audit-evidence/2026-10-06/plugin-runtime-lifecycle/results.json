@@ -1,0 +1,103 @@
+{
+  "recordedAtUTC": "2026-10-06T04:13:49+00:00",
+  "baseCommit": "fc86b7fb98335741407d9284fd1270afbef5b82d",
+  "candidate": {
+    "nativeBuild": "252",
+    "version": "0.3.182",
+    "pluginVersion": "0.2.4"
+  },
+  "scope": "Plugin runtime termination, pre-store signature admission and failure recovery. Installed recovery, isolated admission probes and focused native execution are distinct evidence.",
+  "sources": {
+    "Applications/Mac/NotebookRuntime.swift": "d58f637c73aa8591836618070250f372cda75c3a1e1951c3cbad60dbd58a6428",
+    "Applications/Mac/NotebookRuntimeIdentity.swift": "1276f2f718d38c2e81861a986cd2b49828daf493b09f2afc2c81e9722de0a6e3",
+    "Applications/Shared/NotebookAppModel.swift": "963529b8c4801fb19be6e97783ca1661db131eeaf21f0a7b293374811f74153b",
+    "Applications/MacTests/MacShutdownTests.swift": "651450a029482e773827e988d0c9546d1a14b58defc5b93154e8d02420db3503",
+    "Tests/NotebookRelease/test_runtime_lifecycle.py": "1c2fbb7940fba68e21f9e56d9a0423c21378a55af8a358174453277dc1eda942",
+    "Tests/NotebookRelease/runtime_lifecycle_fixture.swift": "28b1f21f5367030f107affbeb0059e571ad2823181e2edd1f6830253830fba26",
+    "Tests/NotebookRelease/run.py": "04ada1fada770aeaad0475567bf5728edb1e16bb020a4f380d9ef2d9bc191181"
+  },
+  "installedRecovery": {
+    "status": "exited",
+    "pluginVersion": "0.2.2",
+    "nativeBuild": "250",
+    "pid": 48505,
+    "condition": "Installed cache lacked the signed TypeScript discovery symlink. SIGTERM entered nested AppKit termination from a main-actor task and blocked its saved shutdown task.",
+    "evidence": "installed-recovery.json",
+    "mechanism": "Cancel only the nested quit; detach debugger; allow the original lifecycle task to finish saving and close IPC; issue a second ordinary quit.",
+    "forceTermination": false,
+    "dataOrKeychainEdited": false,
+    "scope": "Recovery of the old incomplete installed runtime; does not verify installation or admission of candidate 252."
+  },
+  "isolatedAppKit": {
+    "reproduction": "reproduction.json",
+    "recoverySequence": "recovery-probe.json",
+    "result": "Task-entered terminateLater stalls; run-loop entry completes. Cancel-quit then saved-drain then ordinary quit exits normally.",
+    "regression": {
+      "status": "passed",
+      "tests": 2,
+      "childScenarios": [
+        "SIGTERM",
+        "SIGINT",
+        "existing runtime lease owner"
+      ],
+      "scope": "Actual NotebookRuntime.swift with a data-free lifecycle fixture and admission stub; real AppKit event loops. No installed runtime or user data."
+    }
+  },
+  "signedAdmission": {
+    "status": "passed",
+    "cases": 8,
+    "evidence": "signed-admission.json",
+    "scope": "Actual Release entrypoint and signature owner in signed tiny apps; invalid sealed resources fail before lifecycle construction. Explicit signed acceptance remains admitted."
+  },
+  "initialNativeRun": {
+    "status": "failed-and-interrupted",
+    "evidence": "initial-native-failure.json"
+  },
+  "commandChecks": {
+    "release": {
+      "status": "passed",
+      "tests": 89,
+      "sourceReceipt": ".build/runtime-252-admission-verification-r3/release-execution.json",
+      "sourceIdentitySHA256": "2db74771151f81766ca395bb6a2d1eecc13a7db6d1ee8a7648e4a399bb79876e"
+    },
+    "verification": {
+      "status": "passed",
+      "tests": 111,
+      "sourceReceipt": ".build/runtime-252-admission-verification-r3/verification-execution.json",
+      "sourceIdentitySHA256": "2db74771151f81766ca395bb6a2d1eecc13a7db6d1ee8a7648e4a399bb79876e"
+    }
+  },
+  "finalNativeRun": {
+    "status": "passed",
+    "sourceSHA256": "2db74771151f81766ca395bb6a2d1eecc13a7db6d1ee8a7648e4a399bb79876e",
+    "sourceFiles": 1647,
+    "unchangedSources": true,
+    "receipt": ".build/runtime-252-admission-verification-r3/verification.json",
+    "receiptSHA256": "2a96b1cdebe9874daf1390bee5191b195e04ef06ed16c0e69b238ed885369a06",
+    "passed": 4,
+    "failed": 0,
+    "skipped": 0,
+    "runtimeWarnings": [],
+    "selection": "native-execution.json",
+    "summary": "native-summary.json",
+    "scope": "Signed macOS XCTest host: read/publication Retry, accepted ink across refused shutdown and Retry, real sandboxed TypeScript compilation and refusal before native effects. No physical iPad or visible Codex panel."
+  },
+  "remaining": [
+    "Signed pair 252 build and installation",
+    "Installed Codex panel and physical iPad acceptance"
+  ],
+  "secondNativeRun": {
+    "status": "failed",
+    "passed": 3,
+    "failed": 1,
+    "skipped": 0,
+    "evidence": "native-r2-failure.json"
+  },
+  "independentReview": {
+    "status": "no-findings",
+    "sourceFilesChecked": 1647,
+    "artifactsChecked": 127,
+    "successfulCommands": 38,
+    "scope": "Final diff, current inventory, before/after source receipts, executed selectors, artifact hashes and signed admission source hashes; no additional test run."
+  }
+}

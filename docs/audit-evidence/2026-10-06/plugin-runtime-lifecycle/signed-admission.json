@@ -1,0 +1,83 @@
+{
+  "status": "passed",
+  "scope": "Actual Release NotebookRuntime and NotebookRuntimeIdentity; signed tiny bundles, data-free lifecycle fixture; no workspace, IPC, keychain data, XPC execution or installed runtime touched.",
+  "sourceReceipt": ".build/runtime-admission-252-probe-r2/result.json",
+  "sources": {
+    "Applications/Mac/NotebookRuntime.swift": "d58f637c73aa8591836618070250f372cda75c3a1e1951c3cbad60dbd58a6428",
+    "Applications/Mac/NotebookRuntimeIdentity.swift": "1276f2f718d38c2e81861a986cd2b49828daf493b09f2afc2c81e9722de0a6e3",
+    "Applications/Shared/NotebookAcceptanceConfiguration.swift": "3db033f9f74942eb87d7f077bed2a69a61cd3176fb8c3369042d44620738fc9c",
+    "Tests/NotebookRelease/runtime_lifecycle_fixture.swift": "28b1f21f5367030f107affbeb0059e571ad2823181e2edd1f6830253830fba26"
+  },
+  "fixtureSHA256": "15f9a0ab3e2eae9497987956316d68f2b47f78b7dbb468f852affaa65fa4fa9b",
+  "build": {
+    "configuration": "Release",
+    "swiftVersion": 6,
+    "optimization": "-O",
+    "signing": "Apple Development"
+  },
+  "cases": [
+    {
+      "case": "valid-production",
+      "expected": 0,
+      "exitCode": 0,
+      "events": [
+        "constructed",
+        "admitted",
+        "saving",
+        "saved"
+      ]
+    },
+    {
+      "case": "missing-resource-before-owner",
+      "expected": 1,
+      "exitCode": 1,
+      "events": []
+    },
+    {
+      "case": "release-cannot-bypass-with-environment",
+      "expected": 1,
+      "exitCode": 1,
+      "events": []
+    },
+    {
+      "case": "valid-nested",
+      "expected": 0,
+      "exitCode": 0,
+      "events": [
+        "constructed",
+        "admitted",
+        "saving",
+        "saved"
+      ]
+    },
+    {
+      "case": "missing-nested-resource-before-owner",
+      "expected": 1,
+      "exitCode": 1,
+      "events": []
+    },
+    {
+      "case": "signed-release-acceptance",
+      "expected": 0,
+      "exitCode": 0,
+      "events": [
+        "constructed",
+        "admitted",
+        "saving",
+        "saved"
+      ]
+    },
+    {
+      "case": "acceptance-requires-full-seal",
+      "expected": 1,
+      "exitCode": 1,
+      "events": []
+    },
+    {
+      "case": "acceptance-requires-signed-opt-in",
+      "expected": 1,
+      "exitCode": 1,
+      "events": []
+    }
+  ]
+}

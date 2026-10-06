@@ -1,0 +1,12 @@
+{
+  "pid": 48505,
+  "status": "exited",
+  "mechanism": [
+    "LLDB called only AppKit replyToApplicationShouldTerminate:NO on the observed nested-quit main frame",
+    "detached debugger; original lifecycle task drained owners and closed all IPC sockets",
+    "NSRunningApplication.terminate() sent ordinary second quit"
+  ],
+  "forceTermination": false,
+  "dataOrKeychainEdited": false,
+  "time": 1791258771.57207
+}

@@ -4841,6 +4841,7 @@ final class NotebookAppModel {
         } catch {
           guard !Task.isCancelled, !isStopped else { return }
           publicationFailure = error.localizedDescription
+          persistenceFailure = persistence.failure ?? arrivalFailure ?? publicationFailure
           // Successful writes retain their addressed output and presentation.
           // Retrying this owner repeats only the read/publication.
           return

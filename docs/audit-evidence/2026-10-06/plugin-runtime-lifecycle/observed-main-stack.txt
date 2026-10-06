@@ -1,0 +1,5 @@
+* thread #8, name = 'Task 8438', queue = 'com.apple.main-thread', stop reason = signal SIGSTOP
+* thread #8, name = 'Task 8438', queue = 'com.apple.main-thread', stop reason = signal SIGSTOP
+     frame #14: 0x000000019d3a3264 AppKit`-[NSApplication _shouldTerminate] + 1192
+     frame #15: 0x000000019d395540 AppKit`-[NSApplication terminate:] + 788
+     frame #16: 0x0000000102ab256c NotebookRuntime`closure #1 in closure #1 in NotebookRuntimeLifecycle.applicationDidFinishLaunching() at NotebookRuntime.swift:40:74 [opt]
