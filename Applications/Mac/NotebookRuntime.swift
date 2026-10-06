@@ -1,5 +1,4 @@
 import AppKit
-import NotebookCore
 import OSLog
 
 /// The plugin owns this process. AppKit supplies the event loop required by
@@ -7,6 +6,18 @@ import OSLog
 @main @MainActor
 enum NotebookRuntime {
   static func main() {
+    #if DEBUG
+      // XCTest supplies explicit isolated owners and never starts this model.
+      // Release and signed acceptance processes always validate the full seal.
+      let requiresAdmission = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil
+    #else
+      let requiresAdmission = true
+    #endif
+    if requiresAdmission, case .failure(let failure) = NotebookRuntimeIdentity.admission {
+      Logger(subsystem: "com.amirtlinov.notebook", category: "Runtime")
+        .error("Runtime admission refused: \(failure.localizedDescription, privacy: .public)")
+      exit(EXIT_FAILURE)
+    }
     let application = NSApplication.shared
     let lifecycle = NotebookRuntimeLifecycle()
     application.delegate = lifecycle
@@ -37,7 +48,7 @@ final class NotebookRuntimeLifecycle: NSObject, NSApplicationDelegate {
     for number in [SIGTERM, SIGINT] {
       signal(number, SIG_IGN)
       let source = DispatchSource.makeSignalSource(signal: number, queue: .main)
-      source.setEventHandler { Task { @MainActor in NSApplication.shared.terminate(nil) } }
+      source.setEventHandler { Self.requestTermination() }
       source.resume()
       terminationSignals.append(source)
     }
@@ -53,7 +64,7 @@ final class NotebookRuntimeLifecycle: NSObject, NSApplicationDelegate {
       if launch.existingRuntimeSocketURL != nil {
         // Another launch won the lease. It already serves the plugin and no
         // store was opened in this process.
-        NSApplication.shared.terminate(nil)
+        Self.requestTermination()
         return
       }
       await launch.model?.start(pageSize: NotebookAppModel.defaultPageSize)
@@ -61,6 +72,14 @@ final class NotebookRuntimeLifecycle: NSObject, NSApplicationDelegate {
   }
 
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
+  private nonisolated static func requestTermination() {
+    // AppKit nests a run loop while waiting for terminateLater. Entering that
+    // loop from a MainActor job would prevent the saving task from running.
+    RunLoop.main.perform(inModes: [.common]) {
+      MainActor.assumeIsolated { NSApplication.shared.terminate(nil) }
+    }
+  }
 
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
     guard terminationTask == nil else { return .terminateLater }

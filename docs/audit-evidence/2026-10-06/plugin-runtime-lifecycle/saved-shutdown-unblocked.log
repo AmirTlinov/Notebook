@@ -1,0 +1,4 @@
+2026-10-06 06:50:28.176 Df NotebookRuntime[48505:1093684] [com.apple.AppKit:Application] replyToApplicationShouldTerminate:NO
+2026-10-06 06:50:31.613 Df NotebookRuntime[48505:1093684] [com.apple.AppKit:Application] App termination canceled
+2026-10-06 06:50:31.613 Df NotebookRuntime[48505:1093684] [com.apple.AppKit:Application] Termination aborted
+2026-10-06 06:50:31.638 E  NotebookRuntime[48505:1093684] [com.apple.AppKit:Application] Ignoring unexpected call to replyToApplicationShouldTerminate:YES

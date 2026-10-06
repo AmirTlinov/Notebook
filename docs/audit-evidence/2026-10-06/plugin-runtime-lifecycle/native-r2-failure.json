@@ -1,0 +1,19 @@
+{
+  "status": "failed",
+  "sourceReceipt": ".build/runtime-252-admission-verification-r2/mac.xcresult",
+  "sourceIdentitySHA256": "9467acb111ae253292a00a59f3cb2c27e0823a14bd9ccfdb0541172f015c03cd",
+  "passed": 3,
+  "failed": 1,
+  "skipped": 0,
+  "runtimeWarnings": 0,
+  "durationSeconds": 14.728,
+  "test": "MacShutdownTests/testReadPublicationFailureCanBeRepairedAfterARefusedShutdown()",
+  "failure": {
+    "file": "Applications/MacTests/MacShutdownTests.swift",
+    "line": 51,
+    "message": "Read-only queue probe received the retained unsupported_format failure."
+  },
+  "cause": "The test called finishPendingPersistence before probing the queue. Its durable accepted-witness flush correctly encountered the same schema-version fault and set writer.failure.",
+  "repair": "Move the read-only probe immediately after reloadExternalChanges, assert writer.failure is nil there, then retain the failed persistence boundary, refused quit and explicit retry checks.",
+  "scope": "All four selected native tests finished; the subsequent fixture ordering change awaits another native run."
+}

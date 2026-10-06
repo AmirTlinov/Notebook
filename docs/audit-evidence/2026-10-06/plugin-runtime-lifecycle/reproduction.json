@@ -1,0 +1,23 @@
+{
+  "scope": "isolated AppKit apps with no Notebook model or data",
+  "results": [
+    {
+      "mode": "task",
+      "pid": 59814,
+      "signal": "SIGTERM",
+      "timeout": true,
+      "exitCode": -9,
+      "elapsedSeconds": 3.0115743749774992,
+      "log": "ready 59814 task\ndelegate entered\ndelegate returning terminateLater\n"
+    },
+    {
+      "mode": "runloop",
+      "pid": 59816,
+      "signal": "SIGTERM",
+      "timeout": false,
+      "exitCode": 0,
+      "elapsedSeconds": 0.022619833005592227,
+      "log": "ready 59816 runloop\ndelegate entered\ndelegate returning terminateLater\ntermination Task started\nreply true\n"
+    }
+  ]
+}

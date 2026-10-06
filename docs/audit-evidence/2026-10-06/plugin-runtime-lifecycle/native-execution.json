@@ -1,0 +1,17 @@
+{
+  "executed": [
+    "NotebookMacTests/MacShutdownTests/testAcceptedInkSurvivesWriteFailureRefusedShutdownAndExplicitRetry",
+    "NotebookMacTests/MacShutdownTests/testReadPublicationFailureCanBeRepairedAfterARefusedShutdown",
+    "NotebookMacTests/NotebookScriptServiceTests/testPinnedTypeScriptCLICompilesInsideTheSignedSandboxBeforePublicAdmission",
+    "NotebookMacTests/NotebookScriptServiceTests/testTypeScriptTypeFailurePreventsEvenEarlierNativeEffects"
+  ],
+  "failed": [],
+  "format": 1,
+  "planned": [
+    "NotebookMacTests/MacShutdownTests/testAcceptedInkSurvivesWriteFailureRefusedShutdownAndExplicitRetry",
+    "NotebookMacTests/MacShutdownTests/testReadPublicationFailureCanBeRepairedAfterARefusedShutdown",
+    "NotebookMacTests/NotebookScriptServiceTests/testPinnedTypeScriptCLICompilesInsideTheSignedSandboxBeforePublicAdmission",
+    "NotebookMacTests/NotebookScriptServiceTests/testTypeScriptTypeFailurePreventsEvenEarlierNativeEffects"
+  ],
+  "skipped": []
+}

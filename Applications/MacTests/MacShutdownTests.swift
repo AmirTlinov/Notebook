@@ -8,7 +8,7 @@ import XCTest
 @MainActor
 final class MacShutdownTests: XCTestCase {
   func testShutdownRetiresCachedAppKitRasterWithoutRevokingAnotherBorrower() async throws {
-    let (model, _) = try await fixture()
+    let (model, _, _) = try await fixture()
     let resources = SceneRenderResources()
     let element = AgentElement(id: UUID().uuidString, kind: .web,
       frame: .init(x: 0, y: 0, width: 32, height: 32), source: "Native raster", html: "red")
@@ -36,7 +36,7 @@ final class MacShutdownTests: XCTestCase {
   }
 
   func testReadPublicationFailureCanBeRepairedAfterARefusedShutdown() async throws {
-    let (model, fault) = try await fixture()
+    let (model, fault, writer) = try await fixture()
     XCTAssertEqual(model.shutdownPhase, .running)
     let presentation = ShutdownPresentationProbe(model: model)
     model.registerScenePresentation(presentation)
@@ -44,12 +44,13 @@ final class MacShutdownTests: XCTestCase {
     try fault.rejectReadsAndWrites()
     await model.reloadExternalChanges()?.value
     XCTAssertNotNil(model.persistenceFailure)
+    // The read failure itself does not poison the queue. The later durable
+    // witness flush can fail against the same rejected database format.
+    XCTAssertNil(writer.failure)
+    let queueRemainsAvailable = try await writer.submit { _ in true }
+    XCTAssertTrue(queueRemainsAvailable)
     let beforeRepair = await model.finishPendingPersistence()
     XCTAssertFalse(beforeRepair, "A failed disk refresh cannot acknowledge a completed publication")
-    // A failed read does not poison the native write queue. The error retained
-    // above belongs to the real refresh owner, not an injected queue failure.
-    let queueRemainsAvailable = try await model.performStoreCommand { _ in true }
-    XCTAssertTrue(queueRemainsAvailable)
     let refused = await model.shutdown()
     XCTAssertFalse(refused)
     XCTAssertEqual(model.shutdownPhase, .closing)
@@ -79,7 +80,7 @@ final class MacShutdownTests: XCTestCase {
   }
 
   func testAcceptedInkSurvivesWriteFailureRefusedShutdownAndExplicitRetry() async throws {
-    let (model, fault) = try await fixture()
+    let (model, fault, writer) = try await fixture()
     XCTAssertEqual(model.shutdownPhase, .running)
     let presentation = ShutdownPresentationProbe(model: model)
     model.registerScenePresentation(presentation)
@@ -104,7 +105,7 @@ final class MacShutdownTests: XCTestCase {
     XCTAssertFalse(savedBeforeRepair)
     XCTAssertNotNil(model.persistenceFailure)
     do {
-      _ = try await model.performStoreCommand { _ in true }
+      _ = try await writer.submit { _ in true }
       XCTFail("The failed accepted write must remain at the head of the same queue")
     } catch is NotebookPersistenceQueue.Failure { }
     let refused = await model.shutdown()
@@ -141,7 +142,7 @@ final class MacShutdownTests: XCTestCase {
   }
 
   func testSceneRegistrationIsWeakAndALateOwnerReceivesTheTerminalBoundary() async throws {
-    let (model, _) = try await fixture()
+    let (model, _, _) = try await fixture()
     var temporary: ShutdownPresentationProbe? = ShutdownPresentationProbe(model: model)
     weak let released = temporary
     model.registerScenePresentation(try XCTUnwrap(temporary))
@@ -155,7 +156,7 @@ final class MacShutdownTests: XCTestCase {
   }
 
   func testShutdownClosesNewContactsBeforeItWaitsForTheMeasuredPencil() async throws {
-    let (model, _) = try await fixture()
+    let (model, _, _) = try await fixture()
     let pencil = UUID()
     XCTAssertTrue(model.inputGate.beginPencilAction(source: pencil))
     defer { model.inputGate.endPencilAction(source: pencil) }
@@ -177,12 +178,13 @@ final class MacShutdownTests: XCTestCase {
     XCTAssertFalse(model.inputGate.hasActivePencil)
   }
 
-  private func fixture() async throws -> (NotebookAppModel, SchemaVersionFault) {
+  private func fixture() async throws -> (NotebookAppModel, SchemaVersionFault, NotebookPersistenceQueue) {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("notebook-shutdown-\(UUID())")
     let store = NotebookStore(root: root)
     _ = try store.initializeWorkspace(actor: UUID(), pageSize: .init(width: 100, height: 140))
     let fault = try SchemaVersionFault(database: store.databaseURL)
-    let model = NotebookAppModel(store: store, startsNearbySync: false)
+    let writer = NotebookPersistenceQueue(store: store)
+    let model = NotebookAppModel(store: store, startsNearbySync: false, persistenceQueue: writer)
     addTeardownBlock { @MainActor in
       try fault.restore()
       model.retryPendingPersistence()
@@ -194,7 +196,7 @@ final class MacShutdownTests: XCTestCase {
     await model.start(pageSize: .init(width: 100, height: 140))
     let ready = await model.finishPendingPersistence()
     XCTAssertTrue(ready, model.persistenceFailure ?? "The isolated fixture did not finish startup")
-    return (model, fault)
+    return (model, fault, writer)
   }
 }
 
