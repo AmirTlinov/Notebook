@@ -1,0 +1,54 @@
+{
+  "workspaceID": {
+    "same": true,
+    "before": "54349F3B-9E0A-4DEA-B990-40CAE04EF45E",
+    "after": "54349F3B-9E0A-4DEA-B990-40CAE04EF45E"
+  },
+  "itemCount": {
+    "same": true,
+    "before": 7,
+    "after": 7
+  },
+  "rootBoardID": {
+    "same": true,
+    "before": "7E7A0000-0000-4000-8000-000000000003",
+    "after": "7E7A0000-0000-4000-8000-000000000003"
+  },
+  "boardRevision": {
+    "same": true,
+    "before": "00830b74f2e46ebc1b5ed3bb4be925dc56d1f9272db16c31c356b19581e97177",
+    "after": "00830b74f2e46ebc1b5ed3bb4be925dc56d1f9272db16c31c356b19581e97177"
+  },
+  "boardStamp": {
+    "same": true,
+    "before": {
+      "counter": 67,
+      "actor": "FE3F4542-687E-4827-921B-7CF9D5659BA4"
+    },
+    "after": {
+      "counter": 67,
+      "actor": "FE3F4542-687E-4827-921B-7CF9D5659BA4"
+    }
+  },
+  "selectedItemID": {
+    "same": true,
+    "before": "E04C8778-7E8D-51DD-9B72-240BB4B0AFDF",
+    "after": "E04C8778-7E8D-51DD-9B72-240BB4B0AFDF"
+  },
+  "selectedPageID": {
+    "same": true,
+    "before": "1E5E9179-522C-597D-B554-DFE51270F7F0",
+    "after": "1E5E9179-522C-597D-B554-DFE51270F7F0"
+  },
+  "spatialInkStamp": {
+    "same": true,
+    "before": {
+      "actor": "29DC77FE-8777-41EC-BE98-704F4668A2F4",
+      "counter": 26
+    },
+    "after": {
+      "counter": 26,
+      "actor": "29DC77FE-8777-41EC-BE98-704F4668A2F4"
+    }
+  }
+}

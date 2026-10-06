@@ -1,0 +1,104 @@
+{
+  "status": "installed-readback-passed-physical-regressions-open",
+  "commit": "c96f9ea6",
+  "sourceSHA256": "2db74771151f81766ca395bb6a2d1eecc13a7db6d1ee8a7648e4a399bb79876e",
+  "build": "252",
+  "version": "0.3.182",
+  "pluginVersion": "0.2.4",
+  "buildReceiptSHA256": "5f76dbb265cb3d1f22a0570c63c667afef539aa9c8bd33f8961d62d0411e1cbe",
+  "apps": {
+    "iPad": {
+      "cdhash": "bed746e80446fcface84c063bfd540ef8f1c1cb8",
+      "manifestSHA256": "2b0aea1bb143804ca301e343d6355eeac6f6c089303f18211a4c13f0d8abc653",
+      "identifier": "com.amirtlinov.notebook.preview",
+      "team": "M94V58FCVP"
+    },
+    "mac": {
+      "cdhash": "77d794928b046d58b0010357ba217b66825fa6ea",
+      "manifestSHA256": "ce08192477b73f87b69205695885017a9b178da112bdcaf656a5fce474334926",
+      "identifier": "com.amirtlinov.notebook.mac",
+      "team": "M94V58FCVP"
+    }
+  },
+  "originalInstallerOutcome": {
+    "status": "incomplete",
+    "step": "install-ipad",
+    "error": "Контейнер iPad изменился при inplace установке.",
+    "receiptSHA256": "4f546f4bdc82918ba015de2a973b4c3e554dda64fb096ab60f0c9a510da1617b",
+    "automaticRetry": false
+  },
+  "containerReadback": {
+    "before": "C8E0560B-30FE-4FA1-BC3D-A9084E0346CD",
+    "after": "78ABF5E1-70CB-46D3-B86C-799711EEE5E0",
+    "groupsBefore": [],
+    "groupsAfter": [],
+    "catalogWorkspaceID": "54349F3B-9E0A-4DEA-B990-40CAE04EF45E",
+    "catalogSelectedID": "54349F3B-9E0A-4DEA-B990-40CAE04EF45E",
+    "catalogEntries": 2,
+    "catalogBytes": 400,
+    "currentSQLiteBytes": 329682944,
+    "currentWALBytes": 1767512,
+    "scope": "Read-only catalog and active database presence after update; no pre-update catalog digest was captured. Does not claim byte identity of every file or the old absolute container path."
+  },
+  "mcp": {
+    "status": "passed",
+    "toolCount": 10,
+    "workspaceID": "54349F3B-9E0A-4DEA-B990-40CAE04EF45E",
+    "panelResource": {
+      "uri": "ui://notebook/workspace.html",
+      "mimeType": "text/html;profile=mcp-app",
+      "bytes": 3128178,
+      "sha256": "3f87eac8694ae1f4201864701d7a69273d26985750b0da8f8beab2ce4f2392ba"
+    },
+    "visibleCodexPanel": "pending-plugin-context-refresh"
+  },
+  "connection": {
+    "authenticatedInterface": "awdl0",
+    "observedAt": "2026-10-06T04:24:49.757Z",
+    "codexRuntimeStatus": "connected",
+    "restartedRuntimeStatus": "connected"
+  },
+  "physicalScenarios": {
+    "status": "failed",
+    "nativePassed": 4,
+    "nativeFailed": 5,
+    "nativeSkipped": 0,
+    "nativeRuntimeWarnings": [],
+    "nativeSourceSHA256": "2db74771151f81766ca395bb6a2d1eecc13a7db6d1ee8a7648e4a399bb79876e",
+    "localEvidence": ".build/runtime-252-ipad-native-verification/ipad.xcresult",
+    "failures": [
+      {
+        "test": "NotebookLassoAcceptanceTests/testDeleteAfterEarlyMoveAddressesTheAcceptedFragmentBeforeEitherPreparationFinishes()",
+        "message": "XCTAssertEqual failed: (\"0\") is not equal to (\"1\")"
+      },
+      {
+        "test": "NotebookLassoAcceptanceTests/testDeleteBeforePreparationSurvivesNewFocusAndInkAndKeepsUndoOrder()",
+        "message": "XCTUnwrap failed: expected non-nil value of type \"VersionStamp\""
+      },
+      {
+        "test": "NotebookItemDropUXTests/testInstalledDeleteControlAndRepeatedHistoryPreserveActualCoverInk()",
+        "message": "XCTAssertTrue failed - Undo native restoration: committed=nil; observed=0.114956 seconds; ceiling=0.1 seconds; SQL=Optional(10); cohort=Optional(8); paintInstalled=true. CA commit and mounted owners, not physical scanout.\n0.001019625 seconds: source_requests\n0.002745417 seconds: live_source\n0.005382542 seconds: discover_sources\n0.007515917 seconds: native_ink\n0.007700167 seconds: tiles\n0.00770425 seconds: validate\n0.008811959 seconds: published\n0.008824834 seconds: finished\n0.09540825 seconds: plan\n0.105143167 seconds: source_requests\n0.106269542 seconds: live_source\n0.10965125 seconds: discover_sources\n0.113075334 seconds: native_ink"
+      },
+      {
+        "test": "NotebookLassoAcceptanceTests/testTwoEarlyLiftsAndNextLassoChainAcceptedMaterialWithoutWaitingForSave()",
+        "message": "XCTAssertTrue failed"
+      },
+      {
+        "test": "SpatialInkHandoffTests/testTwoSmallCoversReserveProjectedPixelsAndRefineTheSameOwnersAfterZoom()",
+        "message": "failed - Projected cover phase 'Larger cover installation after contact release' threw CancellationError()"
+      }
+    ],
+    "systemGestures": {
+      "status": "blocked-before-execution",
+      "attempts": 2,
+      "cause": "XCTest UI inventory timed out enabling automation mode; no system-gesture scenarios executed.",
+      "testBundles": "Verifier cleaned its isolated test bundles; production 252 preserved."
+    },
+    "scope": "Nine native scenarios executed on the physical iPad. CA commit and mounted window pixels are not physical scanout measurements."
+  },
+  "remaining": [
+    "Real Codex panel interaction",
+    "Physical iPad scenario completion",
+    "Full performance and joint-work acceptance"
+  ]
+}
