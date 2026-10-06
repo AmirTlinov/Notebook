@@ -317,7 +317,9 @@ import XCTest
       await gate.release()
       let saved=await model.finishPendingPersistence();XCTAssertTrue(saved,model.actionCue ?? "")
       let reopened=try NotebookStore(root:model.store.root).loadPage(page.id)
-      XCTAssertEqual(try reopened.inkDrawing().activeActions,[ink,eraser,later])
+      let acceptedLater=PageInkAction(id:later.id,tool:later.tool,color:later.color,
+        measurements:later.samples,sequence:later.sequence,elementTargets:later.elementTargets,stateStamp:stamp)
+      XCTAssertEqual(try reopened.inkDrawing().activeActions,[ink,eraser,acceptedLater])
       let converted=try XCTUnwrap(reopened.element(id:ready.id.uuidString.lowercased()),model.actionCue ?? "")
       let prepared=try XCTUnwrap(ready.materialization?.working.first { $0.id == converted.id })
       XCTAssertEqual(converted.graphic,prepared.graphic,"Lift cannot alter measurements, colors, alpha, pressure or captured cuts")
