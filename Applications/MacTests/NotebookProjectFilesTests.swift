@@ -1,5 +1,5 @@
 import XCTest
-import NotebookCore
+@testable import NotebookCore
 @testable import Notebook
 
 private final class WaitingFilePresenter: NSObject, NSFilePresenter, @unchecked Sendable {
@@ -188,7 +188,7 @@ final class NotebookProjectFilesTests: XCTestCase {
     }
   }
 
-  func testStopAfterActualRenameLeavesDurableIntentAndColdReadbackCompletesItOnce() async throws {
+  func testStopAfterActualRenameCompletesTheOriginalJournalAndColdReadbackKeepsItsIdentity() async throws {
     try await fixture { store, project, address, _, _ in
       let root = URL(fileURLWithPath: address.root), file = root.appendingPathComponent(address.path)
       let bytes = Data("preserved".utf8); try bytes.write(to: file)
@@ -207,8 +207,9 @@ final class NotebookProjectFilesTests: XCTestCase {
       let intent = try await queue.submit { try $0.fileRename(id) }; XCTAssertEqual(intent?.completed, false)
       files.stop(); await fails { try await pending.value }
       gate.signal(); await fulfillment(of: [released], timeout: 2)
+      try await waitForFileWorker(files)
       let saved = await queue.flush(); XCTAssertTrue(saved)
-      XCTAssertEqual(try store.fileRename(id)?.completed, false)
+      XCTAssertEqual(try store.fileRename(id)?.completed, true, "Stop withdraws the caller, not the completed filesystem effect's journal")
       let coldQueue = NotebookPersistenceQueue(store: NotebookStore(root: store.root))
       let coldFiles = MacNotebookProjectFiles(persistence: coldQueue); defer { coldFiles.stop() }
       let result = try await coldFiles.reconcileRename(id, project: project); XCTAssertEqual(result, request)
@@ -217,6 +218,106 @@ final class NotebookProjectFilesTests: XCTestCase {
       XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent(request.path)), bytes)
       let coldSaved = await coldQueue.flush(); XCTAssertTrue(coldSaved)
     }
+  }
+
+  func testLostCompletionCommitRetainsThePublishedFileWorkerAcrossStopAndRetry() async throws {
+    enum LostReply: Error { case storage }
+    try await fixture { store, project, address, _, _ in
+      let root = URL(fileURLWithPath: address.root), original = root.appendingPathComponent(address.path)
+      let bytes = Data("one physical move".utf8); try bytes.write(to: original)
+      let id = UUID(), probe = NotebookStore(root: store.root)
+      let repaired = store.root.appendingPathComponent("repaired")
+      let admitted = NotebookStore(root: store.root) { phase in
+        if phase == .afterCommit, !FileManager.default.fileExists(atPath: repaired.path),
+          try probe.fileRename(id)?.completed == true { throw LostReply.storage }
+      }
+      let queue = NotebookPersistenceQueue(store: admitted), files = MacNotebookProjectFiles(persistence: queue)
+      defer { files.stop() }
+      let blocked = expectation(description: "The completion journal has committed but lost its exact reply")
+      queue.onFailureChange = { if $0 != nil { blocked.fulfill() } }
+      let request = NotebookFileRename(address: address, path: "moved.py", version: .init(bytes), after: 0)
+      let pending = Task { try await files.rename(id, request: request, project: project) }
+      do {
+        await fulfillment(of: [blocked], timeout: 3)
+        let moved = root.appendingPathComponent(request.path)
+        let before = try FileManager.default.attributesOfItem(atPath: moved.path)[.systemFileNumber] as? NSNumber
+        XCTAssertEqual(try probe.fileRename(id)?.completed, true)
+        XCTAssertTrue(files.hasPendingWork)
+        XCTAssertGreaterThan(queue.pendingCount, 0)
+        files.stop(); await fails { try await pending.value }
+        XCTAssertTrue(files.hasPendingWork, "The same worker keeps its coordinator/answer until accepted journal Retry finishes")
+        try Data().write(to: repaired); queue.retry()
+        let saved = await queue.flush(); XCTAssertTrue(saved)
+        try await waitForFileWorker(files)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: original.path))
+        XCTAssertEqual(try Data(contentsOf: moved), bytes)
+        XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: moved.path)[.systemFileNumber] as? NSNumber, before)
+        XCTAssertEqual(try probe.fileRename(id)?.request, request)
+        XCTAssertEqual(try probe.fileRename(id)?.completed, true)
+      } catch {
+        try Data().write(to: repaired); queue.retry(); _ = await queue.flush()
+        files.stop(); try await waitForFileWorker(files)
+        throw error
+      }
+    }
+  }
+
+  func testCloseJoinsPublishedFilesystemWorkAfterItsObserverHasAlreadyBeenWithdrawn() async throws {
+    try await fixture { store, project, address, _, _ in
+      let root = URL(fileURLWithPath: address.root), original = root.appendingPathComponent(address.path)
+      let bytes = Data("published before close".utf8); try bytes.write(to: original)
+      let queue = NotebookPersistenceQueue(store: store), files = MacNotebookProjectFiles(persistence: queue)
+      let id = UUID(), request = NotebookFileRename(address: address, path: "moved.py", version: .init(bytes), after: 0)
+      let published = expectation(description: "The physical rename is held before its journal completion")
+      let closing = expectation(description: "Close registered the same FileWork join")
+      let gate = DispatchSemaphore(value: 0)
+      defer { gate.signal(); files.stop() }
+      let observed = Task {
+        try await files.rename(id, request: request, project: project, afterMove: {
+          published.fulfill(); gate.wait()
+        })
+      }
+      await fulfillment(of: [published], timeout: 3)
+      files.stop(); await fails { try await observed.value }
+      var acknowledged = false
+      let closed = Task {
+        closing.fulfill()
+        await files.stopAndDrain(); acknowledged = true
+      }
+      await fulfillment(of: [closing], timeout: 3)
+      XCTAssertFalse(acknowledged)
+      XCTAssertTrue(files.hasPendingWork)
+      XCTAssertEqual(try store.fileRename(id)?.completed, false)
+      gate.signal(); await closed.value
+      XCTAssertTrue(acknowledged)
+      XCTAssertFalse(files.hasPendingWork)
+      XCTAssertEqual(try store.fileRename(id)?.completed, true)
+      XCTAssertFalse(FileManager.default.fileExists(atPath: original.path))
+      XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent(request.path)), bytes)
+      let saved = await queue.flush(); XCTAssertTrue(saved)
+    }
+  }
+
+  func testFileVersionCacheIsAcceptedWhileReadingAnExistingVersionIsObservation() async throws {
+    try await fixture { store, project, address, _, _ in
+      let file = URL(fileURLWithPath: address.root).appendingPathComponent(address.path)
+      try Data("bounded UTF-8 source".utf8).write(to: file)
+      let queue = NotebookPersistenceQueue(store: store), files = MacNotebookProjectFiles(persistence: queue)
+      defer { files.stop() }
+      let before = queue.acceptedMutationGeneration
+      let initial = try await files.part(address, project: project, version: nil, offset: 0)
+      XCTAssertGreaterThan(queue.acceptedMutationGeneration, before)
+      let accepted = queue.acceptedMutationGeneration
+      let observed = try await files.part(address, project: project, version: initial.version, offset: 0)
+      XCTAssertEqual(observed, initial)
+      XCTAssertEqual(queue.acceptedMutationGeneration, accepted)
+    }
+  }
+
+  private func waitForFileWorker(_ files: MacNotebookProjectFiles) async throws {
+    let deadline = ContinuousClock.now + .seconds(3)
+    while files.hasPendingWork, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
+    XCTAssertFalse(files.hasPendingWork, "The actual filesystem producer must join before the fixture removes its source")
   }
 
   func testWaitingNativeFilePresenterDoesNotHoldTheNotebookWriterAndStopCancelsCoordination() async throws {

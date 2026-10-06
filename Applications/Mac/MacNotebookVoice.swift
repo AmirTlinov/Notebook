@@ -36,8 +36,8 @@ extension CodexAppServer: NotebookCodexVoiceOwner { }
         result = value.phase == .ended ? .acknowledged : nil
       default: result = nil
       }
-      if let result { return try await persistence.submit { try $0.advanceChatJob(input.id, from: job.state, to: .accepted, result: result) } }
-      if job.state == .attempting { return try await persistence.submit { try $0.advanceChatJob(input.id, from: .attempting, to: .uncertain, error: "Голосовая команда не повторена: её принятие неизвестно.") } }
+      if let result { return try await persistence.submit(writesStore: true) { try $0.advanceChatJob(input.id, from: job.state, to: .accepted, result: result) } }
+      if job.state == .attempting { return try await persistence.submit(writesStore: true) { try $0.advanceChatJob(input.id, from: .attempting, to: .uncertain, error: "Голосовая команда не повторена: её принятие неизвестно.") } }
       return job
     }
     let admitted = try await admit()
@@ -51,11 +51,11 @@ extension CodexAppServer: NotebookCodexVoiceOwner { }
         try await executor.stopVoice(id: id); result = .acknowledged
       default: throw CodexBridgeError.invalidInput
       }
-      return try await persistence.submit { try $0.advanceChatJob(input.id, from: .attempting, to: .accepted, result: result) }
+      return try await persistence.submit(writesStore: true) { try $0.advanceChatJob(input.id, from: .attempting, to: .accepted, result: result) }
     } catch {
       // An offer or stop is never resent after an ambiguous RPC outcome.
       let phase: NotebookChatJob.State = (error as? CodexBridgeError) == .acceptanceUnknown ? .uncertain : .rejected
-      return try await persistence.submit { try $0.advanceChatJob(input.id, from: .attempting, to: phase, error: String(error.localizedDescription.prefix(2048))) }
+      return try await persistence.submit(writesStore: true) { try $0.advanceChatJob(input.id, from: .attempting, to: phase, error: String(error.localizedDescription.prefix(2048))) }
     }
   }
 }

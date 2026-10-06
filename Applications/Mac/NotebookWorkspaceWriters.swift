@@ -19,6 +19,20 @@ final class NotebookWorkspaceWriters {
   /// workspaces whose executor route has not finished starting.
   var persistenceQueues: [NotebookPersistenceQueue] { Array(writers.values) }
 
+  /// Observe one already owned process drain across every admitted writer.
+  /// Failure releases only this caller; accepted work and its drain keep the
+  /// same task/queues until Retry supplies their original outcomes.
+  func waitForLifecycle<Value: Sendable>(_ task: Task<Value, Never>) async -> NotebookPersistenceQueue.LifecycleResult<Value> {
+    let queues = persistenceQueues
+    guard !queues.isEmpty else { return .completed(await task.value) }
+    return await withTaskGroup(of: NotebookPersistenceQueue.LifecycleResult<Value>.self) { group in
+      for queue in queues { group.addTask { await queue.waitForLifecycle(task) } }
+      let result = await group.next()!
+      group.cancelAll()
+      return result
+    }
+  }
+
   func persistence(for store: NotebookStore) -> NotebookPersistenceQueue {
     let root = NotebookStore.canonicalWorkspacePath(store.root)
     if let writer = writers[root] { return writer }

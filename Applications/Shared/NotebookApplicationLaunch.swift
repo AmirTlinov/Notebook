@@ -72,6 +72,20 @@ final class NotebookApplicationLaunch {
     private var archiveAdmitted = false
     private var runtimeIsStopping = false
     private var runtimeNeedsRecovery = false
+    private final class WorkspaceDrain {
+      var models: [NotebookAppModel]
+      var task: Task<Void, Never>?
+      init(models: [NotebookAppModel]) { self.models = models }
+    }
+    @ObservationIgnored private var workspaceDrain: WorkspaceDrain?
+    private var recoveryWorkspaceModels: [NotebookAppModel] {
+      var seen = Set<ObjectIdentifier>()
+      // Retirement can remove a candidate from the live registry before its
+      // host's published FileWork reports a storage failure. Retry still owns
+      // that exact model and writer through the retained process drain.
+      return (ownedWorkspaceModels + (workspaceDrain?.models ?? []))
+        .filter { seen.insert(ObjectIdentifier($0)).inserted }
+    }
     private var isBootstrapping = false
     @ObservationIgnored private var operationWaiters: [CheckedContinuation<Void, Never>] = []
   #endif
@@ -295,7 +309,7 @@ final class NotebookApplicationLaunch {
     }
 
     private var persistenceRecoveryMessage: String? {
-      ownedWorkspaceModels.lazy.compactMap(\.persistenceFailure).first
+      recoveryWorkspaceModels.lazy.compactMap(\.persistenceFailure).first
         ?? workspaceWriters.persistenceQueues.lazy.compactMap(\.failure).first
     }
 
@@ -325,7 +339,7 @@ final class NotebookApplicationLaunch {
       guard await retryRetiringWorkspace() else { return }
       if runtimeNeedsRecovery {
         isChecking = true; catalogGeneration = UUID()
-        for owner in ownedWorkspaceModels { owner.retryPendingPersistence() }
+        for owner in recoveryWorkspaceModels { owner.retryPendingPersistence() }
         for writer in workspaceWriters.persistenceQueues { writer.retry() }
         let drained = await drainWorkspaceOwners()
         if drained {
@@ -370,7 +384,7 @@ final class NotebookApplicationLaunch {
     }
 
     private func retrySavedWork() async -> Bool {
-      let owners = ownedWorkspaceModels.filter { $0.persistenceFailure != nil }
+      let owners = recoveryWorkspaceModels.filter { $0.persistenceFailure != nil }
       let writers = workspaceWriters.persistenceQueues.filter { $0.failure != nil }
       guard !owners.isEmpty || !writers.isEmpty else { return true }
       isChecking = true
@@ -400,10 +414,64 @@ final class NotebookApplicationLaunch {
     /// Recovery runs inside IPC, so only the process termination path may
     /// drain the default server. Both paths retire the same workspace owners.
     private func drainWorkspaceOwners() async -> Bool {
-      guard await drainWorkspaceModels() else { return false }
-      if let owner = model?.codexHost, owner !== codexHost { await owner.shutdown() }
-      await codexHost.shutdown()
-      return await workspaceWriters.shutdown()
+      let drain: WorkspaceDrain
+      if let existing = workspaceDrain { drain = existing }
+      else {
+        // Retirement/startup may remove a candidate from the live registry
+        // while we await it. Its model still owns weak host/source callbacks.
+        drain = .init(models: ownedWorkspaceModels)
+        workspaceDrain = drain
+      }
+      if drain.task == nil {
+        guard await drainWorkspaceModels(drain.models) else { return false }
+        guard workspaceDrain === drain else { return false }
+        var models = Set(drain.models.map { ObjectIdentifier($0) })
+        drain.models.append(contentsOf: ownedWorkspaceModels.filter { models.insert(ObjectIdentifier($0)).inserted })
+        // Another shutdown observer can finish the same model join first.
+        // Recheck ownership after that await before constructing the host task.
+        if drain.task == nil {
+          let sourceModels = drain.models
+          var seen = Set<ObjectIdentifier>()
+          let hosts = (sourceModels.compactMap(\.codexHost) + [codexHost])
+            .filter { seen.insert(ObjectIdentifier($0)).inserted }
+          drain.task = Task {
+            for host in hosts { await host.shutdown() }
+            // Keep weak model/source callbacks backed through every host and
+            // FileWork await, even if the Launch itself loses its last view.
+            withExtendedLifetime(sourceModels) { }
+          }
+        }
+      }
+      guard let task = drain.task else { return false }
+      // Injected model writers and the registry use the same queue lifecycle
+      // boundary. A failure may first occur in FileWork AFTER Model.shutdown.
+      let models = drain.models
+      let hasRegisteredWriters = !workspaceWriters.persistenceQueues.isEmpty
+      let joined: Bool
+      if models.isEmpty && !hasRegisteredWriters {
+        await task.value; joined = true
+      } else {
+        joined = await withTaskGroup(of: Bool.self) { group in
+          if hasRegisteredWriters {
+            group.addTask { [workspaceWriters] in
+              if case .completed = await workspaceWriters.waitForLifecycle(task) { return true }
+              return false
+            }
+          }
+          for model in models {
+            group.addTask {
+              if case .completed = await model.waitForPersistenceLifecycle(task) { return true }
+              return false
+            }
+          }
+          let result = await group.next()!
+          group.cancelAll()
+          return result
+        }
+      }
+      guard joined, await workspaceWriters.shutdown() else { return false }
+      if workspaceDrain === drain { workspaceDrain = nil }
+      return true
     }
 
   #endif
@@ -512,13 +580,13 @@ final class NotebookApplicationLaunch {
       // launch/catalog call still retains this owner; ARC/process exit releases
       // its lease only after that lifetime ends.
     #else
-      guard await drainWorkspaceModels() else { return false }
+      guard await drainWorkspaceModels(ownedWorkspaceModels) else { return false }
     #endif
     return true
   }
 
-  private func drainWorkspaceModels() async -> Bool {
-    for owner in ownedWorkspaceModels { guard await owner.shutdown() else { return false } }
+  private func drainWorkspaceModels(_ owners: [NotebookAppModel]) async -> Bool {
+    for owner in owners { guard await owner.shutdown() else { return false } }
     if let opening = workspaceOpening {
       guard case .completed = await opening.model.waitForPersistenceLifecycle(opening.task) else { return false }
     }

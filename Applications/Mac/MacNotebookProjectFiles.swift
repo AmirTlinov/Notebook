@@ -19,7 +19,14 @@ final class MacNotebookProjectFiles {
   }
 
   func stop() {
-    stopped = true; active?.deadline?.cancel(); active?.work.cancel(); active?.cancel(); active = nil
+    stopped = true; active?.deadline?.cancel(); active?.work.cancel(); active?.cancel()
+  }
+  var hasPendingWork: Bool { active != nil }
+  /// Stop releases the observing reply immediately. Closing joins the exact
+  /// syscall/coordinator and its accepted journal outcome before writer close.
+  func stopAndDrain() async {
+    stop()
+    await active?.work.waitUntilFinished()
   }
 
   @MainActor private final class Reply<Value: Sendable> {
@@ -47,6 +54,7 @@ final class MacNotebookProjectFiles {
       queue.async { [weak self] in
         let result = Result { try work.check(); try beforeAccess(); try work.check(); return try operation(journal) }
         Task { @MainActor [weak self] in
+          defer { work.finish() }
           deadline.cancel()
           guard self?.active?.work === work else { return }
           self?.active = nil; reply.finish(result)
@@ -63,7 +71,7 @@ final class MacNotebookProjectFiles {
     if let version { return try await persistence.submit { try $0.filePart(version, address: address, offset: offset) } }
     let bytes = try await access { _ in try Self.read(address, project: project) }
     guard !stopped else { throw CancellationError() }
-    return try await persistence.submit { store in
+    return try await persistence.submit(writesStore: true) { store in
       let selected = try store.cacheFileVersion(bytes, address: address)
       return try store.filePart(selected, address: address, offset: offset)
     }
@@ -85,9 +93,12 @@ final class MacNotebookProjectFiles {
   private final class FileWork: @unchecked Sendable {
     private let lock = NSLock()
     private var cancelled = false
+    private var published = false
+    private var finished = false
+    private var finishWaiters: [CheckedContinuation<Void, Never>] = []
     private var coordinator: NSFileCoordinator?
     func cancel() {
-      let pending = lock.withLock { cancelled = true; return coordinator }
+      let pending = lock.withLock { cancelled = true; return published ? nil : coordinator }
       pending?.cancel()
     }
     func coordinate(_ value: NSFileCoordinator) throws {
@@ -97,7 +108,26 @@ final class MacNotebookProjectFiles {
       }
     }
     func endCoordination() { lock.withLock { coordinator = nil } }
-    func check() throws { if lock.withLock({ cancelled }) { throw CancellationError() } }
+    var hasPublishedEffect: Bool { lock.withLock { published } }
+    func didPublish() { lock.withLock { published = true } }
+    func check() throws { if lock.withLock({ cancelled && !published }) { throw CancellationError() } }
+    func waitUntilFinished() async {
+      await withCheckedContinuation { continuation in
+        let completed = lock.withLock {
+          if finished { return true }
+          finishWaiters.append(continuation); return false
+        }
+        if completed { continuation.resume() }
+      }
+    }
+    func finish() {
+      let waiting = lock.withLock {
+        precondition(coordinator == nil)
+        finished = true
+        let waiting = finishWaiters; finishWaiters.removeAll(); return waiting
+      }
+      for waiter in waiting { waiter.resume() }
+    }
   }
   private final class JournalAnswer<Value: Sendable>: @unchecked Sendable {
     let ready = DispatchSemaphore(value: 0)
@@ -112,13 +142,25 @@ final class MacNotebookProjectFiles {
     func check() throws { try work.check() }
     // Only the dedicated filesystem thread waits here, while holding the file
     // coordinator's lease. SQLite never waits on filesystem access in return.
-    func perform<Value: Sendable>(_ operation: @escaping @Sendable (NotebookStore) throws -> Value) throws -> Value {
+    func read<Value: Sendable>(_ operation: @escaping @Sendable (NotebookStore) throws -> Value) throws -> Value {
+      try perform(writesStore: work.hasPublishedEffect, operation)
+    }
+    func write<Value: Sendable>(_ operation: @escaping @Sendable (NotebookStore) throws -> Value) throws -> Value {
+      try perform(writesStore: true, operation)
+    }
+    private func perform<Value: Sendable>(writesStore: Bool,
+      _ operation: @escaping @Sendable (NotebookStore) throws -> Value) throws -> Value {
       try work.check()
       let answer = JournalAnswer<Value>()
       Task { @MainActor in
         do {
           try work.check()
-          let value = try await persistence.submit { store in try work.check(); return try operation(store) }
+          let value = try await persistence.submit(writesStore: writesStore) { store in
+            // A completed filesystem effect also owns its readback/result.
+            // Accepted journal writes never borrow caller cancellation.
+            if !writesStore { try work.check() }
+            return try operation(store)
+          }
           answer.finish(.success(value))
         } catch { answer.finish(.failure(error)) }
       }
@@ -203,8 +245,8 @@ final class MacNotebookProjectFiles {
     return try data(fd)
   }
   nonisolated private static func commit(_ id: UUID, author: UUID, address: NotebookFileAddress, project: CodexProject, journal: Journal) throws -> NotebookFileResult {
-    guard try journal.perform({ try $0.fileCommit(id) }) == nil else { throw failure("Сохранение уже начиналось; проверяется исход прежней записи.") }
-    let edit = try journal.perform { try $0.stagedFileEdit(id, author: author) }
+    guard try journal.read({ try $0.fileCommit(id) }) == nil else { throw failure("Сохранение уже начиналось; проверяется исход прежней записи.") }
+    let edit = try journal.read { try $0.stagedFileEdit(id, author: author) }
     guard edit.address == address else { throw failure("Адрес черновика не совпадает с сохранением.") }
     var result: Result<NotebookFileResult, Error>?
     var coordinationError: NSError?
@@ -228,8 +270,8 @@ final class MacNotebookProjectFiles {
     let current = try data(fd), remote = String(decoding: current, as: UTF8.self)
     guard let merged = NotebookFileMerge.combine(base: edit.base, local: edit.text, remote: remote) else {
       let outcome = NotebookFileResult(address: address, status: .conflict, version: .init(current))
-      try journal.perform { try $0.prepareFileCommit(id, address: address, before: current, after: current) }
-      try journal.perform { try $0.finishFileCommit(id, result: outcome) }; return outcome
+      try journal.write { try $0.prepareFileCommit(id, address: address, before: current, after: current) }
+      try journal.write { try $0.finishFileCommit(id, result: outcome) }; return outcome
     }
     let proposed = Data(merged.utf8)
     guard proposed.count <= NotebookFileVersion.maximumBytes else { throw failure("Объединённый файл превышает 2 МиБ; обе версии сохранены.") }
@@ -253,13 +295,15 @@ final class MacNotebookProjectFiles {
     guard fstatat(parent, name, &latest, AT_SYMLINK_NOFOLLOW) == 0, same(before, latest), try data(fd) == current else { throw failure("Код изменился во время сохранения. Черновик остался на iPad; обновите файл.") }
     // Durable intent precedes atomic filesystem publication. Recovery observes
     // this exact hash; it never repeats a write with an unknown outcome.
-    try journal.perform { try $0.prepareFileCommit(id, address: address, before: current, after: proposed) }
+    try journal.write { try $0.prepareFileCommit(id, address: address, before: current, after: proposed) }
     try journal.check()
-    guard renameat(parent, temporary, parent, name) == 0, fsync(parent) == 0 else { throw systemFailure() }
+    guard renameat(parent, temporary, parent, name) == 0 else { throw systemFailure() }
+    journal.work.didPublish()
+    guard fsync(parent) == 0 else { throw systemFailure() }
     let accepted = try read(address, project: project)
     guard accepted == proposed else { throw failure("После записи файл снова изменился. Исход сохранения проверяется без повторной записи.") }
     let outcome = NotebookFileResult(address: address, status: .saved, version: .init(proposed))
-    try journal.perform { try $0.finishFileCommit(id, result: outcome) }; return outcome
+    try journal.write { try $0.finishFileCommit(id, result: outcome) }; return outcome
   }
   struct RenameRejected: LocalizedError { let errorDescription: String? }
   private struct FileIdentity: Codable, Equatable {
@@ -273,7 +317,7 @@ final class MacNotebookProjectFiles {
     }
   }
   nonisolated private static func rename(_ id: UUID, request: NotebookFileRename, project: CodexProject, journal: Journal, afterMove: (() throws -> Void)? = nil) throws -> NotebookFileRename {
-    guard request.isValid, try journal.perform({ try $0.fileRename(id) }) == nil else { throw failure("Переименование уже начиналось; проверяется прежний исход.") }
+    guard request.isValid, try journal.read({ try $0.fileRename(id) }) == nil else { throw failure("Переименование уже начиналось; проверяется прежний исход.") }
     let from = URL(fileURLWithPath: request.address.root).appendingPathComponent(request.address.path)
     let to = URL(fileURLWithPath: request.destination.root).appendingPathComponent(request.path)
     var result: Result<NotebookFileRename, Error>?, coordinationError: NSError?
@@ -293,7 +337,7 @@ final class MacNotebookProjectFiles {
           throw failure("Файл изменился. Обновите его перед переименованием; черновик сохранён.")
         }
         let identity = try JSONEncoder().encode(FileIdentity(original))
-        try journal.perform { try $0.prepareFileRename(id, request: request, identity: identity) }
+        try journal.write { try $0.prepareFileRename(id, request: request, identity: identity) }
         try journal.check()
         guard fstatat(parent, name, &current, AT_SYMLINK_NOFOLLOW) == 0, same(original, current) else {
           throw RenameRejected(errorDescription: "Исходный файл изменился до переименования.")
@@ -302,6 +346,7 @@ final class MacNotebookProjectFiles {
         guard renameatx_np(parent, name, destination, newName, UInt32(RENAME_EXCL)) == 0 else {
           throw RenameRejected(errorDescription: "Переименование не выполнено: " + String(cString: strerror(errno)))
         }
+        journal.work.didPublish()
         coordinator.item(at: from, didMoveTo: to)
         try afterMove?()
         guard fsync(parent) == 0, fsync(destination) == 0 else { throw systemFailure() }
@@ -314,7 +359,7 @@ final class MacNotebookProjectFiles {
     return try result.get()
   }
   nonisolated private static func reconcileRename(_ id: UUID, project: CodexProject, journal: Journal) throws -> NotebookFileRename? {
-    guard let intent = try journal.perform({ try $0.fileRename(id) }) else { return nil }
+    guard let intent = try journal.read({ try $0.fileRename(id) }) else { return nil }
     if intent.completed { return intent.request }
     let request = intent.request, expected = try JSONDecoder().decode(FileIdentity.self, from: intent.identity)
     let parent = try directory(request.destination, project: project, parent: true); defer { close(parent) }
@@ -322,20 +367,22 @@ final class MacNotebookProjectFiles {
     guard fd >= 0 else { return nil }; defer { close(fd) }
     var actual = stat()
     guard fstat(fd, &actual) == 0, actual.st_mode & S_IFMT == S_IFREG, actual.st_nlink == 1, FileIdentity(actual) == expected else { return nil }
+    journal.work.didPublish()
     // The observed identity proves the move even if its contents changed later.
     // A prior crash may precede directory durability; finish it before receipt.
     let sourceParent = try directory(request.address, project: project, parent: true); defer { close(sourceParent) }
     guard fsync(parent) == 0, fsync(sourceParent) == 0 else { throw systemFailure() }
-    try journal.perform { try $0.finishFileRename(id) }
+    try journal.write { try $0.finishFileRename(id) }
     return request
   }
 
   nonisolated private static func reconcile(_ id: UUID, project: CodexProject, journal: Journal) throws -> NotebookFileResult? {
-    guard let commit = try journal.perform({ try $0.fileCommit(id) }) else { return nil }
+    guard let commit = try journal.read({ try $0.fileCommit(id) }) else { return nil }
     if let result = commit.result { return result }
     let observed = try read(commit.address, project: project)
     guard NotebookFileVersion.hash(observed) == commit.hash else { return nil }
+    journal.work.didPublish()
     let result = NotebookFileResult(address: commit.address, status: .saved, version: .init(observed))
-    try journal.perform { try $0.finishFileCommit(id, result: result) }; return result
+    try journal.write { try $0.finishFileCommit(id, result: result) }; return result
   }
 }

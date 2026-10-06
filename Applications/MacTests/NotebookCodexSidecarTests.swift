@@ -1,6 +1,6 @@
 import XCTest
 import CryptoKit
-import NotebookCore
+@testable import NotebookCore
 import NotebookCodex
 @testable import Notebook
 
@@ -127,6 +127,249 @@ private actor NativeOwner: NotebookCodexConversationOwner, NotebookCodexCatalogu
 
 @MainActor
 final class NotebookCodexSidecarTests: XCTestCase {
+  #if DEBUG
+  func testProcessDrainRetriesTheSamePublishedFileAfterItsModelAlreadyStopped() async throws {
+    try await exerciseProcessFileDrain(modelLifetime: .current)
+  }
+
+  func testRetainedWorkspaceIndependentHostKeepsItsFileDrainAcrossLateStorageFailure() async throws {
+    try await exerciseProcessFileDrain(modelLifetime: .retained)
+  }
+
+  func testClearedRetiringCandidateRetriesItsSamePublishedFileAfterLateStorageFailure() async throws {
+    try await exerciseProcessFileDrain(modelLifetime: .retiringCandidate)
+  }
+
+  private enum FileDrainModelLifetime: Equatable { case current, retained, retiringCandidate }
+
+  private func exerciseProcessFileDrain(modelLifetime: FileDrainModelLifetime) async throws {
+    enum LostCompletion: Error { case commitReply, retirementSave }
+    let base = URL(fileURLWithPath: "/tmp/nb-file-drain-" + UUID().uuidString.lowercased(), isDirectory: true)
+    try FileManager.default.createDirectory(at: base, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+    let preferenceDomain = "Notebook.FileDrain." + UUID().uuidString.lowercased()
+    let preferences = try XCTUnwrap(UserDefaults(suiteName: preferenceDomain))
+    defer { preferences.removePersistentDomain(forName: preferenceDomain) }
+    let root = base.appendingPathComponent("Notebook"), socket = base.appendingPathComponent("bridge.sock")
+    let projectRoot = base.appendingPathComponent("project")
+    try FileManager.default.createDirectory(at: projectRoot, withIntermediateDirectories: false)
+    let originalFile = projectRoot.appendingPathComponent("main.py"), bytes = Data("one physical publication".utf8)
+    try bytes.write(to: originalFile)
+    let original = NotebookStore(root: root)
+    let originalHeader = try original.initializeWorkspace(actor: UUID(), pageSize: NotebookAppModel.defaultPageSize)
+    let candidateID = UUID(), library = NotebookWorkspaceLibrary(originalRoot: root)
+    let journalRoot = modelLifetime == .retiringCandidate ? try library.prepare(candidateID) : root
+    let healthy = NotebookStore(root: journalRoot)
+    let header = modelLifetime == .retiringCandidate
+      ? try healthy.initializeWorkspace(actor: UUID(), pageSize: NotebookAppModel.defaultPageSize) : originalHeader
+    let id = UUID(), armed = base.appendingPathComponent("armed"), repaired = base.appendingPathComponent("repaired")
+    let retirementRepaired = base.appendingPathComponent("retirement-repaired")
+    let admitted = NotebookStore(root: journalRoot) { phase in
+      if phase == .afterCommit, FileManager.default.fileExists(atPath: armed.path),
+        !FileManager.default.fileExists(atPath: repaired.path), try healthy.fileRename(id)?.completed == true {
+        throw LostCompletion.commitReply
+      }
+    }
+    let writer = NotebookPersistenceQueue(store: admitted), files = MacNotebookProjectFiles(persistence: writer)
+    let native = NativeOwner(), service = NotebookCodexSidecar(persistence: writer, bridge: native, metadata: native,
+      workspaceID: header.workspaceID, directory: base, files: files)
+    let host = NotebookCodexHost(workspaceID: header.workspaceID, sidecar: service, persistence: writer)
+    var constructions = 0
+    var fileModel: NotebookAppModel?
+    let launch = NotebookApplicationLaunch(root: root, runtimeSocketURL: socket) { proposed, _ in
+      constructions += 1
+      let ownsFile = NotebookStore.canonicalWorkspacePath(proposed.root) == NotebookStore.canonicalWorkspacePath(journalRoot)
+      let store = ownsFile ? admitted : proposed
+      let selectedWriter = ownsFile ? writer : NotebookPersistenceQueue(store: store)
+      let key = String(UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased().prefix(24))
+      let model = NotebookAppModel(store: store, startsNearbySync: false,
+        commandSocketURL: base.appendingPathComponent(key + ".sock"), preferences: preferences,
+        persistenceQueue: selectedWriter)
+      model.codexHost = ownsFile ? host : NotebookCodexHost()
+      if ownsFile { fileModel = model }
+      return model
+    }
+    let gate = DispatchSemaphore(value: 0)
+    let previousObservation = NotebookNavigationObservation.onWebPreparation
+    var phaseTrace: [String] = []
+    @MainActor func recordPhase(_ phase: String) {
+      guard modelLifetime == .retiringCandidate, phaseTrace.count < 32 else { return }
+      let candidate = fileModel
+      phaseTrace.append("\(phase): selected=\(String(describing: launch.selectedWorkspaceID)) "
+        + "candidate=\(String(describing: candidate.map(ObjectIdentifier.init))) "
+        + "workspace=\(String(describing: candidate?.admittedWorkspaceID)) "
+        + "shutdown=\(String(describing: candidate?.shutdownPhase)) "
+        + "retiring=\(launch.hasPendingWorkspaceRetirement) transition=\(launch.canRetryWorkspaceTransition) "
+        + "fileWork=\(files.hasPendingWork) failure=\(String((writer.failure ?? "none").prefix(256)))")
+    }
+    var cleanupDone = false
+    defer {
+      NotebookNavigationObservation.onWebPreparation = previousObservation
+      if modelLifetime == .retiringCandidate {
+        let attachment = XCTAttachment(string: phaseTrace.joined(separator: "\n"))
+        attachment.name = "retiring-candidate-file-drain-phases"
+        attachment.lifetime = .keepAlways
+        XCTContext.runActivity(named: "Retiring candidate owns its exact process drain") { $0.add(attachment) }
+      }
+      if cleanupDone { try? FileManager.default.removeItem(at: base) }
+    }
+    do {
+      await launch.start()
+      let originalModel = try XCTUnwrap(launch.model)
+      await originalModel.start(pageSize: NotebookAppModel.defaultPageSize)
+      if modelLifetime == .retained {
+        let other = UUID()
+        await launch.openWorkspace(other, creatingName: "Independent current host")
+        let current = try XCTUnwrap(launch.model)
+        XCTAssertFalse(current === originalModel)
+        XCTAssertFalse(current.codexHost === host)
+        XCTAssertEqual(launch.selectedWorkspaceID, other)
+        XCTAssertEqual(originalModel.shutdownPhase, .running)
+      }
+      let currentModel = try XCTUnwrap(launch.model), selectedWorkspace = try XCTUnwrap(currentModel.admittedWorkspaceID)
+      let expectedConstructions = modelLifetime == .current ? 1 : 2
+      let project = CodexProject(id: "drain-fixture", name: "Code", roots: [projectRoot.path])
+      let address = NotebookFileAddress(computer: UUID(), project: project.id, root: projectRoot.path, path: "main.py")
+      let request = NotebookFileRename(address: address, path: "moved.py", version: .init(bytes), after: 0)
+      let published = expectation(description: "The exact worker owns a published file before process shutdown")
+      let blocked = expectation(description: "Original completion COMMIT fails after Model.stopped")
+      let observerReturned = expectation(description: "Process failure releases its observer for IPC Retry")
+      let fileReply = Task {
+        try await files.rename(id, request: request, project: project, afterMove: {
+          published.fulfill()
+          guard gate.wait(timeout: .now() + 15) == .success else { throw CocoaError(.fileWriteUnknown) }
+        })
+      }
+      await fulfillment(of: [published], timeout: 3)
+      if modelLifetime == .retiringCandidate {
+        var selectionRefusalArmed = false, retirementFailureInjected = false
+        NotebookNavigationObservation.onWebPreparation = { stage, owner, source, time in
+          previousObservation?(stage, owner, source, time)
+          guard let candidate = fileModel, owner == candidate.actorID,
+            candidate.admittedWorkspaceID == candidateID,
+            NotebookStore.canonicalWorkspacePath(candidate.store.root)
+              == NotebookStore.canonicalWorkspacePath(journalRoot) else { return }
+          if stage == "startup_load_ready", !selectionRefusalArmed {
+            selectionRefusalArmed = true
+            candidate.workspaceName = ""
+            recordPhase("selection-refusal-armed")
+          } else if stage == "shutdown_startup_join", selectionRefusalArmed,
+            launch.hasPendingWorkspaceRetirement, !retirementFailureInjected {
+            // loadState.ready precedes Script initialization's accepted write.
+            // Inject only after startup and the actual catalog refusal, at the
+            // candidate's retirement boundary; otherwise startup never joins.
+            retirementFailureInjected = true
+            recordPhase("retirement-failure-injected")
+            writer.enqueue { _ in
+              guard FileManager.default.fileExists(atPath: retirementRepaired.path) else {
+                throw LostCompletion.retirementSave
+              }
+              return false
+            }
+          }
+        }
+        await launch.openWorkspace(candidateID)
+        NotebookNavigationObservation.onWebPreparation = previousObservation
+        recordPhase("open-workspace-observer-returned")
+        try await wait { launch.hasPendingWorkspaceRetirement }
+        XCTAssertTrue(selectionRefusalArmed)
+        XCTAssertTrue(retirementFailureInjected)
+        XCTAssertTrue(launch.model === originalModel)
+        XCTAssertTrue(launch.hasPendingWorkspaceRetirement)
+        XCTAssertNotNil(writer.failure)
+        guard selectionRefusalArmed, retirementFailureInjected, launch.model === originalModel,
+          launch.hasPendingWorkspaceRetirement, writer.failure != nil else {
+          throw NotebookTransportError.storageUnavailable
+        }
+        // This failed process join snapshots the candidate. The first IPC
+        // Retry then clears its retirement before the host's late failure.
+        let stopped = await launch.shutdown(); XCTAssertFalse(stopped)
+        recordPhase("initial-process-observer-returned")
+        XCTAssertTrue(launch.hasPendingWorkspaceRetirement)
+        guard !stopped, launch.hasPendingWorkspaceRetirement else { throw NotebookTransportError.storageUnavailable }
+        try Data().write(to: retirementRepaired)
+      }
+      let ownerModel = try XCTUnwrap(fileModel)
+      let receive = writer.onFailureChange
+      writer.onFailureChange = { message in
+        receive?(message)
+        if message != nil, FileManager.default.fileExists(atPath: armed.path) {
+          recordPhase("late-published-completion-failure")
+          blocked.fulfill()
+        }
+      }
+      var shutdownResult: Bool?
+      let closing = Task {
+        if modelLifetime == .retiringCandidate {
+          let response = try await self.retryRuntime(socket: socket, workspaceID: selectedWorkspace)
+          shutdownResult = response.status.state == .ready && response.error == nil
+          recordPhase("first-ipc-retry-observer-returned")
+        } else { shutdownResult = await launch.shutdown() }
+        observerReturned.fulfill()
+      }
+      try await wait {
+        ownerModel.shutdownPhase == .stopped
+          && (modelLifetime != .retiringCandidate || !launch.canRetryWorkspaceTransition)
+      }
+      if modelLifetime == .retiringCandidate {
+        recordPhase("retirement-cleared-before-late-completion")
+        XCTAssertFalse(launch.hasPendingWorkspaceRetirement)
+        XCTAssertTrue(launch.model === originalModel)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: healthy.databaseURL.path))
+      }
+      XCTAssertNil(shutdownResult, "The process must still own its Sidecar/FileWork after Model shutdown")
+      XCTAssertTrue(files.hasPendingWork)
+      do { _ = try await fileReply.value; XCTFail("Sidecar Stop must withdraw the observing file reply") }
+      catch is CancellationError { }
+      let moved = projectRoot.appendingPathComponent(request.path)
+      let identity = try FileManager.default.attributesOfItem(atPath: moved.path)[.systemFileNumber] as? NSNumber
+      try Data().write(to: armed); gate.signal()
+      await fulfillment(of: [blocked, observerReturned], timeout: 3)
+      try await closing.value
+      XCTAssertEqual(shutdownResult, false)
+      XCTAssertTrue(launch.model === currentModel)
+      XCTAssertEqual(ownerModel.shutdownPhase, .stopped)
+      XCTAssertTrue(files.hasPendingWork)
+      XCTAssertEqual(constructions, expectedConstructions)
+      XCTAssertEqual(try healthy.fileRename(id)?.completed, true)
+      let repeated = await launch.shutdown(); XCTAssertFalse(repeated)
+      let status = NotebookCommand(command: .runtimeStatus)
+      let recoverable = try await launch.executeRuntimeCommand(status).decode(NotebookRuntimeBootstrapStatus.self)
+      XCTAssertTrue(recoverable.ready); XCTAssertEqual(recoverable.state, .failed)
+      try Data().write(to: repaired)
+      let response = try await retryRuntime(socket: socket, workspaceID: selectedWorkspace)
+      recordPhase("second-ipc-retry-observer-returned")
+      XCTAssertEqual(response.status.state, .ready)
+      XCTAssertNil(response.error)
+      guard response.status.state == .ready, response.error == nil else {
+        throw NotebookTransportError.storageUnavailable
+      }
+      XCTAssertFalse(files.hasPendingWork)
+      XCTAssertEqual(try healthy.fileRename(id)?.request, request)
+      XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: moved.path)[.systemFileNumber] as? NSNumber, identity)
+      XCTAssertEqual(try Data(contentsOf: moved), bytes)
+      XCTAssertFalse(FileManager.default.fileExists(atPath: originalFile.path))
+      let stopped = await launch.shutdown(); XCTAssertTrue(stopped)
+      let saved = await writer.flush(); XCTAssertTrue(saved)
+      cleanupDone = true
+    } catch {
+      recordPhase("cleanup-after-fixture-failure")
+      gate.signal(); try Data().write(to: retirementRepaired); try Data().write(to: repaired); writer.retry()
+      await files.stopAndDrain(); await service.stop(); await host.shutdown()
+      _ = await launch.shutdown(); _ = await writer.flush()
+      cleanupDone = true
+      throw error
+    }
+  }
+
+  private func retryRuntime(socket: URL, workspaceID: UUID) async throws -> NotebookRuntimeWorkspaceResponse {
+    var command = NotebookCommand(command: .runtimeWorkspace)
+    command.runtimeWorkspace = .init(action: .retry, id: workspaceID)
+    return try await Task.detached { [command] in
+      try NotebookIPCClient(socketURL: socket).send(command).decode(NotebookRuntimeWorkspaceResponse.self)
+    }.value
+  }
+  #endif
+
   func testStartupStorageFailureRetriesRecoveryWithoutAnotherUserEvent() async throws {
     try await fixture { store, queue, native, peer in
       let service = try sidecar(store, queue, native)

@@ -25,6 +25,15 @@ final class NotebookCodexHost {
     self.discoverInstallation = discoverInstallation
   }
 
+  #if DEBUG
+    /// Native acceptance installs a concrete already owned route. It uses the
+    /// real sidecar/file worker and never starts an external Codex process.
+    convenience init(workspaceID: UUID, sidecar: NotebookCodexSidecar, persistence: NotebookPersistenceQueue) {
+      self.init()
+      routes[workspaceID] = .init(sidecar: sidecar, persistence: persistence)
+    }
+  #endif
+
   private var persistenceQueues: [NotebookPersistenceQueue] {
     workspaceWriters?.persistenceQueues ?? routes.values.map(\.persistence)
   }

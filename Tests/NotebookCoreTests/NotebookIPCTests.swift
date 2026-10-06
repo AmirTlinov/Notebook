@@ -1,6 +1,7 @@
 import Foundation
 import Darwin
 import Testing
+import CSQLite
 @testable import NotebookCore
 
 struct NotebookIPCTests {
@@ -139,7 +140,7 @@ struct NotebookIPCTests {
     try server.start(); defer { server.stop() }
     let client = IPCCompletion<Result<JSONValue, any Error>>("the queued handler's disconnected client")
     DispatchQueue(label: "Notebook.IPCTests.queued-handler-client").async {
-      client.resolve(.success(Result { try NotebookIPCClient(socketURL: endpoint.socket).send(.init(command: .read)) }))
+      client.resolve(.success(Result { try NotebookIPCClient(socketURL: endpoint.socket).send(.init(command: .pageVision)) }))
     }
     let accepted = await waitForIPC { server.acceptedHandlerCount == 1 }
     #expect(accepted)
@@ -455,6 +456,184 @@ struct NotebookIPCTests {
     #expect(calls.value == 0)
     #expect(await server.stopAndDrain() == .zero)
   }
+
+  enum ReadWithdrawal: Sendable, Equatable { case disconnect, deadline, stop, halfClose }
+  @Test(arguments: [ReadWithdrawal.disconnect, .deadline, .stop, .halfClose])
+  func socketObservationOwnsCancellationBeforeTheFirstSQLiteRow(reason: ReadWithdrawal) async throws {
+    let endpoint = try IPCEndpoint(); defer { endpoint.remove() }
+    let store = NotebookStore(root: endpoint.directory.appendingPathComponent("store"))
+    _ = try store.initializeWorkspace(actor: UUID(), pageSize: .init(width: 100, height: 140))
+    let gate = IPCSQLGate(), probe = IPCSQLReader(store: store, gate: gate)
+    let server = NotebookIPCServer(socketURL: endpoint.socket,
+      workerQueue: .init(label: "Notebook.IPCTests.read-withdrawal", attributes: .concurrent),
+      requestTimeout: reason == .deadline ? .seconds(2) : .seconds(30)) { command in
+        _ = try NotebookReadCommand(command)
+        return try await probe.read()
+      }
+    try server.start(); defer { gate.release.signal(); server.stop() }
+    var fd = try connectIPC(endpoint.socket)
+    defer { if fd >= 0 { close(fd) } }
+    let requestID = UUID()
+    try sendRawIPC(.init(command: .read), id: requestID, fd: fd)
+    let entered = try await blockingIPC { gate.entered.wait(timeout: .now() + 5) == .success }
+    #expect(entered)
+    switch reason {
+    case .disconnect: close(fd); fd = -1
+    case .deadline: break
+    case .stop: server.stop()
+    case .halfClose:
+      #expect(Darwin.shutdown(fd, SHUT_WR) == 0)
+      #expect(server.cancelledHandlerCount == 0)
+    }
+    if reason != .halfClose {
+      #expect(await waitForIPC { server.cancelledHandlerCount == 1 })
+      #expect(server.activeConnectionCount == 1, "The read slot is charged until actual SQL completion")
+    }
+    let drained = IPCCompletion<Duration>("the actual cancelled SQL producer")
+    if reason == .stop {
+      Task(executorPreference: IPCQueueIdentity()) { drained.resolve(.success(await server.stopAndDrain())) }
+      #expect(server.activeConnectionCount == 1)
+    }
+    gate.release.signal()
+    let result = try await probe.finished.value()
+    #expect(result.cancelled == (reason != .halfClose))
+    #expect(result.rows == (reason == .halfClose ? 1 : 0))
+    #expect(result.steps > 1_024 && result.steps < 150_000)
+    if reason == .halfClose {
+      let responseFD = fd
+      let response = try await blockingIPC { try JSONDecoder().decode(JSONValue.self, from: SocketIO.readFrame(fd: responseFD)) }
+      #expect(response["id"]?.string?.lowercased() == requestID.uuidString.lowercased())
+      #expect(response["result"] == .number(4_001))
+    }
+    if reason == .stop { _ = try await drained.value() }
+    else {
+      #expect(await waitForIPC { server.activeConnectionCount == 0 })
+      let next = try await blockingIPC { try NotebookIPCClient(socketURL: endpoint.socket).send(.init(command: .read)) }
+      #expect(next == .number(42), "A cancelled snapshot cannot poison the next idle handle")
+      try await drainIPC(server)
+    }
+  }
+
+  @Test func queuedReadDisconnectCannotCancelOrWriteToAReusedDescriptor() async throws {
+    let endpoint = try IPCEndpoint(); defer { endpoint.remove() }
+    let requestQueue = DispatchQueue(label: "Notebook.IPCTests.read-registration")
+    requestQueue.suspend(); var suspended = true
+    defer { if suspended { requestQueue.resume() } }
+    let calls = IPCCount(), server = NotebookIPCServer(socketURL: endpoint.socket,
+      workerQueue: .init(label: "Notebook.IPCTests.read-transport", attributes: .concurrent), requestQueue: requestQueue) { _ in
+        calls.increment(); return .string("new peer")
+      }
+    try server.start(); defer { server.stop() }
+    let first = try connectIPC(endpoint.socket)
+    try sendRawIPC(.init(command: .read), id: UUID(), fd: first)
+    #expect(await waitForIPC { server.acceptedHandlerCount == 1 })
+    close(first)
+    #expect(await waitForIPC { server.cancelledHandlerCount == 1 })
+    let replacement = try connectIPC(endpoint.socket); defer { close(replacement) }
+    let replacementID = UUID()
+    try sendRawIPC(.init(command: .read), id: replacementID, fd: replacement)
+    #expect(await waitForIPC { server.acceptedHandlerCount == 2 })
+    requestQueue.resume(); suspended = false
+    let response = try await blockingIPC { try JSONDecoder().decode(JSONValue.self, from: SocketIO.readFrame(fd: replacement)) }
+    #expect(response["id"]?.string?.lowercased() == replacementID.uuidString.lowercased())
+    #expect(response["result"] == .string("new peer") && calls.value == 1)
+    try await drainIPC(server)
+  }
+
+  @Test func disconnectedAcceptedWriteRecoversItsLostCommitReplyWithoutRepeatingTheBody() async throws {
+    enum LostCommit: Error { case reply }
+    let endpoint = try IPCEndpoint(); defer { endpoint.remove() }
+    let store = NotebookStore(root: endpoint.directory.appendingPathComponent("store"))
+    _ = try store.initializeWorkspace(actor: UUID(), pageSize: .init(width: 100, height: 140))
+    let calls = IPCCount(), retry = IPCHandlerGate(), acceptedEntered = IPCCompletion<Void>("the lost commit reply")
+    let accepted = NotebookAcceptedWrite(witnesses: .init(root: store.root)) { store in
+      calls.increment(); try store.publishRecords(writes: ["local/ipc-retained.json": .string("exact bytes")])
+      return JSONValue.string("original result")
+    }
+    let lost = NotebookStore(root: store.root) { if case .afterCommit = $0 { throw LostCommit.reply } }
+    let output = IPCCompletion<JSONValue>("the retained accepted result")
+    let server = NotebookIPCServer(socketURL: endpoint.socket) { _ in
+      do { _ = try accepted.apply(to: lost); throw IPCWaitFailure("The accepted fixture must lose its reply") }
+      catch let error as NotebookAcceptedWriteError { #expect(error.outcome == .unresolved) }
+      acceptedEntered.resolve(.success(()))
+      await retry.wait()
+      #expect(!Task.isCancelled, "Transport loss never revokes accepted mutations")
+      let value = try accepted.apply(to: store); output.resolve(.success(value)); return value
+    }
+    try server.start(); defer { retry.open(); server.stop() }
+    let fd = try connectIPC(endpoint.socket)
+    try sendRawIPC(.init(command: .pageVision), id: UUID(), fd: fd)
+    try await acceptedEntered.value()
+    close(fd); server.stop()
+    #expect(server.cancelledHandlerCount == 0 && server.acceptedHandlerCount == 1)
+    #expect(try store.storedValue("local/ipc-retained.json") == .string("exact bytes"))
+    let draining = IPCCompletion<Duration>("accepted result before transport drain")
+    Task(executorPreference: IPCQueueIdentity()) { draining.resolve(.success(await server.stopAndDrain())) }
+    #expect(server.activeConnectionCount == 1)
+    retry.open()
+    let restored = try await output.value(); #expect(restored == .string("original result"))
+    _ = try await draining.value()
+    #expect(calls.value == 1 && server.activeConnectionCount == 0)
+    #expect(try NotebookStore(root: store.root).storedValue("local/ipc-retained.json") == .string("exact bytes"))
+  }
+}
+
+private final class IPCSQLGate: @unchecked Sendable {
+  let entered = DispatchSemaphore(value: 0), release = DispatchSemaphore(value: 0)
+}
+private actor IPCSQLReader {
+  private let store: NotebookStore, session: NotebookReadSession, gate: IPCSQLGate
+  private var first = true
+  let finished = IPCCompletion<(cancelled: Bool, rows: Int, steps: Int)>("SQL cancellation after its first VM prefix")
+  init(store: NotebookStore, gate: IPCSQLGate) {
+    self.store = store; session = .init(store: store); self.gate = gate
+  }
+  func read() throws -> JSONValue {
+    if !first { return try session.observe { _ in .number(Double(try store.currentSQL!.rows("SELECT 42").first![0].integer!)) } }
+    first = false
+    var rows = 0, cancelled = false, actualSteps = 0
+    do {
+      let count = try session.observe { _ in
+        let sql = try #require(store.currentSQL)
+        defer {
+          // Statement/connection borrows end inside this exact SQL snapshot.
+          // Only scalars cross the cancellation catch and actor boundary.
+          var cursor = sqlite3_next_stmt(sql.handle, nil)
+          while let statement = cursor {
+            if let raw = sqlite3_sql(statement), String(cString: raw).contains("COUNT(ipc_probe") {
+              actualSteps += Int(sqlite3_stmt_status(statement, SQLITE_STMTSTATUS_VM_STEP, 0))
+            }
+            cursor = sqlite3_next_stmt(sql.handle, cursor)
+          }
+        }
+        #expect(sqlite3_create_function_v2(sql.handle, "ipc_probe", 1, SQLITE_UTF8,
+          Unmanaged.passUnretained(gate).toOpaque(), { context, _, values in
+            guard let context, let values, let pointer = sqlite3_user_data(context) else { return }
+            let value = sqlite3_value_int64(values[0])
+            if value == 1_024 {
+              let gate = Unmanaged<IPCSQLGate>.fromOpaque(pointer).takeUnretainedValue()
+              gate.entered.signal(); _ = gate.release.wait(timeout: .now() + 5)
+            }
+            sqlite3_result_int64(context, value)
+          }, nil, nil, nil) == SQLITE_OK)
+        var count: Int64 = 0
+        try sql.forEachRow("WITH RECURSIVE input(x) AS (VALUES(0) UNION ALL SELECT x+1 FROM input WHERE x<4000) SELECT COUNT(ipc_probe(x)) FROM input") { row in
+          rows += 1; count = row[0].integer!
+        }
+        return count
+      }
+      finished.resolve(.success((false, rows, actualSteps)))
+      return .number(Double(count))
+    } catch is CancellationError { cancelled = true }
+    catch { finished.resolve(.failure(error)); throw error }
+    finished.resolve(.success((cancelled, rows, actualSteps)))
+    throw CancellationError()
+  }
+}
+
+private func sendRawIPC(_ command: NotebookCommand, id: UUID, fd: Int32) throws {
+  try SocketIO.writeFrame(JSONEncoder().encode(JSONValue.object(["version": .number(Double(NotebookIPC.version)),
+    "id": .string(id.uuidString), "request": try .encode(command)])), fd: fd)
 }
 
 private struct IPCEndpoint: Sendable {

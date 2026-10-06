@@ -1,0 +1,27 @@
+{
+  "status": "capabilities-observed",
+  "observedAtUTC": "2026-10-06T05:27:06Z",
+  "host": "real Codex MCP Apps side panel",
+  "tool": "notebook_surface_verification.notebook_verify_surface_host",
+  "scope": "bundled isolated geometry/GPU/HTML capability checks and synthetic Unicode input; no Notebook workspace content",
+  "passedCapabilities": [
+    "Swift/WASM",
+    "WebGPU",
+    "canonical pressure contour pixels",
+    "Retina/resize",
+    "program origin isolation"
+  ],
+  "unicodeInput": "Проверка Notebook: Привет 😀, x² = 49.",
+  "inputMechanism": "documented Playwright fill; no IME composition observed",
+  "mainNotebookGestureAcceptance": false,
+  "hardwareContactOrFPSMeasurement": false,
+  "rootSourceBinding": null,
+  "rootSourceBindingReason": "Capability app bundle not claimed to be the current remediation product build",
+  "evidence": [
+    {
+      "path": "observed-dom.txt",
+      "sha256": "759db6bdfb742887e4c5c9b6d2b0453ba9ea1207cd4d7b68fc82277792607cfe",
+      "kind": "normalized transcription of observed DOM; not a raw UI snapshot"
+    }
+  ]
+}

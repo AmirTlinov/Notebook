@@ -89,6 +89,7 @@ public final class NotebookIPCServer: @unchecked Sendable {
   private let acceptQueue = DispatchQueue(label: "Notebook.IPC.accept", qos: .userInitiated)
   private let workerQueue: DispatchQueue
   private let requestExecutor: IPCRequestExecutor
+  private let requestTimeout: Duration
 
   public convenience init(socketURL: URL = NotebookIPC.defaultSocketURL, handler: @escaping Handler) {
     self.init(socketURL: socketURL,
@@ -97,13 +98,16 @@ public final class NotebookIPCServer: @unchecked Sendable {
 
   init(socketURL: URL, workerQueue: DispatchQueue,
     requestQueue: DispatchQueue = .init(label: "Notebook.IPC.handler", qos: .userInitiated),
+    requestTimeout: Duration = .seconds(NotebookIPC.requestTimeout),
     handler: @escaping Handler) {
     self.socketURL = socketURL; self.handler = handler; self.workerQueue = workerQueue
+    self.requestTimeout = requestTimeout
     requestExecutor = IPCRequestExecutor(queue: requestQueue)
   }
 
   var activeConnectionCount: Int { lock.withLock { jobs.count } }
   var acceptedHandlerCount: Int { lock.withLock { jobs.values.filter(\.hasPendingHandler).count } }
+  var cancelledHandlerCount: Int { lock.withLock { jobs.values.filter { $0.ownedHandler?.isCancelled == true }.count } }
 
   public func start() throws {
     try start(afterAddressCheck: nil)
@@ -138,15 +142,20 @@ public final class NotebookIPCServer: @unchecked Sendable {
   }
 
   public func stop() {
-    let completion = lock.withLock {
+    let closing = lock.withLock {
       stopped = true
       let fd = listener; listener = -1
-      for job in jobs.values { job.shutdown() }
-      jobs = jobs.filter { !$0.value.finished }
       if fd >= 0 {
         shutdown(fd, SHUT_RDWR); close(fd)
         socketIdentity?.removeSocket(at: socketURL); socketIdentity = nil
       }
+      return Array(jobs.values)
+    }
+    // Cancellation handlers may call their domain owner. Do not invoke them
+    // under the transport registry lock.
+    for job in closing { job.shutdown() }
+    let completion = lock.withLock {
+      jobs = jobs.filter { !$0.value.finished }
       return drainCompletionLocked()
     }
     resumeDrain(completion)
@@ -159,6 +168,8 @@ public final class NotebookIPCServer: @unchecked Sendable {
   @discardableResult public func stopAndDrain() async -> Duration {
     let started = ContinuousClock.now
     stop()
+    let handlers = lock.withLock { jobs.values.compactMap(\.ownedHandler) }
+    for handler in handlers { await handler.value }
     return await withCheckedContinuation { continuation in
       let completed: ContinuousClock.Instant? = lock.withLock {
         if let drainedAt { return drainedAt }
@@ -204,24 +215,20 @@ public final class NotebookIPCServer: @unchecked Sendable {
         throw CollaborationError("ipc_protocol", "Обновите согласованную пару Notebook и MCP.")
       }
       let command = try NotebookIPC.decodeCommand(JSONEncoder().encode(envelope.request))
-      let admitted = lock.withLock {
+      let pureRead = (try? NotebookReadCommand(command)) != nil
+      let admitted = try lock.withLock {
         guard !stopped, jobs[id] === job else { return false }
-        job.beginHandler()
+        try job.beginHandler(pureRead: pureRead, executor: requestExecutor,
+          operation: { [handler] in try await handler(command) }, finished: { [self] in
+            releaseFinishedJob(id, job: job)
+          })
         return true
       }
       guard admitted else { throw CollaborationError("owner_unavailable", "Notebook завершает работу.") }
       // The accepted request does not wait for a spare cooperative-pool
       // thread occupied by synchronous Core work. Actor isolation still owns
       // the actual writer; this executor supplies only its runnable threads.
-      Task(executorPreference: requestExecutor, priority: .userInitiated) { [self] in
-        let response: Result<JSONValue, CollaborationError>
-        do { response = .success(try await handler(command)) }
-        catch { response = .failure((error as? CollaborationError) ?? .init("operation_failed", error.localizedDescription)) }
-        job.finishHandler(response)
-        releaseFinishedJob(id, job: job)
-      }
-      guard job.completion.wait(timeout: .now() + NotebookIPC.requestTimeout) == .success,
-        let result = job.result else {
+      guard try job.waitForHandler(until: .now + requestTimeout), let result = job.result else {
         throw CollaborationError("ipc_timeout", "Владелец ещё завершает принятый запрос. Проверьте тот же ID хода; тайм-аут не означает отмену записи.")
       }
       try write(result.get(), error: nil, id: requestID, fd: job.fd)
@@ -284,15 +291,20 @@ private final class IPCRequestExecutor: TaskExecutor {
 private final class IPCJob: @unchecked Sendable {
   private enum WorkerPhase { case pending, running, finished }
   let fd: Int32
-  let completion = DispatchSemaphore(value: 0)
   private let lock = NSLock()
   private var workerPhase = WorkerPhase.pending
   private var handlerFinished = true
   private var response: Result<JSONValue, CollaborationError>?
+  private var handlerTask: Task<Void, Never>?
+  private var handlerJoinTask: Task<Void, Never>?
+  private var pureRead = false
+  private var withdrawn = false
+  private var events: Int32 = -1
   init(fd: Int32) { self.fd = fd }
   var finished: Bool { lock.withLock { workerPhase == .finished && handlerFinished } }
   var hasPendingHandler: Bool { lock.withLock { !handlerFinished } }
   var result: Result<JSONValue, CollaborationError>? { lock.withLock { response } }
+  var ownedHandler: Task<Void, Never>? { lock.withLock { handlerTask } }
   func beginWorker() -> Bool {
     lock.withLock {
       guard workerPhase == .pending else { return false }
@@ -300,23 +312,104 @@ private final class IPCJob: @unchecked Sendable {
       return true
     }
   }
-  func beginHandler() { lock.withLock { handlerFinished = false } }
-  func finishHandler(_ value: Result<JSONValue, CollaborationError>) {
-    lock.withLock { response = value; handlerFinished = true }; completion.signal()
+  func beginHandler(pureRead: Bool, executor: IPCRequestExecutor,
+    operation: @escaping @Sendable () async throws -> JSONValue,
+    finished: @escaping @Sendable () -> Void) throws {
+    try lock.withLock {
+      let queue = kqueue()
+      guard queue >= 0 else { throw SocketIO.failure("Не удалось наблюдать срок IPC запроса.") }
+      var changes = [
+        kevent64_s(ident: UInt64(fd), filter: Int16(EVFILT_WRITE), flags: UInt16(EV_ADD | EV_CLEAR), fflags: 0, data: 0, udata: 0, ext: (0, 0)),
+        kevent64_s(ident: 1, filter: Int16(EVFILT_USER), flags: UInt16(EV_ADD | EV_CLEAR), fflags: 0, data: 0, udata: 0, ext: (0, 0)),
+      ]
+      guard Darwin.kevent64(queue, &changes, Int32(changes.count), nil, 0, 0, nil) == 0 else {
+        close(queue); throw SocketIO.failure("Не удалось зарегистрировать IPC запрос.")
+      }
+      events = queue; self.pureRead = pureRead; handlerFinished = false
+      let producer = Task(executorPreference: executor, priority: .userInitiated) { [self] in
+        // Acquiring the same lock puts registration before the first handler
+        // await, including an already disconnected or stopped request.
+        let cancelled = lock.withLock { withdrawn && self.pureRead }
+        let response: Result<JSONValue, CollaborationError>
+        do {
+          if cancelled { throw CancellationError() }
+          if pureRead { try Task.checkCancellation() }
+          response = .success(try await operation())
+        } catch {
+          response = .failure((error as? CollaborationError) ?? .init("operation_failed", error.localizedDescription))
+        }
+        recordResponse(response)
+      }
+      handlerTask = producer
+      // This continuation belongs to the same admitted job and executor. A
+      // producer callback is not its task/lease completion: join first, then
+      // release the response, descriptor and charged transport slot.
+      handlerJoinTask = Task(executorPreference: executor, priority: .userInitiated) { [self] in
+        await producer.value
+        finishHandler(); finished()
+      }
+    }
+  }
+  /// A write-half-close is a valid request. Only a disconnected response
+  /// reader, owner Stop, or this job's deadline withdraws a pure observation.
+  func waitForHandler(until deadline: ContinuousClock.Instant) throws -> Bool {
+    while true {
+      if lock.withLock({ handlerFinished }) { return true }
+      if lock.withLock({ withdrawn }) { return false }
+      let remaining = ContinuousClock.now.duration(to: deadline)
+      if remaining <= .zero { withdraw(); return false }
+      let parts = remaining.components
+      var timeout = timespec(tv_sec: Int(parts.seconds), tv_nsec: Int(parts.attoseconds / 1_000_000_000))
+      var event = kevent64_s()
+      let queue = lock.withLock { events }
+      let count = Darwin.kevent64(queue, nil, 0, &event, 1, 0, &timeout)
+      if count < 0 && errno == EINTR { continue }
+      guard count >= 0 else { withdraw(); throw SocketIO.failure("Наблюдение IPC запроса прервано.") }
+      if count == 0 { withdraw(); return false }
+      if event.filter == Int16(EVFILT_WRITE), event.flags & UInt16(EV_EOF | EV_ERROR) != 0 {
+        withdraw(); return false
+      }
+    }
+  }
+  private func withdraw() {
+    let task = lock.withLock { () -> Task<Void, Never>? in
+      withdrawn = true
+      return pureRead ? handlerTask : nil
+    }
+    task?.cancel()
+  }
+  private func wakeLocked() {
+    guard events >= 0 else { return }
+    var event = kevent64_s(ident: 1, filter: Int16(EVFILT_USER), flags: 0, fflags: UInt32(NOTE_TRIGGER), data: 0, udata: 0, ext: (0, 0))
+    _ = Darwin.kevent64(events, &event, 1, nil, 0, 0, nil)
+  }
+  private func closeEventsIfFinishedLocked() {
+    guard workerPhase == .finished, handlerFinished else { return }
+    if events >= 0 { close(events); events = -1 }
+    response = nil; handlerTask = nil; handlerJoinTask = nil
+  }
+  private func recordResponse(_ value: Result<JSONValue, CollaborationError>) {
+    lock.withLock { if workerPhase != .finished { response = value } }
+  }
+  private func finishHandler() {
+    lock.withLock { handlerFinished = true; wakeLocked(); closeEventsIfFinishedLocked() }
   }
   func finishWorker() {
     lock.withLock {
       guard workerPhase != .finished else { return }
       close(fd); workerPhase = .finished
+      closeEventsIfFinishedLocked()
     }
   }
   func shutdown() {
+    withdraw()
     lock.withLock {
       switch workerPhase {
       case .pending: close(fd); workerPhase = .finished
       case .running: Darwin.shutdown(fd, SHUT_RDWR)
       case .finished: break
       }
+      wakeLocked()
     }
   }
 }

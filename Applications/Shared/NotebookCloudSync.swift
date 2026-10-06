@@ -252,7 +252,7 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
           for delivery in deliveries {
             guard epoch == token else { return }
             if try await writer.submit({ try $0.deliveryNeedsContent(delivery) }) {
-              let missing = try await writer.submit { try $0.missingBlobHashes(for: delivery.change, limit: 1) }
+              let missing = try await writer.submit(writesStore: true) { try $0.missingBlobHashes(for: delivery.change, limit: 1) }
               if !missing.isEmpty { continue }
             }
             try await apply(delivery, account); progressed = true

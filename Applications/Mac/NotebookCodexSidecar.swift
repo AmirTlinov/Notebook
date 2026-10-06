@@ -123,8 +123,9 @@ final class NotebookCodexSidecar {
   }
 
   init(persistence: NotebookPersistenceQueue, bridge: any NotebookCodexConversationOwner,
-    metadata: any NotebookCodexCatalogueOwner, workspaceID: UUID, computerID: UUID = UUID(), directory: URL) {
-    files = .init(persistence: persistence)
+    metadata: any NotebookCodexCatalogueOwner, workspaceID: UUID, computerID: UUID = UUID(), directory: URL,
+    files: MacNotebookProjectFiles? = nil) {
+    self.files = files ?? .init(persistence: persistence)
     self.persistence = persistence; self.bridge = bridge; self.metadata = metadata
     self.workspaceID = workspaceID; self.computerID = computerID; self.directory = directory
     voice = (bridge as? any NotebookCodexVoiceOwner).map { .init(persistence: persistence, executor: $0) }
@@ -220,6 +221,7 @@ final class NotebookCodexSidecar {
     for task in tasks { task.cancel() }
     for task in tasks { await task.value }
     executing.removeAll(); reconciling.removeAll()
+    await files.stopAndDrain()
     for task in Array(releases.values) { await task.value }
   }
 

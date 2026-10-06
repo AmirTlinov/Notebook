@@ -1,0 +1,97 @@
+{
+  "format": 1,
+  "date": "2026-10-06",
+  "status": "verified-build",
+  "build": "253",
+  "version": "0.3.183",
+  "pluginVersion": "0.2.5",
+  "sourceSHA256": "1a1f3f25190c916318d25552b92ad3a072a3c112cc76ef2ef4d16868ef664054",
+  "baseCommit": "7974eb2d1f32bb77ade87ef9f997b18ff190dead",
+  "scope": "Recovery release contains preview publication repair7974 and the previously verified Back/contact instrumentation. Native test runs use an isolated headless host. Installed252 and its accepted RAM tail have not been changed.",
+  "native": {
+    "passed": 8,
+    "failed": 0,
+    "skipped": 0,
+    "runtimeWarnings": []
+  },
+  "physicalAcceptance": false,
+  "installationAttempted": false,
+  "apps": {
+    "iPad": {
+      "path": "derived-data/Build/Products/Release-iphoneos/Notebook.app",
+      "uuid": "555DC015-EF30-3783-B65D-4C471EB3D227",
+      "manifestSHA256": "39ac3ff576ef248ac1d3544b694b74b121bd6231e15cedeb2edf4e91f4cac4dc",
+      "signature": {
+        "cdhash": "a294b46832af05e15fff2b42964cc16bf7b620a0",
+        "identifier": "com.amirtlinov.notebook.preview",
+        "team": "M94V58FCVP"
+      }
+    },
+    "mac": {
+      "path": "plugin/notebook/runtime/NotebookRuntime.app",
+      "uuid": "86864C24-C4B9-3183-8A1E-7DE1FD39716E",
+      "manifestSHA256": "4e31456ce196f61067ad0cee974e14b67a921e94e22d22f4aa0401ed75814e6d",
+      "signature": {
+        "cdhash": "ef82c3187459024a4ab53c97fc97859777a24868",
+        "identifier": "com.amirtlinov.notebook.mac",
+        "team": "M94V58FCVP"
+      }
+    }
+  },
+  "review": "Independent release diff and all verification artifact hashes checked; no findings. The product repair was independently reviewed in preview-publication-retry/results.json.",
+  "receipts": [
+    {
+      "path": ".build/runtime-253-recovery-verified/verification.json",
+      "sha256": "73ab5f26a91a366cc10d90c95d3a0d6f91feba1645171ad4c7b099694a16f82b"
+    },
+    {
+      "path": ".build/runtime-253-recovery-verified/source-before.json",
+      "sha256": "c247cff4822e32e5985c0e0daa8be45de7d1ea0d724fea3e594953be8435339f"
+    },
+    {
+      "path": ".build/runtime-253-recovery-verified/source-after.json",
+      "sha256": "c247cff4822e32e5985c0e0daa8be45de7d1ea0d724fea3e594953be8435339f"
+    },
+    {
+      "path": ".build/runtime-253-recovery-verified/mac-summary.json",
+      "sha256": "2ac78d44ca695411e26107198ea3c42b84ea194998f8e2689af83517bdad8666"
+    },
+    {
+      "path": ".build/runtime-253-recovery-verified/mac-tests.json",
+      "sha256": "61fe2e37ec7d1018fd0907c199757124981770d2f903c991c9e1b4f9c230aba9"
+    },
+    {
+      "path": ".build/runtime-253-recovery-verified/mac-timings.json",
+      "sha256": "0b131adfacaf2c38f14eb80b831d9a7484ffa5bfd79ebe14345173a6c1db3c58"
+    },
+    {
+      "path": ".build/runtime-253-recovery-verified/selection.json",
+      "sha256": "c4bca555ecf2ea858c5022f0f8f610853ad99ca9cb271610c5fd8a5cac45b3eb"
+    },
+    {
+      "path": ".build/runtime-pair-253/build.json",
+      "sha256": "afea4ed2e7620632d8d1660e3a8f700ee591dfa0c1c78b8f92137b1faac881ea"
+    },
+    {
+      "path": ".build/runtime-pair-253/source-before.json",
+      "sha256": "c247cff4822e32e5985c0e0daa8be45de7d1ea0d724fea3e594953be8435339f"
+    },
+    {
+      "path": ".build/runtime-pair-253/source-after.json",
+      "sha256": "c247cff4822e32e5985c0e0daa8be45de7d1ea0d724fea3e594953be8435339f"
+    },
+    {
+      "path": ".build/runtime-pair-253/iPad-manifest.json",
+      "sha256": "3b0114a5ec512bd96957b43acff3672ef4a93f7cfeba209d1fbd7ce7582d5b3c"
+    },
+    {
+      "path": ".build/runtime-pair-253/mac-manifest.json",
+      "sha256": "14a253ba20a3fe47202611a197eef21f5d4bccb5a03aaea8a31c7341d0a63ec6"
+    }
+  ],
+  "remaining": [
+    "Safely drain the installed252 accepted queue before replacing the runtime.",
+    "Install the signed pair and verify current content, trusted pairing and a newly valid publication in the real Codex panel.",
+    "Cold lasso/index repair and physical Pencil timing remain separate pending work."
+  ]
+}

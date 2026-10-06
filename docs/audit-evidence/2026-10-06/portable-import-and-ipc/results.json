@@ -1,0 +1,98 @@
+{
+  "status": "local-selected-checks-passed",
+  "sourceSHA256": "4507cf579636dfe556ae7beb745a54bf5eccbb24e9496f63ec08d3d8627c29c7",
+  "sourceInputCount": 1673,
+  "sourceUnchanged": true,
+  "core": {
+    "route": "./verify.sh --only; four explicitly selected suites",
+    "functions": 46,
+    "executions": 49,
+    "failed": 0,
+    "skipped": 0
+  },
+  "node": {
+    "passed": 9,
+    "failed": 0,
+    "skipped": 0,
+    "checks": [
+      "bridge cancellation and shared deadline",
+      "healthy write half-close",
+      "actual MCP cancellation forwarding",
+      "exact sample windows and rebuilt scientific asset package"
+    ]
+  },
+  "mcpCheck": "tsc --noEmit and build-script-services --check: passed",
+  "native": {
+    "initialStatus": "failed",
+    "passed": 10,
+    "failed": 1,
+    "skipped": 0,
+    "runtimeWarnings": 0,
+    "sourceUnchanged": true,
+    "passedScopes": [
+      "bounded import owner and optional-cache completion: 3",
+      "original/imported exact scientific rendering and state, vector export, immutable ranges: 3",
+      "borrowed reader boundary: 2",
+      "current and retained independent FileWork process drain: 2"
+    ],
+    "remaining": [],
+    "sourceAfterKind": "separate diagnostic capture after failed public wrapper; not a PASS receipt",
+    "status": "selected-scenarios-passed",
+    "finalProcessDrain": {
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "sourceSHA256": "08f5d83dc1ba2da9061d5c5b85d6f05c65287dafacce8e7f3f295904818a8410",
+      "sourceUnchanged": true
+    },
+    "initialFailure": "Fixture injected a storage head before terminal Script startup; moved to actual candidate retirement boundary. Production unchanged.",
+    "sourceDeltaFromInitial": [
+      "Applications/MacTests/NotebookCodexSidecarTests.swift"
+    ],
+    "combinedUniquePassingMethods": 11
+  },
+  "physicalAcceptance": false,
+  "artifacts": [
+    {
+      "path": ".build/remediation-portable-ipc-final-core-20261006-v1/verification.json",
+      "sha256": "db00ca0b3553b0b4b905901b50e37333ce1b1fba00d333b9ba5b529e965547ae"
+    },
+    {
+      "path": ".build/remediation-portable-ipc-final-core-20261006-v1/source-before.json",
+      "sha256": "2acdcd64cee2fee1b0e3f3c57936cdf4820f3af251d5be862afe79bb8f386739"
+    },
+    {
+      "path": ".build/remediation-portable-ipc-final-core-20261006-v1/source-after.json",
+      "sha256": "2acdcd64cee2fee1b0e3f3c57936cdf4820f3af251d5be862afe79bb8f386739"
+    },
+    {
+      "path": "/tmp/notebook-remediation-import-ipc-node-final-20261006.log",
+      "sha256": "2ae1647f2ac3d662d110ae781111afda0f6b9025dc76fffc5edfeb3012323058"
+    },
+    {
+      "path": "/tmp/notebook-remediation-mcp-final-20261006.log",
+      "sha256": "4ac7455681a2cf3e032df98845dc335f63193508f24dcc1264b5843fd33ae4c3"
+    },
+    {
+      "path": ".build/remediation-import-ipc-drain-native-final-20261006-v1/mac.xcresult"
+    },
+    {
+      "path": ".build/remediation-import-ipc-drain-native-final-20261006-v1/source-after-diagnostic.json",
+      "sha256": "061eb2e300ba77e027c7049d4517c94ced4a3609defcef0c8de6823742f9acc1"
+    },
+    {
+      "path": ".build/remediation-process-drain-native-final-20261006-v2/verification.json",
+      "sha256": "e21a852bf2cafd60a631317bcc0eac9eaba324f19b5a85ec85ed6b4e34da7bb0"
+    },
+    {
+      "path": ".build/remediation-process-drain-native-final-20261006-v2/source-before.json",
+      "sha256": "1934720729991fabe4d8355793e3a0edce16c14dca01e9bc2fe6408de7c52909"
+    },
+    {
+      "path": ".build/remediation-process-drain-native-final-20261006-v2/source-after.json",
+      "sha256": "1934720729991fabe4d8355793e3a0edce16c14dca01e9bc2fe6408de7c52909"
+    }
+  ],
+  "finalSourceSHA256": "08f5d83dc1ba2da9061d5c5b85d6f05c65287dafacce8e7f3f295904818a8410"
+}

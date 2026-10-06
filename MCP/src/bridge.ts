@@ -18,7 +18,7 @@ export class BridgeError extends Error {
 export async function runBridge<T = Record<string, unknown>>(
   socketPath: string,
   request: Record<string, unknown>,
-  options: { deadline?: number } = {},
+  options: { deadline?: number; signal?: AbortSignal } = {},
 ): Promise<T> {
   // A monotonic deadline may be shared by several calls belonging to one
   // tool response. It includes validation, admission, reply and image reads.
@@ -34,13 +34,16 @@ export async function runBridge<T = Record<string, unknown>>(
     const prefix: Buffer[] = [];
     let prefixBytes = 0;
     const chunks: Buffer[] = [];
+    const aborted=()=>finish(new BridgeError({code:"ipc_cancelled",message:"Наблюдение этого ответа отменено. Принятая запись сохраняет своего владельца."}));
     const finish = (error?: Error, value?: T) => {
       if (settled) return;
-      settled = true; clearTimeout(timer); socket?.destroy();
+      settled = true; clearTimeout(timer); options.signal?.removeEventListener("abort",aborted); socket?.destroy();
       if (error) reject(error); else fulfill(value!);
     };
     const timer = setTimeout(() => finish(new BridgeError({ code: "ipc_timeout",
       message: "Ответ Notebook не получен в пределах срока. Истечение срока не отменяет принятую запись." })), Math.max(0, deadline - performance.now()));
+    options.signal?.addEventListener("abort",aborted,{once:true});
+    if(options.signal?.aborted){aborted();return;}
     void (async () => {
       try {
         const [directory, endpoint] = await Promise.all([lstat(dirname(socketPath)), lstat(socketPath)]);

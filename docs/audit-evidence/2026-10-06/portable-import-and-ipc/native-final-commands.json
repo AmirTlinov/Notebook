@@ -1,0 +1,510 @@
+[
+  {
+    "argv": [
+      "/opt/homebrew/opt/python@3.14/bin/python3.14",
+      "--version"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "toolchain-python"
+  },
+  {
+    "argv": [
+      "/usr/bin/xcrun",
+      "xcodebuild",
+      "-version"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "toolchain-xcode"
+  },
+  {
+    "argv": [
+      "/usr/bin/xcrun",
+      "swift",
+      "--version"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "toolchain-swift"
+  },
+  {
+    "argv": [
+      "/usr/bin/xcrun",
+      "--sdk",
+      "iphoneos",
+      "--show-sdk-build-version"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "toolchain-iphoneosSDK"
+  },
+  {
+    "argv": [
+      "/usr/bin/xcrun",
+      "--sdk",
+      "macosx",
+      "--show-sdk-build-version"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "toolchain-macosSDK"
+  },
+  {
+    "argv": [
+      "/opt/homebrew/bin/xcodegen",
+      "--version"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "toolchain-xcodegen"
+  },
+  {
+    "argv": [
+      "/Users/amir/.local/state/fnm_multishells/70007_1791276664073/bin/node",
+      "--version"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "toolchain-node"
+  },
+  {
+    "argv": [
+      "/Users/amir/.local/state/fnm_multishells/70007_1791276664073/bin/npm",
+      "--version"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "toolchain-npm"
+  },
+  {
+    "argv": [
+      "npm",
+      "ci",
+      "--ignore-scripts"
+    ],
+    "cwd": "/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook/MCP",
+    "exitCode": 0,
+    "label": "mcp-dependencies"
+  },
+  {
+    "argv": [
+      "/opt/homebrew/opt/python@3.14/bin/python3.14",
+      "-B",
+      "/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook/Applications/prepare_notebook_typescript.py",
+      "--prepare",
+      "--stage-root",
+      "/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook/.build/notebook-typescript-runtime"
+    ],
+    "cwd": "/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook",
+    "exitCode": 0,
+    "label": "typescript-resources"
+  },
+  {
+    "argv": [
+      "xcodegen",
+      "generate",
+      "--spec",
+      "project.yml"
+    ],
+    "cwd": "/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook/Applications",
+    "exitCode": 0,
+    "label": "generate-project"
+  },
+  {
+    "argv": [
+      "/opt/homebrew/opt/python@3.14/bin/python3.14",
+      "-B",
+      "/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook/Applications/prepare_notebook_typesetter.py",
+      "--prepare",
+      "--platform",
+      "macosx",
+      "--stage",
+      "/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/.build/surface-ink-runtime"
+    ],
+    "cwd": "/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook",
+    "exitCode": 0,
+    "label": "typesetter-resources-macosx"
+  },
+  {
+    "argv": [
+      "/opt/homebrew/opt/python@3.14/bin/python3.14",
+      "-B",
+      "/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook/Applications/prepare_notebook_codex.py",
+      "--stage",
+      "/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook/.build/notebook-codex-runtime"
+    ],
+    "cwd": "/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook",
+    "exitCode": 0,
+    "label": "codex-resources"
+  },
+  {
+    "argv": [
+      "node",
+      "/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook/MCP/build-surface.mjs",
+      "--stage",
+      "/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook/.build/surface"
+    ],
+    "cwd": "/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook",
+    "exitCode": 0,
+    "label": "surface-resources"
+  },
+  {
+    "argv": [
+      "xcrun",
+      "xcodebuild",
+      "-quiet",
+      "-project",
+      "Notebook.xcodeproj",
+      "-scheme",
+      "NotebookRuntime",
+      "-configuration",
+      "Debug",
+      "-destination",
+      "platform=macOS",
+      "-derivedDataPath",
+      "/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/5a0fbec685353e35/mac",
+      "-parallel-testing-enabled",
+      "NO",
+      "-collect-test-diagnostics",
+      "never",
+      "build-for-testing",
+      "CODE_SIGN_IDENTITY=Apple Development",
+      "CODE_SIGN_STYLE=Automatic",
+      "CODE_SIGNING_ALLOWED=YES",
+      "DEVELOPMENT_TEAM=M94V58FCVP",
+      "NOTEBOOK_MAC_BUNDLE_SUFFIX=.acceptance",
+      "NOTEBOOK_ACCEPTANCE_ENABLED=YES",
+      "NOTEBOOK_SCRIPT_BUNDLE_SUFFIX=.native-test",
+      "NOTEBOOK_TYPESETTER_RUNTIME=/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/.build/surface-ink-runtime",
+      "NOTEBOOK_SURFACE_STAGE=/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook/.build/surface",
+      "NOTEBOOK_TYPESCRIPT_RUNTIME=/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook/.build/notebook-typescript-runtime/474aa6a74b6ec71d0f691d0cdebb0ddb5dce7c4ebb6e68bd1a105befd8ee547f",
+      "-only-testing:NotebookMacTests/NotebookCodexSidecarTests/testClearedRetiringCandidateRetriesItsSamePublishedFileAfterLateStorageFailure",
+      "-only-testing:NotebookMacTests/NotebookCodexSidecarTests/testProcessDrainRetriesTheSamePublishedFileAfterItsModelAlreadyStopped",
+      "-only-testing:NotebookMacTests/NotebookCodexSidecarTests/testRetainedWorkspaceIndependentHostKeepsItsFileDrainAcrossLateStorageFailure"
+    ],
+    "cwd": "/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook/Applications",
+    "exitCode": 0,
+    "label": "mac-build-for-testing"
+  },
+  {
+    "argv": [
+      "/usr/bin/codesign",
+      "--display",
+      "--verbose=4",
+      "/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/5a0fbec685353e35/mac/Build/Products/Debug/NotebookRuntime.app"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "mac-native-signer"
+  },
+  {
+    "argv": [
+      "/usr/bin/codesign",
+      "--force",
+      "--sign",
+      "Apple Development: FINLEY KIWM Q (Q487Y359U5)",
+      "--timestamp=none",
+      "--identifier",
+      "com.amirtlinov.notebook.typescript-compiler",
+      "--entitlements",
+      "/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook/Sources/NotebookMarkupService/typescript-child.entitlements.plist",
+      "/private/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/5a0fbec685353e35/mac/Build/Products/Debug/NotebookRuntime.app/Contents/XPCServices/NotebookMarkupService.xpc/Contents/Resources/NotebookTypeScript/notebook-typescript"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "test-worker-sign-0"
+  },
+  {
+    "argv": [
+      "/usr/bin/codesign",
+      "--display",
+      "--entitlements",
+      ":-",
+      "--xml",
+      "/private/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/5a0fbec685353e35/mac/Build/Products/Debug/NotebookRuntime.app/Contents/XPCServices/NotebookMarkupService.xpc/Contents/Resources/NotebookTypeScript/notebook-typescript"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "test-worker-rights-0"
+  },
+  {
+    "argv": [
+      "/usr/bin/codesign",
+      "--force",
+      "--sign",
+      "Apple Development: FINLEY KIWM Q (Q487Y359U5)",
+      "--timestamp=none",
+      "--identifier",
+      "com.amirtlinov.notebook.script-service.native-test",
+      "--entitlements",
+      "/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook/Sources/NotebookScriptService/entitlements.plist",
+      "/private/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/5a0fbec685353e35/mac/Build/Products/Debug/NotebookRuntime.app/Contents/XPCServices/NotebookScriptService.xpc"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "test-worker-sign-1"
+  },
+  {
+    "argv": [
+      "/usr/bin/codesign",
+      "--display",
+      "--entitlements",
+      ":-",
+      "--xml",
+      "/private/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/5a0fbec685353e35/mac/Build/Products/Debug/NotebookRuntime.app/Contents/XPCServices/NotebookScriptService.xpc"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "test-worker-rights-1"
+  },
+  {
+    "argv": [
+      "/usr/bin/codesign",
+      "--force",
+      "--sign",
+      "Apple Development: FINLEY KIWM Q (Q487Y359U5)",
+      "--timestamp=none",
+      "--identifier",
+      "com.amirtlinov.notebook.markup-service.native-test",
+      "--entitlements",
+      "/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook/Sources/NotebookMarkupService/entitlements.plist",
+      "/private/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/5a0fbec685353e35/mac/Build/Products/Debug/NotebookRuntime.app/Contents/XPCServices/NotebookMarkupService.xpc"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "test-worker-sign-2"
+  },
+  {
+    "argv": [
+      "/usr/bin/codesign",
+      "--display",
+      "--entitlements",
+      ":-",
+      "--xml",
+      "/private/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/5a0fbec685353e35/mac/Build/Products/Debug/NotebookRuntime.app/Contents/XPCServices/NotebookMarkupService.xpc"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "test-worker-rights-2"
+  },
+  {
+    "argv": [
+      "/usr/bin/codesign",
+      "--force",
+      "--sign",
+      "Apple Development: FINLEY KIWM Q (Q487Y359U5)",
+      "--timestamp=none",
+      "--preserve-metadata=identifier,entitlements,flags,runtime",
+      "/private/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/5a0fbec685353e35/mac/Build/Products/Debug/NotebookRuntime.app"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "test-host-reseal"
+  },
+  {
+    "argv": [
+      "/usr/bin/codesign",
+      "--verify",
+      "--deep",
+      "--strict",
+      "/private/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/5a0fbec685353e35/mac/Build/Products/Debug/NotebookRuntime.app"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "test-host-seal-verify"
+  },
+  {
+    "argv": [
+      "xcrun",
+      "xcodebuild",
+      "-quiet",
+      "-project",
+      "Notebook.xcodeproj",
+      "-scheme",
+      "NotebookRuntime",
+      "-configuration",
+      "Debug",
+      "-destination",
+      "platform=macOS",
+      "-derivedDataPath",
+      "/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/5a0fbec685353e35/mac",
+      "-parallel-testing-enabled",
+      "NO",
+      "-collect-test-diagnostics",
+      "never",
+      "test-without-building",
+      "CODE_SIGN_IDENTITY=Apple Development",
+      "CODE_SIGN_STYLE=Automatic",
+      "CODE_SIGNING_ALLOWED=YES",
+      "DEVELOPMENT_TEAM=M94V58FCVP",
+      "NOTEBOOK_MAC_BUNDLE_SUFFIX=.acceptance",
+      "NOTEBOOK_ACCEPTANCE_ENABLED=YES",
+      "NOTEBOOK_SCRIPT_BUNDLE_SUFFIX=.native-test",
+      "NOTEBOOK_TYPESETTER_RUNTIME=/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/.build/surface-ink-runtime",
+      "NOTEBOOK_SURFACE_STAGE=/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook/.build/surface",
+      "NOTEBOOK_TYPESCRIPT_RUNTIME=/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook/.build/notebook-typescript-runtime/474aa6a74b6ec71d0f691d0cdebb0ddb5dce7c4ebb6e68bd1a105befd8ee547f",
+      "-only-testing:NotebookMacTests/NotebookCodexSidecarTests/testClearedRetiringCandidateRetriesItsSamePublishedFileAfterLateStorageFailure",
+      "-only-testing:NotebookMacTests/NotebookCodexSidecarTests/testProcessDrainRetriesTheSamePublishedFileAfterItsModelAlreadyStopped",
+      "-only-testing:NotebookMacTests/NotebookCodexSidecarTests/testRetainedWorkspaceIndependentHostKeepsItsFileDrainAcrossLateStorageFailure",
+      "-enumerate-tests",
+      "-test-enumeration-style",
+      "flat",
+      "-test-enumeration-format",
+      "json",
+      "-test-enumeration-output-path",
+      "/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook/.build/remediation-process-drain-native-final-20261006-v2/mac-inventory.json"
+    ],
+    "cwd": "/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook/Applications",
+    "exitCode": 0,
+    "label": "mac-inventory"
+  },
+  {
+    "argv": [
+      "xcrun",
+      "xcodebuild",
+      "-quiet",
+      "-project",
+      "Notebook.xcodeproj",
+      "-scheme",
+      "NotebookRuntime",
+      "-configuration",
+      "Debug",
+      "-destination",
+      "platform=macOS",
+      "-derivedDataPath",
+      "/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/5a0fbec685353e35/mac",
+      "-parallel-testing-enabled",
+      "NO",
+      "-collect-test-diagnostics",
+      "never",
+      "test-without-building",
+      "-resultBundlePath",
+      "/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook/.build/remediation-process-drain-native-final-20261006-v2/mac.xcresult",
+      "CODE_SIGN_IDENTITY=Apple Development",
+      "CODE_SIGN_STYLE=Automatic",
+      "CODE_SIGNING_ALLOWED=YES",
+      "DEVELOPMENT_TEAM=M94V58FCVP",
+      "NOTEBOOK_MAC_BUNDLE_SUFFIX=.acceptance",
+      "NOTEBOOK_ACCEPTANCE_ENABLED=YES",
+      "NOTEBOOK_SCRIPT_BUNDLE_SUFFIX=.native-test",
+      "NOTEBOOK_TYPESETTER_RUNTIME=/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/.build/surface-ink-runtime",
+      "NOTEBOOK_SURFACE_STAGE=/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook/.build/surface",
+      "NOTEBOOK_TYPESCRIPT_RUNTIME=/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook/.build/notebook-typescript-runtime/474aa6a74b6ec71d0f691d0cdebb0ddb5dce7c4ebb6e68bd1a105befd8ee547f",
+      "-only-testing:NotebookMacTests/NotebookCodexSidecarTests/testClearedRetiringCandidateRetriesItsSamePublishedFileAfterLateStorageFailure",
+      "-only-testing:NotebookMacTests/NotebookCodexSidecarTests/testProcessDrainRetriesTheSamePublishedFileAfterItsModelAlreadyStopped",
+      "-only-testing:NotebookMacTests/NotebookCodexSidecarTests/testRetainedWorkspaceIndependentHostKeepsItsFileDrainAcrossLateStorageFailure"
+    ],
+    "cwd": "/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook/Applications",
+    "exitCode": 0,
+    "label": "mac"
+  },
+  {
+    "argv": [
+      "xcrun",
+      "xcresulttool",
+      "get",
+      "test-results",
+      "summary",
+      "--path",
+      "/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook/.build/remediation-process-drain-native-final-20261006-v2/mac.xcresult",
+      "--compact"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "mac-summary"
+  },
+  {
+    "argv": [
+      "xcrun",
+      "xcresulttool",
+      "get",
+      "test-results",
+      "tests",
+      "--path",
+      "/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook/.build/remediation-process-drain-native-final-20261006-v2/mac.xcresult",
+      "--compact"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "mac-tests"
+  },
+  {
+    "argv": [
+      "/opt/homebrew/opt/python@3.14/bin/python3.14",
+      "--version"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "toolchain-after-python"
+  },
+  {
+    "argv": [
+      "/usr/bin/xcrun",
+      "xcodebuild",
+      "-version"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "toolchain-after-xcode"
+  },
+  {
+    "argv": [
+      "/usr/bin/xcrun",
+      "swift",
+      "--version"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "toolchain-after-swift"
+  },
+  {
+    "argv": [
+      "/usr/bin/xcrun",
+      "--sdk",
+      "iphoneos",
+      "--show-sdk-build-version"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "toolchain-after-iphoneosSDK"
+  },
+  {
+    "argv": [
+      "/usr/bin/xcrun",
+      "--sdk",
+      "macosx",
+      "--show-sdk-build-version"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "toolchain-after-macosSDK"
+  },
+  {
+    "argv": [
+      "/opt/homebrew/bin/xcodegen",
+      "--version"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "toolchain-after-xcodegen"
+  },
+  {
+    "argv": [
+      "/Users/amir/.local/state/fnm_multishells/70007_1791276664073/bin/node",
+      "--version"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "toolchain-after-node"
+  },
+  {
+    "argv": [
+      "/Users/amir/.local/state/fnm_multishells/70007_1791276664073/bin/npm",
+      "--version"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "toolchain-after-npm"
+  }
+]

@@ -1,0 +1,73 @@
+[
+  {
+    "argv": [
+      "/opt/homebrew/opt/python@3.14/bin/python3.14",
+      "--version"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "toolchain-python"
+  },
+  {
+    "argv": [
+      "swift",
+      "--version"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "toolchain-swift"
+  },
+  {
+    "argv": [
+      "swift",
+      "test",
+      "list",
+      "--disable-xctest",
+      "--event-stream-output-path",
+      "/dev/stdout",
+      "--event-stream-version",
+      "6.4"
+    ],
+    "cwd": "/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook",
+    "exitCode": 0,
+    "label": "core-inventory",
+    "stdoutMode": "pipe"
+  },
+  {
+    "argv": [
+      "swift",
+      "test",
+      "--disable-xctest",
+      "--skip-build",
+      "--test-product",
+      "NotebookCoreTests",
+      "--filter",
+      "^(?:NotebookCoreTests\\.DocumentPrintLocationsBudgetTests/aSingleExtendedGraphemeCannotBypassTheWireLineBound\\(\\)/DocumentPrintLocationsTests\\.swift:106:4|NotebookCoreTests\\.DocumentPrintLocationsBudgetTests/actualLocationsShareTheOuterCreditAndKeepUnicodeAddressesAndUTF16SourceOffsets\\(\\)/DocumentPrintLocationsTests\\.swift:117:4|NotebookCoreTests\\.DocumentPrintLocationsBudgetTests/cancellationBeforeParsingDoesNotFirstMaterializeMillionsOfIgnoredLines\\(\\)/DocumentPrintLocationsTests\\.swift:135:4|NotebookCoreTests\\.NotebookIPCTests/aRawMalformedPeerUsesTheProductionSocketAdmissionPolicy\\(\\)/NotebookIPCTests\\.swift:263:4|NotebookCoreTests\\.NotebookIPCTests/aSecondServerCannotReplaceTheCurrentWriterSocket\\(\\)/NotebookIPCTests\\.swift:36:4|NotebookCoreTests\\.NotebookIPCTests/acceptedHandlerKeepsItsServerExecutorAcrossSuspensionAndActorHops\\(\\)/NotebookIPCTests\\.swift:95:4|NotebookCoreTests\\.NotebookIPCTests/anOversizedFrameIsRejectedWithoutCallingTheOwner\\(\\)/NotebookIPCTests\\.swift:253:4|NotebookCoreTests\\.NotebookIPCTests/clientRefusesInsecureSocketBeforeSendingACommand\\(\\)/NotebookIPCTests\\.swift:156:4|NotebookCoreTests\\.NotebookIPCTests/disconnectedAcceptedWriteRecoversItsLostCommitReplyWithoutRepeatingTheBody\\(\\)/NotebookIPCTests\\.swift:543:4|NotebookCoreTests\\.NotebookIPCTests/failedBindAfterAnEmptyAddressCheckPreservesTheWinningSocket\\(\\)/NotebookIPCTests\\.swift:46:4|NotebookCoreTests\\.NotebookIPCTests/frameReaderRejectsImpossibleHeadersWhileThePeerKeepsItsBodyOpen\\(\\)/NotebookIPCTests\\.swift:288:4|NotebookCoreTests\\.NotebookIPCTests/frameReaderRejectsTruncatedHeaderAndPayloadWithoutDecoding\\(\\)/NotebookIPCTests\\.swift:320:4|NotebookCoreTests\\.NotebookIPCTests/frameReaderReturnsExactlyTheRawPeerPayload\\(\\)/NotebookIPCTests\\.swift:304:4|NotebookCoreTests\\.NotebookIPCTests/malformedFrameDoesNotWaitForThePausedAsyncOwner\\(\\)/NotebookIPCTests\\.swift:113:4|NotebookCoreTests\\.NotebookIPCTests/panelPresentationWireAdmitsFullTypedProjectionAndRejectsStoreSelection\\(\\)/NotebookIPCTests\\.swift:220:4|NotebookCoreTests\\.NotebookIPCTests/processLeaseKeepsOneOwnerUntilReleaseAndIsNotInheritedByChildren\\(\\)/NotebookIPCTests\\.swift:75:4|NotebookCoreTests\\.NotebookIPCTests/queuedReadDisconnectCannotCancelOrWriteToAReusedDescriptor\\(\\)/NotebookIPCTests\\.swift:517:4|NotebookCoreTests\\.NotebookIPCTests/realUnixSocketReturnsTypedResultAndKeepsPrivatePermissions\\(\\)/NotebookIPCTests\\.swift:8:4|NotebookCoreTests\\.NotebookIPCTests/runtimeCommandsDecodeWithoutOpeningAWorkspaceAndRejectTheStoreDispatcher\\(\\)/NotebookIPCTests\\.swift:183:4|NotebookCoreTests\\.NotebookIPCTests/serverRefusesSymlinkOrWorldAccessibleDirectory\\(\\)/NotebookIPCTests\\.swift:164:4|NotebookCoreTests\\.NotebookIPCTests/shutdownRetainsAQueuedAcceptedHandlerUntilItsOwnExecutorCompletes\\(\\)/NotebookIPCTests\\.swift:129:4|NotebookCoreTests\\.NotebookIPCTests/socketObservationOwnsCancellationBeforeTheFirstSQLiteRow\\(reason:\\)/NotebookIPCTests\\.swift:461:4|NotebookCoreTests\\.NotebookIPCTests/stopAcknowledgesOnlyAfterAnAcceptedWriterAndDisconnectedClientHaveDrained\\(\\)/NotebookIPCTests\\.swift:336:4|NotebookCoreTests\\.NotebookIPCTests/stopDrainsAnIncompleteFrameWithoutWaitingForItsSocketTimeout\\(\\)/NotebookIPCTests\\.swift:394:4|NotebookCoreTests\\.NotebookIPCTests/stopOwnsAcceptedSocketsBeforeTheirWorkerQueueRuns\\(\\)/NotebookIPCTests\\.swift:421:4|NotebookCoreTests\\.NotebookIPCTests/stoppingARetiredServerDoesNotUnlinkTheReplacementSocket\\(\\)/NotebookIPCTests\\.swift:62:4|NotebookCoreTests\\.NotebookIPCTests/typedErrorSurvivesTheTransport\\(\\)/NotebookIPCTests\\.swift:22:4|NotebookCoreTests\\.NotebookIPCTests/wireCannotChooseRootPathsOrUnknownCommands\\(\\)/NotebookIPCTests\\.swift:176:4|NotebookCoreTests\\.NotebookPortableDocumentTests/acceptedEscapedAndUnicodeSourcesKeepEveryAuthoredByte\\(\\)/NotebookPortableDocumentTests\\.swift:170:4|NotebookCoreTests\\.NotebookPortableDocumentTests/binarySourceReadReservesTheActualFourMiBPartBeforeAccumulatingIt\\(\\)/NotebookPortableDocumentTests\\.swift:210:4|NotebookCoreTests\\.NotebookPortableDocumentTests/exactPresentedPixelsAndSemanticStateRemainChargedDuringPreparation\\(\\)/NotebookPortableDocumentTests\\.swift:185:4|NotebookCoreTests\\.NotebookPortableDocumentTests/fullSixteenMiBSourceBudgetRoundTripsAndPreparesOnePortableExport\\(\\)/NotebookPortableDocumentTests\\.swift:50:4|NotebookCoreTests\\.NotebookPortableDocumentTests/importCreatesOneNewCopyWithStateAndUndo\\(\\)/NotebookPortableDocumentTests\\.swift:97:4|NotebookCoreTests\\.NotebookPortableDocumentTests/matchingDerivedSnapshotCanBeReboundButStaleCompilerIsDiscarded\\(\\)/NotebookPortableDocumentTests\\.swift:260:4|NotebookCoreTests\\.NotebookPortableDocumentTests/oversizedCausalFrontierAndStateHaveExplicitIndependentBudgets\\(\\)/NotebookPortableDocumentTests\\.swift:69:4|NotebookCoreTests\\.NotebookPortableDocumentTests/oversizedOptionalPDFIsDiscardedWithoutLosingSources\\(\\)/NotebookPortableDocumentTests\\.swift:86:4|NotebookCoreTests\\.NotebookPortableDocumentTests/sourceEscapingIsAdmittedBeforeBuildingTheAuthoredOperation\\(\\)/NotebookPortableDocumentTests\\.swift:153:4|NotebookCoreTests\\.NotebookPortableDocumentTests/sourceHashAndCRCFailuresNeverCreateAnItem\\(\\)/NotebookPortableDocumentTests\\.swift:117:4|NotebookCoreTests\\.NotebookPortableDocumentTests/streamingPreparationMeasuresTinyAndOneMiBRealCreatePhases\\(\\)/NotebookPortableDocumentTests\\.swift:233:4|NotebookCoreTests\\.NotebookPortableDocumentTests/unknownImportCommitReturnsItsOriginalCopyAfterAPeerSourceEdit\\(\\)/NotebookPortableDocumentTests\\.swift:134:4|NotebookCoreTests\\.NotebookPortableDocumentTests/zipContainsRealSourcesAndRoundTripsTheExactCut\\(\\)/NotebookPortableDocumentTests\\.swift:38:4|NotebookCoreTests\\.NotebookPortableDocumentTests/zipDeniesTraversalDuplicateNamesAndSymlinks\\(\\)/NotebookPortableDocumentTests\\.swift:281:4|NotebookCoreTests\\.NotebookPortableDocumentTests/zipReadsDeflateWithoutAnExternalExtractor\\(\\)/NotebookPortableDocumentTests\\.swift:298:4|NotebookCoreTests\\.NotebookQueryCutTests/escapedCutCannotReenterAReusedHandleOrAWriter\\(\\)/NotebookQueryCutTests\\.swift:50:4|NotebookCoreTests\\.NotebookQueryCutTests/immutableReadCommandRefusesEveryMutationAndRetainsItsOriginalRequest\\(\\)/NotebookQueryCutTests\\.swift:80:4|NotebookCoreTests\\.NotebookQueryCutTests/panelAndPixelReadsBorrowOneCutAndExpireWithoutAcceptingWrites\\(\\)/NotebookQueryCutTests\\.swift:7:4)$",
+      "--event-stream-output-path",
+      "/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook/.build/remediation-portable-ipc-final-core-20261006-v1/core-NotebookCoreTests-events.jsonl",
+      "--event-stream-version",
+      "6.4"
+    ],
+    "cwd": "/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook",
+    "exitCode": 0,
+    "label": "core-NotebookCoreTests"
+  },
+  {
+    "argv": [
+      "/opt/homebrew/opt/python@3.14/bin/python3.14",
+      "--version"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "toolchain-after-python"
+  },
+  {
+    "argv": [
+      "swift",
+      "--version"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "toolchain-after-swift"
+  }
+]
