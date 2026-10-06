@@ -1,0 +1,170 @@
+{
+  "format": 1,
+  "date": "2026-10-06",
+  "status": "five-scenarios-passed-fixture-warning-repaired",
+  "baseCommit": "01c8a645976494d7c2335cd76bd6aa33c4afaa74",
+  "scope": "Physical iPad isolated native/UI hosts. Production252 unchanged. Back/cold-reopen uses the original system-routed Journey without diagnostic launch arguments. Timing instrumentation is opt-in; hardware Pencil latency is not accepted by these runs.",
+  "sourceSHA256": "2c798e13e672db4e87068ca26cdc3eaa9a32595aeee60c31aa098e2f0fd679f8",
+  "originalRun": {
+    "sourceSHA256": "bf8cd30306a0a94ade9a266166273856a21148b5b2ecf13b45ff6d2c6a051e49",
+    "passed": 5,
+    "failed": 0,
+    "skipped": 0,
+    "runtimeWarnings": [
+      {
+        "issueType": "Runtime Warning",
+        "message": "Adding 'UIButton' as a subview of UIHostingController.view is not supported and may result in a broken view hierarchy. Add your view above UIHostingController.view in a common superview or insert it into your SwiftUI content in a UIViewRepresentable instead.",
+        "sourceURL": "file:///Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/Applications/Tests/NotebookElementManipulationTests.swift"
+      }
+    ],
+    "verificationAccepted": false,
+    "scenarios": [
+      {
+        "nodeIdentifier": "AgentSceneFingerRoutingTests/testWindowObserverRetiresControlAndPopupContactsBeforeTheNextPickup()",
+        "result": "Passed",
+        "durationInSeconds": 0.013810038566589355
+      },
+      {
+        "nodeIdentifier": "InputFrameMonitorTests/testPresentationTimingKeepsBothRenderBranchesBoundToTheirOwnUICommit()",
+        "result": "Passed",
+        "durationInSeconds": 0.008528947830200195
+      },
+      {
+        "nodeIdentifier": "NotebookElementManipulationTests/testClipboardErrorCannotReturnAfterItsDestinationOrContactChanges()",
+        "result": "Passed",
+        "durationInSeconds": 0.21469402313232422
+      },
+      {
+        "nodeIdentifier": "NotebookElementManipulationTests/testPresentedControlsKeepTheirIntentThroughDownAndLift()",
+        "result": "Passed",
+        "durationInSeconds": 1.1454960107803345
+      },
+      {
+        "nodeIdentifier": "NotebookWorkspaceJourneyUITests/testFirstSelectionMoveDeleteAndColdReopenPreserveTheWholeComposition()",
+        "result": "Passed",
+        "durationInSeconds": 48.115538001060486
+      }
+    ]
+  },
+  "fixtureRepeat": {
+    "sourceSHA256": "2c798e13e672db4e87068ca26cdc3eaa9a32595aeee60c31aa098e2f0fd679f8",
+    "passed": 1,
+    "failed": 0,
+    "skipped": 0,
+    "runtimeWarnings": [],
+    "verificationAccepted": true,
+    "scenarios": [
+      {
+        "nodeIdentifier": "NotebookElementManipulationTests/testPresentedControlsKeepTheirIntentThroughDownAndLift()",
+        "result": "Passed",
+        "durationInSeconds": 0.9539960622787476
+      }
+    ],
+    "onlyChangedInput": "Applications/Tests/NotebookElementManipulationTests.swift",
+    "change": "Create the test popover button through UIViewRepresentable rather than adding a child directly to UIHostingController.view; assertions and production bytes are unchanged."
+  },
+  "ownerFiles": [
+    {
+      "executable": false,
+      "path": "Applications/Shared/InkCanvasView.swift",
+      "sha256": "38c2e2ccef5e14a2935c4f055c29d21e8e0d01884994c55461f2596cb646fc49"
+    },
+    {
+      "executable": false,
+      "path": "Applications/Tests/AgentSceneFingerRoutingTests.swift",
+      "sha256": "9110296074c5f4782d30e913d8123a732008c0aa2b11b5ba4db002575b2540af"
+    },
+    {
+      "executable": false,
+      "path": "Applications/Tests/InputFrameMonitorTests.swift",
+      "sha256": "2be3f1515cb43581b2a8c4efbc759e0ed10c9eb8cfde05bc531da76f071cdf3d"
+    },
+    {
+      "executable": false,
+      "path": "Applications/Tests/NotebookElementManipulationTests.swift",
+      "sha256": "219061c37619836823f3bf57786bd4d049e8e32aedfcf15d4ec5573135cc7446"
+    },
+    {
+      "executable": false,
+      "path": "Applications/Tests/NotebookInputTests.swift",
+      "sha256": "6fb0f26970da2afc1a4426bdfedacfc612f56c72a32a88631c489de71d8eff58"
+    },
+    {
+      "executable": false,
+      "path": "Applications/Tests/NotebookSceneFingerOwnershipTests.swift",
+      "sha256": "fb504491b54cadb855e68cb9717860bc833a2535de12a0d486cd38d58ed4e20d"
+    },
+    {
+      "executable": false,
+      "path": "Applications/iPad/WorkspaceGestureLayer.swift",
+      "sha256": "af91e32fc1069615f54191f0d3a4f43b11683e2e791a637762472d553532abd6"
+    }
+  ],
+  "unchangedJourney": {
+    "executable": false,
+    "path": "Applications/UITests/NotebookWorkspaceJourneyUITests.swift",
+    "sha256": "f7f460c78b8b9b1f22993ee5c87c8ba5015bc78d416a6e0b2e39c46fc22f8358"
+  },
+  "behavior": "Window contact lifetime and release barriers include presented controls. Only a new scene contact advances accepted context; popover/sheet down no longer revokes its own command before touchUp.",
+  "timing": "Both Metal callback branches capture their UI modelTime and same-update normal/low-latency CA flush. No added read of the effectful confirmation getter; scheduling, budgets and OS receipt semantics are unchanged.",
+  "review": "Independent reviews of input boundary, timing observation and UIViewRepresentable fixture passed. Root reviewed final diff and three actual system screenshots.",
+  "screenshots": [
+    {
+      "path": "moved-composition.png",
+      "sha256": "b4a5a8ddaf80ecd5c25c62be089007ac6785d0c000b332663d7acf81e3893717",
+      "reviewed": true,
+      "observation": "Moved red body is selected at its new position; blue neighbors, raw ink and leaf marker remain visible."
+    },
+    {
+      "path": "returned-to-board.png",
+      "sha256": "57bacba6f82b7e64ccedad97196c028336de438cfd005de8fc9f3bde8fb66692",
+      "reviewed": true,
+      "observation": "Back reaches the board and shows the closed notebook cover."
+    },
+    {
+      "path": "cold-reopened-composition.png",
+      "sha256": "6ba7de4e388e0ca46a93affea65f7da3f174f8e841f6b677b57bccd937d75cac",
+      "reviewed": true,
+      "observation": "After terminating and reopening the process, the deleted red body remains absent; blue neighbors, raw ink and leaf marker remain visible."
+    }
+  ],
+  "receipts": [
+    {
+      "path": ".build/runtime-253-back-and-frame-timing/source-before.json",
+      "sha256": "491dd6bfdc51fbe8511e680f8443c0f1284ddc9c6aa4262dd207deda349ffa66"
+    },
+    {
+      "path": ".build/runtime-253-back-and-frame-timing/ipad-summary.json",
+      "sha256": "0e23ea37fe1e04687a0d7dba7ef07b92666c00e35d38b95c98e15248d43754e2"
+    },
+    {
+      "path": ".build/runtime-253-back-and-frame-timing/ipad-tests.json",
+      "sha256": "a0733ae8021009a07873d739d53247eb9c4857a75b4b8db81265a211ae0e1360"
+    },
+    {
+      "path": ".build/runtime-253-presented-control-fixture/source-before.json",
+      "sha256": "05eb3b2aa727d0e6e04abc187a6726931fca426789aea90c07ff7b6adaca7349"
+    },
+    {
+      "path": ".build/runtime-253-presented-control-fixture/source-after.json",
+      "sha256": "05eb3b2aa727d0e6e04abc187a6726931fca426789aea90c07ff7b6adaca7349"
+    },
+    {
+      "path": ".build/runtime-253-presented-control-fixture/ipad-summary.json",
+      "sha256": "ef8261a67dd15a4ebc70358b9d2380df8933496c23c28397bc5816ac61e30d46"
+    },
+    {
+      "path": ".build/runtime-253-presented-control-fixture/ipad-tests.json",
+      "sha256": "d686be9b8bb9a2d74e7895fd8ea35c5fb6a7a528f6d792ca5fc16a6fde8f40e5"
+    },
+    {
+      "path": ".build/runtime-253-presented-control-fixture/verification.json",
+      "sha256": "84037debc543526b35da9f967ecdfbc0cc08919c4c49fc151c5e32a20a7c458b"
+    }
+  ],
+  "remaining": [
+    "Fast pending lasso chain repair is isolated and not part of this result.",
+    "Real production Codex panel and hardware Pencil timing remain open.",
+    "No ten-repeat/system-frame/CPU/GPU/memory or 30-minute joint acceptance is claimed."
+  ]
+}

@@ -872,7 +872,8 @@ final class NotebookInputTests: XCTestCase {
 
   @MainActor
   func testContactObserverCannotClaimCameraOrInteractiveTouches() {
-    let observer = NotebookContactObserver(gate: NotebookInputGate())
+    let anchor = UIView()
+    let observer = NotebookContactObserver(gate: NotebookInputGate(), inside: anchor)
     let camera = UIPanGestureRecognizer()
     XCTAssertFalse(observer.canPrevent(camera))
     XCTAssertFalse(observer.canBePrevented(by: camera))

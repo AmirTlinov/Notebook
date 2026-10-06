@@ -40,8 +40,12 @@ final class AgentSceneFingerRoutingTests: XCTestCase {
       XCTAssertTrue(admitted,"A scene exclusion must not hide a physical contact's lifetime")
       XCTAssertFalse(owner.gestureRecognizer(camera,shouldReceive:finger))
       if admitted {
+        let generation=gate.acceptedContactGeneration
         observer.touchesBegan([finger],with:event)
         XCTAssertEqual(gate.admittedFingerContactCount,1)
+        XCTAssertEqual(gate.acceptedContactGeneration,generation+(control === grip ? 1 : 0),
+          "A native scene control advances context; a presented control continues its existing intent")
+        XCTAssertTrue(gate.isActive,"Both controls still own their physical contact barrier")
         if cancelled { observer.touchesCancelled([finger],with:event) }
         else { observer.touchesEnded([finger],with:event) }
       }
@@ -51,7 +55,9 @@ final class AgentSceneFingerRoutingTests: XCTestCase {
     }
     let next=SVGInputTouch(window:window,view:paper.view,point:paper.view.convert(.init(x:120,y:400),to:window))
     XCTAssertTrue(owner.gestureRecognizer(observer,shouldReceive:next))
+    let generation=gate.acceptedContactGeneration
     observer.touchesBegan([next],with:UIEvent())
+    XCTAssertEqual(gate.acceptedContactGeneration,generation+1)
     XCTAssertEqual(gate.admittedFingerContactCount,1)
     XCTAssertTrue(gate.permitsObjectPickup,"The next finger is a fresh sequence, not a leaked second contact")
     owner.uninstall()

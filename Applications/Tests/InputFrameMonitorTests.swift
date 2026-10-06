@@ -171,6 +171,69 @@ final class InputFrameMonitorTests: XCTestCase {
       "An old callback remains bound to its original surface and contact")
   }
 
+  func testPresentationTimingKeepsBothRenderBranchesBoundToTheirOwnUICommit() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let monitor = InputFrameMonitor(root: root)
+    let surface = InputFrameMonitor.Surface(id: UUID(), pageID: UUID()), source = UUID()
+    let update = InkContactFrameObservation.UIUpdate(modelTime: 10)
+    let normal = InkContactFrameTiming.UICommit(phase: .afterCATransactionCommit,
+      modelTime: 10, observed: 10.012, deadline: 10.015, targetPresentation: 10.024,
+      immediatePresentationExpected: true)
+    update.record(normal)
+    func frame(_ branch: InkContactFrameTiming.UIUpdate.Branch) -> InkContactFrameObservation {
+      var timing = InkContactFrameTiming(renderBegan: 10.013, targetDeadline: 10.015, targetPresentation: 10.024)
+      timing.uiUpdate = .init(branch: branch, phase: .lowLatency, modelTime: 10, decisionModelTime: 10,
+        deadline: 10.015, targetPresentation: 10.024,
+        lowLatencyDispatchConfirmed: branch == .afterLowLatencyEventDispatch ? true : nil,
+        immediatePresentationExpected: true)
+      return .init(timing, uiUpdate: update)
+    }
+    let immediate = frame(.metalDisplayLink), deferred = frame(.afterLowLatencyEventDispatch)
+    XCTAssertEqual(immediate.snapshot().uiUpdate?.normalCommit?.observed, 10.012,
+      "A direct Metal callback can arrive after this update's normal commit")
+    XCTAssertNil(immediate.snapshot().uiUpdate?.lowLatencyCommit)
+    XCTAssertNil(immediate.snapshot().uiUpdate?.lowLatencyDispatchConfirmed,
+      "A direct callback already in the late phase does not read the effectful confirmation getter")
+    let late = InkContactFrameTiming.UICommit(phase: .afterLowLatencyCATransactionCommit,
+      modelTime: 10, observed: 10.016, deadline: 10.015, targetPresentation: 10.024,
+      immediatePresentationExpected: false)
+    update.record(late)
+    let nextCommit = InkContactFrameTiming.UICommit(phase: .afterCATransactionCommit,
+      modelTime: 11, observed: 11.012, deadline: 11.015, targetPresentation: 11.024,
+      immediatePresentationExpected: true)
+    let nextUpdate = InkContactFrameObservation.UIUpdate(modelTime: 11)
+    nextUpdate.record(nextCommit)
+    update.record(nextCommit)
+    for (index, observed) in [immediate, deferred].enumerated() {
+      var input = monitor.beginInput(on: surface, phase: .moved)
+      input.accept(.init(timestamp: 10.01, index: index, kind: .actual, replacesSample: false),
+        sourceID: source, tool: .pen)
+      input.contact = .init(sourceID: source, revision: UInt64(index + 1))
+      input.returned = input.entered; monitor.record(input)
+      monitor.record(.init(frameID: UUID(), contact: input.contact!, tile: 0, tileCount: 1,
+        completion: .osPresentation(index == 0 ? 0 : 10.05), isFirstFrame: false,
+        timing: observed.snapshot()), on: surface)
+    }
+    await monitor.finish()
+    let report = try report(at: root)
+    let frames = report.events.compactMap { event -> InputFrameMonitor.Frame? in
+      if case .frame(let frame) = event { return frame }; return nil
+    }
+    XCTAssertEqual(frames.count, 2)
+    XCTAssertEqual(frames.map { $0.timing?.uiUpdate?.branch }, [.metalDisplayLink, .afterLowLatencyEventDispatch])
+    for frame in frames {
+      let info = try XCTUnwrap(frame.timing?.uiUpdate)
+      XCTAssertEqual(info.modelTime, 10)
+      XCTAssertEqual(info.normalCommit?.modelTime, 10, "The next UI update must not relabel an old drawable")
+      XCTAssertEqual(info.normalCommit?.observed, 10.012)
+      XCTAssertEqual(info.lowLatencyCommit?.observed, 10.016)
+      XCTAssertEqual(info.lowLatencyCommit?.immediatePresentationExpected, false)
+    }
+    XCTAssertTrue(report.outcomes.allSatisfy { $0.osPresented == 10.05 },
+      "CA commit timing is diagnostic; only the later matching OS receipt acknowledges either input")
+  }
+
   private func report(at root: URL) throws -> InputFrameMonitor.Report {
     try JSONDecoder().decode(InputFrameMonitor.Report.self,
       from: Data(contentsOf: root.appendingPathComponent("runtime/pencil-input.json")))

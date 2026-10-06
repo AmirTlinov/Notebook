@@ -11,6 +11,24 @@ import AppKit
 /// Optional, fixed-size evidence for the existing contact receipt. All stamps
 /// share CACurrentMediaTime's clock; target times are predictions, not receipts.
 struct InkContactFrameTiming: Codable, Sendable {
+  struct UIUpdate: Codable, Sendable {
+    enum Branch: String, Codable, Sendable { case metalDisplayLink, afterLowLatencyEventDispatch }
+    enum Phase: String, Codable, Sendable { case unavailable, normal, lowLatency }
+    let branch: Branch
+    let phase: Phase
+    let modelTime, decisionModelTime, deadline, targetPresentation: TimeInterval?
+    // Nil means the scheduling condition did not read this effectful getter.
+    let lowLatencyDispatchConfirmed: Bool?
+    let immediatePresentationExpected: Bool?
+    var normalCommit: UICommit?
+    var lowLatencyCommit: UICommit?
+  }
+  struct UICommit: Codable, Sendable {
+    enum Phase: String, Codable, Sendable { case afterCATransactionCommit, afterLowLatencyCATransactionCommit }
+    let phase: Phase
+    let modelTime, observed, deadline, targetPresentation: TimeInterval
+    let immediatePresentationExpected: Bool
+  }
   let renderBegan: TimeInterval
   let targetDeadline: TimeInterval?
   let targetPresentation: TimeInterval?
@@ -25,6 +43,7 @@ struct InkContactFrameTiming: Codable, Sendable {
   var lowLatencyDispatched: TimeInterval?
   var lowLatencyUIDeadline: TimeInterval?
   var lowLatencyUITarget: TimeInterval?
+  var uiUpdate: UIUpdate?
   var gpuStarted: TimeInterval?
   var gpuEnded: TimeInterval?
   var gpuCompletion: TimeInterval?
@@ -33,14 +52,45 @@ struct InkContactFrameTiming: Codable, Sendable {
 /// Exists only while an explicit contact observer is attached. GPU callbacks
 /// update numbers under this lock; the render path neither formats nor stores
 /// a history. The ordinary OS receipt remains its sole acknowledgement.
-private final class InkContactFrameObservation: @unchecked Sendable {
+final class InkContactFrameObservation: @unchecked Sendable {
+  /// A frame retains only its own UI update. The canvas retains the current
+  /// one; a later update cannot overwrite a delayed GPU/OS receipt's phases.
+  final class UIUpdate: @unchecked Sendable {
+    let modelTime: TimeInterval
+    private let lock = NSLock()
+    private var normalCommit, lowLatencyCommit: InkContactFrameTiming.UICommit?
+    init(modelTime: TimeInterval) { self.modelTime = modelTime }
+    func record(_ commit: InkContactFrameTiming.UICommit) {
+      guard commit.modelTime == modelTime else { return }
+      lock.withLock {
+        switch commit.phase {
+        case .afterCATransactionCommit: normalCommit = commit
+        case .afterLowLatencyCATransactionCommit: lowLatencyCommit = commit
+        }
+      }
+    }
+    func append(to timing: inout InkContactFrameTiming) {
+      guard timing.uiUpdate?.modelTime == modelTime else { return }
+      lock.withLock {
+        timing.uiUpdate?.normalCommit = normalCommit
+        timing.uiUpdate?.lowLatencyCommit = lowLatencyCommit
+      }
+    }
+  }
   private let lock = NSLock()
   private var timing: InkContactFrameTiming
-  init(_ timing: InkContactFrameTiming) { self.timing = timing }
+  private let uiUpdate: UIUpdate?
+  init(_ timing: InkContactFrameTiming, uiUpdate: UIUpdate? = nil) {
+    self.timing = timing; self.uiUpdate = uiUpdate
+  }
   func update(_ update: (inout InkContactFrameTiming) -> Void) {
     lock.withLock { update(&timing) }
   }
-  func snapshot() -> InkContactFrameTiming { lock.withLock { timing } }
+  func snapshot() -> InkContactFrameTiming {
+    var value = lock.withLock { timing }
+    uiUpdate?.append(to: &value)
+    return value
+  }
 }
 
 /// A slot is reusable after GPU reads AND scheduled publication have released
@@ -641,6 +691,8 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
   }
   #if os(iOS)
   private var pageUIUpdates: UIUpdateLink?
+  private var observesPageUICommits = false
+  private var observedPageUIUpdate: InkContactFrameObservation.UIUpdate?
   /// A confirmed late Pencil dispatch belongs to this contact and this pair
   /// of clocks. Retain the system's drawable for that one update; never acquire
   /// another drawable or render the pre-dispatch samples as well.
@@ -652,6 +704,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     let sourceGeneration: UInt64
     let windowID: ObjectIdentifier
     let deferredAt: TimeInterval
+    let observedDecisionModelTime: TimeInterval?
   }
   private var deferredContactUpdate: DeferredContactUpdate?
   #endif
@@ -1784,33 +1837,49 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
         "targetTimestamp": .number(update.targetTimestamp),
         "targetPresentationTimestamp": .number(update.targetPresentationTimestamp)])
     }
+    var uiTiming: InkContactFrameTiming.UIUpdate?
+    var uiObservation: InkContactFrameObservation.UIUpdate?
     #if os(iOS)
+    var observedInfo: UIUpdateInfo?
+    var confirmed: Bool?
     if let contact = activeContactFrame, let updates = pageUIUpdates, updates.isEnabled,
-      let window, let info = updates.currentUpdateInfo(),
-      !info.isPerformingLowLatencyPhases, info.isLowLatencyEventDispatchConfirmed {
-      deferredContactUpdate = .init(metalLink: link, updateLink: updates, update: update,
-        sourceID: contact.sourceID, sourceGeneration: spatialSourceGeneration,
-        windowID: ObjectIdentifier(window), deferredAt: CACurrentMediaTime())
-      return
+      let window, let info = updates.currentUpdateInfo() {
+      // Preserve the original short circuit: reading confirmed can itself
+      // request late dispatch. Diagnostics must never add another read.
+      if !info.isPerformingLowLatencyPhases { confirmed = info.isLowLatencyEventDispatchConfirmed }
+      if confirmed == true {
+        deferredContactUpdate = .init(metalLink: link, updateLink: updates, update: update,
+          sourceID: contact.sourceID, sourceGeneration: spatialSourceGeneration,
+          windowID: ObjectIdentifier(window), deferredAt: CACurrentMediaTime(),
+          observedDecisionModelTime: onContactFrameResolved == nil ? nil : info.modelTime)
+        return
+      }
+      observedInfo = info
     }
     // An immediate callback replaces an older unsubmitted late opportunity.
     // Its own drawable and the current measured contact are the only demand.
     deferredContactUpdate = nil
+    if onContactFrameResolved != nil {
+      (uiTiming, uiObservation) = captureContactUIUpdate(observedInfo ?? UIUpdateInfo.current(for: self),
+        branch: .metalDisplayLink, decisionModelTime: observedInfo?.modelTime, confirmed: confirmed)
+    }
     #endif
-    renderPageUpdate(update)
+    renderPageUpdate(update, uiTiming: uiTiming, uiObservation: uiObservation)
   }
 
   private func renderPageUpdate(_ update: CAMetalDisplayLink.Update,
     deferredAt: TimeInterval? = nil, dispatchedAt: TimeInterval? = nil,
-    uiDeadline: TimeInterval? = nil, uiTarget: TimeInterval? = nil) {
+    uiDeadline: TimeInterval? = nil, uiTarget: TimeInterval? = nil,
+    uiTiming: InkContactFrameTiming.UIUpdate? = nil, uiObservation: InkContactFrameObservation.UIUpdate? = nil) {
     let timing = onContactFrameResolved.map { _ in
       var timing = InkContactFrameTiming(renderBegan: CACurrentMediaTime(), targetDeadline: update.targetTimestamp,
         targetPresentation: update.targetPresentationTimestamp)
       timing.lowLatencyDeferred = deferredAt; timing.lowLatencyDispatched = dispatchedAt
       timing.lowLatencyUIDeadline = uiDeadline; timing.lowLatencyUITarget = uiTarget
+      timing.uiUpdate = uiTiming
       return timing
     }
-    autoreleasepool { renderFrame(pageDrawable: update.drawable, contactTiming: timing) }
+    autoreleasepool { renderFrame(pageDrawable: update.drawable, contactTiming: timing, contactUIObservation: uiObservation) }
   }
 
   #if os(iOS)
@@ -1827,14 +1896,44 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       !spatialHandoffIsStopping, !pageBackingIsReclaimed else { return }
     // Late events may have advanced this contact's revision. Encoding reads
     // that latest measured tail; predictions never become the receipt source.
+    let observed = onContactFrameResolved.map { _ in
+      captureContactUIUpdate(info, branch: .afterLowLatencyEventDispatch,
+        decisionModelTime: deferred.observedDecisionModelTime, confirmed: true)
+    }
     renderPageUpdate(deferred.update, deferredAt: deferred.deferredAt,
       dispatchedAt: CACurrentMediaTime(), uiDeadline: info.completionDeadlineTime,
-      uiTarget: info.estimatedPresentationTime)
+      uiTarget: info.estimatedPresentationTime, uiTiming: observed?.0, uiObservation: observed?.1)
+  }
+
+  private func contactUIObservation(modelTime: TimeInterval) -> InkContactFrameObservation.UIUpdate {
+    if observedPageUIUpdate?.modelTime != modelTime {
+      observedPageUIUpdate = .init(modelTime: modelTime)
+    }
+    return observedPageUIUpdate!
+  }
+
+  private func captureContactUIUpdate(_ info: UIUpdateInfo?, branch: InkContactFrameTiming.UIUpdate.Branch,
+    decisionModelTime: TimeInterval?, confirmed: Bool?)
+    -> (InkContactFrameTiming.UIUpdate, InkContactFrameObservation.UIUpdate?) {
+    let timing = InkContactFrameTiming.UIUpdate(branch: branch,
+      phase: info.map { $0.isPerformingLowLatencyPhases ? .lowLatency : .normal } ?? .unavailable,
+      modelTime: info?.modelTime, decisionModelTime: decisionModelTime,
+      deadline: info?.completionDeadlineTime, targetPresentation: info?.estimatedPresentationTime,
+      lowLatencyDispatchConfirmed: confirmed, immediatePresentationExpected: info?.isImmediatePresentationExpected)
+    return (timing, info.map { contactUIObservation(modelTime: $0.modelTime) })
+  }
+
+  private func observeContactUICommit(_ info: UIUpdateInfo, phase: InkContactFrameTiming.UICommit.Phase) {
+    guard onContactFrameResolved != nil else { observedPageUIUpdate = nil; return }
+    let observed = CACurrentMediaTime()
+    contactUIObservation(modelTime: info.modelTime).record(.init(phase: phase, modelTime: info.modelTime,
+      observed: observed, deadline: info.completionDeadlineTime, targetPresentation: info.estimatedPresentationTime,
+      immediatePresentationExpected: info.isImmediatePresentationExpected))
   }
   #endif
 
   private func renderFrame(pageDrawable: (any CAMetalDrawable)? = nil,
-    contactTiming: InkContactFrameTiming? = nil) {
+    contactTiming: InkContactFrameTiming? = nil, contactUIObservation: InkContactFrameObservation.UIUpdate? = nil) {
     let renderBegan = onContactFrameResolved == nil ? nil : (contactTiming?.renderBegan ?? CACurrentMediaTime())
     #if os(macOS)
     if material != nil, window?.occlusionState.contains(.visible) != true { return }
@@ -2121,7 +2220,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     for tile in spatialTarget?.tiles ?? [] { tile.layer.presentsWithTransaction = transactionPresentation }
     let contactObservation = onContactFrameResolved != nil && activeContactFrame != nil && active != nil
       ? renderBegan.map { InkContactFrameObservation(contactTiming
-        ?? .init(renderBegan: $0, targetDeadline: nil, targetPresentation: nil)) } : nil
+        ?? .init(renderBegan: $0, targetDeadline: nil, targetPresentation: nil), uiUpdate: contactUIObservation) } : nil
     contactObservation?.update {
       $0.lastBlankRevision=presentedEmptyContentRevision
       $0.submittedRevision=stableContentRevision
@@ -3295,6 +3394,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     #if os(iOS)
     deferredContactUpdate = nil
     pageUIUpdates?.isEnabled = false; pageUIUpdates = nil
+    observesPageUICommits = false; observedPageUIUpdate = nil
     #endif
   }
 
@@ -3359,6 +3459,19 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       updates.wantsImmediatePresentation = true
       updates.preferredFrameRateRange = .init(minimum: rate, maximum: rate, preferred: rate)
       pageUIUpdates = updates
+    }
+    if onContactFrameResolved != nil, !observesPageUICommits, let updates = pageUIUpdates {
+      // These callbacks observe the existing link's flush phases. They do not
+      // request updates, low-latency dispatch or immediate presentation.
+      updates.addAction(to: .afterCATransactionCommit) { [weak self] link, info in
+        guard let self, link === pageUIUpdates else { return }
+        observeContactUICommit(info, phase: .afterCATransactionCommit)
+      }
+      updates.addAction(to: .afterLowLatencyCATransactionCommit) { [weak self] link, info in
+        guard let self, link === pageUIUpdates else { return }
+        observeContactUICommit(info, phase: .afterLowLatencyCATransactionCommit)
+      }
+      observesPageUICommits = true
     }
     updatePageUIParticipation()
     #endif
