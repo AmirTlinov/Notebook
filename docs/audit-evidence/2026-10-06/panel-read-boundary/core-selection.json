@@ -1,0 +1,33 @@
+{
+  "baseCommit": "102b1faf0fe4a33267db5207925855f2e5d343bd",
+  "changedFiles": [
+    "Applications/Mac/MacPreviewPublisher.swift",
+    "Applications/Mac/NotebookPanelPreviewWriter.swift",
+    "Applications/MacTests/NotebookCommandReaderTests.swift",
+    "Applications/Shared/NotebookAppModel.swift",
+    "Applications/Shared/SceneCompositionSource.swift",
+    "Sources/NotebookCore/NotebookQueryCut.swift",
+    "Tests/NotebookCoreTests/NotebookQueryCutTests.swift"
+  ],
+  "checks": {
+    "commands": [],
+    "core": [
+      "NotebookCoreTests.NotebookQueryCutTests"
+    ],
+    "ipad": [],
+    "mac": []
+  },
+  "format": 2,
+  "manualSelection": true,
+  "optimized": false,
+  "profiles": [],
+  "selectionMode": "explicit-only",
+  "sourceRoot": "/Users/amir/.codex/worktrees/notebook-panel-read/Notebook",
+  "unclassified": [
+    "Applications/Mac/MacPreviewPublisher.swift",
+    "Applications/Mac/NotebookPanelPreviewWriter.swift",
+    "Applications/Shared/NotebookAppModel.swift",
+    "Sources/NotebookCore/NotebookQueryCut.swift",
+    "Tests/NotebookCoreTests/NotebookQueryCutTests.swift"
+  ]
+}

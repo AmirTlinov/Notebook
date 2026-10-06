@@ -95,6 +95,13 @@ Planner ещё не изменён; текущие allowances требуют з�
 и производных кешей. Состав устройств: этот Mac и iPad Елизаветы. Immutable Undo
 transition, остальные native producer admission и полная приёмка остаются открыты.
 
+Панельный read-cut, source `ccc955657762`: **3 Core + 9 native Mac PASS**, без
+пропусков и runtime warnings, точные исходники обоих маршрутов совпали. Request cut,
+материалы и финальная pixel validation используют один serial reader/fixed writer
+prefix; отказ/отмена observation сохраняет принятый хвост. Проверены expired cut,
+stale dependencies, canonical board/region и Stop. iPad и installed Codex gestures
+ещё открыты. [Точный scope](audit-evidence/2026-10-06/panel-read-boundary/results.json).
+
 ## Условия завершения
 
 | Срез | Подтверждено | Осталось |

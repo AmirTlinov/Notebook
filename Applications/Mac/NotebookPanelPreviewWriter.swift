@@ -17,17 +17,17 @@ extension CurrentViewPreviewWriter {
       pixelsPerWorldPoint: projection.camera.scale * projection.pixelScale)
     let initialBounds = WorkspaceSpatialBounds(origin: initialCoverage.tiles.first!.origin,
       maximum: initialCoverage.tiles.last!.bounds.maximum)
-    let captured = try await model.performStoreCommand { store in
-      try store.readTransaction { _ in
-        let header = try store.workspaceHeader()
-        guard header.workspaceID == projection.workspaceID,
-          try store.referenceRevision(target: target) == cut.sourceRevision else { throw NotebookStorageError.transactionConflict }
-        let snapshot = try store.readPanel(.init(workspaceID: projection.workspaceID, target: target,
-          bounds: target.kind == .board ? .init(anchor: initialBounds.origin,
-            region: .init(x: 0, y: 0, width: initialBounds.width, height: initialBounds.height)) : nil), actor: actor)
-        return (header, snapshot, target.kind == .page ? try store.loadPage(target.id) : nil)
-      }
+    let captured = try await model.readCommandCut { reader in
+      let header = try reader.workspaceHeader()
+      guard header.workspaceID == projection.workspaceID,
+        try reader.referenceRevision(target: target) == cut.sourceRevision else { throw NotebookStorageError.transactionConflict }
+      let snapshot = try reader.readPanel(.init(workspaceID: projection.workspaceID, target: target,
+        bounds: target.kind == .board ? .init(anchor: initialBounds.origin,
+          region: .init(x: 0, y: 0, width: initialBounds.width, height: initialBounds.height)) : nil), actor: actor)
+      return (header, snapshot, target.kind == .page ? try reader.loadPage(target.id) : nil)
     }
+    try Task.checkCancellation()
+    guard model.permitsBackgroundPreparation else { throw CancellationError() }
     let (header, capturedSnapshot, page) = captured
     let source = SceneCompositionSource(store: model.store, revision: header.cursor,
       workspaceID: projection.workspaceID, recordPixelDependencies: true, documentGeometry: model.documentPaperSizes)
@@ -51,49 +51,50 @@ extension CurrentViewPreviewWriter {
     let dependencies = try await source.pixelDependencies()
     try Task.checkCancellation()
     guard model.permitsBackgroundPreparation else { throw CancellationError() }
-    return try await model.performStoreCommand { store in
-      try store.readTransaction { _ in
-        try Task.checkCancellation()
-        guard try store.storedWorkspaceID() == projection.workspaceID,
-          try store.referenceRevision(target: target) == cut.sourceRevision,
-          try dependencies?.isCurrent(store) != false else { throw NotebookStorageError.transactionConflict }
-        var snapshot = try store.readPanel(.init(workspaceID: projection.workspaceID, target: target,
-          bounds: target.kind == .board ? .init(anchor: materialBounds.origin,
-            region: .init(x: 0, y: 0, width: materialBounds.width, height: materialBounds.height)) : nil,
-          includeFitBounds: cut.includeFitBounds), actor: actor)
-        let editable = Set(layers.compactMap(\.elementID)), movable = Set(layers.compactMap(\.itemID))
-        snapshot = snapshot.setting("elements", .array((snapshot["elements"]?.arrayValues ?? []).map { entry in
-          entry.setting("editable", .bool(entry["source"]?["id"]?.stringValue.map(editable.contains) == true))
-        }))
-        snapshot = snapshot.setting("cards", .array((snapshot["cards"]?.arrayValues ?? []).map { card in
-          guard let id = card["item"]?["id"]?.stringValue.flatMap(UUID.init(uuidString:)) else { return card }
-          let layer = layers.first { $0.itemID == id }
-          var value = card.setting("editable", .bool(movable.contains(id)))
-          if let layer, let frame = layer.subjectFrame {
-            value = value.setting("frame", try? .encode(frame)).setting("worldOrigin", try? .encode(layer.worldOrigin))
-              .setting("center", try? .encode(layer.worldOrigin))
-            value = value.setting("geometry", .object(["width": .number(frame.width), "height": .number(frame.height)]))
-          }
-          return value
-        }))
-        if target.kind == .page { snapshot = snapshot.setting("worldOrigin", try .encode(WorldPoint.zero)) }
-        let appearance = JSONValue.object(["status": .string("ready"), "requestID": try .encode(cut.id),
-          "sourceRevision": .string(cut.sourceRevision), "cursor": snapshot["cursor"] ?? .string(String(header.cursor)),
-          "camera": try .encode(projection.camera), "viewport": try .encode(projection.viewport),
-          "coverage": .object(["anchor": try .encode(materialBounds.origin),
-            "region": try .encode(PageRect(x: 0, y: 0, width: materialBounds.width, height: materialBounds.height)),
-            "level": .number(Double(coverage.level)),
-            "pixelDensity": .number(layers.filter { $0.repeatSize == nil }
-              .map { min(Double($0.pixelWidth) / $0.frame.width, Double($0.pixelHeight) / $0.frame.height) }.min()
-              ?? projection.camera.scale * projection.pixelScale)]),
-          "layers": .array(try layers.map { try $0.encoded }), "diagnostics": try .encode(diagnostics)])
-        snapshot = snapshot.setting("appearance", appearance)
-        guard try JSONEncoder().encode(snapshot).count <= NotebookPanelRenderProjection.maximumEncodedBytes else {
-          throw SceneRenderError.resourceLimit
+    let snapshot = try await model.readCommandCut { reader in
+      try Task.checkCancellation()
+      guard try reader.storedWorkspaceID() == projection.workspaceID,
+        try reader.referenceRevision(target: target) == cut.sourceRevision,
+        try dependencies?.isCurrent(reader) != false else { throw NotebookStorageError.transactionConflict }
+      var snapshot = try reader.readPanel(.init(workspaceID: projection.workspaceID, target: target,
+        bounds: target.kind == .board ? .init(anchor: materialBounds.origin,
+          region: .init(x: 0, y: 0, width: materialBounds.width, height: materialBounds.height)) : nil,
+        includeFitBounds: cut.includeFitBounds), actor: actor)
+      let editable = Set(layers.compactMap(\.elementID)), movable = Set(layers.compactMap(\.itemID))
+      snapshot = snapshot.setting("elements", .array((snapshot["elements"]?.arrayValues ?? []).map { entry in
+        entry.setting("editable", .bool(entry["source"]?["id"]?.stringValue.map(editable.contains) == true))
+      }))
+      snapshot = snapshot.setting("cards", .array((snapshot["cards"]?.arrayValues ?? []).map { card in
+        guard let id = card["item"]?["id"]?.stringValue.flatMap(UUID.init(uuidString:)) else { return card }
+        let layer = layers.first { $0.itemID == id }
+        var value = card.setting("editable", .bool(movable.contains(id)))
+        if let layer, let frame = layer.subjectFrame {
+          value = value.setting("frame", try? .encode(frame)).setting("worldOrigin", try? .encode(layer.worldOrigin))
+            .setting("center", try? .encode(layer.worldOrigin))
+          value = value.setting("geometry", .object(["width": .number(frame.width), "height": .number(frame.height)]))
         }
-        return snapshot
+        return value
+      }))
+      if target.kind == .page { snapshot = snapshot.setting("worldOrigin", try .encode(WorldPoint.zero)) }
+      let appearance = JSONValue.object(["status": .string("ready"), "requestID": try .encode(cut.id),
+        "sourceRevision": .string(cut.sourceRevision), "cursor": snapshot["cursor"] ?? .string(String(header.cursor)),
+        "camera": try .encode(projection.camera), "viewport": try .encode(projection.viewport),
+        "coverage": .object(["anchor": try .encode(materialBounds.origin),
+          "region": try .encode(PageRect(x: 0, y: 0, width: materialBounds.width, height: materialBounds.height)),
+          "level": .number(Double(coverage.level)),
+          "pixelDensity": .number(layers.filter { $0.repeatSize == nil }
+            .map { min(Double($0.pixelWidth) / $0.frame.width, Double($0.pixelHeight) / $0.frame.height) }.min()
+            ?? projection.camera.scale * projection.pixelScale)]),
+        "layers": .array(try layers.map { try $0.encoded }), "diagnostics": try .encode(diagnostics)])
+      snapshot = snapshot.setting("appearance", appearance)
+      guard try JSONEncoder().encode(snapshot).count <= NotebookPanelRenderProjection.maximumEncodedBytes else {
+        throw SceneRenderError.resourceLimit
       }
+      return snapshot
     }
+    try Task.checkCancellation()
+    guard model.permitsBackgroundPreparation else { throw CancellationError() }
+    return snapshot
   }
 
   /// Finite pages use the same world grid and native paper/ordered ink owners.

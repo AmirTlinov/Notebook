@@ -238,7 +238,7 @@ final class MacPreviewPublisher {
     }
     try await prepareTargetQueue(model)
     guard started, !stopped, !Task.isCancelled, model.permitsBackgroundPreparation else { throw CancellationError() }
-    let cut = try await model.performStoreCommand { try $0.requestPanelPresentation(request) }
+    let cut = try await model.readCommandCut { try $0.requestPanelPresentation(request) }
     try Task.checkCancellation()
     guard started, !stopped, model.permitsBackgroundPreparation else { throw CancellationError() }
     if request.knownRequestID == cut.id, request.knownCursor == String(cut.cursor),

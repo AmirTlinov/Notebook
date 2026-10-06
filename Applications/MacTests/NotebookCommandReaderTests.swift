@@ -8,6 +8,121 @@ final class NotebookCommandReaderTests: XCTestCase {
   private typealias Blocker = NotebookPersistenceFenceContract.Blocker
   private typealias Signal<Value: Sendable> = NotebookPersistenceFenceContract.Signal<Value>
 
+  func testPanelReadRefusalAndCancellationKeepTheAcceptedWriteTailUsable() async throws {
+    let root = temporaryRoot(), store = NotebookStore(root: root)
+    let queue = NotebookPersistenceQueue(store: store)
+    let model = NotebookAppModel(store: store, startsNearbySync: false,
+      preferences: UserDefaults(suiteName: UUID().uuidString)!, persistenceQueue: queue)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let settled = await model.finishPendingInteraction(); XCTAssertTrue(settled)
+    let header = try store.workspaceHeader(), actor = model.actorID
+    let target = CollaborationTarget(kind: .board, id: header.rootBoardID)
+    let request = NotebookPanelReadRequest(workspaceID: header.workspaceID, target: target)
+    let generation = queue.acceptedMutationGeneration
+    let presentation = NotebookPanelPresentationRequest(workspaceID: header.workspaceID, target: target,
+      appearance: .init(viewport: .init(x: 640, y: 480), pixelScale: 1))
+    let captured = try await model.readCommandCut { try $0.requestPanelPresentation(presentation) }
+    XCTAssertEqual(captured.target, target); XCTAssertEqual(captured.projection.workspaceID, header.workspaceID)
+    XCTAssertEqual(queue.acceptedMutationGeneration, generation,
+      "The actual immutable request cut never accepts a mutation")
+    do {
+      _ = try await model.readCommandCut { cut in
+        _ = try cut.readPanel(request, actor: actor)
+        // Actual transport admission raises the same renderer error as a
+        // completed panel which cannot fit its finite response body.
+        var raster = NotebookPanelRasterSet()
+        try raster.append(.init(id: "refused-body", order: 0, worldOrigin: .zero,
+          frame: .init(x: 0, y: 0, width: 1, height: 1), assetID: UUID(),
+          png: Data(count: 9*1_048_576+1), elementID: nil, itemID: nil,
+          subjectFrame: nil, repeatSize: nil, pixelWidth: 1, pixelHeight: 1))
+        return 0
+      }
+      XCTFail("The real panel response budget was bypassed")
+    } catch let error as SceneRenderError { XCTAssertEqual(error, .resourceLimit) }
+    XCTAssertNil(queue.failure); XCTAssertNil(model.persistenceFailure)
+    XCTAssertEqual(queue.pendingCount, 0); XCTAssertEqual(queue.admittedOperationCount, 0)
+    XCTAssertEqual(queue.acceptedMutationGeneration, generation)
+    let reading = Blocker()
+    let observer = Task {
+      try await model.readCommandCut { cut in
+        _ = try cut.readPanel(request, actor: actor)
+        try reading.hold()
+        return try cut.workspaceHeader()
+      }
+    }
+    addTeardownBlock { @MainActor in
+      observer.cancel(); reading.release(); _ = await observer.result
+      let saved = await queue.flush(); XCTAssertTrue(saved)
+    }
+    try await NotebookPersistenceFenceContract.until { reading.entered.value == true }
+    observer.cancel()
+    queue.enqueue { store in
+      try store.publishRecords(writes: ["after-panel-observer.json": .object(["value": .string("saved")])])
+      return false
+    }
+    let saved = await queue.flush()
+    XCTAssertTrue(saved, "The accepted tail saves while the withdrawn WAL reader is still joined")
+    XCTAssertTrue(try store.hasStoredValue("after-panel-observer.json"))
+    reading.release()
+    do { _ = try await observer.value; XCTFail("A cancelled observer published its borrowed result") }
+    catch is CancellationError { }
+    XCTAssertNil(queue.failure); XCTAssertNil(model.persistenceFailure)
+    XCTAssertEqual(queue.pendingCount, 0); XCTAssertEqual(queue.reservedWriteBytes, 0)
+    let next = try await model.readCommandCut { try $0.readPanel(request, actor: actor) }
+    XCTAssertEqual(next["target"], try .encode(target))
+  }
+
+  func testBorrowedPixelValidationRejectsAChangedSourceWithoutBlockingWrites() async throws {
+    let root = temporaryRoot(), store = NotebookStore(root: root)
+    let queue = NotebookPersistenceQueue(store: store), actor = UUID()
+    let model = NotebookAppModel(store: store, startsNearbySync: false,
+      preferences: UserDefaults(suiteName: UUID().uuidString)!, persistenceQueue: queue)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let settled = await model.finishPendingInteraction(); XCTAssertTrue(settled)
+    let initial = try store.loadIndex(), initialTree = try store.loadBoard(items: initial.items), child = UUID()
+    var index = initial, hierarchy = initialTree
+    XCTAssertNotNil(index.createBoard(title: "Read dependency portal", actor: actor, boardID: child))
+    XCTAssertTrue(hierarchy.createBoard(child, in: initial.rootBoardID, near: .zero, actor: actor))
+    _ = try store.saveWorkspaceEdits(before: initial, after: index, boardBefore: initialTree, boardAfter: hierarchy)
+    let header = try store.workspaceHeader()
+    let source = SceneCompositionSource(store: store, revision: header.cursor,
+      workspaceID: header.workspaceID, recordPixelDependencies: true)
+    let camera = try await source.portalCamera(child)
+    let witness = try await source.pixelDependencies()
+    let dependencies = try XCTUnwrap(witness)
+    let current = try await model.readCommandCut { try dependencies.isCurrent($0) }
+    XCTAssertTrue(current)
+    let before = hierarchy
+    XCTAssertTrue(hierarchy.updatePortalCamera(.init(scale: camera.scale*2), for: child, actor: actor))
+    // This addressed peer publication changes camera material after it was
+    // painted; validation cannot substitute another ready image generation.
+    _ = try store.saveBoardEdits(before: before, after: hierarchy)
+    let stale = try await model.readCommandCut { try dependencies.isCurrent($0) }
+    XCTAssertFalse(stale)
+    XCTAssertNil(queue.failure); XCTAssertEqual(queue.pendingCount, 0)
+    let target = CollaborationTarget(kind: .board, id: header.rootBoardID)
+    let request = NotebookPanelPresentationRequest(workspaceID: header.workspaceID, target: target,
+      appearance: .init(viewport: .init(x: 640, y: 480), pixelScale: 1))
+    let cut = try await model.readCommandCut { try $0.requestPanelPresentation(request) }
+    let beforeElement = hierarchy
+    XCTAssertTrue(hierarchy.upsertElement(.init(id: "changed-after-panel-cut", surface: .board(target.id), kind: .nativeText,
+      frame: .init(x: 10, y: 10, width: 100, height: 40), worldOrigin: .zero, source: "A later source",
+      stamp: index.stamp), in: target.id, expected: nil, actor: actor))
+    _ = try store.saveBoardEdits(before: beforeElement, after: hierarchy)
+    let generation = queue.acceptedMutationGeneration
+    do {
+      _ = try await CurrentViewPreviewWriter.panelMaterial(cut, model: model, knownAssets: [])
+      XCTFail("The actual panel owner published a replaced source cut")
+    } catch let error as NotebookStorageError { XCTAssertEqual(error, .transactionConflict) }
+    XCTAssertEqual(queue.acceptedMutationGeneration, generation, "A refused panel source never becomes an accepted mutation")
+    XCTAssertNil(queue.failure); XCTAssertEqual(queue.reservedWriteBytes, 0)
+    queue.enqueue { store in try store.publishRecords(writes: ["after-stale-pixels.json": .bool(true)]); return false }
+    let saved = await queue.flush(); XCTAssertTrue(saved)
+    XCTAssertTrue(try store.hasStoredValue("after-stale-pixels.json"))
+  }
+
   func testReadFenceCapturesTheAcceptedPrefixAndTheReaderDoesNotBlockLaterWrites() async throws {
     let root = temporaryRoot()
     defer { try? FileManager.default.removeItem(at: root) }

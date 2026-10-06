@@ -1,0 +1,27 @@
+{
+  "executed": [
+    "NotebookMacTests/NotebookCommandReaderTests/testBorrowedPixelValidationRejectsAChangedSourceWithoutBlockingWrites",
+    "NotebookMacTests/NotebookCommandReaderTests/testCancellingAReadFenceLeavesTheAcceptedHeadAndItsResultIntact",
+    "NotebookMacTests/NotebookCommandReaderTests/testPanelReadRefusalAndCancellationKeepTheAcceptedWriteTailUsable",
+    "NotebookMacTests/NotebookCommandReaderTests/testReadFenceCapturesTheAcceptedPrefixAndTheReaderDoesNotBlockLaterWrites",
+    "NotebookMacTests/NotebookCommandReaderTests/testStopClosesAdmissionAndCloseJoinsTheActualBorrowedCut",
+    "NotebookMacTests/NotebookCommandReaderTests/testTheReaderRefusesAWrongWorkspaceAndAReplacementDatabaseBeforeTheOperation",
+    "NotebookMacTests/NotebookPanelPresentationTests/testCanonicalBoardMaterialsSplitSubjectsBeforeFirstDragAndJoinCachedRequests",
+    "NotebookMacTests/NotebookPanelPresentationTests/testRegionalMaterialPreparationPreservesOrderedCutsAndBaselineAcrossRegionsAndReleasesGeometry",
+    "NotebookMacTests/NotebookPanelPresentationTests/testStoppingTheOwnerCompletesQueuedPanelReadBeforeCapacityReturns"
+  ],
+  "failed": [],
+  "format": 1,
+  "planned": [
+    "NotebookMacTests/NotebookCommandReaderTests/testBorrowedPixelValidationRejectsAChangedSourceWithoutBlockingWrites",
+    "NotebookMacTests/NotebookCommandReaderTests/testCancellingAReadFenceLeavesTheAcceptedHeadAndItsResultIntact",
+    "NotebookMacTests/NotebookCommandReaderTests/testPanelReadRefusalAndCancellationKeepTheAcceptedWriteTailUsable",
+    "NotebookMacTests/NotebookCommandReaderTests/testReadFenceCapturesTheAcceptedPrefixAndTheReaderDoesNotBlockLaterWrites",
+    "NotebookMacTests/NotebookCommandReaderTests/testStopClosesAdmissionAndCloseJoinsTheActualBorrowedCut",
+    "NotebookMacTests/NotebookCommandReaderTests/testTheReaderRefusesAWrongWorkspaceAndAReplacementDatabaseBeforeTheOperation",
+    "NotebookMacTests/NotebookPanelPresentationTests/testCanonicalBoardMaterialsSplitSubjectsBeforeFirstDragAndJoinCachedRequests",
+    "NotebookMacTests/NotebookPanelPresentationTests/testRegionalMaterialPreparationPreservesOrderedCutsAndBaselineAcrossRegionsAndReleasesGeometry",
+    "NotebookMacTests/NotebookPanelPresentationTests/testStoppingTheOwnerCompletesQueuedPanelReadBeforeCapacityReturns"
+  ],
+  "skipped": []
+}

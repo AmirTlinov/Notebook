@@ -5120,7 +5120,7 @@ final class NotebookAppModel {
 
     /// A fixed accepted prefix is captured before the first await. The reader
     /// then owns its own fresh WAL snapshot; later writes keep draining.
-    private func readCommandCut<Value: Sendable>(
+    func readCommandCut<Value: Sendable>(
       _ operation: @escaping @Sendable (NotebookQueryCut) throws -> Value) async throws -> Value {
       guard loadState == .ready, permitsExternalWork, let workspaceID = admittedWorkspaceID else {
         throw CollaborationError("owner_unavailable", "Читатель рабочего пространства ещё не готов.")
@@ -5130,7 +5130,12 @@ final class NotebookAppModel {
       guard permitsExternalWork, admittedWorkspaceID == workspaceID else {
         throw CollaborationError("owner_unavailable", "Чтение этого рабочего пространства завершено.")
       }
-      return try await commandReader.read(workspaceID: workspaceID, operation)
+      let value = try await commandReader.read(workspaceID: workspaceID, operation)
+      try Task.checkCancellation()
+      guard permitsExternalWork, admittedWorkspaceID == workspaceID else {
+        throw CollaborationError("owner_unavailable", "Чтение этого рабочего пространства завершено.")
+      }
+      return value
     }
 
     private func scripts() throws -> NotebookScriptCoordinator {

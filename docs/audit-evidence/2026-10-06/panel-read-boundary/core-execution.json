@@ -1,0 +1,20 @@
+{
+  "executed": [
+    "NotebookCoreTests.NotebookQueryCutTests/escapedCutCannotReenterAReusedHandleOrAWriter()/NotebookQueryCutTests.swift:50:4",
+    "NotebookCoreTests.NotebookQueryCutTests/immutableReadCommandRefusesEveryMutationAndRetainsItsOriginalRequest()/NotebookQueryCutTests.swift:80:4",
+    "NotebookCoreTests.NotebookQueryCutTests/panelAndPixelReadsBorrowOneCutAndExpireWithoutAcceptingWrites()/NotebookQueryCutTests.swift:7:4"
+  ],
+  "executions": {
+    "NotebookCoreTests.NotebookQueryCutTests/escapedCutCannotReenterAReusedHandleOrAWriter()/NotebookQueryCutTests.swift:50:4": 1,
+    "NotebookCoreTests.NotebookQueryCutTests/immutableReadCommandRefusesEveryMutationAndRetainsItsOriginalRequest()/NotebookQueryCutTests.swift:80:4": 1,
+    "NotebookCoreTests.NotebookQueryCutTests/panelAndPixelReadsBorrowOneCutAndExpireWithoutAcceptingWrites()/NotebookQueryCutTests.swift:7:4": 1
+  },
+  "failed": [],
+  "format": 1,
+  "planned": [
+    "NotebookCoreTests.NotebookQueryCutTests/escapedCutCannotReenterAReusedHandleOrAWriter()/NotebookQueryCutTests.swift:50:4",
+    "NotebookCoreTests.NotebookQueryCutTests/immutableReadCommandRefusesEveryMutationAndRetainsItsOriginalRequest()/NotebookQueryCutTests.swift:80:4",
+    "NotebookCoreTests.NotebookQueryCutTests/panelAndPixelReadsBorrowOneCutAndExpireWithoutAcceptingWrites()/NotebookQueryCutTests.swift:7:4"
+  ],
+  "skipped": []
+}

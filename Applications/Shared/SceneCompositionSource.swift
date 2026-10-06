@@ -76,6 +76,29 @@ struct SceneCompositionLiveData: Sendable {
   }
 }
 
+private protocol ScenePixelReadCut {
+  func workspaceHeader() throws -> NotebookWorkspaceHeader
+  func readItemHeader(_ id: UUID) throws -> NotebookItemHeader?
+  func readBoardNodeHeader(_ id: UUID) throws -> BoardNode?
+  func readBoardItem(_ id: UUID) throws -> BoardNode?
+  func boardHasContent(_ id: UUID) throws -> Bool
+  func readCurrentScenePaintOrder(boardID: UUID, coverID: UUID?, bounds: WorkspaceSpatialBounds,
+    after: NotebookScenePaintPosition?, limit: Int,
+    groupPoses: [String: NotebookElementPlacement.Source]) throws -> NotebookScenePaintPage
+  func spatialInkHistoryStates(ids: Set<UUID>) throws -> [UUID: NotebookSpatialInkHistoryState]
+  func sceneRecordsAreCurrent(_ dependencies: NotebookSceneRecordDependencies) throws -> Bool
+  func spatialInkRecordsAreCurrent(_ records: NotebookSpatialInkWindowRecords) throws -> Bool
+}
+extension NotebookQueryCut: ScenePixelReadCut { }
+extension NotebookStore: ScenePixelReadCut {
+  fileprivate func sceneRecordsAreCurrent(_ dependencies: NotebookSceneRecordDependencies) throws -> Bool {
+    try dependencies.isCurrent(self)
+  }
+  fileprivate func spatialInkRecordsAreCurrent(_ records: NotebookSpatialInkWindowRecords) throws -> Bool {
+    try records.isCurrent(self)
+  }
+}
+
 /// One rendered scene owns its finite dependency witness. Validation repeats
 /// only the admitted index pages and addressed identities, never rendering or
 /// reading ink bodies. Camera is supplied by the publisher's presentation key.
@@ -111,31 +134,44 @@ struct ScenePixelDependencies: Sendable {
   var items: [Item] = []
 
   func isCurrent(_ store: NotebookStore) throws -> Bool {
-    try store.readTransaction { store in
-      guard try store.workspaceHeader().workspaceID == workspaceID, try records.isCurrent(store) else { return false }
-      for (id, exists) in boards where try (store.readBoardNodeHeader(id) != nil) != exists { return false }
-      for (id, camera) in cameras where try (store.readBoardNodeHeader(id)?.portalCamera ?? .init()) != camera { return false }
-      for (id, content) in contents where try store.boardHasContent(id) != content { return false }
-      for item in items where try Self.readItem(store, id: item.id, presence: item.presence, documentGeometry: item.documentGeometry) != item.value { return false }
-      for query in paints {
-        let page = try store.readCurrentScenePaintOrder(boardID: query.boardID, coverID: query.coverID,
-          bounds: query.bounds, after: query.after, groupPoses: query.poses)
-        guard page.entries == query.entries, page.positions == query.positions, (page.next != nil) == query.hasMore else { return false }
-      }
-      for query in ink where try !query.isCurrent(store) { return false }
-      if !inkHeaders.isEmpty {
-        let current = try store.spatialInkHistoryStates(ids: Set(inkHeaders.keys))
-        for (id, expected) in inkHeaders {
-          guard let header = current[id], header.result.creationStamp == expected.stamp,
-            header.surfaces == expected.surfaces else { return false }
-        }
-      }
-      return true
+    try store.readTransaction { try isCurrent(in: $0) }
+  }
+
+  func isCurrent(_ cut: NotebookQueryCut) throws -> Bool { try isCurrent(in: cut) }
+
+  // One validator serves the borrowed read capability and the existing atomic
+  // derived-write boundary. This private contract carries only the exact reads
+  // needed by pixels; it owns neither a session nor a transaction lifetime.
+  private func isCurrent<Read: ScenePixelReadCut>(in read: Read) throws -> Bool {
+    guard try read.workspaceHeader().workspaceID == workspaceID,
+      try read.sceneRecordsAreCurrent(records) else { return false }
+    for (id, exists) in boards where try (read.readBoardNodeHeader(id) != nil) != exists { return false }
+    for (id, camera) in cameras where try (read.readBoardNodeHeader(id)?.portalCamera ?? .init()) != camera { return false }
+    for (id, content) in contents where try read.boardHasContent(id) != content { return false }
+    for item in items where try Self.readItem(in: read, id: item.id, presence: item.presence, documentGeometry: item.documentGeometry) != item.value { return false }
+    for query in paints {
+      let page = try read.readCurrentScenePaintOrder(boardID: query.boardID, coverID: query.coverID,
+        bounds: query.bounds, after: query.after, limit: 32, groupPoses: query.poses)
+      guard page.entries == query.entries, page.positions == query.positions, (page.next != nil) == query.hasMore else { return false }
     }
+    for query in ink where try !read.spatialInkRecordsAreCurrent(query) { return false }
+    if !inkHeaders.isEmpty {
+      let current = try read.spatialInkHistoryStates(ids: Set(inkHeaders.keys))
+      for (id, expected) in inkHeaders {
+        guard let header = current[id], header.result.creationStamp == expected.stamp,
+          header.surfaces == expected.surfaces else { return false }
+      }
+    }
+    return true
   }
 
   fileprivate static func readItem(_ store: NotebookStore, id: UUID, presence: SessionPresence, documentGeometry: WorkspaceItemGeometry? = nil) throws -> RenderedWorkspaceItem? {
-    guard let header = try store.readItemHeader(id), let node = try store.readBoardItem(id), node.id == presence.boardID else { return nil }
+    try readItem(in: store, id: id, presence: presence, documentGeometry: documentGeometry)
+  }
+
+  private static func readItem<Read: ScenePixelReadCut>(in read: Read, id: UUID, presence: SessionPresence,
+    documentGeometry: WorkspaceItemGeometry?) throws -> RenderedWorkspaceItem? {
+    guard let header = try read.readItemHeader(id), let node = try read.readBoardItem(id), node.id == presence.boardID else { return nil }
     let geometry: WorkspaceItemGeometry
     if header.kind == .document { geometry = documentGeometry ?? .uncompiledDocument }
     else { geometry = .notebook }

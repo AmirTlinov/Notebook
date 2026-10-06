@@ -4,6 +4,49 @@ import Testing
 
 @Suite("Borrowed query cuts")
 struct NotebookQueryCutTests {
+  @Test func panelAndPixelReadsBorrowOneCutAndExpireWithoutAcceptingWrites() throws {
+    try fixture { store in
+      let workspace = try store.loadIndex(), item = try #require(workspace.items.first)
+      let pageID = try #require(item.pageIDs.first), header = try store.workspaceHeader(), actor = header.stamp.actor
+      let target = CollaborationTarget(kind: .page, id: pageID)
+      let request = NotebookPanelReadRequest(workspaceID: header.workspaceID, target: target)
+      let presentation = NotebookPanelPresentationRequest(workspaceID: header.workspaceID, target: target,
+        appearance: .init(viewport: .init(x: 640, y: 480), pixelScale: 1))
+      let records = try store.readSpatialInkWindowRecords(coverage: [:], pinnedActionIDs: [], elementIDs: [:])
+      let before = try store.currentReadCursor(), revision = try store.referenceRevision(target: target)
+      let bounds = WorkspaceSpatialBounds(origin: .zero, width: 100, height: 100)
+      let expired = try NotebookReadSession(store: store).observe { cut in
+        let actualRevision = try cut.referenceRevision(target: target)
+        let page = try cut.loadPage(pageID), panel = try cut.readPanel(request, actor: actor)
+        let projected = try cut.requestPanelPresentation(presentation)
+        #expect(actualRevision == revision && page.id == pageID && projected.target == target)
+        let encoded = try JSONValue.encode(target)
+        #expect(panel["target"] == encoded)
+        let node = try cut.readBoardNodeHeader(header.rootBoardID), owner = try cut.readBoardItem(item.id)
+        #expect(node?.id == header.rootBoardID && owner?.id == header.rootBoardID)
+        let hasContent = try cut.boardHasContent(header.rootBoardID)
+        #expect(hasContent)
+        _ = try cut.readCurrentScenePaintOrder(boardID: header.rootBoardID, bounds: bounds)
+        let ink = try cut.spatialInkHistoryStates(ids: [])
+        let pixelsCurrent = try cut.sceneRecordsAreCurrent(.init()), inkCurrent = try cut.spatialInkRecordsAreCurrent(records)
+        #expect(ink.isEmpty && pixelsCurrent && inkCurrent)
+        return cut
+      }
+      expectExpired { _ = try expired.loadPage(pageID) }
+      expectExpired { _ = try expired.referenceRevision(target: target) }
+      expectExpired { _ = try expired.readPanel(request, actor: actor) }
+      expectExpired { _ = try expired.requestPanelPresentation(presentation) }
+      expectExpired { _ = try expired.readBoardNodeHeader(header.rootBoardID) }
+      expectExpired { _ = try expired.readBoardItem(item.id) }
+      expectExpired { _ = try expired.boardHasContent(header.rootBoardID) }
+      expectExpired { _ = try expired.readCurrentScenePaintOrder(boardID: header.rootBoardID, bounds: bounds) }
+      expectExpired { _ = try expired.spatialInkHistoryStates(ids: []) }
+      expectExpired { _ = try expired.sceneRecordsAreCurrent(.init()) }
+      expectExpired { _ = try expired.spatialInkRecordsAreCurrent(records) }
+      let after = try store.currentReadCursor()
+      #expect(after == before)
+    }
+  }
   @Test func escapedCutCannotReenterAReusedHandleOrAWriter() throws {
     try fixture { store in
       let reader = NotebookReadSession(store: store)

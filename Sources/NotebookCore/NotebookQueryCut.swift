@@ -43,6 +43,43 @@ public struct NotebookQueryCut {
   public func readItemHeader(_ id: UUID) throws -> NotebookItemHeader? {
     try requireActive(); return try store.readItemHeader(id)
   }
+  public func referenceRevision(target: CollaborationTarget, elementID: String? = nil) throws -> String {
+    try requireActive(); return try store.referenceRevision(target: target, elementID: elementID)
+  }
+  public func readPanel(_ request: NotebookPanelReadRequest, actor: UUID) throws -> JSONValue {
+    try requireActive(); return try store.readPanel(request, actor: actor)
+  }
+  public func requestPanelPresentation(_ request: NotebookPanelPresentationRequest) throws -> NotebookPanelPresentationCut {
+    try requireActive(); return try store.requestPanelPresentation(request)
+  }
+  public func loadPage(_ id: UUID) throws -> PageDocument {
+    try requireActive(); return try store.loadPage(id)
+  }
+  public func readBoardNodeHeader(_ id: UUID) throws -> BoardNode? {
+    try requireActive(); return try store.readBoardNodeHeader(id)
+  }
+  public func readBoardItem(_ id: UUID) throws -> BoardNode? {
+    try requireActive(); return try store.readBoardItem(id)
+  }
+  public func boardHasContent(_ id: UUID) throws -> Bool {
+    try requireActive(); return try store.boardHasContent(id)
+  }
+  public func readCurrentScenePaintOrder(boardID: UUID, coverID: UUID? = nil, bounds: WorkspaceSpatialBounds,
+    after: NotebookScenePaintPosition? = nil, limit: Int = 32,
+    groupPoses: [String: NotebookElementPlacement.Source] = [:]) throws -> NotebookScenePaintPage {
+    try requireActive()
+    return try store.readCurrentScenePaintOrder(boardID: boardID, coverID: coverID, bounds: bounds,
+      after: after, limit: limit, groupPoses: groupPoses)
+  }
+  public func spatialInkHistoryStates(ids: Set<UUID>) throws -> [UUID: NotebookSpatialInkHistoryState] {
+    try requireActive(); return try store.spatialInkHistoryStates(ids: ids)
+  }
+  public func sceneRecordsAreCurrent(_ dependencies: NotebookSceneRecordDependencies) throws -> Bool {
+    try requireActive(); return try dependencies.isCurrent(store)
+  }
+  public func spatialInkRecordsAreCurrent(_ records: NotebookSpatialInkWindowRecords) throws -> Bool {
+    try requireActive(); return try records.isCurrent(store)
+  }
   public func presenceGeneration() throws -> String {
     try requireActive(); return try store.presenceGeneration()
   }

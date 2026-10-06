@@ -1,0 +1,89 @@
+{
+  "status": "PASS",
+  "scope": "Three immutable panel reads on existing command reader and fixed accepted-writer prefix; portable Core and native Mac only",
+  "route": "./verify.sh:selected",
+  "sourceSHA256": "ccc9556577623d6f4843f1ea87cd22b6c259f4bdccde1e07a8c581aac78590a0",
+  "inputCount": 1667,
+  "coreNativeSameSource": true,
+  "owningInputs": [
+    {
+      "executable": false,
+      "path": "Applications/Mac/MacPreviewPublisher.swift",
+      "sha256": "b5df960f369374d6b078c95f1e0f46a17660c11894007a83feafdc4897976efe"
+    },
+    {
+      "executable": false,
+      "path": "Applications/Mac/NotebookPanelPreviewWriter.swift",
+      "sha256": "d1aa2448220ab696d19b6cb40797492d98e11fbbd86523f463feb9d58a79de48"
+    },
+    {
+      "executable": false,
+      "path": "Applications/MacTests/NotebookCommandReaderTests.swift",
+      "sha256": "43dbd5897b68861829e02d40addd01faa2ce1901f6d4e4f28971c8b7d6373897"
+    },
+    {
+      "executable": false,
+      "path": "Applications/Shared/NotebookAppModel.swift",
+      "sha256": "87f66172c2846e5adc9182d351b26d0fbe3f53a21ba1caed661ab380d35ab40f"
+    },
+    {
+      "executable": false,
+      "path": "Applications/Shared/SceneCompositionSource.swift",
+      "sha256": "205ee977c772b803e17e126a338902fd3af87a6199ed9ed0274a86090c874a17"
+    },
+    {
+      "executable": false,
+      "path": "Sources/NotebookCore/NotebookQueryCut.swift",
+      "sha256": "c951cb6c221c43adb961d15bc3b1483ed441690d034b2b15edca474d0be02a06"
+    },
+    {
+      "executable": false,
+      "path": "Tests/NotebookCoreTests/NotebookQueryCutTests.swift",
+      "sha256": "6394c5ce327caef26578fdd24dfe54e41b0ca26c88b44c3af5f1fd6378446735"
+    }
+  ],
+  "coreFunctions": 3,
+  "coreExecutions": 3,
+  "nativePassed": 9,
+  "nativeFailed": 0,
+  "nativeSkipped": 0,
+  "nativeRuntimeWarnings": [],
+  "physicalIPadAcceptance": false,
+  "installedCodexGestureAcceptance": false,
+  "originalEvidenceDirectories": [
+    "/Users/amir/.codex/worktrees/notebook-panel-read/Notebook/.build/panel-read-core-20261006-v1",
+    "/Users/amir/.codex/worktrees/notebook-panel-read/Notebook/.build/panel-read-native-20261006-v1"
+  ],
+  "artifacts": [
+    {
+      "path": "core-execution.json",
+      "bytes": 1387,
+      "sha256": "aab00594890b4189f553005fb826c58a8401e316b78d2b11a910e3d856703577"
+    },
+    {
+      "path": "native-execution.json",
+      "bytes": 2324,
+      "sha256": "b60eac1c082a7779673bda41c3de52f3123f785a4793213bda2b3dda8619c600"
+    },
+    {
+      "path": "native-summary.json",
+      "bytes": 941,
+      "sha256": "f8216808e00db2eac3c8b839cd7c420c6d63a0f36c0d6f15664372b8514a95df"
+    },
+    {
+      "path": "core-selection.json",
+      "bytes": 1096,
+      "sha256": "f155c7b6860953681663699813ab77a682bbdf8e5b89e27e83d77674b9a80e78"
+    },
+    {
+      "path": "native-selection.json",
+      "bytes": 1628,
+      "sha256": "0264df4640c4110b4b802863c23374447881a90fda727be3a2dbff56b2276a8d"
+    },
+    {
+      "path": "toolchain.json",
+      "bytes": 318,
+      "sha256": "ee0fce6c2e726405f0a3685a69be5335ed15bff52d034039ed77556d0785dc0c"
+    }
+  ]
+}
