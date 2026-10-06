@@ -7,6 +7,32 @@
 
   @MainActor
   final class NotebookAppLaunchTests: XCTestCase {
+    func testFirstLaunchCreatesApplicationSupportBeforeClaimingTheDefaultWitnessLease() async throws {
+      let base = FileManager.default.temporaryDirectory.appendingPathComponent("launch-parent-\(UUID())")
+      let support = base.appendingPathComponent("Library/Application Support", isDirectory: true)
+      let root = support.appendingPathComponent("Notebook", isDirectory: true)
+      let endpoint = NotebookApplicationLaunch.acceptedWitnessLeaseEndpoint(root: root)
+      defer { try? FileManager.default.removeItem(at: base) }
+      XCTAssertFalse(FileManager.default.fileExists(atPath: support.path))
+      var constructions = 0
+      let launch = NotebookApplicationLaunch(root: root, runtimeSocketURL: endpoint) { _, _ in
+        constructions += 1
+        XCTAssertTrue(FileManager.default.fileExists(atPath: support.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: endpoint.path + ".owner"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.path), "Admission precedes the first store access")
+        throw NotebookStorageError.corruptRecord("Stop before creating the first store")
+      }
+      await launch.start()
+      XCTAssertEqual(constructions, 1); XCTAssertNotNil(launch.failure)
+      XCTAssertFalse(FileManager.default.fileExists(atPath: root.path))
+      let permissions = try FileManager.default.attributesOfItem(atPath: endpoint.deletingLastPathComponent().path)[.posixPermissions] as? NSNumber
+      XCTAssertEqual(permissions?.intValue, 0o700)
+      XCTAssertThrowsError(try NotebookIPCProcessLease(socketURL: endpoint)) { error in
+        XCTAssertEqual((error as? CollaborationError)?.code, "ipc_owner_running")
+      }
+      withExtendedLifetime(launch) { XCTAssertNil(launch.model) }
+    }
+
     func testASecondLaunchCannotReachItsModelFactoryWhileTheFailedOwnerKeepsItsLease() async throws {
       let base = FileManager.default.temporaryDirectory.appendingPathComponent("launch-lease-\(UUID())")
       let root = base.appendingPathComponent("Notebook"), endpoint = base.appendingPathComponent("writer.sock")

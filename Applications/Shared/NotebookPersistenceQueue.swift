@@ -118,6 +118,7 @@ final class NotebookPersistenceQueue {
   private var pending = PendingWrites()
   private let admission: NotebookPersistenceAdmission
   private var task: Task<Void, Never>?
+  private var lifecycleWaiters: [AnyHashable: [UUID: WaitCompletion<Bool>]] = [:]
   private(set) var failure: String?
   var onFailureChange: ((String?) -> Void)?
   var onContentMerged: (() -> Void)?
@@ -130,6 +131,7 @@ final class NotebookPersistenceQueue {
   }
 
   var pendingCount: Int { pending.count }
+  var observedLifecycleTaskCount: Int { lifecycleWaiters.count }
   var acceptedPayloadBytes: Int { admission.acceptedPayloadBytes }
   var acceptedCompletionBytes: Int { admission.acceptedCompletionBytes }
   var reservedWriteBytes: Int { admission.occupiedBytes }
@@ -259,6 +261,40 @@ final class NotebookPersistenceQueue {
     failure = nil
     onFailureChange?(nil)
     startIfNeeded()
+  }
+
+  enum LifecycleResult<Value: Sendable>: Sendable {
+    case completed(Value)
+    case blocked
+  }
+
+  /// Observe an already owned lifecycle task without abandoning its accepted
+  /// writes. A storage fault releases the caller so it can request Retry; the
+  /// same task still owns startup/teardown and its eventual result.
+  func waitForLifecycle<Value: Sendable>(_ work: Task<Value, Never>) async -> LifecycleResult<Value> {
+    guard !Task.isCancelled, failure == nil else { return .blocked }
+    let key = AnyHashable(work), id = UUID(), completion = WaitCompletion<Bool>()
+    if lifecycleWaiters[key] == nil {
+      lifecycleWaiters[key] = [:]
+      // One monitor per owned task, including repeated fail/Retry cycles.
+      Task { [weak self] in
+        _ = await work.value
+        if let observers = self?.lifecycleWaiters.removeValue(forKey: AnyHashable(work)) {
+          for observer in observers.values { observer.resolve(true) }
+        }
+      }
+    }
+    let finished = await withTaskCancellationHandler {
+      await withCheckedContinuation { continuation in
+        completion.install(continuation)
+        lifecycleWaiters[key]?[id] = completion
+      }
+    } onCancel: {
+      completion.resolve(false)
+      Task { @MainActor [weak self] in self?.lifecycleWaiters[AnyHashable(work)]?.removeValue(forKey: id) }
+    }
+    guard finished else { return .blocked }
+    return .completed(await work.value)
   }
 
   /// A mutation keeps this result waiter across storage failure; Retry resumes
@@ -428,7 +464,7 @@ final class NotebookPersistenceQueue {
   @discardableResult
   func flush() async -> Bool {
     guard !Task.isCancelled, failure == nil else { return false }
-    let completion = FlushCompletion()
+    let completion = WaitCompletion<Bool>()
     let witnesses = acceptedWitnesses
     return await withTaskCancellationHandler {
       await withCheckedContinuation { continuation in
@@ -449,18 +485,18 @@ final class NotebookPersistenceQueue {
     }
   }
 
-  private final class FlushCompletion: @unchecked Sendable {
+  private final class WaitCompletion<Value: Sendable>: @unchecked Sendable {
     private let lock = NSLock()
-    private var result: Bool?
-    private var continuation: CheckedContinuation<Bool, Never>?
+    private var result: Value?
+    private var continuation: CheckedContinuation<Value, Never>?
 
-    func install(_ continuation: CheckedContinuation<Bool, Never>) {
+    func install(_ continuation: CheckedContinuation<Value, Never>) {
       lock.lock()
       if let result { lock.unlock(); continuation.resume(returning: result) }
       else { self.continuation = continuation; lock.unlock() }
     }
 
-    func resolve(_ result: Bool) {
+    func resolve(_ result: Value) {
       lock.lock()
       guard self.result == nil else { lock.unlock(); return }
       self.result = result
@@ -526,6 +562,11 @@ final class NotebookPersistenceQueue {
       case .failure(let error):
         failure = error.localizedDescription
         onFailureChange?(failure)
+        for key in Array(lifecycleWaiters.keys) {
+          let waiters = lifecycleWaiters[key]!
+          lifecycleWaiters[key]?.removeAll()
+          for waiter in waiters.values { waiter.resolve(false) }
+        }
         for write in pending { write.onBlocked?(error.localizedDescription) }
         let removed = pending.removeAll { $0.lifetime == .observation }
         for write in removed { releaseAdmission(write) }

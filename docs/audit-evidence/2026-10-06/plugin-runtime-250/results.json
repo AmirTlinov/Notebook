@@ -1,0 +1,101 @@
+{
+  "scope": "Retained plugin startup, shutdown and human-context Retry; cold iPad lease parent",
+  "sourceSHA256": "aad2f97a8768e4d15c59e55143612f0afa9e61b28d257ba28c595c34dec64f58",
+  "mac": {
+    "passed": 22,
+    "failed": 0,
+    "skipped": 0,
+    "runtimeWarnings": [],
+    "execution": {
+      "executed": [
+        "NotebookMacTests/DocumentReadingPublicationTests/testReplayedDocumentLandingDoesNotInvalidateIdleNavigation",
+        "NotebookMacTests/DocumentReadingPublicationTests/testReplayedLandingDuringScrollDoesNotPublishAnIntermediateReadingPosition",
+        "NotebookMacTests/NotebookArchiveLaunchTests/testRuntimeAdmissionRefusesLegacySocketAndConcurrentLauncherBeforeWorkspaceAccess",
+        "NotebookMacTests/NotebookArchiveLaunchTests/testRuntimeBootstrapAndCreateRetryKeepTheAcceptedOwnerAndWorkspaceAddress",
+        "NotebookMacTests/NotebookArchiveLaunchTests/testRuntimeCommandsCreateAndSelectThroughTheOwnerWithoutADesktopWindow",
+        "NotebookMacTests/NotebookArchiveLaunchTests/testRuntimeRetriesRetainedAcceptedWritesWithoutQuitOrWorkspaceSwitch",
+        "NotebookMacTests/NotebookArchiveLaunchTests/testRuntimeRetryDrainsRetainedAcceptedWritesBeforeReplacingWorkspaceOwners",
+        "NotebookMacTests/NotebookArchiveLaunchTests/testRuntimeShutdownReturnsBlockedAndRetriesTheAcceptedIPCMutationBeforeRetiringItsOwner",
+        "NotebookMacTests/NotebookArchiveLaunchTests/testRuntimeStatusRemainsAvailableAfterArchiveFailureAndWorkspaceCommandsStayClosed",
+        "NotebookMacTests/NotebookClipboardWriterTests/testClipboardFragmentUsesNativeBoardWriterAndOneUndo",
+        "NotebookMacTests/NotebookClipboardWriterTests/testCopyPasteCarriesAProgramsBinaryClosureThroughTheOrdinaryWriterAndUndo",
+        "NotebookMacTests/NotebookPersistenceQueueTests/testCancellingPreparedResultWaitDoesNotDiscardItsResultOrDependentWrite",
+        "NotebookMacTests/NotebookPersistenceQueueTests/testCoalescingAndDiscardCannotReplaceAnAlreadyAttemptedAcceptedHead",
+        "NotebookMacTests/NotebookPersistenceQueueTests/testDeterministicLimitRefusalDoesNotBecomeAnInfiniteStorageRetry",
+        "NotebookMacTests/NotebookPersistenceQueueTests/testDomainRejectionWithoutAnObserverClosesOnlyItsAcceptedSlot",
+        "NotebookMacTests/NotebookPersistenceQueueTests/testMutatingCommandRetainsItsCompletionAndFIFOAcrossStorageRetry",
+        "NotebookMacTests/NotebookPersistenceQueueTests/testNonpublishingScriptAdmissionReturnsItsOriginalResultAfterUnknownCommitAndRetry",
+        "NotebookMacTests/NotebookPersistenceQueueTests/testPreparedCommandKeepsOneAcceptedInstanceAndExactResultAfterUnknownCommitAndPeer",
+        "NotebookMacTests/NotebookPersistenceQueueTests/testPublishingSubmitKeepsTheSameWaiterUntilItsStorageRetryFinishes",
+        "NotebookMacTests/NotebookPersistenceQueueTests/testStorageErrorBridgeRetainsTheHeadEvenWhenARejectionObserverExists",
+        "NotebookMacTests/NotebookPersistenceQueueTests/testTypedCompletionAndItsCreditStayPendingUntilTheOuterCommitOutcomeIsKnown",
+        "NotebookMacTests/NotebookPersistenceQueueTests/testTypedEffectKeepsNonpublishingMutationAndReleasesReadObserver"
+      ],
+      "failed": [],
+      "format": 1,
+      "planned": [
+        "NotebookMacTests/DocumentReadingPublicationTests/testReplayedDocumentLandingDoesNotInvalidateIdleNavigation",
+        "NotebookMacTests/DocumentReadingPublicationTests/testReplayedLandingDuringScrollDoesNotPublishAnIntermediateReadingPosition",
+        "NotebookMacTests/NotebookArchiveLaunchTests/testRuntimeAdmissionRefusesLegacySocketAndConcurrentLauncherBeforeWorkspaceAccess",
+        "NotebookMacTests/NotebookArchiveLaunchTests/testRuntimeBootstrapAndCreateRetryKeepTheAcceptedOwnerAndWorkspaceAddress",
+        "NotebookMacTests/NotebookArchiveLaunchTests/testRuntimeCommandsCreateAndSelectThroughTheOwnerWithoutADesktopWindow",
+        "NotebookMacTests/NotebookArchiveLaunchTests/testRuntimeRetriesRetainedAcceptedWritesWithoutQuitOrWorkspaceSwitch",
+        "NotebookMacTests/NotebookArchiveLaunchTests/testRuntimeRetryDrainsRetainedAcceptedWritesBeforeReplacingWorkspaceOwners",
+        "NotebookMacTests/NotebookArchiveLaunchTests/testRuntimeShutdownReturnsBlockedAndRetriesTheAcceptedIPCMutationBeforeRetiringItsOwner",
+        "NotebookMacTests/NotebookArchiveLaunchTests/testRuntimeStatusRemainsAvailableAfterArchiveFailureAndWorkspaceCommandsStayClosed",
+        "NotebookMacTests/NotebookClipboardWriterTests/testClipboardFragmentUsesNativeBoardWriterAndOneUndo",
+        "NotebookMacTests/NotebookClipboardWriterTests/testCopyPasteCarriesAProgramsBinaryClosureThroughTheOrdinaryWriterAndUndo",
+        "NotebookMacTests/NotebookPersistenceQueueTests/testCancellingPreparedResultWaitDoesNotDiscardItsResultOrDependentWrite",
+        "NotebookMacTests/NotebookPersistenceQueueTests/testCoalescingAndDiscardCannotReplaceAnAlreadyAttemptedAcceptedHead",
+        "NotebookMacTests/NotebookPersistenceQueueTests/testDeterministicLimitRefusalDoesNotBecomeAnInfiniteStorageRetry",
+        "NotebookMacTests/NotebookPersistenceQueueTests/testDomainRejectionWithoutAnObserverClosesOnlyItsAcceptedSlot",
+        "NotebookMacTests/NotebookPersistenceQueueTests/testMutatingCommandRetainsItsCompletionAndFIFOAcrossStorageRetry",
+        "NotebookMacTests/NotebookPersistenceQueueTests/testNonpublishingScriptAdmissionReturnsItsOriginalResultAfterUnknownCommitAndRetry",
+        "NotebookMacTests/NotebookPersistenceQueueTests/testPreparedCommandKeepsOneAcceptedInstanceAndExactResultAfterUnknownCommitAndPeer",
+        "NotebookMacTests/NotebookPersistenceQueueTests/testPublishingSubmitKeepsTheSameWaiterUntilItsStorageRetryFinishes",
+        "NotebookMacTests/NotebookPersistenceQueueTests/testStorageErrorBridgeRetainsTheHeadEvenWhenARejectionObserverExists",
+        "NotebookMacTests/NotebookPersistenceQueueTests/testTypedCompletionAndItsCreditStayPendingUntilTheOuterCommitOutcomeIsKnown",
+        "NotebookMacTests/NotebookPersistenceQueueTests/testTypedEffectKeepsNonpublishingMutationAndReleasesReadObserver"
+      ],
+      "skipped": []
+    },
+    "verification": {
+      "path": ".build/runtime-250-final-verification/verification.json",
+      "sha256": "ee5ab2ed97ca6ae71ab48890f475240357d0783bfa5e642466f7da486cf53b49"
+    },
+    "commands": {
+      "path": ".build/runtime-250-final-verification/commands.json",
+      "sha256": "4617c5500a04171c85cb725d1110cb2eb868719068c713f4698c9dca9a8aaac2"
+    }
+  },
+  "ipadBuildOnly": {
+    "durationSeconds": 91.00229479200789,
+    "installationAttempted": false,
+    "physicalAcceptance": false,
+    "scope": "generic-iphoneos-build-for-testing",
+    "sourceSHA256": "aad2f97a8768e4d15c59e55143612f0afa9e61b28d257ba28c595c34dec64f58",
+    "status": "passed",
+    "testExecution": false,
+    "commands": {
+      "path": ".build/runtime-250-ipad-build-only/commands.json",
+      "sha256": "556ba67db2fb227c4bd482b9cd6411096021b3df45adbfe1b971e8ef3df4131d"
+    }
+  },
+  "independentReview": {
+    "status": "completed",
+    "remainingFindings": [],
+    "repairs": [
+      "Retain one original startup or shutdown task while releasing faulted observers",
+      "Retry the writer before joining accepted bootstrap and preserve the original candidate address",
+      "Prepare the iPad Application Support parent before strict lease admission",
+      "Observe the original retained context publication across repeated failed Retry without creating completion tasks"
+    ]
+  },
+  "installationAttempted": false,
+  "physicalAcceptance": false,
+  "pending": [
+    "Physical iPad selected scenarios and 20 ms input gate",
+    "Signed pair 250 and installed plugin cutover with current content and trust readback",
+    "Actual Codex panel workflow, C2/C3/C5 and full acceptance"
+  ]
+}

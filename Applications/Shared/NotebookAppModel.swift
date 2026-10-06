@@ -1769,18 +1769,27 @@ final class NotebookAppModel {
 
   func start(pageSize: PageSize, viewport: SpatialPoint? = nil) async {
     guard !isStopped else { return }
-    if let startupTask { await startupTask.value; return }
+    if let startupTask { _ = await persistence.waitForLifecycle(startupTask); return }
     guard !started else { return }
     started = true
     notebookPageSize = pageSize
     let startup = Task<Void, Never> { [weak self] in
       guard let self else { return }
+      defer { startupTask = nil }
       await loadInitialState(pageSize: pageSize,
         viewport: viewport ?? .init(x: pageSize.width, y: pageSize.height))
     }
     startupTask = startup
-    await startup.value
-    startupTask = nil
+    _ = await persistence.waitForLifecycle(startup)
+  }
+
+  /// The workspace transition retains this join after its UI/IPC observer has
+  /// reported a storage fault. Only Retry may release the accepted startup.
+  func finishStartup() async { await startupTask?.value }
+
+  func waitForPersistenceLifecycle<Value: Sendable>(_ work: Task<Value, Never>) async
+    -> NotebookPersistenceQueue.LifecycleResult<Value> {
+    await persistence.waitForLifecycle(work)
   }
 
   private func loadInitialState(pageSize: PageSize, viewport: SpatialPoint) async {
@@ -1813,7 +1822,7 @@ final class NotebookAppModel {
       }
       let stored = preparation.0
       NotebookNavigationObservation.webPreparation("startup_store_resumed", ownerID: actor)
-      installSceneCut(stored)
+      guard installSceneCut(stored) else { throw NotebookStorageError.transactionConflict }
       presence = settledPresence(from: stored.presence, viewport: viewport)
       NotebookNavigationObservation.webPreparation("startup_state_installed", ownerID: actor)
       if let presence {
@@ -6522,7 +6531,9 @@ final class NotebookAppModel {
     defer { observeNavigation("persistence_finish_exit", fields: trace) }
     guard !Task.isCancelled, continuing() else { return false }
     if (boundary == .quiescent || loadState != .ready), let startupTask {
-      observeNavigation("wait_startup_begin", fields: trace); await startupTask.value; observeNavigation("wait_startup_end", fields: trace)
+      observeNavigation("wait_startup_begin", fields: trace)
+      guard case .completed = await persistence.waitForLifecycle(startupTask) else { return false }
+      observeNavigation("wait_startup_end", fields: trace)
     }
     guard !Task.isCancelled, continuing() else { return false }
     if boundary == .acceptedInput {
@@ -6553,7 +6564,11 @@ final class NotebookAppModel {
         guard await persistence.flush() else { return false }
         for task in commands { _ = await task.value }
       }
-      if let task = contextPublicationTask { await task.value }
+      if let task = contextPublicationTask {
+        // The accepted context retains its result across storage failure.
+        // Release this boundary's observer so Retry rejoins that publication.
+        guard case .completed = await persistence.waitForLifecycle(task) else { return false }
+      }
       if let task = collaborationHistoryTask {
         guard await persistence.flush() else { return false }
         _ = await task.value
@@ -6584,10 +6599,14 @@ final class NotebookAppModel {
   /// A failed native write remains in the same queue and returns false.
   @discardableResult
   func shutdown() async -> Bool {
-    if let shutdownTask { return await shutdownTask.value }
+    if let shutdownTask {
+      guard case .completed(let saved) = await persistence.waitForLifecycle(shutdownTask) else { return false }
+      return saved
+    }
     if shutdownPhase == .stopped { return true }
     if shutdownPhase == .running { shutdownPhase = .closing }
     let task = Task { [self] in
+      defer { shutdownTask = nil }
       drawingTools.cancel()
       cancelRequestedNavigation()
       cancelDocumentOpening()
@@ -6671,8 +6690,7 @@ final class NotebookAppModel {
       return saved
     }
     shutdownTask = task
-    let saved = await task.value
-    shutdownTask = nil
+    guard case .completed(let saved) = await persistence.waitForLifecycle(task) else { return false }
     return saved
   }
 
