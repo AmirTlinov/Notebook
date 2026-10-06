@@ -1,4 +1,4 @@
-import NotebookCore
+@testable import NotebookCore
 import Security
 import XCTest
 @testable import Notebook
@@ -6,6 +6,156 @@ import XCTest
 @MainActor
 final class NotebookArchiveLaunchTests: XCTestCase {
   #if os(macOS)
+    func testRuntimeBootstrapAndCreateRetryKeepTheAcceptedOwnerAndWorkspaceAddress() async throws {
+      enum Fault: Error { case storageUnavailable }
+      for creating in [false, true] {
+        let base = URL(fileURLWithPath: "/tmp/nb-start-" + UUID().uuidString.lowercased(), isDirectory: true)
+        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        let root = base.appendingPathComponent("Notebook"), socket = base.appendingPathComponent("bridge.sock")
+        let repaired = base.appendingPathComponent("repaired")
+        let blocked = expectation(description: "Accepted bootstrap reports its storage fault")
+        var owners: [(model: NotebookAppModel, writer: NotebookPersistenceQueue)] = []
+        let launch = NotebookApplicationLaunch(root: root, runtimeSocketURL: socket) { store, _ in
+          let faults = owners.count == (creating ? 1 : 0)
+          let admitted = NotebookStore(root: store.root, storageFault: { phase in
+            if faults, phase == .afterCommit, !FileManager.default.fileExists(atPath: repaired.path) { throw Fault.storageUnavailable }
+          })
+          let writer = NotebookPersistenceQueue(store: admitted)
+          let key = String(UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased().prefix(24))
+          let model = NotebookAppModel(store: admitted, startsNearbySync: false,
+            commandSocketURL: base.appendingPathComponent(key + ".sock"), persistenceQueue: writer)
+          let receive = writer.onFailureChange
+          writer.onFailureChange = { message in receive?(message); if message != nil { blocked.fulfill() } }
+          owners.append((model, writer)); return model
+        }
+        addTeardownBlock { @MainActor in
+          try Data().write(to: repaired)
+          for owner in owners { owner.writer.retry() }
+          _ = await launch.shutdown()
+          try FileManager.default.removeItem(at: base)
+        }
+        await launch.start()
+        let first = try XCTUnwrap(launch.model)
+        if creating { await first.start(pageSize: NotebookAppModel.defaultPageSize) }
+        let previousID = first.workspaceHeader?.workspaceID, requestedID = UUID()
+        let returned = expectation(description: "Bootstrap observer returns without abandoning its write")
+        var didReturn = false
+        let opening = Task { @MainActor in
+          if creating {
+            var create = NotebookCommand(command: .runtimeWorkspace)
+            create.runtimeWorkspace = .init(action: .create, id: requestedID, name: "После восстановления")
+            _ = try? await launch.executeRuntimeCommand(create)
+          } else { await first.start(pageSize: NotebookAppModel.defaultPageSize) }
+          didReturn = true; returned.fulfill()
+        }
+        await fulfillment(of: [blocked, returned], timeout: 3)
+        guard didReturn else {
+          try Data().write(to: repaired); for owner in owners { owner.writer.retry() }
+          await opening.value; return
+        }
+        let candidate = try XCTUnwrap(launch.model), writer = try XCTUnwrap(owners.last?.writer)
+        XCTAssertFalse(launch.isChecking); XCTAssertTrue(candidate.runtimeStartupPending)
+        XCTAssertGreaterThan(writer.pendingCount, 0)
+        let id = try (creating ? requestedID : candidate.store.storedWorkspaceID())
+        if creating {
+          XCTAssertFalse(candidate === first); XCTAssertEqual(first.shutdownPhase, .running)
+          XCTAssertEqual(try NotebookWorkspaceLibrary(originalRoot: root).catalog().selectedID, previousID)
+          var other = NotebookCommand(command: .runtimeWorkspace)
+          other.runtimeWorkspace = .init(action: .create, id: UUID(), name: "Cannot displace the accepted candidate")
+          do { _ = try await launch.executeRuntimeCommand(other); XCTFail("A pending candidate must retain its transition") }
+          catch let error as CollaborationError { XCTAssertEqual(error.code, "owner_unavailable") }
+        }
+        let constructions = owners.count
+        try Data().write(to: repaired)
+        var retry = NotebookCommand(command: .runtimeWorkspace); retry.runtimeWorkspace = .init(action: .retry, id: id)
+        let response = try await Task.detached { [retry] in
+          try NotebookIPCClient(socketURL: socket).send(retry).decode(NotebookRuntimeWorkspaceResponse.self)
+        }.value
+        XCTAssertEqual(response.status.state, .ready); XCTAssertEqual(response.status.workspaceID, id)
+        XCTAssertNil(response.error); XCTAssertTrue(launch.model === candidate)
+        XCTAssertEqual(owners.count, constructions); XCTAssertFalse(candidate.runtimeStartupPending)
+        XCTAssertEqual(writer.pendingCount, 0)
+        XCTAssertEqual(try candidate.store.storedWorkspaceID(), id)
+        if creating { XCTAssertEqual(try NotebookWorkspaceLibrary(originalRoot: root).catalog().selectedID, requestedID) }
+      }
+    }
+
+    func testRuntimeShutdownReturnsBlockedAndRetriesTheAcceptedIPCMutationBeforeRetiringItsOwner() async throws {
+      enum Fault: Error { case storageUnavailable }
+      let base = URL(fileURLWithPath: "/tmp/nb-stop-" + UUID().uuidString.lowercased(), isDirectory: true)
+      try FileManager.default.createDirectory(at: base, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+      let root = base.appendingPathComponent("Notebook"), socket = base.appendingPathComponent("bridge.sock")
+      let armed = base.appendingPathComponent("armed"), repaired = base.appendingPathComponent("repaired")
+      var owners: [(model: NotebookAppModel, writer: NotebookPersistenceQueue, socket: URL)] = []
+      let launch = NotebookApplicationLaunch(root: root, runtimeSocketURL: socket) { store, _ in
+        let admitted = NotebookStore(root: store.root, storageFault: { phase in
+          if phase == .afterCommit, FileManager.default.fileExists(atPath: armed.path),
+            !FileManager.default.fileExists(atPath: repaired.path) { throw Fault.storageUnavailable }
+        })
+        let writer = NotebookPersistenceQueue(store: admitted)
+        let key = String(UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased().prefix(24))
+        let endpoint = base.appendingPathComponent(key + ".sock")
+        let model = NotebookAppModel(store: admitted, startsNearbySync: false, commandSocketURL: endpoint, persistenceQueue: writer)
+        owners.append((model, writer, endpoint)); return model
+      }
+      addTeardownBlock { @MainActor in
+        try Data().write(to: repaired)
+        for owner in owners { owner.writer.retry() }
+        _ = await launch.shutdown()
+        try FileManager.default.removeItem(at: base)
+      }
+      await launch.start()
+      let original = try XCTUnwrap(owners.first)
+      await original.model.start(pageSize: NotebookAppModel.defaultPageSize)
+      let initiallySaved = await original.model.finishPendingInteraction(); XCTAssertTrue(initiallySaved)
+      let workspaceID = try XCTUnwrap(original.model.workspaceHeader?.workspaceID)
+      let page = CollaborationTarget(kind: .page, id: try XCTUnwrap(original.model.workspace?.selectedPageID))
+      let actionID = UUID(), strokeID = UUID()
+      var edit = NotebookCommand(command: .panelEdit)
+      edit.panelEdit = .init(workspaceID: workspaceID, actionID: actionID, target: page,
+        summary: "Accepted IPC stroke", operations: [.init(kind: .appendInkStroke, target: page, id: strokeID.uuidString,
+          values: ["width": .number(4), "points": .array([.object(["x": .number(100), "y": .number(120)]),
+            .object(["x": .number(160), "y": .number(190)])])])], sources: [])
+      let blocked = expectation(description: "IPC mutation retains its result after an unknown commit")
+      let receive = original.writer.onFailureChange
+      original.writer.onFailureChange = { message in receive?(message); if message != nil { blocked.fulfill() } }
+      try Data().write(to: armed)
+      let accepted = Task.detached { [edit, endpoint = original.socket] in try NotebookIPCClient(socketURL: endpoint).send(edit) }
+      await fulfillment(of: [blocked], timeout: 3)
+      XCTAssertNotNil(original.writer.failure)
+      let peer = NotebookStore(root: root), savedResult = try XCTUnwrap(try peer.savedActionResult(actionID))
+      let returned = expectation(description: "Shutdown releases its observer while retaining the same terminal task")
+      var shutdownResult: Bool?
+      let closing = Task { @MainActor in shutdownResult = await launch.shutdown(); returned.fulfill() }
+      await fulfillment(of: [returned], timeout: 3)
+      guard let shutdownResult else {
+        try Data().write(to: repaired); original.writer.retry(); await closing.value; return
+      }
+      XCTAssertFalse(shutdownResult); XCTAssertEqual(original.model.shutdownPhase, .closing)
+      let secondQuit = await launch.shutdown(); XCTAssertFalse(secondQuit)
+      let status = try await Task.detached {
+        try NotebookIPCClient(socketURL: socket).send(.init(command: .runtimeStatus)).decode(NotebookRuntimeBootstrapStatus.self)
+      }.value
+      XCTAssertTrue(status.ready); XCTAssertEqual(status.state, .failed)
+      XCTAssertGreaterThan(original.writer.pendingCount, 0)
+      try Data().write(to: repaired)
+      var retry = NotebookCommand(command: .runtimeWorkspace); retry.runtimeWorkspace = .init(action: .retry, id: workspaceID)
+      let recovered = try await Task.detached { [retry] in
+        try NotebookIPCClient(socketURL: socket).send(retry).decode(NotebookRuntimeWorkspaceResponse.self)
+      }.value
+      XCTAssertEqual(recovered.status.state, .ready); XCTAssertEqual(recovered.status.workspaceID, workspaceID)
+      XCTAssertEqual(original.model.shutdownPhase, .stopped); XCTAssertEqual(original.writer.pendingCount, 0)
+      XCTAssertEqual(owners.count, 2)
+      _ = await accepted.result
+      let current = try XCTUnwrap(owners.last)
+      let settled = await current.model.finishPendingInteraction(); XCTAssertTrue(settled)
+      let cursor = try peer.currentChangeCursor()
+      let repeated = try await Task.detached { [edit, endpoint = current.socket] in try NotebookIPCClient(socketURL: endpoint).send(edit) }.value
+      XCTAssertEqual(repeated, savedResult); XCTAssertEqual(try peer.currentChangeCursor(), cursor)
+      XCTAssertEqual(try peer.loadPage(page.id).inkDrawing().activeActions.filter { $0.id == strokeID }.count, 1)
+      let finalQuit = await launch.shutdown(); XCTAssertTrue(finalQuit)
+    }
+
     func testRuntimeRetriesRetainedAcceptedWritesWithoutQuitOrWorkspaceSwitch() async throws {
       enum Failure: Error { case storageUnavailable }
       let base = URL(fileURLWithPath: "/tmp/nb-runtime-" + UUID().uuidString.lowercased(), isDirectory: true)
@@ -44,12 +194,32 @@ final class NotebookArchiveLaunchTests: XCTestCase {
       persistence.enqueue { _ in
         try (Data(contentsOf: accepted) + Data(" second".utf8)).write(to: accepted); return false
       }
+      let pageID = try XCTUnwrap(model.workspace?.selectedPageID)
+      let contextCount = try model.store.sharedContexts().contexts.count
+      model.publishHumanContext(.init(fragments: [.init(target: .init(kind: .page, id: pageID),
+        elementID: nil, region: .init(x: 20, y: 20, width: 100, height: 100),
+        worldOrigin: nil, pageIndex: nil, label: "Принятый фрагмент")],
+        workspace: try XCTUnwrap(model.workspace), hierarchy: try XCTUnwrap(model.boardHierarchy),
+        ink: try XCTUnwrap(model.spatialInk), pages: model.pages, documents: model.documents, states: model.documentStates),
+        text: "Retained human context")
       let saved = await persistence.flush(); XCTAssertFalse(saved)
       let status = try await launch.executeRuntimeCommand(.init(command: .runtimeStatus)).decode(NotebookRuntimeBootstrapStatus.self)
       XCTAssertTrue(status.ready); XCTAssertEqual(status.state, .failed)
       XCTAssertNotNil(status.socketKey); XCTAssertEqual(model.shutdownPhase, .running)
-      try Data().write(to: repaired)
       var retry = NotebookCommand(command: .runtimeWorkspace); retry.runtimeWorkspace = .init(action: .retry, id: firstID)
+      let acceptedCount = persistence.pendingCount
+      for _ in 0..<3 {
+        let blocked = try await Task.detached { [retry] in
+          try NotebookIPCClient(socketURL: socket).send(retry).decode(NotebookRuntimeWorkspaceResponse.self)
+        }.value
+        XCTAssertEqual(blocked.status.state, .failed); XCTAssertNotNil(blocked.error)
+        XCTAssertTrue(model.selectionSession.isResolvingContext)
+        XCTAssertEqual(persistence.pendingCount, acceptedCount)
+        XCTAssertLessThanOrEqual(persistence.observedLifecycleTaskCount, 1,
+          "Failed Retry observes the one retained publication without accumulating finish tasks")
+        XCTAssertEqual(try model.store.sharedContexts().contexts.count, contextCount)
+      }
+      try Data().write(to: repaired)
       let recovered = try await Task.detached { [retry] in
         try NotebookIPCClient(socketURL: socket).send(retry).decode(NotebookRuntimeWorkspaceResponse.self)
       }.value
@@ -57,6 +227,11 @@ final class NotebookArchiveLaunchTests: XCTestCase {
       XCTAssertEqual(recovered.status.workspaceID, firstID); XCTAssertEqual(recovered.status.socketKey, model.runtimeSocketKey)
       XCTAssertTrue(launch.model === selected); XCTAssertEqual(constructions, 2)
       XCTAssertEqual(model.shutdownPhase, .running); XCTAssertEqual(persistence.pendingCount, 0)
+      XCTAssertEqual(persistence.observedLifecycleTaskCount, 0)
+      XCTAssertFalse(model.selectionSession.isResolvingContext)
+      XCTAssertEqual(try model.store.sharedContexts().contexts.count, contextCount + 1)
+      let entries = try model.store.sharedContexts().contexts.flatMap(\.entries)
+      XCTAssertEqual(entries.filter { $0.text == "Retained human context" }.count, 1)
       XCTAssertEqual(try String(contentsOf: accepted, encoding: .utf8), "first second")
     }
 

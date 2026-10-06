@@ -136,11 +136,23 @@ final class NotebookPersistenceQueueTests: XCTestCase {
     XCTAssertTrue(result.values.isEmpty, "A retained operation cannot release this caller to mint a new action")
     let failedSave = await queue.flush()
     XCTAssertFalse(failedSave)
+    if case .completed = await queue.waitForLifecycle(accepted) { XCTFail("Failure before subscription must release the lifecycle observer") }
+    queue.onFailureChange = nil
+    for _ in 0..<2 {
+      queue.retry()
+      if case .completed = await queue.waitForLifecycle(accepted) { XCTFail("Another storage failure cannot complete the accepted task") }
+      XCTAssertEqual(queue.pendingCount, 1); XCTAssertTrue(result.values.isEmpty)
+    }
+    let cancelledObserver = Task { await queue.waitForLifecycle(accepted) }
+    cancelledObserver.cancel()
+    if case .completed = await cancelledObserver.value { XCTFail("Cancelling an observer abandons only its wait") }
+    XCTAssertFalse(accepted.isCancelled)
     try Data().write(to: ready)
     queue.retry()
     let saved = await queue.flush()
     XCTAssertTrue(saved)
     await accepted.value
+    if case .blocked = await queue.waitForLifecycle(accepted) { XCTFail("A late observer must see the original completion") }
     XCTAssertEqual(result.values.count, 1)
     XCTAssertEqual(try result.values[0].get(), actionID)
   }
