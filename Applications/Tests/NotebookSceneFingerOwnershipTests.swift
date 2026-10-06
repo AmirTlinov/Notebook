@@ -243,7 +243,7 @@ final class NotebookSceneFingerOwnershipTests: XCTestCase {
 
   func testObserverTransfersFrozenOwnerAndCleansCancellationAndRetirement() {
     let gate = NotebookInputGate(), next = NotebookInputGate(), button = UIButton(type: .system)
-    let touch = SceneFingerOwnershipTouch(target: button), observer = NotebookContactObserver(gate: gate)
+    let touch = SceneFingerOwnershipTouch(target: button), observer = NotebookContactObserver(gate: gate, inside: button)
     observer.touchesBegan([touch], with: UIEvent())
     observer.use(next)
     XCTAssertEqual(gate.admittedFingerContactCount, 0)
@@ -266,7 +266,7 @@ final class NotebookSceneFingerOwnershipTests: XCTestCase {
     autoreleasepool {
       let button = UIButton(type: .system), touch = SceneFingerOwnershipTouch(target: nil)
       touch.target = button
-      let observer = NotebookContactObserver(gate: gate)
+      let observer = NotebookContactObserver(gate: gate, inside: button)
       releasedView = button; releasedTouch = touch; releasedObserver = observer
       observer.touchesBegan([touch], with: UIEvent())
       XCTAssertEqual(gate.admittedFingerContactCount, 1)
@@ -278,7 +278,7 @@ final class NotebookSceneFingerOwnershipTests: XCTestCase {
   func testRestingSceneFingerDoesNotKeepPencilCompletionBehindTheIdleBarrier() async throws {
     for fingerFirst in [true, false] {
       let gate = NotebookInputGate(), surface = UIView(), pencil = UUID()
-      let observer = NotebookContactObserver(gate: gate), hand = SceneFingerOwnershipTouch(target: surface)
+      let observer = NotebookContactObserver(gate: gate, inside: surface), hand = SceneFingerOwnershipTouch(target: surface)
       if fingerFirst { observer.touchesBegan([hand], with: UIEvent()) }
       XCTAssertTrue(gate.beginPencilAction(source: pencil))
       if !fingerFirst { observer.touchesBegan([hand], with: UIEvent()) }
@@ -300,7 +300,7 @@ final class NotebookSceneFingerOwnershipTests: XCTestCase {
 
   func testPencilDoesNotReleaseAnIndependentNativeControlContact() async throws {
     let gate = NotebookInputGate(), button = UIButton(), pencil = UUID()
-    let observer = NotebookContactObserver(gate: gate), finger = SceneFingerOwnershipTouch(target: button)
+    let observer = NotebookContactObserver(gate: gate, inside: button), finger = SceneFingerOwnershipTouch(target: button)
     observer.touchesBegan([finger], with: UIEvent())
     XCTAssertTrue(gate.beginPencilAction(source: pencil))
     var completed = false
@@ -315,7 +315,7 @@ final class NotebookSceneFingerOwnershipTests: XCTestCase {
 
   func testMeasuredPencilLiftHasNoSecondWindowObserverBarrier() async throws {
     let gate = NotebookInputGate(), surface = UIView(), source = UUID()
-    let observer = NotebookContactObserver(gate: gate)
+    let observer = NotebookContactObserver(gate: gate, inside: surface)
     let pencil = SceneFingerOwnershipTouch(target: surface, kind: .pencil)
     XCTAssertEqual(observer.allowedTouchTypes, [NSNumber(value: UITouch.TouchType.direct.rawValue)])
     observer.touchesBegan([pencil], with: UIEvent())
@@ -337,7 +337,7 @@ final class NotebookSceneFingerOwnershipTests: XCTestCase {
 
   func testRestingContactTransfersWithoutRevivingItsActivity() async throws {
     let gate = NotebookInputGate(), next = NotebookInputGate(), surface = UIView(), pencil = UUID()
-    let observer = NotebookContactObserver(gate: gate), hand = SceneFingerOwnershipTouch(target: surface)
+    let observer = NotebookContactObserver(gate: gate, inside: surface), hand = SceneFingerOwnershipTouch(target: surface)
     observer.touchesBegan([hand], with: UIEvent())
     XCTAssertTrue(gate.beginPencilAction(source: pencil))
     gate.endPencilAction(source: pencil)
@@ -422,7 +422,7 @@ private final class SceneSelectionOwnershipFixture {
     root.view.layoutIfNeeded()
     anchor = GestureAnchorView(frame: root.view.bounds)
     anchor.isUserInteractionEnabled = false; root.view.addSubview(anchor)
-    observer = NotebookContactObserver(gate: gate)
+    observer = NotebookContactObserver(gate: gate, inside: anchor)
     window.addGestureRecognizer(observer)
     selection.gate = gate; selection.install(anchor)
   }

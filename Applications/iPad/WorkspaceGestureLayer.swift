@@ -194,7 +194,7 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
       redo.delegate = self
       redo.isEnabled = isEnabled
       hostView.addGestureRecognizer(redo)
-      let observer = NotebookContactObserver(gate: inputGate)
+      let observer = NotebookContactObserver(gate: inputGate, inside: sceneView)
       observer.delegate = self
       hostView.addGestureRecognizer(observer)
       self.hostView = hostView
@@ -389,9 +389,11 @@ final class NotebookContactObserver: UIGestureRecognizer {
   private enum Activity { case scene, restingHand, independent }
   private var contacts: [ObjectIdentifier: Activity] = [:]
   private var gate: NotebookInputGate
+  private weak var sceneView: UIView?
 
-  init(gate: NotebookInputGate) {
+  init(gate: NotebookInputGate, inside sceneView: UIView) {
     self.gate = gate
+    self.sceneView = sceneView
     super.init(target: nil, action: nil)
     allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
     cancelsTouchesInView = false
@@ -445,7 +447,12 @@ final class NotebookContactObserver: UIGestureRecognizer {
         ? .scene : .independent
       NotebookInteractionDiagnostics.contact(touch, phase: "began")
     }
-    gate.notifyAcceptedContact()
+    // The window still owns every contact's physical lifetime. Only a new
+    // contact on the workspace advances its intent: touching an already
+    // presented menu or its sheet must not invalidate that menu before lift.
+    if let sceneView, fingers.contains(where: { sceneReceives($0, inside: sceneView) }) {
+      gate.notifyAcceptedContact()
+    }
     if gate.hasPencilContact { restSceneContacts() }
     else { updateActivity() }
   }

@@ -623,6 +623,69 @@ import XCTest
     }
   }
 
+  func testPresentedControlsKeepTheirIntentThroughDownAndLift() async throws {
+    try await fixture { model,reference in
+      let scene=try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+      let previous=scene.windows.first(where:\.isKeyWindow),window=UIWindow(windowScene:scene)
+      let controller=UIViewController();window.rootViewController=controller;window.makeKeyAndVisible()
+      let menus=mountContextMenus(in:controller.view,gate:model.inputGate)
+      let owner=WorkspaceGestureLayer.Coordinator(defersHorizontalMotionToPageTurn:false,isEnabled:true,inputGate:model.inputGate,
+        onCamera:{ _ in XCTFail("A presented control owns its contact") },onUndo:{},onRedo:{})
+      owner.install(on:window,inside:menus.view)
+      defer { owner.uninstall();menus.uninstall();window.isHidden=true;window.rootViewController=nil;previous?.makeKey() }
+      let observer=try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? NotebookContactObserver }.first)
+      model.selectElement(reference)
+      var captured:NotebookContextMenus.PresentationIntent?
+      var hostedButton:UIButton?
+      menus.presentContent(in:model,at:.init(x:200,y:300)) { intent in
+        captured=intent
+        return PresentedControlButton { hostedButton=$0 }
+          .frame(width:160,height:44).padding(20).frame(width:200,height:100,alignment:.topLeading)
+      }
+      let intent=try XCTUnwrap(captured),presented=try XCTUnwrap(controller.presentedViewController)
+      await settlePresentation(presented)
+      var callbacks=0
+      @MainActor func press(_ button:UIButton,in parent:UIViewController) async throws {
+        parent.view.layoutIfNeeded()
+        button.addAction(UIAction { _ in
+          guard menus.isCurrent(intent,in:model) else { return }
+          callbacks += 1
+        },for:.touchUpInside)
+        let touch=PresentedControlTouch(window:window,view:button)
+        let contact=model.inputGate.acceptedContactGeneration,navigation=model.navigationGeneration
+        XCTAssertTrue(owner.gestureRecognizer(observer,shouldReceive:touch))
+        XCTAssertFalse(sceneReceives(touch,inside:menus.view))
+        observer.touchesBegan([touch],with:UIEvent())
+        XCTAssertTrue(model.inputGate.isActive)
+        XCTAssertEqual(model.inputGate.admittedFingerContactCount,1)
+        XCTAssertEqual(model.inputGate.acceptedContactGeneration,contact)
+        XCTAssertEqual(model.navigationGeneration,navigation)
+        menus.updateSelection(model) // The same native update that previously dismissed Back on down.
+        XCTAssertTrue(menus.isCurrent(intent,in:model))
+        XCTAssertNotNil(presented.presentingViewController)
+        var idleReleased=false
+        model.inputGate.performAfterIdle { idleReleased=true }
+        XCTAssertFalse(idleReleased,"The presented contact keeps its physical lifetime barrier")
+        let previousCallbacks=callbacks
+        observer.touchesEnded([touch],with:UIEvent())
+        button.sendActions(for:.touchUpInside)
+        XCTAssertEqual(callbacks,previousCallbacks+1,"The accepted control action survives its own down event")
+        XCTAssertEqual(model.inputGate.admittedFingerContactCount,0)
+        try await assertUX("presented-control-lift-releases-barrier",since:.now,budget:.seconds(2),window:window) { idleReleased }
+        observer.reset()
+      }
+      try await press(try XCTUnwrap(hostedButton),in:presented)
+      let sheet=UIViewController();sheet.modalPresentationStyle = .pageSheet
+      let sheetButton=UIButton(frame:.init(x:20,y:20,width:160,height:44))
+      sheet.view.addSubview(sheetButton)
+      presented.present(sheet,animated:false);await settlePresentation(sheet)
+      XCTAssertTrue(sheet.presentingViewController === presented)
+      try await press(sheetButton,in:sheet)
+      XCTAssertEqual(callbacks,2)
+      XCTAssertTrue(menus.isCurrent(intent,in:model))
+    }
+  }
+
   func testLateClipboardCompositionCannotReplaceANewerMenuOrCloseItsPresentation() async throws {
     try await fixture { model,reference in
       let window=UIWindow(windowScene:try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
@@ -906,4 +969,29 @@ import XCTest
     try model.store.savePage(page); await model.reloadExternalChanges()?.value
     try await body(model, .page(pageID: page.id, elementID: "chart"))
   }
+}
+
+private struct PresentedControlButton: UIViewRepresentable {
+  let created:(UIButton)->Void
+  func makeUIView(context:Context)->UIButton {
+    let button=UIButton(type:.system)
+    created(button)
+    return button
+  }
+  func updateUIView(_ button:UIButton,context:Context) {}
+}
+
+@MainActor private final class PresentedControlTouch: UITouch {
+  private let sourceWindow:UIWindow
+  private let sourceView:UIView
+  private let point:CGPoint
+  init(window:UIWindow,view:UIView) {
+    sourceWindow=window;sourceView=view
+    point=view.convert(.init(x:view.bounds.midX,y:view.bounds.midY),to:window)
+    super.init()
+  }
+  override var type:UITouch.TouchType { .direct }
+  override var window:UIWindow? { sourceWindow }
+  override var view:UIView? { sourceView }
+  override func location(in view:UIView?)->CGPoint { view?.convert(point,from:sourceWindow) ?? point }
 }
