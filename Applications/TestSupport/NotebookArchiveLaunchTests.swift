@@ -203,7 +203,8 @@ final class NotebookArchiveLaunchTests: XCTestCase {
           XCTAssertFalse(candidate === first); XCTAssertEqual(first.shutdownPhase, .running)
           XCTAssertTrue(launch.model === first, "The original scene remains selected until the destination commits")
           XCTAssertEqual(launch.selectedWorkspaceID, first.admittedWorkspaceID)
-          XCTAssertEqual(try NotebookWorkspaceLibrary(originalRoot: root).catalog().selectedID, previousID)
+          let selected = try await NotebookWorkspaceLibrary(originalRoot: root).snapshot().catalog.selectedID
+          XCTAssertEqual(selected, previousID)
           var other = NotebookCommand(command: .runtimeWorkspace)
           other.runtimeWorkspace = .init(action: .create, id: UUID(), name: "Cannot displace the accepted candidate")
           do { _ = try await launch.executeRuntimeCommand(other); XCTFail("A pending candidate must retain its transition") }
@@ -234,7 +235,10 @@ final class NotebookArchiveLaunchTests: XCTestCase {
         XCTAssertFalse(candidate.runtimeStartupPending)
         XCTAssertEqual(writer.pendingCount, 0)
         XCTAssertEqual(try candidate.store.storedWorkspaceID(), id)
-        if creating { XCTAssertEqual(try NotebookWorkspaceLibrary(originalRoot: root).catalog().selectedID, requestedID) }
+        if creating {
+          let selected = try await NotebookWorkspaceLibrary(originalRoot: root).snapshot().catalog.selectedID
+          XCTAssertEqual(selected, requestedID)
+        }
       }
     }
 
@@ -270,10 +274,10 @@ final class NotebookArchiveLaunchTests: XCTestCase {
       let previous = try XCTUnwrap(launch.model)
       await previous.start(pageSize: NotebookAppModel.defaultPageSize)
       let sourceID = try XCTUnwrap(previous.admittedWorkspaceID), candidateID = UUID()
-      let destination = try library.prepare(candidateID)
+      let destination = try await library.prepare(candidateID)
       _ = try NotebookStore(root: destination).initializeWorkspace(actor: UUID(), pageSize: NotebookAppModel.defaultPageSize)
-      _ = try library.select(candidateID, name: "Account destination")
-      _ = try library.select(sourceID, name: "Original source")
+      _ = try await library.selectFixture(candidateID, name: "Account destination")
+      _ = try await library.selectFixture(sourceID, name: "Original source")
       let returned = expectation(description: "Opening observer returns while the accepted startup survives")
       let opening = Task { await launch.openWorkspace(candidateID, automatically: true); returned.fulfill() }
       await fulfillment(of: [blocked, returned], timeout: 3)
@@ -300,7 +304,8 @@ final class NotebookArchiveLaunchTests: XCTestCase {
       await opening.value
       XCTAssertTrue(launch.model === previous)
       XCTAssertEqual(launch.selectedWorkspaceID, sourceID)
-      XCTAssertEqual(try library.catalog().selectedID, sourceID)
+      let selectedCatalog = try await library.snapshot().catalog
+      XCTAssertEqual(selectedCatalog.selectedID, sourceID)
       XCTAssertEqual(owners.count, 2, "Retry resumes the retained attempt; newer source work cancels it without a replacement")
       XCTAssertEqual(previous.shutdownPhase, .running)
       XCTAssertTrue(previous.permitsExternalWork && previous.inputGate.permitsNewContact)
@@ -667,7 +672,7 @@ final class NotebookArchiveLaunchTests: XCTestCase {
     _ = try store.initializeWorkspace(actor: UUID(), pageSize: .init(width: 834, height: 1194))
     let workspace = try store.storedWorkspaceID(), cursor = try store.currentChangeCursor()
     try store.acknowledgePeer(peerID: peer, through: 0)
-    _ = try NotebookWorkspaceLibrary(originalRoot: root).select(workspace)
+    _ = try await NotebookWorkspaceLibrary(originalRoot: root).selectFixture(workspace)
     func arguments(_ id: UUID, _ cut: UInt64) -> [String] {
       ["--notebook-retire-peer", "{\"peerID\":\"\(peer)\",\"workspaceID\":\"\(id)\",\"expectedCursor\":\(cut)}"]
     }

@@ -31,6 +31,7 @@ final class NotebookAccountConnection {
   @ObservationIgnored private var path: NWPathMonitor?
   private var active = false
   private var epoch = UUID()
+  var catalogGeneration: UUID { epoch }
   private var again = false
   private var retryDelay: Double = 2
   private let logger = Logger(subsystem: "com.amirtlinov.notebook", category: "AccountConnection")
@@ -112,6 +113,7 @@ final class NotebookAccountConnection {
           if error as? NotebookAccountDirectory.Failure == .spaceDeleted {
             self.sync.stop()
             await self.accountUnavailable()
+            guard self.active, self.epoch == token, !Task.isCancelled else { return }
             self.active = false
             self.workspaceDeleted()
             return

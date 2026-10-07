@@ -1,0 +1,51 @@
+{
+  "baseCommit": "85fbab1a584bf7b7c827200ebfd67d294ae69538",
+  "changedFiles": [
+    "Applications/Mac/MacNotebookProjectFiles.swift",
+    "Applications/Mac/NotebookCodexHost.swift",
+    "Applications/Mac/NotebookCodexSidecar.swift",
+    "Applications/MacTests/NotebookCodexSidecarTests.swift",
+    "Applications/Shared/NotebookAccountConnection.swift",
+    "Applications/Shared/NotebookAppModel.swift",
+    "Applications/Shared/NotebookApplicationLaunch.swift",
+    "Applications/Shared/NotebookDocumentImportOwner.swift",
+    "Applications/Shared/NotebookPersistenceQueue.swift",
+    "Applications/Shared/NotebookWorkspaceLibrary.swift",
+    "Applications/TestSupport/NotebookAccountConnectionTests.swift",
+    "Applications/TestSupport/NotebookAccountWorkspaceTests.swift",
+    "Applications/TestSupport/NotebookArchiveLaunchTests.swift",
+    "Applications/TestSupport/NotebookDeviceTrustTests.swift",
+    "Applications/TestSupport/NotebookPortableDocumentImportOwnerTests.swift",
+    "Applications/TestSupport/NotebookWorkspaceLibraryFixture.swift",
+    "Applications/TestSupport/NotebookWorkspaceLibraryTests.swift",
+    "Sources/NotebookCore/NotebookCloudStorage.swift",
+    "Sources/NotebookCore/NotebookQueryCut.swift",
+    "Tests/NotebookCoreTests/NotebookCloudDeliveryTests.swift",
+    "docs/installation-pairing.md"
+  ],
+  "checks": {
+    "commands": [],
+    "core": [
+      "NotebookCoreTests.NotebookCloudDeliveryTests/absentCloudSchemaIsUnconfiguredButMissingPreparedControlRowIsCorrupt",
+      "NotebookCoreTests.NotebookCloudDeliveryTests/hundredThousandInboxRowsContributeOneHeadPerExactSourceGeneration"
+    ],
+    "ipad": [],
+    "mac": []
+  },
+  "format": 2,
+  "manualSelection": true,
+  "optimized": false,
+  "profiles": [],
+  "selectionMode": "explicit-only",
+  "sourceRoot": "/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook",
+  "unclassified": [
+    "Applications/Mac/NotebookCodexHost.swift",
+    "Applications/Shared/NotebookAppModel.swift",
+    "Applications/Shared/NotebookApplicationLaunch.swift",
+    "Applications/Shared/NotebookDocumentImportOwner.swift",
+    "Applications/TestSupport/NotebookWorkspaceLibraryFixture.swift",
+    "Sources/NotebookCore/NotebookCloudStorage.swift",
+    "Sources/NotebookCore/NotebookQueryCut.swift",
+    "Tests/NotebookCoreTests/NotebookCloudDeliveryTests.swift"
+  ]
+}

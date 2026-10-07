@@ -100,6 +100,9 @@ public struct NotebookQueryCut {
   public func currentReadCursor() throws -> UInt64 {
     try requireActive(); return try store.currentReadCursor()
   }
+  public func currentChangeCursor() throws -> UInt64 {
+    try requireActive(); return try store.currentChangeCursor()
+  }
   public func scriptExportJob(_ id: UUID) throws -> JSONValue? {
     try requireActive(); return try store.scriptExportJob(id)
   }

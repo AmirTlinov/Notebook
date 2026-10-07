@@ -62,6 +62,15 @@ CA flush и OS receipt; её контракт прошёл, аппаратный
 
 ## Remediation 104
 
+NB14/NB01: catalog I/O принадлежит Library actor; selection ticket сохраняет
+source/candidate через unknown publication и Retry. Name/delete/account callbacks
+проверяют исходный revision/epoch, source seal закрывает новый допуск.
+**21 native Mac PASS**, после переноса **2 Core + 2 native Mac PASS** на
+`6c25cedb31b7` / 1675 inputs, без пропусков и runtime warnings.
+Исходные четыре отказа сохранены вместе с исправлениями; iPad-жесты выбора и
+установленная пара ещё требуют приёмки.
+[Scope и transfer binding](audit-evidence/2026-10-07/catalog-publication/results.json).
+
 QF01/DP08: cloud-plan проверяет source/account/cursor до filesystem work.
 Один CloudSync владеет независимыми incoming/outgoing runs; deferred source
 сохраняет cursor, остальные источники и отправка продолжаются. **5 Core-сценариев

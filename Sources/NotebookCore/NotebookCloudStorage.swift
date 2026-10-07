@@ -60,7 +60,15 @@ extension NotebookStore {
 
   public func cloudConfiguration() throws -> NotebookCloudConfiguration {
     try sqlRead {
-      let row = try $0.rows("SELECT account,enabled FROM cloud_control WHERE id=1").first!
+      // Cloud is optional on a local-only workspace. Its absent schema is a
+      // known unconfigured state; an unreadable or damaged binding is not.
+      guard let schema = try $0.rows("SELECT type FROM sqlite_master WHERE name='cloud_control' LIMIT 1").first else {
+        return .init(account: nil, enabled: false)
+      }
+      guard schema[0].text == "table",
+        let row = try $0.rows("SELECT account,enabled FROM cloud_control WHERE id=1").first else {
+        throw NotebookStorageError.corruptRecord("cloud_control")
+      }
       return .init(account: row[0].text, enabled: row[1].integer == 1)
     }
   }

@@ -1136,7 +1136,7 @@ final class NotebookAppModel {
   private(set) var accountConnection: NotebookAccountConnection?
   var workspaceName = "Моё пространство"
   var publishesWorkspaceName = false
-  @ObservationIgnored var accountWorkspaceNameSaved: (@MainActor (String, Set<UUID>) -> Void)?
+  @ObservationIgnored var accountWorkspaceNameSaved: (@MainActor (String, Set<UUID>) async -> Void)?
   @ObservationIgnored var workspaceDeleted: (@MainActor () -> Void)?
   @ObservationIgnored var openWorkspaceLibrary: (@MainActor (NotebookWorkspaceTab) -> Void)?
   @ObservationIgnored var openDefaultAccountWorkspace: (@MainActor (UUID) -> Void)?
@@ -1155,6 +1155,8 @@ final class NotebookAppModel {
   }
   @ObservationIgnored private var automaticWorkspaceTransition: AutomaticWorkspaceTransition?
   private var workspaceTransitionIsFrozen = false
+  private var workspaceSelectionWriterSeal: UUID?
+  private var manualWorkspaceSelectionSeal: UUID?
   private(set) var pairedPeers: [NotebookTransportIdentity] = []
   @ObservationIgnored private var peerGenerations: [UUID: UUID] = [:]
   #if os(iOS)
@@ -1700,7 +1702,11 @@ final class NotebookAppModel {
     guard await finishPendingInteraction(boundary: .acceptedInput, continuing: {
       self.automaticWorkspaceTransition == transition
         && self.automaticWorkspaceInputIsUnchanged(transition)
-    }), automaticWorkspaceInputIsUnchanged(transition), (try? store.currentChangeCursor()) == cursor else { return nil }
+    }), automaticWorkspaceInputIsUnchanged(transition) else { return nil }
+    guard let current = try? await commandReader.read(workspaceID: workspaceID, {
+      try $0.currentChangeCursor()
+    }), automaticWorkspaceTransition == transition,
+      automaticWorkspaceInputIsUnchanged(transition), current == cursor else { return nil }
     prepared = true
     return transition
   }
@@ -1711,17 +1717,22 @@ final class NotebookAppModel {
       && persistence.acceptedMutationGeneration == transition.mutationGeneration
   }
 
-  /// Freeze and durable catalog selection run in one uninterrupted MainActor
-  /// turn. No await, executor request, or terminal shutdown belongs between them.
-  func freezeAutomaticWorkspaceSwitch(_ transition: AutomaticWorkspaceTransition) throws -> Bool {
+  /// Close source admission before the reader or catalog actor can suspend.
+  /// An unresolved selection retains this seal and the exact source owner.
+  func freezeAutomaticWorkspaceSwitch(_ transition: AutomaticWorkspaceTransition) async throws -> Bool {
     // Preparation completed the accepted writer fence. An unchanged acceptance
     // generation proves that its whole write prefix is still drained; later
     // pure read observers neither edit this source nor revoke its cut.
     guard automaticWorkspaceTransition == transition, !workspaceTransitionIsFrozen,
-      automaticWorkspaceInputIsUnchanged(transition) else { return false }
+      automaticWorkspaceInputIsUnchanged(transition),
+      documentImportOwner?.hasPendingAuthoredPreparation != true,
+      let seal = persistence.sealWorkspaceSelection(expectedGeneration: transition.mutationGeneration) else { return false }
+    workspaceSelectionWriterSeal = seal
     workspaceTransitionIsFrozen = true
     do {
-      guard try store.currentChangeCursor() == transition.cursor else {
+      let cursor = try await commandReader.read(workspaceID: transition.workspaceID) { try $0.currentChangeCursor() }
+      guard automaticWorkspaceTransition == transition, automaticWorkspaceInputIsUnchanged(transition),
+        workspaceSelectionWriterSeal == seal, cursor == transition.cursor else {
         rollbackAutomaticWorkspaceSwitch(transition); return false
       }
       return true
@@ -1730,11 +1741,27 @@ final class NotebookAppModel {
 
   func commitAutomaticWorkspaceSwitch(_ transition: AutomaticWorkspaceTransition) {
     guard automaticWorkspaceTransition == transition, workspaceTransitionIsFrozen else { return }
+    if let seal = workspaceSelectionWriterSeal { persistence.finishWorkspaceSelection(seal) }
+    workspaceSelectionWriterSeal = nil
     automaticWorkspaceTransition = nil; workspaceTransitionIsFrozen = false
+  }
+
+  /// Manual navigation closes new surface input while previously accepted
+  /// workspace-bound external effects keep their original writer completion.
+  func freezeManualWorkspaceSelection() -> UUID? {
+    guard shutdownPhase == .running, !workspaceTransitionIsFrozen, !inputGate.isActive else { return nil }
+    let seal = UUID(); manualWorkspaceSelectionSeal = seal; workspaceTransitionIsFrozen = true
+    return seal
+  }
+  func finishManualWorkspaceSelection(_ seal: UUID) {
+    guard manualWorkspaceSelectionSeal == seal else { return }
+    manualWorkspaceSelectionSeal = nil; workspaceTransitionIsFrozen = false
   }
 
   func rollbackAutomaticWorkspaceSwitch(_ transition: AutomaticWorkspaceTransition) {
     guard automaticWorkspaceTransition == transition else { return }
+    if let seal = workspaceSelectionWriterSeal { persistence.finishWorkspaceSelection(seal) }
+    workspaceSelectionWriterSeal = nil
     automaticWorkspaceTransition = nil; workspaceTransitionIsFrozen = false
   }
 
@@ -1771,11 +1798,6 @@ final class NotebookAppModel {
       guard let cloudSync else { return }
       service = NotebookAccountCloud(cloud: cloudSync)
     }
-    #if os(iOS)
-      let platform = NotebookAccountDirectory.Device.Platform.iPad
-    #else
-      let platform = NotebookAccountDirectory.Device.Platform.mac
-    #endif
     let bound: String?
     do { bound = try await persistence.submit { try $0.cloudConfiguration().account } }
     catch {
@@ -1785,22 +1807,54 @@ final class NotebookAppModel {
       return
     }
     guard !isClosing else { return }
+    bindAccountConnection(connection, service: service, boundAccount: bound)
+  }
+
+  private func bindAccountConnection(_ connection: NearbySync, service: any NotebookAccountService,
+    boundAccount: String?) {
+    guard !isClosing, sync === connection, admittedWorkspaceID == connection.identity.workspaceID else { return }
+    #if os(iOS)
+      let platform = NotebookAccountDirectory.Device.Platform.iPad
+    #else
+      let platform = NotebookAccountDirectory.Device.Platform.mac
+    #endif
     let account = NotebookAccountConnection(
-      device: .init(identity: connection.identity, platform: platform, activation: pairingActivationID), sync: connection, service: service, initialBoundAccount: bound, spaceName: workspaceName, publishName: publishesWorkspaceName,
+      device: .init(identity: connection.identity, platform: platform, activation: pairingActivationID), sync: connection, service: service, initialBoundAccount: boundAccount, spaceName: workspaceName, publishName: publishesWorkspaceName,
       workspaceDeleted: { [weak self] in self?.workspaceDeleted?() },
       shouldOpenDefault: { [weak self] in
         await self?.mayAutomaticallySwitchWorkspace() ?? false
       }, openWorkspace: { [weak self] id in self?.openDefaultAccountWorkspace?(id) },
       accountReady: { [weak self] account in
-        guard let self, !self.isClosing else { return }
+        guard let self, !self.isClosing, self.sync === connection,
+          let accountOwner = self.accountConnection else { return }
+        let accountGeneration = accountOwner.catalogGeneration, sourceAccount = accountOwner.account
+        let workspaceID = self.admittedWorkspaceID
+        guard sourceAccount == account else { return }
         if let name = self.accountConnection?.spaces.first(where: { $0.id == connection.identity.workspaceID })?.name {
-          self.accountWorkspaceNameSaved?(name, self.accountConnection?.deletedSpaces ?? [])
+          await self.accountWorkspaceNameSaved?(name, self.accountConnection?.deletedSpaces ?? [])
         }
+        guard !self.isClosing, self.sync === connection, self.accountConnection === accountOwner,
+          self.admittedWorkspaceID == workspaceID, workspaceID == connection.identity.workspaceID,
+          accountOwner.catalogGeneration == accountGeneration, accountOwner.account == sourceAccount else { return }
+        #if DEBUG
+          Self.onAccountCloudConnection?(account)
+        #endif
         await self.cloudSync?.connect(account: account)
       }, accountUnavailable: { [weak self] in await self?.cloudSync?.stop() })
     accountConnection = account
     account.start()
   }
+
+  #if DEBUG
+    static var onAccountCloudConnection: (@MainActor (String) -> Void)?
+    /// Native checks attach the same account callback to an isolated, already
+    /// owned connection and service, without accessing a system Apple Account.
+    func startFixtureAccountConnection(_ connection: NearbySync, service: any NotebookAccountService) {
+      precondition(sync == nil && accountConnection == nil && admittedWorkspaceID == connection.identity.workspaceID)
+      sync = connection
+      bindAccountConnection(connection, service: service, boundAccount: nil)
+    }
+  #endif
 
 
   isolated deinit {
@@ -2051,7 +2105,8 @@ final class NotebookAppModel {
 
   @discardableResult
   func createNotebook(at center: WorldPoint) -> UUID? {
-    guard center.isValid, var workspace, var board = boardHierarchy, let presence else {
+    guard loadState == .ready, permitsExternalWork, persistence.permitsNewWorkspaceMutation,
+      center.isValid, var workspace, var board = boardHierarchy, let presence else {
       return nil
     }
     let beforeWorkspace = workspace, beforeBoard = board
@@ -3053,7 +3108,7 @@ final class NotebookAppModel {
   @discardableResult
   func commitSpatialElementState(boardID: UUID, rendered: SpatialElement, state: JSONValue,
     onCommitted: NotebookProgramStateCompletion) -> Bool {
-    guard !isStopped, surfaceAcceptsChanges(rendered.surface),
+    guard !isStopped, persistence.permitsNewWorkspaceMutation, surfaceAcceptsChanges(rendered.surface),
       let sourceBasis = onCommitted.sourceBasis else { return false }
     if loadState == .loading, !isClosing, workspaceHeader != nil {
       return bootstrapAdmission.deferProgramWrite(accept: { [weak self] in
@@ -4568,7 +4623,7 @@ final class NotebookAppModel {
   @discardableResult
   func commitElementState(pageID: UUID, elementID: String, state: JSONValue,
     onCommitted: NotebookProgramStateCompletion) -> Bool {
-    guard !isStopped, !isPageBeingDeleted(pageID),
+    guard !isStopped, persistence.permitsNewWorkspaceMutation, !isPageBeingDeleted(pageID),
       let captured = onCommitted.sourceBasis else { return false }
     if loadState == .loading, !isClosing, workspaceHeader != nil {
       return bootstrapAdmission.deferProgramWrite(accept: { [weak self] in

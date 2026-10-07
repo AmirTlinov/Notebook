@@ -30,6 +30,10 @@ final class NotebookCodexHost {
     /// real sidecar/file worker and never starts an external Codex process.
     convenience init(workspaceID: UUID, sidecar: NotebookCodexSidecar, persistence: NotebookPersistenceQueue) {
       self.init()
+      admitFixtureRoute(workspaceID: workspaceID, sidecar: sidecar, persistence: persistence)
+    }
+    func admitFixtureRoute(workspaceID: UUID, sidecar: NotebookCodexSidecar, persistence: NotebookPersistenceQueue) {
+      precondition(routes[workspaceID] == nil && server == nil)
       routes[workspaceID] = .init(sidecar: sidecar, persistence: persistence)
     }
   #endif
@@ -136,11 +140,18 @@ final class NotebookCodexHost {
   }
 
   func hasActiveWork(workspace: UUID) async -> Bool {
+    if routes[workspace]?.sidecar.hasPendingFileWork == true { return true }
     if let route = routes[workspace],
       (try? await route.persistence.submit({ try !$0.pendingChatJobs().isEmpty || !$0.activeRuns().isEmpty })) != false { return true }
     return await server?.hasActiveWork(workspace: workspace) ?? false
   }
+  // Checked in the same MainActor turn as the source seal. A timed-out reply
+  // may still own a physical effect and its original journal completion.
+  func hasPendingFileWork(workspace: UUID) -> Bool {
+    routes[workspace]?.sidecar.hasPendingFileWork == true
+  }
   func hasActiveWork() async -> Bool {
+    if routes.values.contains(where: { $0.sidecar.hasPendingFileWork }) { return true }
     for writer in persistenceQueues {
       if (try? await writer.submit({ try !$0.pendingChatJobs().isEmpty || !$0.activeRuns().isEmpty })) != false { return true }
     }

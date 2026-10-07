@@ -64,6 +64,80 @@ final class NotebookAccountConnectionTests: XCTestCase {
     XCTAssertEqual(trust.saves, 0); XCTAssertNil(owner.account); XCTAssertTrue(owner.spaces.isEmpty)
   }
 
+  #if DEBUG
+  func testAccountReadyRechecksActualEpochAfterHeldNameCallbackBeforeConnectingCloud() async throws {
+    for retiresEpoch in [false, true] { try await exerciseHeldNameCallback(retiresEpoch: retiresEpoch) }
+  }
+
+  private func exerciseHeldNameCallback(retiresEpoch: Bool) async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("account-ready-source-" + UUID().uuidString)
+    let suite = "Notebook.AccountReady." + UUID().uuidString
+    let preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false, preferences: preferences)
+    var held: CheckedContinuation<Void, Never>?
+    var stopping: Task<Void, Never>?
+    let previousHook = NotebookAppModel.onAccountCloudConnection
+    var service: AccountTestService?
+    func cleanup() async {
+      held?.resume(); held = nil
+      service?.onStopped = nil
+      await stopping?.value
+      let stopped = await model.shutdown(); XCTAssertTrue(stopped)
+      NotebookAppModel.onAccountCloudConnection = previousHook
+      preferences.removePersistentDomain(forName: suite)
+      try? FileManager.default.removeItem(at: root)
+    }
+    do {
+      await model.start(pageSize: NotebookAppModel.defaultPageSize)
+      await model.finishStartup()
+      let space = try XCTUnwrap(model.admittedWorkspaceID)
+      let directory = AccountTestDirectory(space: space), device = makeDevice(space, .iPad)
+      let trust = AccountMemoryTrust(), sync = makeSync(device.identity, trust), selectedService = AccountTestService(directory)
+      service = selectedService
+      await sync.start()
+      let entered = expectation(description: "The actual accountReady callback awaits its source-bound name publication")
+      let connected = retiresEpoch ? nil
+        : expectation(description: "The current account generation reaches the Cloud connect boundary")
+      var didHold = false, connections: [String] = []
+      model.accountWorkspaceNameSaved = { _, _ in
+        guard !didHold else { return }
+        didHold = true
+        await withCheckedContinuation { continuation in held = continuation; entered.fulfill() }
+      }
+      NotebookAppModel.onAccountCloudConnection = { account in
+        connections.append(account)
+        if connections.count == 1 { connected?.fulfill() }
+      }
+      model.startFixtureAccountConnection(sync, service: selectedService)
+      await fulfillment(of: [entered], timeout: 3)
+      let owner = try XCTUnwrap(model.accountConnection), generation = owner.catalogGeneration
+      XCTAssertEqual(owner.account, "A")
+      if retiresEpoch {
+        let stopEntered = expectation(description: "Account stop advances the same owner's epoch before joining the held callback")
+        selectedService.onStopped = { stopEntered.fulfill() }
+        stopping = Task { await owner.stop() }
+        await fulfillment(of: [stopEntered], timeout: 3)
+        selectedService.onStopped = nil
+        XCTAssertNotEqual(owner.catalogGeneration, generation)
+        XCTAssertTrue(model.accountConnection === owner)
+        XCTAssertEqual(owner.account, "A", "Identity and account text alone cannot attest the pending callback's authority")
+        XCTAssertEqual(model.admittedWorkspaceID, space)
+        XCTAssertEqual(model.shutdownPhase, .running)
+        held?.resume(); held = nil
+        await stopping?.value
+        XCTAssertTrue(connections.isEmpty, "A retired account callback resumed Cloud after its name observer returned")
+      } else {
+        held?.resume(); held = nil
+        await fulfillment(of: [try XCTUnwrap(connected)], timeout: 3)
+        XCTAssertEqual(owner.catalogGeneration, generation)
+        XCTAssertEqual(connections.first, "A")
+      }
+      sync.stop()
+    } catch { await cleanup(); throw error }
+    await cleanup()
+  }
+  #endif
+
   func testInstalledCloudBindingProtectsKeysBeforeTheirFirstDirectoryEnrollment() async throws {
     let space = UUID(), directory = AccountTestDirectory(space: space), device = makeDevice(space, .mac)
     directory.account = "B"
@@ -157,6 +231,7 @@ final class NotebookAccountConnectionTests: XCTestCase {
   private let id = UUID()
   var hold = false
   var entered: (() -> Void)?
+  var onStopped: (() -> Void)?
   private var gate: CheckedContinuation<Void, Never>?
   init(_ directory: AccountTestDirectory) { self.directory = directory }
   func exchange(device: NotebookAccountDirectory.Device, boundAccount: String?, retained: [NotebookAccountDirectory.Pair], spaceName: String, publishName: Bool) async throws -> NotebookAccountSnapshot {
@@ -175,5 +250,5 @@ final class NotebookAccountConnectionTests: XCTestCase {
       Task { await changed(false) }
     }
   }
-  func stop() async { directory.observers[id] = nil; gate?.resume(); gate = nil }
+  func stop() async { onStopped?(); directory.observers[id] = nil; gate?.resume(); gate = nil }
 }

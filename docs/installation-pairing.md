@@ -59,10 +59,20 @@ instead of publishing a competing starter notebook or empty cloud snapshot.
 The user can choose another workspace while loading.
 
 Each workspace has a separate SQLite store and writer. `NotebookApplicationLaunch`
-drains accepted input and the previous writer before opening or deleting one.
-`NotebookWorkspaceLibrary` owns the local catalog and selected UUID. Destination
-admission precedes saving selection. Removing the last workspace leaves the
-chooser; it does not silently create a replacement.
+drains the accepted input prefix before selection and the whole owner before
+deletion. Automatic selection also requires an unchanged input/mutation generation,
+the same WAL cursor, an empty accepted FIFO, and no authored import preparation or
+active FileWork. It seals new source admission before reading the final cursor or
+awaiting the catalog actor. Manual selection retains earlier workspace-bound work.
+
+One permanent `NotebookWorkspaceLibrary` actor owns catalog I/O and selected UUID.
+Destination admission precedes an immutable selection ticket containing the exact
+catalog bytes and revision. A known durable replacement publishes its prepared
+snapshot on MainActor; old-marker cleanup has a separate diagnostic. An unresolved
+replacement retains the ticket, source, candidate and admission seal through Retry.
+Catalog refresh never selects the visible model; account replies require the same
+model, account generation and catalog revision. Removing the last workspace leaves
+the chooser.
 
 Creation, naming and local use work without pairing. Published names use account
 CAS; filenames and UUIDs are unchanged. Historical archives are not restored.

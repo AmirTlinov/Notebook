@@ -1,0 +1,81 @@
+{
+  "devicesAndConfigurations": [
+    {
+      "device": {
+        "architecture": "arm64",
+        "deviceId": "00006050-001650DA01F9401C",
+        "deviceName": "My Mac",
+        "modelName": "MacBook Pro",
+        "osBuildNumber": "26A434",
+        "osVersion": "27.0.1",
+        "platform": "macOS"
+      },
+      "expectedFailures": 0,
+      "failedTests": 4,
+      "passedTests": 17,
+      "skippedTests": 0,
+      "testPlanConfiguration": {
+        "configurationId": "1",
+        "configurationName": "Test Scheme Action"
+      }
+    }
+  ],
+  "environmentDescription": "NotebookRuntime · Built with macOS 27.0.1",
+  "expectedFailures": 0,
+  "failedTests": 4,
+  "finishTime": 1791358047.441,
+  "passedTests": 17,
+  "result": "Failed",
+  "runtimeWarnings": [],
+  "skippedTests": 0,
+  "startTime": 1791358034.307,
+  "statistics": [],
+  "testFailures": [
+    {
+      "failureText": "Failed due to unwaited expectation 'The current account generation reaches the Cloud connect boundary'.",
+      "targetName": "NotebookMacTests",
+      "testIdentifier": 1,
+      "testIdentifierString": "NotebookAccountConnectionTests/testAccountReadyRechecksActualEpochAfterHeldNameCallbackBeforeConnectingCloud()",
+      "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookAccountConnectionTests/testAccountReadyRechecksActualEpochAfterHeldNameCallbackBeforeConnectingCloud",
+      "testName": "testAccountReadyRechecksActualEpochAfterHeldNameCallbackBeforeConnectingCloud()"
+    },
+    {
+      "failureText": "XCTAssertNil failed: \"8BE44F92-ED01-4BF3-A229-942A23971C4E\"",
+      "targetName": "NotebookMacTests",
+      "testIdentifier": 17,
+      "testIdentifierString": "NotebookWorkspaceLibraryTests/testHeldCatalogPublicationSealsNewSourceWorkAndUnknownRetryRetainsBothModels()",
+      "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookWorkspaceLibraryTests/testHeldCatalogPublicationSealsNewSourceWorkAndUnknownRetryRetainsBothModels",
+      "testName": "testHeldCatalogPublicationSealsNewSourceWorkAndUnknownRetryRetainsBothModels()"
+    },
+    {
+      "failureText": "XCTAssertEqual failed: (\"Optional(\"Работа\")\") is not equal to (\"Optional(\"Идеи\")\")",
+      "targetName": "NotebookMacTests",
+      "testIdentifier": 18,
+      "testIdentifierString": "NotebookWorkspaceLibraryTests/testLocalLifecycleKeepsIndependentDataAndDoesNotRecreateTheDeletedLastSpace()",
+      "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookWorkspaceLibraryTests/testLocalLifecycleKeepsIndependentDataAndDoesNotRecreateTheDeletedLastSpace",
+      "testName": "testLocalLifecycleKeepsIndependentDataAndDoesNotRecreateTheDeletedLastSpace()"
+    },
+    {
+      "failureText": "XCTAssertEqual failed: (\"Optional(34FBD571-FAEC-4BCB-80BF-2B53E54CDBAB)\") is not equal to (\"Optional(ED5FBECD-E760-4FE1-8F7F-758CB6988157)\")",
+      "targetName": "NotebookMacTests",
+      "testIdentifier": 7,
+      "testIdentifierString": "NotebookArchiveLaunchTests/testRuntimeBootstrapAndCreateRetryKeepTheAcceptedOwnerAndWorkspaceAddress()",
+      "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookArchiveLaunchTests/testRuntimeBootstrapAndCreateRetryKeepTheAcceptedOwnerAndWorkspaceAddress",
+      "testName": "testRuntimeBootstrapAndCreateRetryKeepTheAcceptedOwnerAndWorkspaceAddress()"
+    }
+  ],
+  "title": "Test - NotebookRuntime",
+  "topInsights": [
+    {
+      "category": "Common Failures",
+      "impact": "25% of failures",
+      "text": "2 runs of 1 test failed with XCTAssertEqual failed: (\"Optional(34FBD571-FAEC-4BCB-80BF-2B53E54CDBAB)\") is not equal to (\"Optional(ED5FBECD-E760-4FE1-8F7F-758CB6988157)\")"
+    },
+    {
+      "category": "Longest Test Runs",
+      "impact": "26% of duration",
+      "text": "1 longest test run with outlier durations exceeding 3.17s (three standard deviations)"
+    }
+  ],
+  "totalTestCount": 21
+}

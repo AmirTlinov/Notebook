@@ -20,6 +20,10 @@ final class NotebookDocumentImportOwner {
   private var cacheJobs: [UUID: Task<Void, Never>] = [:]
   private var stopped = false
   var optionalJobCount: Int { cacheJobs.count }
+  var hasPendingAuthoredPreparation: Bool { !preparations.isEmpty }
+  #if DEBUG
+    static var onAuthoredPreparation: (@MainActor () async -> Void)?
+  #endif
   init(persistence: NotebookPersistenceQueue, actor: UUID,
     printStore: NotebookPrintedDocumentStore = DocumentCanonicalPrint.store) {
     self.persistence = persistence; self.actor = actor; self.printStore = printStore
@@ -53,6 +57,9 @@ final class NotebookDocumentImportOwner {
   private func run(file: URL, expectedHash: String?, requestID: UUID, targetBoardID: UUID,
     center: WorldPoint) async throws -> Result {
     guard !stopped else { throw CancellationError() }
+    guard persistence.permitsNewWorkspaceMutation else {
+      throw CollaborationError("workspace_selection_pending", "Выбор пространства ещё сохраняется.")
+    }
     guard center.isValid else { throw CollaborationError("invalid_document_import", "Нужно точное место импорта документа.") }
     let initial = Self.cost(NotebookPortableDocumentImport.directoryCost)
     guard let reservation = persistence.reserveWrite(initial) else {
@@ -71,6 +78,9 @@ final class NotebookDocumentImportOwner {
   private func prepare(file: URL, expectedHash: String?, requestID: UUID, targetBoardID: UUID,
     center: WorldPoint, reservation: NotebookPersistenceAdmission.Reservation,
     initial: NotebookPersistenceAdmission.Cost) async throws -> Result {
+    #if DEBUG
+      await Self.onAuthoredPreparation?()
+    #endif
     var held = initial.bytes
     func next(_ value: NotebookPortableDocumentImport.Cost) throws {
       guard !stopped else { throw CancellationError() }

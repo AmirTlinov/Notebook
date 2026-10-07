@@ -120,6 +120,26 @@ final class NotebookPersistenceQueue {
   private var task: Task<Void, Never>?
   private var lifecycleWaiters: [AnyHashable: [UUID: WaitCompletion<Bool>]] = [:]
   private(set) var acceptedMutationGeneration: UInt64 = 0
+  private var workspaceSelectionSeal: UUID?
+  var permitsNewWorkspaceMutation: Bool { workspaceSelectionSeal == nil }
+
+  /// The source's actual FIFO, including old uncharged commands, determines
+  /// quiescence. An observation or retained cache credit is not a mutation.
+  func sealWorkspaceSelection(expectedGeneration: UInt64) -> UUID? {
+    guard workspaceSelectionSeal == nil, failure == nil,
+      acceptedMutationGeneration == expectedGeneration,
+      !pending.contains(where: { $0.lifetime == .accepted }) else { return nil }
+    let seal = UUID(); workspaceSelectionSeal = seal; return seal
+  }
+  func finishWorkspaceSelection(_ seal: UUID) {
+    guard workspaceSelectionSeal == seal else { return }
+    workspaceSelectionSeal = nil
+  }
+  private func requireMutationAdmission() throws {
+    guard permitsNewWorkspaceMutation else {
+      throw CollaborationError("workspace_selection_pending", "Выбор пространства ещё сохраняется. Текущее действие осталось в прежнем пространстве.")
+    }
+  }
   private(set) var failure: String?
   var onFailureChange: ((String?) -> Void)?
   var onContentMerged: (() -> Void)?
@@ -163,6 +183,7 @@ final class NotebookPersistenceQueue {
     cost: NotebookPersistenceAdmission.Cost,
     onRejected: (@MainActor @Sendable (CollaborationError) -> Void)? = nil,
     _ operation: @escaping @Sendable (NotebookStore) throws -> Bool) throws {
+    try requireMutationAdmission()
     let charge = try admission.transfer(reservation, retaining: cost)
     enqueueChange(owner: owner, isOrderingFence: owner.isOrderingFence,
       admissionCharge: charge, onRejected: onRejected) { .init(merged: try operation($0)) }
@@ -197,6 +218,10 @@ final class NotebookPersistenceQueue {
     admissionCharge: UUID? = nil,
     onRejected: (@MainActor @Sendable (CollaborationError) -> Void)? = nil,
     _ operation: @escaping @Sendable (NotebookStore) throws -> Change) {
+    guard permitsNewWorkspaceMutation else {
+      if let admissionCharge { admission.releaseCharge(admissionCharge) }
+      onRejected?(.init("workspace_selection_pending", "Выбор пространства ещё сохраняется.")); return
+    }
     acceptedMutationGeneration &+= 1
     let accepted = NotebookAcceptedWrite(witnesses: acceptedWitnesses, operation)
     let write = Write(owner: owner, isOrderingFence: isOrderingFence, admissionCharge: admissionCharge, operation: { store in
@@ -225,6 +250,7 @@ final class NotebookPersistenceQueue {
   /// Coalesced deltas keep the first unsaved baseline. Replacing that baseline
   /// with the next visible frame would lose an earlier insertion or deletion.
   func enqueueBoardEdit(before: BoardHierarchy, after: BoardHierarchy) {
+    guard permitsNewWorkspaceMutation else { return }
     acceptedMutationGeneration &+= 1
     let index = coalescingIndex(for: .board)
     let baseline = index.flatMap { pending[$0].boardBaseline } ?? before
@@ -375,6 +401,7 @@ final class NotebookPersistenceQueue {
     reservation: NotebookPersistenceAdmission.Reservation, cost: NotebookPersistenceAdmission.Cost,
     _ operation: @escaping @Sendable (NotebookStore) throws -> Value,
     completion: @escaping @Sendable (Result<Value, Error>) -> Void) throws {
+    try requireMutationAdmission()
     guard owner.writesStore else {
       throw CollaborationError("invalid_operation","Резерв принятой записи принадлежит изменению хранилища.")
     }
@@ -387,6 +414,10 @@ final class NotebookPersistenceQueue {
     admissionCharge:UUID? = nil,
     _ operation: @escaping @Sendable (NotebookStore) throws -> Value,
     completion: @escaping @Sendable (Result<Value, Error>) -> Void) {
+    if writesStore, !permitsNewWorkspaceMutation {
+      if let admissionCharge { admission.releaseCharge(admissionCharge) }
+      completion(.failure(CollaborationError("workspace_selection_pending", "Выбор пространства ещё сохраняется."))); return
+    }
     if !writesStore, let failure { completion(.failure(Failure(message: failure))); return }
     let accepted: NotebookAcceptedWrite<Value>? = writesStore
       ? NotebookAcceptedWrite(witnesses: acceptedWitnesses, operation) : nil
@@ -433,6 +464,7 @@ final class NotebookPersistenceQueue {
     reservation: NotebookPersistenceAdmission.Reservation,
     _ preparation: Task<PreparedCommand<Value>, Error>,
     publishesChanges: Bool = false) throws -> Task<Value, Error> {
+    try requireMutationAdmission()
     let charge = try admission.transfer(reservation)
     let measured = Task { [admission] in
       let prepared = try await preparation.value

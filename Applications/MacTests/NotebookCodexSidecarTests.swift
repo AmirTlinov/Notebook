@@ -140,6 +140,78 @@ final class NotebookCodexSidecarTests: XCTestCase {
     try await exerciseProcessFileDrain(modelLifetime: .retiringCandidate)
   }
 
+  func testPublishedFileWorkVetoesAutomaticSelectionAndManualSelectionKeepsItsOriginalCompletion() async throws {
+    let base = URL(fileURLWithPath: "/tmp/nb-file-selection-" + UUID().uuidString.lowercased(), isDirectory: true)
+    let root = base.appendingPathComponent("Notebook"), projectRoot = base.appendingPathComponent("project")
+    try FileManager.default.createDirectory(at: projectRoot, withIntermediateDirectories: true)
+    let library = NotebookWorkspaceLibrary(originalRoot: root)
+    var writers: [NotebookPersistenceQueue] = []
+    let launch = NotebookApplicationLaunch(root: root, libraryOwner: library) { store, _ in
+      let writer = NotebookPersistenceQueue(store: store)
+      let model = NotebookAppModel(store: store, startsNearbySync: false,
+        opensDefaultAccountWorkspace: writers.isEmpty, persistenceQueue: writer)
+      writers.append(writer); return model
+    }
+    let release = DispatchSemaphore(value: 0)
+    var files: MacNotebookProjectFiles?
+    addTeardownBlock { @MainActor in
+      release.signal()
+      await files?.stopAndDrain()
+      let stopped = await launch.shutdown(); XCTAssertTrue(stopped)
+      try FileManager.default.removeItem(at: base)
+    }
+    await launch.start()
+    let source = try XCTUnwrap(launch.model), writer = try XCTUnwrap(writers.first)
+    await source.start(pageSize: NotebookAppModel.defaultPageSize)
+    await source.finishStartup()
+    let sourceID = try XCTUnwrap(source.admittedWorkspaceID), candidateID = UUID()
+    _ = try await library.selectFixture(sourceID, name: "File owner")
+    let destination = try await library.prepare(candidateID)
+    _ = try NotebookStore(root: destination).initializeWorkspace(actor: UUID(), pageSize: NotebookAppModel.defaultPageSize)
+    let fileOwner = MacNotebookProjectFiles(persistence: writer)
+    files = fileOwner
+    let executor = NativeOwner()
+    let sidecar = NotebookCodexSidecar(persistence: writer, bridge: executor, metadata: executor,
+      workspaceID: sourceID, directory: root, files: fileOwner)
+    launch.codexHost.admitFixtureRoute(workspaceID: sourceID, sidecar: sidecar, persistence: writer)
+    source.codexHost = launch.codexHost
+    let bytes = Data("source-owned physical rename".utf8), original = projectRoot.appendingPathComponent("main.py")
+    try bytes.write(to: original)
+    let project = CodexProject(id: "selection-files", name: "Code", roots: [projectRoot.path])
+    let address = NotebookFileAddress(computer: UUID(), project: project.id, root: projectRoot.path, path: "main.py")
+    let id = UUID(), request = NotebookFileRename(address: address, path: "moved.py", version: .init(bytes), after: 0)
+    let published = expectation(description: "The real FileWork has published before its accepted journal completion")
+    let pending = Task {
+      try await fileOwner.rename(id, request: request, project: project, afterMove: {
+        published.fulfill()
+        guard release.wait(timeout: .now() + 15) == .success else { throw CocoaError(.fileWriteUnknown) }
+      })
+    }
+    await fulfillment(of: [published], timeout: 3)
+    XCTAssertTrue(launch.codexHost.hasPendingFileWork(workspace: sourceID))
+    XCTAssertEqual(try source.store.fileRename(id)?.completed, false)
+    await launch.openWorkspace(candidateID, automatically: true)
+    XCTAssertTrue(launch.model === source)
+    XCTAssertTrue(source.inputGate.permitsNewContact)
+    XCTAssertTrue(fileOwner.hasPendingWork)
+    let stillSelected = try await library.snapshot()
+    XCTAssertEqual(stillSelected.catalog.selectedID, sourceID)
+    await launch.openWorkspace(candidateID)
+    XCTAssertFalse(launch.model === source)
+    XCTAssertEqual(launch.selectedWorkspaceID, candidateID)
+    XCTAssertEqual(source.shutdownPhase, .running)
+    XCTAssertTrue(writer.permitsNewWorkspaceMutation)
+    release.signal()
+    let result = try await pending.value
+    XCTAssertEqual(result, request)
+    let saved = await writer.flush(); XCTAssertTrue(saved)
+    XCTAssertEqual(try source.store.fileRename(id)?.completed, true)
+    XCTAssertFalse(fileOwner.hasPendingWork)
+    XCTAssertFalse(FileManager.default.fileExists(atPath: original.path))
+    XCTAssertEqual(try Data(contentsOf: projectRoot.appendingPathComponent("moved.py")), bytes)
+    XCTAssertEqual(launch.selectedWorkspaceID, candidateID)
+  }
+
   private enum FileDrainModelLifetime: Equatable { case current, retained, retiringCandidate }
 
   private func exerciseProcessFileDrain(modelLifetime: FileDrainModelLifetime) async throws {
@@ -157,7 +229,7 @@ final class NotebookCodexSidecarTests: XCTestCase {
     let original = NotebookStore(root: root)
     let originalHeader = try original.initializeWorkspace(actor: UUID(), pageSize: NotebookAppModel.defaultPageSize)
     let candidateID = UUID(), library = NotebookWorkspaceLibrary(originalRoot: root)
-    let journalRoot = modelLifetime == .retiringCandidate ? try library.prepare(candidateID) : root
+    let journalRoot = modelLifetime == .retiringCandidate ? try await library.prepare(candidateID) : root
     let healthy = NotebookStore(root: journalRoot)
     let header = modelLifetime == .retiringCandidate
       ? try healthy.initializeWorkspace(actor: UUID(), pageSize: NotebookAppModel.defaultPageSize) : originalHeader

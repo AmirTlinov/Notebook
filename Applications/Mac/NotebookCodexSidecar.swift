@@ -44,6 +44,7 @@ final class NotebookCodexSidecar {
   private let dictation: MacNotebookDictation?
   private let runs: MacNotebookProjectRuns?
   private let files: MacNotebookProjectFiles
+  var hasPendingFileWork: Bool { files.hasPendingWork }
   private var worker: Task<Void, Never>?
   private var stopped = false
   private var publishEvents: Task<Void, Never>?

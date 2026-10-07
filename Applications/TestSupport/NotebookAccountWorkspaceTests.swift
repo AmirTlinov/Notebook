@@ -77,14 +77,16 @@ import XCTest
     XCTAssertFalse(model.permitsBackgroundPreparation, "One prepared transition revokes derived admission while keeping source input open")
     model.inputGate.notifyAcceptedContact()
     XCTAssertEqual(try model.store.currentChangeCursor(), original.cursor)
-    XCTAssertFalse(try model.freezeAutomaticWorkspaceSwitch(original))
+    let originalFroze = try await model.freezeAutomaticWorkspaceSwitch(original)
+    XCTAssertFalse(originalFroze)
     model.rollbackAutomaticWorkspaceSwitch(original)
     model.rollbackAutomaticWorkspaceSwitch(original)
     XCTAssertTrue(model.permitsExternalWork)
     XCTAssertTrue(model.permitsBackgroundPreparation)
     let nextPreparation = await model.prepareAutomaticWorkspaceSwitch()
     let next = try XCTUnwrap(nextPreparation)
-    XCTAssertTrue(try model.freezeAutomaticWorkspaceSwitch(next))
+    let nextFroze = try await model.freezeAutomaticWorkspaceSwitch(next)
+    XCTAssertTrue(nextFroze)
     XCTAssertFalse(model.permitsExternalWork)
     XCTAssertFalse(model.inputGate.permitsNewContact)
     model.rollbackAutomaticWorkspaceSwitch(original)
@@ -130,7 +132,7 @@ import XCTest
     await fulfillment(of: [reading], timeout: 3)
     XCTAssertGreaterThan(queue.pendingCount, 0)
     XCTAssertEqual(queue.acceptedMutationGeneration, readCut.mutationGeneration)
-    let frozeWithObserver = try model.freezeAutomaticWorkspaceSwitch(readCut)
+    let frozeWithObserver = try await model.freezeAutomaticWorkspaceSwitch(readCut)
     releaseRead.signal()
     let observedAfterCut = try await observer.value
     XCTAssertTrue(frozeWithObserver, "The source writer prefix is drained even while a later read remains active")
@@ -143,13 +145,91 @@ import XCTest
     XCTAssertTrue(mutationFinished)
     XCTAssertEqual(try model.store.currentChangeCursor(), mutationCut.cursor)
     XCTAssertGreaterThan(queue.acceptedMutationGeneration, mutationCut.mutationGeneration)
-    XCTAssertFalse(try model.freezeAutomaticWorkspaceSwitch(mutationCut))
+    let mutationFroze = try await model.freezeAutomaticWorkspaceSwitch(mutationCut)
+    XCTAssertFalse(mutationFroze)
     model.rollbackAutomaticWorkspaceSwitch(mutationCut)
     XCTAssertEqual(model.shutdownPhase, .running)
     XCTAssertTrue(model.inputGate.permitsNewContact)
     let saved = await model.shutdown()
     XCTAssertTrue(saved)
   }
+
+  func testWorkspaceSealUsesUnchargedAcceptedFIFOAndRefusesNewMutationsBeforeAnActorHop() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("workspace-seal-fifo-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), queue = NotebookPersistenceQueue(store: store)
+    _ = try store.initializeWorkspace(actor: UUID(), pageSize: NotebookAppModel.defaultPageSize)
+    let entered = expectation(description: "An uncharged accepted writer owns the actual FIFO head")
+    let release = DispatchSemaphore(value: 0)
+    defer { release.signal() }
+    let accepted = Task {
+      try await queue.submit(writesStore: true) { store in
+        entered.fulfill()
+        guard release.wait(timeout: .now() + 5) == .success else { throw NotebookTransportError.storageUnavailable }
+        return try store.currentChangeCursor()
+      }
+    }
+    await fulfillment(of: [entered], timeout: 3)
+    XCTAssertEqual(queue.admittedOperationCount, 0)
+    XCTAssertGreaterThan(queue.pendingCount, 0)
+    XCTAssertNil(queue.sealWorkspaceSelection(expectedGeneration: queue.acceptedMutationGeneration))
+    release.signal(); _ = try await accepted.value
+    let drained = await queue.flush(); XCTAssertTrue(drained)
+    let generation = queue.acceptedMutationGeneration
+    let seal = try XCTUnwrap(queue.sealWorkspaceSelection(expectedGeneration: generation))
+    do { _ = try await queue.submit(writesStore: true) { _ in true }; XCTFail("New accepted mutation bypassed the source seal") }
+    catch { XCTAssertEqual((error as? CollaborationError)?.code, "workspace_selection_pending") }
+    XCTAssertEqual(queue.acceptedMutationGeneration, generation)
+    XCTAssertEqual(queue.pendingCount, 0)
+    queue.finishWorkspaceSelection(seal)
+    _ = try await queue.submit(writesStore: true) { _ in true }
+    let saved = await queue.flush(); XCTAssertTrue(saved)
+    XCTAssertEqual(queue.acceptedMutationGeneration, generation + 1)
+  }
+
+  #if DEBUG
+  func testPendingAuthoredImportVetoesAutomaticSealBeforeItHasAWriterSlot() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("account-import-preparation-" + UUID().uuidString)
+    let store = NotebookStore(root: root), queue = NotebookPersistenceQueue(store: store)
+    let model = NotebookAppModel(store: store, startsNearbySync: false,
+      opensDefaultAccountWorkspace: true, persistenceQueue: queue)
+    var held: CheckedContinuation<Void, Never>?
+    var importing: Task<UUID, Error>?
+    let previousHook = NotebookDocumentImportOwner.onAuthoredPreparation
+    addTeardownBlock { @MainActor in
+      held?.resume(); held = nil
+      NotebookDocumentImportOwner.onAuthoredPreparation = previousHook
+      _ = await importing?.result
+      let stopped = await model.shutdown(); XCTAssertTrue(stopped)
+      try FileManager.default.removeItem(at: root)
+    }
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    await model.finishStartup()
+    let document = DocumentDocument(actor: UUID(), files: [.init(id: "main", path: "main.tex", source: "Prepared authored import.")])
+    let cut = try NotebookExportCut(document: document, state: .init(id: document.id, actor: document.contentStamp.actor))
+    let file = root.appendingPathComponent("selected.notex")
+    try store.exportPortableDocument(cut: cut).write(to: file)
+    let entered = expectation(description: "The actual authored import owns preparation credit before writer transfer")
+    NotebookDocumentImportOwner.onAuthoredPreparation = {
+      await withCheckedContinuation { continuation in held = continuation; entered.fulfill() }
+    }
+    importing = Task { try await model.importDocumentFile(file) }
+    await fulfillment(of: [entered], timeout: 3)
+    let prepared = await model.prepareAutomaticWorkspaceSwitch()
+    let transition = try XCTUnwrap(prepared)
+    XCTAssertEqual(queue.pendingCount, 0)
+    XCTAssertGreaterThan(queue.reservedWriteBytes, 0)
+    let frozen = try await model.freezeAutomaticWorkspaceSwitch(transition)
+    XCTAssertFalse(frozen, "Authored preparation is still source work even before FIFO transfer")
+    model.rollbackAutomaticWorkspaceSwitch(transition)
+    XCTAssertTrue(model.inputGate.permitsNewContact)
+    held?.resume(); held = nil
+    let imported = try await XCTUnwrap(importing).value
+    let saved = await model.finishPendingInteraction(boundary: .acceptedInput); XCTAssertTrue(saved)
+    XCTAssertEqual(try store.loadDocument(imported).files.first?.source, "Prepared authored import.")
+    XCTAssertEqual(model.shutdownPhase, .running)
+  }
+  #endif
 
   #if os(macOS) && DEBUG
   func testJoinedPageVisionWorkerCannotAdmitAfterAutomaticCutAndSameOwnerResumesOnRollback() async throws {
@@ -196,7 +276,8 @@ import XCTest
     XCTAssertTrue(refused, "A late, uncancelled producer checks source admission before reserving the FIFO")
     XCTAssertEqual(queue.acceptedMutationGeneration, cut.mutationGeneration)
     XCTAssertNil(try store.loadTargetRenderReceipt(request.id))
-    XCTAssertTrue(try model.freezeAutomaticWorkspaceSwitch(cut))
+    let cutFroze = try await model.freezeAutomaticWorkspaceSwitch(cut)
+    XCTAssertTrue(cutFroze)
     model.rollbackAutomaticWorkspaceSwitch(cut)
     XCTAssertTrue(model.permitsBackgroundPreparation)
     XCTAssertEqual(model.admittedWorkspaceID, sourceID)

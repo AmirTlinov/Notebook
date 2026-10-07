@@ -126,7 +126,7 @@ final class NotebookDeviceTrustTests: XCTestCase {
     XCTAssertEqual(try NotebookAccountCloud.decode(encrypted), directory)
   }
 
-  func testOpeningAnotherSpaceKeepsTheOriginalDatabaseAndSelection() throws {
+  func testOpeningAnotherSpaceKeepsTheOriginalDatabaseAndSelection() async throws {
     let base = FileManager.default.temporaryDirectory.appendingPathComponent("Notebook-spaces-" + UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: base) }
     let root = base.appendingPathComponent("Notebook"), original = NotebookStore(root: root)
@@ -134,15 +134,19 @@ final class NotebookDeviceTrustTests: XCTestCase {
     try original.prepareEmptyWorkspace(workspaceID: first)
     _ = try original.loadOrCreate(actor: UUID(), pageSize: .init(width: 800, height: 1000))
     let before = try original.workspaceHeader(), library = NotebookWorkspaceLibrary(originalRoot: root)
-    XCTAssertEqual(try library.selectedRoot(), root)
-    let other = try library.select(second)
+    let initialRoot = try await library.snapshot().selectedRoot
+    XCTAssertEqual(initialRoot, root)
+    let other = try await library.selectFixture(second)
     XCTAssertNotEqual(other, root)
     XCTAssertEqual(try NotebookStore(root: other).storedWorkspaceID(), second)
     XCTAssertFalse(try NotebookStore(root: other).hasWorkspaceContent())
     XCTAssertEqual(try original.workspaceHeader(), before)
-    XCTAssertEqual(try library.selectedRoot(), other)
-    XCTAssertEqual(try library.select(first), root)
-    XCTAssertEqual(try library.selectedRoot(), root)
+    let otherSelection = try await library.snapshot().selectedRoot
+    XCTAssertEqual(otherSelection, other)
+    let firstRoot = try await library.selectFixture(first)
+    let firstSelection = try await library.snapshot().selectedRoot
+    XCTAssertEqual(firstRoot, root)
+    XCTAssertEqual(firstSelection, root)
   }
 
   private func makeSync(_ local: NotebookTransportIdentity, _ trust: DeviceMemoryTrust, retired: Set<UUID> = []) -> NearbySync {

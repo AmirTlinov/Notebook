@@ -5,6 +5,23 @@ import Testing
 
 @Suite("Cloud delivery through the SQLite owner", .serialized)
 struct NotebookCloudDeliveryTests {
+  @Test func absentCloudSchemaIsUnconfiguredButMissingPreparedControlRowIsCorrupt() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("cloud-binding-state-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root)
+    try store.prepareEmptyWorkspace(workspaceID: UUID())
+    let unconfigured = NotebookCloudConfiguration(account: nil, enabled: false)
+    #expect(try store.cloudConfiguration() == unconfigured)
+    #expect(try store.sqlRead { try $0.rows("SELECT 1 FROM sqlite_master WHERE name='cloud_control'").isEmpty },
+      "Reading a local binding must not create optional Cloud storage")
+    try store.prepareCloudStorage()
+    #expect(try store.cloudConfiguration() == unconfigured)
+    try store.commandTransaction { try store.currentSQL!.run("DELETE FROM cloud_control WHERE id=1") }
+    #expect(throws: NotebookStorageError.corruptRecord("cloud_control")) { try store.cloudConfiguration() }
+    #expect(try store.sqlRead { try $0.rows("SELECT 1 FROM cloud_control WHERE id=1").isEmpty },
+      "An unreadable binding cannot be silently recreated as an unbound account")
+  }
+
   private final class Pair {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("cloud-contract-" + UUID().uuidString)
     let a: NotebookStore, b: NotebookStore

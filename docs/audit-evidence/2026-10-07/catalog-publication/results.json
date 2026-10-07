@@ -1,0 +1,76 @@
+{
+  "status": "selected_core_and_mac_passed",
+  "positions": [
+    "NB14",
+    "NB01"
+  ],
+  "native": [
+    {
+      "gate": "child-native-v3",
+      "passed": 17,
+      "failed": 4,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "sourceSHA256": "98076284eff571762d3cd7df17e8624f9fc5c5e18c2ebbb181db882b1c420279",
+      "sourceInputCount": 1674,
+      "sourceUnchanged": null,
+      "summary": "child-native-v3-summary.json"
+    },
+    {
+      "gate": "child-native-v4",
+      "passed": 21,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "sourceSHA256": "252c52b46376ceb26e0fc8bc2b598f8419c096f92d7e329ac8d81aad7a874ae3",
+      "sourceInputCount": 1674,
+      "sourceUnchanged": true,
+      "summary": "child-native-v4-summary.json"
+    },
+    {
+      "gate": "integrated-native-v1",
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "sourceSHA256": "6c25cedb31b7e66bed5877f2f64a95ec44524f7e830cad0170a7fcbb5893279d",
+      "sourceInputCount": 1675,
+      "sourceUnchanged": true,
+      "summary": "integrated-native-v1-summary.json"
+    }
+  ],
+  "core": [
+    {
+      "gate": "child-core-config",
+      "executed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "sourceSHA256": "252c52b46376ceb26e0fc8bc2b598f8419c096f92d7e329ac8d81aad7a874ae3",
+      "sourceInputCount": 1674,
+      "sourceUnchanged": true
+    },
+    {
+      "gate": "integrated-core",
+      "executed": 2,
+      "failed": 0,
+      "skipped": 0,
+      "sourceSHA256": "6c25cedb31b7e66bed5877f2f64a95ec44524f7e830cad0170a7fcbb5893279d",
+      "sourceInputCount": 1675,
+      "sourceUnchanged": true
+    }
+  ],
+  "transfer": {
+    "changedFileFreeze": "3e741298eb556410e0409e9353465181bbc1f509af9d00dae0446b94930bd5e7",
+    "files": 21,
+    "byteIdenticalToChild": 18,
+    "combinedOwnerFiles": [
+      "Applications/Shared/NotebookAppModel.swift",
+      "Sources/NotebookCore/NotebookCloudStorage.swift",
+      "Tests/NotebookCoreTests/NotebookCloudDeliveryTests.swift"
+    ],
+    "basis": "Verified catalog delta layered on committed cloud/resource owners. Integrated Core2 and Native2 verify their overlap."
+  },
+  "originalFailures": "v3: stale-account expectation, sealed-source optimistic birth, absent optional cloud schema blocking rename, accepted manual selection Retry after lifecycle close. All four repaired; strict assertions preserved.",
+  "physicalIPadAndInstalledPairAcceptance": "pending",
+  "fullJointAcceptance": false
+}

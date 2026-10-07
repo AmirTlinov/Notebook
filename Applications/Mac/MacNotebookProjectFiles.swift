@@ -37,6 +37,9 @@ final class MacNotebookProjectFiles {
 
   private func access<Value: Sendable>(_ operation: @escaping @Sendable (Journal) throws -> Value) async throws -> Value {
     guard !stopped else { throw CancellationError() }
+    guard persistence.permitsNewWorkspaceMutation else {
+      throw CollaborationError("workspace_selection_pending", "Выбор пространства ещё сохраняется.")
+    }
     guard active == nil else { throw Self.failure("Mac ещё ожидает доступ к файлу. Заметки и разговор продолжают работать.") }
     let work = FileWork(), journal = Journal(persistence: persistence, work: work), beforeAccess = beforeAccess, timeout = timeout
     return try await withCheckedThrowingContinuation { continuation in

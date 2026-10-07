@@ -123,8 +123,11 @@ final class NotebookPortableDocumentImportOwnerTests: XCTestCase {
     XCTAssertFalse(result.cachedPrint)
     XCTAssertEqual(try store.loadDocument(result.documentID).files[0].source, "Useful authored source.")
     XCTAssertEqual(owner.optionalJobCount, 1)
+    XCTAssertFalse(owner.hasPendingAuthoredPreparation)
     let saved = await queue.flush(); XCTAssertTrue(saved)
     XCTAssertGreaterThan(queue.reservedWriteBytes, 0, "The optional cache still owns source/phase credit")
+    let seal = try XCTUnwrap(queue.sealWorkspaceSelection(expectedGeneration: queue.acceptedMutationGeneration))
+    queue.finishWorkspaceSelection(seal)
     var closed = false
     let closing = Task { await owner.close(); closed = true }
     await Task.yield()

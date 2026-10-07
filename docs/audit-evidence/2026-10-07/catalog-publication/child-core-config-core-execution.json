@@ -1,0 +1,14 @@
+{
+  "executed": [
+    "NotebookCoreTests.NotebookCloudDeliveryTests/absentCloudSchemaIsUnconfiguredButMissingPreparedControlRowIsCorrupt()/NotebookCloudDeliveryTests.swift:8:4"
+  ],
+  "executions": {
+    "NotebookCoreTests.NotebookCloudDeliveryTests/absentCloudSchemaIsUnconfiguredButMissingPreparedControlRowIsCorrupt()/NotebookCloudDeliveryTests.swift:8:4": 1
+  },
+  "failed": [],
+  "format": 1,
+  "planned": [
+    "NotebookCoreTests.NotebookCloudDeliveryTests/absentCloudSchemaIsUnconfiguredButMissingPreparedControlRowIsCorrupt()/NotebookCloudDeliveryTests.swift:8:4"
+  ],
+  "skipped": []
+}
