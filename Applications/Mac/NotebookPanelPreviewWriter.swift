@@ -10,7 +10,7 @@ extension CurrentViewPreviewWriter {
     knownAssets: Set<UUID>) async throws -> JSONValue {
     let projection = cut.projection, target = cut.target, actor = model.actorID
     try projection.validated()
-    guard model.permitsBackgroundPreparation else { throw CancellationError() }
+    guard model.permitsPanelPreparation else { throw CancellationError() }
     let viewBounds = WorkspaceSpatialBounds(origin: projection.worldOrigin,
       width: projection.viewport.x / projection.camera.scale, height: projection.viewport.y / projection.camera.scale)
     let initialCoverage = try CompositionTileCoverage(bounds: viewBounds,
@@ -41,7 +41,7 @@ extension CurrentViewPreviewWriter {
         knownAssets: knownAssets, sourceRevision: cut.sourceRevision, model: model)
     } else {
       let presence = SessionPresence(boardID: target.id, mode: .board, camera: projection.camera, viewport: projection.viewport)
-      let renderer = SceneCompositionRenderer(source: source, permitsPreparation: { model.permitsBackgroundPreparation })
+      let renderer = SceneCompositionRenderer(source: source, permitsPreparation: { model.permitsPanelPreparation })
       let movable = Set((capturedSnapshot["cards"]?.arrayValues ?? []).prefix(NotebookPanelRenderProjection.maximumSubjects)
         .compactMap { $0["item"]?["id"]?.stringValue.flatMap(UUID.init(uuidString:)) })
       let result = try await renderer.renderPanel(presence: presence, projection: projection,
@@ -50,7 +50,7 @@ extension CurrentViewPreviewWriter {
     }
     let dependencies = try await source.pixelDependencies()
     try Task.checkCancellation()
-    guard model.permitsBackgroundPreparation else { throw CancellationError() }
+    guard model.permitsPanelPreparation else { throw CancellationError() }
     return try await model.performStoreCommand { store in
       try store.readTransaction { _ in
         try Task.checkCancellation()
@@ -122,9 +122,9 @@ extension CurrentViewPreviewWriter {
       if let cached = resources.retainRaster(for: element, minimumScale: scale) { value = cached }
       else {
         if preparation == nil { preparation = try await SceneWebRasterPreparation.create(resources: resources,
-          permitsPreparation: { model.permitsBackgroundPreparation }) }
+          permitsPreparation: { model.permitsPanelPreparation }) }
         value = try await preparation!.prepare(element, requestedScale: scale, programStore: model.store,
-          permitsPreparation: { model.permitsBackgroundPreparation })
+          permitsPreparation: { model.permitsPanelPreparation })
       }
       borrowed = value
       let address = SceneSourceAddress(plane: .board(page.id), elementID: element.id)
@@ -254,7 +254,7 @@ extension CurrentViewPreviewWriter {
       }
       let value = try await PageCompositionRenderer.prepareMaterial(page, graph: graph, region: region,
         scale: max(density, tileDensity), resources: resources,
-        permitsPreparation: { model.permitsBackgroundPreparation })
+        permitsPreparation: { model.permitsPanelPreparation })
       materialPreparation = value
       return value
     }
@@ -268,7 +268,7 @@ extension CurrentViewPreviewWriter {
       else {
         body = try await PageCompositionRenderer.renderMaterial(page, ids: [element.id], region: frame,
           scale: density, key: key, preparation: preparedMaterial(), resources: resources,
-          permitsPreparation: { model.permitsBackgroundPreparation }, raster: raster)
+          permitsPreparation: { model.permitsPanelPreparation }, raster: raster)
         resources.cacheComposition(body, receipts: receipts, sources: sourceRasters)
       }
       defer { body.release() }
@@ -291,7 +291,7 @@ extension CurrentViewPreviewWriter {
         if let cached = resources.retainMaterial(key) { body = cached }
         else if index == -1 {
           let canvas = try await SceneRasterCompositor.create(size: visible.size, scale: rasterDensity, resources: resources,
-            permitsPreparation: { model.permitsBackgroundPreparation })
+            permitsPreparation: { model.permitsPanelPreparation })
           try await canvas.drawPaper(size: physical.size, in: physical.offsetBy(dx: -visible.minX, dy: -visible.minY))
           body = try await canvas.finishRaster(for: .material(key))
           resources.cacheComposition(body, receipts: [:], sources: [:])
@@ -299,7 +299,7 @@ extension CurrentViewPreviewWriter {
           body = try await PageCompositionRenderer.renderMaterial(page,
             ids: index == bands.count ? nil : bands[index].ids, region: region, scale: rasterDensity,
             key: key, preparation: preparedMaterial(), resources: resources,
-            permitsPreparation: { model.permitsBackgroundPreparation }, raster: raster)
+            permitsPreparation: { model.permitsPanelPreparation }, raster: raster)
           resources.cacheComposition(body, receipts: receipts, sources: sourceRasters)
         }
         defer { body.release() }

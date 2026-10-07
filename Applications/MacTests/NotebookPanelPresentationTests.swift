@@ -423,6 +423,86 @@ final class NotebookPanelPresentationTests: XCTestCase {
   }
 
   @MainActor
+  func testForegroundPanelSurvivesPeerInputDuringQueuedCaptureAndKeepsLocalFence() async throws {
+    let resources = SceneRenderResources.shared
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("panel-peer-input-\(UUID())")
+    let fixture = MacCommandFixture(root: root)
+    retainNotebookUntilTeardown(fixture.model, removing: root)
+    try await fixture.waitUntil(seconds: 5) {
+      resources.activeBackgroundWebSurfaceCount == 0 && resources.pendingWebRequestCount == 0
+    }
+    var blockers: [WebSurfaceLease] = []
+    for _ in 0..<resources.maximumBackgroundWebSurfaces {
+      blockers.append(try await resources.acquireWebSurface(priority: .background))
+    }
+    defer { blockers.forEach { $0.release() } }
+    try await fixture.start(showingPage: true)
+    let header = try await fixture.read(.init(kind: .workspaceHeader)).decode(NotebookWorkspaceHeader.self)
+    let page = try XCTUnwrap(fixture.model.activePage)
+    let target = CollaborationTarget(kind: .page, id: page.id)
+    try await fixture.apply([.init(kind: .insertElement, target: target, id: "queued-foreground-web-\(UUID())",
+      values: ["kind": .string("web"), "source": .string("Foreground source"),
+        "html": .string("<div style='width:180px;height:120px;background:blue'>Native source</div>"),
+        "frame": try .encode(PageRect(x: 20, y: 30, width: 180, height: 120))])])
+    var command = NotebookCommand(command: .panelPresentation)
+    command.panelPresentation = .init(workspaceID: header.workspaceID, target: target,
+      appearance: .init(viewport: .init(x: 600, y: 800), pixelScale: 1))
+    let accepted = command
+    let durableBefore = Set(try fixture.store.targetRenderRequests().map(\.id))
+    let firstCompleted = expectation(description: "Queued foreground capture completes while the peer contact is held")
+    let reader = Task { @MainActor in
+      defer { firstCompleted.fulfill() }
+      return try await fixture.send(accepted)
+    }
+    defer { reader.cancel() }
+    try await fixture.waitUntil(seconds: 5) { resources.pendingWebRequestCount > 0 }
+
+    let peer = UUID(), generation = UUID(), session = UUID()
+    fixture.model.peerConnected(.init(deviceID: peer, workspaceID: header.workspaceID,
+      displayName: "Held iPad contact"), generation: generation)
+    defer { fixture.model.peerDisconnected(peerID: peer, generation: generation) }
+    fixture.model.receivePeerTransient(.inputActivity(.init(deviceID: peer, sessionID: session, sequence: 1,
+      targets: [.init(kind: .board, id: header.rootBoardID)])), peerID: peer, generation: generation)
+    XCTAssertTrue(fixture.model.peerInputIsActive)
+    XCTAssertFalse(fixture.model.permitsBackgroundPreparation)
+    XCTAssertTrue(fixture.model.permitsPanelPreparation)
+    // This second IPC reader also covers admission after peer input began.
+    let joinedReader = Task { @MainActor in try await fixture.send(accepted) }
+    defer { joinedReader.cancel() }
+    blockers.forEach { $0.release() }
+    await fulfillment(of: [firstCompleted], timeout: 10)
+    let first = try await reader.value, joined = try await joinedReader.value
+    XCTAssertTrue(fixture.model.peerInputIsActive, "Rendering completes before the remote contact releases")
+    XCTAssertEqual(first["appearance"]?["status"], .string("ready"))
+    XCTAssertEqual(joined["appearance"]?["status"], .string("ready"))
+    XCTAssertEqual(first["appearance"]?["sourceRevision"], joined["appearance"]?["sourceRevision"])
+    let layers = try XCTUnwrap(first["appearance"]?["layers"]?.arrayValues)
+    let point = WorldPoint(x: 80, y: 80)
+    let webLayer = try XCTUnwrap(layers.first { layer in
+      guard layer["id"]?.stringValue?.hasPrefix("page-elements:") == true,
+        let frame = try? layer["frame"]?.decode(PageRect.self) else { return false }
+      return frame.x <= 80 && frame.y <= 80 && frame.x + frame.width > 80 && frame.y + frame.height > 80
+    })
+    XCTAssertGreaterThan(try alpha(webLayer, at: point), 0.9, "The reply contains the queued native WebKit pixels")
+    XCTAssertEqual(Set(try fixture.store.targetRenderRequests().map(\.id)), durableBefore,
+      "Foreground reads do not create durable render requests")
+
+    let contact = UUID()
+    fixture.model.inputGate.beginContact(source: contact)
+    defer { fixture.model.inputGate.endContact(source: contact) }
+    XCTAssertFalse(fixture.model.permitsPanelPreparation)
+    do {
+      _ = try await fixture.send(accepted)
+      XCTFail("Local input must retain its foreground preparation fence")
+    } catch let error as CollaborationError { XCTAssertEqual(error.code, "snapshot_pending") }
+    fixture.model.inputGate.endContact(source: contact)
+    XCTAssertTrue(fixture.model.permitsPanelPreparation)
+    let stopped = await fixture.model.shutdown()
+    XCTAssertTrue(stopped)
+    XCTAssertFalse(fixture.model.permitsPanelPreparation)
+  }
+
+  @MainActor
   func testStoppingTheOwnerCompletesQueuedPanelReadBeforeCapacityReturns() async throws {
     let resources = SceneRenderResources.shared
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("panel-stop-\(UUID())")
