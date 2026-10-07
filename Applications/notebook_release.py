@@ -1040,7 +1040,26 @@ def install_verified_pair(source, build, evidence, runner=None):
             require(local.is_file() and not local.is_symlink() and local.stat().st_size == size,
                     "CLI не подтвердил чтение неизменного каталога пространств iPad.")
             data = local.read_bytes()
-        value = json.loads(data)
+        raw_catalog = evidence / (label + "-catalog.json")
+        raw_catalog.write_bytes(data)
+
+        def catalog_object(pairs):
+            value = dict(pairs)
+            require(len(value) == len(pairs), "Каталог пространств iPad содержит повторяющиеся ключи JSON.")
+            return value
+
+        def unsupported_number(_):
+            # Format 1 has only integer numbers. Binary float decoding could
+            # otherwise merge distinct values before the preservation check.
+            raise ReleaseError("Каталог пространств iPad содержит неподдерживаемое число JSON.")
+
+        try:
+            value = json.loads(data, object_pairs_hook=catalog_object,
+                               parse_float=unsupported_number, parse_constant=unsupported_number)
+            canonical = json.dumps(value, ensure_ascii=False, sort_keys=True,
+                                   separators=(",", ":"), allow_nan=False).encode()
+        except (ValueError, UnicodeError, RecursionError) as error:
+            raise ReleaseError("Каталог пространств iPad не содержит корректный JSON.") from error
         uuid = lambda item: isinstance(item, str) and re.fullmatch(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", item)
         require(isinstance(value, dict) and type(value.get("format")) is int and value["format"] == 1 and isinstance(value.get("entries"), list)
                 and len(value["entries"]) <= 32 and all(isinstance(entry, dict) and uuid(entry.get("id")) for entry in value["entries"]),
@@ -1063,9 +1082,10 @@ def install_verified_pair(source, build, evidence, runner=None):
             require(admitted(listing["notebook.sqlite"], False) > 0, "SQLite выбранного пространства iPad пуста.")
             active = support_path + "/" + name + "/notebook.sqlite"
             sqlite_metadata = listing["notebook.sqlite"]["metadata"]
-        return {"identity": {"state": "catalog", "catalogSHA256": digest(data), "catalogBytes": size,
+        return {"identity": {"state": "catalog", "catalogSemanticSHA256": digest(canonical),
                     "originalID": original.lower() if original else None, "selectedID": selected.lower() if selected else None,
                     "workspaceIDs": sorted(ids), "activeSQLite": active},
+                "catalogReadback": {"file": raw_catalog.name, "rawSHA256": digest(data), "rawBytes": size},
                 "sqliteMetadata": sqlite_metadata}
 
     leases = contextlib.ExitStack()
@@ -1165,6 +1185,7 @@ def install_verified_pair(source, build, evidence, runner=None):
                 "Установленный iPad изменился во время подготовки.")
         if workspace_before is not None:
             workspace_preinstall = ipad_workspace("ipad-storage-preinstall")
+            receipt["ipadWorkspacePreinstall"] = workspace_preinstall
             require(workspace_preinstall["identity"] == workspace_before["identity"],
                     "Каталог пространств iPad изменился во время подготовки; установка iPad не начата.")
         receipt["step"] = "install-ipad"; write_json(evidence / "installation.json", receipt)

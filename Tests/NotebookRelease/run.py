@@ -972,28 +972,110 @@ class InstallationTests(unittest.TestCase):
         self.assertEqual(self.cli.install_calls, [])
         self.assertFalse(any(call[1:5] == ["devicectl", "device", "copy", "from"] for call in self.cli.calls))
 
-    def test_catalog_change_during_plugin_setup_stops_before_ipad_install(self):
+    def assert_catalog_change_refused(self, phase, change):
         def changed():
             catalog = json.loads(self.cli.storage[self.cli.catalog_path]["content"])
-            catalog["selectedID"] = None
+            change(catalog)
             self.cli.storage[self.cli.catalog_path] = self.cli.file(content=json.dumps(catalog).encode())
-        self.cli.on_preinstall = changed
-        with self.assertRaisesRegex(release.ReleaseError, "изменился во время подготовки"):
+        setattr(self.cli, "on_" + phase, changed)
+        message = "изменился во время подготовки" if phase == "preinstall" else "Каталог или выбранное пространство"
+        with self.assertRaisesRegex(release.ReleaseError, message):
             self.install()
-        self.assertEqual(self.cli.install_calls, [])
-        self.assertEqual(release.read_json(self.evidence / "installation.json")["status"], "incomplete")
+        self.assertEqual(len(self.cli.install_calls), 0 if phase == "preinstall" else 1)
+        receipt = release.read_json(self.evidence / "installation.json")
+        self.assertEqual(receipt["status"], "incomplete")
+        observation = "ipadWorkspacePreinstall" if phase == "preinstall" else "ipadWorkspaceAfter"
+        self.assertNotEqual(receipt["ipadWorkspaceBefore"]["identity"], receipt[observation]["identity"])
+        if phase == "install":
+            self.assertEqual(receipt["step"], "install-ipad")
+
+    def test_catalog_key_order_and_json_formatting_preserve_the_workspace(self):
+        def reordered(value):
+            if isinstance(value, dict):
+                return {key: reordered(item) for key, item in reversed(value.items())}
+            return [reordered(item) for item in value] if isinstance(value, list) else value
+
+        original = json.loads(self.cli.storage[self.cli.catalog_path]["content"])
+        original["entries"][0]["name"] = "Тетрадь"
+        observations = [json.dumps(original, ensure_ascii=False).encode()]
+        self.cli.storage[self.cli.catalog_path] = self.cli.file(content=observations[0])
+
+        def rewrite():
+            value = reordered(json.loads(self.cli.storage[self.cli.catalog_path]["content"]))
+            data = json.dumps(value, ensure_ascii=len(observations) % 2 == 0, indent=len(observations)).encode()
+            observations.append(data)
+            self.cli.storage[self.cli.catalog_path] = self.cli.file(content=data)
+
+        self.cli.on_preinstall = self.cli.on_install = rewrite
+        receipt = self.install()
+        self.assertEqual(receipt["status"], "installed")
+        self.assertEqual(len(self.cli.install_calls), 1)
+        phases = [receipt[key] for key in ("ipadWorkspaceBefore", "ipadWorkspacePreinstall", "ipadWorkspaceAfter")]
+        self.assertTrue(all(phase["identity"] == phases[0]["identity"] for phase in phases))
+        self.assertEqual(len({phase["catalogReadback"]["rawSHA256"] for phase in phases}), 3)
+        for phase, data in zip(phases, observations, strict=True):
+            raw = phase["catalogReadback"]
+            self.assertEqual((self.evidence / raw["file"]).read_bytes(), data)
+            self.assertEqual((raw["rawSHA256"], raw["rawBytes"]), (release.digest(data), len(data)))
+
+    def test_ambiguous_or_nonfinite_catalog_refuses_before_mutation(self):
+        original = self.cli.storage[self.cli.catalog_path]["content"]
+        for index, extra in enumerate((b'"format":1,', b'"invalid":NaN,', b'"invalid":1e999,')):
+            with self.subTest(extra=extra):
+                self.evidence = self.root / ("invalid-catalog-" + str(index))
+                self.cli.storage[self.cli.catalog_path] = self.cli.file(content=b"{" + extra + original[1:])
+                with self.assertRaisesRegex(release.ReleaseError, "JSON"):
+                    self.install()
+                self.assertEqual(self.cli.install_calls, [])
+                self.assertFalse(self.cli.published_plugin.exists())
+                self.assertFalse(self.cli.cache.exists())
+
+    def test_catalog_change_during_plugin_setup_stops_before_ipad_install(self):
+        self.assert_catalog_change_refused("preinstall", lambda value: value.update(selectedID=None))
+
+    def test_catalog_fractional_numbers_are_refused_without_rounding(self):
+        original = self.cli.storage[self.cli.catalog_path]["content"]
+        for index, number in enumerate((b"1e-400", b"0.0", b"9007199254740992.0", b"9007199254740993.0")):
+            with self.subTest(number=number):
+                self.evidence = self.root / ("fractional-catalog-" + str(index))
+                data = b'{"extra":' + number + b"," + original[1:]
+                self.cli.storage[self.cli.catalog_path] = self.cli.file(content=data)
+                with self.assertRaisesRegex(release.ReleaseError, "неподдерживаемое число JSON"):
+                    self.install()
+                self.assertEqual(self.cli.install_calls, [])
+                self.assertFalse(self.cli.published_plugin.exists())
+                self.assertFalse(self.cli.cache.exists())
 
     def test_changed_selected_workspace_cannot_be_claimed_installed_or_retried(self):
-        def changed():
-            catalog = json.loads(self.cli.storage[self.cli.catalog_path]["content"])
-            catalog["selectedID"] = None
-            self.cli.storage[self.cli.catalog_path] = self.cli.file(content=json.dumps(catalog).encode())
-        self.cli.on_install = changed
-        with self.assertRaisesRegex(release.ReleaseError, "Каталог или выбранное пространство"):
-            self.install()
-        self.assertEqual(len(self.cli.install_calls), 1)
-        receipt = release.read_json(self.evidence / "installation.json")
-        self.assertEqual((receipt["status"], receipt["step"]), ("incomplete", "install-ipad"))
+        self.assert_catalog_change_refused("install", lambda value: value.update(selectedID=None))
+
+    def test_catalog_rename_refuses_before_ipad_install(self):
+        self.assert_catalog_change_refused("preinstall", lambda value: value["entries"][0].update(name="Renamed"))
+
+    def test_catalog_rename_cannot_be_claimed_installed(self):
+        self.assert_catalog_change_refused("install", lambda value: value["entries"][0].update(name="Renamed"))
+
+    def test_catalog_entry_change_refuses_before_ipad_install(self):
+        self.assert_catalog_change_refused("preinstall", lambda value: value["entries"].append(
+            {"id": "A1111111-1111-4111-8111-111111111111", "name": "Another"}))
+
+    def test_catalog_entry_change_cannot_be_claimed_installed(self):
+        self.assert_catalog_change_refused("install", lambda value: value["entries"].append(
+            {"id": "A1111111-1111-4111-8111-111111111111", "name": "Another"}))
+
+    def test_catalog_deletion_change_refuses_before_ipad_install(self):
+        self.assert_catalog_change_refused("preinstall", lambda value: value["deleting"].append(
+            "A1111111-1111-4111-8111-111111111111"))
+
+    def test_catalog_deletion_change_cannot_be_claimed_installed(self):
+        self.assert_catalog_change_refused("install", lambda value: value["deleting"].append(
+            "A1111111-1111-4111-8111-111111111111"))
+
+    def test_catalog_array_order_is_preserved(self):
+        value = json.loads(self.cli.storage[self.cli.catalog_path]["content"])
+        value["entries"].append({"id": "A1111111-1111-4111-8111-111111111111", "name": "Another"})
+        self.cli.storage[self.cli.catalog_path] = self.cli.file(content=json.dumps(value).encode())
+        self.assert_catalog_change_refused("preinstall", lambda value: value["entries"].reverse())
 
     def test_lost_catalog_cannot_be_claimed_installed_or_retried(self):
         self.cli.on_install = lambda: self.cli.storage.pop(self.cli.catalog_path)

@@ -254,9 +254,13 @@ Downgrades and changed signed bytes refuse installation. The installer then
 updates iPad in place and reads back its identity. Unknown outcomes remain
 `incomplete`; it never restores data or retries an uncertain installation.
 
-The iPad preservation check uses its bundle domain. It compares the bounded
-workspace catalog bytes and IDs before preparation, immediately before the iPad
-update, and afterward; the selected SQLite must remain a readable nonempty file.
+The iPad preservation check uses its bundle domain. Before preparation, immediately
+before the iPad update, and afterward, it compares the full catalog's canonical
+JSON hash and IDs. Object-key order and JSON formatting are insignificant; array
+order and every value remain significant. Numbers must use integer notation,
+matching the current catalog format. Duplicate keys and nonfinite numbers refuse
+admission. Each readback retains its raw bytes, hash and size as diagnostics.
+The selected SQLite must remain a readable nonempty file.
 An installed app with neither a catalog nor a store has an empty baseline. Data
 without a provable catalog refuses installation. App-group IDs stay unchanged;
 iPadOS container paths and SQLite/WAL sizes are diagnostic. The installer reads
