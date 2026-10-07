@@ -13,11 +13,13 @@ import AppKit
 final class SceneCameraSettlement {
   @MainActor private final class ClockTarget: NSObject {
     weak var owner: SceneCameraSettlement?
-    @objc func tick(_ link: CADisplayLink) { owner?.advance(at: link.timestamp) }
+    @objc func tick(_ link: CADisplayLink) {
+      owner?.advance(presentationTime: link.targetTimestamp, observedTime: CACurrentMediaTime())
+    }
   }
   private let clockTarget = ClockTarget()
   private var link: CADisplayLink?
-  private var startedAt = 0.0
+  private(set) var startedAt = 0.0
   private var duration = 0.0
   private var spring = Spring()
   private var from: SessionPresence?
@@ -76,17 +78,19 @@ final class SceneCameraSettlement {
     completion?(outcome)
   }
 
-  private func advance(at time: Double) {
+  func advance(presentationTime: Double, observedTime: Double) {
     guard let from, let to, let publish else { return }
-    let elapsed = max(0, time - startedAt)
-    if elapsed >= duration { finish(.completed, pose: to) }
-    else {
-      guard let sample = Self.sample(from: from, to: to, fraction: spring.value(target: 1.0, time: elapsed)) else {
-        finish(.failed); return
-      }
-      current = sample
-      publish(sample, false)
+    // Prepare the upcoming frame, but retain input and passage ownership until
+    // the real deadline. The render target cannot start the next stage early.
+    let deadline = startedAt + duration
+    if observedTime >= deadline { finish(.completed, pose: to); return }
+    let elapsed = max(0, presentationTime - startedAt)
+    let fraction = presentationTime >= deadline ? 1 : spring.value(target: 1.0, time: elapsed)
+    guard let sample = Self.sample(from: from, to: to, fraction: fraction) else {
+      finish(.failed); return
     }
+    current = sample
+    publish(sample, false)
   }
 
   static func sample(from: SessionPresence, to: SessionPresence, fraction: Double) -> SessionPresence? {

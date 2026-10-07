@@ -309,6 +309,70 @@ final class SpatialInkProjectionTests: XCTestCase {
     XCTAssertEqual(Double(Float(point.y) * transform.y + transform.w), expected.y, accuracy: 0.001)
   }
   @MainActor
+  func testSpringPreparesUpcomingFramesWithoutCompletingBeforeItsDeadline() throws {
+    let item = UUID(), viewport = SpatialPoint(x: 834, y: 1194), duration = 0.15
+    let start = SessionPresence(mode: .cover, camera: .init(scale: 0.3), viewport: viewport,
+      focusedItemID: item, openProgress: 0)
+    let target = SessionPresence(mode: .document,
+      camera: .init(center: .init(x: 600, y: -500), scale: 1), viewport: viewport,
+      focusedItemID: item, openProgress: 1)
+    let owner = SceneCameraSettlement()
+    defer { owner.cancel() }
+    var samples: [(presence: SessionPresence, settled: Bool)] = []
+    var outcomes: [SceneCameraSettlement.Outcome] = []
+    var replacementSamples: [SessionPresence] = []
+    var replacementOutcomes: [SceneCameraSettlement.Outcome] = []
+    XCTAssertTrue(owner.start(from: start, to: target, duration: duration, bounce: 0) { presence, settled in
+      samples.append((presence, settled))
+    } completion: { outcome in
+      outcomes.append(outcome)
+      guard outcome == .completed else { return }
+      XCTAssertNil(owner.operationID)
+      XCTAssertTrue(owner.start(from: target, to: start, duration: duration, bounce: 0) { presence, _ in
+        replacementSamples.append(presence)
+      } completion: { replacementOutcomes.append($0) })
+    })
+    let operation = try XCTUnwrap(owner.operationID), startedAt = owner.startedAt
+    XCTAssertEqual(samples.count, 1)
+    XCTAssertEqual(samples.first?.presence, start)
+
+    // The previous displayed frame predates this request. Its next frame must
+    // already move, while callback time still leaves the transition active.
+    let previousFrame = startedAt - 1.0 / 120
+    owner.advance(presentationTime: previousFrame + 1.0 / 60, observedTime: startedAt + 1.0 / 240)
+    let first = try XCTUnwrap(samples.last)
+    XCTAssertGreaterThan(first.presence.openProgress, 0)
+    XCTAssertLessThan(first.presence.openProgress, 1)
+    XCTAssertFalse(first.settled)
+    XCTAssertEqual(owner.operationID, operation)
+
+    let deadline = startedAt + duration
+    owner.advance(presentationTime: deadline, observedTime: deadline - 1.0 / 120)
+    let prepared = try XCTUnwrap(samples.last)
+    XCTAssertEqual(prepared.presence, target)
+    XCTAssertEqual(owner.current, target)
+    XCTAssertFalse(prepared.settled)
+    XCTAssertTrue(outcomes.isEmpty)
+    XCTAssertEqual(owner.operationID, operation)
+
+    owner.advance(presentationTime: deadline + 1.0 / 120, observedTime: deadline)
+    let completed = try XCTUnwrap(samples.last)
+    XCTAssertEqual(completed.presence, target)
+    XCTAssertTrue(completed.settled)
+    XCTAssertEqual(outcomes, [.completed])
+    let replacement = try XCTUnwrap(owner.operationID)
+    XCTAssertNotEqual(replacement, operation)
+    XCTAssertEqual(owner.destination, start)
+    XCTAssertEqual(replacementSamples, [target])
+    let replacementStart = owner.startedAt
+    owner.advance(presentationTime: replacementStart + 1.0 / 120, observedTime: replacementStart + 1.0 / 240)
+    XCTAssertEqual(replacementSamples.count, 2)
+    XCTAssertEqual(owner.operationID, replacement)
+    XCTAssertEqual(outcomes, [.completed])
+    XCTAssertTrue(replacementOutcomes.isEmpty)
+  }
+
+  @MainActor
   func testInterruptedSpringLeavesTheLastPublishedCamera() async throws {
     let start = SessionPresence(mode: .board, camera: .init(scale: 0.3), viewport: .init(x: 834, y: 1194))
     let target = SessionPresence(mode: .board, camera: .init(center: .init(x: 600, y: -500), scale: 1), viewport: start.viewport)
