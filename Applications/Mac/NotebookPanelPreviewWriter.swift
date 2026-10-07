@@ -48,15 +48,15 @@ extension CurrentViewPreviewWriter {
     observe("panel_content_captured")
     let source = SceneCompositionSource(store: model.store, revision: header.cursor,
       workspaceID: projection.workspaceID, recordPixelDependencies: true, documentGeometry: model.documentPaperSizes)
-    let candidates = Array((page?.elements ?? capturedSnapshot?["elements"]?.arrayValues ?? []).filter(NotebookPanelEditableSubject.allows)
-      .prefix(NotebookPanelRenderProjection.maximumSubjects))
-    let ids = Set(candidates.compactMap { $0["source"]?["id"]?.stringValue })
     let layers: [NotebookPanelRasterLayer], coverage: CompositionTileCoverage, diagnostics: [RenderDiagnostic]
     let materialBounds: WorkspaceSpatialBounds
     if let page {
-      (layers, coverage, diagnostics, materialBounds) = try await pagePanelMaterials(page.page, projection: projection, editableIDs: ids,
+      (layers, coverage, diagnostics, materialBounds) = try await pagePanelMaterials(page.page, projectedElements: page.elements, projection: projection,
         knownAssets: knownAssets, sourceRevision: cut.sourceRevision, model: model, leafRasterCollector: collector)
     } else {
+      let candidates = Array((capturedSnapshot?["elements"]?.arrayValues ?? []).filter(NotebookPanelEditableSubject.allows)
+        .prefix(NotebookPanelRenderProjection.maximumSubjects))
+      let ids = Set(candidates.compactMap { $0["source"]?["id"]?.stringValue })
       let presence = SessionPresence(boardID: target.id, mode: .board, camera: projection.camera, viewport: projection.viewport)
       let renderer = SceneCompositionRenderer(source: source, leafRasterCollector: collector,
         permitsPreparation: { model.permitsPanelPreparation })
@@ -153,8 +153,8 @@ extension CurrentViewPreviewWriter {
   /// Finite pages use the same world grid and native paper/ordered ink owners.
   /// Their body pixels are stable across a pan just like board materials.
   @MainActor
-  private static func pagePanelMaterials(_ page: PageDocument, projection: NotebookPanelRenderProjection,
-    editableIDs: Set<String>, knownAssets: Set<UUID>, sourceRevision: String, model: NotebookAppModel,
+  private static func pagePanelMaterials(_ page: PageDocument, projectedElements: [JSONValue], projection: NotebookPanelRenderProjection,
+    knownAssets: Set<UUID>, sourceRevision: String, model: NotebookAppModel,
     leafRasterCollector: SceneLeafRasterWitnessCollector)
     async throws -> ([NotebookPanelRasterLayer], CompositionTileCoverage, [RenderDiagnostic], WorkspaceSpatialBounds) {
     let resources = SceneRenderResources.shared, graph = page.graphicGraph()
@@ -162,6 +162,12 @@ extension CurrentViewPreviewWriter {
       width: projection.viewport.x / projection.camera.scale, height: projection.viewport.y / projection.camera.scale)
     var coverage = try CompositionTileCoverage(bounds: requested,
       pixelsPerWorldPoint: projection.camera.scale * projection.pixelScale, maximumTiles: 8)
+    var admitted = WorkspaceSpatialBounds(origin: coverage.tiles.first!.origin,
+      maximum: coverage.tiles.last!.bounds.maximum)
+    let requestedOffset = WorldPoint.zero.delta(to: requested.origin)
+    let viewport = CGRect(x: requestedOffset.x, y: requestedOffset.y, width: requested.width, height: requested.height)
+    let admittedOffset = WorldPoint.zero.delta(to: admitted.origin)
+    var materialWindow = CGRect(x: admittedOffset.x, y: admittedOffset.y, width: admitted.width, height: admitted.height)
     let target = CollaborationTarget(kind: .page, id: page.id)
     let requestedDensity = projection.camera.scale * projection.pixelScale
     let density = max(requestedDensity, Double(SceneCompositionTileKey.requiredPixelSize(for: coverage.tiles[0],
@@ -192,18 +198,7 @@ extension CurrentViewPreviewWriter {
       sourceRasters[address]?.release(); sourceRasters[address] = value.retainedCopy()
       return value
     }
-    var output = NotebookPanelRasterSet(), subjects: [String: PageRect] = [:]
-    var available = NotebookPanelRenderProjection.maximumDecodedPixels - SceneCompositionPlan.maximumTiles * CompositionTile.pixelSize * CompositionTile.pixelSize
-    for element in page.elements where editableIDs.contains(element.id) && element.graphic?.sourceInkContactID == nil {
-      let frame = graph.resolve(element.id).layout?.frame
-        ?? graph.placement(element.id).map { NotebookElementPresentation(element, placement: $0).frame }
-      guard let frame, frame.width > 0, frame.height > 0,
-        frame.width * density <= 2048, frame.height * density <= 2048,
-        physical.contains(CGRect(x: frame.x, y: frame.y, width: frame.width, height: frame.height)) else { continue }
-      let pixels = Int(ceil(frame.width * density)) * Int(ceil(frame.height * density))
-      guard pixels <= available else { continue }; available -= pixels
-      subjects[element.id] = frame
-    }
+    var output = NotebookPanelRasterSet()
     let elements = PageCompositionRenderer.elements(in: page,
       region: .init(x: 0, y: 0, width: page.size.width, height: page.size.height), elementID: nil)
     let elementFrames = Dictionary(uniqueKeysWithValues: elements.compactMap { element -> (String, CGRect)? in
@@ -211,6 +206,9 @@ extension CurrentViewPreviewWriter {
         ?? graph.placement(element.id).map { NotebookElementPresentation(element, placement: $0).frame }
       return frame.map { (element.id, CGRect(x: $0.x, y: $0.y, width: $0.width, height: $0.height)) }
     })
+    let inkOwnedIDs = Set(elements.compactMap { $0.graphic?.sourceInkContactID == nil ? nil : $0.id })
+    var subjects = pagePanelSubjects(projectedElements, frames: elementFrames, physical: physical,
+      materialWindow: materialWindow, viewport: viewport, density: density, inkOwnedIDs: inkOwnedIDs)
     func visibleIDs(in frame: CGRect) -> Set<String> {
       Set(elementFrames.compactMap { $0.value.intersects(frame) ? $0.key : nil })
     }
@@ -218,7 +216,7 @@ extension CurrentViewPreviewWriter {
     let inkRead = Task.detached(priority: .utility) { try inkSource.drawing() }
     let drawing = try await withTaskCancellationHandler { try await inkRead.value } onCancel: { inkRead.cancel() }
     try Task.checkCancellation()
-    let hasInk = !drawing.isEmpty || elements.contains { $0.graphic?.sourceInkContactID != nil }
+    let hasInk = !drawing.isEmpty || !inkOwnedIDs.isEmpty
     func painterRuns() -> (bands: [(ids: Set<String>, rank: Int)], subjects: [String: Int]) {
       var bands: [(Set<String>, Int)] = [], pending = Set<String>(), ranks: [String: Int] = [:], rank = 0
       for element in elements {
@@ -231,23 +229,24 @@ extension CurrentViewPreviewWriter {
       return (bands, ranks)
     }
     var runs = painterRuns()
-    while coverage.tiles.count * (runs.bands.count + 1 + (hasInk ? 1 : 0)) > SceneCompositionPlan.maximumTiles {
-      let coarser = try CompositionTileCoverage(bounds: requested,
-        pixelsPerWorldPoint: Double(CompositionTile.pixelSize) / (coverage.tiles[0].worldSize * 2), maximumTiles: 8)
-      if coarser.level > coverage.level { coverage = coarser }
-      else if let optional = elements.last(where: { subjects[$0.id] != nil }) {
-        subjects.removeValue(forKey: optional.id); runs = painterRuns()
-      } else { throw SceneRenderError.resourceLimit }
+    func fitCompositionCoverage() throws {
+      while coverage.tiles.count * (runs.bands.count + 1 + (hasInk ? 1 : 0)) > SceneCompositionPlan.maximumTiles {
+        let coarser = try CompositionTileCoverage(bounds: admitted,
+          pixelsPerWorldPoint: Double(CompositionTile.pixelSize) / (coverage.tiles[0].worldSize * 2), maximumTiles: 8)
+        if coarser.level > coverage.level { coverage = coarser }
+        else if let optional = pagePanelOptionalSubject(subjects, ranks: runs.subjects, viewport: viewport) {
+          subjects.removeValue(forKey: optional); runs = painterRuns()
+        } else { throw SceneRenderError.resourceLimit }
+      }
     }
-    let requestedOffset = WorldPoint.zero.delta(to: requested.origin)
-    let viewport = CGRect(x: requestedOffset.x, y: requestedOffset.y, width: requested.width, height: requested.height)
-    func regions(clipped: Bool, density: Double) -> [(tile: CompositionTile, frame: CGRect)] {
+    try fitCompositionCoverage()
+    func regions(density: Double) -> [(tile: CompositionTile, frame: CGRect)] {
       var result: [(CompositionTile, CGRect)] = []
       let side = 1024 / density
       for tile in coverage.tiles {
         let offset = WorldPoint.zero.delta(to: tile.origin)
-        var frame = physical.intersection(.init(x: offset.x, y: offset.y, width: tile.worldSize, height: tile.worldSize))
-        if clipped { frame = frame.intersection(viewport) }
+        let frame = physical.intersection(.init(x: offset.x, y: offset.y, width: tile.worldSize, height: tile.worldSize))
+          .intersection(materialWindow)
         guard !frame.isNull, !frame.isEmpty else { continue }
         // The ordered renderer needs eight temporary backings. Admit a bounded
         // regional working set within the existing passive allocation window.
@@ -267,10 +266,9 @@ extension CurrentViewPreviewWriter {
       guard width <= 8192, height <= 8192 else { return NotebookPanelRenderProjection.maximumDecodedPixels + 1 }
       return Int(width) * Int(height)
     }
-    let minimumDensity = Double(CompositionTile.pixelSize) / coverage.tiles[0].worldSize / 1024
     var tileDensity = max(requestedDensity, Double(SceneCompositionTileKey.requiredPixelSize(for: coverage.tiles[0],
       density: requestedDensity)) / coverage.tiles[0].worldSize)
-    var clipped = false, tiles = regions(clipped: false, density: tileDensity), diagnostics: [RenderDiagnostic] = []
+    var tiles = regions(density: tileDensity), diagnostics: [RenderDiagnostic] = []
     func cost() -> (pixels: Int, layers: Int) {
       if tiles.count + subjects.count > 96 {
         return (NotebookPanelRenderProjection.maximumDecodedPixels + 1, tiles.count + subjects.count)
@@ -289,16 +287,23 @@ extension CurrentViewPreviewWriter {
     }
     func fits() -> Bool { let value = cost(); return value.pixels <= NotebookPanelRenderProjection.maximumDecodedPixels && value.layers <= 96 }
     if !fits() {
-      clipped = true; tileDensity = requestedDensity; tiles = regions(clipped: true, density: tileDensity)
+      // Coarsening changes the grid inside one admitted overscan window. Only
+      // this budget transition narrows that window and rebuilds admission.
+      admitted = requested; materialWindow = viewport
+      subjects = pagePanelSubjects(projectedElements, frames: elementFrames, physical: physical,
+        materialWindow: materialWindow, viewport: viewport, density: density, inkOwnedIDs: inkOwnedIDs)
+      runs = painterRuns(); try fitCompositionCoverage()
+      tileDensity = requestedDensity; tiles = regions(density: tileDensity)
     }
-    while !fits(), let optional = elements.last(where: { subjects[$0.id] != nil }) {
-      subjects.removeValue(forKey: optional.id); runs = painterRuns()
+    while !fits(), let optional = pagePanelOptionalSubject(subjects, ranks: runs.subjects, viewport: viewport) {
+      subjects.removeValue(forKey: optional); runs = painterRuns()
     }
+    let minimumDensity = Double(CompositionTile.pixelSize) / coverage.tiles[0].worldSize / 1024
     while !fits() {
       try Task.checkCancellation()
       guard tileDensity > minimumDensity else { throw SceneRenderError.resourceLimit }
       tileDensity *= 0.9
-      tiles = regions(clipped: true, density: tileDensity)
+      tiles = regions(density: tileDensity)
     }
     if tileDensity + 0.000001 < requestedDensity {
       diagnostics.append(.init(kind: "quality_limit", message: "Разрешение видимой страницы ограничено общим объёмом пикселей. Приблизьте меньший участок."))
@@ -371,9 +376,47 @@ extension CurrentViewPreviewWriter {
           order: order, worldOrigin: .zero, frame: region, raster: body, knownAssets: knownAssets))
       }
     }
-    let admitted = clipped ? requested : WorkspaceSpatialBounds(origin: coverage.tiles.first!.origin,
-      maximum: coverage.tiles.last!.bounds.maximum)
     return (output.layers, coverage, diagnostics, admitted)
+  }
+
+  /// Pixel-independent admission preserves full authored bodies and painter
+  /// order. Visible subjects take the finite grant before prefetched neighbors.
+  static func pagePanelSubjects(_ elements: [JSONValue], frames: [String: CGRect], physical: CGRect,
+    materialWindow: CGRect, viewport: CGRect, density: Double, inkOwnedIDs: Set<String> = []) -> [String: PageRect] {
+    var subjects: [String: PageRect] = [:]
+    var available = NotebookPanelRenderProjection.maximumDecodedPixels
+      - SceneCompositionPlan.maximumTiles * CompositionTile.pixelSize * CompositionTile.pixelSize
+    for visibleFirst in [true, false] {
+      for entry in elements {
+        guard subjects.count < NotebookPanelRenderProjection.maximumSubjects else { break }
+        guard let id = entry["source"]?["id"]?.stringValue,
+          let frame = frames[id], frame.width > 0, frame.height > 0,
+          frame.width * density <= 2048, frame.height * density <= 2048, physical.contains(frame) else { continue }
+        let admitted = frame.intersection(materialWindow), visible = frame.intersection(viewport)
+        guard !admitted.isNull, !admitted.isEmpty, (!visible.isNull && !visible.isEmpty) == visibleFirst,
+          !inkOwnedIDs.contains(id), NotebookPanelEditableSubject.allows(entry) else { continue }
+        let pixels = Int(ceil(frame.width * density)) * Int(ceil(frame.height * density))
+        guard pixels <= available else { continue }
+        available -= pixels
+        subjects[id] = .init(x: frame.minX, y: frame.minY, width: frame.width, height: frame.height)
+      }
+    }
+    return subjects
+  }
+
+  /// Demotion follows the same viewport priority as admission. Its search is
+  /// bounded by the sixteen subjects, independently of total page membership.
+  static func pagePanelOptionalSubject(_ subjects: [String: PageRect], ranks: [String: Int], viewport: CGRect) -> String? {
+    func isPrefetched(_ id: String) -> Bool {
+      let frame = subjects[id]!
+      let visible = viewport.intersection(.init(x: frame.x, y: frame.y, width: frame.width, height: frame.height))
+      return visible.isNull || visible.isEmpty
+    }
+    return subjects.keys.max { first, second in
+      let firstPrefetched = isPrefetched(first), secondPrefetched = isPrefetched(second)
+      if firstPrefetched != secondPrefetched { return !firstPrefetched }
+      return ranks[first, default: -1] < ranks[second, default: -1]
+    }
   }
 
 }

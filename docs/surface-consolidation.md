@@ -72,6 +72,11 @@ form the following C2 slice. Card geometry and painter order come from
 the native scene independently of raster separation. Empty ink cells are omitted
 only after an addressed occupancy proof; empty SQL reads remain in the final
 pixel witness, while uncertain or claimed content retains its paint cell.
+Finite-page independent bodies are admitted by `NotebookPanelPreviewWriter`
+inside the actual preparation window. Visible bodies receive the sixteen-subject
+grant before prefetch. Grid coarsening preserves that window; budget clipping
+rebuilds admission before raster preparation. Excluded bodies retain their native
+painter bands, authored source and hit geometry.
 The runtime is now packaged inside the plugin;
 `NotebookRuntimeLifecycle` owns its process, while `NotebookApplicationLaunch`
 owns admission, the workspace catalog and persistence recovery. The panel opens,

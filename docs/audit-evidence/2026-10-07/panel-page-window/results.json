@@ -1,0 +1,55 @@
+{
+  "format": 1,
+  "scope": "page panel body admission and native presentation",
+  "status": "passed",
+  "baseCommit": "ac9e168c4d5c3a7fe69a5b35bf86e86da304d6e7",
+  "source": {
+    "sha256": "aab21d78202113725dd46e23fdd4be9b40d564d2a3d909757623cc108c869283",
+    "fileCount": 1715,
+    "beforeEqualsAfter": true
+  },
+  "changedOwners": [
+    "Applications/Mac/NotebookPanelPreviewWriter.swift",
+    "Applications/MacTests/NotebookPanelPageAdmissionTests.swift"
+  ],
+  "route": "./verify.sh --only --test NotebookMacTests/NotebookPanelPageAdmissionTests --test NotebookMacTests/NotebookPanelPageContentTests --test NotebookMacTests/NotebookPanelPresentationTests/testNotebookCardFirstPageOpensNativePixelsAndNavigationWithoutMovingPresence",
+  "rawEvidence": ".build/panel-page-window-20261008-mac-v1",
+  "verification": {
+    "status": "passed",
+    "scope": "registry-contracts",
+    "wrapperExitCode": 0,
+    "passed": 7,
+    "failed": 0,
+    "skipped": 0,
+    "runtimeWarnings": [],
+    "nativeTestSeconds": 8.481424927711487,
+    "independentReview": "density: PASS on unchanged source freeze"
+  },
+  "scenarios": [
+    "Sixteen distant or prefetched bodies followed by a visible seventeenth; full source/hit data and actual passive-over-body pixels preserved",
+    "Whole bodies crossing the prefetch boundary, tangent and outside exclusion, existing semantic/ink exclusions and prefetch-first demotion",
+    "Actual decoded-pixel/layer budget clips overscan before preparation while preserving visible body, painter pixels and requested density",
+    "100000 distant entries and one visible entry through the production admission helper",
+    "Warm visible-body asset reuse without another PNG",
+    "Concurrent membership/presence refresh and source invalidation during native preparation",
+    "First page opening and navigation without moving shared presence"
+  ],
+  "load": {
+    "distantEntries": 100000,
+    "admittedSubjects": 1,
+    "wholeTestSeconds": 0.1056981086730957,
+    "measurementScope": "Debug XCTest, including fixture construction; not isolated admission or input latency"
+  },
+  "build": {
+    "exitCode": 0,
+    "diagnostics": "Unchanged unrelated Swift warnings and one SwiftCompile diagnostic saying exit code 0 with no further output; all seven current selectors compiled and executed successfully"
+  },
+  "installedPair": 260,
+  "repairInstalled": false,
+  "physicalAcceptance": false,
+  "remaining": [
+    "Fresh Codex panel gesture, zoom sharpness and actual display latency",
+    "Whole-page JSON projection and addressed SceneDelta",
+    "System frame/CPU/GPU/memory measurements, ten repetitions and thirty minutes of joint work"
+  ]
+}
