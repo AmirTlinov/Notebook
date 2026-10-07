@@ -229,11 +229,18 @@ extension NotebookStore {
         let ink = try page.inkDrawing()
         rawInkPresent = ink.baselinePNG?.isEmpty == false || ink.actions.contains { $0.isActive && $0.tool == .pen }
         size = try .encode(page.size)
+        let graph = page.graphicGraph()
+        // The loaded page and ink already belong to this WAL snapshot. Reuse
+        // their projections instead of decoding each addressed source again.
+        let erasures = Dictionary(ink.elementErasures.map { (collaborationIdentity($0.key), $0.value) },
+          uniquingKeysWith: +)
         for element in page.elements {
-          let read = try readPageElementSnapshot(pageID: target.id, elementID: element.id)
           var value: [String: JSONValue] = ["source": try .encode(element)]
-          if element.graphic != nil { value["graphicResolution"] = try readGraphicResolution(target: target, elementID: element.id).readProjection(includeGeometry: true) }
-          value["appearance"] = read?.appearance
+          let resolution = element.graphic == nil ? nil : graph.resolve(element.id)
+          if let resolution { value["graphicResolution"] = try resolution.readProjection(includeGeometry: true) }
+          let frame = resolution?.layout?.frame ?? element.frame
+          value["appearance"] = NotebookElementAppearance.readProjection(graphic: element.graphic, layout: resolution?.layout,
+            size: .init(width: frame.width, height: frame.height), erasures: erasures[collaborationIdentity(element.id)] ?? [])
           elements.append(.object(value))
         }
       } else {

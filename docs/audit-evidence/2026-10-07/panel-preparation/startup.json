@@ -1,0 +1,83 @@
+{
+  "at": "2026-10-07T09:30:41.058Z",
+  "plugin": "0.2.7",
+  "scope": "Installed MCP first connection and exact board open. Native phase trace recorded separately; no host input-to-pixel or OS-cold claim.",
+  "samples": [
+    {
+      "label": "open",
+      "ms": 17.702541999999085,
+      "bytes": 14434,
+      "error": false,
+      "cursor": "65703"
+    }
+  ],
+  "connectMilliseconds": 8461.235874999998,
+  "workspaceID": "54349F3B-9E0A-4DEA-B990-40CAE04EF45E",
+  "target": {
+    "id": "7E7A0000-0000-4000-8000-000000000003",
+    "kind": "board"
+  },
+  "resourceBytes": 3133267,
+  "status": "passed",
+  "stderr": "{\"kind\":\"notebook-runtime-startup\",\"launcherPID\":90902,\"phase\":\"startup.begin\",\"startedAt\":\"2026-10-07T09:30:41.110Z\",\"elapsedMilliseconds\":0.6704579999999964,\"attempts\":0,\"launched\":false}\n{\"kind\":\"notebook-runtime-startup\",\"launcherPID\":90902,\"phase\":\"launch.begin\",\"startedAt\":\"2026-10-07T09:30:41.110Z\",\"elapsedMilliseconds\":1.695332999999998,\"attempts\":1,\"launched\":true,\"lastErrorCode\":\"ipc_unavailable\"}\n{\"kind\":\"notebook-runtime-startup\",\"launcherPID\":90902,\"phase\":\"launch.end\",\"startedAt\":\"2026-10-07T09:30:41.110Z\",\"elapsedMilliseconds\":156.280875,\"attempts\":1,\"launched\":true,\"lastErrorCode\":\"ipc_unavailable\"}\n{\"kind\":\"notebook-runtime-startup\",\"launcherPID\":90902,\"phase\":\"startup.done\",\"startedAt\":\"2026-10-07T09:30:41.110Z\",\"elapsedMilliseconds\":8352.519167,\"attempts\":82,\"launched\":true,\"lastErrorCode\":\"ipc_unavailable\",\"runtimePID\":90905,\"runtimeState\":\"opening\"}\nNotebook MCP listens on stdio\n",
+  "nativePhases": [
+    {
+      "timestamp": "2026-10-07 12:30:48.721213+0300",
+      "eventMessage": "startup stage=process.entry elapsed_ms=0.001 pid=90905",
+      "processID": 90905
+    },
+    {
+      "timestamp": "2026-10-07 12:30:48.730210+0300",
+      "eventMessage": "startup stage=signature.dynamic.begin elapsed_ms=10.626 pid=90905",
+      "processID": 90905
+    },
+    {
+      "timestamp": "2026-10-07 12:30:48.736343+0300",
+      "eventMessage": "startup stage=signature.dynamic.end elapsed_ms=16.718 pid=90905 status=0",
+      "processID": 90905
+    },
+    {
+      "timestamp": "2026-10-07 12:30:48.736371+0300",
+      "eventMessage": "startup stage=signature.static.begin elapsed_ms=16.793 pid=90905",
+      "processID": 90905
+    },
+    {
+      "timestamp": "2026-10-07 12:30:49.277397+0300",
+      "eventMessage": "startup stage=signature.static.end elapsed_ms=557.815 pid=90905 status=0",
+      "processID": 90905
+    },
+    {
+      "timestamp": "2026-10-07 12:30:49.373748+0300",
+      "eventMessage": "startup stage=launch.delegate elapsed_ms=654.168 pid=90905",
+      "processID": 90905
+    },
+    {
+      "timestamp": "2026-10-07 12:30:49.375163+0300",
+      "eventMessage": "startup stage=socket.claim.begin elapsed_ms=655.585 pid=90905",
+      "processID": 90905
+    },
+    {
+      "timestamp": "2026-10-07 12:30:49.375634+0300",
+      "eventMessage": "startup stage=socket.bound elapsed_ms=656.057 pid=90905",
+      "processID": 90905
+    },
+    {
+      "timestamp": "2026-10-07 12:30:49.453340+0300",
+      "eventMessage": "startup stage=runtime_status.begin elapsed_ms=733.762 pid=90905",
+      "processID": 90905
+    },
+    {
+      "timestamp": "2026-10-07 12:30:49.453439+0300",
+      "eventMessage": "startup stage=runtime_status.end elapsed_ms=733.862 pid=90905",
+      "processID": 90905
+    }
+  ],
+  "analysis": {
+    "launcherStartToProcessEntryMilliseconds": 7611.213,
+    "launchServicesReturnToProcessEntryMilliseconds": 7454.932,
+    "nativeStaticSignatureMilliseconds": 541.022,
+    "nativeEntryToSocketBoundMilliseconds": 656.057,
+    "cause": "Dominant delay precedes process.entry; LaunchServices/dyld/system startup work not yet distinguished.",
+    "limits": "Monotonic clocks within each process; cross-process wall-time comparison approximate. One first launch after installation, not OS-cold or p95. Native runtime_status.end is not wire receipt."
+  }
+}

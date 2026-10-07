@@ -186,7 +186,9 @@ export class Surface {
         if((element.appearance as {state?:string}|undefined)?.state==='erased'||element.source.graphic?.visible===false)continue;
         const selection:PanelSelection={kind:'element',id:element.source.id},id=key(selection),frame=frames.get(id)??sourceFrame(element,origin);
         if(!validFrame(frame))continue;frames.set(id,frame);
-        hits.set(id,{selection,frame,label:element.source.kind==='nativeText'?element.source.source:String(element.source.graphic?.label??element.source.kind),
+        const label=(element.source.kind==='nativeText'?element.source.source:String(element.source.graphic?.label??element.source.kind)).trim()
+          ||(element.source.kind==='nativeText'?'Текст':'Фигура');
+        hits.set(id,{selection,frame,label,
           editable:groups.has(id)&&editable(element)&&!snapshot.unsupportedElements.some(value=>value.id===selection.id),order:orders.get(id)??-1});
       }
       this.discardPrepared();this.prepared={snapshot,fragment,assets,groups,frames,hits,backdrop,view:{...view,camera:a.camera}};return true;

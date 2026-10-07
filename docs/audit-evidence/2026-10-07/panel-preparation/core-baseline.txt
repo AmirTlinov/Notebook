@@ -1,0 +1,25 @@
+Building for production...
+[1 / 4] NotebookCoreTests-product
+[2 / 5] NotebookCoreTests-product
+[4 / 5] NotebookCoreTests-product
+[8 / 8] NotebookCoreTests-product
+Build complete! (4,64 с)
+◇ Test run started.
+↳ Testing Library Version: 2084
+↳ Target Platform: arm64e-apple-macos14.0
+◇ Suite "Panel page material reads" started.
+◇ Test mixedPageMatchesAddressedGeometryAndAppearance() started.
+PANEL_PAGE_MIXED elements=12 SQL=270 addressed=92 erasures=12 elapsed=0.322826833 seconds bytes=118453
+✘ Test mixedPageMatchesAddressedGeometryAndAppearance() recorded an issue at NotebookPanelPageReadTests.swift:113:5: Expectation failed: trace.elementReads == 0
+↳ A loaded page must not reread its bodies or graphic dependencies
+↳ trace.elementReads == 0 → false
+↳   trace.elementReads → 92
+✘ Test mixedPageMatchesAddressedGeometryAndAppearance() recorded an issue at NotebookPanelPageReadTests.swift:114:5: Expectation failed: trace.erasureReads == 0
+↳ All element masks already belong to the loaded ink source
+↳ trace.erasureReads == 0 → false
+↳   trace.erasureReads → 12
+✘ Test mixedPageMatchesAddressedGeometryAndAppearance() failed after 1.147 seconds with 2 issues.
+✘ Suite "Panel page material reads" failed after 1.147 seconds with 2 issues.
+✘ Test run with 1 test in 1 suite failed after 1.147 seconds with 2 issues.
+Note: Some test targets reported failures:
+  - NotebookCoreTests (Swift Testing)

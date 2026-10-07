@@ -1,0 +1,124 @@
+{
+  "baseCommit": "d6d6817bcd780e5eb55ae42620c53aeda0544128",
+  "checks": {
+    "launcherFailed": 0,
+    "launcherPassed": 7,
+    "launcherSkipped": 0,
+    "nativeCompile": "pending root combined run",
+    "typescript": "passed"
+  },
+  "commands": [
+    {
+      "argv": [
+        "./node_modules/.bin/tsx",
+        "--test",
+        "--test-name-pattern=MCP clients join|cold clients wait|incompatible or unsafe owner|startup timeout|startup summary|timeout retains|live MCP connection recovers",
+        "test/runtime-launcher.test.ts"
+      ],
+      "cwd": "/Users/amir/.codex/worktrees/notebook-runtime-handoff/Notebook/MCP",
+      "elapsedSeconds": 1.2645047090481967,
+      "exitCode": 0,
+      "label": "launcher"
+    },
+    {
+      "argv": [
+        "./node_modules/.bin/tsc",
+        "--noEmit"
+      ],
+      "cwd": "/Users/amir/.codex/worktrees/notebook-runtime-handoff/Notebook/MCP",
+      "elapsedSeconds": 0.7246470840182155,
+      "exitCode": 0,
+      "label": "typescript"
+    }
+  ],
+  "rawArtifacts": [
+    {
+      "bytes": 0,
+      "path": "/Users/amir/.codex/worktrees/notebook-runtime-handoff/Notebook/.build/runtime-startup-trace/launcher.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 791,
+      "path": "/Users/amir/.codex/worktrees/notebook-runtime-handoff/Notebook/.build/runtime-startup-trace/launcher.stdout.log",
+      "sha256": "efbac277406ddc78a298d790c9dc46a148196246281674ed527702674f3c9f4c"
+    },
+    {
+      "bytes": 0,
+      "path": "/Users/amir/.codex/worktrees/notebook-runtime-handoff/Notebook/.build/runtime-startup-trace/typescript.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 0,
+      "path": "/Users/amir/.codex/worktrees/notebook-runtime-handoff/Notebook/.build/runtime-startup-trace/typescript.stdout.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "scope": "isolated Node IPC launcher diagnostics and TypeScript; no native compile/live launch/installation",
+  "sourceAfter": {
+    "files": [
+      {
+        "path": "Applications/Mac/NotebookRuntime.swift",
+        "sha256": "49f0c87a8928e9fe360824401502e69522e3c5d0d11c8281a09ed87edd2b9371"
+      },
+      {
+        "path": "Applications/Mac/NotebookRuntimeIdentity.swift",
+        "sha256": "aab38fe439180596741d7f3e27453b05fbf371275a1eeb874c3beef584e7327f"
+      },
+      {
+        "path": "Applications/Shared/NotebookApplicationLaunch.swift",
+        "sha256": "7041bc785fca2e48c97ccd419eeb1ea47457cf0c567efb4c7680e5569bf06129"
+      },
+      {
+        "path": "MCP/src/runtime-launcher.ts",
+        "sha256": "7dad69cf0596b8507ec6ce623f43cf7a0ecc881cfe32ab5bddfc654d25f627c8"
+      },
+      {
+        "path": "MCP/test/runtime-launcher.test.ts",
+        "sha256": "155c9611d8e96afc0dda3e0e87a9968408de830636c4443f416b162c2aa0c824"
+      },
+      {
+        "path": "MCP/package-lock.json",
+        "sha256": "620df9f40bbac09d59f4695c5365571715152bb1b520970d3c383b4e2fd6881e"
+      },
+      {
+        "path": "MCP/tsconfig.json",
+        "sha256": "04079674e8ad2c1e6a853b852e5f4725f567c65d93d555e74ce159b2c026c278"
+      }
+    ],
+    "sha256": "e96c64d5880d69b361f360425d730a40538400f23df3c34681d416a588431ae6"
+  },
+  "sourceBefore": {
+    "files": [
+      {
+        "path": "Applications/Mac/NotebookRuntime.swift",
+        "sha256": "49f0c87a8928e9fe360824401502e69522e3c5d0d11c8281a09ed87edd2b9371"
+      },
+      {
+        "path": "Applications/Mac/NotebookRuntimeIdentity.swift",
+        "sha256": "aab38fe439180596741d7f3e27453b05fbf371275a1eeb874c3beef584e7327f"
+      },
+      {
+        "path": "Applications/Shared/NotebookApplicationLaunch.swift",
+        "sha256": "7041bc785fca2e48c97ccd419eeb1ea47457cf0c567efb4c7680e5569bf06129"
+      },
+      {
+        "path": "MCP/src/runtime-launcher.ts",
+        "sha256": "7dad69cf0596b8507ec6ce623f43cf7a0ecc881cfe32ab5bddfc654d25f627c8"
+      },
+      {
+        "path": "MCP/test/runtime-launcher.test.ts",
+        "sha256": "155c9611d8e96afc0dda3e0e87a9968408de830636c4443f416b162c2aa0c824"
+      },
+      {
+        "path": "MCP/package-lock.json",
+        "sha256": "620df9f40bbac09d59f4695c5365571715152bb1b520970d3c383b4e2fd6881e"
+      },
+      {
+        "path": "MCP/tsconfig.json",
+        "sha256": "04079674e8ad2c1e6a853b852e5f4725f567c65d93d555e74ce159b2c026c278"
+      }
+    ],
+    "sha256": "e96c64d5880d69b361f360425d730a40538400f23df3c34681d416a588431ae6"
+  },
+  "sourceUnchangedDuringRun": true
+}

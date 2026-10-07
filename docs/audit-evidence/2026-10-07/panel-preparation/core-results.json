@@ -1,0 +1,68 @@
+{
+  "status": "verified-focused-core",
+  "baseCommit": "032268f209c5190fe2880d5270c567b28eb269aa",
+  "sourceSHA256": {
+    "Sources/NotebookCore/NotebookPanel.swift": "e9ea30ef1fb05b09768acee92ff6161474d9cb98f5035c28ad3cbe219744a598",
+    "Tests/NotebookCoreTests/NotebookPanelPageReadTests.swift": "615dd7b7845e9bab57667aee599deef6ce1e726846c9aa719486ec3169c5f4d4"
+  },
+  "toolchain": "Swift 6.4.0 release, optimized; Swift Testing 2084; macOS 27 SDK",
+  "scope": "Core page read projection only; isolated scratch package and temporary SQLite workspaces",
+  "baseline": {
+    "log": "core-baseline.txt",
+    "status": "regression reproduced: expected no-repeat SQL assertions failed; addressed projection byte equality passed",
+    "mixedElements": 12,
+    "responseBytes": 118453,
+    "readSeconds": 0.322826833,
+    "sqlStatements": 270,
+    "addressedElementQueries": 92,
+    "erasureQueries": 12
+  },
+  "after": {
+    "log": "core-final.txt",
+    "tests": 6,
+    "cases": 9,
+    "failed": 0,
+    "mixedElements": 12,
+    "responseBytes": 118453,
+    "readSeconds": 0.078760333,
+    "sqlStatements": 51,
+    "addressedElementQueries": 0,
+    "erasureQueries": 0,
+    "checks": [
+      "sorted JSON element projection equals addressed geometry/appearance",
+      "authored source and masks preserved",
+      "canonical UUID erasure identity",
+      "group placement and connectors",
+      "pending and hidden resolution",
+      "shared-ink graphic claims",
+      "inactive and whole-element erasures",
+      "cursor unchanged",
+      "existing panel edit/CAS/idempotency/undo and presentation tests"
+    ]
+  },
+  "stress": {
+    "log": "core-final.txt",
+    "elements": 100000,
+    "kind": "rectangle graphics",
+    "sqlStatements": 51,
+    "addressedElementQueries": 0,
+    "erasureQueries": 0,
+    "readSeconds": 18.86234075,
+    "responseBytes": 59837152,
+    "scope": "Full Core read-all projection with existing sparse causal format; exceeds 16 MiB panel reply. No live UI or interaction-latency acceptance."
+  },
+  "groupBoundary": {
+    "log": "core-depth.txt",
+    "tests": 1,
+    "cases": 2,
+    "failed": 0,
+    "seconds": 0.42,
+    "depth63": "same geometry as addressed read and native graph",
+    "depth64": "same pending as native graph; old addressed resolver throws. Source including mask remains addressable; panel editable-subject admission false; cursor unchanged."
+  },
+  "limits": [
+    "Timings are one baseline and one repaired local sample; SQL elimination is deterministic.",
+    "No live runtime, iPad, Xcode runner, installation, or source-volume contract changed.",
+    "The full response still carries authored freehand geometry; this repair eliminates rereading it."
+  ]
+}

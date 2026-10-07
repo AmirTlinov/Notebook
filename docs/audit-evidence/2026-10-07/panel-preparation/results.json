@@ -1,0 +1,115 @@
+{
+  "status": "installed-focused-verified-ux-acceptance-open",
+  "build": "255",
+  "version": "0.3.185",
+  "pluginVersion": "0.2.7",
+  "sourceSHA256": "b55a5a735d46f47d9183b303b25e3efe2ca4b0269b97b9435ebbfb6407d76e8a",
+  "productInputsUnchangedAcrossNativeRuns": true,
+  "sourceUnchangedDuringFinalRun": true,
+  "changes": [
+    "Load page graph and canonical erasures once for panel projection",
+    "Admit final painter cohort before optional body GPU/PNG preparation",
+    "Trace signed runtime startup stages without changing admission or deadlines",
+    "Give blank graphic/text hit targets accessible names"
+  ],
+  "checks": {
+    "nativeUnique": 5,
+    "nativeFirstRunPassed": 4,
+    "nativeFinalRunPassed": 1,
+    "skipped": 0,
+    "runtimeWarnings": [],
+    "coreMethods": 7,
+    "coreCases": 11,
+    "launcherNode": 7,
+    "strictTypeScript": "passed",
+    "independentReview": "passed",
+    "combinedNativeCoreExecution": {
+      "executed": [
+        "NotebookCoreTests.NotebookPanelPageReadTests/mixedPageMatchesAddressedGeometryAndAppearance()/NotebookPanelPageReadTests.swift:37:4"
+      ],
+      "executions": {
+        "NotebookCoreTests.NotebookPanelPageReadTests/mixedPageMatchesAddressedGeometryAndAppearance()/NotebookPanelPageReadTests.swift:37:4": 1
+      },
+      "failed": [],
+      "format": 1,
+      "planned": [
+        "NotebookCoreTests.NotebookPanelPageReadTests/mixedPageMatchesAddressedGeometryAndAppearance()/NotebookPanelPageReadTests.swift:37:4"
+      ],
+      "skipped": []
+    }
+  },
+  "nativeFinal": {
+    "devicesAndConfigurations": [
+      {
+        "device": {
+          "architecture": "arm64",
+          "deviceId": "00006050-001650DA01F9401C",
+          "deviceName": "My Mac",
+          "modelName": "MacBook Pro",
+          "osBuildNumber": "26A434",
+          "osVersion": "27.0.1",
+          "platform": "macOS"
+        },
+        "expectedFailures": 0,
+        "failedTests": 0,
+        "passedTests": 1,
+        "skippedTests": 0,
+        "testPlanConfiguration": {
+          "configurationId": "1",
+          "configurationName": "Test Scheme Action"
+        }
+      }
+    ],
+    "environmentDescription": "NotebookRuntime · Built with macOS 27.0.1",
+    "expectedFailures": 0,
+    "failedTests": 0,
+    "finishTime": 1791364991.186,
+    "passedTests": 1,
+    "result": "Passed",
+    "runtimeWarnings": [],
+    "skippedTests": 0,
+    "startTime": 1791364988.965,
+    "statistics": [],
+    "testFailures": [],
+    "title": "Test - NotebookRuntime",
+    "topInsights": [],
+    "totalTestCount": 1
+  },
+  "sourceFiles": {
+    "Applications/MacTests/NotebookPanelMaterialTests.swift": "9b9ac07cd66fda54d56abe179fdad1cd6aba310311b59066e70589b75becf873",
+    "Applications/Shared/SceneCompositionRenderer.swift": "f5d72919e0ea6b477cee5dd79eada8ae6d6bb3e04d4cb79ebb5a6b94edac825d",
+    "MCP/panel/surface.ts": "74010857e53d1a3c1e5b3963d168bd6b832ce6603e03f29cf0047c5ccd05e400",
+    "MCP/src/runtime-launcher.ts": "7dad69cf0596b8507ec6ce623f43cf7a0ecc881cfe32ab5bddfc654d25f627c8",
+    "Sources/NotebookCore/NotebookPanel.swift": "e9ea30ef1fb05b09768acee92ff6161474d9cb98f5035c28ad3cbe219744a598"
+  },
+  "nativeReceipts": {
+    "initial": ".build/runtime-255-panel-verified",
+    "final": ".build/runtime-255-panel-verified-v4"
+  },
+  "initialFailures": [
+    "first-native.json",
+    "second-native.json",
+    "third-native.json"
+  ],
+  "limits": [
+    "Actual Codex frontend acceptance remains open; installed MCP connection and exact page read succeed in this chat after reconnect.",
+    "100000 items exercised Core projection only; response exceeds 16 MiB panel limit; not a panel latency claim.",
+    "First native launch still spends about 7.6 seconds before process.entry; tracing does not fix startup latency.",
+    "No OS-frame/CPU/GPU/memory, ten-repeat or 30-minute joint acceptance."
+  ],
+  "nativeFixtureOnlyChanges": [
+    "Applications/MacTests/NotebookPanelMaterialTests.swift"
+  ],
+  "nativeSelected": [
+    "NotebookMacTests/NotebookPanelMaterialTests/testBudgetDemotedCoverCellsNeverAllocateIndependentMaterialPixels",
+    "NotebookMacTests/NotebookPanelMaterialTests/testBudgetDemotedElementBodiesNeverCreateDiscardedMaterialRasters",
+    "NotebookMacTests/NotebookPanelMaterialTests/testLocalEditAndTranslationReuseUnchangedPixelsWhileTextAndSizeRefresh",
+    "NotebookMacTests/NotebookPanelPresentationTests/testCanonicalBoardMaterialsSplitSubjectsBeforeFirstDragAndJoinCachedRequests",
+    "NotebookMacTests/NotebookPanelPresentationTests/testNotebookCardFirstPageOpensNativePixelsAndNavigationWithoutMovingPresence"
+  ],
+  "baseCommit": "3b7dc0fac89831657baf2879c8a37d3375610569",
+  "startupTraceCommit": "032268f209c5190fe2880d5270c567b28eb269aa",
+  "installation": "installation.json",
+  "performance": "navigation-comparison.json",
+  "startup": "startup.json"
+}

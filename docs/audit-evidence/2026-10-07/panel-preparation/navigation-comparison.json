@@ -1,0 +1,35 @@
+{
+  "scope": "Installed MCP response duration at fixed 900x800/DPR2, page1/page2/page3/page2. One baseline and two after passes; not input-to-pixels, p95 or cold-open benchmark.",
+  "sameFields": [
+    "sourceRevision",
+    "camera",
+    "coverage",
+    "bytes"
+  ],
+  "pageMilliseconds": [
+    [
+      814.447,
+      1174.081,
+      811.24,
+      778.526
+    ],
+    [
+      697.983,
+      609.226,
+      132.965,
+      517.042
+    ],
+    [
+      699.87,
+      531.807,
+      102.686,
+      491.547
+    ]
+  ],
+  "order": [
+    "before-254.json",
+    "after-255.json",
+    "after-255-warm.json"
+  ],
+  "remaining": "Pages 1 and 2 still take about 0.5-0.7 seconds. Full source and raster bytes are still transferred."
+}
