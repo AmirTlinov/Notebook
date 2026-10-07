@@ -65,10 +65,15 @@ export async function ensureRuntime(app: string, socket: string, expectedBuild: 
         throw new BridgeError({code:"runtime_update_required",message:"Notebook IPC returned an incompatible runtime status."});
       }
       if (status.protocolVersion !== 1 || status.build !== expectedBuild) {
+        const olderConnection = status.protocolVersion === 1 && typeof status.build === "string"
+          && /^\d{1,19}$/.test(status.build) && /^\d{1,19}$/.test(expectedBuild)
+          && BigInt(status.build) > BigInt(expectedBuild);
         throw new BridgeError({code:"runtime_update_required", message:
           `runtime_update_required: Active Notebook runtime build ${status.build ?? "unknown"} `
           + `(protocol ${status.protocolVersion ?? "unknown"}) differs from plugin build ${expectedBuild}. `
-          + "Complete the runtime update before reconnecting the plugin."});
+          + (olderConnection
+            ? `Reconnect @Notebook in this chat to load plugin build ${status.build}. The runtime is already updated.`
+            : "Install the matching Notebook iPad/plugin pair, then reconnect @Notebook in this chat.")});
       }
       if (!status.ready) throw new BridgeError({code:"owner_unavailable",message:"Notebook runtime is draining accepted work."});
       trace("startup.done",status);

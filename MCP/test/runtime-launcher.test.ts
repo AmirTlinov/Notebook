@@ -79,9 +79,17 @@ test('an incompatible or unsafe owner cannot trigger a second runtime',async t=>
   const launch=async()=>{assert.fail('Do not launch beside an incompatible owner');};
   await assert.rejects(ensureRuntime('/plugin/NotebookRuntime.app',host.socket,status.build,{launch}),/runtime transition/);
   response={result:{...status,build:'previous'}};
-  await assert.rejects(ensureRuntime('/plugin/NotebookRuntime.app',host.socket,status.build,{launch}),/runtime_update_required/);
+  await assert.rejects(ensureRuntime('/plugin/NotebookRuntime.app',host.socket,status.build,{launch}),
+    /runtime_update_required.*Install the matching Notebook iPad\/plugin pair/);
+  response={result:{...status,build:'259'}};
+  await assert.rejects(ensureRuntime('/plugin/NotebookRuntime.app',host.socket,'258',{launch}),(error:BridgeError)=>{
+    assert.equal(error.detail.code,'runtime_update_required');
+    assert.match(error.message,/Reconnect @Notebook in this chat to load plugin build 259/);
+    assert.match(error.message,/runtime is already updated/);return true;
+  });
   response={result:{...status,protocolVersion:2}};
-  await assert.rejects(ensureRuntime('/plugin/NotebookRuntime.app',host.socket,status.build,{launch}),/runtime_update_required/);
+  await assert.rejects(ensureRuntime('/plugin/NotebookRuntime.app',host.socket,status.build,{launch}),
+    /runtime_update_required.*Install the matching Notebook iPad\/plugin pair/);
   await chmod(host.socket,0o666);
   await assert.rejects(ensureRuntime('/plugin/NotebookRuntime.app',host.socket,status.build,{launch}),/0700.*0600/);
 });

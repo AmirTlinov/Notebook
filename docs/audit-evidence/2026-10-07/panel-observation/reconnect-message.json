@@ -1,0 +1,34 @@
+{
+  "status": "passed",
+  "sourceSHA256": "287739fa880fb4301367e528d5f0ef4eff6fc1778fd73607dad1aa722ffbbbf5",
+  "fileCount": 1707,
+  "sourceMatched": true,
+  "runs": [
+    {
+      "label": "launcher",
+      "argv": [
+        "./node_modules/.bin/tsx",
+        "--test",
+        "--test-name-pattern=an incompatible or unsafe owner",
+        "test/runtime-launcher.test.ts"
+      ],
+      "exitCode": 0,
+      "passed": 1,
+      "failed": 0,
+      "log": ".build/reconnect-message-20261007/launcher.log"
+    },
+    {
+      "label": "typescript",
+      "argv": ["./node_modules/.bin/tsc", "--noEmit"],
+      "exitCode": 0,
+      "log": ".build/reconnect-message-20261007/typescript.log"
+    }
+  ],
+  "review": {
+    "agent": "/root/page_reuse_review",
+    "status": "passed",
+    "scope": "Both changed source files; strict build/protocol equality, error code, no second launch, no replay and deadlines preserved"
+  },
+  "scope": "One existing isolated unsafe-owner regression plus TypeScript; no native or installed app changes",
+  "installation": "Not included in installed pair 259/plugin 0.2.11"
+}
