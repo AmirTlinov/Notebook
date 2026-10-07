@@ -1,0 +1,21 @@
+◇ Test run started.
+↳ Testing Library Version: 2084
+↳ Target Platform: arm64e-apple-macos14.0
+◇ Suite NotebookScriptHelpTests started.
+◇ Test initialHelpExposesCompletionAndEmbeddedReadinessBeforeAnyRender() started.
+◇ Test compactIndexResolvesEveryIndividualOperationFromTheBundledReference() started.
+◇ Test repeatedCoordinatorHelpPreservesTheBundledResponseAndMeasuresDecodeCost() started.
+✘ Test initialHelpExposesCompletionAndEmbeddedReadinessBeforeAnyRender() recorded an issue at NotebookScriptHelpTests.swift:74:22: Expectation failed: interactive["contract"]?["block"].string("javaScript")
+↳ interactive["contract"]?["block"].string("javaScript") → nil
+↳   interactive["contract"]?["block"] → nil
+✘ Test compactIndexResolvesEveryIndividualOperationFromTheBundledReference() recorded an issue at NotebookScriptHelpTests.swift:51:5: Expectation failed: items.count == 22
+↳ items.count == 22 → false
+↳   items.count → 20
+✘ Test initialHelpExposesCompletionAndEmbeddedReadinessBeforeAnyRender() failed after 0.359 seconds with 1 issue.
+✘ Test compactIndexResolvesEveryIndividualOperationFromTheBundledReference() failed after 0.362 seconds with 1 issue.
+SDK_HELP_MEASUREMENTS {"fixture":"bundled_reference_real_coordinator","fullReadDecodeMS":[352.97445900000002,185.19316599999999,183.374833],"helpRetrievalMS":[0.011207999999999999,0.0015,0.00095799999999999998,0.00083299999999999997,0.000834],"referencePayloadBytes":4240554,"replyBytes":4921,"sourceBytes":1827285}
+✔ Test repeatedCoordinatorHelpPreservesTheBundledResponseAndMeasuresDecodeCost() passed after 0.732 seconds.
+✘ Suite NotebookScriptHelpTests failed after 0.732 seconds with 2 issues.
+✘ Test run with 3 tests in 1 suite failed after 0.732 seconds with 2 issues.
+Note: Some test targets reported failures:
+  - NotebookScriptHostTests (Swift Testing)
