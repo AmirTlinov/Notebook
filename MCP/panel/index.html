@@ -2,8 +2,8 @@
 <html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Notebook</title><style>/* NOTEBOOK_STYLE */</style></head>
 <body>
-  <header><button id="back" aria-label="Вернуться на предыдущую доску" hidden>‹</button><button id="workspaces" aria-label="Пространства Notebook">Notebook</button><span id="surface-name"></span>
-    <span id="page-navigation" hidden><button id="page-previous" aria-label="Предыдущий лист">‹</button><span id="page-position"></span><button id="page-next" aria-label="Следующий лист">›</button></span>
+  <header><button id="back" aria-label="Вернуться на предыдущую доску" title="Назад" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg></button><button id="workspaces" aria-label="Пространства Notebook" title="Пространства">Notebook</button><span id="surface-name"></span>
+    <span id="page-navigation" hidden><button id="page-previous" aria-label="Предыдущий лист" title="Предыдущий лист"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg></button><span id="page-position"></span><button id="page-next" aria-label="Следующий лист" title="Следующий лист"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 6 6 6-6 6"/></svg></button></span>
     <span id="status" role="status">Подключение…</span></header>
   <main id="workspace" tabindex="0" aria-label="Рабочая поверхность Notebook">
     <svg id="paper" xmlns="http://www.w3.org/2000/svg" aria-label="Доска Notebook"><g id="material"></g><g id="selection"></g></svg>
@@ -12,19 +12,24 @@
     <span id="coverage"></span>
     <div id="message" role="alert" hidden><span></span><button id="retry">Повторить</button></div>
   </main>
-  <nav aria-label="Инструменты Notebook">
-    <button data-tool="select" aria-label="Выделение (V)" title="Выделение (V). Перетаскивание пустого места двигает доску" aria-pressed="true">↖</button>
-    <button data-tool="hand" aria-label="Перемещение доски (H)" title="Перемещение доски (H), пробел или средняя кнопка" aria-pressed="false">✋</button>
-    <button data-tool="pen" aria-label="Ручка (P)" title="Ручка (P)" aria-pressed="false">✎</button>
-    <button data-tool="text" aria-label="Текст (T)" title="Текст (T). ⌘Enter — сохранить, Escape — отменить" aria-pressed="false">T</button>
-    <button data-tool="rectangle" aria-label="Прямоугольник" aria-pressed="false">□</button>
-    <button data-tool="ellipse" aria-label="Эллипс" aria-pressed="false">○</button>
-    <button data-tool="connector" aria-label="Стрелка" aria-pressed="false">↗</button>
-    <span class="divider"></span>
-    <button id="undo" aria-label="Отменить свою правку" disabled>↶</button>
-    <button id="delete" aria-label="Удалить выделенное" disabled>⌫</button>
-    <span class="divider"></span>
-    <button id="zoom-out" aria-label="Уменьшить масштаб">−</button><span id="zoom-level" aria-label="Текущий масштаб">100%</span><button id="zoom-in" aria-label="Увеличить масштаб">+</button><button id="zoom-fit" aria-label="Общий вид" title="Показать весь материал">Общий вид</button>
-  </nav>
+  <div id="surface-controls" class="surface-controls">
+    <nav class="tool-palette" aria-label="Инструменты Notebook">
+      <button data-tool="select" aria-label="Выделение (V)" title="Выделение · V" aria-keyshortcuts="V" aria-pressed="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 3 14 9-7 1-3 7Z"/></svg></button>
+      <button data-tool="hand" aria-label="Перемещение доски (H)" title="Перемещение · H или пробел" aria-keyshortcuts="H" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 12V6a1.5 1.5 0 0 1 3 0v5-7a1.5 1.5 0 0 1 3 0v7-5a1.5 1.5 0 0 1 3 0v6-3a1.5 1.5 0 0 1 3 0v6c0 5-3 7-6 7h-1c-2 0-3.5-1-5-3l-4-5a1.5 1.5 0 0 1 2-2l2 2"/></svg></button>
+      <button data-tool="pen" aria-label="Ручка (P)" title="Ручка · P" aria-keyshortcuts="P" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 4 5 5M4 20l5-1L20 8a2 2 0 0 0-5-5L4 14Z"/><path d="m4 14 5 5"/></svg></button>
+      <button data-tool="text" aria-label="Текст (T)" title="Текст · T" aria-keyshortcuts="T" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7V4h14v3M12 4v16m-4 0h8"/></svg></button>
+      <span class="divider" aria-hidden="true"></span>
+      <button data-tool="rectangle" aria-label="Прямоугольник" title="Прямоугольник · R" aria-keyshortcuts="R" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="2"/></svg></button>
+      <button data-tool="ellipse" aria-label="Эллипс" title="Эллипс · O" aria-keyshortcuts="O" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="12" rx="8" ry="7"/></svg></button>
+      <button data-tool="connector" aria-label="Стрелка" title="Стрелка · A" aria-keyshortcuts="A" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 19 14-14M8 5h11v11"/></svg></button>
+    </nav>
+    <div class="history-controls control-group" role="group" aria-label="Правки">
+      <button id="undo" aria-label="Отменить свою правку" title="Отменить · ⌘Z" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5-5 5 5 5M4 10h10a5 5 0 0 1 0 10h-3"/></svg></button>
+      <button id="delete" aria-label="Удалить выделенное" title="Удалить · ⌫" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7m4-7v7"/></svg></button>
+    </div>
+    <div class="zoom-controls control-group" role="group" aria-label="Масштаб доски">
+      <button id="zoom-out" aria-label="Уменьшить масштаб" title="Уменьшить"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/></svg></button><span id="zoom-level" aria-label="Текущий масштаб">100%</span><button id="zoom-in" aria-label="Увеличить масштаб" title="Увеличить"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M12 5v14"/></svg></button><button id="zoom-fit" aria-label="Общий вид" title="Показать весь материал"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4H4v5m11-5h5v5M4 15v5h5m11-5v5h-5"/><rect x="8" y="8" width="8" height="8" rx="1"/></svg></button>
+    </div>
+  </div>
   <script type="module">/* NOTEBOOK_SCRIPT */</script>
 </body></html>

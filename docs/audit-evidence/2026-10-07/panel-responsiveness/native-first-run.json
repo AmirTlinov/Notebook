@@ -1,0 +1,186 @@
+{
+  "devices" : [
+    {
+      "architecture" : "arm64",
+      "deviceId" : "00006050-001650DA01F9401C",
+      "deviceName" : "My Mac",
+      "modelName" : "MacBook Pro",
+      "osBuildNumber" : "26A434",
+      "osVersion" : "27.0.1",
+      "platform" : "macOS"
+    }
+  ],
+  "testNodes" : [
+    {
+      "children" : [
+        {
+          "children" : [
+            {
+              "children" : [
+                {
+                  "duration" : "0,47s",
+                  "durationInSeconds" : 0.4675949811935425,
+                  "name" : "testCanonicalBoardMaterialsSplitSubjectsBeforeFirstDragAndJoinCachedRequests()",
+                  "nodeIdentifier" : "NotebookPanelPresentationTests/testCanonicalBoardMaterialsSplitSubjectsBeforeFirstDragAndJoinCachedRequests()",
+                  "nodeIdentifierURL" : "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookPanelPresentationTests/testCanonicalBoardMaterialsSplitSubjectsBeforeFirstDragAndJoinCachedRequests",
+                  "nodeType" : "Test Case",
+                  "result" : "Passed"
+                },
+                {
+                  "children" : [
+                    {
+                      "name" : "XCTAssertTrue failed",
+                      "nodeType" : "Failure Message",
+                      "sourceLocation" : {
+                        "filePath" : "/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/Applications/MacTests/NotebookPanelPresentationTests.swift",
+                        "lineNumber" : 499
+                      }
+                    },
+                    {
+                      "name" : "failed: caught error: \"Error Domain=NSCocoaErrorDomain Code=513 \"“panel-peer-input-6B520ADB-B036-45A9-8696-612B086555E5” couldn’t be removed because you don’t have permission to access it.\" UserInfo={NSUserStringVariant=(\n    Remove\n), NSFilePath=/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/panel-peer-input-6B520ADB-B036-45A9-8696-612B086555E5, NSURL=file:///var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/panel-peer-input-6B520ADB-B036-45A9-8696-612B086555E5, NSUnderlyingError=0x7c8a0af300 {Error Domain=NSPOSIXErrorDomain Code=1 \"Operation not permitted\"}}\"",
+                      "nodeType" : "Failure Message",
+                      "sourceLocation" : {
+                        "filePath" : "/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/Applications/TestSupport/NotebookModelLifetime.swift",
+                        "lineNumber" : 0
+                      }
+                    }
+                  ],
+                  "duration" : "0,76s",
+                  "durationInSeconds" : 0.7581321001052856,
+                  "name" : "testForegroundPanelSurvivesPeerInputDuringQueuedCaptureAndKeepsLocalFence()",
+                  "nodeIdentifier" : "NotebookPanelPresentationTests/testForegroundPanelSurvivesPeerInputDuringQueuedCaptureAndKeepsLocalFence()",
+                  "nodeIdentifierURL" : "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookPanelPresentationTests/testForegroundPanelSurvivesPeerInputDuringQueuedCaptureAndKeepsLocalFence",
+                  "nodeType" : "Test Case",
+                  "result" : "Failed"
+                },
+                {
+                  "duration" : "0,74s",
+                  "durationInSeconds" : 0.7414259910583496,
+                  "name" : "testNotebookCardFirstPageOpensNativePixelsAndNavigationWithoutMovingPresence()",
+                  "nodeIdentifier" : "NotebookPanelPresentationTests/testNotebookCardFirstPageOpensNativePixelsAndNavigationWithoutMovingPresence()",
+                  "nodeIdentifierURL" : "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookPanelPresentationTests/testNotebookCardFirstPageOpensNativePixelsAndNavigationWithoutMovingPresence",
+                  "nodeType" : "Test Case",
+                  "result" : "Passed"
+                },
+                {
+                  "duration" : "0,011s",
+                  "durationInSeconds" : 0.011034011840820312,
+                  "name" : "testRegionalMaterialPreparationPreservesOrderedCutsAndBaselineAcrossRegionsAndReleasesGeometry()",
+                  "nodeIdentifier" : "NotebookPanelPresentationTests/testRegionalMaterialPreparationPreservesOrderedCutsAndBaselineAcrossRegionsAndReleasesGeometry()",
+                  "nodeIdentifierURL" : "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookPanelPresentationTests/testRegionalMaterialPreparationPreservesOrderedCutsAndBaselineAcrossRegionsAndReleasesGeometry",
+                  "nodeType" : "Test Case",
+                  "result" : "Passed"
+                },
+                {
+                  "duration" : "0,013s",
+                  "durationInSeconds" : 0.012552022933959961,
+                  "name" : "testRepeatingGridKeepsNativePhaseAndOpaqueBackgroundAcrossCameraTilesAndZoomSteps()",
+                  "nodeIdentifier" : "NotebookPanelPresentationTests/testRepeatingGridKeepsNativePhaseAndOpaqueBackgroundAcrossCameraTilesAndZoomSteps()",
+                  "nodeIdentifierURL" : "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookPanelPresentationTests/testRepeatingGridKeepsNativePhaseAndOpaqueBackgroundAcrossCameraTilesAndZoomSteps",
+                  "nodeType" : "Test Case",
+                  "result" : "Passed"
+                },
+                {
+                  "duration" : "0,16s",
+                  "durationInSeconds" : 0.16422200202941895,
+                  "name" : "testStoppingTheOwnerCompletesQueuedPanelReadBeforeCapacityReturns()",
+                  "nodeIdentifier" : "NotebookPanelPresentationTests/testStoppingTheOwnerCompletesQueuedPanelReadBeforeCapacityReturns()",
+                  "nodeIdentifierURL" : "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookPanelPresentationTests/testStoppingTheOwnerCompletesQueuedPanelReadBeforeCapacityReturns",
+                  "nodeType" : "Test Case",
+                  "result" : "Passed"
+                }
+              ],
+              "name" : "NotebookPanelPresentationTests",
+              "nodeIdentifierURL" : "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookPanelPresentationTests",
+              "nodeType" : "Test Suite",
+              "result" : "Failed"
+            },
+            {
+              "children" : [
+                {
+                  "duration" : "0,13s",
+                  "durationInSeconds" : 0.1339099407196045,
+                  "name" : "testPartialFilePublicationRetriesTheExactAdmittedBytesAfterRevocation()",
+                  "nodeIdentifier" : "NotebookPreviewPublicationTests/testPartialFilePublicationRetriesTheExactAdmittedBytesAfterRevocation()",
+                  "nodeIdentifierURL" : "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookPreviewPublicationTests/testPartialFilePublicationRetriesTheExactAdmittedBytesAfterRevocation",
+                  "nodeType" : "Test Case",
+                  "result" : "Passed"
+                },
+                {
+                  "duration" : "0,14s",
+                  "durationInSeconds" : 0.13986992835998535,
+                  "name" : "testRevocationBeforeAdmissionDoesNotBlockLaterAcceptedWork()",
+                  "nodeIdentifier" : "NotebookPreviewPublicationTests/testRevocationBeforeAdmissionDoesNotBlockLaterAcceptedWork()",
+                  "nodeIdentifierURL" : "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookPreviewPublicationTests/testRevocationBeforeAdmissionDoesNotBlockLaterAcceptedWork",
+                  "nodeType" : "Test Case",
+                  "result" : "Passed"
+                },
+                {
+                  "duration" : "0,15s",
+                  "durationInSeconds" : 0.15117502212524414,
+                  "name" : "testStaleReceiptRefusesOnlyItsOwnSlotAndPreservesTheAcceptedTail()",
+                  "nodeIdentifier" : "NotebookPreviewPublicationTests/testStaleReceiptRefusesOnlyItsOwnSlotAndPreservesTheAcceptedTail()",
+                  "nodeIdentifierURL" : "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookPreviewPublicationTests/testStaleReceiptRefusesOnlyItsOwnSlotAndPreservesTheAcceptedTail",
+                  "nodeType" : "Test Case",
+                  "result" : "Passed"
+                },
+                {
+                  "duration" : "0,16s",
+                  "durationInSeconds" : 0.16141104698181152,
+                  "name" : "testTargetReceiptRetriesItsAdmittedFingerprintAfterPartialPublication()",
+                  "nodeIdentifier" : "NotebookPreviewPublicationTests/testTargetReceiptRetriesItsAdmittedFingerprintAfterPartialPublication()",
+                  "nodeIdentifierURL" : "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookPreviewPublicationTests/testTargetReceiptRetriesItsAdmittedFingerprintAfterPartialPublication",
+                  "nodeType" : "Test Case",
+                  "result" : "Passed"
+                }
+              ],
+              "name" : "NotebookPreviewPublicationTests",
+              "nodeIdentifierURL" : "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookPreviewPublicationTests",
+              "nodeType" : "Test Suite",
+              "result" : "Passed"
+            },
+            {
+              "children" : [
+                {
+                  "duration" : "0,65s",
+                  "durationInSeconds" : 0.6450779438018799,
+                  "name" : "testQueuedCurrentViewDoesNotPublishAfterPublisherCancellation()",
+                  "nodeIdentifier" : "PageVisionDemandTests/testQueuedCurrentViewDoesNotPublishAfterPublisherCancellation()",
+                  "nodeIdentifierURL" : "test://com.apple.xcode/Notebook/NotebookMacTests/PageVisionDemandTests/testQueuedCurrentViewDoesNotPublishAfterPublisherCancellation",
+                  "nodeType" : "Test Case",
+                  "result" : "Passed"
+                },
+                {
+                  "duration" : "0,62s",
+                  "durationInSeconds" : 0.6227160692214966,
+                  "name" : "testQueuedCurrentViewDoesNotPublishDuringNewInput()",
+                  "nodeIdentifier" : "PageVisionDemandTests/testQueuedCurrentViewDoesNotPublishDuringNewInput()",
+                  "nodeIdentifierURL" : "test://com.apple.xcode/Notebook/NotebookMacTests/PageVisionDemandTests/testQueuedCurrentViewDoesNotPublishDuringNewInput",
+                  "nodeType" : "Test Case",
+                  "result" : "Passed"
+                }
+              ],
+              "name" : "PageVisionDemandTests",
+              "nodeIdentifierURL" : "test://com.apple.xcode/Notebook/NotebookMacTests/PageVisionDemandTests",
+              "nodeType" : "Test Suite",
+              "result" : "Passed"
+            }
+          ],
+          "name" : "NotebookMacTests",
+          "nodeIdentifierURL" : "test://com.apple.xcode/Notebook/NotebookMacTests",
+          "nodeType" : "Unit test bundle",
+          "result" : "Failed"
+        }
+      ],
+      "name" : "NotebookRuntime",
+      "nodeType" : "Test Plan",
+      "result" : "Failed"
+    }
+  ],
+  "testPlanConfigurations" : [
+    {
+      "configurationId" : "1",
+      "configurationName" : "Test Scheme Action"
+    }
+  ]
+}

@@ -1208,6 +1208,13 @@ final class NotebookAppModel {
         && $0.publication == nil }
   }
   #if os(macOS)
+    /// The foreground Codex reader owns its pinned stored cut. Local input and
+    /// shutdown keep their preparation fence; remote contact owns publication
+    /// to its device independently from this read.
+    var permitsPanelPreparation: Bool {
+      loadState == .ready && !isStopped && !inputIsActive
+    }
+
     @ObservationIgnored var codexHost: NotebookCodexHost?
     @ObservationIgnored private var codexSidecar: NotebookCodexSidecar?
     @ObservationIgnored private var codexStartupTask: Task<Void, Never>?

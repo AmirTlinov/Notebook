@@ -8,6 +8,7 @@ import { capturedSource, type Camera, type Frame, type PanelElement, type PanelM
 
 const el=<T extends HTMLElement>(id:string)=>document.getElementById(id) as T;
 const workspace=el<HTMLElement>("workspace");
+const controls=el<HTMLElement>("surface-controls");
 const paper=document.getElementById("paper") as unknown as SVGSVGElement;
 const material=document.getElementById("material") as unknown as SVGGElement;
 const selection=document.getElementById("selection") as unknown as SVGGElement;
@@ -80,7 +81,7 @@ function buttons(){
   el<HTMLButtonElement>("workspaces").disabled=session.busy||drawing||!!draft||!!gesture;
   el<HTMLButtonElement>("undo").disabled=!session.snapshot?.history.undoActionID||waiting;
   editor.readOnly=waiting;
-  document.querySelectorAll<HTMLButtonElement>("[data-tool]").forEach(button=>button.disabled=button.dataset.tool==="hand"?!session.hasAppearance||!!draft||!!gesture||drawing:waiting||!!gesture||drawing||(button.dataset.tool==="pen"&&!ink.ready));
+  document.querySelectorAll<HTMLButtonElement>("[data-tool]").forEach(button=>button.disabled=!session.hasAppearance||!!draft||!!gesture||drawing||(button.dataset.tool==="pen"&&!ink.ready));
   el<HTMLButtonElement>("back").hidden=path.length===0&&!session.snapshot?.navigation?.parentBoard;
   el<HTMLButtonElement>("back").disabled=waiting;
   for(const id of ["zoom-in","zoom-out","zoom-fit"])el<HTMLButtonElement>(id).disabled=!session.hasAppearance||!!draft||!!gesture||drawing;
@@ -155,6 +156,7 @@ session.onSnapshot=snapshot=>{
   el("coverage").textContent=notes.join(" ");
   if(draft){if(!draft.isNew)surface.hideSubject(draft.element.source.id,true);positionEditor(draft.element,draft.isNew);}
 };
+session.onStateChange=buttons;
 session.onStatus=text=>{el("status").textContent=text;buttons();};
 session.onError=(message,action)=>{
   const box=el("message");box.hidden=!message;box.querySelector("span")!.textContent=message;
@@ -352,7 +354,8 @@ async function finishGesture(event:PointerEvent,cancel=false){
     const graphic:Record<string,unknown>={shape:tool,style:{stroke:{red:.12,green:.12,blue:.12},strokeWidth:2},label:"",representation:"geometry",visible:true,sourceInkIDs:[]};
     if(tool==="connector")graphic.connection={start:{point:{x:g.start.x-frame.x,y:g.start.y-frame.y}},end:{point:{x:g.last.x-frame.x,y:g.last.y-frame.y}},bend:0,startArrowhead:"none",endArrowhead:"arrow",labelPosition:.5,routing:"straight"};
     const values:Record<string,unknown>={kind:"graphic",source:"",frame,graphic};if(session.snapshot?.worldOrigin)values.worldOrigin=session.snapshot.worldOrigin;
-    if(await save(mutation("Добавить фигуру",operation("insertElement",id,values)))){tool="select";toolButtons();choose({kind:"element",id});}
+    tool="select";toolButtons();
+    if(await save(mutation("Добавить фигуру",operation("insertElement",id,values))))choose({kind:"element",id});
   }
 }
 paper.addEventListener("pointerup",event=>{void finishGesture(event);},events);
@@ -403,8 +406,9 @@ el("back").addEventListener("click",()=>{void(async()=>{if(ink.hasPreview||gestu
 async function stepPage(direction:number){if(ink.hasPreview||gesture||!(await finishEditor())||closed)return;const target=neighbor(direction);if(target)await session.openSurface(target);if(!closed)buttons();}
 el("page-previous").addEventListener("click",()=>{void stepPage(-1);},events);
 el("page-next").addEventListener("click",()=>{void stepPage(1);},events);
-workspace.addEventListener("keydown",event=>{
+const handleShortcut=(event:KeyboardEvent)=>{
   if(event.target===editor||event.isComposing)return;
+  if(event.currentTarget===controls&&(event.key==="Enter"||event.key===" "))return;
   const card=(event.target as Element).closest("[data-card-id]")?.getAttribute("data-card-id");
   if(card&&event.key==="Enter"){event.preventDefault();void openCard(card);return;}
   if(card&&event.key===" "){event.preventDefault();choose({kind:"item",id:card});return;}
@@ -414,7 +418,9 @@ workspace.addEventListener("keydown",event=>{
   if(event.key.toLowerCase()==="z"&&(event.metaKey||event.ctrlKey)&&!event.shiftKey){event.preventDefault();if(ink.pointer===undefined)void session.undo().catch(()=>{});}
   if(event.key==="Enter"){if(activeCard()){event.preventDefault();void openCard(activeCard()!.item.id);}else if(active())openEditor(active()!);}
   if(!event.metaKey&&!event.ctrlKey&&!event.altKey){const key=event.key.toLowerCase(),next=({v:"select",h:"hand",p:"pen",t:"text",r:"rectangle",o:"ellipse",a:"connector"} as Record<string,string>)[key];if(next&&!gesture&&ink.pointer===undefined){tool=next;toolButtons();}}
-},events);
+};
+workspace.addEventListener("keydown",handleShortcut,events);
+controls.addEventListener("keydown",handleShortcut,events);
 function cancelGesture(refresh=true){
   const pointer=ink.pointer;
   if(pointer!==undefined){if(paper.hasPointerCapture(pointer))paper.releasePointerCapture(pointer);ink.clear();session.suspended=false;if(refresh)void session.refresh();}

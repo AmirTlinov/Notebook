@@ -1,0 +1,50 @@
+{
+  "at": "2026-10-07T08:15:28.568Z",
+  "plugin": "0.2.6",
+  "scope": "Installed MCP read-only presentation timing; not host input-to-pixel latency",
+  "samples": [
+    {
+      "label": "open",
+      "ms": 15.224625000000003,
+      "bytes": 3186,
+      "error": false,
+      "cursor": "65548"
+    },
+    {
+      "label": "initial-view",
+      "ms": 159.056625,
+      "bytes": 1040388,
+      "error": false,
+      "layers": 28,
+      "encodedChars": 1023988,
+      "cursor": "65548"
+    },
+    {
+      "label": "unchanged",
+      "ms": 23.422833000000026,
+      "bytes": 13852,
+      "error": false,
+      "layers": 28,
+      "encodedChars": 0,
+      "cursor": "65548"
+    },
+    {
+      "label": "zoom-1.2",
+      "ms": 99.73062499999992,
+      "bytes": 1930597,
+      "error": false,
+      "layers": 28,
+      "encodedChars": 1916432,
+      "cursor": "65548"
+    }
+  ],
+  "targetKind": "board",
+  "cards": [
+    {
+      "kind": "notebook",
+      "pageCount": 1
+    }
+  ],
+  "status": "passed",
+  "stderr": "Notebook MCP listens on stdio\n"
+}

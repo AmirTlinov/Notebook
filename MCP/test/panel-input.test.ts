@@ -25,7 +25,7 @@ const listeners=transformSync([
   section('paper.addEventListener("pointerdown"','async function openCard('),
   section('paper.addEventListener("dblclick"','paper.addEventListener("wheel"'),
   section('async function remove(){','el("delete").addEventListener'),
-  section('workspace.addEventListener("keydown"','window.addEventListener("keyup"'),
+  section('const handleShortcut=','window.addEventListener("keyup"'),
 ].join('\n'),{loader:'ts',target:'es2022'}).code;
 const turn=()=>new Promise<void>(resolve=>setImmediate(resolve));
 
@@ -49,7 +49,7 @@ async function fixture(){
   session.needsPresentation=()=>false;
   await session.refresh(true);calls.length=0;
   const paperListeners=new Map<string,(event:unknown)=>void>(),keyListeners=new Map<string,(event:unknown)=>void>(),
-    editorListeners=new Map<string,(event:unknown)=>void>();
+    editorListeners=new Map<string,(event:unknown)=>void>(),controlListeners=new Map<string,(event:unknown)=>void>();
   const captures=new Set<number>();
   let previews=0,clears=0,inkClears=0;
   const ink={pointer:undefined as number|undefined,hasPreview:false,ready:true,
@@ -65,12 +65,15 @@ async function fixture(){
   const editor={value:'',hidden:true,style:{},scrollHeight:80,focus(){},select(){},
     addEventListener:(name:string,callback:(event:unknown)=>void)=>editorListeners.set(name,callback)};
   const context=createContext({session,ink,surface,PanelError,crypto:{randomUUID},events:{},
+    document:{createElementNS:(_namespace:string,tagName:string)=>({tagName,setAttribute(){}})},
+    selection:{replaceChildren(){},append(){}},
     paper:{addEventListener:(name:string,callback:(event:unknown)=>void)=>paperListeners.set(name,callback),
       ownerDocument:{elementFromPoint:()=>hit},
       setPointerCapture:(pointer:number)=>captures.add(pointer),hasPointerCapture:(pointer:number)=>captures.has(pointer),
       releasePointerCapture:(pointer:number)=>captures.delete(pointer),getBoundingClientRect:()=>({left:0,top:0})},
     workspace:{clientWidth:800,clientHeight:600,
       addEventListener:(name:string,callback:(event:unknown)=>void)=>keyListeners.set(name,callback),focus(){}},
+    controls:{addEventListener:(name:string,callback:(event:unknown)=>void)=>controlListeners.set(name,callback)},
     gesture:null,draft:null,selected:{kind:'element',id:'text'},tool:'select',space:false,closed:false,editor,
     camera:{x:0,y:0,scale:1},worldCamera:snapshot.appearance!.camera,viewport:()=>({x:800,y:600}),
     geometry:{manipulateFrame:(_mode:string,frame:{x:number;y:number},delta:{x:number;y:number})=>
@@ -90,10 +93,13 @@ async function fixture(){
   const pointer=(name:string,id=1,x=100)=>dispatch(name,
     {pointerId:id,clientX:x,clientY:100,button:0,altKey:false,
       target:context.tool==='pen'?blank:hit,preventDefault(){}});
-  const key=async(value:string,control=false)=>{
-    keyListeners.get('keydown')?.({key:value,code:value===' '?'Space':value,isComposing:false,
-      metaKey:false,ctrlKey:control,shiftKey:false,altKey:false,target:blank,preventDefault(){}});
+  const key=async(value:string,control=false,fromControls=false)=>{
+    let prevented=false;
+    (fromControls?controlListeners:keyListeners).get('keydown')?.({key:value,code:value===' '?'Space':value,isComposing:false,
+      metaKey:false,ctrlKey:control,shiftKey:false,altKey:false,target:blank,
+      currentTarget:fromControls?context.controls:context.workspace,preventDefault(){prevented=true;}});
     await turn();
+    return prevented;
   };
   const editorKey=async(value:string,control=false)=>{
     editorListeners.get('keydown')?.({key:value,isComposing:false,metaKey:false,ctrlKey:control,preventDefault(){}});
@@ -105,6 +111,34 @@ async function fixture(){
       await turn();
     }};
 }
+
+test('tool controls retain the board shortcuts without an extra focus click',async()=>{
+  const f=await fixture();
+  await f.key('p',false,true);assert.equal(f.context.tool,'pen');
+  await f.key('v',false,true);assert.equal(f.context.tool,'select');
+  await f.key('z',true,true);assert.equal(f.calls.at(-1)!.name,'notebook_panel_undo');
+  await f.complete();
+});
+
+test('Enter and Space on controls preserve native button activation',async()=>{
+  const f=await fixture();
+  for(const key of ['Enter',' ']){
+    assert.equal(await f.key(key,false,true),false,'The button still receives its native activation');
+    assert.equal(f.context.draft,null);assert.equal(f.editor.hidden,true);
+    assert.equal(f.context.space,false);assert.equal(f.writes.length,0);
+  }
+});
+
+test('a completed shape save preserves the next tool chosen while saving',async()=>{
+  const f=await fixture();f.context.tool='rectangle';
+  await f.pointer('pointerdown');await f.pointer('pointermove',1,140);await f.pointer('pointerup',1,140);
+  assert.equal(f.writes.length,1);assert.equal(f.context.tool,'select');
+  const operation=(f.calls.at(-1)!.arguments.operations as PanelMutation['operations'])[0]!;
+  assert.equal(operation.kind,'insertElement');
+  assert.equal((operation.values.graphic as {shape:string}).shape,'rectangle');
+  await f.key('p',false,true);assert.equal(f.context.tool,'pen');
+  await f.complete();assert.equal(f.context.tool,'pen');
+});
 
 test('keyboard undo and delete cannot admit another action during a dragged contact',async t=>{
   for(const key of ['z','Delete'])await t.test(key,async()=>{

@@ -26,7 +26,13 @@ function sameAddress(a:PanelAddress,b:PanelAddress):boolean {
 export class NotebookSession {
   readonly app=new App({name:"Notebook",version:"1.0.0"},{availableDisplayModes:["fullscreen"]});
   snapshot:PanelSnapshot|undefined;
-  busy=false;
+  private working=false;
+  get busy(){return this.working;}
+  set busy(value:boolean){
+    if(this.working===value)return;
+    this.working=value;
+    if(!this.closed)this.onStateChange();
+  }
   private synchronizing=false;
   private failedWrite=false;
   private contextSelection:PanelSelection|null=null;
@@ -40,6 +46,7 @@ export class NotebookSession {
   onPrepareSnapshot:(snapshot:PanelSnapshot,view:PanelView)=>Promise<boolean>=async()=>true;
   onClose:()=>void=()=>{};
   onStatus:(text:string)=>void=()=>{};
+  onStateChange:()=>void=()=>{};
   onError:(message:string,retry:(()=>Promise<void>)|null)=>void=()=>{};
   onRuntime:(status:RuntimeStatus)=>void=()=>{};
   bounds:()=>SceneBounds|undefined=()=>undefined;
@@ -198,7 +205,15 @@ export class NotebookSession {
         this.synchronizing=false;if(!this.failedWrite)this.onError("",null);this.onStatus("Подключено");return this.snapshot;
       }
       if(!isSnapshot(value)||!sameAddress(request,value))throw new Error("Notebook вернул другую поверхность.");
-      if(!(await this.onPrepareSnapshot(value,request.appearance))||this.stale(request,generation))return;
+      const prepared=await this.onPrepareSnapshot(value,request.appearance);
+      if(this.stale(request,generation))return;
+      if(!prepared){
+        this.boundsDirty=this.needsPresentation();
+        if(this.presented&&!this.boundsDirty&&!this.synchronizing&&!this.failedWrite){
+          this.onError("",null);this.onStatus("Подключено");
+        }
+        return;
+      }
       if(!this.failedWrite)this.onError("",null);this.accept(value,request.appearance);
       // Camera motion does not invalidate world-placed pixels. Keep the current
       // camera and coalesce the latest projection after accepting useful coverage.

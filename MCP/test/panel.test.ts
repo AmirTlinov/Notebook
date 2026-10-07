@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import test, {type TestContext} from 'node:test';
 import {randomUUID} from 'node:crypto';
 import {chmod, mkdtemp, rm} from 'node:fs/promises';
 import {createServer, type Socket} from 'node:net';
@@ -9,7 +9,8 @@ import {McpServer} from '@modelcontextprotocol/server';
 import {RESOURCE_MIME_TYPE} from '@modelcontextprotocol/ext-apps/server';
 import {panelResourceURI, registerNotebookPanel} from '../src/panel-tools.js';
 import {NotebookSession} from '../panel/session.js';
-import type {PanelMutation, PanelSnapshot} from '../panel/model.js';
+import {Surface} from '../panel/surface.js';
+import type {PanelMutation, PanelSnapshot, PanelView} from '../panel/model.js';
 
 type Value = Record<string, unknown>;
 type Reply = {result: Value} | {error: Value};
@@ -19,6 +20,86 @@ const workspaceID = randomUUID();
 const target = {kind: 'board', id: randomUUID()};
 const address = {workspaceID, target, socketKey};
 const origin = {tileX: 7, tileY: -3, localX: 40, localY: 60};
+
+function materialFixture(t:TestContext) {
+  const display={devicePixelRatio:1},dimensions={width:800,height:600};
+  class NodePort {
+    children:NodePort[]=[];attributes=new Map<string,string>();style={};clientWidth=800;clientHeight=600;
+    ownerDocument={defaultView:display};
+    setAttribute(key:string,value:string){this.attributes.set(key,value);}
+    removeAttribute(key:string){this.attributes.delete(key);}
+    append(...nodes:NodePort[]){this.children.push(...nodes);}
+    insertBefore(node:NodePort,before:NodePort|null){this.children.splice(before?this.children.indexOf(before):this.children.length,0,node);}
+    replaceChildren(...nodes:NodePort[]){this.children=nodes;}
+    get firstChild():NodePort|null{return this.children[0]??null;}
+  }
+  const priorDocument=Object.getOwnPropertyDescriptor(globalThis,'document'),priorImage=Object.getOwnPropertyDescriptor(globalThis,'Image');
+  Object.defineProperty(globalThis,'document',{configurable:true,value:{activeElement:null,
+    createElementNS:()=>new NodePort(),createDocumentFragment:()=>new NodePort()}});
+  Object.defineProperty(globalThis,'Image',{configurable:true,value:class {
+    naturalWidth=dimensions.width;naturalHeight=dimensions.height;src='';async decode(){}
+  }});
+  const surface=new Surface(new NodePort() as unknown as SVGSVGElement,new NodePort() as unknown as SVGGElement,new NodePort() as unknown as SVGGElement);
+  surface.setCamera({x:0,y:0,scale:1});
+  t.after(()=>{surface.dispose();for(const [key,prior] of [['document',priorDocument],['Image',priorImage]] as const){
+    if(prior)Object.defineProperty(globalThis,key,prior);else Reflect.deleteProperty(globalThis,key);
+  }});
+  const anchor={tileX:0,tileY:0,localX:0,localY:0};
+  const snapshot=(density:number,width=800,height=600,revision='same-source'):PanelSnapshot=>({
+    ...address,target:{kind:'board',id:target.id},cursor:'10',worldOrigin:anchor,size:{width:1600,height:1200},elements:[],cards:[],rawInkPresent:false,
+    unsupportedElements:[],history:{},truncated:false,appearance:{status:'ready',requestID:randomUUID(),sourceRevision:revision,
+      camera:{center:{...anchor,localX:width/2,localY:height/2},scale:800/width},viewport:{x:800,y:600},
+      coverage:{anchor,region:{x:0,y:0,width,height},level:0,pixelDensity:density},layers:[{
+        id:'native-material',assetID:randomUUID(),worldOrigin:anchor,frame:{x:0,y:0,width,height},order:0,
+        pixelWidth:width*density,pixelHeight:height*density,pngBase64:'iVBORw0KGgo=',sha256:'a'.repeat(64)}]}});
+  const prepare=(value:PanelSnapshot,pixelScale=1)=>{
+    dimensions.width=value.appearance!.layers[0]!.pixelWidth;dimensions.height=value.appearance!.layers[0]!.pixelHeight;
+    const view:PanelView={viewport:{x:800,y:600},pixelScale,camera:value.appearance!.camera};
+    return surface.prepare(value,view);
+  };
+  return {surface,display,snapshot,prepare};
+}
+
+test('same-source late coarse material cannot replace sharper pixels at the current zoom',async t=>{
+  const {surface,snapshot,prepare}=materialFixture(t),sharp=snapshot(1),coarse=snapshot(.5,1600,1200);
+  assert.equal(await prepare(sharp),true);surface.render(sharp);
+  const held=surface.assetIDs;
+  assert.equal(await prepare(coarse),false,'Equal visible coverage must not reduce current pixel adequacy');
+  assert.deepEqual(surface.assetIDs,held);
+});
+
+test('zoom-out admits lower excess density using the current display scale',async t=>{
+  const {surface,display,snapshot,prepare}=materialFixture(t),sharp=snapshot(1,1600,1200),coarse=snapshot(.5,1600,1200);
+  display.devicePixelRatio=2;assert.equal(await prepare(sharp,2),true);surface.render(sharp);
+  display.devicePixelRatio=1;surface.setCamera({x:0,y:0,scale:.5});
+  assert.equal(await prepare(coarse,2),true,'Stale request DPR must not outweigh the current adequate density');
+  surface.render(coarse);assert.deepEqual(surface.assetIDs,[coarse.appearance!.layers[0]!.assetID]);
+});
+
+test('an inadequate prior admits the current native pixel budget reply and ends demand',async t=>{
+  const {surface,snapshot,prepare}=materialFixture(t),prior=snapshot(1.5),bounded=snapshot(1);
+  prior.appearance!.camera.scale=1.5;surface.setCamera({x:0,y:0,scale:2});
+  assert.equal(await prepare(prior),true);surface.render(prior);
+  bounded.appearance!.camera={center:{tileX:0,tileY:0,localX:200,localY:150},scale:2};
+  const view={viewport:{x:800,y:600},pixelScale:1,camera:bounded.appearance!.camera};
+  const bounds={anchor:bounded.worldOrigin!,region:{x:0,y:0,width:400,height:300}};
+  assert.equal(surface.covers(bounds,view),false);
+  assert.equal(await prepare(bounded),true);surface.render(bounded);
+  assert.equal(surface.covers(bounds,view),true,'The same bounded projection must not rerender every polling tick');
+});
+
+test('coarser material still admits fresh source identity and visible coverage gains',async t=>{
+  for(const change of ['revision','workspace','endpoint','coverage'] as const)await t.test(change,async t=>{
+    const {surface,snapshot,prepare}=materialFixture(t),sharp=snapshot(1),coarse=snapshot(.5,1600,1200);
+    assert.equal(await prepare(sharp),true);surface.render(sharp);
+    if(change==='revision')coarse.appearance!.sourceRevision='new-source';
+    if(change==='workspace')coarse.workspaceID=randomUUID();
+    if(change==='endpoint')coarse.socketKey='abcdef0123456789abcdef0123456789';
+    if(change==='coverage')surface.setCamera({x:400,y:0,scale:1});
+    assert.equal(await prepare(coarse),true,change);surface.render(coarse);
+    assert.deepEqual(surface.assetIDs,[coarse.appearance!.layers[0]!.assetID]);
+  });
+});
 
 test('session coalesces viewport demand against accepted pixels without delaying required reads', async t => {
   for (const scenario of ['covered', 'needed', 'forced', 'fit'] as const) await t.test(scenario, async t => {
@@ -110,6 +191,35 @@ async function controlledSession() {
   return {session, calls, events, close, mutation, retry: () => retry};
 }
 
+test('a rejected coarse reply settles idle status while retaining write recovery state',async t=>{
+  for(const state of ['idle','synchronizing','failedWrite'] as const)await t.test(state,async t=>{
+    t.mock.timers.enable({apis:['setTimeout','setInterval']});
+    const material=materialFixture(t),{session,calls,close}=await controlledSession();
+    const sharp=material.snapshot(1),coarse=material.snapshot(.5,1600,1200);
+    assert.equal(await material.prepare(sharp),true);material.surface.render(sharp);session.snapshot=sharp;
+    const view={viewport:{x:800,y:600},pixelScale:1,camera:sharp.appearance!.camera};
+    const bounds={anchor:sharp.worldOrigin!,region:{x:0,y:0,width:800,height:600}};
+    session.needsPresentation=()=>!material.surface.covers(bounds,view);
+    session.onPrepareSnapshot=value=>material.prepare(value);
+    let accepted=0;const statuses:string[]=[],errors:string[]=[];
+    session.onSnapshot=()=>{accepted++;};session.onStatus=text=>statuses.push(text);session.onError=message=>errors.push(message);
+    if(state!=='idle')Object.defineProperty(session,state,{value:true,writable:true});
+    const held=material.surface.assetIDs,read=session.refresh(true);
+    assert.equal(statuses.at(-1),'Подготовка поверхности…');
+    calls[1]!.resolve({content:[],structuredContent:coarse});await read;
+    assert.equal(accepted,0);assert.equal(session.snapshot,sharp);assert.deepEqual(material.surface.assetIDs,held);
+    if(state==='idle'){
+      assert.equal(statuses.at(-1),'Подключено');assert.equal(errors.at(-1),'');assert.equal(session.mutationReady,true);
+    }else{
+      assert.equal(statuses.at(-1),'Подготовка поверхности…');assert.equal(errors.length,0);
+      assert.equal((session as unknown as Record<string,unknown>)[state],true);
+      if(state==='synchronizing')assert.equal(session.mutationReady,false,'Retained pixels do not confirm accepted-write history');
+    }
+    assert.equal(calls.length,2,'No idle timer was needed to settle the retained frame');
+    await close();
+  });
+});
+
 test('session teardown releases readers and ignores late read and write completions', async t => {
   for (const outcome of ['read', 'saved', 'conflict', 'uncertain'] as const) await t.test(outcome, async t => {
     t.mock.timers.enable({apis: ['setTimeout', 'setInterval']});
@@ -146,6 +256,29 @@ test('session teardown releases readers and ignores late read and write completi
     assert.equal(session.snapshot?.cursor, '1');
     assert.equal(session.mutationReady, false);
   });
+});
+
+test('navigation publishes ready controls immediately after the new surface is accepted',async t=>{
+  t.mock.timers.enable({apis:['setTimeout','setInterval']});
+  const {session,calls,close}=await controlledSession();
+  session.needsPresentation=()=>false;
+  const availability:boolean[]=[];
+  session.onStateChange=()=>availability.push(session.mutationReady);
+  const destination={kind:'board' as const,id:randomUUID()};
+  const opening=session.openSurface(destination);
+  assert.equal(availability.at(-1),false);
+  calls[1]!.resolve({content:[],structuredContent:{...sessionSnapshot('2'),target:destination}});
+  assert.equal(await opening,true);
+  assert.equal(availability.at(-1),true,'Controls must update without waiting for the next polling tick');
+  assert.equal(calls.length,2);
+  const next=session.openSurface(sessionSnapshot().target);
+  assert.equal(calls.length,3,'An immediately repeated navigation can start');
+  calls[2]!.resolve({content:[],structuredContent:sessionSnapshot('3')});
+  assert.equal(await next,true);
+  await close();
+  const count=availability.length;
+  session.busy=true;session.busy=false;
+  assert.equal(availability.length,count,'Disposed controls receive no activity notifications');
 });
 
 test('a confirmed pen contact replaces an in-flight old scene before the next polling tick', async t => {
