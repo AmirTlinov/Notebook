@@ -1,0 +1,55 @@
+{
+  "issue": "GUI-508",
+  "verifiedAt": "2026-10-07T16:35:32+03:00",
+  "sourceCommit": "87a10b5af446de793e1fce9a239ecb859b4571c6",
+  "implementationCommit": "f7af0e45032afb8ab680c67187687fe1e4f667f1",
+  "scope": "Current main already contains the accepted slice. No runtime source or kernel changes in this recheck.",
+  "inputSHA256": "3f2798c2bb26254b7d1a05614a819804f9a89428ed8b3aa133558e8d260cf43e",
+  "canonicalFilesSHA256": {
+    "Sources/NotebookTypesetterRuntime/Runtime.lock.json": "0c03df6e6f67f501925eeb60f754b4420a4700777344833e5f7e7fac63ab8d16",
+    "Sources/NotebookTypesetterRuntime/build/format-test.c": "b7941154b957ca5a22478cdeed8dad424650c010127f8485bfa6be8cc1e59901",
+    "Sources/NotebookTypesetterRuntime/build/rebuild-tectonic.py": "59d6e8a9ee8c1531d417afecb99e59b9b58f9a7de94f276831bc31181f68e970",
+    "Sources/NotebookTypesetterRuntime/build/tectonic.patch": "f345f430dac3d2a8c9198c6eba5d8b8380bb812c47136142fd9b10db07ebb424",
+    "Sources/NotebookTypesetterRuntime/kernels/tectonic.wasm.gz": "54b28932b08f1ddb1409a67fa531b9636d84d7af510c245f6cda354cbd99d85a",
+    "Sources/NotebookTypesetterRuntime/src/lib.rs": "9cadb4216f34570d39e216c84966180eee05b8a49fa5b5022e88c315406f9376"
+  },
+  "isolatedEvidence": {
+    "report": "docs/audit-evidence/2026-10-07/product-quality-baseline/typesetter-cold.json",
+    "resolvedRoot": "/Users/amir/.codex/worktrees/notebook-product-quality/Notebook",
+    "verifiedArtifactHashes": 15,
+    "pinnedBuildInputsUnchanged": true,
+    "trackedKernelEqualsPinnedRebuild": true,
+    "tablePDFAndPhaseInterruptionResults": "Existing experiment verified by unchanged owner and exact artifact hashes; not rerun."
+  },
+  "checks": {
+    "pinnedFormatASanUBSan": {
+      "status": "PASS",
+      "ownerSHA256": "077a3fd391c5d6ba83ccba2a06c4bb05f0bcfaa1c1b1a8d84abcb6018015f4fa",
+      "constantsSHA256": "f2b41dc1c4328eec879adae12e47ed2261f13ec7f079e292f0fe795713306b2d",
+      "log": ".build/gui508-current-20261007/format-test.log",
+      "logSHA256": "01397e5d60c758d250761620d4dd136de2a932b29bb4287410b58686b29d3352"
+    },
+    "runtimeIntegration": {
+      "status": "PASS",
+      "test": "tests::file_document_shipout_and_sandbox",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "testDurationSeconds": 0.97,
+      "log": ".build/gui508-current-20261007/runtime-integration.log",
+      "logSHA256": "9862a1eedc0d419928a2a9e1a7c01629c4170dc79ed1cd4666265241453e557c",
+      "nativeObjectsMatchedToAdmittedStage": 16
+    },
+    "exactSourceStage": {
+      "status": "PASS",
+      "path": "/Users/amir/.codex/worktrees/notebook-product-quality/Notebook/.build/gui508-typesetter-runtime",
+      "platforms": [
+        "macosx",
+        "iphoneos"
+      ],
+      "command": "python3 -B Applications/prepare_notebook_typesetter.py --check --platform <platform> --stage <path>"
+    }
+  },
+  "preserved": "Pinned upstream, toolchain, immutable latex.fmt, two TeX passes, aux convergence, cancellation/deadline supervisor, input/output/memory limits and opening animation. No new runtime or cache.",
+  "physicalScope": "This recheck does not install the pair or repeat physical opening acceptance; those remain with the existing pair/release owner and GUI-315/GUI-190."
+}
