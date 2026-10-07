@@ -13,5 +13,10 @@
   "repairedSourceSHA256": "97c93c0761cee04bfd4ddbd5f1c23603101c1f68c1574b519003ba6cb19793f4",
   "inputChanges": [
     "Applications/MacTests/RasterEncodedRepresentationTests.swift"
-  ]
+  ],
+  "publishedLogFormat": "Trailing whitespace normalized; original raw logs remain in the local evidence directory.",
+  "originalLogSHA256": {
+    "initial-mac-build-for-testing.stdout.log": "c37f0936e2fed9f7f87b7bb60968eda6ae84b66be24acceb0d2fd8d65a9923ed",
+    "initial-mac-build-for-testing.stderr.log": "ecb3d66f4d821032aff4eee4ab6755971c662e052463cfa778405bc49e022237"
+  }
 }

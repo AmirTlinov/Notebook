@@ -11,7 +11,7 @@
 268 | */
 269 | - (void)evaluateJavaScript:(NSString *)javaScriptString completionHandler:(WK_SWIFT_UI_ACTOR void (^ _Nullable)(id WK_NULLABLE_RESULT, NSError * _Nullable error))completionHandler;
     | `- note: 'evaluateJavaScript' declared here
-270 | 
+270 |
 271 | /* @abstract Evaluates the given JavaScript string.
 
 /Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/Applications/Shared/AgentWebElementView.swift:1090:11: warning: consider using asynchronous alternative function
@@ -27,7 +27,7 @@
 268 | */
 269 | - (void)evaluateJavaScript:(NSString *)javaScriptString completionHandler:(WK_SWIFT_UI_ACTOR void (^ _Nullable)(id WK_NULLABLE_RESULT, NSError * _Nullable error))completionHandler;
     | `- note: 'evaluateJavaScript' declared here
-270 | 
+270 |
 271 | /* @abstract Evaluates the given JavaScript string.
 /Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/Applications/TestSupport/ProgramStateTransferTests.swift:257:14: warning: weak variable 'retained' was never mutated; consider changing to 'let' constant [#VariableNeverMutated::WeakMutability]
 255 |     let resources = SceneRenderResources()
@@ -49,16 +49,16 @@ CoreFoundation.CGFloat.greatestFiniteMagnitude:2:19: note: found this candidate 
 1 | struct CGFloat {
 2 | public static var greatestFiniteMagnitude: CGFloat { get }}
   |                   `- note: found this candidate in module 'CoreFoundation'
-3 | 
+3 |
 
 Swift.Double.greatestFiniteMagnitude:2:30: note: found this candidate in module 'Swift'
 1 | struct Double {
 2 | @inlinable public static var greatestFiniteMagnitude: Double { get }}
   |                              `- note: found this candidate in module 'Swift'
-3 | 
+3 |
 
 /Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/Applications/MacTests/RasterEncodedRepresentationTests.swift:95:14: warning: weak variable 'borrowedPool' was never mutated; consider changing to 'let' constant [#VariableNeverMutated::WeakMutability]
- 93 | 
+ 93 |
  94 |     var temporaryPool: SceneRenderResources? = SceneRenderResources(byteLimit: 8 * 1024 * 1024, profile: .headless)
  95 |     weak var borrowedPool = temporaryPool
     |              `- warning: weak variable 'borrowedPool' was never mutated; consider changing to 'let' constant [#VariableNeverMutated::WeakMutability]
