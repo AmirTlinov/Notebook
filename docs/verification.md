@@ -465,6 +465,13 @@ GUI-196, GUI-197, GUI-183 и длительная GUI-250 остаются от�
   нужен профиль её затрат. Все 120 запросов и exact OS receipts сохранены,
   initial/final pixels корректны. GUI-528 пока вне installed259.
   [Линейный обход, фазы и все запросы](audit-evidence/2026-10-07/selection-pose/linear-values.json).
+  GUI-530: единственный совместный CPU/Allocations профиль получил start notification,
+  затем отказ `Allocations cannot handle a target type of 'All Processes'`, exit 2.
+  Отдельный native XCTest **1 PASS**, 0 skips/runtime warnings; исходники неизменны,
+  test bundle удалён, runners закрыты. Общая попытка exit 1: attribution затрат отсутствует.
+  Повторной записи не было; следующий маршрут требует адресного процесса и начала
+  подготовки после подключения профиля.
+  [Отказ профиля и точный scope](audit-evidence/2026-10-07/selection-pose/cold-profile-coverage.json).
 - **Pencil/eraser, ≤ 20 мс по контракту.** Настоящий Pencil в установленной 253:
   6880 input batches, без потерь событий/сэмплов и ошибок записи; actual→OS
   pen/eraser p95 **57,39/57,43 мс**, 118 unresolved lift batches. GPU execution

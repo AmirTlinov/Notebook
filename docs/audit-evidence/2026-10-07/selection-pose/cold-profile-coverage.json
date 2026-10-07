@@ -1,0 +1,75 @@
+{
+  "format": 1,
+  "issue": "GUI-530",
+  "date": "2026-10-07",
+  "status": "coverage_failure",
+  "scope": "one physical diagnostic attempt; target-only curated metadata",
+  "baseCommit": "ff8852b517df739a2181b2704800c6b100aa53be",
+  "sourceBeforeSHA256": "505d1660249f7e8ebf1022787e84c0eedb943b7a144a172de08d506033c6bcc8",
+  "sourceAfterSHA256": "505d1660249f7e8ebf1022787e84c0eedb943b7a144a172de08d506033c6bcc8",
+  "harnessSHA256": {
+    "Applications/Tests/NotebookSelectionPoseLatencyTests.swift": "d4e6fc9dcdb5fe55c62031ee9b8436454ef7122392d98be5994f29fcad33b321",
+    "Tests/NotebookCoreTests/InkActionMapTests.swift": "4ac8817b0bb34f08cb5118732b803b014cfe802d274885bbebb88932c609d78f"
+  },
+  "build": {
+    "bundleIdentifier": "com.amirtlinov.notebook.native-test",
+    "optimized": true,
+    "products": [
+      {
+        "executable": "Notebook",
+        "uuid": "DCE3B9EE-7A01-3A59-AD9A-3243130700F0",
+        "sha256": "baab98541e01046d9f9007e777eb725635c24dc3191e8347a72c7c58aa160b05",
+        "matchingDwarfSHA256": "6358d4509c657137ae235ec88a53a3ddc5105b1daf5a00d6217914418a48507e"
+      },
+      {
+        "executable": "NotebookTests",
+        "uuid": "F426BB2B-2AAA-3D5D-8712-0FED24105CD5",
+        "sha256": "3be7be03641f93800cfb59f112c8bb8da71787bcb7523e74d26f26ffb17e51d3",
+        "matchingDwarfSHA256": "3d5664d327e2a964e99debf56edbac0d20f0d433aad34b69c02c363818c654a4"
+      }
+    ]
+  },
+  "capture": {
+    "template": "Time Profiler",
+    "additionalInstrument": "Allocations",
+    "target": "All Processes",
+    "limitSeconds": 90,
+    "startNotificationReceived": true,
+    "startedWallTime": 1791398642.3667772,
+    "exitCode": 2,
+    "fallback": null,
+    "error": "Allocations cannot handle a target type of 'All Processes'",
+    "loadedTargetPID": null,
+    "loadedTargetUUID": null,
+    "cpuAttribution": null,
+    "allocationAttribution": null,
+    "secondAttempt": false,
+    "rawPath": ".build/gui530-cold-profile-20261007-v1-capture",
+    "rawPublished": false,
+    "recordLogSHA256": "258da4e7d518fea60c4d44935cd318c8729e8ce01815905007850afddcdff6e5"
+  },
+  "native": {
+    "selector": "NotebookTests/NotebookSelectionPoseLatencyTests/testInstalledSelectionPoseLatencyAtOneAnd100000ForeignBodies",
+    "xcodebuildExitCode": 0,
+    "result": "Passed",
+    "passed": 1,
+    "failed": 0,
+    "skipped": 0,
+    "runtimeWarnings": [],
+    "startWallTime": 1791398643.307,
+    "finishWallTime": 1791398651.751,
+    "summaryIntervalSeconds": 8.444
+  },
+  "completion": {
+    "coordinatorExitCode": 1,
+    "selectedVerificationReceiptProduced": false,
+    "sourcesUnchanged": true,
+    "cleanupExitCode": 0,
+    "nativeTestRemoved": true,
+    "closedRunnerObserved": true,
+    "closedRecorderObserved": true,
+    "processClosureObservedAt": "2026-10-07T18:45:42Z",
+    "globalWindowReturned": true
+  },
+  "next": "Single-process target with preparation gated by the existing Native owner; establish actual PID/loaded UUID and stack coverage before attributing cost. Diagnostic timing is not an unprofiled speed comparison."
+}
