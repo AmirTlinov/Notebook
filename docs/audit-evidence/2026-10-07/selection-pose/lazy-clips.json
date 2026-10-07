@@ -1,0 +1,291 @@
+{
+  "date": "2026-10-07",
+  "baseCommit": "e515dda40f6182aa2545f3e6debdc9cefac8a193",
+  "sourceSHA256": "753d6f91c138dd1d9751e65e65825ad2137f8c24f4f5dcb12876747029c646ab",
+  "sourceBeforeEqualsAfter": true,
+  "files": {
+    "Applications/Shared/InkCanvasView.swift": "aba352cc32b2a9310a0a76efaf979d64fc805b4dba4320b5fbab54d7322ddd68",
+    "Applications/Shared/InkOrderedGeometry.swift": "d9e7bb1ad1a7bf3e5781b5c7fe24cd18f32eb3ea5ff589b61656e809074380bf",
+    "Applications/Shared/NotebookOrderedInkPlan.swift": "b03d452f3ccad974e8b65ad69d08e3b85b1422c53d865a327a01970e97bdb79e",
+    "Applications/Shared/NotebookSelectionPresentation.swift": "c183085adad4feb09fa9dada4ac50a845adac92a9da7d40569cf52f5ff435d08",
+    "Applications/Tests/NotebookSelectionPoseLatencyTests.swift": "d4e6fc9dcdb5fe55c62031ee9b8436454ef7122392d98be5994f29fcad33b321",
+    "Sources/NotebookCore/InkActionMap.swift": "3bd2b254079222dda90868a5821663e69341ed5db39502faf2b6b5fd3c1b9d5d",
+    "Sources/NotebookCore/WorkspaceSpatialIndex.swift": "ad1138cf0796909f45bbd88e4e4072408cfd10dcd064c7b427d24b68098732f6",
+    "Applications/Shared/NotebookPageOrderedInk.swift": "a717f8100d010ec77a68dd8b5d7a8d0cb94b956ea4c1eb1db08c5aa1cfb53d06",
+    "Sources/NotebookCore/SpatialInkJournal.swift": "481a0a308fec0b886dcb2441bd6b31d0eb422f669b4c4b5dc16e2c5daf845f92",
+    "Applications/Tests/InkMaterialCanvasTests.swift": "0fa352a1050770ca5c9e8499e6a472a6608f0c271b8bdfedf167a3c22375ddc0",
+    "Tests/NotebookCoreTests/WorkspaceSpatialIndexTests.swift": "9ba39f87bd47ae0e01d491563546c048ca6441fb8fd0c59de11a8abbd2263dab",
+    "Applications/Shared/InkMaterialRenderer+Ordered.swift": "51614345b89c00b7097f99906931124b0555ae518606e16bc5ec856b2f7f9fc7",
+    "Applications/Shared/InkOrderedComposition.swift": "e4c7f6296aaa6ed005c9eaeffe07745798e7054cc44826e59f6c4b6a87c857fa",
+    "Applications/Shared/NotebookInputGate.swift": "b30606f322df22280eb63d9c7b06c11e1384e4d7ab183098f76a2e3150dd99d4",
+    "Applications/iPad/NotebookContextMenus.swift": "72cb751eed700b9fe041551c38c306ea6ee7ca15a117a1177c575a5ceedd0a30",
+    "Applications/iPad/WorkspaceGestureLayer.swift": "76d043a28401dab686570c5cb64a8b0807b76f74294cb1848b8385de614fd43f",
+    "Applications/Tests/AgentSceneFingerRoutingTests.swift": "03ca2073cee442df4a0c00fef89a4fdb0e917521192757d400bb48b5e27b6bfb",
+    "Applications/UITests/NotebookGraphicSelectionUITests.swift": "18f83fd1644015a6cc6a87bb7b9bfa45485637cc87e7a3e73485091b1d1d87de"
+  },
+  "device": {
+    "architecture": "arm64e",
+    "deviceId": "00008103-001E059934D9001E",
+    "deviceName": "iPad (Елизавета)",
+    "modelName": "iPad Pro (11-inch) (3rd generation)",
+    "osBuildNumber": "24A435",
+    "osVersion": "27.0",
+    "platform": "iOS"
+  },
+  "checks": {
+    "nativePassed": 7,
+    "uiFailed": 1,
+    "skipped": 0,
+    "runtimeWarnings": [],
+    "uiFailure": "Both elements selected in the accessibility hierarchy; stale move-element-group assertion at NotebookGraphicSelectionUITests.swift:54. Route exits 1. Separate gesture retry follows an assertion-only correction."
+  },
+  "nativeCropPoints": [
+    400,
+    400
+  ],
+  "drawablePixels": [
+    800,
+    800
+  ],
+  "cases": [
+    {
+      "foreignBodies": 1,
+      "orderedBodies": 3,
+      "counts": {
+        "fixed120Hz": 120,
+        "exactInstalled": 42,
+        "exactPresented": 42,
+        "superseded": 78,
+        "unmatchedReceipts": 0,
+        "unexpectedInstalledFrames": 0
+      },
+      "latencyMS": {
+        "scheduledToDeliveryMS": {
+          "n": 120,
+          "p50": 0.8441249956376851,
+          "p95": 2.0662916940636933,
+          "p99": 2.1359582897275686,
+          "max": 2.2822916507720947
+        },
+        "deliveryToReturnMS": {
+          "n": 120,
+          "p50": 0.12024998432025313,
+          "p95": 0.18258328782394528,
+          "p99": 0.18987501971423626,
+          "max": 0.19391666864976287
+        },
+        "scheduledToExactOSMS": {
+          "n": 42,
+          "p50": 42.24008327582851,
+          "p95": 46.58095829654485,
+          "p99": 59.109624999109656,
+          "max": 59.109624999109656
+        },
+        "scheduledToNextAdvancingPoseOSMS": {
+          "n": 120,
+          "p50": 50.57341663632542,
+          "p95": 63.146166619844735,
+          "p99": 63.247624959331006,
+          "max": 63.26774996705353
+        }
+      },
+      "preparationMS": {
+        "setupMS": 0.06254168692976236,
+        "prepareMS": 0.0764167052693665,
+        "initialInstallMS": 22.276791627518833
+      },
+      "memoryBytes": {
+        "footprintBefore": 55657408,
+        "footprintPrepared": 55952320,
+        "preparationPeak": 55952320,
+        "accountedBytes": 8405696,
+        "limitBytes": 268435456
+      },
+      "thermal": "nominal",
+      "lowPower": false,
+      "sampleCSV": "lazy-clips-1.csv",
+      "sampleSHA256": "b6ad1687a88c209116879a46ecff45e6bb0fe2ca0f4e5032204d5a263b2fa052",
+      "pixels": [
+        {
+          "kind": "initial",
+          "file": "9B8F8C1C-FD65-4B0D-94F7-15C0262FBF08.png",
+          "sha256": "ae98bb2bf2346da4acc9b013ec7fa11f70f61c4a3f8c2bfc0d16c94aa0f061fc"
+        },
+        {
+          "kind": "final",
+          "file": "FF8D9D95-AD72-487C-BE78-C75540DEF51B.png",
+          "sha256": "edd5f5e070681f019869f02a1bca8406fe0d9c1dffb3a25ba9b54c1c1c512565"
+        }
+      ]
+    },
+    {
+      "foreignBodies": 100000,
+      "orderedBodies": 100002,
+      "counts": {
+        "fixed120Hz": 120,
+        "exactInstalled": 41,
+        "exactPresented": 41,
+        "superseded": 79,
+        "unmatchedReceipts": 0,
+        "unexpectedInstalledFrames": 0
+      },
+      "latencyMS": {
+        "scheduledToDeliveryMS": {
+          "n": 120,
+          "p50": 1.138749998062849,
+          "p95": 1.3907083193771541,
+          "p99": 1.8676250474527478,
+          "max": 3.7908333470113575
+        },
+        "deliveryToReturnMS": {
+          "n": 120,
+          "p50": 0.10587502038106322,
+          "p95": 0.208500016015023,
+          "p99": 0.2376250340603292,
+          "max": 0.2942083519883454
+        },
+        "scheduledToExactOSMS": {
+          "n": 41,
+          "p50": 47.632250003516674,
+          "p95": 47.956875001545995,
+          "p99": 51.851333351805806,
+          "max": 51.851333351805806
+        },
+        "scheduledToNextAdvancingPoseOSMS": {
+          "n": 120,
+          "p50": 55.96558336401358,
+          "p95": 64.56266669556499,
+          "p99": 64.65395831037313,
+          "max": 68.51800001459196
+        }
+      },
+      "preparationMS": {
+        "setupMS": 660.5352082988247,
+        "prepareMS": 1390.0554582942277,
+        "initialInstallMS": 459.45075002964586
+      },
+      "memoryBytes": {
+        "footprintBefore": 54985664,
+        "footprintPrepared": 611698056,
+        "preparationPeak": 611698056,
+        "accountedBytes": 8405696,
+        "limitBytes": 268435456
+      },
+      "thermal": "nominal",
+      "lowPower": false,
+      "sampleCSV": "lazy-clips-100000.csv",
+      "sampleSHA256": "3309408be42c3cdca55bb92d362b9e9695f36212f7549333b38bcd2c85a9bc00",
+      "pixels": [
+        {
+          "kind": "initial",
+          "file": "4A564FDD-7B1C-49FB-A0F0-83AEABE32BD9.png",
+          "sha256": "ae98bb2bf2346da4acc9b013ec7fa11f70f61c4a3f8c2bfc0d16c94aa0f061fc"
+        },
+        {
+          "kind": "final",
+          "file": "9800D4EC-8E34-40DE-847E-3B4A223F2F47.png",
+          "sha256": "edd5f5e070681f019869f02a1bca8406fe0d9c1dffb3a25ba9b54c1c1c512565"
+        }
+      ]
+    }
+  ],
+  "orderedPolygon": {
+    "scenario": "Fractional scaled frame with intersect polygon, subtract hole, unchanged rectangular neighbor; offcrop move, return with a new measured cut, source-restoration cancellation.",
+    "states": [
+      {
+        "kind": "initial",
+        "submission": "4F48173A-E2D3-4DC6-8028-C51DDE0ACAF9",
+        "revision": 4,
+        "osPresentedTime": 474635.4986855834,
+        "file": "CD8974C0-6168-4C31-801D-6151A93A83EE.png",
+        "sha256": "e36d267ed02dbb403d4453a9b6050bab486d0b63fcef63db6c3db77dc91a19cf"
+      },
+      {
+        "kind": "offcrop",
+        "submission": "DD9E77D9-5FB3-445C-A684-FC3DB709562A",
+        "revision": 5,
+        "osPresentedTime": 474635.5737161251,
+        "file": "53DEE2D6-BE52-42AD-8F95-F621ECAB2AC9.png",
+        "sha256": "9e04334714c8f3f046360ef4d9f827c5861337236b7bc55f31833480f5f9dead"
+      },
+      {
+        "kind": "returned-cut",
+        "submission": "B1A96AE3-B5EE-4325-A1E0-53319DF768E9",
+        "revision": 6,
+        "osPresentedTime": 474635.6404100001,
+        "file": "0AFF7A16-1BC6-4306-A3E4-F1A6A12A4985.png",
+        "sha256": "dcf4d4c75014654765d550702830ee9d3efaf8326497e5972daad1ad85f872a7"
+      },
+      {
+        "kind": "cancel-restored",
+        "submission": "0A7B2110-3720-453D-A084-C78CC9800D37",
+        "revision": 7,
+        "osPresentedTime": 474635.7071036668,
+        "file": "30ECA7DF-4D05-49D5-8237-9726CD19B3EF.png",
+        "sha256": "e36d267ed02dbb403d4453a9b6050bab486d0b63fcef63db6c3db77dc91a19cf"
+      }
+    ],
+    "originalPlanUnchanged": true,
+    "sourceRestoreCount": 1,
+    "abandonedSourceCount": 0,
+    "windowPixelProbesPerState": 5
+  },
+  "deltaFromAddressedIndex": {
+    "1": {
+      "prepareMS": [
+        0.3592083230614662,
+        0.0764167052693665
+      ],
+      "footprintPreparedBytes": [
+        55640928,
+        55952320
+      ],
+      "accountedBytes": [
+        8406128,
+        8405696
+      ],
+      "nextAdvancingP95MS": [
+        63.51729162270203,
+        63.146166619844735
+      ]
+    },
+    "100000": {
+      "prepareMS": [
+        6316.512041667011,
+        1390.0554582942277
+      ],
+      "footprintPreparedBytes": [
+        761103752,
+        611698056
+      ],
+      "accountedBytes": [
+        22805984,
+        8405696
+      ],
+      "nextAdvancingP95MS": [
+        66.51316664647311,
+        64.56266669556499
+      ]
+    }
+  },
+  "scope": [
+    "Ordinary selection model/presentation owner with native mounted InkCanvasView and matching Metal OS receipts.",
+    "Fixed 120 Hz demands keep delivery backlog and superseded requests; final exact pose and visible unchanged neighbor checked.",
+    "Foreign source assembly and clip preparation precede motion with the default 256 MiB scene resource budget."
+  ],
+  "evidenceDirectory": ".build/selection-pose-and-clip-candidate-20261007-v2",
+  "screenshotsReviewed": [
+    "4A564FDD-7B1C-49FB-A0F0-83AEABE32BD9.png",
+    "9800D4EC-8E34-40DE-847E-3B4A223F2F47.png",
+    "CD8974C0-6168-4C31-801D-6151A93A83EE.png",
+    "53DEE2D6-BE52-42AD-8F95-F621ECAB2AC9.png",
+    "0AFF7A16-1BC6-4306-A3E4-F1A6A12A4985.png",
+    "30ECA7DF-4D05-49D5-8237-9726CD19B3EF.png"
+  ],
+  "remaining": [
+    "Single native replay per workload with unchanged motion harness; no compositor FPS or physical Pencil measurement.",
+    "Native replay follows selected regressions; one-body preparation is warm. Absolute preparation and footprint deltas are not repeated measurements.",
+    "Foreign bodies bypass SQL/model assembly. Preparation still takes 1390 ms and process footprint is 611.70 MB at 100k; precise retained allocation split is unmeasured.",
+    "UI retry, production release and integrated physical acceptance are separate receipts."
+  ]
+}

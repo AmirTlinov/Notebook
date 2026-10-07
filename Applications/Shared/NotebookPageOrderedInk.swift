@@ -43,9 +43,8 @@ struct NotebookPageOrderedInkInput:Equatable,Sendable {
   }
   func matches(_ plan:NotebookOrderedInkPlan)->Bool {
     guard suppressedInkIDs == plan.suppressedInkIDs,candidates.count == plan.bodies.count else {return false}
-    let byID=Dictionary(uniqueKeysWithValues:plan.bodies.map {($0.elementID,$0)})
     return candidates.allSatisfy { candidate in
-      guard let body=byID[candidate.id] else {return false}
+      guard let body=plan.body(elementID:candidate.id) else {return false}
       return body.sourceID == candidate.graphic.sourceInkContactID
         && body.graphic == candidate.graphic && body.layout == candidate.layout && body.erasures == candidate.erasures
     }

@@ -156,6 +156,19 @@ as described under the current-page lifecycle below.
 Unmount/reclamation releases canvas backing; submitted work and external leases
 keep their exact resources charged until GPU completion/release.
 
+Ordered selection poses replace only their addressed plan and prepared-body
+search paths. The existing spatial index retains immutable bounds, painter and
+ID roots; each move updates those roots together. Local queries stay bounded
+after repeated foreign moves, while captured roots and painter cursors remain
+stable. Cancellation restores selected sources against the current plan,
+preserving unrelated suppression even when its prepared geometry is empty.
+
+An offcrop ordered body retains its source and clip metadata; its first visible
+preparation stages mutable material renderers from the captured inputs.
+Rectangle clips submit six inline display nodes. Polygon clips admit aligned
+buffer backing and check actual `allocatedSize`; submitted frames hold the
+reservation through GPU completion.
+
 A rejected page-frame allocation or encoding attempt pauses its existing display
 clock; UIKit drains the final update through the same phase action. It must not
 retry continuously while resource admission is refused. A later owner request

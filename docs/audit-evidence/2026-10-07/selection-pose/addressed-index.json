@@ -1,0 +1,224 @@
+{
+  "date": "2026-10-07",
+  "nativeCropPoints": [
+    400,
+    400
+  ],
+  "drawablePixels": [
+    800,
+    800
+  ],
+  "scope": [
+    "Ordinary selection model/presentation owner with native mounted InkCanvasView and matching Metal OS receipts.",
+    "Fixed 120 Hz demands keep delivery backlog and superseded requests; final exact pose and visible unchanged neighbor checked.",
+    "Foreign source assembly and clip preparation precede motion with the default 256 MiB scene resource budget."
+  ],
+  "baseCommit": "e515dda40f6182aa2545f3e6debdc9cefac8a193",
+  "sourceSHA256": "47a33fec042ff828d7553fdd2fed232d9ec862997d07738e1c347a1874d805b4",
+  "sourceBeforeEqualsAfter": true,
+  "files": {
+    "Applications/Shared/InkCanvasView.swift": "aba352cc32b2a9310a0a76efaf979d64fc805b4dba4320b5fbab54d7322ddd68",
+    "Applications/Shared/InkOrderedGeometry.swift": "d9e7bb1ad1a7bf3e5781b5c7fe24cd18f32eb3ea5ff589b61656e809074380bf",
+    "Applications/Shared/NotebookOrderedInkPlan.swift": "b03d452f3ccad974e8b65ad69d08e3b85b1422c53d865a327a01970e97bdb79e",
+    "Applications/Shared/NotebookSelectionPresentation.swift": "c183085adad4feb09fa9dada4ac50a845adac92a9da7d40569cf52f5ff435d08",
+    "Applications/Tests/NotebookSelectionPoseLatencyTests.swift": "d4e6fc9dcdb5fe55c62031ee9b8436454ef7122392d98be5994f29fcad33b321",
+    "Sources/NotebookCore/InkActionMap.swift": "3bd2b254079222dda90868a5821663e69341ed5db39502faf2b6b5fd3c1b9d5d",
+    "Sources/NotebookCore/WorkspaceSpatialIndex.swift": "ad1138cf0796909f45bbd88e4e4072408cfd10dcd064c7b427d24b68098732f6",
+    "Applications/Shared/NotebookPageOrderedInk.swift": "a717f8100d010ec77a68dd8b5d7a8d0cb94b956ea4c1eb1db08c5aa1cfb53d06",
+    "Sources/NotebookCore/SpatialInkJournal.swift": "481a0a308fec0b886dcb2441bd6b31d0eb422f669b4c4b5dc16e2c5daf845f92",
+    "Applications/Tests/InkMaterialCanvasTests.swift": "bee58bb47b63e75a89619d8082f0a6543e0c82dd9b45f593dc167d1899a73d6d",
+    "Tests/NotebookCoreTests/WorkspaceSpatialIndexTests.swift": "9ba39f87bd47ae0e01d491563546c048ca6441fb8fd0c59de11a8abbd2263dab"
+  },
+  "device": {
+    "architecture": "arm64e",
+    "deviceId": "00008103-001E059934D9001E",
+    "deviceName": "iPad (Елизавета)",
+    "modelName": "iPad Pro (11-inch) (3rd generation)",
+    "osBuildNumber": "24A435",
+    "osVersion": "27.0",
+    "platform": "iOS"
+  },
+  "checks": {
+    "corePassed": 15,
+    "nativePassed": 4,
+    "uiFailed": 1,
+    "skipped": 0,
+    "runtimeWarnings": [],
+    "uiFailure": "Context action unavailable: Выбрать несколько; before movement. Verification route exits 1, UIKit gesture acceptance remains pending."
+  },
+  "cases": [
+    {
+      "foreignBodies": 1,
+      "orderedBodies": 3,
+      "counts": {
+        "fixed120Hz": 120,
+        "exactInstalled": 41,
+        "exactPresented": 41,
+        "superseded": 79,
+        "unmatchedReceipts": 0,
+        "unexpectedInstalledFrames": 0
+      },
+      "latencyMS": {
+        "scheduledToDeliveryMS": {
+          "n": 120,
+          "p50": 1.155291625764221,
+          "p95": 1.2280833325348794,
+          "p99": 1.2553333071991801,
+          "max": 1.2558749876916409
+        },
+        "deliveryToReturnMS": {
+          "n": 120,
+          "p50": 0.11241668835282326,
+          "p95": 0.15183334471657872,
+          "p99": 0.16329169739037752,
+          "max": 0.18254166934639215
+        },
+        "scheduledToExactOSMS": {
+          "n": 41,
+          "p50": 46.69858328998089,
+          "p95": 50.7958332891576,
+          "p99": 54.95045828865841,
+          "max": 54.95045828865841
+        },
+        "scheduledToNextAdvancingPoseOSMS": {
+          "n": 120,
+          "p50": 55.0319166504778,
+          "p95": 63.51729162270203,
+          "p99": 71.61712500965223,
+          "max": 75.79583331244066
+        }
+      },
+      "preparationMS": {
+        "setupMS": 0.08583336602896452,
+        "prepareMS": 0.3592083230614662,
+        "initialInstallMS": 25.139333331026137
+      },
+      "memoryBytes": {
+        "footprintBefore": 55378784,
+        "footprintPrepared": 55640928,
+        "preparationPeak": 55640928,
+        "accountedBytes": 8406128,
+        "limitBytes": 268435456
+      },
+      "thermal": "nominal",
+      "lowPower": false,
+      "sampleCSV": "addressed-index-1.csv",
+      "sampleSHA256": "a3a3b7fad9c6e86ae78b35d505a39b463d15fcb9da9bb9ff52edb6937e15e9d1",
+      "pixels": [
+        {
+          "kind": "initial",
+          "file": "F9EBA058-EC5C-45C3-9508-475FE39F05B6.png",
+          "sha256": "ae98bb2bf2346da4acc9b013ec7fa11f70f61c4a3f8c2bfc0d16c94aa0f061fc"
+        },
+        {
+          "kind": "final",
+          "file": "3D21389C-0540-4D47-8F98-E5C8BCFB7024.png",
+          "sha256": "edd5f5e070681f019869f02a1bca8406fe0d9c1dffb3a25ba9b54c1c1c512565"
+        }
+      ]
+    },
+    {
+      "foreignBodies": 100000,
+      "orderedBodies": 100002,
+      "counts": {
+        "fixed120Hz": 120,
+        "exactInstalled": 42,
+        "exactPresented": 42,
+        "superseded": 78,
+        "unmatchedReceipts": 0,
+        "unexpectedInstalledFrames": 0
+      },
+      "latencyMS": {
+        "scheduledToDeliveryMS": {
+          "n": 120,
+          "p50": 1.145916699897498,
+          "p95": 1.2763750273734331,
+          "p99": 1.3699166593141854,
+          "max": 1.3750833459198475
+        },
+        "deliveryToReturnMS": {
+          "n": 120,
+          "p50": 0.112166628241539,
+          "p95": 0.2147083287127316,
+          "p99": 0.2460000105202198,
+          "max": 0.27466670144349337
+        },
+        "scheduledToExactOSMS": {
+          "n": 42,
+          "p50": 45.78929167473689,
+          "p95": 49.94758334942162,
+          "p99": 62.47633334714919,
+          "max": 62.47633334714919
+        },
+        "scheduledToNextAdvancingPoseOSMS": {
+          "n": 120,
+          "p50": 54.122624977026135,
+          "p95": 66.51316664647311,
+          "p99": 66.61425001220778,
+          "max": 66.6345416684635
+        }
+      },
+      "preparationMS": {
+        "setupMS": 650.2421667100862,
+        "prepareMS": 6316.512041667011,
+        "initialInstallMS": 461.43933333223686
+      },
+      "memoryBytes": {
+        "footprintBefore": 54444896,
+        "footprintPrepared": 761103752,
+        "preparationPeak": 761103752,
+        "accountedBytes": 22805984,
+        "limitBytes": 268435456
+      },
+      "thermal": "nominal",
+      "lowPower": false,
+      "sampleCSV": "addressed-index-100000.csv",
+      "sampleSHA256": "114554e32496c1fd1a8ccebc02bc9e88ce4fec3617f0749a59ab93581e90cc7e",
+      "pixels": [
+        {
+          "kind": "initial",
+          "file": "E05675C5-69FA-4BED-A4E1-81BCF24749B5.png",
+          "sha256": "ae98bb2bf2346da4acc9b013ec7fa11f70f61c4a3f8c2bfc0d16c94aa0f061fc"
+        },
+        {
+          "kind": "final",
+          "file": "04886B1D-EC9E-4463-AD90-94B2F451EE02.png",
+          "sha256": "edd5f5e070681f019869f02a1bca8406fe0d9c1dffb3a25ba9b54c1c1c512565"
+        }
+      ]
+    }
+  ],
+  "evidenceDirectory": ".build/selection-pose-candidate-20261007-v1",
+  "screenshotsReviewed": [
+    "E05675C5-69FA-4BED-A4E1-81BCF24749B5.png",
+    "04886B1D-EC9E-4463-AD90-94B2F451EE02.png"
+  ],
+  "remaining": [
+    "Single native replay per workload; same motion harness, no compositor FPS or physical Pencil measurement.",
+    "Native run follows three selected regressions, so one-body setup is warm. Absolute preparation deltas are not repeated measurements.",
+    "100k preparation and resident memory remain high; GUI-525 separately addresses offcrop clipping/material preparation.",
+    "UI page gesture failed before motion at context menu. Production release and integrated physical acceptance remain pending."
+  ],
+  "deltaFromBaseline": {
+    "1": {
+      "nextAdvancingP95MS": [
+        78.22595827747136,
+        63.51729162270203
+      ],
+      "deliveryP95MS": [
+        1.2924583279527724,
+        1.2280833325348794
+      ]
+    },
+    "100000": {
+      "nextAdvancingP95MS": [
+        608.2422916661017,
+        66.51316664647311
+      ],
+      "deliveryP95MS": [
+        196.40704162884504,
+        1.2763750273734331
+      ]
+    }
+  }
+}

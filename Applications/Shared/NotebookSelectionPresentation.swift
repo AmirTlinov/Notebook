@@ -123,7 +123,7 @@ import QuartzCore
     var restoration:InkCanvasView.SourceRestoration?
     if let raw {
       for member in source.orderedMembers {
-        guard let body=raw.orderedInkPlan.bodies.first(where:{$0.elementID == member.id}),
+        guard let body=raw.orderedInkPlan.body(elementID:member.id),
           body.graphic == member.graphic,body.layout == member.layout else {return nil}
         originals[member.id]=body
       }

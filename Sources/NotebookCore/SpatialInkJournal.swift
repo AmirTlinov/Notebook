@@ -179,7 +179,9 @@ public struct SpatialInkJournal: Codable, Equatable, Sendable {
   /// their shared contact index, including indirect identifiers and capacity.
   /// Shared roots are intentionally charged to each retaining cache entry.
   public var retainedMetadataBytes: Int {
-    128 + actionCount * (MemoryLayout<SpatialInkAction>.stride + 128) + storage.contactIndex.retainedMetadataBytes
+    let nodes = InkActionMapNode<Int, SpatialInkAction>.retainedNodeBytes
+      + InkActionMapNode<UUID, Int>.retainedNodeBytes
+    return 128 + actionCount * nodes + storage.contactIndex.retainedMetadataBytes
   }
   public var retainedPayloadBytes:Int { storage.retainedPayloadBytes }
   public private(set) var stamp: VersionStamp

@@ -195,7 +195,7 @@ public struct WorkspaceSpatialIntersectionQuery: Equatable, Sendable {
 public struct WorkspaceSpatialReadCursor: Sendable {
   fileprivate let generation: UUID
   fileprivate let bounds: WorkspaceSpatialBounds
-  fileprivate let pending: [Int]
+  fileprivate let pending: [WorkspaceSpatialIndex.PaintStep]
 }
 
 public enum WorkspaceSpatialReadError: Error, Equatable { case cursorMismatch }
@@ -206,94 +206,157 @@ public struct WorkspaceSpatialReadPage: Sendable {
   public let visitedNodes: Int
 }
 
-/// Immutable derived geometry. Build once per geometry revision, query without reading content.
-/// Query work and returned primitives are bounded even when every source overlaps the viewport.
+/// One immutable spatial and painter index. Addressed updates share unchanged
+/// tree nodes; readers retain their exact geometry and generation.
 public struct WorkspaceSpatialIndex: Sendable {
-  private struct Node: Sendable {
-    var bounds: WorkspaceSpatialBounds
-    var range: Range<Int>
-    var children: (Int, Int)?
-    var kinds: WorkspaceSpatialKinds
+  fileprivate struct Identifier: Comparable, Sendable {
+    let id: WorkspaceSpatialID
+    static func < (a: Self, b: Self) -> Bool { WorkspaceSpatialIndex.idOrder(a.id, b.id) }
+  }
+  fileprivate struct SpatialKey: Comparable, Sendable {
+    let origin: WorldPoint
+    let id: WorkspaceSpatialID
+    init(_ entry: WorkspaceSpatialEntry) { origin = entry.bounds.origin; id = entry.id }
+    static func < (a: Self, b: Self) -> Bool {
+      // Signed tiles remain exact through the full Int64 range. Local doubles
+      // are positive monotone bit patterns; normalize the two spellings of zero.
+      func interleaved(_ ax: UInt64, _ ay: UInt64, _ bx: UInt64, _ by: UInt64) -> Bool? {
+        let x = ax ^ bx, y = ay ^ by
+        guard x != 0 || y != 0 else { return nil }
+        return x.leadingZeroBitCount <= y.leadingZeroBitCount ? ax < bx : ay < by
+      }
+      let sign: UInt64 = 1 << 63
+      if let order = interleaved(UInt64(bitPattern: a.origin.tileX) ^ sign,
+        UInt64(bitPattern: a.origin.tileY) ^ sign, UInt64(bitPattern: b.origin.tileX) ^ sign,
+        UInt64(bitPattern: b.origin.tileY) ^ sign) { return order }
+      if let order = interleaved(a.origin.localX == 0 ? 0 : a.origin.localX.bitPattern,
+        a.origin.localY == 0 ? 0 : a.origin.localY.bitPattern,
+        b.origin.localX == 0 ? 0 : b.origin.localX.bitPattern,
+        b.origin.localY == 0 ? 0 : b.origin.localY.bitPattern) { return order }
+      return WorkspaceSpatialIndex.idOrder(a.id, b.id)
+    }
+  }
+  fileprivate struct PaintKey: Comparable, Sendable {
+    let z: Double
+    let id: WorkspaceSpatialID
+    init(_ entry: WorkspaceSpatialEntry) { z = entry.zIndex; id = entry.id }
+    static func < (a: Self, b: Self) -> Bool {
+      a.z == b.z ? WorkspaceSpatialIndex.idOrder(a.id, b.id) : a.z < b.z
+    }
+  }
+  fileprivate struct BoundsSummary: InkActionTreeSummary {
+    let bounds: WorkspaceSpatialBounds
+    let kinds: WorkspaceSpatialKinds
+    init(value: WorkspaceSpatialEntry, left: Self?, right: Self?) {
+      var bounds = value.bounds, kinds = WorkspaceSpatialIndex.kind(of: value.id)
+      if let left { bounds = bounds.union(left.bounds); kinds.formUnion(left.kinds) }
+      if let right { bounds = bounds.union(right.bounds); kinds.formUnion(right.kinds) }
+      self.bounds = bounds; self.kinds = kinds
+    }
+  }
+  fileprivate typealias SpatialNode = InkActionTreeNode<SpatialKey, WorkspaceSpatialEntry, BoundsSummary>
+  fileprivate typealias PaintNode = InkActionTreeNode<PaintKey, WorkspaceSpatialEntry, BoundsSummary>
+  fileprivate enum PaintStep: Sendable {
+    case tree(PaintNode)
+    case entry(WorkspaceSpatialEntry)
+  }
+  private enum SpatialStep {
+    case tree(SpatialNode, lower: Int)
+    case entry(WorkspaceSpatialEntry, rank: Int)
+    var bounds: WorkspaceSpatialBounds {
+      switch self { case .tree(let node, _): node.summary.bounds; case .entry(let entry, _): entry.bounds }
+    }
+    var range: Range<Int> {
+      switch self { case .tree(let node, let lower): lower..<(lower+node.count); case .entry(_, let rank): rank..<(rank+1) }
+    }
   }
 
-  private let generation = UUID()
-  private let paintEntries: [WorkspaceSpatialEntry]
-  private let paintNodes: [Node]
-  private let entries: [WorkspaceSpatialEntry]
-  private let positions: [WorkspaceSpatialID: Int]
-  private let nodes: [Node]
-  private let identifierBytes:Int
+  private var generation = UUID()
+  private var spatial: SpatialNode?
+  private var paint: PaintNode?
+  private var entries: InkActionMap<Identifier, WorkspaceSpatialEntry>
+  private var identifierBytes: Int
 
-  /// Retained index storage, including capacity and indirect identifier buffers.
-  /// Computed from the immutable owner without visiting its entries at input.
-  var retainedMetadataBytes:Int {
-    256 + (entries.capacity+paintEntries.capacity)*MemoryLayout<WorkspaceSpatialEntry>.stride
-      + (nodes.capacity+paintNodes.capacity)*MemoryLayout<Node>.stride
-      + positions.capacity*2*(MemoryLayout<WorkspaceSpatialID>.stride+MemoryLayout<Int>.stride+8)
+  // The three roots contain separate fixed node fields; immutable string
+  // payload is shared by their entry/key values and is charged only once.
+  var retainedMetadataBytes: Int {
+    256 + (spatial?.count ?? 0)*SpatialNode.retainedNodeBytes
+      + (paint?.count ?? 0)*PaintNode.retainedNodeBytes
+      + entries.count*InkActionMapNode<Identifier,WorkspaceSpatialEntry>.retainedNodeBytes
       + identifierBytes
   }
 
   public init(entries source: [WorkspaceSpatialEntry]) {
-    var entries = source
     precondition(Set(source.map(\.id)).count == source.count, "Spatial addresses must be unique")
-    var nodes: [Node] = []
-    nodes.reserveCapacity(source.count * 2)
-    if !entries.isEmpty {
-      Self.build(entries: &entries, range: entries.indices, nodes: &nodes)
-    }
-    self.entries = entries
-    self.nodes = nodes
-    let ordered = source.sorted(by: Self.detailOrder)
-    var orderedNodes: [Node] = []
-    if !ordered.isEmpty { Self.buildPaint(entries: ordered, range: ordered.indices, nodes: &orderedNodes) }
-    paintEntries = ordered
-    paintNodes = orderedNodes
-    positions = Dictionary(uniqueKeysWithValues: entries.enumerated().map { ($0.element.id, $0.offset) })
-    identifierBytes=source.reduce(0) {total,entry in
-      if case .element(let id)=entry.id {return total+id.utf8.count*2+64}
-      return total
-    }
+    let located = source.map { (SpatialKey($0), $0) }.sorted { $0.0 < $1.0 }
+    let ordered = source.map { (PaintKey($0), $0) }.sorted { $0.0 < $1.0 }
+    spatial = SpatialNode.balanced(located, 0, located.count)
+    paint = PaintNode.balanced(ordered, 0, ordered.count)
+    entries = .init(entries: source.map { (Identifier(id: $0.id), $0) })
+    identifierBytes = source.reduce(0) { $0+Self.identifierBytes($1.id) }
   }
 
-  public func entry(id: WorkspaceSpatialID) -> WorkspaceSpatialEntry? {
-    positions[id].map { entries[$0] }
+  public func entry(id: WorkspaceSpatialID) -> WorkspaceSpatialEntry? { entries[Identifier(id: id)] }
+
+  /// Each supplied address replaces or removes exactly that entry. No spatial
+  /// override list, old generation, or whole-index rebuild follows a pose.
+  public func replacing(_ ids: Set<WorkspaceSpatialID>, with source: [WorkspaceSpatialEntry]) -> Self {
+    precondition(source.allSatisfy { ids.contains($0.id) })
+    let next = Dictionary(uniqueKeysWithValues: source.map { ($0.id, $0) })
+    var result = self, changed = false
+    for id in ids {
+      let key = Identifier(id: id), old = entries[key], value = next[id]
+      guard old != value else { continue }
+      changed = true
+      if let old {
+        if value.map({ SpatialKey($0) != SpatialKey(old) }) ?? true {
+          result.spatial = result.spatial?.removing(SpatialKey(old))
+        }
+        if value.map({ PaintKey($0) != PaintKey(old) }) ?? true {
+          result.paint = result.paint?.removing(PaintKey(old))
+        }
+      }
+      if let value {
+        result.spatial = result.spatial?.inserting(SpatialKey(value), value) ?? .init(SpatialKey(value), value)
+        result.paint = result.paint?.inserting(PaintKey(value), value) ?? .init(PaintKey(value), value)
+      }
+      result.entries[key] = value
+      if old == nil { result.identifierBytes += Self.identifierBytes(id) }
+      if value == nil { result.identifierBytes -= Self.identifierBytes(id) }
+    }
+    if changed { result.generation = UUID() }
+    return result
   }
 
-  /// Exact spatial candidates without overview primitives. The same retained
-  /// tree owns rendering and interaction broad phase; only matching leaf kinds
-  /// are visited, and dense hits stop at an explicit caller limit.
+  /// Exact spatial candidates without overview primitives. Matching bounds
+  /// and kinds prune whole immutable subtrees before an entry is disclosed.
   public func intersections(in bounds: WorkspaceSpatialBounds,
     kinds: WorkspaceSpatialKinds = .all, limit: Int = 4_096) -> WorkspaceSpatialIntersectionQuery {
     precondition(limit > 0)
-    guard !nodes.isEmpty, !kinds.isEmpty else {
-      return .init(entries: [], overflow: false,
-        statistics: .init(visitedNodes: 0, examinedEntries: 0))
+    guard let spatial, !kinds.isEmpty else {
+      return .init(entries: [], overflow: false, statistics: .init(visitedNodes: 0, examinedEntries: 0))
     }
-    var pending = [0], result: [WorkspaceSpatialEntry] = []
+    var pending = [spatial], result: [WorkspaceSpatialEntry] = []
     var visits = 0, examined = 0, overflow = false
-    while let id = pending.popLast() {
-      let node = nodes[id]
+    while let node = pending.popLast() {
       visits += 1
-      guard !node.kinds.intersection(kinds).isEmpty,
-        node.bounds.intersects(bounds) else { continue }
-      if let children = node.children {
-        pending.append(children.1); pending.append(children.0)
-      } else {
-        examined += 1
-        let entry = entries[node.range.lowerBound]
-        guard Self.kind(of: entry.id).isSubset(of: kinds), entry.bounds.intersects(bounds) else { continue }
-        if result.count == limit { overflow = true; break }
-        result.append(entry)
-      }
+      guard !node.summary.kinds.intersection(kinds).isEmpty, node.summary.bounds.intersects(bounds) else { continue }
+      if let right = node.right { pending.append(right) }
+      if let left = node.left { pending.append(left) }
+      let value = node.value
+      guard Self.kind(of: value.id).isSubset(of: kinds) else { continue }
+      examined += 1
+      guard value.bounds.intersects(bounds) else { continue }
+      if result.count == limit { overflow = true; break }
+      result.append(value)
     }
     result.sort(by: Self.detailOrder)
     return .init(entries: result, overflow: overflow,
       statistics: .init(visitedNodes: visits, examinedEntries: examined))
   }
 
-  /// Exact, stable painter order for sequential raster preparation. Each call
-  /// bounds both output and traversal, including sparse and fully overlapping
-  /// compositions. An empty page with a cursor is progress, not an empty region.
+  /// Bounded painter-order traversal retains only a search path. A cursor
+  /// names this exact immutable generation and physical query rectangle.
   public func readPaintOrder(in bounds: WorkspaceSpatialBounds,
     after cursor: WorkspaceSpatialReadCursor? = nil, limit: Int = 64,
     maximumVisits: Int = 512) throws -> WorkspaceSpatialReadPage {
@@ -301,189 +364,112 @@ public struct WorkspaceSpatialIndex: Sendable {
     if let cursor, cursor.generation != generation || cursor.bounds != bounds {
       throw WorkspaceSpatialReadError.cursorMismatch
     }
-    var pending = cursor?.pending ?? (paintNodes.isEmpty ? [] : [0])
-    var result: [WorkspaceSpatialEntry] = []
-    var visits = 0
-    while visits < maximumVisits, result.count < limit, let id = pending.popLast() {
-      let node = paintNodes[id]
+    var pending = cursor?.pending ?? paint.map { [PaintStep.tree($0)] } ?? []
+    var result: [WorkspaceSpatialEntry] = [], visits = 0
+    while visits < maximumVisits, result.count < limit, let step = pending.popLast() {
       visits += 1
-      guard node.bounds.intersects(bounds) else { continue }
-      if let children = node.children {
-        pending.append(children.1)
-        pending.append(children.0)
-      } else {
-        result.append(paintEntries[node.range.lowerBound])
+      switch step {
+      case .tree(let node):
+        guard node.summary.bounds.intersects(bounds) else { continue }
+        if let right = node.right { pending.append(.tree(right)) }
+        if node.value.bounds.intersects(bounds) { pending.append(.entry(node.value)) }
+        if let left = node.left { pending.append(.tree(left)) }
+      case .entry(let value): result.append(value)
       }
     }
     return .init(entries: result, next: pending.isEmpty ? nil : .init(generation: generation,
       bounds: bounds, pending: pending), visitedNodes: visits)
   }
 
-  @discardableResult
-  private static func buildPaint(entries: [WorkspaceSpatialEntry], range: Range<Int>, nodes: inout [Node]) -> Int {
-    let id = nodes.count
-    nodes.append(.init(bounds: entries[range.lowerBound].bounds, range: range, children: nil,
-      kinds: kind(of: entries[range.lowerBound].id)))
-    if range.count > 1 {
-      let middle = range.lowerBound + range.count / 2
-      let left = buildPaint(entries: entries, range: range.lowerBound..<middle, nodes: &nodes)
-      let right = buildPaint(entries: entries, range: middle..<range.upperBound, nodes: &nodes)
-      nodes[id].bounds = nodes[left].bounds.union(nodes[right].bounds)
-      nodes[id].kinds = nodes[left].kinds.union(nodes[right].kinds)
-      nodes[id].children = (left, right)
-    }
-    return id
-  }
-
-  /// `limit` bounds ordinary details plus aggregates. Explicit pinned owners are returned
-  /// additionally, including outside the viewport, and never counted again in an aggregate.
-  /// A zero minimum extent requests exact details whenever the primitive budget permits.
-  public func query(
-    bounds: WorkspaceSpatialBounds,
-    limit: Int = 256,
-    minimumProjectedExtent: Double = 12,
-    scale: Double = 1,
-    pinned: Set<WorkspaceSpatialID> = []
-  ) -> WorkspaceSpatialQuery {
+  /// Overview primitives and explicit pins share the same current geometry.
+  /// The finite frontier always partitions its unpinned source entries.
+  public func query(bounds: WorkspaceSpatialBounds, limit: Int = 256,
+    minimumProjectedExtent: Double = 12, scale: Double = 1,
+    pinned: Set<WorkspaceSpatialID> = []) -> WorkspaceSpatialQuery {
     precondition(limit > 0 && scale.isFinite && scale > 0)
     precondition(minimumProjectedExtent.isFinite && minimumProjectedExtent >= 0)
-    let pinnedPositions = pinned.compactMap { positions[$0] }.sorted()
-    var details = pinnedPositions.map { entries[$0] }
-    guard !nodes.isEmpty else {
-      return WorkspaceSpatialQuery(entries: [], aggregates: [], statistics: .init(visitedNodes: 0, examinedEntries: 0))
+    let pinnedEntries = pinned.compactMap { entry(id: $0) }
+    let pinnedRanks = pinnedEntries.compactMap { rank(of: SpatialKey($0)) }.sorted()
+    var details = pinnedEntries
+    guard let spatial else {
+      return .init(entries: [], aggregates: [], statistics: .init(visitedNodes: 0, examinedEntries: 0))
     }
-    var visited = 1
-    var examined = 0
-    let maximumVisits = max(64, limit.multipliedReportingOverflow(by: 8).overflow ? Int.max : limit * 8)
-    var frontier: [Int] = nodes[0].bounds.intersects(bounds) ? [0] : []
+    var visited = 1, examined = 0, ordinaryCount = 0, next = 0
+    let maximumVisits = max(64, limit.multipliedReportingOverflow(by: 8).overflow ? Int.max : limit*8)
+    var frontier: [SpatialStep] = spatial.summary.bounds.intersects(bounds) ? [.tree(spatial, lower: 0)] : []
     var aggregates: [WorkspaceSpatialAggregate] = []
-    var ordinaryCount = 0
-
-    var next = 0
     while next < frontier.count {
-      let nodeID = frontier[next]
-      next += 1
-      let node = nodes[nodeID]
-      let pinnedCount = Self.lowerBound(pinnedPositions, node.range.upperBound)
-        - Self.lowerBound(pinnedPositions, node.range.lowerBound)
-      let count = node.range.count - pinnedCount
+      let step = frontier[next]; next += 1
+      let range = step.range
+      let pinnedCount = Self.lowerBound(pinnedRanks, range.upperBound)-Self.lowerBound(pinnedRanks, range.lowerBound)
+      let count = range.count-pinnedCount
       guard count > 0 else { continue }
-      let available = limit - ordinaryCount - aggregates.count - (frontier.count - next)
-      let extent = max(node.bounds.width, node.bounds.height) * scale
-      // Do not draw many identical overview labels for coincident sources.
-      // An uncapped query can still ask for every individual source.
-      let refinementSeparatesSpace = node.children.map {
-        nodes[$0.0].bounds != node.bounds || nodes[$0.1].bounds != node.bounds
-      } ?? false
-      if node.range.count == 1 {
+      let available = limit-ordinaryCount-aggregates.count-(frontier.count-next)
+      let extent = max(step.bounds.width, step.bounds.height)*scale
+      let leaf: WorkspaceSpatialEntry?
+      var children: [SpatialStep] = []
+      switch step {
+      case .entry(let entry, _): leaf = entry
+      case .tree(let node, let lower):
         examined += 1
-        let entry = entries[node.range.lowerBound]
-        if entry.bounds.intersects(bounds) {
-          if extent >= minimumProjectedExtent {
-            details.append(entry)
-            ordinaryCount += 1
-          } else {
-            aggregates.append(.init(id: nodeID, bounds: node.bounds, count: 1))
-          }
+        if node.count == 1 { leaf = node.value }
+        else {
+          leaf = nil
+          let leftCount = node.left?.count ?? 0
+          if let left = node.left { children.append(.tree(left, lower: lower)) }
+          children.append(.entry(node.value, rank: lower+leftCount))
+          if let right = node.right { children.append(.tree(right, lower: lower+leftCount+1)) }
         }
-      } else if extent >= minimumProjectedExtent, available >= 2,
-                (refinementSeparatesSpace || count <= available),
-                visited <= maximumVisits - 2, let children = node.children {
-        visited += 2
-        // The frontier contains disjoint subtrees, so a failed refinement can always be
-        // represented by one aggregate without dropping hidden descendants.
-        if nodes[children.0].bounds.intersects(bounds) { frontier.append(children.0) }
-        if nodes[children.1].bounds.intersects(bounds) { frontier.append(children.1) }
+      }
+      if let leaf {
+        if extent >= minimumProjectedExtent { details.append(leaf); ordinaryCount += 1 }
+        else { aggregates.append(.init(id: range.lowerBound, bounds: step.bounds, count: 1)) }
+      } else if extent >= minimumProjectedExtent, available >= children.count,
+        children.contains(where: { $0.bounds != step.bounds }) || count <= available,
+        visited <= maximumVisits-children.count {
+        visited += children.count
+        frontier.append(contentsOf: children.filter { $0.bounds.intersects(bounds) })
       } else {
-        aggregates.append(.init(id: nodeID, bounds: node.bounds, count: count))
+        aggregates.append(.init(id: range.lowerBound, bounds: step.bounds, count: count))
       }
     }
-    details.sort(by: Self.detailOrder)
-    aggregates.sort { $0.id < $1.id }
-    return WorkspaceSpatialQuery(
-      entries: details,
-      aggregates: aggregates,
-      statistics: .init(visitedNodes: visited, examinedEntries: examined)
-    )
+    details.sort(by: Self.detailOrder); aggregates.sort { $0.id < $1.id }
+    return .init(entries: details, aggregates: aggregates,
+      statistics: .init(visitedNodes: visited, examinedEntries: examined))
   }
 
-  @discardableResult
-  private static func build(entries: inout [WorkspaceSpatialEntry], range: Range<Int>, nodes: inout [Node]) -> Int {
-    var bounds = entries[range.lowerBound].bounds
-    var kinds = kind(of: entries[range.lowerBound].id)
-    for index in range.dropFirst() {
-      bounds = bounds.union(entries[index].bounds);kinds.formUnion(kind(of:entries[index].id))
+  private func rank(of key: SpatialKey) -> Int? {
+    var node = spatial, offset = 0
+    while let current = node {
+      if key < current.key { node = current.left }
+      else if key > current.key { offset += (current.left?.count ?? 0)+1; node = current.right }
+      else { return offset+(current.left?.count ?? 0) }
     }
-    let nodeID = nodes.count
-    nodes.append(Node(bounds: bounds, range: range, children: nil, kinds: kinds))
-    if range.count > 1 {
-      let horizontal = bounds.width >= bounds.height
-      let middle = range.lowerBound + range.count / 2
-      partition(entries: &entries, range: range, middle: middle, horizontal: horizontal)
-      let left = build(entries: &entries, range: range.lowerBound..<middle, nodes: &nodes)
-      let right = build(entries: &entries, range: middle..<range.upperBound, nodes: &nodes)
-      nodes[nodeID].children = (left, right)
-    }
-    return nodeID
+    return nil
   }
-
-  /// In-place median selection avoids allocating or sorting a second geometry tree.
-  private static func partition(entries: inout [WorkspaceSpatialEntry], range: Range<Int>, middle: Int, horizontal: Bool) {
-    var lower = range.lowerBound
-    var upper = range.upperBound - 1
-    while lower < upper {
-      let pivot = entries[lower + (upper - lower) / 2]
-      var left = lower
-      var right = upper
-      while left <= right {
-        while spatialOrder(entries[left], pivot, horizontal: horizontal) { left += 1 }
-        while spatialOrder(pivot, entries[right], horizontal: horizontal) { right -= 1 }
-        if left <= right {
-          entries.swapAt(left, right)
-          left += 1
-          right -= 1
-        }
-      }
-      if middle <= right { upper = right }
-      else if middle >= left { lower = left }
-      else { return }
+  private static func identifierBytes(_ id: WorkspaceSpatialID) -> Int {
+    if case .element(let text) = id { return text.utf8.count*2+64 }
+    return 0
+  }
+  private static func detailOrder(_ a: WorkspaceSpatialEntry, _ b: WorkspaceSpatialEntry) -> Bool {
+    a.zIndex == b.zIndex ? idOrder(a.id, b.id) : a.zIndex < b.zIndex
+  }
+  private static func idOrder(_ a: WorkspaceSpatialID, _ b: WorkspaceSpatialID) -> Bool {
+    switch (a, b) {
+    case (.item(let x), .item(let y)): x < y
+    case (.element(let x), .element(let y)): x < y
+    case (.item, .element): true
+    case (.element, .item): false
     }
   }
-
-  private static func spatialOrder(_ lhs: WorkspaceSpatialEntry, _ rhs: WorkspaceSpatialEntry, horizontal: Bool) -> Bool {
-    let a = lhs.bounds.origin
-    let b = rhs.bounds.origin
-    let order = horizontal
-      ? WorkspaceSpatialBounds.compare(a.tileX, a.localX, b.tileX, b.localX)
-      : WorkspaceSpatialBounds.compare(a.tileY, a.localY, b.tileY, b.localY)
-    if order != 0 { return order < 0 }
-    return idOrder(lhs.id, rhs.id)
-  }
-
-  private static func detailOrder(_ lhs: WorkspaceSpatialEntry, _ rhs: WorkspaceSpatialEntry) -> Bool {
-    if lhs.zIndex != rhs.zIndex { return lhs.zIndex < rhs.zIndex }
-    return idOrder(lhs.id, rhs.id)
-  }
-
-  private static func idOrder(_ lhs: WorkspaceSpatialID, _ rhs: WorkspaceSpatialID) -> Bool {
-    switch (lhs, rhs) {
-    case (.item(let a), .item(let b)): return a.uuidString < b.uuidString
-    case (.element(let a), .element(let b)): return a < b
-    case (.item, .element): return true
-    case (.element, .item): return false
-    }
-  }
-
   private static func kind(of id: WorkspaceSpatialID) -> WorkspaceSpatialKinds {
     switch id { case .item: .items; case .element: .elements }
   }
-
   private static func lowerBound(_ positions: [Int], _ value: Int) -> Int {
-    var lower = 0
-    var upper = positions.count
+    var lower = 0, upper = positions.count
     while lower < upper {
-      let middle = lower + (upper - lower) / 2
-      if positions[middle] < value { lower = middle + 1 } else { upper = middle }
+      let middle = lower+(upper-lower)/2
+      if positions[middle] < value { lower = middle+1 } else { upper = middle }
     }
     return lower
   }

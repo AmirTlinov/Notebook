@@ -6,6 +6,125 @@ import XCTest
 @testable import Notebook
 
 @MainActor final class InkMaterialCanvasTests: XCTestCase {
+  func testOrderedPolygonClipSurvivesOffcropCutAndSourceRestoration() async throws {
+    let scene=try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous=scene.windows.first(where:\.isKeyWindow),window=UIWindow(windowScene:scene)
+    let controller=UIViewController(),canvas=InkCanvasView(frame:.zero,resources:SceneRenderResources())
+    window.rootViewController=controller;controller.view.backgroundColor = .white
+    controller.view.addSubview(canvas);window.makeKeyAndVisible()
+    defer {
+      canvas.onOrderedFrameInstalled=nil;canvas.onOrderedFrameResolved=nil
+      Task { await canvas.finishSpatialHandoffFrames() }
+      canvas.removeFromSuperview();window.isHidden=true;window.rootViewController=nil;previous?.makeKey()
+    }
+    let sourceFrame=PageRect(x:0,y:0,width:200,height:100)
+    let frame=PageRect(x:24.25,y:40.5,width:220.5,height:150.75)
+    let neighborFrame=PageRect(x:270.25,y:40.5,width:100.5,height:150.75)
+    let samples=[10.0,190].map { x in
+      SpatialInkSample(point:.init(x:x,y:50),timeOffset:x/240,width:16,opacity:1,force:1,azimuth:0,altitude:.pi/2)
+    }
+    let moving=PageInkAction(tool:.pen,samples:samples,sequence:1),neighbor=PageInkAction(tool:.pen,samples:samples,sequence:2)
+    let mask=NotebookGraphicMask().appending(.intersect,polygon:[.init(x:0.1,y:0),.init(x:0.85,y:0),.init(x:0.85,y:1),.init(x:0.1,y:1)])
+      .appending(.subtract,polygon:[.init(x:0.45,y:0.35),.init(x:0.55,y:0.35),.init(x:0.55,y:0.65),.init(x:0.45,y:0.65)])
+    func body(_ action:PageInkAction,_ id:String,_ rect:PageRect,mask:NotebookGraphicMask? = nil,cuts:[InkElementErasure] = []) throws -> NotebookOrderedInkPlan.Body {
+      let graphic=NotebookGraphic(shape:.freehand,sourceInkIDs:[action.id],freehand:.init(layers:[
+        .init(tool:.pen,color:.black,measured:.init(sourceID:action.id,measurements:action.samples,frame:sourceFrame))]),mask:mask)
+      let node=NotebookGraphicGraph.Node(id:id,graphic:graphic,frame:rect,surface:.page(UUID()),shown:true)
+      let layout=try XCTUnwrap(NotebookGraphicGraph([node]).resolve(id).layout)
+      return .init(elementID:id,key:.page(sequence:action.sequence,id:action.id),graphic:graphic,layout:layout,erasures:cuts)
+    }
+    let originalBody=try body(moving,"masked-body",frame,mask:mask)
+    let neighborBody=try body(neighbor,"rectangle-neighbor",neighborFrame)
+    let originalPlan=NotebookOrderedInkPlan(bodies:[originalBody,neighborBody],suppressedInkIDs:[moving.id,neighbor.id])
+    canvas.projectPage(region:.init(x:0,y:0,width:400,height:300),sourceSize:.init(width:400,height:300),pixelDensity:2)
+    canvas.apply(.init(actions:[moving,neighbor]));try await ready(canvas,after:0)
+    var installed:(id:UUID,revision:UInt64)?
+    var presented:[UUID:(revision:UInt64,time:TimeInterval)]=[:],receipts:[String]=[]
+    canvas.onOrderedFrameInstalled={ installed=($0,$1) }
+    canvas.onOrderedFrameResolved={ id,revision,readiness in
+      if let time=readiness.presentedTime {presented[id]=(revision,time)}
+    }
+    func shown(_ name:String,after prior:UUID?) async throws {
+      func matches()->Bool {
+        guard let installed,installed.id != prior else {return false}
+        return presented[installed.id]?.revision == installed.revision && canvas.isStableFramePresented
+      }
+      let deadline=ContinuousClock.now + .seconds(5)
+      while !matches(),ContinuousClock.now < deadline {try await Task.sleep(for:.milliseconds(5))}
+      XCTAssertTrue(matches(),"\(name) must join its exact installation to an OS presentation receipt")
+      let exact=try XCTUnwrap(installed),os=try XCTUnwrap(presented[exact.id])
+      XCTAssertNotEqual(exact.id,prior);XCTAssertEqual(exact.revision,os.revision)
+      receipts.append("\(name): submission=\(exact.id), revision=\(exact.revision), osPresentedTime=\(os.time)")
+    }
+    func pixels(_ name:String,cut:Bool,offcrop:Bool = false) throws {
+      let image=try NotebookUXObservation.Pixels(window:window)
+      func point(_ x:Double)->CGPoint {canvas.convert(.init(x:frame.x+x*frame.width,y:frame.y+frame.height/2),to:window)}
+      XCTAssertTrue(try image.matches([
+        (point(0.25),offcrop || cut ? .paper:.black),
+        (point(0.5),.paper), // The polygon's visible hole stays absent.
+        (point(0.72),offcrop ? .paper:.black),
+        (point(0.92),.paper), // Stroke outside the intersected region.
+        (canvas.convert(.init(x:neighborFrame.x+neighborFrame.width/2,y:neighborFrame.y+neighborFrame.height/2),to:window),.black)]),name)
+      let proof=XCTAttachment(image:image.image);proof.name="ordered-polygon-\(name)";proof.lifetime = .keepAlways;add(proof)
+    }
+    let preparedOriginal=try await canvas.prepareOrderedPlan(originalPlan)
+    let original=try XCTUnwrap(preparedOriginal)
+    try await canvas.presentOrderedPlan(original,plan:originalPlan,canonical:true)
+    try await shown("initial",after:nil);try pixels("initial",cut:false)
+    let restoration=try XCTUnwrap(canvas.captureSourceRestoration(for:[moving.id]))
+    let outside=PageRect(x:700.5,y:450.25,width:frame.width,height:frame.height)
+    let offcrop=NotebookOrderedInkPlan(bodies:[try body(moving,"masked-body",outside,mask:mask)],suppressedInkIDs:[moving.id])
+    var prior=installed?.id
+    let hidden=try await canvas.prepareOrderedPlan(offcrop)
+    try await canvas.presentOrderedPlan(hidden,plan:offcrop,replacing:[moving.id])
+    try await shown("offcrop",after:prior);try pixels("offcrop",cut:false,offcrop:true)
+    let cut=InkElementErasure(target:.init(elementID:"masked-body",frame:frame),samples:[
+      .init(point:.init(x:frame.x+frame.width*0.25,y:frame.y+frame.height/2),timeOffset:0,width:32,opacity:1,force:1,azimuth:0,altitude:.pi/2)])
+    let changed=NotebookOrderedInkPlan(bodies:[try body(moving,"masked-body",frame,mask:mask,cuts:[cut])],suppressedInkIDs:[moving.id])
+    prior=installed?.id
+    let returned=try await canvas.prepareOrderedPlan(changed)
+    try await canvas.presentOrderedPlan(returned,plan:changed,replacing:[moving.id])
+    restoration.installed()
+    try await shown("returned-cut",after:prior);try pixels("returned-cut",cut:true)
+    XCTAssertEqual(original.plan,originalPlan,"The captured geometry keeps its original clip and cut contents")
+    var restored=0,abandoned=0
+    prior=installed?.id
+    restoration.restore(install:{restored += 1},abandon:{abandoned += 1})
+    try await shown("cancel-restored",after:prior);try pixels("cancel-restored",cut:false)
+    XCTAssertEqual(restored,1);XCTAssertEqual(abandoned,0)
+    XCTAssertEqual(canvas.orderedInkPlan,originalPlan);XCTAssertEqual(original.plan,originalPlan)
+    let report=XCTAttachment(string:receipts.joined(separator:"\n"));report.name="ordered-polygon-os-receipts";report.lifetime = .keepAlways;add(report)
+    await canvas.finishSpatialHandoffFrames()
+  }
+
+  func testRestoringLastOrderedBodyKeepsUnrelatedSuppressionWithoutCurrentGeometry() async throws {
+    let device=try XCTUnwrap(MTLCreateSystemDefaultDevice()),resources=SceneRenderResources()
+    let restoredID=UUID(),hiddenID=UUID(),frame=PageRect(x:0,y:0,width:160,height:160)
+    let measurements=InkMeasurements([30.0,130].map {x in
+      SpatialInkSample(point:.init(x:x,y:80),timeOffset:x/240,width:12,opacity:1,force:1,azimuth:0,altitude:.pi/2)
+    })
+    let graphic=NotebookGraphic(shape:.freehand,sourceInkIDs:[restoredID],freehand:.init(layers:[
+      .init(tool:.pen,color:.black,measured:.init(sourceID:restoredID,measurements:measurements,frame:frame))]))
+    let node=NotebookGraphicGraph.Node(id:"restored-body",graphic:graphic,frame:frame,surface:.page(UUID()),shown:true)
+    let layout=try XCTUnwrap(NotebookGraphicGraph([node]).resolve(node.id).layout)
+    let body=NotebookOrderedInkPlan.Body(elementID:node.id,key:.page(sequence:1,id:restoredID),
+      graphic:graphic,layout:layout,erasures:[])
+    let originalPlan=NotebookOrderedInkPlan(bodies:[body],suppressedInkIDs:[restoredID])
+    let original=try await InkOrderedGeometry(originalPlan,reusing:nil,device:device,resources:resources,owner:nil)
+    // A peer's hidden source was accepted after capture; removing the last
+    // visible body leaves a plan with suppression and no prepared geometry.
+    let currentPlan=NotebookOrderedInkPlan(bodies:[],suppressedInkIDs:[restoredID,hiddenID])
+    let restored=try XCTUnwrap(InkOrderedGeometry.restoring(original,originalPlan:originalPlan,
+      in:nil,currentPlan:currentPlan,removing:[restoredID]))
+    XCTAssertEqual(restored.plan.bodies.count,1)
+    XCTAssertEqual(restored.plan.body(sourceID:restoredID),body)
+    XCTAssertNil(restored.plan.body(sourceID:hiddenID))
+    XCTAssertEqual(restored.plan.suppressedInkIDs,[restoredID,hiddenID],
+      "Restoration owns the selected source; unrelated suppression survives an empty geometry")
+    XCTAssertEqual(original.plan.suppressedInkIDs,[restoredID],"The captured root stays immutable")
+    XCTAssertTrue(currentPlan.isEmpty)
+  }
+
   func testOrderedDamageKeepsA100000SampleMaskQueryLocal() async throws {
     let device=try XCTUnwrap(MTLCreateSystemDefaultDevice()),resources=SceneRenderResources()
     let sourceID=UUID(),frame=PageRect(x:0,y:0,width:1_000,height:300)

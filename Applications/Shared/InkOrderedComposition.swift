@@ -16,11 +16,15 @@ extension InkRasterRenderer {
     let viewport:SIMD2<Float>
     let tool:SpatialInkTool
   }
+  enum OrderedClip {
+    case rectangle(size:CGSize,affine:InkAffine,viewport:SIMD2<Float>)
+    case polygon(Draw)
+  }
   enum OrderedEvent {
     case raw(Draw)
     /// The local body remains a forward pen/cut sequence. Only the OUTER paint
     /// events are traversed backwards. The clip is an exact even-odd triangle fan.
-    case body(draws:[Draw],clip:Draw)
+    case body(draws:[Draw],clip:OrderedClip)
   }
   struct OrderedPipelines:Sendable {
     let raw:any MTLRenderPipelineState
@@ -129,6 +133,28 @@ extension InkRasterRenderer {
     encoder.setVertexBytes(&primitive,length:MemoryLayout<InkPrimitive>.stride,index:3)
     encoder.setFragmentBytes(&erases,length:MemoryLayout<UInt32>.stride,index:0)
     connectivity.draw(nodes:draw.count,flags:draw.flags,encoder:encoder)
+  }
+
+  private func encode(_ clip:OrderedClip,pipeline:any MTLRenderPipelineState,encoder:any MTLRenderCommandEncoder) {
+    switch clip {
+    case .polygon(let draw):encode(draw,pipeline:pipeline,encoder:encoder)
+    case .rectangle(let size,var affine,var viewport):
+      func node(_ x:Float,_ y:Float)->InkRenderGeometry.Node {
+        .init(position:.init(x,y),edge:.zero,radius:0,alpha:1)
+      }
+      let width=Float(size.width),height=Float(size.height)
+      // The same two-triangle rectangle fan as the prepared polygon path.
+      // Inline bytes belong to this command; no body retains a Metal buffer.
+      var vertices=(node(0,0),node(width,0),node(width,height),node(0,0),node(width,height),node(0,height))
+      var primitive=InkPrimitive(count:6,flags:8,color:.init(repeating:1)),erases:UInt32=0
+      encoder.setRenderPipelineState(pipeline)
+      withUnsafeBytes(of:&vertices) {encoder.setVertexBytes($0.baseAddress!,length:$0.count,index:0)}
+      encoder.setVertexBytes(&viewport,length:MemoryLayout<SIMD2<Float>>.stride,index:1)
+      encoder.setVertexBytes(&affine,length:MemoryLayout<InkAffine>.stride,index:2)
+      encoder.setVertexBytes(&primitive,length:MemoryLayout<InkPrimitive>.stride,index:3)
+      encoder.setFragmentBytes(&erases,length:MemoryLayout<UInt32>.stride,index:0)
+      encoder.drawPrimitives(type:.triangle,vertexStart:0,vertexCount:6)
+    }
   }
 
   /// The only outer composition algorithm, shared by live canvases and exported

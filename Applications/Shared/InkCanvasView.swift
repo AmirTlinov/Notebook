@@ -538,8 +538,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     }
     func canApply(to current:NotebookOrderedInkPlan)->Bool {
       guard let replacing else {return true}
-      return basis.bodies.filter{replacing.contains($0.sourceID)} == current.bodies.filter{replacing.contains($0.sourceID)}
-        && basis.suppressedInkIDs.intersection(replacing) == current.suppressedInkIDs.intersection(replacing)
+      return basis.matches(current,ids:replacing)
     }
     func resolve(_ error:Error? = nil) {
       guard let waiter=completion else {return};completion=nil
@@ -1567,7 +1566,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       var cuts:InkElementErasureMap=[:]
       for span in action.spans where span.surface == source.surface {
         for target in span.elementTargets ?? [] {
-          guard let body=geometry.plan.bodies.first(where:{$0.elementID == target.elementID}) else {continue}
+          guard let body=geometry.plan.body(elementID:target.elementID) else {continue}
           var values=cuts[target.elementID] ?? body.erasures
           values.removeAll{$0.samples.revision == span.samples.revision}
           if action.isActive {values.append(.init(target:target,measurements:span.samples))}
@@ -1577,7 +1576,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       if !cuts.isEmpty {
         let old=orderedInkPlan
         orderedGeometry=geometry.replacingErasures(cuts);orderedInkPlan=orderedGeometry?.plan ?? .init();orderedRequest=orderedInkPlan
-        invalidateOrderedPaint(from:old,to:orderedInkPlan,ids:Set(old.bodies.filter{cuts[$0.elementID] != nil}.map(\.sourceID)))
+        invalidateOrderedPaint(from:old,to:orderedInkPlan,ids:Set(cuts.compactMap{old.body(elementID:$0.key)?.sourceID}))
       }
     }
     installedSpatialSource = installedSpatialSource?.appending(action)
@@ -2013,19 +2012,22 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       }
       if let replacing=orderedCut.replacing {
         orderedGeometry=InkOrderedGeometry.replacing(replacing,with:orderedCut.geometry,plan:orderedCut.plan,in:orderedGeometry,currentPlan:orderedInkPlan)
-        orderedInkPlan=orderedGeometry?.plan ?? .init(suppressedInkIDs:orderedInkPlan.suppressedInkIDs.subtracting(replacing).union(orderedCut.plan.suppressedInkIDs.intersection(replacing)))
+        orderedInkPlan=orderedGeometry?.plan ?? orderedInkPlan.replacing(replacing,from:orderedCut.plan)
       } else {orderedGeometry=orderedCut.geometry;orderedInkPlan=orderedCut.plan}
       orderedRequest=orderedInkPlan;orderedFrameIsCanonical=orderedCut.canonical
-      if let source=installedSpatialSource {installedSpatialSource=source.suppressing(orderedInkPlan.suppressedInkIDs)}
-      else {setSuppressedPageActions(orderedInkPlan.suppressedInkIDs)}
+      if orderedCut.replacing == nil || previousOrderedPlan.suppressedInkIDs != orderedInkPlan.suppressedInkIDs {
+        if let source=installedSpatialSource {installedSpatialSource=source.suppressing(orderedInkPlan.suppressedInkIDs)}
+        else {setSuppressedPageActions(orderedInkPlan.suppressedInkIDs)}
+      }
       invalidateOrderedPaint(from:previousOrderedPlan,to:orderedInkPlan,ids:orderedCut.replacing)
       beginStableContentUpdate()
     }
     defer {
       if let orderedCut,!orderedCutSubmitted {
+        let suppressionChanged=orderedInkPlan.suppressedInkIDs != previousOrderedPlan.suppressedInkIDs
         orderedGeometry=previousOrderedGeometry;orderedInkPlan=previousOrderedPlan;orderedFrameIsCanonical=previousCanonical
         installedSpatialSource=previousSpatialSource
-        if previousSpatialSource == nil {setSuppressedPageActions(previousOrderedPlan.suppressedInkIDs)}
+        if (orderedCut.replacing == nil || suppressionChanged),previousSpatialSource == nil {setSuppressedPageActions(previousOrderedPlan.suppressedInkIDs)}
         invalidateOrderedPaint(from:orderedCut.plan,to:previousOrderedPlan,ids:orderedCut.replacing)
         if orderedCut.cancelled {orderedCut.resolve(CancellationError())}
         else {orderedCut.resolve(orderedCutFailure)}
@@ -2454,9 +2456,10 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
             if let self,orderedCut != nil,stableContentRevision == submittedRevision {
               // The old frame owns its displayed geometry alone. A newer
               // requested plan keeps its own generation through this rollback.
+              let suppressionChanged=orderedInkPlan.suppressedInkIDs != previousOrderedPlan.suppressedInkIDs
               orderedGeometry=previousOrderedGeometry;orderedInkPlan=previousOrderedPlan;orderedFrameIsCanonical=previousCanonical
               installedSpatialSource=previousSpatialSource
-              if previousSpatialSource == nil {setSuppressedPageActions(previousOrderedPlan.suppressedInkIDs)}
+              if (orderedCut?.replacing == nil || suppressionChanged),previousSpatialSource == nil {setSuppressedPageActions(previousOrderedPlan.suppressedInkIDs)}
               invalidateOrderedPaint(from:orderedCut?.plan ?? .init(),to:previousOrderedPlan,ids:orderedCut?.replacing)
               beginStableContentUpdate();requestFrame()
             }
@@ -2565,11 +2568,13 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
   private func invalidateOrderedPaint(from old:NotebookOrderedInkPlan,to new:NotebookOrderedInkPlan,ids:Set<UUID>?) {
     let changed=ids ?? Set(old.bodies.map(\.sourceID)).union(new.bodies.map(\.sourceID))
     var box=CGRect.null
-    for body in old.bodies+new.bodies where changed.contains(body.sourceID) {
-      let position=spatialCamera.map{$0.worldToScreen(body.layout.origin.offsetBy(x:body.layout.frame.x,y:body.layout.frame.y),viewport:spatialViewport)}
-        ?? .init(x:body.layout.frame.x-(pageRenderRegion?.minX ?? 0),y:body.layout.frame.y-(pageRenderRegion?.minY ?? 0))
-      let scale=spatialCamera?.scale ?? 1
-      box=box.union(.init(x:position.x,y:position.y,width:body.layout.frame.width*scale,height:body.layout.frame.height*scale))
+    for id in changed {
+      for body in [old.body(sourceID:id),new.body(sourceID:id)].compactMap({$0}) {
+        let position=spatialCamera.map{$0.worldToScreen(body.layout.origin.offsetBy(x:body.layout.frame.x,y:body.layout.frame.y),viewport:spatialViewport)}
+          ?? .init(x:body.layout.frame.x-(pageRenderRegion?.minX ?? 0),y:body.layout.frame.y-(pageRenderRegion?.minY ?? 0))
+        let scale=spatialCamera?.scale ?? 1
+        box=box.union(.init(x:position.x,y:position.y,width:body.layout.frame.width*scale,height:body.layout.frame.height*scale))
+      }
     }
     let raw=Set(changed.compactMap{pageBatchIndex[$0]})
     box=box.union(paintBounds(of:raw))
@@ -2798,7 +2803,8 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     let crop=pageRenderRegion?.origin ?? .zero
     var damage=activeMesh.chunks.reduce(CGRect.null) {$0.union($1.bounds)}.offsetBy(dx:-crop.x,dy:-crop.y)
     let whole=Set(liveOrderedErasures.values.flatMap {$0.filter{$0.value.contains{$0.target.wholeElement}}.keys})
-    for body in orderedInkPlan.bodies where whole.contains(body.elementID) {
+    for id in whole {
+      guard let body=orderedInkPlan.body(elementID:id) else {continue}
       let position=spatialCamera.map{$0.worldToScreen(body.layout.origin.offsetBy(x:body.layout.frame.x,y:body.layout.frame.y),viewport:spatialViewport)}
         ?? .init(x:body.layout.frame.x-crop.x,y:body.layout.frame.y-crop.y)
       let scale=spatialCamera?.scale ?? 1
@@ -2834,7 +2840,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     for id in ids {
       guard let action=change.drawing.action(id:id),action.tool == .eraser else {continue}
       for target in action.elementTargets ?? [] {
-        guard let body=geometry.plan.bodies.first(where:{$0.elementID == target.elementID}) else {continue}
+        guard let body=geometry.plan.body(elementID:target.elementID) else {continue}
         var values=cuts[target.elementID] ?? body.erasures
         values.removeAll{$0.samples.revision == action.samples.revision}
         if action.isActive {values.append(.init(target:target,measurements:action.samples))}
@@ -2844,7 +2850,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     if !cuts.isEmpty {
       let old=orderedInkPlan
       orderedGeometry=geometry.replacingErasures(cuts);orderedInkPlan=orderedGeometry?.plan ?? .init();orderedRequest=orderedInkPlan
-      invalidateOrderedPaint(from:old,to:orderedInkPlan,ids:Set(old.bodies.filter{cuts[$0.elementID] != nil}.map(\.sourceID)))
+      invalidateOrderedPaint(from:old,to:orderedInkPlan,ids:Set(cuts.compactMap{old.body(elementID:$0.key)?.sourceID}))
       beginStableContentUpdate();requestFrame()
     }
   }
@@ -2912,12 +2918,10 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     }
     func installed() {
       guard let canvas else {return}
-      let before=Dictionary(uniqueKeysWithValues:originalPlan.bodies.map{($0.sourceID,$0)})
-      let after=Dictionary(uniqueKeysWithValues:canvas.orderedInkPlan.bodies.map{($0.sourceID,$0)})
-      changed=sourceIDs.filter{before[$0] != after[$0]
+      changed=sourceIDs.filter{originalPlan.body(sourceID:$0) != canvas.orderedInkPlan.body(sourceID:$0)
         || originalPlan.suppressedInkIDs.contains($0) != canvas.orderedInkPlan.suppressedInkIDs.contains($0)}
-      witness=after.filter{changed.contains($0.key)}
-      suppressionWitness=canvas.orderedInkPlan.suppressedInkIDs.intersection(changed)
+      witness=Dictionary(uniqueKeysWithValues:changed.compactMap{id in canvas.orderedInkPlan.body(sourceID:id).map{(id,$0)}})
+      suppressionWitness=Set(changed.filter{canvas.orderedInkPlan.suppressedInkIDs.contains($0)})
     }
     func restore(install:@escaping @MainActor ()->Void,abandon:@escaping @MainActor ()->Void) {
       guard let canvas,!canvas.spatialHandoffIsStopping,canvas.window != nil,
@@ -2931,12 +2935,10 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
         // A queued restoration cannot take the newer cut as its own basis.
         // Check the addressed witness at admission, and merge the originals
         // into this current geometry; unrelated bodies remain current.
-        let current=Dictionary(uniqueKeysWithValues:canvas.orderedInkPlan.bodies.map{($0.sourceID,$0)})
-        guard canvas.orderedInkPlan.suppressedInkIDs.intersection(restoredIDs) == expectedSuppression,
-          restoredIDs.allSatisfy({current[$0] == expected[$0]}) else {abandon();return}
-        let restored=InkOrderedGeometry.restoring(original,originalPlan:originalPlan,in:canvas.orderedGeometry,removing:restoredIDs)
-        let plan=restored?.plan ?? .init(suppressedInkIDs:
-          canvas.orderedInkPlan.suppressedInkIDs.subtracting(restoredIDs).union(originalPlan.suppressedInkIDs.intersection(restoredIDs)))
+        guard restoredIDs.allSatisfy({canvas.orderedInkPlan.body(sourceID:$0) == expected[$0]
+          && canvas.orderedInkPlan.suppressedInkIDs.contains($0) == expectedSuppression.contains($0)}) else {abandon();return}
+        let restored=InkOrderedGeometry.restoring(original,originalPlan:originalPlan,in:canvas.orderedGeometry,currentPlan:canvas.orderedInkPlan,removing:restoredIDs)
+        let plan=restored?.plan ?? canvas.orderedInkPlan.replacing(restoredIDs,from:originalPlan)
         do {try await canvas.presentOrderedPlan(restored,plan:plan,replacing:restoredIDs,canonical:canonical,allowsContact:true,install:install)} catch {abandon()}
       }
     }
