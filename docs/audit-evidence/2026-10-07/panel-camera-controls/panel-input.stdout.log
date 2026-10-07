@@ -1,0 +1,251 @@
+TAP version 13
+# Subtest: camera input does not read content arrays with 100000 entries
+ok 1 - camera input does not read content arrays with 100000 entries
+  ---
+  duration_ms: 170.160542
+  type: 'test'
+  ...
+# Subtest: editor entry updates controls without a camera state refresh
+ok 2 - editor entry updates controls without a camera state refresh
+  ---
+  duration_ms: 1.149
+  type: 'test'
+  ...
+# Subtest: resize cancellation restores controls before another presentation
+    # Subtest: move
+    ok 1 - move
+      ---
+      duration_ms: 0.79925
+      type: 'test'
+      ...
+    # Subtest: resize
+    ok 2 - resize
+      ---
+      duration_ms: 0.842
+      type: 'test'
+      ...
+    # Subtest: pen with a pending presentation
+    ok 3 - pen with a pending presentation
+      ---
+      duration_ms: 1.819833
+      type: 'test'
+      ...
+    1..3
+ok 3 - resize cancellation restores controls before another presentation
+  ---
+  duration_ms: 3.856417
+  type: 'test'
+  ...
+# Subtest: tool controls retain the board shortcuts without an extra focus click
+ok 4 - tool controls retain the board shortcuts without an extra focus click
+  ---
+  duration_ms: 0.813125
+  type: 'test'
+  ...
+# Subtest: Enter and Space on controls preserve native button activation
+ok 5 - Enter and Space on controls preserve native button activation
+  ---
+  duration_ms: 0.500375
+  type: 'test'
+  ...
+# Subtest: a completed shape save preserves the next tool chosen while saving
+ok 6 - a completed shape save preserves the next tool chosen while saving
+  ---
+  duration_ms: 1.028542
+  type: 'test'
+  ...
+# Subtest: keyboard undo and delete cannot admit another action during a dragged contact
+    # Subtest: z
+    ok 1 - z
+      ---
+      duration_ms: 0.817542
+      type: 'test'
+      ...
+    # Subtest: Delete
+    ok 2 - Delete
+      ---
+      duration_ms: 0.802791
+      type: 'test'
+      ...
+    1..2
+ok 7 - keyboard undo and delete cannot admit another action during a dragged contact
+  ---
+  duration_ms: 1.819917
+  type: 'test'
+  ...
+# Subtest: Enter and double-click cannot open a nested editor or release the current contact
+    # Subtest: select: Enter
+    ok 1 - select: Enter
+      ---
+      duration_ms: 0.798333
+      type: 'test'
+      ...
+    # Subtest: select: dblclick
+    ok 2 - select: dblclick
+      ---
+      duration_ms: 0.766834
+      type: 'test'
+      ...
+    # Subtest: pen: Enter
+    ok 3 - pen: Enter
+      ---
+      duration_ms: 0.618625
+      type: 'test'
+      ...
+    # Subtest: pen: dblclick
+    ok 4 - pen: dblclick
+      ---
+      duration_ms: 0.583958
+      type: 'test'
+      ...
+    1..4
+ok 8 - Enter and double-click cannot open a nested editor or release the current contact
+  ---
+  duration_ms: 2.958791
+  type: 'test'
+  ...
+# Subtest: an idle editor still opens, cancels and saves one completed edit
+ok 9 - an idle editor still opens, cancels and saves one completed edit
+  ---
+  duration_ms: 0.845625
+  type: 'test'
+  ...
+# Subtest: the text tool still admits and saves a new element
+ok 10 - the text tool still admits and saves a new element
+  ---
+  duration_ms: 0.747708
+  type: 'test'
+  ...
+# Subtest: blur and tool changes share one editor completion and preserve the latest intent
+    # Subtest: saved-toolbar
+    ok 1 - saved-toolbar
+      ---
+      duration_ms: 0.780125
+      type: 'test'
+      ...
+    # Subtest: saved-shortcut
+    ok 2 - saved-shortcut
+      ---
+      duration_ms: 0.678333
+      type: 'test'
+      ...
+    # Subtest: conflict
+    ok 3 - conflict
+      ---
+      duration_ms: 0.9165
+      type: 'test'
+      ...
+    # Subtest: uncertain
+    ok 4 - uncertain
+      ---
+      duration_ms: 1.161875
+      type: 'test'
+      ...
+    # Subtest: cancel
+    ok 5 - cancel
+      ---
+      duration_ms: 0.6685
+      type: 'test'
+      ...
+    # Subtest: closed
+    ok 6 - closed
+      ---
+      duration_ms: 0.828042
+      type: 'test'
+      ...
+    1..6
+ok 11 - blur and tool changes share one editor completion and preserve the latest intent
+  ---
+  duration_ms: 5.3435
+  type: 'test'
+  ...
+# Subtest: one pointer activation cannot retry a fast editor refusal before its click
+ok 12 - one pointer activation cannot retry a fast editor refusal before its click
+  ---
+  duration_ms: 0.829584
+  type: 'test'
+  ...
+# Subtest: lost pointer capture cancels the unfinished preview and resumes the same projection
+    # Subtest: select
+    ok 1 - select
+      ---
+      duration_ms: 0.759083
+      type: 'test'
+      ...
+    # Subtest: pen
+    ok 2 - pen
+      ---
+      duration_ms: 0.7665
+      type: 'test'
+      ...
+    1..2
+ok 13 - lost pointer capture cancels the unfinished preview and resumes the same projection
+  ---
+  duration_ms: 1.683917
+  type: 'test'
+  ...
+# Subtest: Escape still cancels an unfinished contact without admitting a competing write
+    # Subtest: select
+    ok 1 - select
+      ---
+      duration_ms: 0.735708
+      type: 'test'
+      ...
+    # Subtest: pen
+    ok 2 - pen
+      ---
+      duration_ms: 0.51525
+      type: 'test'
+      ...
+    1..2
+ok 14 - Escape still cancels an unfinished contact without admitting a competing write
+  ---
+  duration_ms: 1.366416
+  type: 'test'
+  ...
+# Subtest: late lost-capture events preserve a completed ink contact and a newer pointer
+    # Subtest: select: pointer 1
+    ok 1 - select: pointer 1
+      ---
+      duration_ms: 0.904792
+      type: 'test'
+      ...
+    # Subtest: select: pointer 2
+    ok 2 - select: pointer 2
+      ---
+      duration_ms: 0.734125
+      type: 'test'
+      ...
+    # Subtest: pen: pointer 1
+    ok 3 - pen: pointer 1
+      ---
+      duration_ms: 0.729084
+      type: 'test'
+      ...
+    # Subtest: pen: pointer 2
+    ok 4 - pen: pointer 2
+      ---
+      duration_ms: 0.63475
+      type: 'test'
+      ...
+    1..4
+ok 15 - late lost-capture events preserve a completed ink contact and a newer pointer
+  ---
+  duration_ms: 3.226
+  type: 'test'
+  ...
+# Subtest: real pen input retains measured samples through completion and discards only cancelled contact
+ok 16 - real pen input retains measured samples through completion and discards only cancelled contact
+  ---
+  duration_ms: 1.781709
+  type: 'test'
+  ...
+1..16
+# tests 39
+# suites 0
+# pass 39
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 508.53475

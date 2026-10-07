@@ -1,0 +1,52 @@
+{
+  "earlierAttempts": [
+    {
+      "attempt": "v1",
+      "result": "36pass/2fail of38 (closed subcase and its parent): geometryLoaded fixture omitted dispose port; review separately found ink-cancel publication gap; both fixed and pen regression added"
+    },
+    {
+      "attempt": "v2",
+      "result": "39Node passed; TypeScript rejected one callback implicit any; exact API parameter type added; runtime production and assertions unchanged"
+    }
+  ],
+  "execution": {
+    "casesIncludingSubtests": 39,
+    "failures": 0,
+    "milliseconds": 508.53475,
+    "nodeBeforeEqualsAfter": true,
+    "route": "pinned Node24.21.0 / real controller sections, Session and InkInput through bounded DOM/GPU/Swift ports",
+    "skips": 0,
+    "topLevelTests": 16,
+    "typeScriptExitCode": 0
+  },
+  "format": 1,
+  "independentReview": {
+    "finalTypeAnnotationFreeze": "2026-10-07T23:31:48Z",
+    "freeze": "2026-10-07T23:28:45Z",
+    "meaning": "two source files; final annotation only derives the API parameter type",
+    "owner": "density",
+    "status": "passed"
+  },
+  "rawEvidence": ".build/panel-camera-controls-20261008-v3",
+  "recordedAt": "2026-10-07T23:35:00Z",
+  "regressions": [
+    "wheel zoom/pan and repeated pan samples perform zero reads of each 100000-entry elements/pages/unsupported array, update camera/zoom text and retain the addressed basis",
+    "editor entry immediately updates disabled controls and focus without camera-triggered buttons",
+    "move/resize cancellation immediately releases capture/suspension and restores controls without a new presentation",
+    "real InkInput.clear publishes while suspended; final cancellation restores controls before a stalled presentation responds and trailing terminal events cannot write",
+    "controller teardown disposes surface and geometry once during an overlapping editor completion"
+  ],
+  "remaining": [
+    "Installed pair is still260; actual Codex pixel/frame/focus acceptance is pending.",
+    "Full-page capture/native preparation and cold runtime startup remain separate causes.",
+    "Toolbar overlap inferred from CSS at256px requires actual target layout measurement.",
+    "GUI532 owns retained page source reuse; NB19/B16 owns preview WAL outside the writer; GUI533 owns cold addressed material after C1 and current-format owner transition."
+  ],
+  "scope": "controller camera work and immediate editor/contact controls",
+  "source": {
+    "beforeEqualsAfterEqualsFinal": true,
+    "fileCount": 1717,
+    "sha256": "774570e2de74bbd21d92273e614e600bcace655e031a59631e77143941deaf7a"
+  },
+  "status": "passed"
+}

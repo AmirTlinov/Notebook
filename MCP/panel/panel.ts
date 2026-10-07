@@ -98,9 +98,10 @@ function buttons(){
   el("page-position").textContent=navigation?.position&&navigation.directory?`${navigation.position.index+1} / ${navigation.directory.header.item.pageCount}`:"";
   el<HTMLButtonElement>("page-previous").disabled=waiting||!neighbor(-1);
   el<HTMLButtonElement>("page-next").disabled=waiting||!neighbor(1);
-  el("zoom-level").textContent=`${Math.round(camera.scale*100)}%`;
+  updateZoomReadout();
   workspace.dataset.tool=tool;workspace.dataset.pan=String(gesture?.mode==="pan"||space);
 }
+function updateZoomReadout(){el("zoom-level").textContent=`${Math.round(camera.scale*100)}%`;}
 function cameraScaleBounds(){
   const ratio=panelCoordinateScale(workspace.clientWidth,workspace.clientHeight);
   return {min:geometry.minimumScale/ratio,max:geometry.maximumScale/ratio};
@@ -115,7 +116,7 @@ function setCamera(next:Camera){
 function publishCamera(next:SurfaceCamera){
   if(closed)return;
   worldCamera=next;
-  surface.setCamera(camera);ink.draw();if(draft)positionEditor(draft.element,draft.isNew);buttons();session.viewportChanged();
+  surface.setCamera(camera);ink.draw();if(draft)positionEditor(draft.element,draft.isNew);updateZoomReadout();session.viewportChanged();
 }
 function mutation(summary:string,operation:PanelOperation,element?:PanelElement,card?:PanelCard):PanelMutation {
   return {...session.address(),actionID:crypto.randomUUID(),summary,operations:[operation],
@@ -191,7 +192,7 @@ function openEditor(element:PanelElement,isNew=false){
   setCamera({scale,x:frame.x+frame.width/2-workspace.clientWidth/(2*scale),y:frame.y+frame.height/2-workspace.clientHeight/(2*scale)});
   if(!isNew)surface.hideSubject(element.source.id,true);
   editor.value=element.source.kind==="nativeText"?element.source.source:String(element.source.graphic?.label??"");
-  positionEditor(element,isNew);editor.hidden=false;editor.focus();editor.select();
+  positionEditor(element,isNew);editor.hidden=false;buttons();editor.focus();editor.select();
 }
 function positionEditor(element:PanelElement,isNew:boolean){
   const text=element.source.kind==="nativeText";
@@ -464,7 +465,7 @@ workspace.addEventListener("keydown",handleShortcut,events);
 controls.addEventListener("keydown",handleShortcut,events);
 function cancelGesture(refresh=true){
   const pointer=ink.pointer;
-  if(pointer!==undefined){if(paper.hasPointerCapture(pointer))paper.releasePointerCapture(pointer);ink.clear();session.suspended=false;if(refresh)void session.refresh();}
+  if(pointer!==undefined){if(paper.hasPointerCapture(pointer))paper.releasePointerCapture(pointer);ink.clear();session.suspended=false;buttons();if(refresh)void session.refresh();}
   const g=gesture;if(!g)return;gesture=null;session.suspended=false;if(paper.hasPointerCapture(g.pointer))paper.releasePointerCapture(g.pointer);surface.clearPreview();buttons();if(refresh)void session.refresh();
 }
 window.addEventListener("keyup",event=>{if(event.code==="Space"){space=false;buttons();}},events);
@@ -477,7 +478,7 @@ const resizeObserver=new ResizeObserver(()=>{
   if(gesture&&gesture.mode!=="pan"){
     const pointer=gesture.pointer;gesture=null;session.suspended=false;
     if(paper.hasPointerCapture(pointer))paper.releasePointerCapture(pointer);
-    surface.clearPreview();
+    surface.clearPreview();buttons();
   }
   setCamera(camera);
   if(gesture?.mode==="pan"){

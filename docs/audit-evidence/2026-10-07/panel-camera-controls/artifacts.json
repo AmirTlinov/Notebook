@@ -1,0 +1,25 @@
+{
+  "artifacts": [
+    {
+      "bytes": 2704,
+      "path": "commands.json",
+      "sha256": "904fa88395f6a443d68fd996f3779a57f1dac7b7d02f7b98e1f130acb661eb5e"
+    },
+    {
+      "bytes": 6246,
+      "path": "panel-input.stdout.log",
+      "sha256": "2804c2ba961063df46f2cdf04ca406679c9bf6855ad8c1e1716b35aab604b0aa"
+    },
+    {
+      "bytes": 2561,
+      "path": "results.json",
+      "sha256": "e798d0238adc32c790904427e2125522fea78e908fe53f46f8cc9b1565b7e671"
+    },
+    {
+      "bytes": 577,
+      "path": "source-records.json",
+      "sha256": "6b8fa03861b5991837bae67ad07b5b4fce6a035e2c5201d627134e54265f9519"
+    }
+  ],
+  "format": 1
+}

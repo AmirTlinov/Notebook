@@ -5,6 +5,16 @@
 Самостоятельного Mac-приложения нет. Изолированные native-проверки используют
 отдельную test-идентичность; каждый результат относится к своим исходникам.
 
+GUI-388: camera publication обновляет zoom readout; state boundaries обновляют
+controls. После ink/geometry resize cancellation кнопки готовы до ответа runtime.
+**39 Node cases и TypeScript PASS**, 0 failures/skips; source `774570e2…`/1717
+до/после/final одинаков, независимое ревью принято. Реальные controller/Session/
+InkInput через bounded DOM/GPU/Swift ports проверяют zero reads по100000
+elements/pages/unsupported во время wheel/pan. Это ещё вне installed260.
+Повторное чтение страницы ведётся в GUI-532; preview outside writer входит в
+NB19/B16; cold addressed cut — GUI-533.
+[Scope и исправленные отказы](audit-evidence/2026-10-07/panel-camera-controls/results.json).
+
 GUI-388: JSON страницы кодирует фактическое окно native-подготовки; полный typed
 cut и source/ink fence сохранены. Surface берёт выбор из принятого hit descriptor.
 **9 Core functions / 10 cases + 8 Mac + 11 Node cases и TypeScript PASS**, без

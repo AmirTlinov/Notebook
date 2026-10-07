@@ -1,0 +1,19 @@
+{
+  "baseCommit": "8d8be72f0b3ab2dd053b6672f59e9d8f1793920d",
+  "beforeEqualsAfterEqualsFinal": true,
+  "changedBuildInputs": [
+    {
+      "executable": false,
+      "path": "MCP/panel/panel.ts",
+      "sha256": "e6e4a754c8440c4eda134ea517bf7b9c51e5751a9b6d05889941c8c7bcb3ff24"
+    },
+    {
+      "executable": false,
+      "path": "MCP/test/panel-input.test.ts",
+      "sha256": "71cf3c007711d993fa5e9d199091d969e8333a20964fa95b9a05623c222588e5"
+    }
+  ],
+  "fileCount": 1717,
+  "format": 1,
+  "sha256": "774570e2de74bbd21d92273e614e600bcace655e031a59631e77143941deaf7a"
+}

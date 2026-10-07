@@ -8,7 +8,9 @@ import {transformSync} from 'esbuild';
 import {NotebookSession,PanelError} from '../panel/session.js';
 import {InkInput} from '../panel/ink-input.js';
 import {InkGPU} from '../panel/ink-gpu.js';
-import type {SwiftSurface} from '../panel/swift-surface.js';
+import {editable} from '../panel/surface.js';
+import {admitPanelCamera,panelCoordinateScale,transformPanelCamera} from '../panel/projection.js';
+import type {SwiftSurface,SurfaceCamera,SurfacePoint} from '../panel/swift-surface.js';
 import {capturedSource,type PanelMutation,type PanelSnapshot} from '../panel/model.js';
 
 // Execute the shipped controller listeners against the real session. DOM,
@@ -20,17 +22,21 @@ function section(start:string,end:string){
   return source.slice(first,last);
 }
 const listeners=transformSync([
-  section('function active(){','function activeCard(){'),
+  section('const camera:Camera={','let selected:PanelSelection'),
+  section('const worldDelta=','function choose('),
+  section('function active(){','function buttons(){'),
   section('function buttons(){','function cameraScaleBounds(){'),
+  section('function cameraScaleBounds(){','function mutation('),
   section('function mutation(','async function save(request:PanelMutation){'),
   section('async function save(request:PanelMutation){','session.bounds='),
   section('session.onClose=()=>{','let first=true;'),
   section('function newElement(','paper.addEventListener("pointerdown"'),
   section('paper.addEventListener("pointerdown"','async function openCard('),
-  section('paper.addEventListener("dblclick"','paper.addEventListener("wheel"'),
+  section('paper.addEventListener("dblclick"','function toolButtons(){'),
   section('function toolButtons(){','async function remove(){'),
   section('async function remove(){','el("delete").addEventListener'),
   section('const handleShortcut=','window.addEventListener("keyup"'),
+  section('const resizeObserver=','function observeDisplayScale(){'),
 ].join('\n'),{loader:'ts',target:'es2022'}).code;
 const turn=()=>new Promise<void>(resolve=>setImmediate(resolve));
 
@@ -61,17 +67,20 @@ async function fixture(){
   let editorFocused=false;
   const blurFocusedEditor=()=>{if(editorFocused){editorFocused=false;editorListeners.get('blur')?.({});}};
   const captures=new Set<number>();
-  let previews=0,clears=0,inkClears=0,editorFocus=0,workspaceFocus=0,disposals=0;
+  let previews=0,clears=0,inkClears=0,editorFocus=0,workspaceFocus=0,disposals=0,geometryDisposals=0,cameraPublications=0,inkDraws=0;
+  let resize:()=>void=()=>{throw new Error('ResizeObserver was not installed');};
   const ink={pointer:undefined as number|undefined,hasPreview:false,ready:true,
     begin(event:{pointerId:number}){this.pointer=event.pointerId;this.hasPreview=true;return true;},
     append(){},finish(){this.pointer=undefined;return {points:[{x:1,y:1,force:1}],worldOrigin:snapshot.worldOrigin};},
-    clear(){this.pointer=undefined;this.hasPreview=false;inkClears++;}};
+    clear(){this.pointer=undefined;this.hasPreview=false;inkClears++;},draw(){inkDraws++;}};
   const elementHit={getAttribute:()=> 'text'};
   const hit={hasAttribute:()=>false,closest:(selector:string)=>selector==='[data-element-id]'?elementHit:null};
+  const resizeHit={...hit,hasAttribute:(name:string)=>name==='data-resize-handle'};
   const blank={hasAttribute:()=>false,closest:()=>null};
   const surface={point:(x:number,y:number)=>({x,y}),selectionFrame:()=>snapshot.elements[0]!.source.frame,
     authoredFrame:()=>snapshot.elements[0]!.source.frame,
-    preview(){previews++;},clearPreview(){clears++;},select(){},hideSubject(){},dispose:async()=>{disposals++;}};
+    hasSubject:()=>true,hasItemSubject:()=>true,setCamera(){cameraPublications++;},
+    preview(){previews++;},previewSize(){previews++;},clearPreview(){clears++;},select(){},hideSubject(){},dispose:async()=>{disposals++;}};
   const editor={value:'',hidden:true,readOnly:false,style:{},scrollHeight:80,focus(){editorFocused=true;editorFocus++;},select(){},
     addEventListener:(name:string,callback:(event:unknown)=>void)=>editorListeners.set(name,callback)};
   type ToolEvent={button:number;preventDefault:()=>void};
@@ -83,7 +92,8 @@ async function fixture(){
       setAttribute(name:string,value:string){if(name==='aria-pressed')this.pressed=value;},
       addEventListener(name:string,callback:(event:ToolEvent)=>void){this.listeners.set(name,callback);}}]));
   const otherControls=new Map<string,{disabled:boolean;hidden:boolean;textContent:string}>();
-  const context=createContext({session,ink,surface,PanelError,capturedSource,crypto:{randomUUID},events:{},
+  const context=createContext({session,ink,surface,PanelError,capturedSource,editable,
+    admitPanelCamera,panelCoordinateScale,transformPanelCamera,crypto:{randomUUID},events:{},
     document:{createElementNS:(_namespace:string,tagName:string)=>({tagName,setAttribute(){}}),
       querySelectorAll:()=>[...toolControls.values()]},
     el(id:string){if(!otherControls.has(id))otherControls.set(id,{disabled:false,hidden:false,textContent:''});return otherControls.get(id);},
@@ -96,13 +106,19 @@ async function fixture(){
       addEventListener:(name:string,callback:(event:unknown)=>void)=>keyListeners.set(name,callback),focus(){blurFocusedEditor();workspaceFocus++;}},
     controls:{addEventListener:(name:string,callback:(event:unknown)=>void)=>controlListeners.set(name,callback)},
     gesture:null,draft:null,editorFinish:null,toolIntent:0,selected:{kind:'element',id:'text'},tool:'select',space:false,closed:false,editor,
-    path:[],geometryLoaded:false,lifetime:new AbortController(),resizeObserver:{disconnect(){}},
-    camera:{x:0,y:0,scale:1},worldCamera:snapshot.appearance!.camera,viewport:()=>({x:800,y:600}),
-    geometry:{manipulateFrame:(_mode:string,frame:{x:number;y:number},delta:{x:number;y:number})=>
-      ({...frame,x:frame.x+delta.x,y:frame.y+delta.y}),offset:(origin:object,x:number,y:number)=>({...origin,localX:x,localY:y})},
+    path:[],geometryLoaded:true,lifetime:new AbortController(),worldCamera:snapshot.appearance!.camera,
+    ResizeObserver:class{constructor(callback:()=>void){resize=callback;}observe(){}disconnect(){}},
+    geometry:{minimumScale:.0125,maximumScale:4,dispose(){geometryDisposals++;},
+      camera:(camera:SurfaceCamera,_viewport:SurfacePoint,from:SurfacePoint,to:SurfacePoint,magnification:number)=>
+        ({center:{...camera.center,localX:camera.center.localX+(from.x-to.x)/camera.scale,
+          localY:camera.center.localY+(from.y-to.y)/camera.scale},scale:camera.scale*magnification}),
+      delta:(origin:SurfaceCamera['center'],destination:SurfaceCamera['center'])=>
+        ({x:destination.localX-origin.localX,y:destination.localY-origin.localY}),
+      manipulateFrame:(_mode:string,frame:{x:number;y:number},delta:{x:number;y:number})=>
+        ({...frame,x:frame.x+delta.x,y:frame.y+delta.y}),
+      offset:(origin:SurfaceCamera['center'],x:number,y:number)=>({...origin,localX:origin.localX+x,localY:origin.localY+y})},
     choose(value:unknown){context.selected=value;context.buttons();},
-    canMove:()=>true,canEdit:()=>true,canMoveCard:()=>true,activeCard:()=>undefined,neighbor:()=>undefined,
-    setCamera(){},openCard(){},
+    openCard(){},
     operation:(kind:string,elementID:string,values:Record<string,unknown>)=>({kind,target,id:elementID,values}),
   });
   runInContext(listeners,context);
@@ -111,9 +127,9 @@ async function fixture(){
     paperListeners.get(name)?.(event);
     await turn();
   };
-  const pointer=(name:string,id=1,x=100)=>dispatch(name,
+  const pointer=(name:string,id=1,x=100,resizing=false)=>dispatch(name,
     {pointerId:id,clientX:x,clientY:100,button:0,altKey:false,
-      target:context.tool==='pen'?blank:hit,preventDefault(){}});
+      target:resizing?resizeHit:context.tool==='pen'?blank:hit,preventDefault(){}});
   const key=async(value:string,control=false,fromControls=false)=>{
     let prevented=false;
     (fromControls?controlListeners:keyListeners).get('keydown')?.({key:value,code:value===' '?'Space':value,isComposing:false,
@@ -143,12 +159,130 @@ async function fixture(){
     session.app.connect=async()=>{};await session.connect();
     await session.app.onteardown!({},{} as never);await turn();
   };
-  return {session,snapshot,context,calls,writes,ink,captures,pointer,dispatch,key,editor,editorKey,clickTool,pressTool,activateTool,blurEditor,toolControls,close,retry:()=>retry,
-    counts:()=>({previews,clears,inkClears,editorFocus,workspaceFocus,disposals}),complete:async()=>{
+  return {session,snapshot,context,calls,writes,ink,captures,pointer,dispatch,key,editor,editorKey,clickTool,pressTool,activateTool,blurEditor,toolControls,otherControls,close,retry:()=>retry,
+    resize:()=>resize(),counts:()=>({previews,clears,inkClears,editorFocus,workspaceFocus,disposals,geometryDisposals,cameraPublications,inkDraws}),complete:async()=>{
       for(const write of writes.splice(0))write.resolve({content:[],structuredContent:{status:'saved'}});
       await turn();
     }};
 }
+
+test('camera input does not read content arrays with 100000 entries',async()=>{
+  const f=await fixture(),text=f.snapshot.elements[0]!;
+  const reads={elements:0,pages:0,unsupported:0};
+  const watched=<T>(name:keyof typeof reads,entries:T[])=>new Proxy(entries,{get(array,property,receiver){
+    reads[name]++;
+    return Reflect.get(array,property,receiver);
+  }});
+  f.snapshot.target={kind:'page',id:randomUUID()};
+  f.snapshot.elements=watched('elements',Array.from({length:100000},(_,index)=>index===99999?text:
+    {source:{...text.source,id:`element-${index}`}}));
+  f.snapshot.unsupportedElements=watched('unsupported',Array.from({length:100000},(_,index)=>
+    ({id:`unsupported-${index}`,kind:'program',reason:'program'})));
+  f.snapshot.navigation={position:{index:50000,pageID:f.snapshot.target.id},
+    directory:{header:{item:{title:'Large document',pageCount:100000}},
+      pages:watched('pages',Array.from({length:100000},(_,index)=>
+        ({position:{index,pageID:index===50000?f.snapshot.target.id:`page-${index}`}})))}};
+  await f.session.refresh(true);f.context.buttons();
+  for(const [name,count]of Object.entries(reads))assert.ok(count>=100000,`${name} exercises the real control-state lookup`);
+  assert.equal(f.otherControls.get('delete')!.disabled,false);
+  assert.equal(f.otherControls.get('page-previous')!.disabled,false);
+  assert.equal(f.otherControls.get('page-next')!.disabled,false);
+  const basis=f.session.snapshot,selection=f.context.selected;
+  const cameraInput=async(action:()=>Promise<void>)=>{
+    reads.elements=reads.pages=reads.unsupported=0;
+    const before=f.counts();await action();
+    assert.deepEqual(reads,{elements:0,pages:0,unsupported:0},'Camera samples never scan content or the page directory');
+    assert.equal(f.counts().cameraPublications,before.cameraPublications+1);
+    assert.equal(f.counts().inkDraws,before.inkDraws+1);
+    assert.equal(f.otherControls.get('zoom-level')!.textContent,`${Math.round(f.context.worldCamera.scale*100)}%`);
+    assert.equal(f.session.snapshot,basis);assert.equal(f.context.selected,selection);
+    assert.equal(f.writes.length,0);
+  };
+  let prevented=false;
+  await cameraInput(()=>f.dispatch('wheel',{ctrlKey:true,metaKey:false,deltaX:0,deltaY:-25,
+    clientX:400,clientY:300,preventDefault(){prevented=true;}}));
+  assert.equal(prevented,true);assert.equal(f.otherControls.get('zoom-level')!.textContent,'122%');
+  const center=f.context.worldCamera.center;
+  await cameraInput(()=>f.dispatch('wheel',{ctrlKey:false,metaKey:false,deltaX:30,deltaY:40,preventDefault(){}}));
+  assert.notDeepEqual(f.context.worldCamera.center,center,'The real wheel listener publishes its pan');
+  await f.clickTool('hand');await f.pointer('pointerdown',7,200);
+  assert.equal(f.context.gesture.mode,'pan');
+  for(const x of [220,260,280])await cameraInput(()=>f.pointer('pointermove',7,x));
+  await f.pointer('pointerup',7,280);assert.equal(f.context.gesture,null);
+});
+
+test('editor entry updates controls without a camera state refresh',async()=>{
+  const f=await fixture(),before=f.counts();
+  assert.equal(f.otherControls.get('zoom-in')!.disabled,false);
+  assert.equal(f.otherControls.get('workspaces')!.disabled,false);
+  await f.key('Enter');
+  assert.equal(f.context.draft.element,f.snapshot.elements[0]);assert.equal(f.editor.hidden,false);
+  assert.equal(f.counts().cameraPublications,before.cameraPublications+1);
+  assert.equal(f.counts().editorFocus,before.editorFocus+1);assert.equal(f.editor.readOnly,false);
+  for(const id of ['zoom-in','zoom-out','zoom-fit','workspaces'])assert.equal(f.otherControls.get(id)!.disabled,true,id);
+  assert.equal(f.toolControls.get('hand')!.disabled,false,'A draft still finishes through the toolbar');
+  await f.editorKey('Escape');assert.equal(f.context.draft,null);assert.equal(f.editor.hidden,true);
+  for(const id of ['zoom-in','zoom-out','zoom-fit','workspaces'])assert.equal(f.otherControls.get(id)!.disabled,false,id);
+  assert.equal(f.writes.length,0);
+});
+
+test('resize cancellation restores controls before another presentation',async t=>{
+  for(const mode of ['move','resize'])await t.test(mode,async()=>{
+    const f=await fixture();await f.pointer('pointerdown',1,100,mode==='resize');await f.pointer('pointermove',1,140);
+    assert.equal(f.context.gesture.mode,mode);assert.equal(f.session.suspended,true);assert.equal(f.captures.has(1),true);
+    for(const id of ['zoom-in','workspaces','undo','delete'])assert.equal(f.otherControls.get(id)!.disabled,true,id);
+    assert.equal(f.toolControls.get('hand')!.disabled,true);
+    const before=f.counts(),basis=f.session.snapshot,requests=f.calls.length;
+    f.context.workspace.clientWidth=900;f.context.workspace.clientHeight=700;f.resize();
+    assert.equal(f.context.gesture,null);assert.equal(f.session.suspended,false);assert.equal(f.session.mutationReady,true);
+    assert.equal(f.captures.size,0);assert.equal(f.counts().clears,before.clears+1);
+    assert.equal(f.counts().cameraPublications,before.cameraPublications+1);
+    for(const id of ['zoom-in','zoom-out','zoom-fit','workspaces','undo','delete'])assert.equal(f.otherControls.get(id)!.disabled,false,id);
+    assert.equal(f.toolControls.get('hand')!.disabled,false);assert.equal(f.editor.readOnly,false);
+    assert.equal(f.session.snapshot,basis);assert.equal(f.calls.length,requests);assert.equal(f.writes.length,0);
+    await f.pointer('lostpointercapture');await f.pointer('pointerup',1,140);
+    assert.equal(f.writes.length,0,'Trailing terminal events cannot save a resized contact');
+  });
+  await t.test('pen with a pending presentation',async t=>{
+    const f=await fixture(),gpu={setNodes(){},resize(){},draw(){},dispose(){}} as unknown as InkGPU;
+    t.mock.method(InkGPU,'create',async()=>gpu);
+    let contactDisposals=0;
+    Object.assign(f.context.geometry,{
+      penSample:(force:number)=>({width:2,opacity:1,filteredForce:force,color:{red:0,green:0,blue:0}}),
+      inkContact:()=>({update(){return {};},snapshot(){return {};},dispose(){contactDisposals++;}}),
+    });
+    const errors:Error[]=[],changes:{suspended:boolean;undoDisabled:boolean}[]=[];
+    const input=new InkInput({hidden:true} as HTMLCanvasElement,()=>f.context.geometry,
+      ()=>({camera:f.context.worldCamera,viewport:{x:800,y:600},pixelScale:1}),f.context.lifetime.signal,
+      ()=>{f.context.buttons();changes.push({suspended:f.session.suspended,undoDisabled:f.otherControls.get('undo')!.disabled});},
+      error=>errors.push(error));
+    await turn();assert.equal(input.ready,true);f.context.ink=input;f.context.tool='pen';
+    let release!:(value:Awaited<ReturnType<NotebookSession['app']['callServerTool']>>)=>void;
+    const response=new Promise<Awaited<ReturnType<NotebookSession['app']['callServerTool']>>>(resolve=>{release=resolve;});
+    let requested=false;
+    t.mock.method(f.session.app,'callServerTool',async(request:Parameters<NotebookSession['app']['callServerTool']>[0])=>{
+      assert.equal(request.name,'notebook_panel_presentation');requested=true;return response;
+    });
+    const reading=f.session.refresh(true);
+    t.after(async()=>{release({content:[],structuredContent:f.snapshot});await reading;f.context.lifetime.abort();});
+    await turn();assert.equal(requested,true);
+    const sample={pointerId:1,timeStamp:10,pointerType:'pen',pressure:.5,clientX:100,clientY:100,button:0,altKey:false,
+      target:{hasAttribute:()=>false,closest:()=>null},preventDefault(){}};
+    await f.dispatch('pointerdown',sample);assert.equal(input.pointer,1);assert.equal(f.session.suspended,true);
+    assert.equal(f.otherControls.get('undo')!.disabled,true);assert.equal(f.editor.readOnly,true);changes.length=0;
+    const basis=f.session.snapshot;f.resize();
+    assert.deepEqual(changes,[{suspended:true,undoDisabled:true}],'The real InkInput.clear publishes before suspension is released');
+    assert.equal(input.pointer,undefined);assert.equal(input.hasPreview,false);assert.equal(contactDisposals,1);
+    assert.equal(f.captures.size,0);assert.equal(f.session.suspended,false);assert.equal(f.session.mutationReady,true);
+    for(const id of ['undo','back','zoom-in','workspaces'])assert.equal(f.otherControls.get(id)!.disabled,false,id);
+    assert.equal(f.editor.readOnly,false);assert.equal(f.toolControls.get('hand')!.disabled,false);
+    assert.equal(f.otherControls.get('delete')!.disabled,true,'Pen entry cleared the selection');
+    await turn();assert.equal(f.otherControls.get('undo')!.disabled,false,'Controls remain ready while the response is still pending');
+    assert.equal(f.session.snapshot,basis);assert.deepEqual(errors,[]);assert.equal(f.writes.length,0);
+    await f.dispatch('lostpointercapture',sample);await f.dispatch('pointerup',{...sample,timeStamp:20});
+    assert.equal(f.writes.length,0,'The cancelled pen contact cannot produce a later write');
+  });
+});
 
 test('tool controls retain the board shortcuts without an extra focus click',async()=>{
   const f=await fixture();
@@ -276,6 +410,7 @@ test('blur and tool changes share one editor completion and preserve the latest 
     }
     if(outcome==='closed'){
       await f.close();const afterClose=f.counts();assert.equal(f.context.closed,true);
+      assert.equal(afterClose.disposals,1);assert.equal(afterClose.geometryDisposals,1);
       await f.complete();assert.deepEqual(f.counts(),afterClose,'Late receipts cannot refocus or recreate a closed controller');
       assert.equal(f.context.tool,'select');assert.equal(f.context.draft,null);assert.equal(f.editor.hidden,true);return;
     }
