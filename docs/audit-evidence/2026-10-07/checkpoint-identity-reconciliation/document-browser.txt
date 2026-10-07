@@ -1,0 +1,23 @@
+✔ canonical activation preserves source provenance and event trust, never caller arguments (2.021717ms)
+✔ a runtime assigns distinct ordered identities to terminal activations (1.16385ms)
+✔ editor, rendering and absent canonical source cannot emit navigation (1.484014ms)
+✔ a two-finger pinch and its compatibility double-click never edit source (1.02475ms)
+✔ drag, cancellation, long hold and orphan release cannot complete a double tap (1.966715ms)
+✔ single-finger double tap has one owner; a later mouse double-click still edits (0.638215ms)
+✔ source request carries the installed identity and full paper coordinates, not the inset content origin (0.800461ms)
+✔ custom paper receipt preserves PDF points separately from surface extent (2.667375ms)
+✔ failed author keeps its admitted state transport until the existing drain permits retry (4.958119ms)
+✔ prepared geometry returns synchronously with no animation, clock or lifecycle sampling (1.444695ms)
+✔ receipt observation preserves prepared geometry and measures only synchronous work (0.989056ms)
+✔ superseded source, runtime, state, token, page or attempt cannot inherit an earlier receipt observation (3.641668ms)
+✔ the shipped program adapter waits on its one font getter and image decode before author readiness (6.063171ms)
+✔ render observation times the actual program and state waits, not removed PDF/font work (3.760288ms)
+✔ a superseded frame cannot publish canonical readiness from either real program dependency (2.192587ms)
+ℹ tests 15
+ℹ suites 0
+ℹ pass 15
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 97.029905
