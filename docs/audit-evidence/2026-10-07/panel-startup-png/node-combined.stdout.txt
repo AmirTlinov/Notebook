@@ -1,0 +1,71 @@
+✔ same-source late coarse material cannot replace sharper pixels at the current zoom (1.932625ms)
+✔ zoom-out admits lower excess density using the current display scale (0.38025ms)
+✔ an inadequate prior admits the current native pixel budget reply and ends demand (0.247792ms)
+▶ coarser material still admits fresh source identity and visible coverage gains
+  ✔ revision (0.2965ms)
+  ✔ workspace (0.185084ms)
+  ✔ endpoint (0.173584ms)
+  ✔ coverage (0.118958ms)
+✔ coarser material still admits fresh source identity and visible coverage gains (0.948125ms)
+▶ session coalesces viewport demand against accepted pixels without delaying required reads
+  ✔ covered (3.335708ms)
+  ✔ needed (0.614041ms)
+  ✔ forced (0.516ms)
+  ✔ fit (0.495791ms)
+✔ session coalesces viewport demand against accepted pixels without delaying required reads (5.375792ms)
+▶ a rejected coarse reply settles idle status while retaining write recovery state
+  ✔ idle (0.551042ms)
+  ✔ synchronizing (0.201708ms)
+  ✔ failedWrite (0.209916ms)
+✔ a rejected coarse reply settles idle status while retaining write recovery state (1.133292ms)
+▶ session teardown releases readers and ignores late read and write completions
+  ✔ read (1.011417ms)
+  ✔ saved (0.532125ms)
+  ✔ conflict (0.337667ms)
+  ✔ uncertain (0.32ms)
+✔ session teardown releases readers and ignores late read and write completions (2.419584ms)
+✔ navigation publishes ready controls immediately after the new surface is accepted (0.206959ms)
+✔ a confirmed pen contact replaces an in-flight old scene before the next polling tick (0.495417ms)
+✔ an unfinished contact owns mutation admission until completion or cancellation (0.332583ms)
+✔ error Retry repairs ipc_timeout before repeating the same text action (0.562ms)
+✔ error Retry repairs operation_failed before repeating the same text action (0.257416ms)
+✔ error Retry repairs runtime_starting before repeating the same text action (0.260416ms)
+✔ error Retry repairs runtime_startup_failed before repeating the same text action (0.376458ms)
+✔ workspace recovery preserves an uncertain action and its panel address (0.295792ms)
+✔ session closed during handshake suppresses the late connection failure (0.16925ms)
+✔ initial connect keeps exact target and bounds through startup and native opening without workspace transitions (0.541959ms)
+✔ startup failure before bounded waiting leaves an explicit retry with the same opening request (0.291209ms)
+✔ startup failure after bounded waiting leaves an explicit retry with the same opening request (0.216458ms)
+▶ closing during startup cancels queued reads and ignores late native admission
+  ✔ waiting (0.302167ms)
+  ✔ in-flight (0.222833ms)
+✔ closing during startup cancels queued reads and ignores late native admission (0.691917ms)
+✔ Notebook exposes one HTML app resource, a model opener and app-only gesture tools (23.432084ms)
+✔ native presentation stays pinned, bounds pixels and avoids duplicating PNG bytes in text (12.828292ms)
+✔ panel gestures keep the admitted endpoint and exact native sources (8.195875ms)
+✔ panel rejects caller routing/authorship fields and preserves the native conflict detail (5.648333ms)
+✔ workspace bootstrap opens in the same panel without a content owner or desktop window (5.339875ms)
+✔ workspace switching retires an old in-flight read and preserves accepted edit ownership (0.450458ms)
+✔ MCP clients join the ready owner even before a workspace exists (5.694042ms)
+✔ cold clients wait for bundled runtime admission on one isolated endpoint (104.742959ms)
+✔ an incompatible or unsafe owner cannot trigger a second runtime (2.122ms)
+✔ startup timeout is bounded and launches at most once per client (151.811ms)
+✔ startup summary counts retries without logging successful polls or private reply fields (208.623208ms)
+✔ timeout retains the last owner refusal without tracing its message or private context (153.724834ms)
+✔ a live MCP connection recovers its crashed runtime before an addressed retry without replaying uncertain writes (131.777458ms)
+✔ one pending bootstrap leaves MCP handshake, discovery and the static opening card available (140.481917ms)
+✔ an agent deadline expires before admission without a late write, and the same MCP connection can retry (4019.435958ms)
+✔ every native tool refuses a mismatched owner before dispatch while the opener stays static (17.86425ms)
+▶ a real rejected bootstrap stays recoverable before and after a caller stops waiting
+  ✔ before bounded wait (257.8685ms)
+  ✔ after bounded wait (258.290708ms)
+✔ a real rejected bootstrap stays recoverable before and after a caller stops waiting (516.668666ms)
+✔ runtime staging preserves the previous package until the copied product validates (16.024ms)
+ℹ tests 57
+ℹ suites 0
+ℹ pass 57
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 5687.19975

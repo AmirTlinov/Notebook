@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import { operationSchema, targetSchema, documentPathSchema, documentResourceSchema } from "./actions.js";
 import { worldPointSchema } from "./spatial.js";
 import { registerNotebookPanel } from "./panel-tools.js";
+import { runtimeAdmission, toolBudgetMilliseconds } from "./runtime-admission.js";
 
 const {version} = JSON.parse(await readFile(new URL("../package.json",import.meta.url),"utf8")) as {version:string};
 const operationDiagnostic=z.object({index:z.number().int().min(0).max(511),
@@ -40,9 +41,6 @@ const reads=z.enum(["help","observe","read","readMany","board","notebook","page"
 type Value=Record<string,unknown>;
 type Image={type:"image";data:string;mimeType:string};
 type PendingRun={run_id:string;op:string;after_seq:number;admission:"unknown"|"confirmed";observed_status?:string};
-// Leave time for JSON/MCP envelope serialization inside the four-second call.
-const toolBudgetMilliseconds=3_900;
-
 async function artifact(socket:string, descriptor:unknown,deadline:number):Promise<Image> {
   const value=await runBridge<{data:string;mimeType:string;sha256:string}>(socket,{command:"scriptArtifact",artifact:descriptor},{deadline});
   return {type:"image",data:value.data,mimeType:value.mimeType};
@@ -69,45 +67,39 @@ async function response(operation:(deadline:number)=>Promise<{value:Value;images
  * owned by the installed Mac coordinator; no JS eval or store exists here. */
 export function createServer(socketPath=defaultSocketPath(),options:{panelHtml?:string;bootstrapRuntime?:()=>Promise<Value>}={}):McpServer {
   const server=new McpServer({name:"notebook",version});
-  const bootstrapRuntime=options.bootstrapRuntime&& (async()=>{
-    try{return await options.bootstrapRuntime!();}
-    catch(cause){
-      // Launcher and server are separate bundles. Preserve the admitted
-      // error payload without relying on their BridgeError class identity.
-      const detail=cause instanceof Error&&"detail" in cause?cause.detail:undefined;
-      if(detail&&typeof detail==="object"&&"code" in detail&&typeof detail.code==="string"
-        &&"message" in detail&&typeof detail.message==="string")throw new BridgeError({...detail});
-      throw cause;
-    }
-  });
-  registerNotebookPanel(server,socketPath,options.panelHtml,bootstrapRuntime);
+  const admit=runtimeAdmission(options.bootstrapRuntime);
+  const admittedResponse=(operation:Parameters<typeof response>[0],pending?:PendingRun)=>response(async deadline=>{
+    await admit(deadline);
+    return operation(deadline);
+  },pending);
+  registerNotebookPanel(server,socketPath,options.panelHtml,admit);
   server.registerTool("notebook_import_program",{
     title:"Stage an immutable program package from local Mac files",
     description:"Trusted Mac file import, outside QuickJS. Prepare a descriptor with the installed program-package.mjs tooling; pass its SHA-256 packageHash and absolute manifestPath. Returns staging/ready/error/cancelled and byte progress; poll status with the same hash. Cancel stops before the next bounded part; retry reuses accepted SHA blobs. A ready import only stages bytes; it does not publish or show a scene. No source bytes or Base64 belong in tool arguments. Files are never exposed to the browser, and this operation cannot select a Notebook store.",
     inputSchema:z.object({op:z.enum(["start","status","cancel"]),packageHash:z.string().regex(/^[0-9a-f]{64}$/),manifestPath:z.string().min(1).max(4096).optional()}).strict(),
     annotations:{readOnlyHint:false,destructiveHint:false,openWorldHint:false,idempotentHint:true},
-  },input=>response(async(deadline)=>({value:await runBridge<Value>(socketPath,{command:"importProgram",programImport:input},{deadline})})));
+  },input=>admittedResponse(async(deadline)=>({value:await runBridge<Value>(socketPath,{command:"importProgram",programImport:input},{deadline})})));
   server.registerTool("notebook_import_document",{
     title:"Import one portable Notebook document",
     description:"Create a new document copy from a single local .notex ZIP, at most 64 MiB. The Mac owner verifies the exact SHA-256, paths, sizes and resource closure, then saves source and state in one ordinary transaction. Source programs do not execute during import. Reuse the exact id and arguments after a timeout; a new id requests another copy. filePath must be absolute. This is not an archive/workspace restore and never replaces the current workspace, keys or chats.",
     inputSchema:z.object({id:z.uuid(),filePath:z.string().startsWith("/").min(2).max(4096),sha256:z.string().regex(/^[0-9a-f]{64}$/),
       targetBoardID:z.uuid(),center:worldPointSchema}).strict(),
     annotations:{readOnlyHint:false,destructiveHint:false,openWorldHint:false,idempotentHint:true},
-  },input=>response(async(deadline)=>({value:await runBridge<Value>(socketPath,{command:"importDocument",documentImport:input},{deadline})})));
+  },input=>admittedResponse(async(deadline)=>({value:await runBridge<Value>(socketPath,{command:"importDocument",documentImport:input},{deadline})})));
   server.registerTool("notebook_import_document_resource",{
     title:"Stage one document resource from a local Mac file",
     description:"Read one regular local file up to 16 MiB, verify sha256 and stage its immutable SHA parts through the existing Mac persistence owner. filePath is absolute; path is its relative destination within a document, such as figures/chart.png. Returns a resource descriptor, not a document mutation. Use that descriptor in putDocumentFile with a current file sourceVersion (null for creation). Retry the same digest safely. No executable package, dummy program, source conversion or editable disk mirror is created.",
     inputSchema:z.object({filePath:z.string().startsWith("/").min(2).max(4096),path:documentPathSchema,sha256:z.string().regex(/^[0-9a-f]{64}$/)}).strict(),
     outputSchema:z.union([z.object({status:z.literal("ready"),sha256:z.string(),resource:documentResourceSchema}).strict(),error]),
     annotations:{readOnlyHint:false,destructiveHint:false,openWorldHint:false,idempotentHint:true},
-  },input=>response(async(deadline)=>({value:await runBridge<Value>(socketPath,{command:"importDocumentResource",documentResourceImport:input},{deadline})})));
+  },input=>admittedResponse(async(deadline)=>({value:await runBridge<Value>(socketPath,{command:"importDocumentResource",documentResourceImport:input},{deadline})})));
   server.registerTool("notebook_context",{
     title:"Read Notebook and discover its typed SDK",
     description:"Read shared attention, documents, pages, board, revisions, receipts and exact images. API v2 reads return {data,basis,coverage,cursor}; transactions accept base from a read. Use method:'help' only for an unknown contract. args:{topic:'operations'} gives a compact index; topic:'operation/createDocument' (or any operation name) gives one exact schema. transaction gives the complete action schema; interactive includes notebook.ready(promise); execution explains terminal status and output pagination. Other method topics give their schemas and examples. Read methods have the same args as nb methods. render/pageMap/place can prepare derived pictures but never change saved content or the camera.",
     inputSchema:z.object({method:reads.default("observe"),args:z.record(z.string(),z.json()).default({})}).strict(),
     outputSchema:contextOutput,
     annotations:{readOnlyHint:true,destructiveHint:false,openWorldHint:false},
-  },({method,args})=>response(async(deadline)=>{
+  },({method,args})=>admittedResponse(async(deadline)=>{
     const reply=await runBridge<Value>(socketPath,{command:"scriptContext",scriptContext:{apiVersion:2,method,arguments:args}},{deadline});
     if(reply.api_version!==2 || !("value" in reply)) throw new BridgeError({code:"api_version_mismatch",message:"MCP v2 requires the matching Mac helper."});
     const data=reply.value;
@@ -125,7 +117,7 @@ export function createServer(socketPath=defaultSocketPath(),options:{panelHtml?:
     annotations:{readOnlyHint:false,destructiveHint:true,openWorldHint:false,idempotentHint:true},
   },input=>{
     const pending:PendingRun={run_id:input.run_id,op:input.op,after_seq:input.after_seq,admission:"unknown"};
-    return response(async(deadline)=>{
+    return admittedResponse(async(deadline)=>{
       // Leave time for the native polling tick and IPC response before this
       // same tool deadline; a healthy empty 4s poll must not time out itself.
       const waitMilliseconds=Math.max(0,Math.min(input.wait_ms,Math.floor(deadline-performance.now())-100));

@@ -35,56 +35,59 @@ final class NotebookPanelMaterialTests: XCTestCase {
       camera: .init(center: center, scale: 1), viewport: .init(x: 1536, y: 1536), pixelScale: 1)
     let presence = SessionPresence(boardID: target.id, mode: .board,
       camera: projection.camera, viewport: projection.viewport)
-    let result = try await renderer.renderPanel(presence: presence, projection: projection,
-      editableIDs: optional, movableItemIDs: [], knownAssets: [])
-    let admitted = Set(result.layers.compactMap(\.elementID)), discarded = optional.subtracting(admitted)
-    XCTAssertFalse(discarded.isEmpty, "Interleaved passive bands force the real aggregate budget to demote bodies")
-    for id in discarded {
-      let value = try await source.readElementForPaint(id, boardID: target.id)
-      let read = try XCTUnwrap(value)
-      let presentation = read.placement.map { NotebookElementPresentation(read.element, placement: $0) }
-      let key = try await source.elementMaterialKey(read, boardID: target.id, presentation: presentation, density: 1)
-      let unexpected = resources.retainMaterial(key)
-      XCTAssertNil(unexpected, "A demoted body must not begin raster/PNG preparation before admission")
-      unexpected?.release()
+    // The response owns small PNG grants until its last layer borrow ends.
+    do {
+      let result = try await renderer.renderPanel(presence: presence, projection: projection,
+        editableIDs: optional, movableItemIDs: [], knownAssets: [])
+      let admitted = Set(result.layers.compactMap(\.elementID)), discarded = optional.subtracting(admitted)
+      XCTAssertFalse(discarded.isEmpty, "Interleaved passive bands force the real aggregate budget to demote bodies")
+      for id in discarded {
+        let value = try await source.readElementForPaint(id, boardID: target.id)
+        let read = try XCTUnwrap(value)
+        let presentation = read.placement.map { NotebookElementPresentation(read.element, placement: $0) }
+        let key = try await source.elementMaterialKey(read, boardID: target.id, presentation: presentation, density: 1)
+        let unexpected = resources.retainMaterial(key)
+        XCTAssertNil(unexpected, "A demoted body must not begin raster/PNG preparation before admission")
+        unexpected?.release()
+      }
+      XCTAssertEqual(resources.rasterCount, Set(result.layers.map(\.assetID)).count,
+        "Only final cohort pixels were produced; no discarded material or eviction hides wasted work")
+      XCTAssertLessThan(resources.peakAccountedBytes, resources.byteLimit)
+      XCTAssertLessThanOrEqual(result.layers.count, 96)
+      XCTAssertLessThanOrEqual(result.layers.reduce(0) { $0 + $1.pixelWidth * $1.pixelHeight },
+        NotebookPanelRenderProjection.maximumDecodedPixels)
+      for layer in result.layers where layer.repeatSize == nil {
+        XCTAssertGreaterThanOrEqual(min(Double(layer.pixelWidth) / layer.frame.width,
+          Double(layer.pixelHeight) / layer.frame.height), 0.995)
+      }
+      let sample = center.offsetBy(x: -5, y: -5)
+      let covering = result.layers.filter { layer in
+        let point = layer.worldOrigin.delta(to: sample)
+        return layer.repeatSize == nil && point.x >= layer.frame.x && point.y >= layer.frame.y
+          && point.x < layer.frame.x + layer.frame.width && point.y < layer.frame.y + layer.frame.height
+      }.sorted { $0.order < $1.order }
+      // Empty ink tiles still cover this point above the element bands. Check
+      // the displayed source-over result, not the highest layer's clear pixel.
+      var pixel = (red: CGFloat(0), blue: CGFloat(0), alpha: CGFloat(0))
+      for layer in covering {
+        let point = layer.worldOrigin.delta(to: sample)
+        let image = try bitmap(layer.encoded)
+        let color = try XCTUnwrap(image.colorAt(x: Int((point.x - layer.frame.x) * Double(layer.pixelWidth) / layer.frame.width),
+          y: Int((point.y - layer.frame.y) * Double(layer.pixelHeight) / layer.frame.height))?.usingColorSpace(.deviceRGB))
+        let alpha = color.alphaComponent
+        pixel = (color.redComponent * alpha + pixel.red * (1 - alpha),
+          color.blueComponent * alpha + pixel.blue * (1 - alpha), alpha + pixel.alpha * (1 - alpha))
+      }
+      XCTAssertGreaterThan(pixel.alpha, 0.95)
+      XCTAssertGreaterThan(pixel.blue, 0.95, "The last passive body remains above every admitted red subject")
+      XCTAssertLessThan(pixel.red, 0.05)
+      let repeated = try await renderer.renderPanel(presence: presence, projection: projection,
+        editableIDs: optional, movableItemIDs: [], knownAssets: Set(result.layers.map(\.assetID)))
+      XCTAssertEqual(repeated.layers.map(\.assetID), result.layers.map(\.assetID))
+      XCTAssertEqual(repeated.layers.map(\.order), result.layers.map(\.order))
+      XCTAssertTrue(repeated.layers.allSatisfy { $0.png == nil })
     }
-    XCTAssertEqual(resources.rasterCount, Set(result.layers.map(\.assetID)).count,
-      "Only final cohort pixels were produced; no discarded material or eviction hides wasted work")
-    XCTAssertEqual(resources.reservedBytes, 0)
-    XCTAssertLessThan(resources.peakAccountedBytes, resources.byteLimit)
-    XCTAssertLessThanOrEqual(result.layers.count, 96)
-    XCTAssertLessThanOrEqual(result.layers.reduce(0) { $0 + $1.pixelWidth * $1.pixelHeight },
-      NotebookPanelRenderProjection.maximumDecodedPixels)
-    for layer in result.layers where layer.repeatSize == nil {
-      XCTAssertGreaterThanOrEqual(min(Double(layer.pixelWidth) / layer.frame.width,
-        Double(layer.pixelHeight) / layer.frame.height), 0.995)
-    }
-    let sample = center.offsetBy(x: -5, y: -5)
-    let covering = result.layers.filter { layer in
-      let point = layer.worldOrigin.delta(to: sample)
-      return layer.repeatSize == nil && point.x >= layer.frame.x && point.y >= layer.frame.y
-        && point.x < layer.frame.x + layer.frame.width && point.y < layer.frame.y + layer.frame.height
-    }.sorted { $0.order < $1.order }
-    // Empty ink tiles still cover this point above the element bands. Check
-    // the displayed source-over result, not the highest layer's clear pixel.
-    var pixel = (red: CGFloat(0), blue: CGFloat(0), alpha: CGFloat(0))
-    for layer in covering {
-      let point = layer.worldOrigin.delta(to: sample)
-      let image = try bitmap(layer.encoded)
-      let color = try XCTUnwrap(image.colorAt(x: Int((point.x - layer.frame.x) * Double(layer.pixelWidth) / layer.frame.width),
-        y: Int((point.y - layer.frame.y) * Double(layer.pixelHeight) / layer.frame.height))?.usingColorSpace(.deviceRGB))
-      let alpha = color.alphaComponent
-      pixel = (color.redComponent * alpha + pixel.red * (1 - alpha),
-        color.blueComponent * alpha + pixel.blue * (1 - alpha), alpha + pixel.alpha * (1 - alpha))
-    }
-    XCTAssertGreaterThan(pixel.alpha, 0.95)
-    XCTAssertGreaterThan(pixel.blue, 0.95, "The last passive body remains above every admitted red subject")
-    XCTAssertLessThan(pixel.red, 0.05)
-    let repeated = try await renderer.renderPanel(presence: presence, projection: projection,
-      editableIDs: optional, movableItemIDs: [], knownAssets: Set(result.layers.map(\.assetID)))
-    XCTAssertEqual(repeated.layers.map(\.assetID), result.layers.map(\.assetID))
-    XCTAssertEqual(repeated.layers.map(\.order), result.layers.map(\.order))
-    XCTAssertTrue(repeated.layers.allSatisfy { $0.png == nil })
+    XCTAssertEqual(resources.reservedBytes, 0, "Every transient grant ends with the response; entry PNG residency stays charged")
   }
 
   @MainActor

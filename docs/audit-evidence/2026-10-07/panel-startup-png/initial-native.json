@@ -1,0 +1,17 @@
+{
+  "outcome": "build-for-testing failed; tests not run",
+  "exitCode": 65,
+  "failure": "Ambiguous greatestFiniteMagnitude in new test fixture",
+  "repair": "Explicit Double constants; weak reference test declaration changed to let",
+  "productionChangedForRepair": false,
+  "evidenceDirectory": ".build/runtime-256-png-verified",
+  "logs": [
+    "initial-mac-build-for-testing.stdout.log",
+    "initial-mac-build-for-testing.stderr.log"
+  ],
+  "sourceBeforeSHA256": "817016659ee00288bae7a4cdbbc1ff8224a16dc418eb1b0bfb39c5dbe510a57c",
+  "repairedSourceSHA256": "97c93c0761cee04bfd4ddbd5f1c23603101c1f68c1574b519003ba6cb19793f4",
+  "inputChanges": [
+    "Applications/MacTests/RasterEncodedRepresentationTests.swift"
+  ]
+}

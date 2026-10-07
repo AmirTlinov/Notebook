@@ -360,7 +360,7 @@ final class NotebookPanelPresentationTests: XCTestCase {
     baselineCanvas.setFillColor(NSColor.red.cgColor)
     baselineCanvas.fill(.init(x: 96, y: 96, width: 24, height: 24))
     let baselineImage = try XCTUnwrap(baselineCanvas.makeImage())
-    let baseline = try await CompositionPixels.encodePNG(baselineImage)
+    let baseline = try await NotebookPNGEncodingFixture.encode(baselineImage)
     let drawing = PageInkDrawing(baselinePNG: baseline, baselineActionCount: 1,
       actions: [early, moved, later, capturedCut, targetCut, baselineCut])
     let graphic = NotebookGraphic(shape: .freehand, sourceInkIDs: [moved.id], freehand: .init(layers: [
@@ -389,7 +389,7 @@ final class NotebookPanelPresentationTests: XCTestCase {
           }
         let image = try XCTUnwrap(body.sampledImage(for: .init(width: Double.greatestFiniteMagnitude,
           height: Double.greatestFiniteMagnitude)))
-        let png = try await CompositionPixels.encodePNG(image)
+        let png = try await NotebookPNGEncodingFixture.encode(image)
         let actual = try XCTUnwrap(NSBitmapImageRep(data: png))
         body.release()
         for (x, y) in [(56, 40), (56, 65), (48, 40), (56, 25), (56, 50), (64, 65), (110, 110), (105, 105)] {

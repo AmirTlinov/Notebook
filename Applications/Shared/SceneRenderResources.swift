@@ -90,13 +90,57 @@ enum SceneResourceProfile: Equatable, Sendable {
   case interactive, headless
 }
 
+/// Off-main output remains covered by the caller's grant until adoption.
+struct RasterEncodedBytes: Sendable {
+  let png: Data
+  let sha256: String
+  let accountedByteCount: Int
+}
+
+/// A response keeps the pool alive while borrowing encoded backing, without
+/// retaining the entry's image pixels. The entry itself retains no pool cycle.
+@MainActor
+final class RasterEncodedBorrow {
+  nonisolated let value: RasterEncodedPNG
+  private let resources: SceneRenderResources
+  fileprivate init(_ value: RasterEncodedPNG, resources: SceneRenderResources) {
+    self.value = value; self.resources = resources
+  }
+  isolated deinit {}
+}
+
+/// One immutable entry's PNG and SHA. Responses share this borrow, including
+/// withOrder. Entry eviction transfers its bytes into the existing grant ledger
+/// until the last response releases them; it never pins otherwise unused pixels.
+@MainActor
+final class RasterEncodedPNG {
+  nonisolated let png: Data
+  nonisolated let sha256: String
+  nonisolated let accountedByteCount: Int
+  nonisolated let entryID: UUID
+  private var reservation: RasterReservation?
+  fileprivate init(_ value: RasterEncodedBytes, entryID: UUID, reservation: RasterReservation) {
+    png = value.png; sha256 = value.sha256; accountedByteCount = value.accountedByteCount
+    self.entryID = entryID; self.reservation = reservation
+  }
+  fileprivate func transferToEntry(_ resources: SceneRenderResources) {
+    if let reservation { resources.releaseReservation(reservation.id, notifies: false); reservation.release() }
+    reservation = nil
+  }
+  fileprivate func detachFromEntry(_ resources: SceneRenderResources) {
+    precondition(reservation == nil)
+    reservation = resources.reserveEncodedBytes(accountedByteCount)
+  }
+  isolated deinit { reservation?.release() }
+}
+
 /// A retained image is charged until its final lease ends. Released leases cannot
 /// keep an unaccounted strong image reference alive.
 @MainActor
 final class RasterLease {
   let source: SceneRasterSource
   let pixelScale: Double
-  let accountedByteCount: Int
+  var accountedByteCount: Int { resources?.rasterByteCount(entryID) ?? 0 }
   let semanticSelection: ProgramSemanticSelection?
   let entryID: UUID
   private var resources: SceneRenderResources?
@@ -133,13 +177,17 @@ final class RasterLease {
     return retainedImage
   }
   fileprivate init(source: SceneRasterSource, pixelScale: Double, image: AgentSnapshotImage,
-    mipmaps: [CGImage], byteCount: Int, entryID: UUID, semanticSelection: ProgramSemanticSelection?, resources: SceneRenderResources) {
-    self.source = source; self.pixelScale = pixelScale; retainedImage = image; accountedByteCount = byteCount
+    mipmaps: [CGImage], entryID: UUID, semanticSelection: ProgramSemanticSelection?, resources: SceneRenderResources) {
+    self.source = source; self.pixelScale = pixelScale; retainedImage = image
     self.mipmaps = mipmaps; self.semanticSelection = semanticSelection
     self.entryID = entryID; self.resources = resources
   }
   func retainedCopy() -> RasterLease? {
     resources?.retainRasterEntry(entryID)
+  }
+  func encodedPNG() async throws -> RasterEncodedBorrow {
+    guard let resources else { throw CancellationError() }
+    return try await resources.borrowEncodedPNG(self)
   }
   func release() {
     guard let owner = resources else { return }
@@ -514,7 +562,8 @@ final class SceneRenderResources {
     let image: AgentSnapshotImage
     let mipmaps: [CGImage]
     let pixelScale: Double
-    let cost: Int
+    let pixelCost: Int
+    var cost: Int { pixelCost + (encodedPNG?.accountedByteCount ?? 0) }
     let documentLayout: DocumentLayoutRecord?
     let semanticSelection: ProgramSemanticSelection?
     // Publication order is immutable; borrowing an old receipt only changes
@@ -525,6 +574,22 @@ final class SceneRenderResources {
     // Only complete composition pixels are eligible for a warm return. This
     // metadata dies with the same budgeted entry; it retains no source images.
     var compositionReceipts: [SceneSourceAddress: SceneSourceReceipt]? = nil
+    var encodedPNG: RasterEncodedPNG? = nil
+    var encoding: PNGEncoding? = nil
+  }
+  @MainActor private final class PNGEncoding {
+    let task: Task<RasterEncodedPNG, Error>
+    var requests: [UUID: PNGRequest] = [:]
+    var hasReaders: Bool { requests.values.contains { !$0.isCancelled } }
+    init(_ task: Task<RasterEncodedPNG, Error>) { self.task = task }
+  }
+  /// Cancellation is observable before its queued MainActor bookkeeping, so
+  /// a completed codec cannot publish after the last reader has cancelled.
+  private final class PNGRequest: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+    var isCancelled: Bool { lock.lock(); defer { lock.unlock() }; return cancelled }
+    func cancel() { lock.lock(); cancelled = true; lock.unlock() }
   }
   private struct DiagnosticEntry {
     let element: AgentElement
@@ -644,7 +709,87 @@ final class SceneRenderResources {
     guard var entry = entries[id] else { return nil }
     accessClock &+= 1; entry.access = accessClock; entry.retains += 1; entries[id] = entry
     return RasterLease(source: entry.source, pixelScale: entry.pixelScale, image: entry.image,
-      mipmaps: entry.mipmaps, byteCount: entry.cost, entryID: id, semanticSelection: entry.semanticSelection, resources: self)
+      mipmaps: entry.mipmaps, entryID: id, semanticSelection: entry.semanticSelection, resources: self)
+  }
+
+  fileprivate func rasterByteCount(_ id: UUID) -> Int { entries[id]?.cost ?? 0 }
+
+  fileprivate func borrowEncodedPNG(_ raster: RasterLease) async throws -> RasterEncodedBorrow {
+    try Task.checkCancellation()
+    let id = raster.entryID
+    guard let pin = raster.retainedCopy() else { throw CancellationError() }
+    defer { pin.release() }
+    // A cancelled flight keeps its source and output charged until ImageIO
+    // returns. A new caller waits for that completion before starting again.
+    while let encoding = entries[id]?.encoding, encoding.task.isCancelled || !encoding.hasReaders {
+      encoding.task.cancel()
+      _ = try? await encoding.task.value
+      try Task.checkCancellation()
+      if entries[id]?.encoding === encoding { entries[id]?.encoding = nil }
+    }
+    guard !raster.isReleased, let entry = entries[id] else { throw CancellationError() }
+    if let value = entry.encodedPNG { return RasterEncodedBorrow(value, resources: self) }
+    let encoding: PNGEncoding
+    if let pending = entry.encoding { encoding = pending }
+    else {
+      guard let image = pin.sampledImage(for: .init(width: Double.greatestFiniteMagnitude, height: Double.greatestFiniteMagnitude)),
+        let sourcePin = pin.retainedCopy(),
+        let charge = reserveDerivedBytes(4096, priority: .passive) else { throw SceneRenderError.resourceLimit }
+      let task = Task { @MainActor in
+        defer { sourcePin.release() }
+        do {
+          let value = try await CompositionPixels.encodePNG(image, maximumBytes: 9 * 1024 * 1024) { [self] bytes in
+            guard entries[id]?.encoding?.hasReaders == true else { return false }
+            return resizePassiveDerivedReservation(charge, to: bytes)
+          }
+          try Task.checkCancellation()
+          guard entries[id]?.encoding?.hasReaders == true else { throw CancellationError() }
+          let allocation = RasterEncodedPNG(value, entryID: id, reservation: charge)
+          // Small incompressible entries need not retain an oversized malloc
+          // slab. Their response still holds the admitted transient allocation.
+          if let current = entries[id], value.accountedByteCount < current.pixelCost {
+            let previous = rasterAdmission
+            allocation.transferToEntry(self)
+            entries[id]?.encodedPNG = allocation
+            residentBytes += value.accountedByteCount
+            scheduleAdmissionNotification(previous)
+          }
+          return allocation
+        } catch { charge.release(); throw error }
+      }
+      encoding = PNGEncoding(task)
+      entries[id]?.encoding = encoding
+    }
+    let request = UUID()
+    let reader = PNGRequest()
+    encoding.requests[request] = reader
+    defer { finishPNGRequest(request, id: id, encoding: encoding) }
+    let allocation: RasterEncodedPNG
+    do {
+      allocation = try await withTaskCancellationHandler {
+        try await encoding.task.value
+      } onCancel: {
+        reader.cancel()
+        Task { @MainActor [self] in cancelPNGRequest(request, id: id, encoding: encoding) }
+      }
+    } catch {
+      try Task.checkCancellation()
+      throw error
+    }
+    try Task.checkCancellation()
+    guard !raster.isReleased else { throw CancellationError() }
+    return RasterEncodedBorrow(allocation, resources: self)
+  }
+
+  private func cancelPNGRequest(_ request: UUID, id: UUID, encoding: PNGEncoding) {
+    guard entries[id]?.encoding === encoding else { return }
+    encoding.requests[request] = nil
+    if !encoding.hasReaders { encoding.task.cancel() }
+  }
+  private func finishPNGRequest(_ request: UUID, id: UUID, encoding: PNGEncoding) {
+    guard entries[id]?.encoding === encoding else { return }
+    encoding.requests[request] = nil
+    if encoding.requests.isEmpty { entries[id]?.encoding = nil }
   }
 
   func compositionReceipts(for raster: RasterLease) -> [SceneSourceAddress: SceneSourceReceipt]? {
@@ -950,7 +1095,7 @@ final class SceneRenderResources {
     guard let id = installRaster(image, for: source, reservation: reservation, documentLayout: documentLayout, retaining: true, mipmaps: mipmaps, semanticSelection: semanticSelection),
       let entry = entries[id] else { return nil }
     return RasterLease(source: entry.source, pixelScale: entry.pixelScale, image: entry.image,
-      mipmaps: entry.mipmaps, byteCount: entry.cost, entryID: id, semanticSelection: entry.semanticSelection, resources: self)
+      mipmaps: entry.mipmaps, entryID: id, semanticSelection: entry.semanticSelection, resources: self)
   }
 
   private func installRaster(_ image: AgentSnapshotImage, for source: SceneRasterSource,
@@ -982,7 +1127,7 @@ final class SceneRenderResources {
     accessClock &+= 1
     let id = UUID()
     entries[id] = RasterEntry(source: source, image: image, mipmaps: mipmaps, pixelScale: raster.scale,
-      cost: raster.cost, documentLayout: documentLayout, semanticSelection: semanticSelection, publication: accessClock, access: accessClock, retains: retaining ? 1 : 0)
+      pixelCost: raster.cost, documentLayout: documentLayout, semanticSelection: semanticSelection, publication: accessClock, access: accessClock, retains: retaining ? 1 : 0)
     rasterOwners[source.owner, default: []].append(id)
     residentBytes += raster.cost; rasterCount = entries.count
     scheduleAdmissionNotification(previous)
@@ -1317,9 +1462,15 @@ final class SceneRenderResources {
     guard let entry = entries.removeValue(forKey: id) else { return }
     precondition(entry.retains == 0)
     residentBytes -= entry.cost; rasterCount = entries.count
+    entry.encodedPNG?.detachFromEntry(self)
     rasterOwners[entry.source.owner]?.removeAll { $0 == id }
     if rasterOwners[entry.source.owner]?.isEmpty == true { rasterOwners[entry.source.owner] = nil }
     changed(entry.source.owner)
+  }
+  /// Already resident PNG bytes change owner without competing for admission.
+  /// The removed entry has just returned this exact cost to the same ledger.
+  fileprivate func reserveEncodedBytes(_ bytes: Int) -> RasterReservation {
+    reserveAllocation(bytes: bytes, rasterCount: 0, priority: .passive, physicalOwner: nil)
   }
   private func changed(_ owner: RasterOwner) {
     rasterGeneration &+= 1

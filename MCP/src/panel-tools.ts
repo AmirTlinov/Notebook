@@ -6,10 +6,12 @@ import { readFile } from "node:fs/promises";
 import { BridgeError, defaultSocketPath, runBridge } from "./bridge.js";
 import { appendInkStrokeSchema, inkStrokePointSchema, operationSchema } from "./actions.js";
 import { sceneBoundsSchema, worldPointSchema } from "./spatial.js";
+import { toolBudgetMilliseconds, type RuntimeAdmission } from "./runtime-admission.js";
 
 declare const NOTEBOOK_PANEL_HTML: string;
 export const panelResourceURI = "ui://notebook/workspace.html";
 export const panelTargetSchema = z.object({kind:z.enum(["board","page"]),id:z.uuid()}).strict();
+const panelOpenSchema=z.object({target:panelTargetSchema.optional(),bounds:sceneBoundsSchema.optional()}).strict();
 export const panelAddressSchema = z.object({
   workspaceID:z.uuid(),target:panelTargetSchema,socketKey:z.string().regex(/^[a-f0-9]{24}$/),
 }).strict();
@@ -48,7 +50,7 @@ export function panelSocket(address:Pick<Address,"socketKey">,initialSocket=defa
 async function result(operation:()=>Promise<Value>,appearance=false) {
   try {
     const value=await operation();
-    const text=appearance?{workspaceID:value.workspaceID,target:value.target,cursor:value.cursor,
+    const text=appearance&&value.workspaceID?{workspaceID:value.workspaceID,target:value.target,cursor:value.cursor,
       status:(value.appearance as Value|undefined)?.status??"ready"}:value;
     return {content:[{type:"text" as const,text:JSON.stringify(text)}],structuredContent:value};
   } catch(cause) {
@@ -58,8 +60,13 @@ async function result(operation:()=>Promise<Value>,appearance=false) {
   }
 }
 
-export function registerNotebookPanel(server:McpServer,socketPath:string,html?:string,bootstrapRuntime?:()=>Promise<Value>) {
+export function registerNotebookPanel(server:McpServer,socketPath:string,html?:string,admit?:RuntimeAdmission) {
   const appMetadata={ui:{resourceUri:panelResourceURI,visibility:["app"]}};
+  const native=(operation:(runtime:Value|undefined,deadline:number)=>Promise<Value>,appearance=false)=>result(async()=>{
+    const deadline=performance.now()+toolBudgetMilliseconds;
+    const runtime=await admit?.(deadline);
+    return operation(runtime,deadline);
+  },appearance);
   registerAppResource(server,"Notebook workspace",panelResourceURI,{},async()=>({contents:[{
     uri:panelResourceURI,mimeType:RESOURCE_MIME_TYPE,
     text:html??(typeof NOTEBOOK_PANEL_HTML!=="undefined"?NOTEBOOK_PANEL_HTML
@@ -70,24 +77,29 @@ export function registerNotebookPanel(server:McpServer,socketPath:string,html?:s
   registerAppTool(server,"notebook_open",{
     title:"Notebook",
     description:"Open the real Notebook workspace for human and agent collaboration. The plugin runtime owns saved material. Pass an exact board/page target when known; omitted target follows the admitted Notebook focus. The panel keeps its own camera and selection and never changes the iPad camera. With no selected workspace, choose or create one inside the panel.",
-    inputSchema:z.object({target:panelTargetSchema.optional(),bounds:sceneBoundsSchema.optional()}).strict(),
+    inputSchema:panelOpenSchema,
     annotations:{readOnlyHint:true,destructiveHint:false,openWorldHint:false},
     _meta:{ui:{resourceUri:panelResourceURI},"openai/ui":{entrypoints:[{type:"thread"},{type:"global"}]}},
-  },input=>result(async()=>{
-    const runtime=bootstrapRuntime?await bootstrapRuntime():await runBridge<Value>(socketPath,{command:"runtimeStatus"});
+  },input=>result(async()=>({open:input})));
+  registerAppTool(server,"notebook_panel_connect",{
+    title:"Connect this Notebook panel",
+    description:"Admit the installed runtime and read this panel's original board/page request. Retry the same request while Notebook opens; no content edit or workspace selection is performed.",
+    inputSchema:panelOpenSchema,
+    annotations:{readOnlyHint:true,destructiveHint:false,openWorldHint:false},_meta:appMetadata,
+  },input=>native(async(admitted,deadline)=>{
+    const runtime=admitted??await runBridge<Value>(socketPath,{command:"runtimeStatus"},{deadline});
     if(runtime.state!=="ready")return {runtime};
     return readRuntimePanel(runtime,input,socketPath);
-  }));
+  },true));
   registerAppTool(server,"notebook_panel_workspace",{
     title:"Choose a Notebook workspace",
     description:"Read, select, create or rename the personal workspace through the plugin runtime. Accepted edits retain their original workspace owner.",
-    inputSchema:z.object({action:z.enum(["list","create","select","rename","retry"]),id:z.uuid().optional(),name:z.string().trim().min(1).max(200).optional()}).strict(),
+    inputSchema:z.object({action:z.enum(["list","create","select","rename","retry"]),id:z.uuid().optional(),name:z.string().trim().min(1).max(200).optional(),open:panelOpenSchema.optional()}).strict(),
     annotations:{readOnlyHint:false,destructiveHint:false,openWorldHint:false},_meta:appMetadata,
-  },request=>result(async()=>{
-    if(bootstrapRuntime&&["list","retry"].includes(request.action))await bootstrapRuntime();
+  },({open,...request})=>native(async()=>{
     const value=await runBridge<Value>(socketPath,{command:"runtimeWorkspace",runtimeWorkspace:request});
     if(["create","select","retry"].includes(request.action)&&(value.status as Value)?.state==="ready"&&!value.error){
-      value.snapshot=await readRuntimePanel(value.status as Value,{},socketPath);
+      value.snapshot=await readRuntimePanel(value.status as Value,open??{},socketPath);
     }
     return value;
   }));
@@ -97,21 +109,21 @@ export function registerNotebookPanel(server:McpServer,socketPath:string,html?:s
     inputSchema:panelAddressSchema.extend({appearance:panelViewSchema,knownCursor:z.string().optional(),knownRequestID:z.uuid().optional(),
       knownAssets:z.array(z.uuid()).max(96).optional(),includeFitBounds:z.boolean().optional()}).strict(),
     annotations:{readOnlyHint:true,destructiveHint:false,openWorldHint:false},_meta:appMetadata,
-  },({socketKey,...request})=>result(()=>runBridge<Value>(panelSocket({...request,socketKey},socketPath),
+  },({socketKey,...request})=>native(()=>runBridge<Value>(panelSocket({...request,socketKey},socketPath),
     {command:"panelPresentation",panelPresentation:request}),true));
   registerAppTool(server,"notebook_panel_edit",{
     title:"Save a human Notebook edit",
     description:"Apply the completed human gesture through Notebook native commands. A pen contact carries one appendInkStroke and sources:[]; element and card edits carry their exact captured sources. Reuse actionID and identical payload after an uncertain response. The native owner chooses authorship and validates the addressed surface.",
     inputSchema:panelEditSchema,
     annotations:{readOnlyHint:false,destructiveHint:true,openWorldHint:false,idempotentHint:true},_meta:appMetadata,
-  },({socketKey,...request})=>result(()=>runBridge<Value>(panelSocket({...request,socketKey},socketPath),
+  },({socketKey,...request})=>native(()=>runBridge<Value>(panelSocket({...request,socketKey},socketPath),
     {command:"panelEdit",panelEdit:request})));
   registerAppTool(server,"notebook_panel_undo",{
     title:"Undo a human Notebook contribution",
     description:"Undo the admitted native history head while preserving subsequent contributions from other authors.",
     inputSchema:panelAddressSchema.extend({actionID:z.uuid()}).strict(),
     annotations:{readOnlyHint:false,destructiveHint:true,openWorldHint:false,idempotentHint:true},_meta:appMetadata,
-  },({socketKey,...request})=>result(()=>runBridge<Value>(panelSocket({...request,socketKey},socketPath),
+  },({socketKey,...request})=>native(()=>runBridge<Value>(panelSocket({...request,socketKey},socketPath),
     {command:"panelUndo",panelUndo:request})));
 }
 

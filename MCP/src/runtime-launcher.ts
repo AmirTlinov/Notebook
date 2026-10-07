@@ -62,7 +62,7 @@ export async function ensureRuntime(app: string, socket: string, expectedBuild: 
       if (status?.kind !== "notebookRuntime" || typeof status.ready !== "boolean"
         || !Number.isSafeInteger(status.pid) || status.pid <= 0
         || !["opening", "ready", "workspaceRequired", "failed"].includes(status.state)) {
-        throw new Error("Notebook IPC returned an incompatible runtime status.");
+        throw new BridgeError({code:"runtime_update_required",message:"Notebook IPC returned an incompatible runtime status."});
       }
       if (status.protocolVersion !== 1 || status.build !== expectedBuild) {
         throw new BridgeError({code:"runtime_update_required", message:
@@ -82,9 +82,9 @@ export async function ensureRuntime(app: string, socket: string, expectedBuild: 
       if (!(error instanceof BridgeError)
         || !["ipc_unavailable", "ipc_timeout", "owner_unavailable"].includes(String(error.detail.code))) {
         trace("startup.failed");
-        throw new Error("The active Notebook owner does not support this plugin runtime. "
+        throw new BridgeError({code:"runtime_update_required",message:"The active Notebook owner does not support this plugin runtime. "
           + "Finish the Notebook runtime transition before reconnecting the plugin. "
-          + (error instanceof Error ? error.message : String(error)), { cause: error });
+          + (error instanceof Error ? error.message : String(error))});
       }
       if (!launched && error.detail.code === "ipc_unavailable") {
         launched = true;
@@ -99,7 +99,7 @@ export async function ensureRuntime(app: string, socket: string, expectedBuild: 
   } while (performance.now() < deadline);
   trace("startup.failed");
   throw new Error("The bundled Notebook runtime has not opened its IPC channel. "
-    + "Reconnect the plugin after resolving its startup error."
+    + "Retry opening Notebook in the existing panel after resolving its startup error."
     + (lastError?` Last attempt: ${String(lastError.detail.code)}: ${lastError.message.slice(0,512).replace(/[\r\n]/g," ")}`:""),
     {cause:lastError});
 }
@@ -136,11 +136,16 @@ async function main() {
     console.error(JSON.stringify({kind:"notebook-runtime-startup",launcherPID:process.pid,...event}));
     if(event.phase==="startup.done"||event.phase==="startup.failed")tracingStartup=false;
   }});
-  await bootstrapRuntime();
   // The launcher already runs in the bundled Node. Keep one stdio transport
-  // and its normal signal/EOF lifetime; closing it does not stop the app owner.
+  // alive during native admission; each domain call joins the same bootstrap.
+  // Closing the transport does not stop the app owner.
   const {startStdio}=await import(pathToFileURL(entry).href);
   startStdio({bootstrapRuntime});
+  // Startup failure belongs to the live panel's retry path, not MCP handshake.
+  void bootstrapRuntime().catch(error=>{
+    console.error(JSON.stringify({kind:"notebook-runtime-startup-error",launcherPID:process.pid,
+      message:(error instanceof Error?error.message:String(error)).slice(0,1024).replace(/[\r\n]/g," ")}));
+  });
 }
 
 if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {

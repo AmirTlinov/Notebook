@@ -8,6 +8,8 @@ import {dirname, join} from 'node:path';
 import {ensureRuntime, runtimeBootstrap, type RuntimeStartupEvent} from '../src/runtime-launcher.js';
 import {createServer as createNotebookServer} from '../src/server.js';
 import {BridgeError} from '../src/bridge.js';
+import {panelResourceURI} from '../src/panel-tools.js';
+import {runtimeAdmission} from '../src/runtime-admission.js';
 
 const status={kind:'notebookRuntime',ready:true,pid:1234,state:'workspaceRequired',protocolVersion:1,build:'248'};
 
@@ -180,7 +182,7 @@ test('a live MCP connection recovers its crashed runtime before an addressed ret
   await Promise.all([runtime.stop(),content.stop()]);
   uncertain=false;
   const recovered=await Promise.all([
-    client.callTool({name:'notebook_open',arguments:{}}),
+    client.callTool({name:'notebook_panel_connect',arguments:{}}),
     client.callTool({name:'notebook_panel_workspace',arguments:{action:'retry',id:workspaceID}}),
   ]);
   assert(recovered.every(result=>result.isError!==true));
@@ -196,6 +198,146 @@ test('a live MCP connection recovers its crashed runtime before an addressed ret
   assert.equal((incompatible.structuredContent as Record<string,unknown>)?.code,'runtime_update_required');
   assert.equal(requests.length,1,'Version refusal happens before the addressed command');
   assert.equal(launches,1,'An incompatible owner cannot be replaced by a second launch');
+});
+
+test('one pending bootstrap leaves MCP handshake, discovery and the static opening card available',async t=>{
+  const commands:string[]=[];
+  const runtime=await owner(t,request=>{
+    if(request.command==='runtimeStatus')return {result:status};
+    commands.push(String(request.command));
+    return {result:{api_version:2,value:{data:{saved:true}}}};
+  });
+  let release!:()=>void,launched!:()=>void,launches=0;
+  const held=new Promise<void>(resolve=>{release=resolve;}),started=new Promise<void>(resolve=>{launched=resolve;});
+  const bootstrapRuntime=runtimeBootstrap('/isolated/NotebookRuntime.app',runtime.socket,status.build,{
+    launch:async()=>{launches++;launched();await held;await runtime.start();},
+  });
+  const background=bootstrapRuntime();await started;
+  const server=createNotebookServer(runtime.socket,{panelHtml:'<html>Opening Notebook</html>',bootstrapRuntime});
+  const client=new Client({name:'early-handshake',version:'1'});
+  const [clientTransport,serverTransport]=InMemoryTransport.createLinkedPair();
+  t.after(async()=>{release();await background;await client.close();await server.close();});
+  await server.connect(serverTransport);await client.connect(clientTransport);
+  const request={target:{kind:'page',id:randomUUID()},bounds:{anchor:{tileX:0,tileY:0,localX:20,localY:30},region:{x:0,y:0,width:300,height:400}}};
+  const [listed,resource,opened]=await Promise.all([client.listTools(),client.readResource({uri:panelResourceURI}),
+    client.callTool({name:'notebook_open',arguments:request})]);
+  assert(listed.tools.some(tool=>tool.name==='notebook_panel_connect'));
+  assert.equal(resource.contents.length,1);
+  assert.deepEqual(opened.structuredContent,{open:request});
+  assert.deepEqual(commands,[]);
+  const reads=Promise.all([client.callTool({name:'notebook_context',arguments:{method:'help'}}),
+    client.callTool({name:'notebook_panel_connect',arguments:request})]);
+  await new Promise<void>(resolve=>setImmediate(resolve));
+  assert.deepEqual(commands,[],'No domain read is sent while bootstrap is pending');
+  assert.equal(launches,1);
+  release();await background;
+  assert((await reads).every(reply=>reply.isError!==true));
+  assert.deepEqual(commands,['scriptContext']);
+  assert.equal(launches,1,'Background and tool callers join one admission attempt');
+});
+
+test('an agent deadline expires before admission without a late write, and the same MCP connection can retry',async t=>{
+  const runID=randomUUID(),writes:Record<string,unknown>[]=[];
+  const runtime=await owner(t,request=>{
+    if(request.command==='runtimeStatus')return {result:status};
+    writes.push(request);
+    return {result:{api_version:2,run_api_version:2,status:'completed',run_id:runID,fingerprint:'fixture',
+      events:[],next_seq:0,has_more:false,result:null,error:null,effects:[],resume_semantics:'attach_only_no_replay'}};
+  });
+  let release!:()=>void,launched!:()=>void;
+  const held=new Promise<void>(resolve=>{release=resolve;}),started=new Promise<void>(resolve=>{launched=resolve;});
+  const bootstrapRuntime=runtimeBootstrap('/isolated/NotebookRuntime.app',runtime.socket,status.build,{
+    launch:async()=>{launched();await held;await runtime.start();},
+  });
+  const background=bootstrapRuntime();await started;
+  const server=createNotebookServer(runtime.socket,{panelHtml:'<html></html>',bootstrapRuntime});
+  const client=new Client({name:'admission-deadline',version:'1'});
+  const [clientTransport,serverTransport]=InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);await client.connect(clientTransport);
+  t.after(async()=>{release();await background;await client.close();await server.close();});
+  const call={name:'notebook_execute',arguments:{op:'start',run_id:runID,api_version:2,code:'return 1;',wait_ms:0}};
+  const began=performance.now(),expired=await client.callTool(call);
+  assert.equal(expired.isError,true);
+  assert.equal((expired.structuredContent as Record<string,unknown>).code,'runtime_starting');
+  assert.equal((expired.structuredContent as Record<string,unknown>).run_id,runID);
+  assert(performance.now()-began<5_000,'Admission shares the 3.9 s agent budget instead of waiting for 10 s startup');
+  assert.deepEqual(writes,[]);
+  release();await background;await new Promise<void>(resolve=>setImmediate(resolve));
+  assert.deepEqual(writes,[],'Late admission cannot dispatch the expired call');
+  const retried=await client.callTool(call);
+  assert.notEqual(retried.isError,true);
+  assert.equal(writes.length,1,'Only the explicit retry sends the unchanged run');
+});
+
+test('every native tool refuses a mismatched owner before dispatch while the opener stays static',async t=>{
+  const socketKey='0123456789abcdef01234567',workspaceID=randomUUID(),target={kind:'board',id:randomUUID()};
+  const address={workspaceID,socketKey,target},center={tileX:0,tileY:0,localX:0,localY:0};
+  const commands:Record<string,unknown>[]=[];
+  const runtime=await owner(t,request=>{commands.push(request);return {result:{}};});await runtime.start();
+  let admissions=0;
+  const server=createNotebookServer(runtime.socket,{panelHtml:'<html></html>',bootstrapRuntime:async()=>{
+    admissions++;
+    throw Object.assign(new Error('Different runtime build'),{detail:{code:'runtime_update_required',message:'Different runtime build'}});
+  }});
+  const client=new Client({name:'all-admission-gates',version:'1'});
+  const [clientTransport,serverTransport]=InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);await client.connect(clientTransport);
+  t.after(async()=>{await client.close();await server.close();});
+  const calls=[
+    {name:'notebook_import_program',arguments:{op:'status',packageHash:'a'.repeat(64)}},
+    {name:'notebook_import_document',arguments:{id:randomUUID(),filePath:'/tmp/document.notex',sha256:'a'.repeat(64),targetBoardID:target.id,center}},
+    {name:'notebook_import_document_resource',arguments:{filePath:'/tmp/figure.svg',path:'figure.svg',sha256:'a'.repeat(64)}},
+    {name:'notebook_context',arguments:{method:'help'}},
+    {name:'notebook_execute',arguments:{op:'start',run_id:randomUUID(),api_version:2,code:'return 1;'}},
+    {name:'notebook_panel_connect',arguments:{}},
+    {name:'notebook_panel_workspace',arguments:{action:'select',id:workspaceID}},
+    {name:'notebook_panel_presentation',arguments:{...address,appearance:{viewport:{x:800,y:600},pixelScale:1}}},
+    {name:'notebook_panel_edit',arguments:{...address,actionID:randomUUID(),summary:'Edit',
+      operations:[{kind:'updateElement',target,id:'text',values:{source:'Changed'}}],sources:[{id:'text'}]}},
+    {name:'notebook_panel_undo',arguments:{...address,actionID:randomUUID()}},
+  ];
+  for(const call of calls){
+    const result=await client.callTool(call);
+    assert.equal(result.isError,true,call.name);
+    assert.equal((result.structuredContent as Record<string,unknown>).code,'runtime_update_required',call.name);
+  }
+  assert.equal(admissions,calls.length);assert.deepEqual(commands,[]);
+  const opened=await client.callTool({name:'notebook_open',arguments:{}});
+  assert.deepEqual(opened.structuredContent,{open:{}});
+  assert.equal(admissions,calls.length,'The static card does not require or fabricate native admission');
+});
+
+test('a real rejected bootstrap stays recoverable before and after a caller stops waiting',async t=>{
+  for(const stoppedWaiting of [false,true])await t.test(stoppedWaiting?'after bounded wait':'before bounded wait',async t=>{
+    const workspaceID=randomUUID(),socketKey='0123456789abcdef01234567';
+    const request={target:{kind:'page',id:randomUUID()},bounds:{anchor:{tileX:0,tileY:0,localX:40,localY:50},region:{x:10,y:20,width:300,height:400}}};
+    const runtime=await owner(t,()=>({result:{...status,state:'ready',workspaceID,socketKey}}));
+    const reads:Record<string,unknown>[]=[];
+    const content=await owner(t,command=>{
+      reads.push(command);
+      return {result:{workspaceID,socketKey,target:request.target,cursor:'1',elements:[]}};
+    },join(runtime.root,`${socketKey}.sock`));await content.start();
+    let mayStart=false;
+    const bootstrapRuntime=runtimeBootstrap('/isolated/NotebookRuntime.app',runtime.socket,status.build,{
+      timeoutMilliseconds:150,launch:async()=>{if(mayStart)await runtime.start();},
+    });
+    const background=bootstrapRuntime().catch(()=>undefined);
+    if(stoppedWaiting)await assert.rejects(runtimeAdmission(bootstrapRuntime)(performance.now()+20),
+      (error:BridgeError)=>error.detail.code==='runtime_starting');
+    const server=createNotebookServer(runtime.socket,{panelHtml:'<html></html>',bootstrapRuntime});
+    const client=new Client({name:'startup-retry',version:'1'});
+    const [clientTransport,serverTransport]=InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);await client.connect(clientTransport);
+    t.after(async()=>{await background;await client.close();await server.close();});
+    const failed=await client.callTool({name:'notebook_panel_connect',arguments:request});
+    assert.equal(failed.isError,true);
+    assert.equal((failed.structuredContent as Record<string,unknown>).code,'runtime_startup_failed');
+    assert.deepEqual(reads,[]);
+    await background;mayStart=true;
+    const recovered=await client.callTool({name:'notebook_panel_connect',arguments:request});
+    assert.notEqual(recovered.isError,true);
+    assert.deepEqual(reads,[{command:'panelRead',panelRead:{...request,workspaceID}}]);
+  });
 });
 
 test('runtime staging preserves the previous package until the copied product validates',async t=>{

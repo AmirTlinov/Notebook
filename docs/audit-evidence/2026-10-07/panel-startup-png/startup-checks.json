@@ -1,0 +1,134 @@
+{
+  "scope": "Node/TypeScript only; no native build, installed runtime launch, device or host UI acceptance.",
+  "provenance": "The commands originally returned stdout through exec_command without filesystem redirection. These logs restore that already observed stdout verbatim from tool results; no verification was rerun to create this evidence.",
+  "cwd": "/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook",
+  "sourceFreeze": "2026-10-07T13:13:37+03:00",
+  "toolchain": {
+    "nodeAtSameRootCwdAfterRun": "v24.8.0",
+    "typescriptVersion": "7.0.2",
+    "queriedAt": "2026-10-07T13:15:00+03:00",
+    "qualification": "Version commands ran after the tests through the same root-cwd shell route. The test stdout itself does not capture Node version. MCP subdirectory shell selects v24.14.1; all reported 57+2+2 runs used root cwd."
+  },
+  "runs": [
+    {
+      "argv": [
+        "MCP/node_modules/.bin/tsx",
+        "--test",
+        "MCP/test/runtime-launcher.test.ts",
+        "MCP/test/panel.test.ts"
+      ],
+      "exitCode": 0,
+      "tests": 57,
+      "pass": 57,
+      "fail": 0,
+      "durationMs": 5687.19975,
+      "log": "node-combined.stdout.txt",
+      "toolOutputChunks": [
+        "dd6901",
+        "10e164"
+      ],
+      "sessionID": 56951,
+      "qualification": "Two assertion-only edits to panel.test.ts followed this run; affected cases rerun below. Production sources did not change."
+    },
+    {
+      "argv": [
+        "MCP/node_modules/.bin/tsx",
+        "--test",
+        "MCP/test/sidecar-bundle.test.ts",
+        "MCP/test/public-transport.test.ts"
+      ],
+      "environment": {
+        "NOTEBOOK_SURFACE_STAGE": "/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/.build/surface"
+      },
+      "exitCode": 0,
+      "tests": 2,
+      "pass": 2,
+      "fail": 0,
+      "durationMs": 770.446208,
+      "log": "bundled-transport.stdout.txt",
+      "toolOutputChunks": [
+        "0ddfd3"
+      ],
+      "qualification": "Node bundling reads and verifies the existing WASM stage; no Swift compiler invocation."
+    },
+    {
+      "argv": [
+        "MCP/node_modules/.bin/tsx",
+        "--test",
+        "--test-name-pattern=panel gestures keep|workspace bootstrap opens",
+        "MCP/test/panel.test.ts"
+      ],
+      "exitCode": 0,
+      "tests": 2,
+      "pass": 2,
+      "fail": 0,
+      "durationMs": 423.510166,
+      "log": "panel-assertions.stdout.txt",
+      "toolOutputChunks": [
+        "7d75f1"
+      ]
+    },
+    {
+      "argv": [
+        "MCP/node_modules/.bin/tsc",
+        "--noEmit",
+        "-p",
+        "MCP/tsconfig.json"
+      ],
+      "exitCode": 0,
+      "log": "final-tsc.stdout.txt",
+      "toolOutputChunks": [
+        "056e78"
+      ]
+    },
+    {
+      "argv": [
+        "git",
+        "diff",
+        "--check",
+        "--",
+        "MCP/src/runtime-launcher.ts",
+        "MCP/src/runtime-admission.ts",
+        "MCP/src/server.ts",
+        "MCP/src/panel-tools.ts",
+        "MCP/panel/session.ts",
+        "MCP/panel/workspaces.ts",
+        "MCP/test/runtime-launcher.test.ts",
+        "MCP/test/panel.test.ts",
+        "MCP/test/sidecar-bundle.test.ts",
+        "MCP/test/public-transport.test.ts",
+        "MCP/test/script-protocol.test.ts",
+        "MCP/test/installed-smoke.ts",
+        "MCP/test/smoke.ts"
+      ],
+      "exitCode": 0,
+      "log": "final-diff-check.stdout.txt",
+      "toolOutputChunks": [
+        "6d14cb"
+      ]
+    }
+  ],
+  "sourceSHA256": {
+    "MCP/src/runtime-admission.ts": "ef8e099fc4fa1553ba13f526205790cb7332b89a9fe9f3cfc4c6568ef3f86fbf",
+    "MCP/src/runtime-launcher.ts": "695182957ff091484f2831cd69261ad2570f2c407a192b79456d02281466054a",
+    "MCP/src/server.ts": "cb286aa0cafd7a9984d5a48252e1c0d13821c9831086d51831fe1fc8670d3964",
+    "MCP/src/panel-tools.ts": "25aa97826f5673ee2eed7d331b34548ac20dd0083e00e75c51a9f0ec5ec645f2",
+    "MCP/panel/session.ts": "5f9f8527d9b6c027b1ff3f142aadc2ed736157a296dd5f1234ba7d98263e52d0",
+    "MCP/panel/workspaces.ts": "382bb185c6e1d86d7135d57c3906405eff8c708ba4fcb53a258c6584ec201956",
+    "MCP/test/runtime-launcher.test.ts": "da500565672361bc78cb66f814d780502daf9c520fd52374893ac2605b3b5eec",
+    "MCP/test/panel.test.ts": "7535f20c39d439292b1417b93831ac92ed93de78f200e69de7183c2682048064",
+    "MCP/test/public-transport.test.ts": "39debbf4f6604fcb476f9ed8a2ebf4e460a182dd3306ee5dcd1cca6762db81d7",
+    "MCP/test/sidecar-bundle.test.ts": "10aa8bd0cfc65797aea6be1471edb22e63f4dd815bdb09e62a013440012a4261",
+    "MCP/test/script-protocol.test.ts": "f61c6dc03b0e196cae746d9c44211600e735f558f05a91bd454eb814d5cf6229",
+    "MCP/test/installed-smoke.ts": "3ee63f8a6418d02d41ee94253f845e8e6bc6312b55a494c29bb582e3cf04f3c1",
+    "MCP/test/smoke.ts": "3db7318789ac082fa7fdf746ab51c830df949732949b43e861de96579233f080"
+  },
+  "logSHA256": {
+    "node-combined.stdout.txt": "57be3e156c3d40fc1231abd7b3b0f4bbf7b1e241beee35e601c0ac482b55975f",
+    "bundled-transport.stdout.txt": "181c691b142ee402e7a837a2c9c208fbaf0f3c6f148a0d9976ca5265b0523be0",
+    "panel-assertions.stdout.txt": "45c85d2d769e8ffa5eff698e3b2927a7a7592a08a8659f64ae1afa79a62c7c76",
+    "final-tsc.stdout.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "final-diff-check.stdout.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "versions-after-run.stdout.txt": "37b4932ccee7e2bd826f7934b6d48261b27b704daa86bab5f38272f649220827"
+  }
+}

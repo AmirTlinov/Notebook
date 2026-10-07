@@ -52,7 +52,7 @@ export class WorkspacePicker {
     if(!this.dialog.open)this.dialog.showModal();
     this.message.textContent=status.message??"Открываем Notebook…";
     this.form.hidden=status.state==="failed"||status.state==="opening";
-    void this.request({action:status.state==="opening"?"retry":"list"});
+    void this.request({action:"list"});
   }
   private setBusy(value:boolean){
     this.busy=value;

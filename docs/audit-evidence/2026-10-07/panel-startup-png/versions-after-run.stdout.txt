@@ -1,0 +1,6 @@
+Root worktree cwd:
+v24.8.0
+Version 7.0.2
+MCP cwd:
+Using Node v24.14.1
+v24.14.1

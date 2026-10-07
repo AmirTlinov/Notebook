@@ -1,7 +1,5 @@
 import CoreGraphics
-import CryptoKit
 import Foundation
-import ImageIO
 import NotebookCore
 
 /// Completed native artwork and placement. Known immutable pool entries carry
@@ -12,7 +10,8 @@ struct NotebookPanelRasterLayer {
   let worldOrigin: WorldPoint
   let frame: PageRect
   let assetID: UUID
-  let png: Data?
+  private let encodedPixels: RasterEncodedBorrow?
+  var png: Data? { encodedPixels?.value.png }
   let elementID: String?
   let itemID: UUID?
   let subjectFrame: PageRect?
@@ -22,7 +21,7 @@ struct NotebookPanelRasterLayer {
 
   func withOrder(_ order: Int) -> Self {
     .init(id: id, order: order, worldOrigin: worldOrigin, frame: frame, assetID: assetID,
-      png: png, elementID: elementID, itemID: itemID, subjectFrame: subjectFrame,
+      encodedPixels: encodedPixels, elementID: elementID, itemID: itemID, subjectFrame: subjectFrame,
       repeatSize: repeatSize, pixelWidth: pixelWidth, pixelHeight: pixelHeight)
   }
 
@@ -32,9 +31,9 @@ struct NotebookPanelRasterLayer {
     subjectFrame: PageRect? = nil, repeatSize: CGSize? = nil) async throws -> Self {
     guard let image = raster.sampledImage(for: .init(width: Double.greatestFiniteMagnitude, height: Double.greatestFiniteMagnitude))
     else { throw SceneRenderError.snapshotPending("panel_pixels") }
-    let png = knownAssets.contains(raster.entryID) ? nil : try await CompositionPixels.encodePNG(image)
+    let encodedPixels = knownAssets.contains(raster.entryID) ? nil : try await raster.encodedPNG()
     return .init(id: id, order: order, worldOrigin: worldOrigin, frame: frame, assetID: raster.entryID,
-      png: png, elementID: elementID, itemID: itemID, subjectFrame: subjectFrame, repeatSize: repeatSize,
+      encodedPixels: encodedPixels, elementID: elementID, itemID: itemID, subjectFrame: subjectFrame, repeatSize: repeatSize,
       pixelWidth: image.width, pixelHeight: image.height)
   }
 
@@ -43,9 +42,9 @@ struct NotebookPanelRasterLayer {
       var value: [String: JSONValue] = ["id": .string(id), "order": .number(Double(order)),
         "worldOrigin": try .encode(worldOrigin), "frame": try .encode(frame), "assetID": try .encode(assetID),
         "pixelWidth": .number(Double(pixelWidth)), "pixelHeight": .number(Double(pixelHeight))]
-      if let png {
-        value["pngBase64"] = .string(png.base64EncodedString())
-        value["sha256"] = .string(SHA256.hash(data: png).map { String(format: "%02x", $0) }.joined())
+      if let pixels = encodedPixels?.value {
+        value["pngBase64"] = .string(pixels.png.base64EncodedString())
+        value["sha256"] = .string(pixels.sha256)
       }
       if let elementID { value["elementID"] = .string(elementID) }
       if let itemID { value["itemID"] = try .encode(itemID) }

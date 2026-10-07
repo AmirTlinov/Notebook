@@ -345,7 +345,7 @@ test('an unfinished contact owns mutation admission until completion or cancella
   await close();
 });
 
-for(const code of ['ipc_timeout','operation_failed'])test(`error Retry repairs ${code} before repeating the same text action`, async t => {
+for(const code of ['ipc_timeout','operation_failed','runtime_starting','runtime_startup_failed'])test(`error Retry repairs ${code} before repeating the same text action`, async t => {
   t.mock.timers.enable({apis: ['setTimeout', 'setInterval']});
   const {session, calls, close, mutation, retry} = await controlledSession();
   const saved = session.save(mutation);
@@ -417,6 +417,88 @@ test('session closed during handshake suppresses the late connection failure', a
   assert.equal(session.hasAppearance, false);
 });
 
+async function openingSession(){
+  const session=new NotebookSession();
+  const calls:{name:string;arguments:Value;resolve:(value:Awaited<ReturnType<typeof session.app.callServerTool>>)=>void}[]=[];
+  const events:string[]=[],runtimes:unknown[]=[];
+  let disposed=false,retry:(()=>Promise<void>)|null=null;
+  const observe=(value:string)=>{assert.equal(disposed,false,'No callback after teardown');events.push(value);};
+  session.app.connect=async()=>{};
+  session.app.callServerTool=async input=>new Promise(resolve=>calls.push({name:input.name,arguments:input.arguments!,resolve}));
+  session.app.updateModelContext=async()=>({});
+  session.onStatus=observe;
+  session.onError=(_message,action)=>{observe('error');retry=action;};
+  session.onRuntime=value=>{observe('runtime');runtimes.push(value);};
+  session.onSnapshot=()=>observe('snapshot');
+  session.onClose=()=>{observe('closed');disposed=true;};
+  await session.connect();
+  return {session,calls,events,runtimes,retry:()=>retry,close:()=>session.app.onteardown!({},{} as never)};
+}
+
+test('initial connect keeps exact target and bounds through startup and native opening without workspace transitions',async t=>{
+  t.mock.timers.enable({apis:['setTimeout','setInterval']});
+  const {session,calls,runtimes,close}=await openingSession();
+  const request={target:{kind:'page' as const,id:randomUUID()},bounds:{anchor:origin,region:{x:-20,y:30,width:400,height:300}}};
+  const snapshot={...sessionSnapshot(),target:request.target};
+  session.app.ontoolresult!({content:[],structuredContent:{open:request}});
+  assert.equal(calls[0]!.name,'notebook_panel_connect');assert.deepEqual(calls[0]!.arguments,request);
+  calls[0]!.resolve({content:[],isError:true,structuredContent:{status:'error',code:'runtime_starting',message:'Starting'}});
+  await new Promise<void>(resolve=>setImmediate(resolve));
+  t.mock.timers.tick(250);
+  assert.equal(calls[1]!.name,'notebook_panel_connect');assert.deepEqual(calls[1]!.arguments,request);
+  calls[1]!.resolve({content:[],structuredContent:{runtime:{kind:'notebookRuntime',ready:true,pid:42,state:'opening'}}});
+  await new Promise<void>(resolve=>setImmediate(resolve));
+  session.app.ontoolresult!({content:[],structuredContent:{open:{target:{kind:'board',id:randomUUID()}}}});
+  t.mock.timers.tick(250);
+  assert.equal(calls[2]!.name,'notebook_panel_connect');assert.deepEqual(calls[2]!.arguments,request);
+  assert.deepEqual(runtimes,[],'An opening workspace does not go through workspace retry or selection');
+  calls[2]!.resolve({content:[],structuredContent:snapshot});
+  await new Promise<void>(resolve=>setImmediate(resolve));
+  assert.equal(calls[3]!.name,'notebook_panel_presentation');assert.deepEqual(calls[3]!.arguments.target,request.target);
+  calls[3]!.resolve({content:[],structuredContent:snapshot});
+  await new Promise<void>(resolve=>setImmediate(resolve));
+  assert.equal(session.hasAppearance,true);assert.deepEqual(session.snapshot?.target,request.target);
+  session.app.ontoolresult!({content:[],structuredContent:{open:{}}});
+  assert.equal(calls.length,4,'A second host result cannot redirect the mounted panel');
+  await close();
+});
+
+for(const afterWait of [false,true])test(`startup failure ${afterWait?'after':'before'} bounded waiting leaves an explicit retry with the same opening request`,async t=>{
+  t.mock.timers.enable({apis:['setTimeout','setInterval']});
+  const {session,calls,retry,close}=await openingSession();
+  const request={target:{kind:'page' as const,id:randomUUID()},bounds:{anchor:origin,region:{x:10,y:20,width:500,height:600}}};
+  session.app.ontoolresult!({content:[],structuredContent:{open:request}});
+  if(afterWait){
+    calls[0]!.resolve({content:[],isError:true,structuredContent:{status:'error',code:'runtime_starting',message:'Still starting'}});
+    await new Promise<void>(resolve=>setImmediate(resolve));t.mock.timers.tick(250);
+  }
+  calls.at(-1)!.resolve({content:[],isError:true,structuredContent:{status:'error',code:'runtime_startup_failed',message:'Launch failed'}});
+  await new Promise<void>(resolve=>setImmediate(resolve));
+  const count=calls.length;t.mock.timers.tick(1000);
+  assert.equal(calls.length,count,'A failed startup waits for an explicit retry');
+  const action=retry();assert.ok(action);const retried=action();
+  assert.deepEqual(calls.at(-1)!.arguments,request);assert.equal(calls.at(-1)!.name,'notebook_panel_connect');
+  calls.at(-1)!.resolve({content:[],structuredContent:{...sessionSnapshot(),target:request.target}});
+  await retried;assert.deepEqual(session.snapshot?.target,request.target);
+  await close();
+});
+
+test('closing during startup cancels queued reads and ignores late native admission',async t=>{
+  for(const stage of ['waiting','in-flight'] as const)await t.test(stage,async t=>{
+    t.mock.timers.enable({apis:['setTimeout','setInterval']});
+    const {session,calls,events,close}=await openingSession();
+    session.app.ontoolresult!({content:[],structuredContent:{open:{}}});
+    if(stage==='waiting'){
+      calls[0]!.resolve({content:[],isError:true,structuredContent:{status:'error',code:'runtime_starting',message:'Starting'}});
+      await new Promise<void>(resolve=>setImmediate(resolve));
+    }
+    await close();const after=events.slice();
+    if(stage==='in-flight')calls[0]!.resolve({content:[],structuredContent:sessionSnapshot()});
+    t.mock.timers.tick(3000);await new Promise<void>(resolve=>setImmediate(resolve));
+    assert.equal(calls.length,1);assert.deepEqual(events,after);assert.equal(session.snapshot,undefined);
+  });
+});
+
 async function connectedPanel(socketPath: string) {
   const server = new McpServer({name: 'panel-contract', version: '1'});
   registerNotebookPanel(server, socketPath, html);
@@ -475,7 +557,7 @@ test('Notebook exposes one HTML app resource, a model opener and app-only gestur
   try {
     const {tools} = await panel.client.listTools();
     assert.deepEqual(tools.map(tool => tool.name).sort(),
-      ['notebook_open', 'notebook_panel_edit', 'notebook_panel_presentation', 'notebook_panel_undo', 'notebook_panel_workspace']);
+      ['notebook_open', 'notebook_panel_connect', 'notebook_panel_edit', 'notebook_panel_presentation', 'notebook_panel_undo', 'notebook_panel_workspace']);
     const opener = tools.find(tool => tool.name === 'notebook_open')!;
     assert.deepEqual(opener._meta?.ui, {resourceUri: panelResourceURI});
     assert.deepEqual(opener._meta?.['openai/ui'], {entrypoints: [{type: 'thread'}, {type: 'global'}]});
@@ -548,9 +630,11 @@ test('panel gestures keep the admitted endpoint and exact native sources', async
     return {result: undone};
   });
   try {
-    const opened = await panel.client.callTool({name: 'notebook_open', arguments: {}});
+    const opened = await panel.client.callTool({name: 'notebook_panel_connect', arguments: {}});
     assert.notEqual(opened.isError, true);
     assert.deepEqual(opened.structuredContent, readValue);
+    assert.deepEqual(JSON.parse((opened.content[0] as {text:string}).text),{workspaceID,target,cursor,status:'ready'},
+      'Only structuredContent carries the full initial scene');
     assert.deepEqual(panel.requests, [{endpoint:'default',request:{command:'runtimeStatus'}},
       {endpoint: 'pinned', request: {command: 'panelRead', panelRead: {workspaceID}}}]);
 
@@ -611,6 +695,7 @@ test('workspace bootstrap opens in the same panel without a content owner or des
   let ready=false;
   const id=randomUUID(),status=()=>({kind:'notebookRuntime',ready:true,pid:42,state:ready?'ready':'workspaceRequired',...(ready?{workspaceID,socketKey}:{})});
   const snapshot=sessionSnapshot();
+  const open={target,bounds:{anchor:origin,region:{x:-20,y:30,width:500,height:400}}};
   const panel=await nativeFixture((endpoint,request)=>{
     assert.equal(endpoint,request.command==='panelRead'?'pinned':'default');
     if(request.command==='runtimeStatus')return {result:status()};
@@ -619,14 +704,14 @@ test('workspace bootstrap opens in the same panel without a content owner or des
       ready=true;return {result:{status:status(),workspaces:[{id,name:'Личное пространство',local:true,remote:false,deleting:false}]}};
     }
     assert.equal(ready,true,'An empty library must not cause a content read');
-    assert.equal(request.command,'panelRead');return {result:snapshot};
+    assert.equal(request.command,'panelRead');assert.deepEqual(request.panelRead,{...open,workspaceID});return {result:snapshot};
   });
   try{
-    const opened=await panel.client.callTool({name:'notebook_open',arguments:{}});
+    const opened=await panel.client.callTool({name:'notebook_panel_connect',arguments:open});
     assert.notEqual(opened.isError,true);
     assert.deepEqual(opened.structuredContent,{runtime:status()});
     assert.equal(panel.requests.length,1);
-    const created=await panel.client.callTool({name:'notebook_panel_workspace',arguments:{action:'create',id,name:'Личное пространство'}});
+    const created=await panel.client.callTool({name:'notebook_panel_workspace',arguments:{action:'create',id,name:'Личное пространство',open}});
     assert.deepEqual((created.structuredContent as Value).snapshot,snapshot);
     assert.equal(panel.requests.length,3);
   }finally{await panel.close();}
