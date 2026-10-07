@@ -238,6 +238,13 @@ inspect only active chunks and accepted tile revisions. Imported baselines,
 painter order, GPU lifetimes and first-visible readiness retain the same owner. Page MTKView drawing and disposable export raster jobs
 are not the spatial retained-tile cache.
 
+Page ink retains its cropped RGBA backing through an eraser contact. Each update
+recomposes the old and new tail bounds in painter order; contact retirement repairs
+its previous footprint. Ordered masks use the captured source basis and invalidate
+normalized GPU chunks by changed geometry, including coincident raw samples.
+A borrowed accepted backing is copied before writing; live cuts cannot be borrowed
+as accepted pixels. Dense repeated sweeps can still overlap many historical chunks.
+
 An isolated state-update ratio is not a frame-rate claim. Benchmarks must report
 GPU and submit/wait separately, preparation and resident payload separately, and
 whether LOD or dirty tiles actually removed work.

@@ -1,3 +1,4 @@
+import CoreGraphics
 import NotebookCore
 import simd
 
@@ -8,6 +9,8 @@ struct IncrementalInkMesh {
   var nodes: [SpatialInkGeometry.Node] { geometry.nodes }
   private(set) var chunks: [SpatialInkGeometry.Chunk] = []
   private(set) var chunkRevisions: [UInt64] = []
+  /// Both sides of a rebuilt tail, including pixels vacated by a correction.
+  private(set) var changedBounds = CGRect.null
   private var revision: UInt64 = 0
   var rebuiltPointCount: Int { geometry.rebuiltPointCount }
   var rebuiltNodeStart: Int { geometry.rebuiltNodeStart }
@@ -41,6 +44,7 @@ struct IncrementalInkMesh {
       })
     let firstSegment = max(0, rebuiltNodeStart - 1)
     let chunkIndex = min(firstSegment / InkRenderGeometry.maximumSegments, chunks.count)
+    changedBounds = chunks[chunkIndex...].reduce(CGRect.null) { $0.union($1.bounds) }
     chunks.removeSubrange(chunkIndex...)
     chunkRevisions.removeSubrange(chunkIndex...)
     revision &+= 1
@@ -48,6 +52,7 @@ struct IncrementalInkMesh {
       for: nodes, color: color, eraser: eraser,
       startingSegment: chunkIndex * InkRenderGeometry.maximumSegments, buildLOD: false)
     for chunk in fresh {
+      changedBounds = changedBounds.union(chunk.bounds)
       chunkRevisions.append(revision)
       let sealed = chunk.nodes.upperBound < nodes.count
       chunks.append(

@@ -1,10 +1,93 @@
 import NotebookCore
+import Metal
 import UIKit
 import SwiftUI
 import XCTest
 @testable import Notebook
 
 @MainActor final class InkMaterialCanvasTests: XCTestCase {
+  func testOrderedDamageKeepsA100000SampleMaskQueryLocal() async throws {
+    let device=try XCTUnwrap(MTLCreateSystemDefaultDevice()),resources=SceneRenderResources()
+    let sourceID=UUID(),frame=PageRect(x:0,y:0,width:1_000,height:300)
+    func sample(_ x:Double)->SpatialInkSample {
+      .init(point:.init(x:x,y:150),timeOffset:0,width:2,opacity:1,force:1,azimuth:0,altitude:1)
+    }
+    let ink=NotebookFreehand(layers:[.init(tool:.pen,color:.black,
+      measured:.init(sourceID:sourceID,measurements:.init([sample(0),sample(1_000)]),frame:frame))])
+    let graphic=NotebookGraphic(shape:.freehand,sourceInkIDs:[sourceID],freehand:ink)
+    let node=NotebookGraphicGraph.Node(id:"long-body",graphic:graphic,frame:frame,surface:.page(UUID()),shown:true)
+    let layout=try XCTUnwrap(NotebookGraphicGraph([node]).resolve(node.id).layout)
+    let source=NotebookOrderedInkPlan.Body(elementID:node.id,key:.page(sequence:1,id:sourceID),
+      graphic:graphic,layout:layout,erasures:[])
+    let body=InkMaterialRenderer.OrderedBody(source)
+    try await body.prepareClip(device:device,resources:resources,owner:nil)
+    let cut=InkElementErasure(target:.init(elementID:node.id,frame:frame),
+      samples:(0..<100_000).map {sample(Double($0)/100)})
+    let prepared=try body.prepare(camera:nil,viewport:.zero,region:.init(x:0,y:0,width:1_000,height:300),
+      pixels:.init(width:1_000,height:300),device:device,resources:resources,owner:nil,extraCuts:[cut],
+      damage:.init(x:980,y:145,width:10,height:10))
+    guard case .body(let draws,_) = prepared.event else {return XCTFail("Expected ordered body geometry")}
+    XCTAssertLessThan(draws.filter{$0.tool == .eraser}.reduce(0){$0+$1.count},4_096,
+      "A ten-point damage patch must not submit the hundred-thousand-sample mask")
+    XCTAssertTrue(draws.allSatisfy{$0.viewport == .init(1_000,300)},
+      "Damage limits geometry admission while preserving the original projection")
+  }
+
+  func testErasureDamageHandlesWholeMembershipAndCoincidentPredecessors() throws {
+    let frame=PageRect(x:0,y:0,width:300,height:300)
+    let node=NotebookGraphicGraph.Node(id:"body",graphic:.init(shape:.rectangle),frame:frame,surface:.page(UUID()),shown:true)
+    let layout=try XCTUnwrap(NotebookGraphicGraph([node]).resolve(node.id).layout)
+    func sample(_ x:Double,width:Double = 10)->SpatialInkSample {
+      .init(point:.init(x:x,y:100),timeOffset:0,width:width,opacity:1,force:1,azimuth:0,altitude:1)
+    }
+    let target=InkElementTarget(elementID:node.id,frame:frame,wholeElement:true)
+    let first=InkElementErasure(target:target,samples:[sample(20)])
+    let extended=InkElementErasure(target:target,samples:[sample(20),sample(80)])
+    XCTAssertTrue(InkMaterialRenderer.erasureDamage([extended],replacing:[first],transform:nil,layout:layout).isNull,
+      "An already hidden whole body must not damage its entire frame for every later sample")
+    XCTAssertEqual(InkMaterialRenderer.erasureDamage([],replacing:[extended],transform:nil,layout:layout),
+      CGRect(x:0,y:0,width:300,height:300))
+    let partial=InkElementTarget(elementID:node.id,frame:frame)
+    var contact=InkSampleRelations.Contact(header:.init(tool:.eraser,color:.black))
+    contact.replaceTail(from:0,with:[sample(20)]+Array(repeating:sample(250),count:10_000))
+    let before=InkElementErasure(target:partial,measurements:contact.frozen().measurements)
+    contact.replaceTail(from:contact.count-1,with:[sample(250,width:30)])
+    let after=InkElementErasure(target:partial,measurements:contact.frozen().measurements)
+    XCTAssertTrue(InkMaterialRenderer.erasureDamage([after],replacing:[before],transform:nil,layout:layout)
+      .contains(CGPoint(x:100,y:100)),"Replacing a coincident endpoint also changes its long incoming sweep")
+
+    var long=InkSampleRelations.Contact(header:.init(tool:.eraser,color:.black))
+    var path=(0..<90_000).map {sample(Double($0%200))}
+    path[path.count-1]=sample(240)
+    path += Array(repeating:sample(250),count:10_000)
+    long.replaceTail(from:0,with:path)
+    let old=InkElementErasure(target:partial,measurements:long.frozen().measurements)
+    long.replaceTail(from:long.count-1,with:[sample(250,width:30)])
+    let source=long.frozen(),corrected=InkElementErasure(target:partial,measurements:source.measurements)
+    let prefix=corrected.samples.unchangedPrefix(comparedTo:old.samples)
+    let predecessor=source.lastDisplayPredecessor(before:prefix-1,projection:.init())
+    XCTAssertEqual(predecessor.result,.point(source.address(at:89_999)))
+    XCTAssertLessThan(predecessor.cost.decodedSamples,512,"A stationary suffix must be skipped through the existing source tree")
+    XCTAssertLessThan(predecessor.cost.visitedNodes,512)
+    let damage=InkMaterialRenderer.erasureDamage([corrected],replacing:[old],transform:nil,layout:layout)
+    XCTAssertTrue(damage.contains(CGPoint(x:245,y:100)),"Keep the changed incoming sweep")
+    XCTAssertTrue(damage.contains(CGPoint(x:250,y:114)),"Include the expanded endpoint")
+    XCTAssertGreaterThan(damage.minX,210,"The old broad path must not repaint for a stationary endpoint correction")
+
+    let returning=InkSampleRelations(sourceID:UUID(),revision:UUID(),samples:[0,0.011,0.002,0].map{sample($0)},
+      header:.init(tool:.eraser,color:.black))
+    XCTAssertEqual(returning.lastDisplayPredecessor(before:3,projection:.init()).result,.point(returning.address(at:0)),
+      "A discarded point is still the raw successor of its preceding point")
+    XCTAssertEqual(returning.lastDisplayPredecessor(before:3,projection:.init(scale:0.1)).result,.none)
+
+    let ambiguous=InkSampleRelations(sourceID:UUID(),revision:UUID(),samples:(0..<10_000).map{sample(Double($0)/4096)},
+      header:.init(tool:.eraser,color:.black))
+    let exhausted=ambiguous.lastDisplayPredecessor(before:ambiguous.count-1,projection:.init())
+    XCTAssertEqual(exhausted.result,.unproven,"An ambiguous chain must not be mistaken for a proved empty predecessor")
+    XCTAssertGreaterThan(exhausted.cost.decodedSamples,0)
+    XCTAssertLessThan(exhausted.cost.decodedSamples,2_048,"Do not scan the historical near-coincident chain")
+  }
+
   func testUnpaintedMaterialMaskIsNeutralAndChangingItsRoleDoesNotBorrowWhiteInk() async {
     let canvas=InkCanvasView(frame:.zero)
     let mask=NotebookInkMaterialView.Content(freehand:nil,erasures:[],transform:nil,layout:nil)

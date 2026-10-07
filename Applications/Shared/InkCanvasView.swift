@@ -462,6 +462,11 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
   private var spatialStagingID: UUID?
   private weak var stagedSpatialFrame: PreparedFrame?
   private var liveOrderedErasures:[UUID:InkElementErasureMap]=[:]
+  private var orderedErasureRevision:UInt64=0
+  // Page coordinates survive crop changes. The footprint retires once when a
+  // live contact ends; only the changed tail is repainted while it continues.
+  private var pageErasureDamage=CGRect.null
+  private var pageErasureFootprint=CGRect.null
   private var orderedGeometry:InkOrderedGeometry?
   private var orderedPreparation:Task<Void,Never>?
   private var orderedPreparationID=UUID()
@@ -650,11 +655,19 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     let baseline: ObjectIdentifier?
     let region: CGRect
     let pixels: CGSize
+    let erasure:PageErasureKey?
+  }
+  private struct PageErasureKey:Equatable {
+    let contact:UUID?
+    let revision:UInt64?
+    let addressed:UInt64
   }
   private var currentPageRetainedKey:PageRetainedKey? {
     guard let region=pageRenderRegion,spatialTarget == nil,material == nil,pageRetainedTexture != nil else {return nil}
+    let erasure:PageErasureKey? = activeEraserStroke == nil && liveOrderedErasures.isEmpty ? nil:
+      .init(contact:activeEraserStroke == nil ? nil:activeRenderID,revision:activeEraserStroke?.revision,addressed:orderedErasureRevision)
     return .init(generation:acceptedPaintRevision,baseline:baselineTexture.map(ObjectIdentifier.init),
-      region:region,pixels:drawableSize)
+      region:region,pixels:drawableSize,erasure:erasure)
   }
   private var pageRetainedKey: PageRetainedKey?
   private(set) var pageCommittedPassCount = 0
@@ -1549,7 +1562,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     for range in spatialTailRanges[action.id] ?? [] {
       committedBatches[range.batch].spatialPaintKey = .spatial(stamp:action.stamp,id:action.id)
     }
-    liveOrderedErasures[action.id]=nil
+    setOrderedErasure(nil,id:action.id)
     if let geometry=orderedGeometry,let source=installedSpatialSource {
       var cuts:InkElementErasureMap=[:]
       for span in action.spans where span.surface == source.surface {
@@ -1967,6 +1980,16 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     // Page crops and retained scene canvases own their MSAA attachment.
     // Apple GPUs keep it in tile memory; do not allocate another implicit copy.
     sampleCount = spatialDrawableScale == nil && pageRenderRegion == nil ? samples : 1
+    // A crop can supersede a drawable already queued by the system. Validate
+    // it before the retained pass uses it as resolve/blit scratch, and leave
+    // the pending ordered cut untouched for the next matching drawable.
+    if usesPageDisplayLink {
+      guard let pageDrawable,
+        pageDrawable.texture.width == Int(drawableSize.width),
+        pageDrawable.texture.height == Int(drawableSize.height) else {
+          continuesPageFrames = true; return
+        }
+    }
     guard takeFrameSlotIfAvailable() else {
       continuesPageFrames = true; return
     }
@@ -1981,7 +2004,6 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     let previousOrderedGeometry=orderedGeometry,previousOrderedPlan=orderedInkPlan,previousSpatialSource=installedSpatialSource
     let previousCanonical=orderedFrameIsCanonical
     var orderedCutSubmitted=false
-    var retriesOrderedCut=false
     var orderedCutFailure:Error=SceneRenderError.resourceLimit
     if let orderedCut {
       pendingOrderedCut=nil
@@ -2005,8 +2027,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
         installedSpatialSource=previousSpatialSource
         if previousSpatialSource == nil {setSuppressedPageActions(previousOrderedPlan.suppressedInkIDs)}
         invalidateOrderedPaint(from:orderedCut.plan,to:previousOrderedPlan,ids:orderedCut.replacing)
-        if retriesOrderedCut,!orderedCut.cancelled,pendingOrderedCut == nil {pendingOrderedCut=orderedCut}
-        else if orderedCut.cancelled {orderedCut.resolve(CancellationError())}
+        if orderedCut.cancelled {orderedCut.resolve(CancellationError())}
         else {orderedCut.resolve(orderedCutFailure)}
       }
     }
@@ -2026,7 +2047,12 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       let oldTexture=pageRetainedTexture,oldReservation=pageRetainedReservation,oldKey=pageRetainedKey
       let localDamage: CGRect?
       if pageDrawable != nil,let oldKey,oldKey.region == key.region,oldKey.pixels == key.pixels,oldKey.baseline == key.baseline {
-        localDamage=acceptedPaintDamage.map{$0.intersection(CGRect(origin:.zero,size:bounds.size))}
+        var erased=pageErasureDamage
+        if oldKey.erasure?.contact != key.erasure?.contact || (oldKey.erasure != nil && key.erasure == nil) {
+          erased=erased.union(pageErasureFootprint)
+        }
+        let changed=erased.offsetBy(dx:-key.region.minX,dy:-key.region.minY).insetBy(dx:-2,dy:-2)
+        localDamage=acceptedPaintDamage.map{$0.union(changed).intersection(CGRect(origin:.zero,size:bounds.size))}
       } else {localDamage=nil}
       let copyingBorrowed=pageRetainedExternalLeases>0
       if copyingBorrowed,!admitPageRetainedTexture(replacing:true) {return}
@@ -2036,7 +2062,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
         if let oldReservation {materialReservations.append(oldReservation)}
       }
       // The available drawable is bounded scratch until its final pass. A
-      // local accepted change resolves MSAA there, then blits only its damage
+      // local change resolves MSAA there, then blits only its damage
       // into the owned backing. No borrowed backing is modified in place.
       if localDamage?.isEmpty != true && localDamage?.isNull != true {
         let patch=localDamage.flatMap{_ in pageDrawable?.texture}
@@ -2045,16 +2071,17 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
         let affected=localDamage.map{paintDirectory?.value.query($0.insetBy(dx:-1,dy:-1)) ?? []} ?? visible
         if let orderedGeometry {
           do {
-            materialReservations += try encodeOrderedFrame(batches:committedBatches,visible:affected,active:nil,
+            materialReservations += try encodeOrderedFrame(batches:committedBatches,visible:affected,
+              active:active?.operation == .erase ? active:nil,
               geometry:orderedGeometry,camera:spatialCamera,viewport:spatialViewport,size:bounds.size,clip:localDamage,
-              descriptor:descriptor,metalViewport:nil,command:commandBuffer,includesLiveCuts:false,
+              descriptor:descriptor,metalViewport:nil,command:commandBuffer,
               damage:localDamage,scratchSlot:frameSlot)
           } catch {orderedCutFailure=error;renderFailure = .resourceLimit;return}
         } else {
           guard let encoder=commandBuffer.makeRenderCommandEncoder(descriptor:descriptor) else {return}
           if let localDamage {encoder.setScissorRect(scissor(localDamage,size:bounds.size,texture:destination))}
           encodeTexture(baselineTexture,croppedTo:pageRenderRegion,label:"Imported Notebook Ink Baseline",with:encoder)
-          encodeSpatial(batches:committedBatches,visible:affected,active:nil,camera:spatialCamera,
+          encodeSpatial(batches:committedBatches,visible:affected,active:active?.operation == .erase ? active:nil,camera:spatialCamera,
             viewport:spatialViewport,size:bounds.size,clip:localDamage,suppressedInkIDs:orderedInkPlan.suppressedInkIDs,encoder:encoder)
           encoder.endEncoding()
         }
@@ -2111,13 +2138,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
         }
         passes.append((spatialRenderPass(target:tile,drawable:drawable),drawable,target.viewport(index),clip,tileVisible,tile))
       }
-    } else if usesPageDisplayLink {
-      guard let drawable = pageDrawable,
-        drawable.texture.width == Int(drawableSize.width),
-        drawable.texture.height == Int(drawableSize.height) else {
-          retriesOrderedCut=true
-          continuesPageFrames = true; return
-        }
+    } else if let drawable = pageDrawable {
       let pass = MTLRenderPassDescriptor()
       pass.colorAttachments[0].texture = pageMultisample ?? drawable.texture
       pass.colorAttachments[0].resolveTexture = pageMultisample == nil ? nil : drawable.texture
@@ -2146,7 +2167,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     needsRevealedFrame = false
     for (descriptor, _, viewport, clip, tileVisible,tile) in passes {
       let accepted=tile?.accepted ?? (retainedPageKey == nil ? nil:pageRetainedTexture)
-      if let orderedGeometry,accepted == nil || activeEraserStroke != nil || !liveOrderedErasures.isEmpty {
+      if let orderedGeometry,accepted == nil || (retainedPageKey == nil && (activeEraserStroke != nil || !liveOrderedErasures.isEmpty)) {
         do {
           let damage=accepted == nil ? nil:orderedContactDamage().map {damage in clip.map{damage.intersection($0)} ?? damage}
           let affected=damage.map{paintDirectory?.value.query($0.insetBy(dx:-1,dy:-1)) ?? []} ?? tileVisible
@@ -2163,9 +2184,9 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       if let viewport { encoder.setViewport(viewport) }
       if let accepted {
         if let tile {encoder.setViewport(.init(originX:0,originY:0,width:Double(tile.accepted.width),height:Double(tile.accepted.height),znear:0,zfar:1))}
-        encodeTexture(accepted,croppedTo:nil,label:"Retained Accepted Ink",with:encoder)
+        encodeTexture(accepted,croppedTo:nil,label:"Retained Ink Cut",with:encoder)
         if let viewport {encoder.setViewport(viewport)}
-        encodeSpatial(batches:[],visible:[],active:active,camera:spatialCamera,
+        encodeSpatial(batches:[],visible:[],active:retainedPageKey?.erasure != nil && active?.operation == .erase ? nil:active,camera:spatialCamera,
           viewport:spatialViewport,size:bounds.size,clip:clip,encoder:encoder)
         pageActivePassCount += 1
       } else {
@@ -2398,7 +2419,11 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
         }
       }
     }
-    if let encodedRetainedKey {pageRetainedKey=encodedRetainedKey;acceptedPaintDamage = .null}
+    if let encodedRetainedKey {
+      pageRetainedKey=encodedRetainedKey;acceptedPaintDamage = .null
+      pageErasureFootprint=encodedRetainedKey.erasure == nil ? .null:pageErasureFootprint.union(pageErasureDamage)
+      pageErasureDamage = .null
+    }
     for (tile,revision) in acceptedTiles {tile.acceptedRevision=revision}
     if transactionPresentation {
       let sourceGeneration=spatialSourceGeneration
@@ -2784,17 +2809,26 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     return damage.isNull || damage.isEmpty ? nil:damage
   }
 
+  private func setOrderedErasure(_ cuts:InkElementErasureMap?,id:UUID) {
+    let previous=liveOrderedErasures[id]
+    guard previous != cuts else {return}
+    if pageRenderRegion != nil,spatialTarget == nil,let orderedGeometry {
+      pageErasureDamage=pageErasureDamage.union(orderedGeometry.erasureDamage(cuts ?? [:],replacing:previous ?? [:]))
+    }
+    liveOrderedErasures[id]=cuts;orderedErasureRevision &+= 1
+  }
+
   func updateOrderedErasing(_ contacts:[NotebookElementErasing],id:UUID) {
     guard orderedGeometry != nil else {return}
     var cuts:InkElementErasureMap=[:]
     for contact in contacts {for (element,values) in contact.masks {cuts[element,default:[]] += values}}
-    liveOrderedErasures[id]=cuts.isEmpty ? nil:cuts
+    setOrderedErasure(cuts.isEmpty ? nil:cuts,id:id)
     beginStableContentUpdate();requestFrame()
   }
   func acceptOrderedPageChange(_ change:PreparedPageInkChange) {
     let ids:Set<UUID>
     switch change.mutation {case .append(let action):ids=[action.id];case .setActive(let changed,_):ids=changed}
-    for id in ids {liveOrderedErasures[id]=nil}
+    for id in ids {setOrderedErasure(nil,id:id)}
     guard let geometry=orderedGeometry else {return}
     var cuts:InkElementErasureMap=[:]
     for id in ids {
@@ -3707,6 +3741,9 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
         activeBufferDirtyStarts = Array(repeating: 0, count: Self.framesInFlight)
       }
       activeMesh.update(measured:measured,predicted:predicted,changedFrom:changed,color:color,projection:projection)
+      if operation == .erase,pageRenderRegion != nil,spatialTarget == nil {
+        pageErasureDamage=pageErasureDamage.union(activeMesh.changedBounds)
+      }
       for index in activeBufferDirtyStarts.indices {
         activeBufferDirtyStarts[index] = min(
           activeBufferDirtyStarts[index], activeMesh.rebuiltNodeStart)

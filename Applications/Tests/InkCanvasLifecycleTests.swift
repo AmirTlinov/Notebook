@@ -83,6 +83,149 @@ final class InkCanvasLifecycleTests: XCTestCase {
   }
 
   @MainActor
+  func testRetainedEraserRepairsItsOldTailAndPreservesBorrowedOrderedPixels() async throws {
+    try await withPreparedSelectionCanvas { canvas,window,action,preparedPlan in
+      var graphic=try XCTUnwrap(preparedPlan.bodies.first).graphic
+      // Keep the captured basis inside its physical frame; source y=40 still
+      // lands at y=110 after this nonidentity transform.
+      graphic.transform = .init(a:1,b:0,c:0,d:0.25,tx:0,ty:0.625)
+      let plan=try self.handoffPlan(action:action,graphic:graphic)
+      let raw=PageInkAction(tool:.pen,color:.init(red:1,green:0,blue:0),samples:[20.0,140].map {x in
+        .init(point:.init(x:x,y:110),timeOffset:0,width:10,opacity:1,force:1,azimuth:0,altitude:1)
+      },sequence:2)
+      canvas.apply(.init(actions:[action,raw]));try await self.waitForStableFrame(canvas)
+      let geometry=try await canvas.prepareOrderedPlan(plan)
+      try await canvas.presentOrderedPlan(geometry,plan:plan,canonical:true)
+      canvas.projectPage(region:.init(x:10,y:10,width:140,height:140),
+        sourceSize:.init(width:160,height:160),pixelDensity:2)
+      try await self.waitForStableFrame(canvas,accepted:true)
+      let borrowed=try XCTUnwrap(canvas.acquireAcceptedFrameLease())
+      defer {borrowed.release()}
+      let allocations=canvas.pageRetainedAllocationCount,pools=canvas.pageDrawableAllocationCount
+      func location(_ x:Double)->CGPoint {canvas.convert(.init(x:x-10,y:100),to:window)}
+      func sample(_ x:Double,width:Double = 18)->SpatialInkSample {
+        .init(point:.init(x:x,y:110),timeOffset:0,width:width,opacity:1,force:1,azimuth:0,altitude:1)
+      }
+      let body=try XCTUnwrap(plan.bodies.first)
+      let target=InkElementTarget(elementID:body.elementID,frame:body.layout.frame,
+        graphicTransform:body.graphic.transform,elementTransform:body.layout.elementTransform)
+      let eraser=ActiveEraserStroke()
+      @MainActor func addressed(_ stroke:ActiveEraserStroke) {
+        let cut=NotebookElementErasing(id:stroke.measured.sourceID,surface:.page(UUID()),
+          samples:stroke.measured.frozen().measurements,targets:[target])
+        canvas.updateOrderedErasing([cut],id:cut.id)
+      }
+      eraser.replaceMeasuredTail(from:0,with:[sample(80)])
+      canvas.displayActiveEraser(eraser)
+      try await assertUX("retained-raw-eraser-reveals-untargeted-body",since:.now,window:window) {
+        try NotebookUXObservation.Pixels(window:window).matches([(location(80),.black),(location(120),.red)])
+      }
+      XCTAssertEqual(canvas.pageRetainedAllocationCount,allocations+1,"Only the borrowed accepted cut requires a replacement")
+      XCTAssertFalse(canvas.acceptedMaterialIsReady)
+      XCTAssertNil(canvas.acquireAcceptedFrameLease(),"Live erased pixels cannot be lent as a canonical cut")
+      addressed(eraser)
+      try await assertUX("retained-addressed-eraser-cuts-its-body",since:.now,window:window) {
+        try NotebookUXObservation.Pixels(window:window).matches([(location(80),.paper),(location(120),.red)])
+      }
+      // Prime the displayed mask after many raw samples have collapsed to one
+      // node. A later width correction must replace that cached node's pixels.
+      eraser.replaceMeasuredTail(from:1,with:Array(repeating:sample(80),count:9_999))
+      let primedRevision=eraser.revision,previousReceipt=canvas.onContactFrameResolved
+      var primed=false
+      canvas.onContactFrameResolved={ receipt in
+        previousReceipt?(receipt)
+        if receipt.contact.sourceID == eraser.measured.sourceID,
+          receipt.contact.revision == primedRevision,receipt.completion.isReady {primed=true}
+      }
+      defer {canvas.onContactFrameResolved=previousReceipt}
+      canvas.displayActiveEraser(eraser);addressed(eraser)
+      try await NotebookPersistenceFenceContract.until {primed && canvas.isFrameLoopPaused}
+      canvas.onContactFrameResolved=previousReceipt
+      XCTAssertTrue(try NotebookUXObservation.Pixels(window:window).matches([(location(92),.red)]))
+      eraser.replaceMeasuredTail(from:9_999,with:[sample(80,width:30)])
+      canvas.displayActiveEraser(eraser);addressed(eraser)
+      try await assertUX("stationary-eraser-width-replaces-normalized-mask-pixels",since:.now,window:window) {
+        try NotebookUXObservation.Pixels(window:window).matches([(location(92),.paper),(location(120),.red)])
+      }
+      eraser.replaceMeasuredTail(from:0,with:[sample(120)])
+      canvas.displayActiveEraser(eraser);addressed(eraser)
+      try await assertUX("retained-erasure-correction-restores-vacated-pixels",since:.now,window:window) {
+        try NotebookUXObservation.Pixels(window:window).matches([(location(80),.red),(location(120),.paper)])
+      }
+      // Switch contacts before an empty frame: the predecessor's retained
+      // footprint must be restored in the successor's first drawable.
+      canvas.updateOrderedErasing([],id:eraser.measured.sourceID);canvas.clearActiveAction()
+      let next=ActiveEraserStroke();next.replaceMeasuredTail(from:0,with:[sample(40)])
+      canvas.displayActiveEraser(next);addressed(next)
+      try await assertUX("retained-eraser-switch-restores-predecessor",since:.now,window:window) {
+        try NotebookUXObservation.Pixels(window:window).matches([(location(40),.paper),(location(80),.red),(location(120),.red)])
+      }
+      canvas.updateOrderedErasing([],id:next.measured.sourceID);canvas.clearActiveAction()
+      try await self.waitForStableFrame(canvas,accepted:true)
+      try await assertUX("retained-erasure-cancel-restores-canonical-cut",since:.now,window:window) {
+        try NotebookUXObservation.Pixels(window:window).matches([(location(40),.red),(location(80),.red),(location(120),.red)])
+      }
+      let restored=try XCTUnwrap(canvas.acquireAcceptedFrameLease());defer {restored.release()}
+      XCTAssertFalse(restored.texture === borrowed.texture)
+      XCTAssertEqual(canvas.pageRetainedAllocationCount,allocations+1)
+      XCTAssertEqual(canvas.pageDrawableAllocationCount,pools,"The patch reuses the existing drawable pool")
+      restored.release()
+      let lifted=ActiveEraserStroke();lifted.replaceMeasuredTail(from:0,with:[sample(80)])
+      canvas.displayActiveEraser(lifted)
+      try await assertUX("retained-eraser-before-lift",since:.now,window:window) {
+        try NotebookUXObservation.Pixels(window:window).matches([(location(80),.black)])
+      }
+      let accepted=PageInkAction(id:lifted.measured.sourceID,tool:.eraser,
+        measurements:lifted.measured.frozen().measurements,sequence:3)
+      canvas.commitActiveEraser(accepted);try await self.waitForStableFrame(canvas,accepted:true)
+      try await assertUX("retained-lift-reconstructs-the-same-canonical-order",since:.now,window:window) {
+        try NotebookUXObservation.Pixels(window:window).matches([(location(80),.black),(location(120),.red)])
+      }
+      XCTAssertEqual(canvas.pageRetainedAllocationCount,allocations+1)
+    }
+  }
+
+  @MainActor
+  func testRetainedEraserDamageFollowsTheCapturedMaskThroughShearAndScale() async throws {
+    try await withPreparedSelectionCanvas { canvas,window,action,_ in
+      let frame=PageRect(x:0,y:0,width:160,height:160)
+      let ink=NotebookFreehand(layers:[.init(tool:.pen,color:.black,
+        measured:.init(sourceID:action.id,measurements:action.samples,frame:frame))])
+      let graphic=NotebookGraphic(shape:.freehand,sourceInkIDs:[action.id],freehand:ink,
+        transform:.init(a:1,b:0.3,c:0.25,d:0.75,tx:0,ty:0.2))
+      let plan=try self.handoffPlan(action:action,graphic:graphic)
+      let geometry=try await canvas.prepareOrderedPlan(plan)
+      try await canvas.presentOrderedPlan(geometry,plan:plan,canonical:true)
+      canvas.projectPage(region:.init(x:10,y:10,width:140,height:140),
+        sourceSize:.init(width:160,height:160),pixelDensity:2)
+      try await self.waitForStableFrame(canvas,accepted:true)
+      let first=canvas.convert(CGPoint(x:80,y:76),to:window)
+      let second=canvas.convert(CGPoint(x:120,y:88),to:window)
+      let stroke=ActiveEraserStroke()
+      @MainActor func move(_ x:Double) {
+        stroke.replaceMeasuredTail(from:0,with:[.init(point:.init(x:x,y:40),timeOffset:0,
+          width:18,opacity:1,force:1,azimuth:0,altitude:1)])
+        canvas.displayActiveEraser(stroke)
+        let cut=NotebookElementErasing(id:stroke.measured.sourceID,surface:.page(UUID()),
+          samples:stroke.measured.frozen().measurements,
+          targets:[.init(elementID:"moved-contact",frame:frame)])
+        canvas.updateOrderedErasing([cut],id:cut.id)
+      }
+      move(80)
+      try await assertUX("retained-captured-mask-uses-current-body-basis",since:.now,window:window) {
+        try NotebookUXObservation.Pixels(window:window).matches([(first,.paper),(second,.black)])
+      }
+      move(120)
+      try await assertUX("retained-captured-mask-restores-old-transformed-tail",since:.now,window:window) {
+        try NotebookUXObservation.Pixels(window:window).matches([(first,.black),(second,.paper)])
+      }
+      canvas.updateOrderedErasing([],id:stroke.measured.sourceID);canvas.clearActiveAction()
+      try await self.waitForStableFrame(canvas,accepted:true)
+      XCTAssertTrue(try NotebookUXObservation.Pixels(window:window).matches([(first,.black),(second,.black)]))
+    }
+  }
+
+  @MainActor
   func testReturningTheRawSourceJoinsTheNextPencilFrameWithoutDroppingTheContact() async throws {
     let resources=SceneRenderResources(byteLimit:8 * 1024 * 1024)
     try await withPreparedSelectionCanvas(resources:resources) { canvas,window,action,moved in
@@ -398,7 +541,8 @@ final class InkCanvasLifecycleTests: XCTestCase {
     let stroke=handoffPencil(),action=stroke.measured.frozen().restoredAction()
     let change=try page.prepareLiveInkChange(.append(action),stamp:.init(counter:1,actor:actor))
     var first:UUID?,firstCount:Int?,published=Set<UUID>(),resolved:[UUID:NotebookMetalFrameReadiness]=[:]
-    var trace:[String]=[],firstResolutionCount:Int?
+    var trace:[String]=[],firstResolutionCount:Int?,previousReveal:UUID?
+    var acceptedRevision:UInt64?
     canvas.onContactFrameResolved={ receipt in
       trace.append("contact \(receipt.frameID) \(receipt.completion); timing=\(String(describing:receipt.timing))")
     }
@@ -406,6 +550,15 @@ final class InkCanvasLifecycleTests: XCTestCase {
       trace.append("owner \(event); clock=\(CACurrentMediaTime()); drawables=\(canvas.drawableRequestCount); opacity=\(canvas.layer.opacity)")
       switch event {
       case .willPublish(let submission):
+        if let previous=previousReveal {
+          XCTAssertNotNil(resolved[previous],
+            "Each reveal must resolve before its successor is scheduled")
+          if previous != first {
+            XCTAssertEqual(resolved[previous]?.isReady,false,
+              "Only a discarded accepted reveal may schedule another retry")
+          }
+        }
+        previousReveal=submission
         guard first == nil else {return}
         first=submission;firstCount=canvas.drawableRequestCount
         XCTAssertEqual(canvas.pendingFirstPresentationID,submission)
@@ -413,6 +566,7 @@ final class InkCanvasLifecycleTests: XCTestCase {
         // Actual GPU scheduling precedes this actor turn. Lift and accepted
         // binding change the content revision here, before its real publication.
         canvas.commitActiveStroke(action);canvas.settle(change);canvas.draw()
+        acceptedRevision=canvas.framePublicationState.revision
         XCTAssertEqual(canvas.pendingFirstPresentationID,submission)
         XCTAssertEqual(canvas.drawableRequestCount,submitted)
         XCTAssertFalse(canvas.isStableFramePresented,"The old reveal cannot acknowledge the accepted revision")
@@ -425,7 +579,7 @@ final class InkCanvasLifecycleTests: XCTestCase {
     }
     canvas.displayActiveStroke(stroke)
     controller.view.addSubview(canvas);window.makeKeyAndVisible()
-    try await waitForStableFrame(canvas)
+    try await waitForStableFrame(canvas,accepted:true)
     let firstSubmission=try XCTUnwrap(first)
     let evidence=trace.joined(separator:"\n"),attachment=XCTAttachment(string:evidence)
     attachment.name="first-lift-publication-and-OS-outcome";attachment.lifetime = .keepAlways;add(attachment)
@@ -434,12 +588,22 @@ final class InkCanvasLifecycleTests: XCTestCase {
     XCTAssertNotNil(resolved[firstSubmission],"The original reveal must finish through its own real OS outcome: \(evidence)")
     XCTAssertEqual(firstResolutionCount,firstCount,
       "No successor drawable may replace the reveal before its OS presentation/discard: \(evidence)")
-    XCTAssertEqual(canvas.drawableRequestCount,try XCTUnwrap(firstCount)+1,
-      "One current accepted revision follows the original OS outcome: \(evidence)")
+    XCTAssertGreaterThan(canvas.drawableRequestCount,try XCTUnwrap(firstCount),
+      "The accepted revision follows the original OS outcome, retrying discarded drawables: \(evidence)")
+    let accepted=try XCTUnwrap(acceptedRevision),publication=canvas.framePublicationState
+    XCTAssertEqual(publication.revision,accepted)
+    XCTAssertEqual(publication.preparedRevision,accepted)
+    XCTAssertEqual(publication.presentedRevision,accepted)
+    XCTAssertNil(publication.pendingPresentation)
+    XCTAssertTrue(canvas.acceptedFrameIsReady)
     canvas.onFirstFrameEvent=nil;canvas.onContactFrameResolved=nil
     XCTAssertNil(canvas.pendingFirstPresentationID)
     XCTAssertEqual(canvas.layer.opacity,1)
     XCTAssertTrue(canvas.frameReadiness?.isReady == true)
+    let settledDrawables=canvas.drawableRequestCount
+    try await Task.sleep(for:.milliseconds(50))
+    XCTAssertEqual(canvas.drawableRequestCount,settledDrawables,
+      "An accepted, presented revision must retire its frame demand")
     try await assertUX("first-reveal-survives-lift",since:.now,window:window) {
       try NotebookUXObservation.Pixels(window:window).matches([
         (canvas.convert(.init(x:80,y:145),to:window),.black),
@@ -591,6 +755,8 @@ final class InkCanvasLifecycleTests: XCTestCase {
 
   @MainActor
   func testPageCoalescesNewMaterialUntilTheSystemSuppliesADrawable() async throws {
+    // Isolate drawable scheduling from the renderer's asynchronous first-use preparation.
+    try await InkRasterRenderer.shared.prepareInk()
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let window = UIWindow(windowScene: scene), controller = UIViewController()
     window.rootViewController = controller; controller.view.backgroundColor = .white

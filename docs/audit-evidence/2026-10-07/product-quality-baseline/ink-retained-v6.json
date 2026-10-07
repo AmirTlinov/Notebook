@@ -1,0 +1,41 @@
+{
+  "date": "2026-10-07",
+  "baseCommit": "9a907c0b53cde95caf07aabdc3a760b86e88fbc6",
+  "sourceAggregateSHA256": "1093fe8521f407f0fdcfea57b6d64a777c66c2d10e001cca79a584974e8d5d51",
+  "verifiedInkSources": {
+    "Applications/Shared/IncrementalInkMesh.swift": "ba32470c9339f28b71e1ba5238f6fae396657edabf85cfd0f025fc963da2f397",
+    "Applications/Shared/InkCanvasView.swift": "08d048923cb96dbdbb0dc89ce9c6141dd3f53f6c9b5767519a94da25e27a429f",
+    "Applications/Shared/InkMaterialRenderer+Ordered.swift": "44ffed54283f3f68f607143d6737dd47d8ec871ef80d582c1d000969efc1b235",
+    "Applications/Shared/InkOrderedGeometry.swift": "a28c8de98922f7283fa4e1cee3274efa4ad4b96aacc41043cf6d39546b496e8d",
+    "Applications/Shared/NotebookInkMaterialView.swift": "b53171f3748e93e93ebf1aaaec7ad0479e5e547e14564fb8c5305cdf28034b38",
+    "Applications/Tests/IncrementalInkMeshTests.swift": "21b8749f35be2ad4ca3c2c15b922efbd9ca9af13ec02b387ed6f5e3221be4cb8",
+    "Applications/Tests/InkCanvasLifecycleTests.swift": "a46e35097dff29b8681d2ae046bbc67d6d9ebfedb1edcb855f4dbf98a315a8ec",
+    "Applications/Tests/InkMaterialCanvasTests.swift": "11938f56e254105c58967967148fd8124e4ab0d27b3138fd59b35db7e5607491",
+    "Sources/NotebookCore/InkDisplayNormalization.swift": "da385eec26e68cf349ed97f39af81ef7f2c666dbbd8320acd943912078ce33c4"
+  },
+  "device": "physical iPad Pro 11-inch M1, iOS27.0 24A435",
+  "configuration": "optimized Debug, isolated native-test bundle",
+  "v3b": "100k predecessor/tail, whole/coincident masks, transformed materials, pressure/COW recovery, live erase/cancel/undo/redo passed; document/input timing failures remain separate and open.",
+  "v6": {
+    "selectedTest": "NotebookTests/InkCanvasLifecycleTests/testRetainedEraserRepairsItsOldTailAndPreservesBorrowedOrderedPixels",
+    "build": "PASS",
+    "inventory": "PASS",
+    "nativeTests": {
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": []
+    },
+    "durationSeconds": 0.7977529764175415,
+    "sourceUnchangedDuringRun": true,
+    "summarySHA256": "7683fee9e475e554fef9a08e4a2393ef8a0fd2e3983438b87bfdc16892dcbf63",
+    "wrapperExit": 1,
+    "wrapperReason": "Final coverage validation requires the named gesture for separately changed document-fit UI fixture; the selected ink test passed."
+  },
+  "localEvidence": ".build/product-quality-eraser-20261007-v6/ipad.xcresult",
+  "limitations": [
+    "Actual Pencil latency, sustained dense-eraser speed, system frame/CPU/GPU/memory and full physical acceptance are not established.",
+    "This ink candidate is separate from installed production255."
+  ]
+}
