@@ -1625,7 +1625,8 @@ final class SceneCompositionTiles {
       }
       for key in plan.tiles {
         if !invalidatedTiles.contains(key), canCarry, let previous, let old = previous.rasters.first(where: { $0.key.hasSamePaintWindow(as: key) })?.value,
-          !old.isReleased, let hit = old.retainedCopy() { tiles[key] = hit }
+          !old.isReleased, resources.leafRastersAreCurrent(old.leafRasters),
+          let hit = old.retainedCopy() { tiles[key] = hit }
         else if !invalidatedTiles.contains(key), let hit = resources.retainComposition(key, accepts: { receipts in
           receipts.allSatisfy { address, receipt in
             guard let view = plan.presentations[.board(address.plane.boardID)] else { return false }

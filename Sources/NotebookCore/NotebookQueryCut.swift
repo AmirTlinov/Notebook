@@ -50,6 +50,9 @@ public struct NotebookQueryCut {
     reusing pageContent: NotebookPanelPageContent? = nil) throws -> JSONValue {
     try requireActive(); return try store.readPanel(request, actor: actor, reusing: pageContent)
   }
+  public func readPanelMetadata(workspaceID: UUID, target: CollaborationTarget, actor: UUID) throws -> NotebookPanelMetadata {
+    try requireActive(); return try store.readPanelMetadata(workspaceID: workspaceID, target: target, actor: actor)
+  }
   public func capturePanelPageContent(_ cut: NotebookPanelPresentationCut) throws -> NotebookPanelPageContent {
     try requireActive(); return try store.capturePanelPageContent(cut)
   }

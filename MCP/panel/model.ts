@@ -4,6 +4,19 @@ export type Point={x:number;y:number};
 export type Frame=Point&{width:number;height:number};
 export type PanelTarget={kind:"board"|"page";id:string};
 export type PanelAddress={workspaceID:string;target:PanelTarget;socketKey:string};
+export type PanelCheckpoint={id:string;epoch:string;readCursor:string;changeCursor:string};
+export type PanelChanges=PanelAddress&{checkpoint:PanelCheckpoint;changed:boolean;reset?:boolean};
+
+export function isPanelCheckpoint(value:unknown):value is PanelCheckpoint {
+  if(!value||typeof value!=="object"||Array.isArray(value))return false;
+  const checkpoint=value as Record<string,unknown>;
+  const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const cursor=(value:unknown)=>typeof value==="string"&&/^(0|[1-9]\d{0,18})$/.test(value)
+    &&BigInt(value)<=9_223_372_036_854_775_807n;
+  return typeof checkpoint.id==="string"&&uuid.test(checkpoint.id)
+    &&typeof checkpoint.epoch==="string"&&uuid.test(checkpoint.epoch)
+    &&cursor(checkpoint.readCursor)&&cursor(checkpoint.changeCursor);
+}
 export type NativeElement=Record<string,unknown>&{
   id:string;kind:string;frame:Frame;worldOrigin?:WorldPoint;source:string;
   graphic?:Record<string,any>;textStyle?:Record<string,unknown>&{fontSize?:number;weight?:number;format?:unknown;runs?:unknown[]};
@@ -29,7 +42,7 @@ export type PanelAppearance={status:"ready"|"pending"|"error";requestID:string;s
 export type PanelSnapshot=PanelAddress&{worldOrigin:WorldPoint|null;size:{width:number;height:number};
   elements:PanelElement[];cards:PanelCard[];rawInkPresent:boolean;
   unsupportedElements:{id:string;kind:string;reason:string}[];cursor:string;
-  history:{undoActionID?:string};truncated:boolean;appearance?:PanelAppearance;
+  history:{undoActionID?:string};truncated:boolean;appearance?:PanelAppearance;checkpoint?:PanelCheckpoint;
   fitBounds?:{anchor:WorldPoint;region:Frame};
   navigation?:{parentBoard?:PanelTarget;itemID?:string;position?:{index:number;pageID:string};
     directory?:{header:{item:{title:string;pageCount:number}};pages:{position:{index:number;pageID:string}}[]}}};

@@ -4,7 +4,11 @@ import Darwin
 public enum NotebookIPC {
   public static let version = 1
   public static let maximumFrameBytes = 32 * 1_024 * 1_024
+  /// Ordinary handlers and suspended panel observations retain separate
+  /// admission windows. A frame has no domain quota before typed decoding.
   public static let maximumConnections = 8
+  public static let maximumWaitingConnections = 16
+  public static let maximumUnclassifiedConnections = 8
   public static let requestTimeout: TimeInterval = 30
   public static var defaultSocketURL: URL {
     URL(fileURLWithPath: "/tmp/notebook-\(geteuid())/bridge.sock")
@@ -85,7 +89,12 @@ public final class NotebookIPCServer: @unchecked Sendable {
   private var listener: Int32 = -1
   private var socketIdentity: SocketIO.Identity?
   private var stopped = false
-  private var jobs: [UUID: IPCJob] = [:]
+  private enum Admission: Equatable { case unclassified, command, panelChanges }
+  private struct AdmittedJob {
+    let job: IPCJob
+    var admission: Admission
+  }
+  private var jobs: [UUID: AdmittedJob] = [:]
   private let acceptQueue = DispatchQueue(label: "Notebook.IPC.accept", qos: .userInitiated)
   private let workerQueue: DispatchQueue
   private let requestExecutor: IPCRequestExecutor
@@ -106,8 +115,14 @@ public final class NotebookIPCServer: @unchecked Sendable {
   }
 
   var activeConnectionCount: Int { lock.withLock { jobs.count } }
-  var acceptedHandlerCount: Int { lock.withLock { jobs.values.filter(\.hasPendingHandler).count } }
-  var cancelledHandlerCount: Int { lock.withLock { jobs.values.filter { $0.ownedHandler?.isCancelled == true }.count } }
+  var acceptedHandlerCount: Int { lock.withLock { jobs.values.filter { $0.job.hasPendingHandler }.count } }
+  var cancelledHandlerCount: Int { lock.withLock { jobs.values.filter { $0.job.ownedHandler?.isCancelled == true }.count } }
+  var waitingConnectionCount: Int { lock.withLock { connectionCountLocked(.panelChanges) } }
+  var commandConnectionCount: Int { lock.withLock { connectionCountLocked(.command) } }
+  var unclassifiedConnectionCount: Int { lock.withLock { connectionCountLocked(.unclassified) } }
+  private func connectionCountLocked(_ admission: Admission) -> Int {
+    jobs.values.filter { $0.admission == admission }.count
+  }
 
   public func start() throws {
     try start(afterAddressCheck: nil)
@@ -124,7 +139,8 @@ public final class NotebookIPCServer: @unchecked Sendable {
       do {
         try SocketIO.bind(fd, url: socketURL)
         boundIdentity = try SocketIO.Identity(socketURL)
-        guard chmod(socketURL.path, 0o600) == 0, listen(fd, Int32(NotebookIPC.maximumConnections)) == 0 else {
+        let backlog = NotebookIPC.maximumConnections + NotebookIPC.maximumWaitingConnections + NotebookIPC.maximumUnclassifiedConnections
+        guard chmod(socketURL.path, 0o600) == 0, listen(fd, Int32(backlog)) == 0 else {
           throw SocketIO.failure("Не удалось защитить локальный сокет.")
         }
         listener = fd; socketIdentity = boundIdentity
@@ -149,13 +165,13 @@ public final class NotebookIPCServer: @unchecked Sendable {
         shutdown(fd, SHUT_RDWR); close(fd)
         socketIdentity?.removeSocket(at: socketURL); socketIdentity = nil
       }
-      return Array(jobs.values)
+      return jobs.values.map(\.job)
     }
     // Cancellation handlers may call their domain owner. Do not invoke them
     // under the transport registry lock.
     for job in closing { job.shutdown() }
     let completion = lock.withLock {
-      jobs = jobs.filter { !$0.value.finished }
+      jobs = jobs.filter { !$0.value.job.finished }
       return drainCompletionLocked()
     }
     resumeDrain(completion)
@@ -168,7 +184,7 @@ public final class NotebookIPCServer: @unchecked Sendable {
   @discardableResult public func stopAndDrain() async -> Duration {
     let started = ContinuousClock.now
     stop()
-    let handlers = lock.withLock { jobs.values.compactMap(\.ownedHandler) }
+    let handlers = lock.withLock { jobs.values.compactMap { $0.job.ownedHandler } }
     for handler in handlers { await handler.value }
     return await withCheckedContinuation { continuation in
       let completed: ContinuousClock.Instant? = lock.withLock {
@@ -190,8 +206,8 @@ public final class NotebookIPCServer: @unchecked Sendable {
       catch { close(fd); continue }
       let id = UUID(), job = IPCJob(fd: fd)
       let accepted = lock.withLock {
-        guard !stopped, jobs.count < NotebookIPC.maximumConnections else { return false }
-        jobs[id] = job; return true
+        guard !stopped, connectionCountLocked(.unclassified) < NotebookIPC.maximumUnclassifiedConnections else { return false }
+        jobs[id] = .init(job: job, admission: .unclassified); return true
       }
       guard accepted else { close(fd); continue }
       workerQueue.async { [weak self] in self?.serve(id: id, job: job) }
@@ -215,13 +231,24 @@ public final class NotebookIPCServer: @unchecked Sendable {
         throw CollaborationError("ipc_protocol", "Обновите согласованную пару Notebook и MCP.")
       }
       let command = try NotebookIPC.decodeCommand(JSONEncoder().encode(envelope.request))
-      let pureRead = (try? NotebookReadCommand(command)) != nil
+      // Only this validated observation may suspend in the waiting quota. An
+      // ordinary command cannot borrow it by attaching a panelChanges field.
+      let readCommand: NotebookReadCommand?
+      if command.command == .panelChanges { readCommand = try NotebookReadCommand(command) }
+      else { readCommand = try? NotebookReadCommand(command) }
+      let pureRead = readCommand != nil
+      let admission: Admission = command.command == .panelChanges ? .panelChanges : .command
       let admitted = try lock.withLock {
-        guard !stopped, jobs[id] === job else { return false }
+        guard !stopped, jobs[id]?.job === job else { return false }
+        let limit = admission == .panelChanges ? NotebookIPC.maximumWaitingConnections : NotebookIPC.maximumConnections
+        guard connectionCountLocked(admission) < limit else {
+          throw CollaborationError("ipc_busy", "Окно одновременных IPC запросов заполнено. Повторите запрос после завершения текущих.")
+        }
         try job.beginHandler(pureRead: pureRead, executor: requestExecutor,
           operation: { [handler] in try await handler(command) }, finished: { [self] in
             releaseFinishedJob(id, job: job)
           })
+        jobs[id]?.admission = admission
         return true
       }
       guard admitted else { throw CollaborationError("owner_unavailable", "Notebook завершает работу.") }
@@ -244,7 +271,7 @@ public final class NotebookIPCServer: @unchecked Sendable {
   }
   private func releaseFinishedJob(_ id: UUID, job: IPCJob) {
     let completion: DrainCompletion? = lock.withLock {
-      guard jobs[id] === job, job.finished else { return nil }
+      guard jobs[id]?.job === job, job.finished else { return nil }
       jobs.removeValue(forKey: id)
       return drainCompletionLocked()
     }

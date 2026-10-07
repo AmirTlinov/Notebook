@@ -17,7 +17,7 @@ for(const name of env_vars??[])if(process.env[name]!==undefined)environment[name
 const transport=new StdioClientTransport({command,args,env:{...environment,...env},...(cwd?{cwd}:{}),stderr:"pipe"});
 try {
   await client.connect(transport);
-  assert.deepEqual((await client.listTools()).tools.map(t=>t.name).sort(),["notebook_context","notebook_execute","notebook_import_document","notebook_import_document_resource","notebook_import_program","notebook_open","notebook_panel_connect","notebook_panel_edit","notebook_panel_presentation","notebook_panel_undo","notebook_panel_workspace"]);
+  assert.deepEqual((await client.listTools()).tools.map(t=>t.name).sort(),["notebook_context","notebook_execute","notebook_import_document","notebook_import_document_resource","notebook_import_program","notebook_open","notebook_panel_changes","notebook_panel_connect","notebook_panel_edit","notebook_panel_presentation","notebook_panel_undo","notebook_panel_workspace"]);
   const help=await client.callTool({name:"notebook_context",arguments:{method:"help",args:{topic:"operation/insertElement"}}});
   assert.notEqual(help.isError,true,JSON.stringify(help));assert.match(JSON.stringify(help.structuredContent),/"nativeText"/);
   const deadline=Date.now()+30_000;

@@ -10,11 +10,17 @@ import { toolBudgetMilliseconds, type RuntimeAdmission } from "./runtime-admissi
 
 declare const NOTEBOOK_PANEL_HTML: string;
 export const panelResourceURI = "ui://notebook/workspace.html";
+export const panelObservationToolMilliseconds=35_000;
 export const panelTargetSchema = z.object({kind:z.enum(["board","page"]),id:z.uuid()}).strict();
 const panelOpenSchema=z.object({target:panelTargetSchema.optional(),bounds:sceneBoundsSchema.optional()}).strict();
 export const panelAddressSchema = z.object({
   workspaceID:z.uuid(),target:panelTargetSchema,socketKey:z.string().regex(/^[a-f0-9]{24}$/),
 }).strict();
+const panelCursorSchema=z.string().regex(/^(0|[1-9]\d{0,18})$/)
+  .refine(value=>!/^\d{1,19}$/.test(value)||BigInt(value)<=9_223_372_036_854_775_807n,
+    "The checkpoint cursor exceeds the committed journal range.");
+export const panelCheckpointSchema=z.object({id:z.uuid(),epoch:z.uuid(),
+  readCursor:panelCursorSchema,changeCursor:panelCursorSchema}).strict();
 export const panelViewSchema=z.object({
   viewport:z.object({x:z.number().min(1).max(2048),y:z.number().min(1).max(2048)}).strict(),
   pixelScale:z.number().min(.5).max(4),
@@ -62,9 +68,10 @@ async function result(operation:()=>Promise<Value>,appearance=false) {
 
 export function registerNotebookPanel(server:McpServer,socketPath:string,html?:string,admit?:RuntimeAdmission) {
   const appMetadata={ui:{resourceUri:panelResourceURI,visibility:["app"]}};
-  const native=(operation:(runtime:Value|undefined,deadline:number)=>Promise<Value>,appearance=false)=>result(async()=>{
-    const deadline=performance.now()+toolBudgetMilliseconds;
-    const runtime=await admit?.(deadline);
+  const native=(operation:(runtime:Value|undefined,deadline:number)=>Promise<Value>,appearance=false,
+    budgetMilliseconds=toolBudgetMilliseconds)=>result(async()=>{
+    const started=performance.now(),deadline=started+budgetMilliseconds;
+    const runtime=await admit?.(Math.min(deadline,started+toolBudgetMilliseconds));
     return operation(runtime,deadline);
   },appearance);
   registerAppResource(server,"Notebook workspace",panelResourceURI,{},async()=>({contents:[{
@@ -111,6 +118,13 @@ export function registerNotebookPanel(server:McpServer,socketPath:string,html?:s
     annotations:{readOnlyHint:true,destructiveHint:false,openWorldHint:false},_meta:appMetadata,
   },({socketKey,...request},ctx)=>native((_runtime,deadline)=>runBridge<Value>(panelSocket({...request,socketKey},socketPath),
     {command:"panelPresentation",panelPresentation:request},{deadline,signal:ctx.mcpReq.signal}),true));
+  registerAppTool(server,"notebook_panel_changes",{
+    title:"Wait for changes to this Notebook view",
+    description:"Wait up to 25 seconds for an addressed change to the accepted presentation. The runtime validates the checkpoint and visible dependencies; an unchanged reply rearms the wait without preparing pixels. Closing this observation preserves accepted edits.",
+    inputSchema:panelAddressSchema.extend({checkpoint:panelCheckpointSchema}).strict(),
+    annotations:{readOnlyHint:true,destructiveHint:false,openWorldHint:false},_meta:appMetadata,
+  },({socketKey,...request},ctx)=>native((_runtime,deadline)=>runBridge<Value>(panelSocket({...request,socketKey},socketPath),
+    {command:"panelChanges",panelChanges:request},{deadline,signal:ctx.mcpReq.signal}),false,panelObservationToolMilliseconds));
   registerAppTool(server,"notebook_panel_edit",{
     title:"Save a human Notebook edit",
     description:"Apply the completed human gesture through Notebook native commands. A pen contact carries one appendInkStroke and sources:[]; element and card edits carry their exact captured sources. Reuse actionID and identical payload after an uncertain response. The native owner chooses authorship and validates the addressed surface.",

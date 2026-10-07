@@ -1331,7 +1331,12 @@ final class NotebookAppModel {
       surfaceHistory.setWriterBlocked(message != nil)
       if message == nil, let cloudSync { Task { await cloudSync.writerRecovered() } }
     }
-    persistence.onContentMerged = { [weak self] in self?.reloadExternalChanges() }
+    persistence.onContentMerged = { [weak self] in
+      #if os(macOS)
+        self?.previewPublisher?.panelContentDidCommit()
+      #endif
+      self?.reloadExternalChanges()
+    }
     persistence.onCommit = { [weak self] owner in self?.didCommitDurableChanges(owner: owner) }
     inputGate.onNewAcceptedContact = { [weak self] in
       guard let self else { return }
@@ -1376,6 +1381,9 @@ final class NotebookAppModel {
 
   private func didCommitDurableChanges(owner: NotebookPersistenceQueue.Owner?) {
     guard !isStopped else { return }
+    #if os(macOS)
+      previewPublisher?.panelContentDidCommit()
+    #endif
     sync?.notifyDurableChanges()
     if let cloudSync { Task { await cloudSync.notifyLocalChanges() } }
     switch owner {
@@ -5216,12 +5224,18 @@ final class NotebookAppModel {
         }
         return try presentationRelay.handle(command)
       }
-      if command.command == .panelPresentation {
-        guard let request = command.panelPresentation, let publisher = previewPublisher,
+      if command.command == .panelPresentation || command.command == .panelChanges {
+        guard let publisher = previewPublisher,
           let socket = commandSocketURL else {
           throw CollaborationError("owner_unavailable", "Представление Notebook ещё не готово.")
         }
-        let result = try await publisher.panelPresentation(request)
+        let result: JSONValue
+        if command.command == .panelChanges, let request = command.panelChanges {
+          _ = try NotebookReadCommand(command)
+          result = try await publisher.panelChanges(request)
+        } else if command.command == .panelPresentation, let request = command.panelPresentation {
+          result = try await publisher.panelPresentation(request)
+        } else { throw CollaborationError("invalid_panel_request", "Запрос панели отсутствует.") }
         guard case .object(var fields) = result else {
           throw CollaborationError("invalid_panel_presentation", "Представление Notebook не содержит адреса.")
         }

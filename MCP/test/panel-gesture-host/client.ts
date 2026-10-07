@@ -5,7 +5,7 @@ import {TILE_SIZE} from '../../src/spatial.js';
 
 // The mounted panel, Swift camera and image owner are production code. Only the
 // external tool transport and decoder completion are controlled by this probe.
-const workspaceID=crypto.randomUUID(),a=crypto.randomUUID(),b=crypto.randomUUID();
+const workspaceID=crypto.randomUUID(),a=crypto.randomUUID(),b=crypto.randomUUID(),epoch=crypto.randomUUID();
 const origin={tileX:0,tileY:0,localX:0,localY:0},socketKey='0123456789abcdef01234567';
 type Reply=Awaited<ReturnType<App['callServerTool']>>;
 type Mode='late-pixels'|'late-error'|'held-decode';
@@ -102,6 +102,7 @@ function snapshot(id:string,view:PanelView,knownAssets:string[]=[]):PanelSnapsho
   const camera=view.camera??{center:{...origin,localX:id===a?320:240,localY:id===a?200:150},scale:1};
   const width=view.viewport.x/camera.scale,height=view.viewport.y/camera.scale;
   return {workspaceID,socketKey,target:{kind:'board',id},worldOrigin:origin,size:{width:1400,height:900},
+    checkpoint:{id:crypto.randomUUID(),epoch,readCursor:'1',changeCursor:'1'},
     cursor:'1',elements:[],cards:id===a?[{item:{id:b,kind:'board',title:'Папка B'},center:{...origin,localX:320,localY:200},
       frame:cards[0]!.frame,worldOrigin:origin}]:[],rawInkPresent:false,unsupportedElements:[],history:{},truncated:false,
     appearance:{status:'ready',requestID:crypto.randomUUID(),sourceRevision:id,viewport:view.viewport,camera,layers,
@@ -110,10 +111,20 @@ function snapshot(id:string,view:PanelView,knownAssets:string[]=[]):PanelSnapsho
     ...(id===b?{navigation:{parentBoard:{kind:'board',id:a}}}:{})};
 }
 App.prototype.connect=async function(){
-  app=this;this.ontoolresult?.({content:[],structuredContent:snapshot(a,{viewport:{x:800,y:600},pixelScale:1})});
+  app=this;this.ontoolresult?.({content:[],structuredContent:{open:{target:{kind:'board',id:a}}}});
 };
 App.prototype.updateModelContext=async()=>({});
 App.prototype.callServerTool=async function(input,options){
+  if(input.name==='notebook_panel_connect'){
+    const requested=input.arguments as {target?:{id:string}};
+    const initial=snapshot(requested.target?.id??a,{viewport:{x:800,y:600},pixelScale:1});
+    delete initial.appearance;delete initial.checkpoint;
+    return {content:[],structuredContent:initial};
+  }
+  if(input.name==='notebook_panel_changes')return await new Promise<Reply>((_resolve,reject)=>{
+    const abort=()=>reject(new Error('The addressed observation was cancelled.'));
+    if(options?.signal?.aborted)abort();else options?.signal?.addEventListener('abort',abort,{once:true});
+  });
   if(input.name!=='notebook_panel_presentation')throw new Error('This isolated gesture probe accepts only native presentation reads.');
   const request=input.arguments as {target:{id:string};appearance:PanelView;knownAssets?:string[];knownCursor?:string;knownRequestID?:string};
   reads[request.target.id===a?'A':'B']++;

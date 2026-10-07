@@ -60,7 +60,11 @@ final class NotebookPanelPageContentTests: XCTestCase {
     }
     defer { NotebookNavigationObservation.onPageMaterialPreparation = nil }
     let result: Result<JSONValue, Error>
-    do { result = .success(try await CurrentViewPreviewWriter.panelMaterial(cut, model: fixture.model, knownAssets: [])) }
+    do {
+      let prepared = try await CurrentViewPreviewWriter.panelMaterial(cut, model: fixture.model, knownAssets: [])
+      prepared.leafRasterCollector.close()
+      result = .success(prepared.snapshot)
+    }
     catch { result = .failure(error) }
     try await XCTUnwrap(mutation).value
     XCTAssertNotNil(phases["panel_content_captured"])

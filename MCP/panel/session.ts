@@ -1,6 +1,7 @@
 import { App } from "@modelcontextprotocol/ext-apps";
 import type { SceneBounds } from "../src/spatial.js";
-import type { PanelSnapshot, PanelAddress, PanelMutation, PanelSelection, PanelTarget, PanelView } from "./model.js";
+import { isPanelCheckpoint, type PanelCheckpoint, type PanelChanges, type PanelSnapshot, type PanelAddress,
+  type PanelMutation, type PanelSelection, type PanelTarget, type PanelView } from "./model.js";
 
 type ToolResult={structuredContent?:Record<string,unknown>;content?:{type:string;text?:string}[];isError?:boolean};
 type OpenRequest={target?:PanelTarget;bounds?:SceneBounds};
@@ -19,7 +20,14 @@ function body(result:ToolResult):Record<string,unknown> {
   return value;
 }
 function isSnapshot(value:Record<string,unknown>):value is Record<string,unknown>&PanelSnapshot {
-  return typeof value.workspaceID==="string"&&typeof value.socketKey==="string"&&Array.isArray(value.elements)&&!!value.target;
+  return isAddress(value)&&Array.isArray(value.elements);
+}
+function isAddress(value:Record<string,unknown>):value is Record<string,unknown>&PanelAddress {
+  const target=value.target as Record<string,unknown>|undefined;
+  const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  return typeof value.workspaceID==="string"&&uuid.test(value.workspaceID)
+    &&typeof value.socketKey==="string"&&/^[a-f0-9]{24}$/.test(value.socketKey)&&!!target
+    &&["board","page"].includes(String(target.kind))&&typeof target.id==="string"&&uuid.test(target.id);
 }
 function sameAddress(a:PanelAddress,b:PanelAddress):boolean {
   return a.workspaceID.toLowerCase()===b.workspaceID.toLowerCase()&&a.socketKey===b.socketKey
@@ -45,7 +53,15 @@ export class NotebookSession {
   private contextDirty=false;
   get mutationReady(){return this.presented&&!this.suspended&&!this.busy&&!this.pending&&!this.synchronizing;}
   get hasPending(){return !!this.pending;}
-  suspended=false;
+  private contactActive=false;
+  get suspended(){return this.contactActive;}
+  set suspended(value:boolean){
+    if(this.contactActive===value)return;
+    this.contactActive=value;
+    if(!value&&!this.closed)queueMicrotask(()=>{
+      this.forcedRefreshQueued ||= this.changesDirty;this.drainRefresh();
+    });
+  }
   onSnapshot:(snapshot:PanelSnapshot)=>void=()=>{};
   onPrepareSnapshot:(snapshot:PanelSnapshot,view:PanelView)=>Promise<boolean>=async()=>true;
   onCancelSnapshotPreparation:()=>Promise<void>=async()=>{};
@@ -58,7 +74,18 @@ export class NotebookSession {
   view:(navigation:boolean,camera?:PanelView["camera"])=>PanelView=()=>({viewport:{x:834,y:1194},pixelScale:1});
   knownAssets:()=>string[]=()=>[];
   needsPresentation:()=>boolean=()=>true;
-  private timer:ReturnType<typeof setInterval>|undefined;
+  private connected=false;
+  private workspaceChanging=false;
+  private changesDirty=false;
+  private changesFailed=false;
+  private changesWait:{controller:AbortController;address:PanelAddress;checkpoint:PanelCheckpoint}|undefined;
+  private changesRetryTimer:ReturnType<typeof setTimeout>|undefined;
+  private changesRetryDelay=250;
+  private visibilityDocument:Document|undefined;
+  private readonly visibilityChanged=()=>{
+    if(this.hidden){this.cancelChanges();return;}
+    this.forcedRefreshQueued ||= this.changesDirty;this.drainRefresh();this.watchChanges();
+  };
   private reading=false;
   private readers:(()=>void)[]=[];
   private closed=false;
@@ -93,16 +120,91 @@ export class NotebookSession {
     this.app.onteardown=async()=>{
       if(this.closed)return {};
       this.closed=true;this.presented=false;++this.generation;
-      this.cancelNavigation();
-      clearInterval(this.timer);clearTimeout(this.refreshTimer);clearTimeout(this.contextTimer);clearTimeout(this.openingTimer);
-      this.timer=undefined;this.refreshTimer=undefined;this.contextTimer=undefined;this.openingTimer=undefined;this.openingRequest=undefined;
+      this.cancelNavigation();this.cancelChanges();
+      this.visibilityDocument?.removeEventListener("visibilitychange",this.visibilityChanged);this.visibilityDocument=undefined;
+      clearTimeout(this.refreshTimer);clearTimeout(this.contextTimer);clearTimeout(this.openingTimer);
+      this.refreshTimer=undefined;this.contextTimer=undefined;this.openingTimer=undefined;this.openingRequest=undefined;
       this.pending?.reject(new Error("Панель закрыта."));this.pending=undefined;
       this.busy=false;this.releaseReaders();
       this.onStatus("Панель закрыта");await this.onClose();return {};
     };
     try{await this.app.connect();}catch(error){if(!this.closed)throw error;}
     if(this.closed)return;
-    this.timer=setInterval(()=>{if(!document.hidden&&!this.suspended&&!this.busy)void this.refresh();},1500);
+    this.connected=true;
+    if(typeof document!=="undefined"&&typeof document.addEventListener==="function"){
+      this.visibilityDocument=document;document.addEventListener("visibilitychange",this.visibilityChanged);
+    }
+    this.watchChanges();
+  }
+  private get hidden(){return this.visibilityDocument?.hidden===true;}
+  private cancelChanges(){
+    this.changesWait?.controller.abort();
+    clearTimeout(this.changesRetryTimer);this.changesRetryTimer=undefined;
+  }
+  /** Recovery has one bounded backoff, charged only to failed delivery or dirty pixels. */
+  private retryChanges(){
+    if(this.closed||this.hidden||this.changesRetryTimer!==undefined||!this.presented||!this.snapshot?.checkpoint)return;
+    const address=this.address(),epoch=this.snapshot.checkpoint.epoch;
+    this.changesRetryTimer=setTimeout(()=>{
+      this.changesRetryTimer=undefined;
+      if(this.closed||this.hidden||!sameAddress(address,this.address())||this.snapshot?.checkpoint?.epoch!==epoch)return;
+      if(this.changesDirty){this.forcedRefreshQueued=true;this.drainRefresh();}
+      else this.watchChanges();
+    },this.changesRetryDelay);
+    this.changesRetryDelay=Math.min(4000,this.changesRetryDelay*2);
+  }
+  private watchChanges(){
+    if(!this.connected||this.closed||this.hidden||!this.presented||this.changesDirty
+      ||this.changesWait||this.changesRetryTimer!==undefined||this.workspaceChanging||this.navigation||!this.snapshot?.checkpoint)return;
+    const waiting={controller:new AbortController(),address:this.address(),checkpoint:{...this.snapshot.checkpoint}};
+    this.changesWait=waiting;void this.readChanges(waiting);
+  }
+  private async readChanges(waiting:NonNullable<NotebookSession["changesWait"]>){
+    const current=()=>!this.closed&&!this.hidden&&!waiting.controller.signal.aborted&&this.changesWait===waiting
+      &&sameAddress(waiting.address,this.address());
+    try{
+      const value=body(await this.app.callServerTool({name:"notebook_panel_changes",
+        arguments:{...waiting.address,checkpoint:waiting.checkpoint}},
+      {signal:waiting.controller.signal,timeout:35_000}) as ToolResult);
+      if(!current())return;
+      if(!isAddress(value)||!sameAddress(waiting.address,value)||!isPanelCheckpoint(value.checkpoint)
+        ||typeof value.changed!=="boolean"||(value.reset!==undefined&&typeof value.reset!=="boolean")){
+        throw new Error("Notebook вернул неполное наблюдение или другую поверхность.");
+      }
+      const reply=value as PanelChanges;
+      const sameEpoch=reply.checkpoint.epoch.toLowerCase()===waiting.checkpoint.epoch.toLowerCase();
+      if(!reply.reset&&(!sameEpoch||BigInt(reply.checkpoint.readCursor)<BigInt(waiting.checkpoint.readCursor)
+        ||BigInt(reply.checkpoint.changeCursor)<BigInt(waiting.checkpoint.changeCursor))){
+        throw new Error("Наблюдение Notebook требует восстановления после смены владельца.");
+      }
+      if(!reply.changed&&!reply.reset&&reply.checkpoint.id.toLowerCase()!==waiting.checkpoint.id.toLowerCase()){
+        throw new Error("Notebook подтвердил другой снимок поверхности.");
+      }
+      this.changesWait=undefined;
+      const recovered=this.changesFailed;this.changesFailed=false;
+      if(reply.changed||reply.reset){
+        this.changesDirty=true;this.forcedRefreshQueued=true;this.drainRefresh();
+      }else{
+        this.changesRetryDelay=250;
+        if(recovered&&!this.busy&&!this.reading&&!this.suspended&&!this.pending&&!this.synchronizing&&!this.failedWrite){
+          this.onError("",null);this.onStatus("Подключено");
+        }
+        this.snapshot={...this.snapshot!,checkpoint:reply.checkpoint};this.watchChanges();
+      }
+    }catch(error){
+      if(current()){
+        this.changesWait=undefined;
+        this.changesFailed=true;
+        if(!this.pending&&!this.failedWrite&&!this.busy)this.report(error,async()=>{await this.refresh(true);});
+        this.retryChanges();
+      }
+    }finally{
+      // Revoked observations retain this one browser slot until their request
+      // settles. A new address never stacks waits behind cancellation.
+      if(this.changesWait===waiting){
+        this.changesWait=undefined;if(waiting.controller.signal.aborted)this.watchChanges();
+      }
+    }
   }
   private async connectSurface(){
     if(this.closed||this.busy||!this.openingRequest)return;
@@ -140,6 +242,8 @@ export class NotebookSession {
   }
   async workspace(request:WorkspaceRequest):Promise<WorkspaceResult|undefined>{
     if(this.closed||this.busy||(this.pending&&request.action!=="list"&&request.action!=="retry"))return;
+    this.workspaceChanging=request.action==="select"||request.action==="create";
+    if(this.workspaceChanging)this.cancelChanges();
     this.busy=true;this.onStatus("Открытие пространства…");
     const recovering=request.action==="retry"&&this.snapshot!==undefined;
     const command={...(recovering?{...request,id:this.snapshot!.workspaceID}:request),
@@ -161,6 +265,7 @@ export class NotebookSession {
           // action. The runtime's current focus belongs to another surface.
           if(repaired)this.failedWrite=false;
         }else{
+          this.cancelChanges();this.changesDirty=false;this.changesFailed=false;this.changesRetryDelay=250;
           this.openingRequest=undefined;clearTimeout(this.openingTimer);this.openingTimer=undefined;
           ++this.generation;this.cancelNavigation();
           this.initialClaimed=true;this.presented=false;this.snapshot=value.snapshot;
@@ -171,11 +276,13 @@ export class NotebookSession {
       }
       return value;
     }finally{
+      this.workspaceChanging=false;
       this.busy=false;
       if(!this.closed){
         if(repaired&&this.pending)void this.sendPending();
         else if(this.snapshot&&(!this.presented||repaired))void this.refresh(true);
         else this.onStatus(this.presented?"Подключено":"Выберите пространство");
+        this.drainRefresh();this.watchChanges();
       }
     }
   }
@@ -203,13 +310,15 @@ export class NotebookSession {
     this.refreshTimer=setTimeout(()=>{this.refreshTimer=undefined;this.viewportRefreshQueued=true;this.drainRefresh();},80);
   }
   private drainRefresh(){
-    if(this.closed)return;
+    if(this.closed||this.hidden)return;
     if(!this.boundsDirty){clearTimeout(this.refreshTimer);this.refreshTimer=undefined;this.viewportRefreshQueued=false;}
     if(this.reading||this.suspended||this.busy||this.pending)return;
+    if(this.changesDirty&&this.changesRetryTimer!==undefined&&!this.viewportRefreshQueued)return;
     if(this.forcedRefreshQueued||this.viewportRefreshQueued)void this.refresh(this.forcedRefreshQueued);
   }
   async openSurface(target:PanelTarget,camera?:PanelView["camera"]){
     if(this.busy||this.pending||this.closed)return false;
+    this.cancelChanges();
     let finish!:()=>void;
     const navigation={controller:new AbortController(),finished:new Promise<void>(resolve=>{finish=resolve;})};
     this.navigation=navigation;
@@ -224,9 +333,10 @@ export class NotebookSession {
       if(!current())return false;
       const value=body(result);
       if(!isSnapshot(value)||!sameAddress(request,value))throw new Error("Notebook вернул другую поверхность.");
+      this.requirePresentationCheckpoint(value);
       await priorPreparation;
       if(!current()||!(await this.onPrepareSnapshot(value,request.appearance))||!current())return false;
-      this.accept(value,request.appearance);
+      if(!this.accept(value,request.appearance))return false;
       // Resize keeps this destination. World pixels install at its current
       // viewport; only uncovered demand asks for a coalesced projection read.
       this.boundsDirty=this.needsPresentation();this.viewportRefreshQueued=this.boundsDirty;
@@ -239,6 +349,8 @@ export class NotebookSession {
       this.busy=false;finish();
       if(revoked&&!this.closed&&this.presented)this.onStatus("Подключено");
       this.drainRefresh();
+      if(this.changesDirty)this.retryChanges();
+      this.watchChanges();
     }
   }
   async requestFit():Promise<SceneBounds|undefined>{
@@ -254,10 +366,9 @@ export class NotebookSession {
   }
   async refresh(force=false,includeFitBounds=false):Promise<PanelSnapshot|undefined> {
     if(this.closed||!this.snapshot)return;
-    // Idle polling never queues a forced repaint behind a slow native render.
     if(this.reading||this.suspended||this.busy||this.pending){this.forcedRefreshQueued ||= force;return;}
     clearTimeout(this.refreshTimer);this.refreshTimer=undefined;
-    force ||= this.forcedRefreshQueued;
+    force ||= this.forcedRefreshQueued||this.changesDirty;
     this.reading=true;this.forcedRefreshQueued=false;this.viewportRefreshQueued=false;
     const generation=this.generation,viewRevision=this.viewRevision;
     const view=!force&&!includeFitBounds&&!this.boundsDirty&&this.presentedView?this.presentedView:this.view(false);
@@ -271,24 +382,33 @@ export class NotebookSession {
       if(value.unchanged){
         if(typeof value.workspaceID!=="string"||!value.target
           ||!sameAddress(request,{workspaceID:value.workspaceID,target:value.target as PanelTarget,socketKey:request.socketKey}))throw new Error("Notebook вернул другую поверхность.");
+        if(this.changesDirty){this.forcedRefreshQueued=true;return;}
         this.synchronizing=false;if(!this.failedWrite)this.onError("",null);this.onStatus("Подключено");return this.snapshot;
       }
       if(!isSnapshot(value)||!sameAddress(request,value))throw new Error("Notebook вернул другую поверхность.");
+      this.requirePresentationCheckpoint(value);
       const prepared=await this.onPrepareSnapshot(value,request.appearance);
       if(this.stale(request,generation))return;
       if(!prepared){
         this.boundsDirty=this.needsPresentation();
-        if(this.presented&&!this.boundsDirty&&!this.synchronizing&&!this.failedWrite){
+        if(this.presented&&!this.boundsDirty&&!this.synchronizing&&!this.failedWrite&&!this.changesDirty){
           this.onError("",null);this.onStatus("Подключено");
         }
+        if(this.changesDirty)this.retryChanges();
         return;
       }
-      if(!this.failedWrite)this.onError("",null);this.accept(value,request.appearance);
+      if(!this.accept(value,request.appearance)){
+        if(this.changesDirty)this.retryChanges();return;
+      }
+      if(!this.failedWrite)this.onError("",null);
       // Camera motion does not invalidate world-placed pixels. Keep the current
       // camera and coalesce the latest projection after accepting useful coverage.
       this.boundsDirty=this.needsPresentation();
       return this.snapshot;
-    }catch(error){if(!this.stale(request,generation))this.report(error,async()=>{await this.refresh(true);});}
+    }catch(error){if(!this.stale(request,generation)){
+      this.report(error,async()=>{await this.refresh(true);});
+      if(this.changesDirty)this.retryChanges();
+    }}
     finally{
       this.reading=false;
       this.releaseReaders();
@@ -300,6 +420,7 @@ export class NotebookSession {
         // A useful intermediate cohort can already cover the final camera. Only
         // unmet viewport demand survives; an elapsed coalesce never waits twice.
         queueMicrotask(()=>this.drainRefresh());
+        this.watchChanges();
       }
     }
   }
@@ -373,10 +494,18 @@ export class NotebookSession {
   }
   private accept(value:Record<string,unknown>,view:PanelView) {
     if(!isSnapshot(value))throw new Error("Notebook вернул неполную поверхность.");
+    this.requirePresentationCheckpoint(value);
     if(this.snapshot&&sameAddress(this.snapshot,value)
-      &&/^\d+$/.test(value.cursor)&&/^\d+$/.test(this.snapshot.cursor)&&BigInt(value.cursor)<BigInt(this.snapshot.cursor))return;
+      &&this.snapshot.checkpoint?.epoch.toLowerCase()===value.checkpoint!.epoch.toLowerCase()
+      &&/^\d+$/.test(value.cursor)&&/^\d+$/.test(this.snapshot.cursor)&&BigInt(value.cursor)<BigInt(this.snapshot.cursor))return false;
     if(value.appearance?.status!=="ready")throw new Error("Notebook ещё готовит изображение поверхности.");
+    this.cancelChanges();this.changesDirty=false;this.changesFailed=false;this.changesRetryDelay=250;
     this.snapshot=value;this.presentedView={...view,camera:value.appearance.camera};this.presented=true;this.synchronizing=false;this.onSnapshot(value);this.onStatus("Подключено");
+    this.watchChanges();
+    return true;
+  }
+  private requirePresentationCheckpoint(value:PanelSnapshot){
+    if(!isPanelCheckpoint(value.checkpoint))throw new Error("Notebook не передал checkpoint готовой поверхности.");
   }
   private report(error:unknown,retry:(()=>Promise<void>)|null) {
     if(this.closed)return;

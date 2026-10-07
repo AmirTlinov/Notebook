@@ -143,6 +143,7 @@ final class RasterLease {
   var accountedByteCount: Int { resources?.rasterByteCount(entryID) ?? 0 }
   let semanticSelection: ProgramSemanticSelection?
   let entryID: UUID
+  var leafRasters: [SceneLeafRasterWitness] { resources?.leafRasters(for: self) ?? [] }
   private var resources: SceneRenderResources?
   private var retainedImage: AgentSnapshotImage?
   private var mipmaps: [CGImage]
@@ -390,6 +391,8 @@ final class SceneRenderResources {
     return resources
   }()
   static let didChange = Notification.Name("NotebookSceneRenderResourcesDidChange")
+  static let didPublishLeafRaster = Notification.Name("NotebookSceneRenderResourcesDidPublishLeafRaster")
+  static let leafRasterPublicationKey = "publication"
   static let didGainRasterAdmission = Notification.Name("NotebookSceneRenderResourcesDidGainRasterAdmission")
   let byteLimit: Int
   let profile: SceneResourceProfile
@@ -574,6 +577,7 @@ final class SceneRenderResources {
     // Only complete composition pixels are eligible for a warm return. This
     // metadata dies with the same budgeted entry; it retains no source images.
     var compositionReceipts: [SceneSourceAddress: SceneSourceReceipt]? = nil
+    var leafRasters: [SceneLeafRasterWitness]? = nil
     var encodedPNG: RasterEncodedPNG? = nil
     var encoding: PNGEncoding? = nil
   }
@@ -792,6 +796,52 @@ final class SceneRenderResources {
     if encoding.requests.isEmpty { entries[id]?.encoding = nil }
   }
 
+  /// Addressed proofs use only this entry and the already indexed leaf owner.
+  /// Removing an entry does not change pixels already sent to a panel.
+  func leafRasters(for raster: RasterLease) -> [SceneLeafRasterWitness] {
+    guard !raster.isReleased, let entry = entries[raster.entryID] else { return [] }
+    if let leaf = SceneLeafRasterPublication(entryID: raster.entryID, source: entry.source,
+      pixelScale: entry.pixelScale, publication: entry.publication) { return [.pixels(leaf)] }
+    return entry.leafRasters ?? []
+  }
+
+  func leafRasterWitnesses(for source: SceneRasterSource, minimumScale: Double = 0,
+    using raster: RasterLease?) -> [SceneLeafRasterWitness] {
+    precondition(minimumScale.isFinite && minimumScale >= 0)
+    guard source.isLeafRaster else { return [] }
+    var result = raster.map { leafRasters(for: $0) } ?? []
+    if raster?.image(for: source, minimumScale: minimumScale) == nil {
+      result.append(.missing(source: source, minimumScale: minimumScale, afterPublication: accessClock))
+    }
+    return result
+  }
+
+  func leafRastersAreCurrent(_ witnesses: [SceneLeafRasterWitness]) -> Bool {
+    for witness in witnesses {
+      let source: SceneRasterSource, scale: Double
+      switch witness {
+      case .pixels(let used): source = used.source; scale = used.pixelScale
+      case .missing(let missing, let minimumScale, _):
+        // A fallback may have been selected before an awaited capture finished.
+        // Its absence proof fails whenever the requested pixels are available,
+        // even if publication preceded the proof's future-event boundary.
+        if matchingRaster(missing, minimumScale: minimumScale) != nil { return false }
+        continue
+      }
+      // A lower-density alias cannot replace the painter's chosen image.
+      guard let id = matchingRaster(source, minimumScale: scale), let entry = entries[id],
+        let current = SceneLeafRasterPublication(entryID: id, source: entry.source,
+          pixelScale: entry.pixelScale, publication: entry.publication) else { continue }
+      if witness.isAffected(by: current) { return false }
+    }
+    return true
+  }
+
+  func recordLeafRasters(_ witnesses: [SceneLeafRasterWitness], for raster: RasterLease) {
+    guard !raster.isReleased, !raster.source.isLeafRaster else { return }
+    entries[raster.entryID]?.leafRasters = witnesses
+  }
+
   func compositionReceipts(for raster: RasterLease) -> [SceneSourceAddress: SceneSourceReceipt]? {
     guard !raster.isReleased else { return nil }
     return entries[raster.entryID]?.compositionReceipts
@@ -811,8 +861,17 @@ final class SceneRenderResources {
 
   func cacheComposition(_ raster: RasterLease, receipts: [SceneSourceAddress: SceneSourceReceipt],
     sources: [SceneSourceAddress: RasterLease]) {
-    guard !raster.isReleased, receipts.values.allSatisfy(\.hasCurrentPixels) else { return }
+    guard !raster.isReleased else { return }
     switch raster.source { case .composition, .material: break; default: return }
+    if entries[raster.entryID]?.leafRasters == nil {
+      let witnesses = receipts.flatMap { address, receipt in
+        leafRasterWitnesses(for: receipt.demand.rasterSource, minimumScale: receipt.demand.minimumScale,
+          using: sources[address])
+      }
+      entries[raster.entryID]?.leafRasters = witnesses
+    }
+    guard receipts.values.allSatisfy(\.hasCurrentPixels),
+      leafRastersAreCurrent(entries[raster.entryID]?.leafRasters ?? []) else { return }
     for (address, receipt) in receipts {
       // Capture may finish during an awaited paint. Do not register the old
       // output as reusable after that newer source already invalidated caches.
@@ -1125,7 +1184,7 @@ final class SceneRenderResources {
       reservation.release()
     }
     accessClock &+= 1
-    let id = UUID()
+    let publicationOrder = accessClock, id = UUID()
     entries[id] = RasterEntry(source: source, image: image, mipmaps: mipmaps, pixelScale: raster.scale,
       pixelCost: raster.cost, documentLayout: documentLayout, semanticSelection: semanticSelection, publication: accessClock, access: accessClock, retains: retaining ? 1 : 0)
     rasterOwners[source.owner, default: []].append(id)
@@ -1136,12 +1195,15 @@ final class SceneRenderResources {
       diagnostics.values.removeAll { $0.kind == "resource_limit" }
       diagnosticEntries[element.id] = diagnostics
     }
-    if let element = source.agentElement {
-      // A new capture may have the same durable source/state as its previous
-      // frame. Revoke dependent cache eligibility, never displayed leases.
-      for id in entries.keys where entries[id]?.compositionReceipts?.keys.contains(where: { $0.elementID == element.id }) == true {
-        entries[id]?.compositionReceipts = nil
-      }
+    if let publication = SceneLeafRasterPublication(entryID: id, source: source,
+      pixelScale: raster.scale, publication: publicationOrder) {
+      // New leaf pixels invalidate only composed entries that actually used
+      // that immutable source. The witnesses survive with their budgeted entry.
+      for entryID in entries.keys where entries[entryID]?.leafRasters?.contains(where: {
+        $0.isAffected(by: publication)
+      }) == true { entries[entryID]?.compositionReceipts = nil }
+      NotificationCenter.default.post(name: Self.didPublishLeafRaster, object: self,
+        userInfo: [Self.leafRasterPublicationKey: publication])
     }
     changed(source.owner)
     return id

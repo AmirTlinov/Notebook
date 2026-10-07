@@ -2,15 +2,25 @@ import AppKit
 import Foundation
 import NotebookCore
 
+struct NotebookPanelPreparedScene {
+  let snapshot: JSONValue
+  let metadata: NotebookPanelMetadata
+  let pixels: ScenePixelDependencies?
+  let leafRasterCollector: SceneLeafRasterWitnessCollector
+}
+
 /// Ephemeral app presentation executes in the publisher's existing target queue.
 /// Native world material is borrowed from its shared pool; no camera receipt is written.
 extension CurrentViewPreviewWriter {
   @MainActor
   static func panelMaterial(_ cut: NotebookPanelPresentationCut, model: NotebookAppModel,
-    knownAssets: Set<UUID>) async throws -> JSONValue {
+    knownAssets: Set<UUID>) async throws -> NotebookPanelPreparedScene {
     let projection = cut.projection, target = cut.target, actor = model.actorID
     try projection.validated()
     guard model.permitsPanelPreparation else { throw CancellationError() }
+    let collector = SceneLeafRasterWitnessCollector()
+    var prepared = false
+    defer { if !prepared { collector.close() } }
     func observe(_ stage: String) {
       guard target.kind == .page, let observer = NotebookNavigationObservation.onPageMaterialPreparation else { return }
       observer(stage, cut.id, target.id, nil, nil, ProcessInfo.processInfo.systemUptime)
@@ -45,10 +55,11 @@ extension CurrentViewPreviewWriter {
     let materialBounds: WorkspaceSpatialBounds
     if let page {
       (layers, coverage, diagnostics, materialBounds) = try await pagePanelMaterials(page.page, projection: projection, editableIDs: ids,
-        knownAssets: knownAssets, sourceRevision: cut.sourceRevision, model: model)
+        knownAssets: knownAssets, sourceRevision: cut.sourceRevision, model: model, leafRasterCollector: collector)
     } else {
       let presence = SessionPresence(boardID: target.id, mode: .board, camera: projection.camera, viewport: projection.viewport)
-      let renderer = SceneCompositionRenderer(source: source, permitsPreparation: { model.permitsPanelPreparation })
+      let renderer = SceneCompositionRenderer(source: source, leafRasterCollector: collector,
+        permitsPreparation: { model.permitsPanelPreparation })
       let movable = Set((capturedSnapshot?["cards"]?.arrayValues ?? []).prefix(NotebookPanelRenderProjection.maximumSubjects)
         .compactMap { $0["item"]?["id"]?.stringValue.flatMap(UUID.init(uuidString:)) })
       let result = try await renderer.renderPanel(presence: presence, projection: projection,
@@ -81,18 +92,19 @@ extension CurrentViewPreviewWriter {
     let dependencies = try await source.pixelDependencies()
     try Task.checkCancellation()
     guard model.permitsPanelPreparation else { throw CancellationError() }
-    let snapshot = try await model.readCommandCut { reader in
+    let (snapshot, metadata) = try await model.readCommandCut { reader in
       try Task.checkCancellation()
       guard try reader.storedWorkspaceID() == projection.workspaceID,
         try reader.referenceRevision(target: target) == cut.sourceRevision,
         try dependencies?.isCurrent(reader) != false else { throw NotebookStorageError.transactionConflict }
       // Content is immutable; device-local history, membership/selection and
       // cursor are read after the last await in this publication transaction.
+      let metadata = try reader.readPanelMetadata(workspaceID: projection.workspaceID, target: target, actor: actor)
       var snapshot: JSONValue
       if let page {
         snapshot = try reader.readPanel(.init(workspaceID: projection.workspaceID, target: target,
           includeFitBounds: cut.includeFitBounds), actor: actor, reusing: page)
-      } else if let preparedSnapshot { snapshot = preparedSnapshot }
+      } else if let preparedSnapshot { snapshot = try metadata.updating(preparedSnapshot) }
       else { throw NotebookStorageError.transactionConflict }
       let editable = Set(layers.compactMap(\.elementID)), movable = Set(layers.compactMap(\.itemID))
       snapshot = snapshot.setting("elements", .array((snapshot["elements"]?.arrayValues ?? []).map { entry in
@@ -128,19 +140,22 @@ extension CurrentViewPreviewWriter {
       guard try JSONEncoder().encode(snapshot).count <= NotebookPanelRenderProjection.maximumEncodedBytes else {
         throw SceneRenderError.resourceLimit
       }
-      return snapshot
+      return (snapshot, metadata)
     }
     try Task.checkCancellation()
     guard model.permitsPanelPreparation else { throw CancellationError() }
+    guard collector.isCurrent else { throw NotebookStorageError.transactionConflict }
     observe("panel_published")
-    return snapshot
+    prepared = true
+    return .init(snapshot: snapshot, metadata: metadata, pixels: dependencies, leafRasterCollector: collector)
   }
 
   /// Finite pages use the same world grid and native paper/ordered ink owners.
   /// Their body pixels are stable across a pan just like board materials.
   @MainActor
   private static func pagePanelMaterials(_ page: PageDocument, projection: NotebookPanelRenderProjection,
-    editableIDs: Set<String>, knownAssets: Set<UUID>, sourceRevision: String, model: NotebookAppModel)
+    editableIDs: Set<String>, knownAssets: Set<UUID>, sourceRevision: String, model: NotebookAppModel,
+    leafRasterCollector: SceneLeafRasterWitnessCollector)
     async throws -> ([NotebookPanelRasterLayer], CompositionTileCoverage, [RenderDiagnostic], WorkspaceSpatialBounds) {
     let resources = SceneRenderResources.shared, graph = page.graphicGraph()
     let requested = WorkspaceSpatialBounds(origin: projection.worldOrigin,
@@ -154,6 +169,7 @@ extension CurrentViewPreviewWriter {
     let physical = CGRect(x: 0, y: 0, width: page.size.width, height: page.size.height)
     var borrowed: RasterLease?, preparation: SceneWebRasterPreparation?
     var sourceRasters: [SceneSourceAddress: RasterLease] = [:], receipts: [SceneSourceAddress: SceneSourceReceipt] = [:]
+    var materialSources: Set<SceneSourceAddress> = []
     defer { borrowed?.release(); preparation?.close(); sourceRasters.values.forEach { $0.release() } }
     func raster(_ element: AgentElement) async throws -> RasterLease {
       borrowed?.release(); borrowed = nil
@@ -167,7 +183,9 @@ extension CurrentViewPreviewWriter {
           permitsPreparation: { model.permitsPanelPreparation })
       }
       borrowed = value
+      leafRasterCollector.record(resources.leafRasterWitnesses(for: .agent(element), minimumScale: scale, using: value))
       let address = SceneSourceAddress(plane: .board(page.id), elementID: element.id)
+      materialSources.insert(address)
       let demand = SceneSourceDemand(source: element, minimumScale: scale)
       receipts[address] = .init(demand: demand, installedSource: value.source.agentElement, installedScale: value.pixelScale,
         status: .ready, installedRegion: value.source.captureRegion)
@@ -306,12 +324,15 @@ extension CurrentViewPreviewWriter {
       let body: RasterLease
       if let cached = resources.retainMaterial(key) { body = cached }
       else {
+        materialSources.removeAll(keepingCapacity: true)
         body = try await PageCompositionRenderer.renderMaterial(page, ids: [element.id], region: frame,
           scale: density, key: key, preparation: preparedMaterial(), resources: resources,
           permitsPreparation: { model.permitsPanelPreparation }, raster: raster)
-        resources.cacheComposition(body, receipts: receipts, sources: sourceRasters)
+        resources.cacheComposition(body, receipts: receipts.filter { materialSources.contains($0.key) },
+          sources: sourceRasters.filter { materialSources.contains($0.key) })
       }
       defer { body.release() }
+      leafRasterCollector.record(body.leafRasters)
       try output.append(await .completed(id: "subject-" + element.id, order: rank, worldOrigin: .zero,
         frame: frame, raster: body, knownAssets: knownAssets, elementID: element.id, subjectFrame: frame))
     }
@@ -336,13 +357,16 @@ extension CurrentViewPreviewWriter {
           body = try await canvas.finishRaster(for: .material(key))
           resources.cacheComposition(body, receipts: [:], sources: [:])
         } else {
+          materialSources.removeAll(keepingCapacity: true)
           body = try await PageCompositionRenderer.renderMaterial(page,
             ids: index == bands.count ? nil : bands[index].ids, region: region, scale: rasterDensity,
             key: key, preparation: preparedMaterial(), resources: resources,
             permitsPreparation: { model.permitsPanelPreparation }, raster: raster)
-          resources.cacheComposition(body, receipts: receipts, sources: sourceRasters)
+          resources.cacheComposition(body, receipts: receipts.filter { materialSources.contains($0.key) },
+            sources: sourceRasters.filter { materialSources.contains($0.key) })
         }
         defer { body.release() }
+        leafRasterCollector.record(body.leafRasters)
         try output.append(await .completed(id: role + ":\(tile.column):\(tile.row):\(tile.localColumn):\(tile.localRow):\(regionIndex)",
           order: order, worldOrigin: .zero, frame: region, raster: body, knownAssets: knownAssets))
       }

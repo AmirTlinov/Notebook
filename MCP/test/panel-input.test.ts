@@ -32,6 +32,7 @@ const turn=()=>new Promise<void>(resolve=>setImmediate(resolve));
 async function fixture(){
   const id=randomUUID(),actionID=randomUUID(),target={kind:'board' as const,id:randomUUID()};
   const snapshot:PanelSnapshot={workspaceID:id,socketKey:'0123456789abcdef01234567',target,cursor:'1',
+    checkpoint:{id:randomUUID(),epoch:randomUUID(),readCursor:'1',changeCursor:'1'},
     worldOrigin:{tileX:0,tileY:0,localX:0,localY:0},size:{width:800,height:600},cards:[],
     elements:[{source:{id:'text',kind:'nativeText',source:'Before',frame:{x:100,y:100,width:100,height:80}}}],
     rawInkPresent:false,unsupportedElements:[],history:{undoActionID:actionID},truncated:false,

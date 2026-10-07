@@ -1,6 +1,33 @@
 import Foundation
 import CryptoKit
 
+/// Identifies one published scene and both SQLite cursor domains. The runtime
+/// retains its finite validation witness; the browser never supplies one.
+public struct NotebookPanelCheckpoint: Codable, Equatable, Sendable {
+  public let id: UUID
+  public let epoch: UUID
+  public let readCursor: String
+  public let changeCursor: String
+  public init(id: UUID, epoch: UUID, readCursor: String, changeCursor: String) {
+    self.id = id; self.epoch = epoch; self.readCursor = readCursor; self.changeCursor = changeCursor
+  }
+}
+
+public struct NotebookPanelChangesRequest: Codable, Sendable {
+  public let workspaceID: UUID
+  public let target: CollaborationTarget
+  public let checkpoint: NotebookPanelCheckpoint
+  public init(workspaceID: UUID, target: CollaborationTarget, checkpoint: NotebookPanelCheckpoint) {
+    self.workspaceID = workspaceID; self.target = target; self.checkpoint = checkpoint
+  }
+  public func validated() throws {
+    guard [.board, .page].contains(target.kind), target.boardID == nil,
+      UInt64(checkpoint.readCursor) != nil, UInt64(checkpoint.changeCursor) != nil else {
+      throw CollaborationError("invalid_panel_request", "Ожиданию панели нужен точный адрес и курсоры опубликованной сцены.")
+    }
+  }
+}
+
 /// A browser supplies one bounded projection; physical content stays native.
 public struct NotebookPanelAppearanceProjection: Codable, Equatable, Sendable {
   public let viewport: SpatialPoint
@@ -218,16 +245,10 @@ extension NotebookStore {
           "cursor": .string(cursor), "unchanged": .bool(true)])
       }
       var elements: [JSONValue] = [], cards: [JSONValue] = [], size: JSONValue = .null, worldOrigin: JSONValue = .null
-      var navigation: JSONValue = .null
+      let metadata = try readPanelMetadata(workspaceID: workspaceID, target: target, actor: actor)
       var truncated = false, rawInkPresent = false
       if target.kind == .page {
         let page = try pageContent?.page ?? loadPage(target.id)
-        if let itemID = try ownerItemID(ofPage: target.id), let boardID = try ownerBoardID(of: itemID),
-          let position = try resolveNotebookPage(target.id, in: itemID) {
-          navigation = .object(["parentBoard": try .encode(CollaborationTarget(kind: .board, id: boardID)),
-            "itemID": try .encode(itemID), "position": try .encode(position),
-            "directory": try .encode(readNotebookPageDirectory(itemID: itemID, from: max(0, position.index - 1), limit: 3))])
-        }
         size = try .encode(page.size)
         if let pageContent { elements = pageContent.elements; rawInkPresent = pageContent.rawInkPresent }
         else { (elements, rawInkPresent) = try NotebookPanelPageContent.projection(page) }
@@ -281,13 +302,6 @@ extension NotebookStore {
           elements.append(.object(value))
         }
       }
-      var history: [String: JSONValue] = [:]
-      if case .command(let actionID)? = try nativeHistory(domain: .init(target), actor: actor).last {
-        let head = try actionReadModel(actionID)
-        if head.author == .human, head.action.operations.allSatisfy({ $0.target == target }) {
-          history["undoActionID"] = try .encode(actionID)
-        }
-      }
       let unsupported = elements.compactMap { entry -> JSONValue? in
         guard let source = entry["source"], let id = source["id"]?.string, let kind = source["kind"]?.string else { return nil }
         let graphic = source["graphic"]
@@ -300,9 +314,9 @@ extension NotebookStore {
         return reason.map { .object(["id": .string(id), "kind": .string(kind), "reason": .string($0)]) }
       }
       let snapshot = JSONValue.object(["workspaceID": try .encode(workspaceID), "target": try .encode(target),
-        "elements": .array(elements), "size": size, "worldOrigin": worldOrigin, "basis": try .encode(readBasis(targets: [target], includeSource: true)),
+        "elements": .array(elements), "size": size, "worldOrigin": worldOrigin, "basis": try .encode(metadata.basis),
         "cards": .array(cards), "rawInkPresent": .bool(rawInkPresent), "unsupportedElements": .array(unsupported),
-        "cursor": .string(cursor), "history": .object(history), "truncated": .bool(truncated), "navigation": navigation])
+        "cursor": .string(cursor), "history": metadata.history, "truncated": .bool(truncated), "navigation": metadata.navigation])
       guard request.includeFitBounds == true else { return snapshot }
       return snapshot.setting("fitBounds", try panelMaterialBounds(target: target).map { try .encode($0) } ?? .null)
     }

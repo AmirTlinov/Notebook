@@ -7,6 +7,62 @@ final class NotebookPanelMaterialTests: XCTestCase {
   override func setUp() async throws { try await InkRasterRenderer.shared.prepareInk() }
 
   @MainActor
+  func testWarmPanelMaterialKeepsItsActualLeafWitnessAndRefreshesForSameSourcePixels() async throws {
+    let (fixture, header, target) = try await fixture()
+    try await fixture.apply([.init(kind: .insertElement, target: target, id: "program", values: [
+      "kind": .string("web"), "source": .string("Saved program"),
+      "html": .string("<svg viewBox='0 0 16 16'/>"), "worldOrigin": try .encode(WorldPoint.zero),
+      "frame": try .encode(PageRect(x: -8, y: -8, width: 16, height: 16))])])
+    let revision = try fixture.store.workspaceHeader().cursor
+    let source = SceneCompositionSource(store: fixture.store, revision: revision,
+      workspaceID: header.workspaceID, recordPixelDependencies: true)
+    let value = try await source.readElementForPaint("program", boardID: target.id)
+    let leaf = SceneRasterSource.agent(agentElementSnapshotSource(try XCTUnwrap(value).element))
+    let resources = SceneRenderResources(byteLimit: 64 * 1024 * 1024, profile: .headless)
+    func image(_ color: NSColor) -> NSImage {
+      let context = CGContext(data: nil, width: 16, height: 16, bitsPerComponent: 8, bytesPerRow: 64,
+        space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+      context.setFillColor(color.cgColor); context.fill(CGRect(x: 0, y: 0, width: 16, height: 16))
+      return NSImage(cgImage: context.makeImage()!, size: .init(width: 16, height: 16))
+    }
+    XCTAssertTrue(resources.store(image(.blue), for: leaf))
+    let firstLeaf = try XCTUnwrap(resources.retainRaster(for: leaf))
+    let used = firstLeaf.leafRasters
+    firstLeaf.release()
+    let renderer = SceneCompositionRenderer(source: source, resources: resources)
+    let projection = NotebookPanelRenderProjection(workspaceID: header.workspaceID,
+      camera: .init(center: .zero, scale: 1), viewport: .init(x: 256, y: 256), pixelScale: 1)
+    let presence = SessionPresence(boardID: target.id, mode: .board,
+      camera: projection.camera, viewport: projection.viewport)
+    let first = try await renderer.renderPanel(presence: presence, projection: projection,
+      editableIDs: ["program"], movableItemIDs: [], knownAssets: [])
+    let original = try XCTUnwrap(first.layers.first { $0.elementID == "program" })
+    XCTAssertEqual(original.leafRasters, used)
+    XCTAssertTrue(first.leafRasters.contains(try XCTUnwrap(used.first)))
+
+    let warm = try await renderer.renderPanel(presence: presence, projection: projection,
+      editableIDs: ["program"], movableItemIDs: [], knownAssets: Set(first.layers.map(\.assetID)))
+    let reused = try XCTUnwrap(warm.layers.first { $0.elementID == "program" })
+    XCTAssertEqual(reused.assetID, original.assetID)
+    XCTAssertEqual(reused.leafRasters, used, "A cache hit carries its original leaf entry, not a fresh source lookup")
+    XCTAssertNil(reused.png)
+
+    XCTAssertTrue(resources.store(image(.red), for: leaf))
+    XCTAssertFalse(resources.leafRastersAreCurrent(warm.leafRasters))
+    let currentLeaf = try XCTUnwrap(resources.retainRaster(for: leaf))
+    let current = currentLeaf.leafRasters
+    currentLeaf.release()
+    let updated = try await renderer.renderPanel(presence: presence, projection: projection,
+      editableIDs: ["program"], movableItemIDs: [], knownAssets: Set(first.layers.map(\.assetID)))
+    let repainted = try XCTUnwrap(updated.layers.first { $0.elementID == "program" })
+    XCTAssertNotEqual(repainted.assetID, original.assetID)
+    XCTAssertEqual(repainted.leafRasters, current)
+    let pixel = try color(repainted.encoded, x: 8, y: 8)
+    XCTAssertGreaterThan(pixel.redComponent, 0.95)
+    XCTAssertLessThan(pixel.blueComponent, 0.05)
+  }
+
+  @MainActor
   func testBudgetDemotedElementBodiesNeverCreateDiscardedMaterialRasters() async throws {
     let (fixture, header, target) = try await fixture()
     // Wide passive bodies keep the interleaved bands over the aggregate

@@ -540,13 +540,14 @@ test('changing Proxy descriptors, array entries and ownKeys acquire full credit 
     f.api.lifecycle({pause:()=>{pauses++;},checkpoint:()=>{checkpoints++;return completed;}});
     const pending=f.program.checkpoint({serialized:true});
     await new Promise(resolve=>setTimeout(resolve,0));
-    assert.equal(requests.length,1);assert.ok(requests[0]>large.length*8-4096);
+    assert.equal(requests.length,1);const requestedCredit=requests[0];assert.ok(requestedCredit!==undefined);
+    assert.ok(requestedCredit>large.length*8-4096);
     assert.equal(calls.stringify,0);assert.equal(calls.parse,0);assert.equal(calls.join,0,'No immutable JSON join before the changed descriptor fits credit');
     assert.equal(f.program.lifecycleState.phase,'checkpointing');
-    f.program.grantStateCredit(requests[0]+1024);
+    f.program.grantStateCredit(requestedCredit+1024);
     const frozen=await pending;
     assert.equal(checkpoints,1);assert.equal(pauses,1);assert.equal(calls.stringify,0);assert.equal(calls.parse,1);assert.equal(calls.join,1);
-    assert.ok(frozen.cost<=4096+requests[0]+1024);assert.ok(calls.largestJoin>=large.length);
+    assert.ok(frozen.cost<=4096+requestedCredit+1024);assert.ok(calls.largestJoin>=large.length);
     const expected=shape==='keys'?{[large]:0}:shape==='array'?[large]:{payload:large};
     let json='',offset=0;
     while(offset<frozen.units){const chunk=f.program.readSnapshot({revision:frozen.revision,offset});json+=chunk;offset+=chunk.length;}
@@ -645,7 +646,7 @@ test('actual spatial and block-runtime adapters transport checkpoint credit whil
       assert.equal(calls.stringify,0);context.expectedToken='current';
     }
     assert.equal(runInContext(`(()=>{${nativeCreditScript()}})()`,context),true);
-    const frozen=await pending;assert.equal(checkpoints,1);assert.equal(calls.stringify,0);assert.equal(calls.parse,1);
+    const frozen=await pending;assert.ok(frozen);assert.equal(checkpoints,1);assert.equal(calls.stringify,0);assert.equal(calls.parse,1);
     assert.equal(owner.api.commit({phase:99}),false);
   }
 });
@@ -693,7 +694,7 @@ test('native credit admission is source-bound and independent from ordinary comm
     spatial.slice(spatial.indexOf('} else if object["kind"] as? String == "stateCredit"'),spatial.indexOf('} else if object["kind"] as? String == "state",')),
     block.slice(block.indexOf('    case "stateCredit":'),block.indexOf('    case "state":',block.indexOf('    case "stateCredit":'))),
     paper.slice(paper.indexOf('    case "stateCredit":'),paper.indexOf('    case "state":',paper.indexOf('    case "stateCredit":')))
-  ];
+  ] as const;
   for(const clause of clauses) {
     assert.match(clause,/requestCredit\(bytes\)/);assert.doesNotMatch(clause,/snapshotOnly|allowsStateCommits|requestedInput|ownsProgramState|programsVisible/);
   }

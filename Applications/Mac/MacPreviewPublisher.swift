@@ -147,12 +147,7 @@ final class MacPreviewPublisher {
     let continuation: CheckedContinuation<JSONValue, any Error>
   }
   private var panelWaiters: [UUID: PanelWaiter] = [:]
-  private struct PanelValidation {
-    let id: UUID
-    let cursor: String
-    let rasterGeneration: UInt64
-  }
-  private var panelValidations: [PanelValidation] = []
+  private let panelObservation: NotebookPanelObservation
   private var targetQueuePrepared = false
   private var lastTargetWasPanel = false
 
@@ -162,6 +157,7 @@ final class MacPreviewPublisher {
     reconciliationInterval: Duration = .seconds(1)
   ) {
     self.model = model
+    panelObservation = NotebookPanelObservation(model: model)
     self.currentViewDelay = currentViewDelay
     self.reconciliationInterval = reconciliationInterval
   }
@@ -215,13 +211,13 @@ final class MacPreviewPublisher {
     stopped = true
     started = false
     let waiters = panelWaiters.values; panelWaiters.removeAll()
-    panelValidations.removeAll()
     for waiter in waiters { waiter.continuation.resume(throwing: CancellationError()) }
     documentSnapshotObserver?.cancel(); documentSnapshotObserver = nil
     agentSnapshotObserver?.cancel(); agentSnapshotObserver = nil
     let tasks = [currentViewTask, pageRequestTask, reconciliationTask, targetTask, sourceReadTask, healthWriteTask].compactMap { $0 }
     for task in tasks { task.cancel() }
     let drain = Task { @MainActor [weak self] in
+      await self?.panelObservation.stop()
       for task in tasks { await task.value }
       guard let self else { return }
       currentViewTask = nil; pageRequestTask = nil; reconciliationTask = nil
@@ -246,10 +242,9 @@ final class MacPreviewPublisher {
     try Task.checkCancellation()
     guard started, !stopped, model.permitsPanelPreparation else { throw CancellationError() }
     if request.knownRequestID == cut.id, request.knownCursor == String(cut.cursor),
-      panelValidations.contains(where: { $0.id == cut.id && $0.cursor == String(cut.cursor)
-        && $0.rasterGeneration == SceneRenderResources.shared.rasterGeneration }) {
-      return .object(["workspaceID": try .encode(cut.projection.workspaceID), "target": try .encode(cut.target),
-        "cursor": .string(String(cut.cursor)), "unchanged": .bool(true)])
+      let unchanged = try panelObservation.unchanged(requestID: cut.id, workspaceID: cut.projection.workspaceID,
+        target: cut.target, cursor: String(cut.cursor)) {
+      return unchanged
     }
     let waiterID = UUID()
     return try await withTaskCancellationHandler {
@@ -273,20 +268,13 @@ final class MacPreviewPublisher {
 
   private func completePanel(_ waiter: PanelWaiter, model: NotebookAppModel) async {
     let result: Result<JSONValue, any Error>
-    let generation = SceneRenderResources.shared.rasterGeneration
     do {
-      let snapshot = try await CurrentViewPreviewWriter.panelMaterial(waiter.cut, model: model,
+      let prepared = try await CurrentViewPreviewWriter.panelMaterial(waiter.cut, model: model,
         knownAssets: waiter.knownAssets)
+      defer { prepared.leafRasterCollector.close() }
       try Task.checkCancellation()
       guard started, !stopped, model.permitsPanelPreparation else { throw CancellationError() }
-      // A warmed render can establish the idle shortcut only if no native pixels
-      // changed across its whole preparation. First-time captures simply skip it.
-      if generation == SceneRenderResources.shared.rasterGeneration {
-        panelValidations.removeAll { $0.id == waiter.cut.id }
-        panelValidations.append(.init(id: waiter.cut.id, cursor: String(waiter.cut.cursor), rasterGeneration: generation))
-        if panelValidations.count > 16 { panelValidations.removeFirst(panelValidations.count - 16) }
-      }
-      result = .success(snapshot)
+      result = .success(try panelObservation.publish(prepared, requestID: waiter.cut.id))
     } catch { result = .failure(error) }
     // Readers with identical asset possession may join even while this job is
     // painting. Other readers keep their own missing-byte contract in the queue.
@@ -294,6 +282,13 @@ final class MacPreviewPublisher {
       && $0.value.knownAssets == waiter.knownAssets }.map(\.key)
     for id in ids { panelWaiters.removeValue(forKey: id)?.continuation.resume(with: result) }
   }
+
+  func panelChanges(_ request: NotebookPanelChangesRequest) async throws -> JSONValue {
+    guard started, !stopped, model?.permitsExternalWork == true else { throw CancellationError() }
+    return try await panelObservation.changes(request)
+  }
+
+  func panelContentDidCommit() { panelObservation.contentDidCommit() }
 
   private func prepareTargetQueue(_ model: NotebookAppModel) async throws {
     guard !targetQueuePrepared else { return }

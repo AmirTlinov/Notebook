@@ -62,8 +62,13 @@ The parity check compares the actual native and WASM camera and ink outputs,
 including address limits, memory growth and refusal without partial writes.
 Bulk migration waits for this gate and the physical iPad scenario in
 [GUI-475](https://linear.app/main-cluster/issue/GUI-475).
-This first slice extends the existing panel. Native raster coverage and polling
-remain until their C2 replacements. Card geometry and painter order come from
+The panel still uses native raster coverage. Its published checkpoint carries
+separate read/change cursors and a finite scene witness. A waiting MCP request
+validates short metadata after durable commits or new pixels from used leaf
+resources; it holds no WAL snapshot while idle. Observation has its own bounded
+IPC admission and cancellation joins its handler. Local camera and gestures
+continue independently. Addressed `SceneDelta` and the remaining shared tools
+form the following C2 slice. Card geometry and painter order come from
 the native scene independently of raster separation. Empty ink cells are omitted
 only after an addressed occupancy proof; empty SQL reads remain in the final
 pixel witness, while uncertain or claimed content retains its paint cell.

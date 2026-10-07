@@ -171,6 +171,54 @@ struct NotebookPanelPageReadTests {
     #expect(trace.pageLoads == 0, "Publication refreshes dynamic fields without loading the painted page again")
   }
 
+  @Test func panelMetadataIgnoresNavigationReadClocksButRetainsAddressedChanges() throws {
+    let f = try PageWindowFixture(count: 3); defer { f.clean() }
+    let store = f.store, actor = f.actor, target = CollaborationTarget(kind: .page, id: f.pages[0])
+    let workspaceID = try store.storedWorkspaceID(), captionActionID = UUID()
+    func metadata() throws -> NotebookPanelMetadata {
+      try store.readPanelMetadata(workspaceID: workspaceID, target: target, actor: actor)
+    }
+    _ = try store.editPanel(.init(workspaceID: workspaceID, actionID: captionActionID, target: target,
+      summary: "Page caption", operations: [.init(kind: .insertElement, target: target, id: "caption",
+        values: ["kind": .string("nativeText"), "source": .string("Unchanged caption"),
+          "frame": try .encode(PageRect(x: 20, y: 30, width: 100, height: 80))])], sources: [.init(id: "caption")]), actor: actor)
+    let before = try metadata(), board = CollaborationTarget(kind: .board, id: try store.workspaceHeader().rootBoardID)
+    let foreignActionID = UUID()
+    _ = try store.applyNativeAction(.init(id: foreignActionID, additionalOwners: [board], summary: "Another surface",
+      expected: store.readBasis(targets: [board]).owners,
+      operations: [.init(kind: .insertElement, target: board, id: "elsewhere",
+        values: ["kind": .string("nativeText"), "source": .string("Board caption"),
+          "worldOrigin": try .encode(WorldPoint.zero), "frame": try .encode(PageRect(x: 20, y: 30, width: 100, height: 80))])]), actor: actor)
+    let unrelated = try metadata()
+    #expect(unrelated.readCursor > before.readCursor && unrelated.changeCursor > before.changeCursor)
+    #expect(unrelated.navigation != before.navigation)
+    #expect(unrelated.sourceRevision == before.sourceRevision && unrelated.basis == before.basis)
+    #expect(unrelated.history == before.history)
+    #expect(unrelated.history["undoActionID"] == (try .encode(captionActionID)))
+    #expect(try store.nativeHistory(domain: .board(board.id), actor: actor).last == .command(foreignActionID))
+    #expect(unrelated.hasSameScene(as: before))
+    let position = try #require(unrelated.navigation["position"]).decode(NotebookPagePosition.self)
+    let directory = try #require(unrelated.navigation["directory"]).decode(NotebookPageDirectory.self)
+    #expect(position.readCursor == unrelated.readCursor && directory.header.readCursor == unrelated.readCursor)
+    #expect(directory.pages.allSatisfy { $0.position.readCursor == unrelated.readCursor }, "Wire navigation keeps every WAL read clock")
+
+    try f.select(f.pages[1])
+    let selected = try metadata()
+    #expect(selected.sourceRevision == unrelated.sourceRevision && selected.basis == unrelated.basis)
+    #expect(selected.history == unrelated.history)
+    #expect(selected.navigation["directory"]?["header"]?["selectedPageID"] == (try .encode(f.pages[1])))
+    #expect(!selected.hasSameScene(as: unrelated), "Actual page selection changes navigation")
+
+    let caption = try #require(try store.readPageElement(pageID: target.id, elementID: "caption")), updatedActionID = UUID()
+    _ = try store.editPanel(.init(workspaceID: workspaceID, actionID: updatedActionID, target: target,
+      summary: "Update page caption", operations: [.init(kind: .updateElement, target: target, id: caption.id,
+        values: ["source": .string("Changed caption")])], sources: [.init(id: caption.id, page: caption)]), actor: actor)
+    let changed = try metadata()
+    #expect(changed.sourceRevision != selected.sourceRevision && changed.basis != selected.basis)
+    #expect(changed.history["undoActionID"] == (try .encode(updatedActionID)))
+    #expect(changed.history != selected.history && !changed.hasSameScene(as: selected))
+  }
+
   @Test func retainedContentRejectsChangedSourceTargetAndWorkspace() async throws {
     let f = try PageWindowFixture(count: 2); defer { f.clean() }
     let store = f.store, actor = f.actor, target = CollaborationTarget(kind: .page, id: f.pages[0])
@@ -225,6 +273,10 @@ struct NotebookPanelPageReadTests {
     let store = NotebookStore(root: root), actor = UUID(), pageID = UUID()
     _ = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194), initialPageID: pageID)
     let file = pageFile(pageID), count = 100_000
+    let (_, emptyMetadataTrace) = try measured(store) {
+      try store.readPanelMetadata(workspaceID: store.storedWorkspaceID(),
+        target: .init(kind: .page, id: pageID), actor: actor)
+    }
     // Populate the existing sparse causal page format through its fragment
     // writer. This measures read-all projection, not causal-field admission.
     try store.commandTransaction {
@@ -236,6 +288,16 @@ struct NotebookPanelPageReadTests {
           collection: "elements", member: id, position: index, value: try .encode(element), collections: []), database: store.currentSQL!)
       }
     }
+    let metadataStart = ContinuousClock.now
+    let (metadata, metadataTrace) = try measured(store) {
+      try store.readPanelMetadata(workspaceID: store.storedWorkspaceID(),
+        target: .init(kind: .page, id: pageID), actor: actor)
+    }
+    let metadataElapsed = metadataStart.duration(to: .now)
+    #expect(metadataTrace.pageLoads == 0 && metadataTrace.elementReads == 0 && metadataTrace.erasureReads == 0)
+    #expect(metadataTrace.statements == emptyMetadataTrace.statements,
+      "Checking a panel checkpoint must not add SQL work as its page grows")
+    #expect(metadata.sourceRevision == (try store.referenceRevision(target: .init(kind: .page, id: pageID))))
     let cursor = try store.currentReadCursor(), start = ContinuousClock.now
     let (result, trace) = try read(store, pageID: pageID, actor: actor)
     let elapsed = start.duration(to: .now), entries = try #require(result["elements"]).array
@@ -259,6 +321,7 @@ struct NotebookPanelPageReadTests {
     #expect(try store.currentReadCursor() == cursor)
     print("PANEL_PAGE_SCALE elements=\(count) SQL=\(trace.statements) addressed=\(trace.elementReads) erasures=\(trace.erasureReads) elapsed=\(elapsed) bytes=\(try JSONEncoder().encode(result).count)")
     print("PANEL_PAGE_CUT_SCALE elements=\(count) capture=\(captureElapsed) reuse=\(reuseElapsed) capture_page_loads=\(captureTrace.pageLoads) reuse_page_loads=\(reuseTrace.pageLoads)")
+    print("PANEL_METADATA_SCALE elements=\(count) SQL=\(metadataTrace.statements) empty_SQL=\(emptyMetadataTrace.statements) elapsed=\(metadataElapsed) page_loads=\(metadataTrace.pageLoads)")
   }
 
   @Test(arguments: [63, 64])

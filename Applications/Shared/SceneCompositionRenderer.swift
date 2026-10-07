@@ -15,6 +15,8 @@ final class SceneCompositionRenderer {
   private let resources: SceneRenderResources
   private let permitsPreparation: @MainActor () -> Bool
   private var webPreparation: SceneWebRasterPreparation?
+  private var leafRasterCollector: SceneLeafRasterWitnessCollector?
+  private var paintingLeafRasters: [SceneLeafRasterWitness] = []
   private let usesPreparedSources: Bool
   private var fallbackSources: [SceneSourceAddress: RasterLease]
   private var temporarySources: [SceneSourceAddress: SceneRasterCut]
@@ -161,9 +163,11 @@ final class SceneCompositionRenderer {
     temporarySources: [SceneSourceAddress: SceneRasterCut] = [:],
     fallbackSources: [SceneSourceAddress: RasterLease] = [:],
     sourceFailures: [SceneSourceAddress: SceneSourceFailure] = [:],
+    leafRasterCollector: SceneLeafRasterWitnessCollector? = nil,
     permitsPreparation: @escaping @MainActor () -> Bool = { true }) {
     self.source = source; self.resources = resources; self.permitsPreparation = permitsPreparation
     self.usesPreparedSources = usesPreparedSources
+    self.leafRasterCollector = leafRasterCollector
     sourceRasters = installedSources.compactMapValues { $0.retainedCopy() }
     self.temporarySources = temporarySources
     self.fallbackSources = fallbackSources; self.sourceFailures = sourceFailures
@@ -188,6 +192,7 @@ final class SceneCompositionRenderer {
 
   struct PanelMaterials {
     let layers: [NotebookPanelRasterLayer]
+    let leafRasters: [SceneLeafRasterWitness]
     let coverage: CompositionTileCoverage
     let bounds: WorkspaceSpatialBounds
     let diagnostics: [RenderDiagnostic]
@@ -220,7 +225,12 @@ final class SceneCompositionRenderer {
   /// coverage demand, never the pixel basis of an already completed tile/body.
   func renderPanel(presence: SessionPresence, projection: NotebookPanelRenderProjection,
     editableIDs: Set<String>, movableItemIDs: Set<UUID>, knownAssets: Set<UUID>) async throws -> PanelMaterials {
-    defer { finishPreparation() }
+    let ownCollector = leafRasterCollector == nil
+    if ownCollector { leafRasterCollector = SceneLeafRasterWitnessCollector(resources: resources) }
+    defer {
+      finishPreparation()
+      if ownCollector { leafRasterCollector?.close(); leafRasterCollector = nil }
+    }
     try projection.validated(); try checkPreparation()
     let requested = WorkspaceSpatialBounds(origin: projection.worldOrigin,
       width: projection.viewport.x / presence.camera.scale, height: projection.viewport.y / presence.camera.scale)
@@ -354,6 +364,7 @@ final class SceneCompositionRenderer {
         cachePreparedTiles([key: raster])
       }
       defer { raster.release() }
+      leafRasterCollector?.record(raster.leafRasters)
       let rank = bands.first { $0.range == key.range }!.rank
       let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
       let tileID = String(data: try encoder.encode(key.tile), encoding: .utf8)!
@@ -367,7 +378,9 @@ final class SceneCompositionRenderer {
       message: "Нативное представление достигло предела деталей этой области.")] : []
     let admitted = WorkspaceSpatialBounds(origin: requested.origin.offsetBy(x: -leftMargin, y: -topMargin),
       width: requested.width + leftMargin + rightMargin, height: requested.height + topMargin + bottomMargin)
-    return .init(layers: output.layers, coverage: coverage, bounds: admitted, diagnostics: diagnostics)
+    guard leafRasterCollector?.isCurrent != false else { throw NotebookStorageError.transactionConflict }
+    return .init(layers: output.layers, leafRasters: output.leafRasters,
+      coverage: coverage, bounds: admitted, diagnostics: diagnostics)
   }
 
   /// Cover cropping and density are admitted before either pixels or PNG exist.
@@ -411,16 +424,19 @@ final class SceneCompositionRenderer {
       let raster: RasterLease
       if let cached = resources.retainMaterial(key) { raster = cached }
       else {
+        paintingLeafRasters.removeAll(keepingCapacity: true)
         let size = CGSize(width: frame.width, height: frame.height)
         let canvas = try await SceneRasterCompositor.create(size: size, scale: density,
           resources: resources, permitsPreparation: permitsPreparation)
         try await paintElement(read, boardID: presence.boardID, frame: .init(origin: .zero, size: size),
           canvas: canvas, presentation: presentation)
         raster = try await canvas.finishRaster(for: .material(key))
+        resources.recordLeafRasters(paintingLeafRasters, for: raster)
         let address = SceneSourceAddress(plane: .board(presence.boardID), elementID: id)
         resources.cacheComposition(raster, receipts: receipts().filter { $0.key == address }, sources: sourceRasters)
       }
       defer { raster.release() }
+      leafRasterCollector?.record(raster.leafRasters)
       return [try await .completed(id: "subject-" + id, order: 0, worldOrigin: origin,
         frame: frame, raster: raster, knownAssets: knownAssets, elementID: id, subjectFrame: frame)]
     case .cover(let item, let regions, let materialDensity):
@@ -445,6 +461,7 @@ final class SceneCompositionRenderer {
       let raster: RasterLease
       if let cached = resources.retainMaterial(key) { raster = cached }
       else {
+        paintingLeafRasters.removeAll(keepingCapacity: true)
         let canvas = try await SceneRasterCompositor.create(size: region.size, scale: density,
           resources: resources, permitsPreparation: permitsPreparation)
         try await paintCover(item, boardID: presence.boardID,
@@ -452,9 +469,11 @@ final class SceneCompositionRenderer {
           visible: .init(origin: .zero, size: region.size), transitionViewport: .init(x: width, y: height),
           passes: WorkspaceSceneProjection.portalPasses, canvas: canvas)
         raster = try await canvas.finishRaster(for: .material(key))
+        resources.recordLeafRasters(paintingLeafRasters, for: raster)
         resources.cacheComposition(raster, receipts: receipts(), sources: sourceRasters)
       }
       defer { raster.release() }
+      leafRasterCollector?.record(raster.leafRasters)
       result.append(try await .completed(id: "item-" + item.id.uuidString + ":" + key.fingerprint,
         order: 0, worldOrigin: item.center, frame: frame, raster: raster, knownAssets: knownAssets,
         itemID: item.id, subjectFrame: .init(x: -width / 2, y: -height / 2, width: width, height: height)))
@@ -568,6 +587,7 @@ final class SceneCompositionRenderer {
   func renderTile(key: SceneCompositionTileKey, presentation: SessionPresence) async throws -> RasterLease {
     try checkPreparation()
     currentTile = key
+    paintingLeafRasters.removeAll(keepingCapacity: true)
     defer { currentTile = nil }
     guard key.workspaceID == source.workspaceID, key.revision == source.revision,
       key.plane.boardID == presentation.boardID else { throw NotebookStorageError.transactionConflict }
@@ -592,6 +612,7 @@ final class SceneCompositionRenderer {
     }
     try await source.validate(); try checkPreparation()
     let raster = try await canvas.finishRaster(for: .composition(key))
+    resources.recordLeafRasters(paintingLeafRasters, for: raster)
     paintedTiles.insert(key)
     return raster
   }
@@ -833,6 +854,8 @@ final class SceneCompositionRenderer {
       if let cut = temporarySources[address] {
         guard cut.source.agentElement == source else { throw SceneRenderError.snapshotPending("cover_cut_source") }
         if discoversDemand { onSourceDemand?() }
+        recordLeafRasters(resources.leafRasterWitnesses(for: demand.rasterSource,
+          minimumScale: demand.minimumScale, using: nil))
         try await canvas.draw(cut, in: Self.rasterFrame(cut.source, element: source, frame: frame),
           erasures: erasures, elementFrame: frame, presentation: presentation)
         return
@@ -849,6 +872,8 @@ final class SceneCompositionRenderer {
         ?? fallback
       if let raster { sourceRasters[address] = raster }
       if discoversDemand { onSourceDemand?() }
+      recordLeafRasters(resources.leafRasterWitnesses(for: demand.rasterSource,
+        minimumScale: demand.minimumScale, using: raster))
       if let raster {
         let destination = Self.rasterFrame(raster.source, element: source, frame: frame)
         try await canvas.draw(raster, in: destination, erasures: erasures, elementFrame: frame,presentation:presentation)
@@ -868,9 +893,15 @@ final class SceneCompositionRenderer {
     sourceDemands[address] = .init(source: source, minimumScale: requiredScale)
     sourceRasters[address]?.release(); sourceRasters[address] = raster.retainedCopy()
     if let currentTile { tileSources[currentTile, default: []].insert(address) }
+    recordLeafRasters(resources.leafRasterWitnesses(for: .agent(source), minimumScale: requiredScale, using: raster))
     do { try await canvas.draw(raster, in: frame, erasures: erasures,presentation:presentation); raster.release() }
     catch { raster.release(); throw error }
     canvas.recordDiagnostics(resources.diagnostics(for: [source]))
+  }
+
+  private func recordLeafRasters(_ witnesses: [SceneLeafRasterWitness]) {
+    paintingLeafRasters.append(contentsOf: witnesses)
+    leafRasterCollector?.record(witnesses)
   }
 
   private static func rasterFrame(_ source: SceneRasterSource, element: AgentElement, frame: CGRect) -> CGRect {

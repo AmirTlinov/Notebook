@@ -8,7 +8,7 @@ public struct NotebookCommand: Codable, Sendable {
     case apply, admitAction, prepareAction, commitAction, undo, action, actions, continuations, search, contexts, point, delivery
     case referenceStatus, referenceStatuses, actionDetails, reference, placement, render, pageVision, read, artifact, presentation
     case script, scriptContext, scriptArtifact, importProgram, importDocument, importDocumentResource
-    case panelRead, panelEdit, panelUndo, panelPresentation
+    case panelRead, panelEdit, panelUndo, panelPresentation, panelChanges
     case runtimeStatus, runtimeWorkspace
   }
   public var command: Kind
@@ -47,13 +47,14 @@ public struct NotebookCommand: Codable, Sendable {
   public var panelEdit: NotebookPanelEditRequest?
   public var panelUndo: NotebookPanelUndoRequest?
   public var panelPresentation: NotebookPanelPresentationRequest?
+  public var panelChanges: NotebookPanelChangesRequest?
   public var runtimeWorkspace: NotebookRuntimeWorkspaceRequest?
 
   enum CodingKeys: String, CodingKey, CaseIterable {
     case command, query, filters, next, limit, action, actionID, target, elementID, reference
     case expectedRevision, region, worldOrigin, pageIndex, placement, contextID
     case replyTo, references, queries, expectedCursor, artifact, presentation, cancel, fingerprint, script, scriptContext, actionPage, scriptEffect, readSnapshots, programImport, documentImport, documentResourceImport, panelRead, panelEdit, panelUndo, panelPresentation
-    case runtimeWorkspace
+    case runtimeWorkspace, panelChanges
   }
 
   public init(command: Kind) { self.command = command }
@@ -180,7 +181,7 @@ public struct NotebookCommandDispatcher: Sendable {
     case .panelRead:
       guard let nativeActor, let panel = request.panelRead else { throw invalid("panel_owner_unavailable", "Панель обслуживает владелец установленного Notebook.") }
       return try store.readPanel(panel, actor: nativeActor)
-    case .panelPresentation:
+    case .panelPresentation, .panelChanges:
       throw invalid("panel_owner_unavailable", "Представление панели готовит установленный Mac-владелец.")
     case .panelEdit:
       guard let nativeActor, let panel = request.panelEdit else { throw invalid("panel_owner_unavailable", "Правку панели принимает владелец Notebook.") }

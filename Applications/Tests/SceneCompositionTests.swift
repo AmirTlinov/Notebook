@@ -320,13 +320,17 @@ final class SceneCompositionTests: XCTestCase {
       let reservation = try XCTUnwrap(resources.reserveRaster(pixelWidth: 32, pixelHeight: 32))
       return try XCTUnwrap(resources.storeAndRetain(image, for: source, reservation: reservation))
     }
-    let sourcePixels = try store(.agent(source)), composed = try store(.composition(key))
-    defer { sourcePixels.release(); composed.release() }
+    let sourcePixels = try store(.agent(source)), pending = try store(.composition(key))
+    defer { sourcePixels.release(); pending.release() }
     let demand = SceneSourceDemand(source: source, minimumScale: 1)
-    resources.cacheComposition(composed, receipts: [address: .init(demand: demand, installedSource: nil,
+    resources.cacheComposition(pending, receipts: [address: .init(demand: demand, installedSource: nil,
       installedScale: 0, status: .pending)], sources: [:])
     XCTAssertNil(resources.retainComposition(key, accepts: { _ in true }))
     let ready = SceneSourceReceipt(demand: demand, installedSource: source, installedScale: 1, status: .ready)
+    resources.cacheComposition(pending, receipts: [address: ready], sources: [address: sourcePixels])
+    XCTAssertNil(resources.retainComposition(key, accepts: { _ in true }),
+      "Ready metadata cannot repaint the immutable pixels of an earlier pending tile")
+    let composed = try store(.composition(key)); defer { composed.release() }
     resources.cacheComposition(composed, receipts: [address: ready], sources: [address: sourcePixels])
     let hit = try XCTUnwrap(resources.retainComposition(key, accepts: { $0[address]?.hasCurrentPixels == true }))
     XCTAssertEqual(hit.entryID, composed.entryID); hit.release()

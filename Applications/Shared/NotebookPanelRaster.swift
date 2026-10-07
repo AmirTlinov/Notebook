@@ -10,6 +10,7 @@ struct NotebookPanelRasterLayer {
   let worldOrigin: WorldPoint
   let frame: PageRect
   let assetID: UUID
+  let leafRasters: [SceneLeafRasterWitness]
   private let encodedPixels: RasterEncodedBorrow?
   var png: Data? { encodedPixels?.value.png }
   let elementID: String?
@@ -20,7 +21,7 @@ struct NotebookPanelRasterLayer {
   let pixelHeight: Int
 
   func withOrder(_ order: Int) -> Self {
-    .init(id: id, order: order, worldOrigin: worldOrigin, frame: frame, assetID: assetID,
+    .init(id: id, order: order, worldOrigin: worldOrigin, frame: frame, assetID: assetID, leafRasters: leafRasters,
       encodedPixels: encodedPixels, elementID: elementID, itemID: itemID, subjectFrame: subjectFrame,
       repeatSize: repeatSize, pixelWidth: pixelWidth, pixelHeight: pixelHeight)
   }
@@ -28,11 +29,12 @@ struct NotebookPanelRasterLayer {
   @MainActor
   static func completed(id: String, order: Int, worldOrigin: WorldPoint, frame: PageRect,
     raster: RasterLease, knownAssets: Set<UUID>, elementID: String? = nil, itemID: UUID? = nil,
-    subjectFrame: PageRect? = nil, repeatSize: CGSize? = nil) async throws -> Self {
+    subjectFrame: PageRect? = nil, repeatSize: CGSize? = nil,
+    leafRasters: [SceneLeafRasterWitness]? = nil) async throws -> Self {
     guard let image = raster.sampledImage(for: .init(width: Double.greatestFiniteMagnitude, height: Double.greatestFiniteMagnitude))
     else { throw SceneRenderError.snapshotPending("panel_pixels") }
     let encodedPixels = knownAssets.contains(raster.entryID) ? nil : try await raster.encodedPNG()
-    return .init(id: id, order: order, worldOrigin: worldOrigin, frame: frame, assetID: raster.entryID,
+    return .init(id: id, order: order, worldOrigin: worldOrigin, frame: frame, assetID: raster.entryID, leafRasters: leafRasters ?? raster.leafRasters,
       encodedPixels: encodedPixels, elementID: elementID, itemID: itemID, subjectFrame: subjectFrame, repeatSize: repeatSize,
       pixelWidth: image.width, pixelHeight: image.height)
   }
@@ -61,6 +63,7 @@ struct NotebookPanelRasterLayer {
 /// cohort and counts every image even when the browser already owns its bytes.
 struct NotebookPanelRasterSet {
   private(set) var layers: [NotebookPanelRasterLayer] = []
+  var leafRasters: [SceneLeafRasterWitness] { layers.flatMap(\.leafRasters) }
   private var byteCount = 0
   private var pixelCount = 0
   mutating func append(_ layer: NotebookPanelRasterLayer) throws {

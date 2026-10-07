@@ -7,7 +7,8 @@ import {join} from 'node:path';
 import {Client, InMemoryTransport} from '@modelcontextprotocol/client';
 import {McpServer} from '@modelcontextprotocol/server';
 import {RESOURCE_MIME_TYPE} from '@modelcontextprotocol/ext-apps/server';
-import {panelResourceURI, registerNotebookPanel} from '../src/panel-tools.js';
+import {panelObservationToolMilliseconds,panelResourceURI, registerNotebookPanel} from '../src/panel-tools.js';
+import type {RuntimeAdmission} from '../src/runtime-admission.js';
 import {NotebookSession} from '../panel/session.js';
 import {Surface} from '../panel/surface.js';
 import type {PanelMutation, PanelSnapshot, PanelView} from '../panel/model.js';
@@ -20,6 +21,18 @@ const workspaceID = randomUUID();
 const target = {kind: 'board', id: randomUUID()};
 const address = {workspaceID, target, socketKey};
 const origin = {tileX: 7, tileY: -3, localX: 40, localY: 60};
+const publicationEpoch=randomUUID();
+const checkpoint=(cursor:string)=>({id:randomUUID(),epoch:publicationEpoch,readCursor:cursor,changeCursor:cursor});
+function heldChanges(signal:AbortSignal|undefined):Promise<Awaited<ReturnType<NotebookSession['app']['callServerTool']>>>{
+  return new Promise((_resolve,reject)=>{
+    const abort=()=>reject(new Error('Observation closed'));
+    if(signal?.aborted)abort();else signal?.addEventListener('abort',abort,{once:true});
+  });
+}
+function event<T>(){
+  let resolve!:(value:T)=>void;
+  return {promise:new Promise<T>(done=>{resolve=done;}),resolve:(value:T)=>resolve(value)};
+}
 
 function materialFixture(t:TestContext) {
   const display={devicePixelRatio:1},dimensions={width:800,height:600};
@@ -51,7 +64,7 @@ function materialFixture(t:TestContext) {
   const anchor={tileX:0,tileY:0,localX:0,localY:0};
   const snapshot=(density:number,width=800,height=600,revision='same-source'):PanelSnapshot=>({
     ...address,target:{kind:'board',id:target.id},cursor:'10',worldOrigin:anchor,size:{width:1600,height:1200},elements:[],cards:[],rawInkPresent:false,
-    unsupportedElements:[],history:{},truncated:false,appearance:{status:'ready',requestID:randomUUID(),sourceRevision:revision,
+    unsupportedElements:[],history:{},truncated:false,checkpoint:checkpoint('10'),appearance:{status:'ready',requestID:randomUUID(),sourceRevision:revision,
       camera:{center:{...anchor,localX:width/2,localY:height/2},scale:800/width},viewport:{x:800,y:600},
       coverage:{anchor,region:{x:0,y:0,width,height},level:0,pixelDensity:density},layers:[{
         id:'native-material',assetID:randomUUID(),worldOrigin:anchor,frame:{x:0,y:0,width,height},order:0,
@@ -142,7 +155,7 @@ test('session coalesces viewport demand against accepted pixels without delaying
     session.onSnapshot = value => {density = value.appearance!.coverage!.pixelDensity;};
     const snapshot = (scale: number, pixels: number, cursor: string): PanelSnapshot => ({
       ...address, target: {...target, kind: 'board'}, cursor, worldOrigin: origin, size: {width: 800, height: 600},
-      elements: [], cards: [], rawInkPresent: false, unsupportedElements: [], history: {}, truncated: false,
+      elements: [], cards: [], rawInkPresent: false, unsupportedElements: [], history: {}, truncated: false,checkpoint:checkpoint(cursor),
       appearance: {status: 'ready', requestID: randomUUID(), sourceRevision: 'same-source',
         camera: {center: origin, scale}, viewport: {x: 800, y: 600}, layers: [],
         coverage: {anchor: origin, region: {x: 0, y: 0, width: 800, height: 600}, level: 0, pixelDensity: pixels}},
@@ -184,7 +197,7 @@ test('session coalesces viewport demand against accepted pixels without delaying
 function sessionSnapshot(cursor = '1'): PanelSnapshot {
   return {...address, target: {...target, kind: 'board'}, cursor, worldOrigin: origin,
     size: {width: 800, height: 600}, elements: [], cards: [], rawInkPresent: false,
-    unsupportedElements: [], history: {}, truncated: false,
+    unsupportedElements: [], history: {}, truncated: false,checkpoint:checkpoint(cursor),
     appearance: {status: 'ready', requestID: randomUUID(), sourceRevision: cursor,
       camera: {center: origin, scale: 1}, viewport: {x: 800, y: 600}, layers: []}};
 }
@@ -197,7 +210,8 @@ async function controlledSession() {
   let disposed = false, retry: (() => Promise<void>) | null = null;
   const observe = (event: string) => {assert.equal(disposed, false, `Callback after disposal: ${event}`); events.push(event);};
   session.app.connect = async () => {};
-  session.app.callServerTool = async (input, options) => new Promise(resolve => calls.push({name: input.name, arguments: input.arguments!, signal: options?.signal, resolve}));
+  session.app.callServerTool = async (input, options) => input.name==='notebook_panel_changes'?heldChanges(options?.signal)
+    :new Promise(resolve => calls.push({name: input.name, arguments: input.arguments!, signal: options?.signal, resolve}));
   session.app.updateModelContext = async () => ({});
   session.needsPresentation = () => {observe('coverage'); return true;};
   session.onPrepareSnapshot = async () => {observe('prepare'); return true;};
@@ -521,7 +535,8 @@ async function openingSession(){
   let disposed=false,retry:(()=>Promise<void>)|null=null;
   const observe=(value:string)=>{assert.equal(disposed,false,'No callback after teardown');events.push(value);};
   session.app.connect=async()=>{};
-  session.app.callServerTool=async input=>new Promise(resolve=>calls.push({name:input.name,arguments:input.arguments!,resolve}));
+  session.app.callServerTool=async(input,options)=>input.name==='notebook_panel_changes'?heldChanges(options?.signal)
+    :new Promise(resolve=>calls.push({name:input.name,arguments:input.arguments!,resolve}));
   session.app.updateModelContext=async()=>({});
   session.onStatus=observe;
   session.onError=(_message,action)=>{observe('error');retry=action;};
@@ -549,7 +564,8 @@ test('initial connect keeps exact target and bounds through startup and native o
   t.mock.timers.tick(250);
   assert.equal(calls[2]!.name,'notebook_panel_connect');assert.deepEqual(calls[2]!.arguments,request);
   assert.deepEqual(runtimes,[],'An opening workspace does not go through workspace retry or selection');
-  calls[2]!.resolve({content:[],structuredContent:snapshot});
+  const initialRead={...snapshot};delete initialRead.appearance;delete initialRead.checkpoint;
+  calls[2]!.resolve({content:[],structuredContent:initialRead});
   await new Promise<void>(resolve=>setImmediate(resolve));
   assert.equal(calls[3]!.name,'notebook_panel_presentation');assert.deepEqual(calls[3]!.arguments.target,request.target);
   calls[3]!.resolve({content:[],structuredContent:snapshot});
@@ -596,9 +612,9 @@ test('closing during startup cancels queued reads and ignores late native admiss
   });
 });
 
-async function connectedPanel(socketPath: string) {
+async function connectedPanel(socketPath: string,admit?:RuntimeAdmission) {
   const server = new McpServer({name: 'panel-contract', version: '1'});
-  registerNotebookPanel(server, socketPath, html);
+  registerNotebookPanel(server, socketPath, html,admit);
   const client = new Client({name: 'panel-contract', version: '1'});
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
@@ -607,7 +623,7 @@ async function connectedPanel(socketPath: string) {
 }
 
 /** Separate default and pinned endpoints make accidental routing to the current window observable. */
-async function nativeFixture(reply: (endpoint: 'default' | 'pinned', request: Value) => Reply) {
+async function nativeFixture(reply: (endpoint: 'default' | 'pinned', request: Value,socket:Socket) => Reply|Promise<Reply>,admit?:RuntimeAdmission) {
   // macOS Unix socket names are short; the user temp directory can exceed the socket path limit.
   const root = await mkdtemp('/tmp/nb-panel-');
   await chmod(root, 0o700);
@@ -617,6 +633,7 @@ async function nativeFixture(reply: (endpoint: 'default' | 'pinned', request: Va
   const servers = endpoints.map(endpoint => createServer({allowHalfOpen: true}, socket => {
     sockets.add(socket);
     socket.once('close', () => sockets.delete(socket));
+    socket.on('error',()=>{});
     let bytes = Buffer.alloc(0), handled = false;
     socket.on('data', part => {
       if (handled) return;
@@ -626,9 +643,12 @@ async function nativeFixture(reply: (endpoint: 'default' | 'pinned', request: Va
       const envelope = JSON.parse(bytes.subarray(4).toString()) as {version: number; id: string; request: Value};
       assert.equal(envelope.version, 1);
       requests.push({endpoint, request: envelope.request});
-      const body = Buffer.from(JSON.stringify({version: 1, id: envelope.id, ...reply(endpoint, envelope.request)}));
-      const prefix = Buffer.alloc(4); prefix.writeUInt32BE(body.length);
-      socket.end(Buffer.concat([prefix, body]));
+      void Promise.resolve(reply(endpoint,envelope.request,socket)).then(answer=>{
+        if(socket.destroyed)return;
+        const body = Buffer.from(JSON.stringify({version: 1, id: envelope.id, ...answer}));
+        const prefix = Buffer.alloc(4); prefix.writeUInt32BE(body.length);
+        socket.end(Buffer.concat([prefix, body]));
+      }).catch(error=>socket.destroy(error instanceof Error?error:new Error(String(error))));
     });
   }));
   const paths = [join(root, 'bridge.sock'), join(root, `${socketKey}.sock`)];
@@ -639,7 +659,7 @@ async function nativeFixture(reply: (endpoint: 'default' | 'pinned', request: Va
     });
     await chmod(path, 0o600);
   }
-  const panel = await connectedPanel(paths[0]!);
+  const panel = await connectedPanel(paths[0]!,admit);
   return {...panel, requests, close: async () => {
     await panel.close();
     for (const socket of sockets) socket.destroy();
@@ -654,7 +674,7 @@ test('Notebook exposes one HTML app resource, a model opener and app-only gestur
   try {
     const {tools} = await panel.client.listTools();
     assert.deepEqual(tools.map(tool => tool.name).sort(),
-      ['notebook_open', 'notebook_panel_connect', 'notebook_panel_edit', 'notebook_panel_presentation', 'notebook_panel_undo', 'notebook_panel_workspace']);
+      ['notebook_open', 'notebook_panel_changes', 'notebook_panel_connect', 'notebook_panel_edit', 'notebook_panel_presentation', 'notebook_panel_undo', 'notebook_panel_workspace']);
     const opener = tools.find(tool => tool.name === 'notebook_open')!;
     assert.deepEqual(opener._meta?.ui, {resourceUri: panelResourceURI});
     assert.deepEqual(opener._meta?.['openai/ui'], {entrypoints: [{type: 'thread'}, {type: 'global'}]});
@@ -703,6 +723,88 @@ test('native presentation stays pinned, bounds pixels and avoids duplicating PNG
     assert.equal(excessiveAssets.isError,true);
     assert.equal(panel.requests.length,1,'Over-budget projection does not enter native preparation');
   } finally {await panel.close();}
+});
+
+test('panel change observation keeps its accepted endpoint and validates both checkpoint clocks',async()=>{
+  const accepted=checkpoint('42');
+  const value={...address,checkpoint:{...accepted,readCursor:'43'},changed:false};
+  const panel=await nativeFixture(()=>({result:value}));
+  try{
+    const observed=await panel.client.callTool({name:'notebook_panel_changes',arguments:{...address,checkpoint:accepted}});
+    assert.notEqual(observed.isError,true);assert.deepEqual(observed.structuredContent,value);
+    assert.deepEqual(panel.requests,[{endpoint:'pinned',request:{command:'panelChanges',panelChanges:{workspaceID,target,checkpoint:accepted}}}]);
+    for(const malformed of [{...accepted,id:'arbitrary'},{...accepted,readCursor:'-1'},
+      {...accepted,changeCursor:'not-a-cursor'},{...accepted,changeCursor:'9223372036854775808'},
+      {...accepted,changeCursor:'0'.repeat(1000)}]){
+      const refused=await panel.client.callTool({name:'notebook_panel_changes',arguments:{...address,checkpoint:malformed}});
+      assert.equal(refused.isError,true);
+    }
+    assert.equal(panel.requests.length,1,'Invalid observations never reach the admitted owner');
+  }finally{await panel.close();}
+});
+
+test('observation has one 35-second tool budget while admission and ordinary tools retain 3.9 seconds',async t=>{
+  for(const scenario of ['wait-reply','wait-deadline','ordinary-deadline'] as const)await t.test(scenario,async t=>{
+    t.mock.timers.enable({apis:['setTimeout']});
+    let clock=10_000;
+    t.mock.method(performance,'now',()=>clock);
+    const started=clock,admissions:number[]=[],requested=event<void>(),answer=event<Reply>();
+    const accepted=checkpoint('42'),value={...address,checkpoint:accepted,changed:false};
+    const panel=await nativeFixture((_endpoint,request)=>{
+      assert.equal(request.command,scenario==='ordinary-deadline'?'panelPresentation':'panelChanges');
+      requested.resolve();return answer.promise;
+    },async deadline=>{
+      admissions.push(deadline);
+      clock+=1000; // Consumed admission time is part of the same tool deadline.
+      return undefined;
+    });
+    try{
+      let settled=false;
+      const result=panel.client.callTool(scenario==='ordinary-deadline'
+        ? {name:'notebook_panel_presentation',arguments:{...address,appearance:{viewport:{x:800,y:600},pixelScale:1}}}
+        : {name:'notebook_panel_changes',arguments:{...address,checkpoint:accepted}},
+      {timeout:45_000}).then(value=>{settled=true;return value;});
+      await requested.promise;
+      assert.deepEqual(admissions,[started+3900],'Waiting never enlarges runtime admission');
+      const advance=async(milliseconds:number)=>{
+        clock+=milliseconds;t.mock.timers.tick(milliseconds);
+        await new Promise<void>(resolve=>setImmediate(resolve));
+      };
+      if(scenario==='wait-reply'){
+        await advance(4000);
+        assert.equal(settled,false,'A healthy observation remains admitted after the ordinary tool budget');
+        answer.resolve({result:value});
+        const observed=await result;
+        assert.notEqual(observed.isError,true);assert.deepEqual(observed.structuredContent,value);
+      }else{
+        const remaining=(scenario==='wait-deadline'?panelObservationToolMilliseconds:3900)-1000;
+        await advance(remaining-1);assert.equal(settled,false);
+        await advance(1);
+        const expired=await result;
+        assert.equal(expired.isError,true);assert.equal((expired.structuredContent as Value).code,'ipc_timeout');
+      }
+      assert.equal(panel.requests.length,1,'A waiting or timed-out observation is never replayed');
+    }finally{answer.resolve({result:value});await panel.close();}
+  });
+});
+
+test('MCP cancellation closes only the addressed observation bridge without replay',async()=>{
+  const requested=event<Socket>(),answer=event<Reply>(),disconnected=event<void>(),accepted=checkpoint('42');
+  const panel=await nativeFixture((_endpoint,request,socket)=>{
+    assert.equal(request.command,'panelChanges');
+    socket.once('close',()=>disconnected.resolve());requested.resolve(socket);return answer.promise;
+  });
+  try{
+    const controller=new AbortController();
+    const result=panel.client.callTool({name:'notebook_panel_changes',arguments:{...address,checkpoint:accepted}},
+      {signal:controller.signal,timeout:45_000});
+    const refused=assert.rejects(result),socket=await requested.promise;
+    controller.abort();await refused;
+    await new Promise<void>(resolve=>setImmediate(resolve));
+    answer.resolve({result:{...address,checkpoint:accepted,changed:false}});
+    await disconnected.promise;
+    assert.equal(socket.destroyed,true);assert.equal(panel.requests.length,1);
+  }finally{answer.resolve({result:{...address,checkpoint:accepted,changed:false}});await panel.close();}
 });
 
 test('panel gestures keep the admitted endpoint and exact native sources', async () => {
