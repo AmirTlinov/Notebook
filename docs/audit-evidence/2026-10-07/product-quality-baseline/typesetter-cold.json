@@ -1,0 +1,462 @@
+{
+  "date": "2026-10-07",
+  "issue": "GUI-508",
+  "baseCommit": "e91c0fdd5e184785b843022d354546b289851d69",
+  "sourceReview": "GO",
+  "canonicalFilesSHA256": {
+    "Sources/NotebookTypesetterRuntime/Runtime.lock.json": "0c03df6e6f67f501925eeb60f754b4420a4700777344833e5f7e7fac63ab8d16",
+    "Sources/NotebookTypesetterRuntime/build/format-test.c": "b7941154b957ca5a22478cdeed8dad424650c010127f8485bfa6be8cc1e59901",
+    "Sources/NotebookTypesetterRuntime/build/rebuild-tectonic.py": "59d6e8a9ee8c1531d417afecb99e59b9b58f9a7de94f276831bc31181f68e970",
+    "Sources/NotebookTypesetterRuntime/build/tectonic.patch": "f345f430dac3d2a8c9198c6eba5d8b8380bb812c47136142fd9b10db07ebb424",
+    "Sources/NotebookTypesetterRuntime/kernels/tectonic.wasm.gz": "54b28932b08f1ddb1409a67fa531b9636d84d7af510c245f6cda354cbd99d85a",
+    "Sources/NotebookTypesetterRuntime/src/lib.rs": "9cadb4216f34570d39e216c84966180eee05b8a49fa5b5022e88c315406f9376"
+  },
+  "build": {
+    "status": "PASS",
+    "receipt": {
+      "path": ".build/gui508-typesetter-rebuild-v3/receipt.json",
+      "sha256": "c08ceb6ae858807e22667e8f61d564323e6f5c66236a82c3e8e87fb7bc88b7c5"
+    },
+    "upstreamRevision": "d1a46a5d127ea40c6a1afcb45e91bb3d7c1f5e47",
+    "kernel": {
+      "bytes": 5206914,
+      "sha256": "8d8f9fb45bc3e33677c20e9be69d0dd3c25d899aef7b1eb40cfd8903fb4f2ffe",
+      "packedSHA256": "54b28932b08f1ddb1409a67fa531b9636d84d7af510c245f6cda354cbd99d85a"
+    },
+    "formatRegression": "PASS (actual pinned types/helpers/run guards; ASan/UBSan)",
+    "formatLog": {
+      "path": ".build/gui508-typesetter-rebuild-v3/format-test.log",
+      "sha256": "01397e5d60c758d250761620d4dd136de2a932b29bb4287410b58686b29d3352"
+    }
+  },
+  "macPairedCold": {
+    "scope": "Fresh process/runtime per compile; OS page cache warm; Mac arm64 release AOT. Local compilation only.",
+    "totalProcesses": 8,
+    "processesPerVariant": 4,
+    "medianMS": {
+      "baseline": 516.6075,
+      "candidate": 466.5145
+    },
+    "medianReductionPercent": 9.6965,
+    "identicalPDFSHA256": "ce5f687d15ab2365f1227edc1bdd488a45734611828d2b5b7877e09a91e2ad76",
+    "texPassesEveryRun": 2,
+    "results": {
+      "path": ".build/typesetter-cold/regenerated-ab.json",
+      "sha256": "6ea7c383bec9f2778bd862af025734ee6729547b405c2be9bcf64f95efd548aa"
+    },
+    "probeSource": {
+      "path": ".build/typesetter-cold/probe.c",
+      "sha256": "8f655e2dbe8a7bd08ef00268b7d7cfc0e0c9550b5fd077799ca81af5549163d5"
+    },
+    "baselineProbe": {
+      "path": ".build/typesetter-cold/probe",
+      "sha256": "11c8f30294ee91130d3c233626812617cd425b7c6d8798f8e8ff12a332cbaec2"
+    },
+    "candidateProbe": {
+      "path": ".build/typesetter-cold/probe-regenerated",
+      "sha256": "b382d2499e2943177d7b2580a862a03dd78dff762ba2ee4d12da956b755865c8"
+    }
+  },
+  "memory": {
+    "baselineAndCandidateGuestLinearBytes": 291635200,
+    "scope": "Reported guest linear extent in table-equivalence probes; host allocations/RSS excluded. Paired timing receipt has no per-run memory values.",
+    "baseline": {
+      "path": ".build/typesetter-cold/equivalence/baseline/stdout.log",
+      "sha256": "3507c6f714d3c28c03619ee0aa2660b142bd69eefde9498bd3a978088649f28c"
+    },
+    "candidate": {
+      "path": ".build/typesetter-cold/regenerated-equivalence/stdout.log",
+      "sha256": "a6c62abe935557d949b2d9ab87ed8d2c69f40f9be85800dc837cc239fdb39f6f"
+    }
+  },
+  "tableEquivalence": {
+    "status": "PASS",
+    "scope": "Actual regenerated kernel equals baseline immediately after both format loads (passes 1 and 2).",
+    "tables": {
+      "eqtb": {
+        "bytes": 76331664,
+        "sha256": "f29f2a52d5001441f5fb7bff49a8aaa5b601f79ce8e384c71f2c085ce84245bb"
+      },
+      "hash": {
+        "bytes": 58505864,
+        "sha256": "f5a52ec21db3d04ef3a5f4cca7cc3c3fcb7ec43bec3ea8a2aa4a2a54a78ad586"
+      }
+    },
+    "receipt": {
+      "path": ".build/typesetter-cold/regenerated-equivalence/receipt.json",
+      "sha256": "a3d29105a83f4ba3915e689fa645179c573a5d4789207371da32daf5bb8b8241"
+    },
+    "generatedOwnerSHA256": "08b4a8f0b3fd27900d479636f30b233d73fe927f7d74dfc36ac2c2d940480ad4",
+    "instrumentedOwnerSHA256": "cdc5a971ef90eb0f3f91877232578112dd7d11e31fb4681baed601918f72b202",
+    "baselineLog": {
+      "path": ".build/typesetter-cold/equivalence/baseline/stderr.log",
+      "sha256": "04375e234efed828cd89fd576d6143869661695091b919aaec760172bd23b1b8"
+    }
+  },
+  "interruption": {
+    "status": "PASS",
+    "scope": "Three call-entry witness hooks in a private regenerated load_fmt_file copy; existing flag, memory operations and supervisor unchanged.",
+    "cancelTiming": "From setting cancellation at the identified bulk-call entry to compile return.",
+    "deadlineTiming": "Actual 1000 ms runtime deadline expires while held at the identified call; join measured after the hold resumes. Hold excluded; these are observed joins, not universal operation bounds.",
+    "assertedJoinLimitMS": 2000,
+    "receipt": {
+      "path": ".build/typesetter-cold/regenerated-bulk-interruption/receipt.json",
+      "sha256": "78b4473239d66fff405caa4f205135929b30ec9084f52bf1ae6fa695e2b13f06"
+    },
+    "probeSource": {
+      "path": ".build/typesetter-cold/bulk-interruption-probe.c",
+      "sha256": "70b8b353fc135e5df696e74ac7479afff78078acf2b62f7d66760d0cfc764ff1"
+    },
+    "instrumentedOwnerSHA256": "5212736c43928ad4a4872b4c1cf352228d7130be02417ddb7317ef3a1a4c81b4",
+    "runLog": {
+      "path": ".build/typesetter-cold/regenerated-bulk-interruption/run.log",
+      "sha256": "efb8c272f7374f9a21e1cd75becb5a18b1443e8ea7a7e5ec0f8e19cad3a9d52b"
+    },
+    "phases": [
+      {
+        "name": "hash-zero",
+        "bytes": 58505864,
+        "cancelJoinMS": 3.474,
+        "deadlinePostHoldJoinMS": 4.563
+      },
+      {
+        "name": "extra-eqtb-repeat",
+        "bytes": 524288,
+        "cancelJoinMS": 0.8,
+        "deadlinePostHoldJoinMS": 2.51
+      },
+      {
+        "name": "eqtb-rle-repeat",
+        "bytes": 524288,
+        "cancelJoinMS": 1.798,
+        "deadlinePostHoldJoinMS": 3.48
+      }
+    ],
+    "assertions": {
+      "phaseWitnesses": 6,
+      "matchingErrors": [
+        "typesetter_cancelled",
+        "typesetter_deadline"
+      ],
+      "allBeforeInput": true,
+      "freshPDFRecoveries": 6
+    }
+  },
+  "runtimeIntegration": {
+    "status": "PASS",
+    "test": "tests::file_document_shipout_and_sandbox",
+    "tests": 1,
+    "failures": 0,
+    "durationSeconds": 0.8,
+    "scope": "Unmodified regenerated runtime; multi-file document, BibTeX, nested entrypoint, sandbox, pre-input startup cancellation/deadline, running-TeX deadline, recovery. Startup markers alone do not identify a particular format operation.",
+    "log": {
+      "path": ".build/typesetter-cold/runtime-regenerated-test.log",
+      "sha256": "d1618548f9fb45ab80960decee2a5b412fab8e0f8c8b951086b87ff477a2d63f"
+    }
+  },
+  "stage": {
+    "path": ".build/gui508-typesetter-runtime",
+    "platforms": [
+      "iphoneos",
+      "macosx"
+    ],
+    "canonicalSourceChecks": "PASS (macosx and iphoneos)",
+    "inputSHA256": "3f2798c2bb26254b7d1a05614a819804f9a89428ed8b3aa133558e8d260cf43e",
+    "manifest": {
+      "path": ".build/gui508-typesetter-runtime/manifest.json",
+      "sha256": "c625bd161a8f8172932ea260a710f548f991fbf553f2339fb3d525853f844ffd"
+    },
+    "unchangedLatexFormat": {
+      "bytes": 24451432,
+      "sha256": "744c7d59f930a926d26f0f6de066b2f8305adb02a05349eca4fa6e907c49fe9e"
+    }
+  },
+  "physicalColdOpening": {
+    "status": "Native v8 PASS (5/5); custom-paper gesture and full repeated acceptance OPEN",
+    "budgetMS": 1000,
+    "metric": "Request to native document input, with an uncached canonical source.",
+    "budgetAndAnimationUnchanged": true,
+    "timedNativeScenarios": [
+      "history reference to unloaded document outside current camera",
+      "history reference to unloaded document on another board"
+    ],
+    "gestureScenario": "cold closed custom-paper cover open/rotate/rapid reopen gesture",
+    "v7": {
+      "scope": "Isolated native app on physical iPad; fresh canonical-source nonce for each document; actual compiler invocation asserted. Request → native paper input, not touch-to-photon. Two scenarios in one process; other-board ran first. No gesture or ten-repetition acceptance.",
+      "executedAtUTC": "2026-10-07T10:53:15.909000+00:00",
+      "result": "Failed",
+      "passedTests": 1,
+      "failedTests": 1,
+      "skippedTests": 0,
+      "runtimeWarnings": 0,
+      "device": {
+        "architecture": "arm64",
+        "deviceId": "00008103-001E059934D9001E",
+        "deviceName": "iPad (Елизавета)",
+        "modelName": "iPad Pro (11-inch) (3rd generation)",
+        "osBuildNumber": "24A435",
+        "osVersion": "27.0",
+        "platform": "iOS"
+      },
+      "summary": {
+        "path": ".build/product-quality-documents-20261007-v7/native-summary.json",
+        "sha256": "133acb6f1ab5a962b938174445272d3f673f1ce5116db6f015ff0765029e7c2b"
+      },
+      "tests": {
+        "path": ".build/product-quality-documents-20261007-v7/native-tests.json",
+        "sha256": "b7582af3a10721abbb5f417d6c09010ce56bd5131eec3e91d1a84b7677cc61c7"
+      },
+      "sourceBefore": {
+        "path": ".build/product-quality-documents-20261007-v7/source-before.json",
+        "sha256": "5ac64e4ac782990df0a6b32a6fc0a688ab0e5899a73e7ad52626f13ad8288758"
+      },
+      "sourceAggregateSHA256": "41ade69ba7535f8a38a6232313f6d9f6eb46632e56b9ec4f09ac2d71551267be",
+      "sourceRecheck": {
+        "atUTC": "2026-10-07T11:05:45.047735+00:00",
+        "files": 1661,
+        "differingFiles": 0,
+        "scope": "Root rehashed all selected source files after run; wrapper has no source-after because test assertion failed."
+      },
+      "scenarios": {
+        "otherBoard": {
+          "result": "FAIL (original 1000 ms input budget)",
+          "requestToNativePaperInputMS": 1037.9571666708216,
+          "milestonesFromRequestMS": {
+            "closed": 177.7931249816902,
+            "demanded": 197.24670832511038,
+            "configured": 213.76675000647083,
+            "paperInstalled": 863.1742916768417,
+            "firstOpening": 884.2329583130777,
+            "contentReady": 931.3494582893327,
+            "recordedNativeInput": 1037.8913333406672
+          },
+          "sourcePreparationPhasesMS": {
+            "artifact.queue": 0.013792,
+            "artifact.save": 1.286292,
+            "locations": 0.000125,
+            "artifact.bind": 0.00525,
+            "artifact.lookup": 4.9035,
+            "pdfNavigation": 1.007625,
+            "artifact": 787.22,
+            "artifact.inputBridge": 0.014625,
+            "artifact.native": 776.752667,
+            "layout": 0.102666,
+            "artifact.output": 2.896333,
+            "artifact.namespace": 0.177417,
+            "artifact.inputs": 0.172792,
+            "admission": 0.044291,
+            "canonicalPrint": 788.522458,
+            "artifact.inputValidation": 0.002833,
+            "artifact.wait": 780.489542,
+            "artifact.runtime": 0.430833
+          },
+          "closedWhilePreparing": true,
+          "openedBeforeReady": false,
+          "openedBeforePaint": false,
+          "trace": {
+            "path": ".build/product-quality-documents-20261007-v7/attachments/E27548E6-D1BA-4311-9B24-E8B31C227349.json",
+            "sha256": "786747ac7d5308cb85e4cac04b6a2bb2b1637e47da8bed9055225c80771bfeec"
+          },
+          "approach": {
+            "path": ".build/product-quality-documents-20261007-v7/attachments/5250E0DD-775B-4A83-983E-D41A3BFC135F.txt",
+            "sha256": "0327e7b0ee9624704e564aa13079cb9af0e1789522fb235dfbce0160d63c04ad"
+          },
+          "inputClock": {
+            "path": ".build/product-quality-documents-20261007-v7/attachments/5BB2F255-F858-4A0C-9172-308C7858D0EC.txt",
+            "sha256": "51eef4a1b0e6387753f1b58e73c64f0583ce3ce758434487e4e47d590872850b"
+          },
+          "screenshot": {
+            "path": ".build/product-quality-documents-20261007-v7/attachments/FDE0C960-55DC-4468-8D93-D07F78E31956.png",
+            "sha256": "1727c6e6e8abffcbea971c9546d4903168053f387032a7bcac81d7d548c5c812"
+          }
+        },
+        "outsideCurrentCamera": {
+          "result": "PASS",
+          "requestToNativePaperInputMS": 886.4092083531432,
+          "milestonesFromRequestMS": {
+            "closed": 141.0579583607614,
+            "demanded": 62.94425000669435,
+            "configured": 73.69091670261696,
+            "paperInstalled": 722.1415000385605,
+            "firstOpening": 732.9826666973531,
+            "contentReady": 760.6166666955687,
+            "recordedNativeInput": 886.3685833639465
+          },
+          "sourcePreparationPhasesMS": {
+            "admission": 0.041125,
+            "artifact.bind": 0.002542,
+            "canonicalPrint": 662.855417,
+            "artifact.native": 656.402125,
+            "artifact.namespace": 0.077583,
+            "artifact.inputValidation": 0.000792,
+            "artifact.inputs": 0.02675,
+            "pdfNavigation": 0.106834,
+            "artifact.runtime": 0.000125,
+            "locations": 8.3e-05,
+            "artifact.queue": 0.000875,
+            "artifact": 662.1415,
+            "artifact.lookup": 1.620417,
+            "artifact.save": 1.657042,
+            "layout": 0.049166,
+            "artifact.output": 2.219458,
+            "artifact.inputBridge": 0.0035,
+            "artifact.wait": 658.721833
+          },
+          "closedWhilePreparing": true,
+          "openedBeforeReady": false,
+          "openedBeforePaint": false,
+          "trace": {
+            "path": ".build/product-quality-documents-20261007-v7/attachments/61A4A4EF-8AE3-4387-B063-47A32B6E9FD3.json",
+            "sha256": "bd41b77e10d558a19a9dd4b1b3cbf08bd116c1672333aebbdaf000a8e69b711a"
+          },
+          "approach": {
+            "path": ".build/product-quality-documents-20261007-v7/attachments/05362547-0327-42F1-AFBD-88D12CB6CE2A.txt",
+            "sha256": "edc17cf7801f261ccba9494d34a0250c37dce23039e53e52c0b5d326cfb743a6"
+          },
+          "inputClock": {
+            "path": ".build/product-quality-documents-20261007-v7/attachments/09E08C28-194B-48E6-BBC8-735925D37BB3.txt",
+            "sha256": "26d8b48ce64d5214f07bdaebc6bf175662c8999f881fb387393fa04593cb0ff0"
+          },
+          "screenshot": {
+            "path": ".build/product-quality-documents-20261007-v7/attachments/77C15B0D-9095-425F-A0E0-374C04AD8D1B.png",
+            "sha256": "1727c6e6e8abffcbea971c9546d4903168053f387032a7bcac81d7d548c5c812"
+          }
+        }
+      }
+    },
+    "v8": {
+      "scope": "Same exact typesetter kernel as v7; upcoming-frame camera sampling retains wall-clock settlement deadline. Five physical native tests include two uncached canonical documents, real-clock cancellation, deterministic ownership/deadline regression and existing recorder round-trip. One process; other-board compile first. No ten-repetition or gesture acceptance.",
+      "executedAtUTC": "2026-10-07T11:29:31.954000+00:00",
+      "passedTests": 5,
+      "failedTests": 0,
+      "skippedTests": 0,
+      "runtimeWarnings": 0,
+      "summary": {
+        "path": ".build/product-quality-documents-20261007-v8/native-summary.json",
+        "sha256": "dfdf11f04a7749d1390ccac16f9b19c31c5898c02f0f77e7537402a720be0195"
+      },
+      "tests": {
+        "path": ".build/product-quality-documents-20261007-v8/native-tests.json",
+        "sha256": "0186d8d17e0cbd80ee1947ebaf7ea736cfb38684a1177b830c61055cf8cb4ba4"
+      },
+      "sourceBefore": {
+        "path": ".build/product-quality-documents-20261007-v8/source-before.json",
+        "sha256": "6123596729bfd92d329ec93d95cf63c8b65ec596389e698dd98eaf8d6d2133d7"
+      },
+      "sourceAfter": {
+        "path": ".build/product-quality-documents-20261007-v8/source-after.json",
+        "sha256": "6123596729bfd92d329ec93d95cf63c8b65ec596389e698dd98eaf8d6d2133d7"
+      },
+      "sourceAggregateSHA256": "a6c8693e9bfccf494d94ded4031bfed8421201d4f515b1e097543b53d48d35c8",
+      "sourceUnchanged": true,
+      "wrapperExit": 1,
+      "wrapperFailure": "Changed UI fixture requires its named gesture scenario; all five selected native tests passed.",
+      "scenarios": {
+        "otherBoard": {
+          "result": "PASS",
+          "requestToNativePaperInputMS": 986.331291613169,
+          "milestonesFromRequestMS": {
+            "sourcePreparationBegan": 57.03729164088145,
+            "closed": 137.03466666629538,
+            "sourcePreparationCompleted": 812.0346666546538,
+            "paperInstalled": 815.2567083016038,
+            "firstOpening": 833.1920416676439,
+            "contentReady": 871.9262916711159,
+            "recordedNativeInput": 986.2582499627024
+          },
+          "sourcePreparationPhasesMS": {
+            "pdfNavigation": 0.1205,
+            "artifact.inputBridge": 0.051709,
+            "artifact.lookup": 6.46575,
+            "artifact.namespace": 0.416542,
+            "artifact.runtime": 0.346583,
+            "artifact.save": 1.266667,
+            "layout": 0.324042,
+            "artifact": 754.226459,
+            "artifact.bind": 0.006208,
+            "admission": 0.052292,
+            "locations": 8.3e-05,
+            "artifact.inputs": 0.153,
+            "artifact.wait": 745.72725,
+            "artifact.output": 3.156167,
+            "canonicalPrint": 754.9975,
+            "artifact.queue": 0.020917,
+            "artifact.inputValidation": 0.001292,
+            "artifact.native": 741.73975
+          },
+          "closedWhilePreparing": true,
+          "openedBeforeReady": false,
+          "openedBeforePaint": false,
+          "trace": {
+            "path": ".build/product-quality-documents-20261007-v8/attachments/CFB54DA3-A205-409B-8629-E8AC5B03C2EB.json",
+            "sha256": "9278ffae1b05e39217ef8731200481c889952255853531faf0388e2d48cee0b7"
+          },
+          "approach": {
+            "path": ".build/product-quality-documents-20261007-v8/attachments/8862E3FF-CB40-41B1-BF7F-9B1567E363B2.txt",
+            "sha256": "9f6188127f15c54e859ec1e0da97d09e4bb62470bc9c54de0984b14572b01335"
+          },
+          "inputClock": {
+            "path": ".build/product-quality-documents-20261007-v8/attachments/1820A94B-E03E-436A-9705-F17DC0C1AA7F.txt",
+            "sha256": "1eb5293686aea19026fb9bb135b0ad3b3a68c8f748c8736abc821b92215fd259"
+          },
+          "screenshot": {
+            "path": ".build/product-quality-documents-20261007-v8/attachments/DBCBC288-D992-49E9-8093-5AB4E8782D47.png",
+            "sha256": "1727c6e6e8abffcbea971c9546d4903168053f387032a7bcac81d7d548c5c812"
+          }
+        },
+        "outsideCurrentCamera": {
+          "result": "PASS",
+          "requestToNativePaperInputMS": 878.3077916596085,
+          "milestonesFromRequestMS": {
+            "sourcePreparationBegan": 61.79695832543075,
+            "closed": 124.72620833432302,
+            "sourcePreparationCompleted": 716.2348333513364,
+            "paperInstalled": 717.9639166570269,
+            "firstOpening": 725.4825416603126,
+            "contentReady": 765.4880416812375,
+            "recordedNativeInput": 878.2738333102316
+          },
+          "sourcePreparationPhasesMS": {
+            "artifact.bind": 0.002458,
+            "artifact.wait": 651.207375,
+            "artifact": 653.922875,
+            "artifact.queue": 0.001125,
+            "artifact.inputValidation": 0.000708,
+            "admission": 0.039958,
+            "locations": 0.000125,
+            "artifact.native": 648.94875,
+            "artifact.runtime": 0.000209,
+            "artifact.namespace": 0.0215,
+            "artifact.inputs": 0.025041,
+            "artifact.save": 1.627125,
+            "artifact.lookup": 1.017291,
+            "artifact.inputBridge": 0.002625,
+            "canonicalPrint": 654.438125,
+            "artifact.output": 2.166583,
+            "pdfNavigation": 0.098125,
+            "layout": 0.043625
+          },
+          "closedWhilePreparing": true,
+          "openedBeforeReady": false,
+          "openedBeforePaint": false,
+          "trace": {
+            "path": ".build/product-quality-documents-20261007-v8/attachments/F970B6CF-ADAD-425B-980E-0B74AEF818C0.json",
+            "sha256": "0f3b99f16c8c531287a303cfebb28f6537e9e67ec48701f0a49502b4af110100"
+          },
+          "approach": {
+            "path": ".build/product-quality-documents-20261007-v8/attachments/D604EE46-383C-4C59-8DE2-09F6F19BB63F.txt",
+            "sha256": "868cdf60934ce924a79f97675c9a1cc187a20d4a47c41e8e04490082d5058c90"
+          },
+          "inputClock": {
+            "path": ".build/product-quality-documents-20261007-v8/attachments/078E7DBD-12B7-470C-AE8E-458DB2376962.txt",
+            "sha256": "d879836f37421f65e4f31734b4695dbaf52f04cce7e9fb16effd11e771c5fb90"
+          },
+          "screenshot": {
+            "path": ".build/product-quality-documents-20261007-v8/attachments/C0F5DA30-8A19-45D9-B25E-BD2098E51E29.png",
+            "sha256": "1727c6e6e8abffcbea971c9546d4903168053f387032a7bcac81d7d548c5c812"
+          }
+        }
+      }
+    }
+  }
+}
