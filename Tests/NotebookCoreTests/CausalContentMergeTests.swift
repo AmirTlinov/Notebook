@@ -197,6 +197,47 @@ import Testing
     }
   }
 
+  @Test func sparseAdoptionKeepsExactEscapedMembershipAndCanBeCausallyUndone() throws {
+    let members: [JSONValue] = ["a", "a/exists", "a/~", "a/~child"].map { id in
+      .object(["id": .string(id), "source": .string("original"), "css": .string("black"),
+        "graphic": .object(["shape": .string("connector"), "connection": .object(["bend": .number(3)])])])
+    }
+    let file: JSONValue = .object(["id": .string("a/~"), "path": .string("main.tex"), "source": .string("untouched file")])
+    let original: JSONValue = .object(["elements": .array(members), "files": .array([file])])
+    var metadata = CollaborativeContent(); metadata.materializeVersions(in: original, fallback: versions[0].stamp)
+    let base = State(value: original, metadata: metadata, stamp: versions[0].stamp)
+    let empty: JSONValue = .object(["elements": .array([]), "files": .array([])])
+    var removed = metadata
+    removed.record(before: original, after: empty, beforeStamp: base.stamp, stamp: versions[1].stamp, human: false)
+    let adoptionStamp = VersionStamp(counter: 11, actor: z)
+    let adopted = members[2].setting("source", .string("human edit"))
+    var displayed = members; displayed[2] = adopted
+    let edited = original.setting("elements", .array(displayed))
+    var edit = metadata
+    edit.record(before: original, after: edited, beforeStamp: base.stamp, stamp: adoptionStamp, human: true)
+    let existence = fieldKey(["elements", "a/~", "exists"])
+    #expect(edit.fields[existence]?.stamp == adoptionStamp)
+    for id in ["a", "a/exists", "a/~child"] {
+      let key = fieldKey(["elements", id, "exists"])
+      #expect(edit.fields[key] == metadata.fields[key])
+    }
+    #expect(edit.fields[fieldKey(["files", "a/~", "exists"])] == metadata.fields[fieldKey(["files", "a/~", "exists"])])
+    let states = [base, State(value: empty, metadata: removed, stamp: versions[1].stamp),
+      State(value: edited, metadata: edit, stamp: adoptionStamp)]
+    for order in orders {
+      let joined = try merge(merge(states[order[0]], states[order[1]]), states[order[2]])
+      #expect(joined.value["elements"] == .array([adopted]))
+      #expect(joined.value["files"] == .array([]))
+      var undone = joined.metadata
+      let undoStamp = VersionStamp(counter: 12, actor: x)
+      undone.record(before: joined.value, after: original, beforeStamp: joined.stamp, stamp: undoStamp, human: true)
+      var restored = State(value: original, metadata: undone, stamp: undoStamp)
+      for replay in states + [joined] { restored = try merge(restored, replay) }
+      #expect(restored.value == original)
+      #expect(restored.metadata == undone)
+    }
+  }
+
   @Test func clearedOptionalGeometrySurvivesReorderingReplayAndSnapshotJoins() throws {
     let original: JSONValue = .object(["elements":.array([.object([
       "id":.string("ink"),"source":.string("exact"),"css":.string("black"),
@@ -236,7 +277,7 @@ import Testing
     let documents = try versions.enumerated().map { index, version in
       let document = DocumentDocument(id: id, actor: x, files: [DocumentFile(id: "body", path: "body" + ".tex", source: ["a", "b", "c"][index])])
       return try JSONValue.encode(document).setting("contentStamp", .encode(version.stamp))
-        .setting("collaboration", .encode(CollaborativeContent(fields: ["blocks/body/content": version]))).decode(DocumentDocument.self)
+        .setting("collaboration", .encode(CollaborativeContent(fields: ["files/body/content": version]))).decode(DocumentDocument.self)
     }
     let boards = try versions.enumerated().map { index, version in
       let element = SpatialElement(id: "material", surface: .board(id), kind: .web,

@@ -35,6 +35,12 @@ Existence/deletion does not rewrite the deleted member's source. Delivery never
 turns a composite order into a new authored edit. Previously lost legacy history
 cannot be reconstructed by this algorithm.
 
+Full snapshots visit flat causal fields once to discover adopted existence
+addresses and reconstruct member bodies. Those bodies exist only during this
+merge; field versions remain the sole causal owner. Scalar roots detach once.
+The existing canonical sort of concurrent members outside the preferred order
+is preserved.
+
 Composite results receive a changed aggregate revision even when original counters
 match. Undo checks both field value and authorship, restores only surviving owned
 fields and reports later adopted content/dependencies as preserved. Repeated undo
