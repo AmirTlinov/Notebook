@@ -1,0 +1,17 @@
+programWasReady=true
+acquisitionDrained=484758.49791608343
+acquisitionMainActorDelivery=484758.4980332918
+closing=484758.4786611251
+drawableRequested=484758.49561495846
+drawableTaken=484758.49818666675
+encodingBegan=484758.4981940001
+gpuBegan=484758.51180950005
+gpuEnded=484758.5190689167
+materialBegan=484758.4791985418
+materialReady=484758.4950912918
+nextDrawableBegan=484758.49573620845
+nextDrawableReturned=484758.4978761251
+programReadyMainActor=none
+scheduled=484758.5125027501
+submitted=484758.51013170846
+workerBegan=484758.49565866677

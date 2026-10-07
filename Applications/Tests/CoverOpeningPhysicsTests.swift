@@ -186,12 +186,29 @@ final class CoverOpeningPhysicsTests: XCTestCase {
     update(1)
     try await Task.sleep(for: .milliseconds(250))
     XCTAssertEqual(controller.capturedCoverCount, 0, "An initially open page has no background cover snapshot demand")
+    XCTAssertEqual(controller.submittedCurlFrameCount, 0,
+      "Preparing the mounted cover program does not consume screen drawables")
     let curl = try XCTUnwrap(controller.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
     let liveCover = try XCTUnwrap(controller.view.subviews.first { !($0 is SheetCurlMetalView) })
     var firstFrame: SheetCurlMetalView.FrameTiming?, readyProgress: Double?
+    var materialBegan: TimeInterval?, materialReady: TimeInterval?, programReady: TimeInterval?
+    let prepareMaterial = try XCTUnwrap(controller.prepareMaterial)
+    controller.prepareMaterial = { owner, revision, scale in
+      materialBegan = CACurrentMediaTime()
+      defer { materialReady = CACurrentMediaTime() }
+      return try await prepareMaterial(owner, revision, scale)
+    }
+    let renderingReady = curl.onCoverRenderingReady
+    curl.onCoverRenderingReady = { programReady = CACurrentMediaTime(); renderingReady?() }
     curl.onFrameMeasured = { if firstFrame == nil { firstFrame = $0 } }
     curl.onCoverFrameReady = { _, progress, _, readiness in if readiness.isReady { readyProgress = progress } }
-    defer { curl.onFrameMeasured = nil; curl.onCoverFrameReady = nil }
+    defer {
+      controller.prepareMaterial = prepareMaterial; curl.onCoverRenderingReady = renderingReady
+      curl.onFrameMeasured = nil; curl.onCoverFrameReady = nil
+    }
+    let programWasReady = SheetCurlGPU.shared.preparedCoverContext != nil
+    XCTAssertTrue(programWasReady,
+      "The armed mounted cover prepares its shared program before the first closing gesture")
     let closing = CACurrentMediaTime()
     update(0.7)
     XCTAssertEqual(controller.capturedCoverCount, 0)
@@ -206,6 +223,27 @@ final class CoverOpeningPhysicsTests: XCTestCase {
       try await Task.sleep(for: .milliseconds(10))
     }
     let timing = try XCTUnwrap(firstFrame)
+    XCTAssertGreaterThanOrEqual(try XCTUnwrap(materialBegan), closing,
+      "Current cover material belongs to foreground closing, not idle program preparation")
+    let acquisition = try XCTUnwrap(timing.drawableAcquisition,
+      "A cover submission must consume the completed physical drawable request")
+    let clocks: [String: TimeInterval?] = [
+      "closing": closing, "materialBegan": materialBegan, "materialReady": materialReady,
+      "programReadyMainActor": programReady, "drawableRequested": acquisition.requested,
+      "workerBegan": acquisition.workerBegan, "nextDrawableBegan": acquisition.nextDrawableBegan,
+      "nextDrawableReturned": acquisition.nextDrawableReturned, "acquisitionDrained": acquisition.drained,
+      "acquisitionMainActorDelivery": acquisition.mainActorDeliveryBeforeTake, "drawableTaken": acquisition.taken,
+      "encodingBegan": timing.encodingBegan, "submitted": timing.submitted,
+      "scheduled": timing.scheduled, "gpuBegan": timing.gpuBegan, "gpuEnded": timing.gpuEnded
+    ]
+    let trace = clocks.keys.sorted().map { key in
+      "\(key)=\(clocks[key]!.map { String($0) } ?? "none")"
+    }.joined(separator: "\n")
+    let clockProof = XCTAttachment(string: "programWasReady=\(programWasReady)\n\(trace)")
+    clockProof.name = "cold-cover-hardware-clocks"; clockProof.lifetime = .keepAlways; add(clockProof)
+    XCTAssertLessThanOrEqual(acquisition.nextDrawableBegan, acquisition.nextDrawableReturned)
+    XCTAssertLessThanOrEqual(acquisition.nextDrawableReturned, acquisition.taken)
+    XCTAssertLessThanOrEqual(acquisition.taken, timing.encodingBegan)
     XCTAssertLessThanOrEqual((timing.submitted - closing) * 1_000, 100,
       "First cold-closing GPU submission includes foreground capture, not OS presentation or photons")
     XCTAssertEqual(try XCTUnwrap(readyProgress), 0.2)
@@ -368,6 +406,27 @@ final class CoverOpeningPhysicsTests: XCTestCase {
   }
 
   @MainActor
+  func testCoverViewDestructionKeepsOutputCreditUntilGPUFence() async throws {
+    let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+    let resources = SceneRenderResources(byteLimit: 4_096, profile: .interactive)
+    let lease = try XCTUnwrap(resources.reserveDerivedBytes(4_096, priority: .input))
+    weak var retiredView: SheetCurlMetalView?
+    autoreleasepool {
+      let view = SheetCurlMetalView(frame: .zero, device: device)
+      view.frameLease = lease
+      retiredView = view
+    }
+    XCTAssertNil(retiredView, "Physical retirement must not retain the unmounted view")
+    XCTAssertFalse(lease.isReleased, "Unmount retains output credit until the ordered GPU fence completes")
+    XCTAssertEqual(resources.reservedBytes, 4_096)
+    for _ in 0..<100 where !lease.isReleased {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    XCTAssertTrue(lease.isReleased)
+    XCTAssertEqual(resources.reservedBytes, 0)
+  }
+
+  @MainActor
   func testUnchangedLayerDisplayDoesNotBorrowAnotherCoverDrawable() async throws {
     let (window, controller) = try coverWindow()
     defer { window.isHidden = true }
@@ -382,15 +441,29 @@ final class CoverOpeningPhysicsTests: XCTestCase {
       try await Task.sleep(for: .milliseconds(10))
     }
     XCTAssertGreaterThan(controller.submittedCurlFrameCount, 0)
-    let curl = try XCTUnwrap(controller.view.subviews.compactMap { $0 as? MTKView }.first)
+    let curl = try XCTUnwrap(controller.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
     let warmFrames = controller.submittedCurlFrameCount
     // The document page installing beside this cover flushes the layer tree.
     // No new cover pixels, geometry or progress were requested by its owner.
     for _ in 0..<5 { curl.draw() }
     XCTAssertEqual(controller.submittedCurlFrameCount, warmFrames)
+    var nextFrame: SheetCurlMetalView.FrameTiming?
+    curl.onFrameMeasured = { if nextFrame == nil { nextFrame = $0 } }
+    defer { curl.onFrameMeasured = nil }
     update(0.35)
+    let demandReturned = CACurrentMediaTime()
     curl.draw()
+    // MainActor has not yielded to the finite acquisition's delivery. Repeated
+    // display callbacks share this pending request and cannot publish inline.
+    for _ in 0..<5 { curl.draw() }
+    XCTAssertEqual(controller.submittedCurlFrameCount, warmFrames)
+    for _ in 0..<100 where controller.submittedCurlFrameCount == warmFrames || nextFrame == nil {
+      try await Task.sleep(for: .milliseconds(10))
+    }
     XCTAssertEqual(controller.submittedCurlFrameCount, warmFrames + 1)
+    let acquisition = try XCTUnwrap(try XCTUnwrap(nextFrame).drawableAcquisition)
+    XCTAssertLessThanOrEqual(acquisition.requested, demandReturned,
+      "The accepted pose starts its one drawable request before returning, without waiting for MTK display")
     for _ in 0..<5 { curl.draw() }
     XCTAssertEqual(controller.submittedCurlFrameCount, warmFrames + 1)
     XCTAssertEqual(controller.capturedCoverCount, 1)

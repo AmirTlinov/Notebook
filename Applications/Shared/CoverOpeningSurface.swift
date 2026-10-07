@@ -536,6 +536,7 @@ struct CoverSnapshotState<Frame> {
 
     private func renderCurrentState() {
       guard let curlLayout = layoutSurfaces() else { return }
+      prepareCoverProgramIfNeeded()
       if CoverOpeningPhysics.isClosed(lifecycle.progress) {
         discardEphemeralMaterial()
         lifecycle.settleAtClosedEndpoint(
@@ -621,6 +622,23 @@ struct CoverSnapshotState<Frame> {
       curlView.isHidden = true
       guard preparesCoverMotion, !hasLivePrograms, canPrepare() else { return }
       if lifecycle.needsCurrentSnapshot { requestMaterial() }
+    }
+
+    private func prepareCoverProgramIfNeeded() {
+      guard let ownerID = materialOwnerID, let revision = lifecycle.revision,
+        let window = view.window, !window.isHidden,
+        preparesCoverMotion, canPrepare() else { return }
+      var ancestor: UIView? = view
+      while let node = ancestor {
+        guard !node.isHidden, node.alpha > 0.001 else { return }
+        ancestor = node.superview
+      }
+      // This is the mounted owner's body-free capability demand. An initially
+      // open cover still takes its current material only after closing begins.
+      // Recheck the source after the live preparation permission callback.
+      guard materialOwnerID == ownerID, lifecycle.revision == revision,
+        preparesCoverMotion, view.window === window, !window.isHidden else { return }
+      SheetCurlGPU.shared.requestCoverPreparation()
     }
 
     private var needsMaterialNow: Bool {

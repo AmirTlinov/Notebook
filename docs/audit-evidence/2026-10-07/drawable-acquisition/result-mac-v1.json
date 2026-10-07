@@ -1,0 +1,16 @@
+{
+  "format": 1,
+  "baseCommit": "c65487712b619f4bafe737867803f1c0a00a05a9",
+  "sourceSha256": "0024515282232dd5447c236dd3347b5c9e8f175340457bc0b8e7b236b7732558",
+  "sourceCount": 1709,
+  "sourceUnchangedAfterExecution": true,
+  "mac": {
+    "result": "Passed",
+    "passedTests": 1,
+    "failedTests": 0,
+    "skippedTests": 0,
+    "runtimeWarnings": []
+  },
+  "selector": "NotebookMacTests/InkMaterialCanvasTests/testNativeMaterialKeepsItsBuffersAcrossCameraAndStopsWhenDetached",
+  "wrapperExitCode": 0
+}

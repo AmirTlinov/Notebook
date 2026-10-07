@@ -1,0 +1,171 @@
+{
+  "format": 1,
+  "slice": "NB18",
+  "baseCommit": "d237749e34892f1688502428807ce54ddff00751",
+  "finalSource": {
+    "sha256": "505d1660249f7e8ebf1022787e84c0eedb943b7a144a172de08d506033c6bcc8",
+    "count": 1710
+  },
+  "status": "focused-native-passed-installation-pending",
+  "changes": [
+    "One shared finite off-main physical drawable acquisition for cover and ink; cancellation drains before credit return; no implicit MTK drawable acquisition.",
+    "Cover acquisition starts from accepted demand; mounted permitted cover prepares the existing body-free CI capability before a closing gesture.",
+    "100k contact suppression includes changed mask IDs and clipped indexed geometry damage; only one affected tile is accepted.",
+    "Cover deinit retains output credit through physical acquisition and GPU fence without creating a weak self during deinit."
+  ],
+  "runs": {
+    "v2": {
+      "physicalIpad": {
+        "passed": 11,
+        "failed": 1
+      },
+      "mac": "not-run"
+    },
+    "v3": {
+      "physicalIpad": {
+        "passed": 4,
+        "failed": 1
+      },
+      "mac": "not-run"
+    },
+    "macV1": {
+      "passed": 1,
+      "failed": 0
+    },
+    "v4": {
+      "physicalIpad": {
+        "passed": 6,
+        "failed": 0
+      }
+    }
+  },
+  "scope": "Separate focused runs; not one 13-test run on the final whole-source signature. V2 unchanged ink/request/page mechanisms remain byte-identical; v4 rechecks cover, affected gesture and100k suppression after GUI528 Core iterator integration. MacV1 proves the unchanged native canvas mechanism.",
+  "coreIteratorEvidence": "../selection-pose/linear-values.json",
+  "coldSubmissionMilliseconds": {
+    "v2": 127.84650002140552,
+    "v3": 134.77595831500366,
+    "v4": 31.471
+  },
+  "v4MaterialMilliseconds": 15.893,
+  "v4DrawableWaitMilliseconds": 2.14,
+  "sourceUnchangedDuringEveryRun": true,
+  "allPhysicalTestBundlesRemoved": true,
+  "independentReview": "cover/cancellation/drain owners accepted; final early-capability guards and no early image/drawable work accepted",
+  "fullAcceptance": "pending system frame/CPU/GPU/memory traces, ten repetitions and30min joint work",
+  "files": [
+    {
+      "path": "Applications/Shared/CoverOpeningSurface.swift",
+      "sha256": "8390406d560e34ca8ca0570572656163ec9095a0d2eb8c9b9a2a256691ccd82b",
+      "unchangedFromV2": false
+    },
+    {
+      "path": "Applications/Shared/InkCanvasView.swift",
+      "sha256": "98f334f6a85b9089eda2cba1858d318737f56cbb15d210a450136269ddd3a466",
+      "unchangedFromV2": true
+    },
+    {
+      "path": "Applications/Shared/SheetCurlRenderer.swift",
+      "sha256": "d02b9b979b2fec06d3684890706a21f8b6ecb4416a5b440b338d13de0078f755",
+      "unchangedFromV2": false
+    },
+    {
+      "path": "Applications/Shared/SpatialInkMesh.swift",
+      "sha256": "85f87945cc6f6ec6559ba2b01bf51653dc700acc158f8457c65a55c823f7129b",
+      "unchangedFromV2": true
+    },
+    {
+      "path": "Applications/Shared/SceneMetalDrawableRequest.swift",
+      "sha256": "2cf52ebaf8b28fec4f0cd7f0eb72a890227dd1be298e8c34fd5c53222e6fd62c",
+      "unchangedFromV2": true
+    },
+    {
+      "path": "Applications/Shared/InkCanvasDrawableAcquisition.swift",
+      "sha256": "4526e43a465c36a90f4a42857107f132f326ccbc228aa609cdfd480e5ccbed11",
+      "unchangedFromV2": true
+    },
+    {
+      "path": "Applications/Tests/CoverOpeningPhysicsTests.swift",
+      "sha256": "6a32ccff3914ff6fb8791ab3e634033c1274533ddf73502940b30c47ae16a4e7",
+      "unchangedFromV2": false
+    },
+    {
+      "path": "Applications/Tests/SpatialInkInputBudgetTests.swift",
+      "sha256": "183220a86e2d9f78209e4d7f68f53a90ec263677ac85c29ea1a2507c5ab1e178",
+      "unchangedFromV2": true
+    },
+    {
+      "path": "Applications/Tests/SpatialInkTerminalStopTests.swift",
+      "sha256": "444d157e675d1f63a014ececf8bf924e333ed74f1777011f7f67ba7a4bc72a62",
+      "unchangedFromV2": true
+    },
+    {
+      "path": "Applications/Tests/SpatialInkTilePoolTests.swift",
+      "sha256": "5a45ca6253e9b44e31f5805bc9c6306f54ae9a15ddc70787316a1ae202da9c0d",
+      "unchangedFromV2": true
+    }
+  ],
+  "selectedRoutes": {
+    "v2": [
+      "NotebookTests/SpatialInkTilePoolTests/testExhaustedDrawablePoolKeepsInputResponsiveAndRetainsCancelledCreditUntilDrain",
+      "NotebookTests/SpatialInkTilePoolTests/testNearFullRotationReusesPoolsAndKeepsRetinaPixelsAcrossTenPresentations",
+      "NotebookTests/SpatialInkTilePoolTests/testGrowthCancellationAndRetainedPresentationReceiptsDoNotKeepRetiredPools",
+      "NotebookTests/SpatialInkTilePoolTests/testWholeContactSuppressionBorrowsIndexedChunksWithoutRebuildingOneHundredThousandActions",
+      "NotebookTests/SpatialInkTerminalStopTests/testStoppedCanvasReleasesItsSourceAndMeshWhileItsNativeLeaseRemainsRetained",
+      "NotebookTests/SpatialInkInputBudgetTests/testColdDenseRetinaBoardRendersAndPersistsItsFirstPencilContactUnderSharedRasterPressure",
+      "NotebookTests/CoverOpeningPhysicsTests/testClosingFromAnInitiallyOpenPageKeepsAnOpaqueCover",
+      "NotebookTests/CoverOpeningPhysicsTests/testUnchangedLayerDisplayDoesNotBorrowAnotherCoverDrawable",
+      "NotebookTests/CoverOpeningPhysicsTests/testDetachedCoverKeepsLatestDemandWithoutSubmittingDrawables",
+      "NotebookTests/NotebookPageCurlInteractionTests/testCancellationAtPagePublicationDiscardsScheduledPixelsAndStopsUpdates",
+      "NotebookMacTests/InkMaterialCanvasTests/testNativeMaterialKeepsItsBuffersAcrossCameraAndStopsWhenDetached",
+      "NotebookUITests/DrawingResponsivenessTests/testDocumentClosesWithPinchAndReopensByDoubleTap",
+      "NotebookTests/CoverOpeningPhysicsTests/testCoverViewDestructionKeepsOutputCreditUntilGPUFence"
+    ],
+    "v3": [
+      "NotebookTests/CoverOpeningPhysicsTests/testClosingFromAnInitiallyOpenPageKeepsAnOpaqueCover",
+      "NotebookTests/CoverOpeningPhysicsTests/testUnchangedLayerDisplayDoesNotBorrowAnotherCoverDrawable",
+      "NotebookTests/CoverOpeningPhysicsTests/testDetachedCoverKeepsLatestDemandWithoutSubmittingDrawables",
+      "NotebookTests/CoverOpeningPhysicsTests/testCoverViewDestructionKeepsOutputCreditUntilGPUFence",
+      "NotebookUITests/DrawingResponsivenessTests/testDocumentClosesWithPinchAndReopensByDoubleTap",
+      "NotebookMacTests/InkMaterialCanvasTests/testNativeMaterialKeepsItsBuffersAcrossCameraAndStopsWhenDetached"
+    ],
+    "v4": [
+      "NotebookTests/CoverOpeningPhysicsTests/testClosingFromAnInitiallyOpenPageKeepsAnOpaqueCover",
+      "NotebookTests/CoverOpeningPhysicsTests/testUnchangedLayerDisplayDoesNotBorrowAnotherCoverDrawable",
+      "NotebookTests/CoverOpeningPhysicsTests/testDetachedCoverKeepsLatestDemandWithoutSubmittingDrawables",
+      "NotebookTests/CoverOpeningPhysicsTests/testCoverViewDestructionKeepsOutputCreditUntilGPUFence",
+      "NotebookUITests/DrawingResponsivenessTests/testDocumentClosesWithPinchAndReopensByDoubleTap",
+      "NotebookTests/SpatialInkTilePoolTests/testWholeContactSuppressionBorrowsIndexedChunksWithoutRebuildingOneHundredThousandActions"
+    ],
+    "macV1": [
+      "NotebookMacTests/InkMaterialCanvasTests/testNativeMaterialKeepsItsBuffersAcrossCameraAndStopsWhenDetached"
+    ]
+  },
+  "initialRejectedRun": {
+    "sourceCount": 1703,
+    "physicalIpad": {
+      "passed": 4,
+      "failed": 7
+    },
+    "causes": [
+      "Cover deinit weak-self crash",
+      "Suppression-only changed-ID invalidation omitted hidden contacts",
+      "Three fixture expectations: header cursor, mounted-window state and durable baseline receipt"
+    ],
+    "rawEvidence": ".build/nb18-drawable-acquisition-20261007/native-v1-execution",
+    "sourceSha256": "48e6332cc58924c80a3d6deb2d533d20c06412b77bbb86ecde41a3e7871c08b1"
+  },
+  "v4RelativeToV2ProductionScopes": {
+    "unchangedFiles": [
+      "Applications/Shared/InkCanvasView.swift",
+      "Applications/Shared/SpatialInkMesh.swift",
+      "Applications/Shared/SceneMetalDrawableRequest.swift",
+      "Applications/Shared/InkCanvasDrawableAcquisition.swift"
+    ],
+    "changedCover": "SheetCurlRenderer cover request starts earlier; page clock/drain/publication code unchanged. CoverOpeningSurface arms existing CI capability; no source/material preparation changes.",
+    "changedCore": "InkActionMap.Values iterator was accepted under GUI528; v4 additionally checks100k indexed suppression, current rendering and one affected tile."
+  },
+  "curatedClockProofs": {
+    "cold-cover-v3.txt": "0c2b00e30a5e9e323d54c563fcd0a875592c859e65aa90e44e956335b8ff993d",
+    "cold-cover-v4.txt": "518705f90dd7324d9373ddd6c74df9d51d650ce96f7082ee6daafa5ed7d75e46"
+  }
+}

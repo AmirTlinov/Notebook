@@ -21,12 +21,16 @@ final class SpatialInkTerminalStopTests: XCTestCase {
     XCTAssertTrue(acceptedSource.actions.contains { $0.id == action.id })
     let vertices = canvas.committedSourceNodeCount
     XCTAssertGreaterThan(vertices, 0)
-    XCTAssertGreaterThan(canvas.spatialDrawableAccountedBytes, 0)
+    let buffers = canvas.residentCommittedBufferBytes
+    let drawableBytes = canvas.spatialDrawableAccountedBytes
+    XCTAssertGreaterThan(drawableBytes, 0)
 
     // Ordinary handoff is not a terminal release, even after accepted input.
-    fixture.parkAndRemount()
+    try fixture.parkAndRemount()
     XCTAssertTrue(fixture.mount.inkView === canvas)
     XCTAssertEqual(canvas.committedSourceNodeCount, vertices)
+    XCTAssertEqual(canvas.residentCommittedBufferBytes, buffers)
+    XCTAssertEqual(canvas.spatialDrawableAccountedBytes, drawableBytes)
     XCTAssertEqual(try canvas.installedSpatialSource?.referenceInk(), acceptedSource)
     try await Self.waitUntil { canvas.isStableFramePresented }
     XCTAssertEqual(try Self.inkPixels(fixture.mount), acceptedPixels)
@@ -49,7 +53,9 @@ final class SpatialInkTerminalStopTests: XCTestCase {
     try pending.install()
     XCTAssertFalse(transactionCommitted)
     XCTAssertEqual(canvas.committedSourceNodeCount, vertices)
-    XCTAssertEqual(try canvas.installedSpatialSource?.referenceInk(), acceptedSource)
+    let durableSource = try NotebookReferenceInk(surface: acceptedSource.surface, actions: acceptedSource.actions,
+      baselineActionIDs: Set(durable.actions.map(\.id)))
+    XCTAssertEqual(try canvas.installedSpatialSource?.referenceInk(), durableSource)
     await fixture.stop()
     XCTAssertTrue(transactionCommitted, "Terminal release waits for the already submitted native transaction")
 
@@ -168,13 +174,10 @@ final class SpatialInkTerminalStopTests: XCTestCase {
         onCommit: { [weak self] tool, color, spans, _ in self?.accept(tool: tool, color: color, spans: spans) })
     }
 
-    func parkAndRemount() {
-      let canvas = mount.inkView
+    func parkAndRemount() throws {
+      let canvas = try XCTUnwrap(mount.inkView)
       coordinator?.uninstall()
-      XCTAssertNotNil(canvas?.window)
-      XCTAssertFalse(canvas?.window === window)
-      XCTAssertEqual(canvas?.window?.canBecomeKey, false, "A parked renderer cannot own system input")
-      XCTAssertEqual(canvas?.window?.accessibilityElementsHidden, true, "A prepared surface is not another human window")
+      XCTAssertNil(canvas.window, "An unmounted retained canvas keeps its backing without a hidden window")
       update()
     }
 

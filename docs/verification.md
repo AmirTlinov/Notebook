@@ -28,7 +28,7 @@ checkpoint; новое изображение определяется её со
 [Readback](audit-evidence/2026-10-07/panel-observation/installation.json).
 Чат удерживает MCP258 и отклоняет259; свежая панель Codex и полная физическая
 приёмка остаются открытыми. Исправления перемещения/подготовки/меню GUI-524/525/527
-включены в эту подписанную пару. NB18 asynchronous drawable ещё проверяется отдельно.
+включены в эту подписанную пару. NB18 проверен отдельно и пока вне установленной пары.
 
 В исходниках уточнено сообщение `runtime_update_required`: более новый runtime
 требует переподключения `@Notebook`, остальные несовпадения — согласованной пары.
@@ -36,6 +36,28 @@ checkpoint; новое изображение определяется её со
 **1 isolated MCP regression + TypeScript PASS**, исходники неизменны,
 независимое ревью принято. Изменение пока вне installed259.
 [Проверка диагностики](audit-evidence/2026-10-07/panel-observation/reconnect-message.json).
+
+NB18 прошёл отдельные прицельные native-проверки; срез ещё не установлен.
+Один finite off-main request обслуживает ink и cover. Отмена сохраняет credit
+до физического drain; source/layout проверяются перед публикацией, multi-tile
+install остаётся атомарным. Mounted cover заранее готовит существующую CI capability;
+материал захватывается после жеста, предварительных снимков и drawable submissions нет.
+
+Final source `505d1660…`/1710, база `d237749e`: **6 physical iPad PASS**, 0 skips/runtime
+warnings. Это четыре cover regression, pinch close/reopen и 100 000 контактов
+с одним affected tile pass. Первый cold-closing GPU submission: **31,471 мс**
+при прежнем пороге 100 мс; material **15,893 мс**, drawable wait **2,140 мс**.
+Это submission clock. Отдельный Mac canvas scenario: **1 PASS**, source `00245152…`.
+Прежние ink/page/request проверки имеют собственные неизменённые byte scopes.
+Сводка не обозначает единый прогон всех сценариев на final source.
+
+V2: **11 PASS / 1 FAIL**, cold close 127,847 мс; V3: **4 PASS / 1 FAIL**, 134,776 мс.
+Последний trace локализовал 125,052 мс в позднем ожидании общей CI capability,
+а не в получении drawable. Предыдущие отказы сохранены. Каждый прогон завершён,
+исходники до/после совпадают; physical test bundles удалены, независимое ревью принято.
+[Scopes и результаты](audit-evidence/2026-10-07/drawable-acquisition/results.json).
+Системные frame/CPU/GPU/memory traces, десять повторов и 30 минут совместной работы
+остаются полной приёмкой. NB19 pressure policy и device-tier memory budget открыты.
 
 В 258 native painter и ответ панели используют один захват страницы вместо трёх.
 На совпадающих source/camera/coverage/bytes страницы 1→2→3→2 отвечают

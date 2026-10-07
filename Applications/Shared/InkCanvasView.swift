@@ -454,6 +454,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
   var spatialDrawableByteCeiling: Int { spatialTarget?.tiles.reduce(0) { $0 + $1.drawableByteCeiling } ?? 0 }
   var spatialTilePoolIDs: [ObjectIdentifier] { spatialTarget?.tiles.map(ObjectIdentifier.init) ?? [] }
   private var physicalAdmission: ScenePhysicalOwnerLease?
+  private let drawableAcquisition = InkCanvasDrawableAcquisition()
   private var submittedFrameCount = 0
   private var submittedPresentationCount = 0
   private var frameDrainWaiters: [CheckedContinuation<Void, Never>] = []
@@ -1022,6 +1023,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
 
   isolated deinit {
     if let pageReclamationOwner { resources.unregisterReclamationOwner(pageReclamationOwner) }
+    drawableAcquisition.cancel()
     pageMeshTask?.cancel()
     pipelinePreparation?.cancel()
     pageDisplayLink?.invalidate()
@@ -1060,6 +1062,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     defer {publishAcceptedMaterialReadiness()}
     recordPageInkObservation("ink_mount_changed")
     guard window != nil else {
+      drawableAcquisition.cancel()
       pendingTransaction = nil
       abandonOrderedCuts()
       // UIKit can retain a culled canvas beyond the end of its visible use.
@@ -1258,11 +1261,12 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     #endif
     CATransaction.commit()
     beginStableContentUpdate()
-    guard submittedFrameCount > 0 || submittedPresentationCount > 0 else { return nil }
+    drawableAcquisition.whenDrained { [weak self] in self?.resumeSpatialDrainIfReady() }
+    guard submittedFrameCount > 0 || submittedPresentationCount > 0 || drawableAcquisition.isPending else { return nil }
     // Submitted work already retains its exact reservations. Keep this owner
     // alive until that existing GPU boundary releases them; do not uncharge early.
     return Task { @MainActor [self] in
-      if submittedFrameCount > 0 || submittedPresentationCount > 0 {
+      if submittedFrameCount > 0 || submittedPresentationCount > 0 || drawableAcquisition.isPending {
         await withCheckedContinuation { frameDrainWaiters.append($0) }
       }
     }
@@ -1270,7 +1274,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
 
   private func admitPageDrawable(samples: Int) -> Bool {
     defer {publishAcceptedMaterialReadiness()}
-    guard pageRenderRegion != nil, spatialDrawableScale == nil else { return true }
+    guard spatialDrawableScale == nil else { return true }
     // Changing a native frame can request drawing before projectPage installs
     // its nonzero drawable size. This intermediate layout is not an allocation.
     guard drawableSize.width > 0, drawableSize.height > 0 else { return false }
@@ -1297,6 +1301,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     guard samples == 1 || attachment != nil else {
       renderFailure = .resourceLimit; return false
     }
+    (layer as? CAMetalLayer)?.maximumDrawableCount = Self.pageDrawableCount
     pageDrawableReservation = reservation; pageMultisample = attachment
     pageAdmittedSize = drawableSize
     pageDrawableAllocationCount += 1
@@ -1348,12 +1353,14 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
   func finishSpatialHandoffFrames() async {
     abandonOrderedCuts()
     spatialHandoffIsStopping = true
+    drawableAcquisition.cancel()
+    drawableAcquisition.whenDrained { [weak self] in self?.resumeSpatialDrainIfReady() }
     publishAcceptedMaterialReadiness()
     orderedPreparationID=UUID();orderedPreparation?.cancel();orderedPreparation=nil
     cancelSpatialStaging()
     retirePageDisplayLink()
     isPaused = true
-    if submittedFrameCount > 0 || submittedPresentationCount > 0 {
+    if submittedFrameCount > 0 || submittedPresentationCount > 0 || drawableAcquisition.isPending {
       await withCheckedContinuation { frameDrainWaiters.append($0) }
     }
     releaseDrawables()
@@ -1944,6 +1951,37 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
   }
   #endif
 
+  private func takeLiveDrawables(indices: [Int]) -> [any CAMetalDrawable]? {
+    let target = spatialTarget
+    guard let output = target?.tiles.first?.layer ?? (layer as? CAMetalLayer) else { return nil }
+    let cut = InkCanvasDrawableAcquisition.Cut(source: spatialSourceGeneration, content: stableContentRevision,
+      preparation: orderedPreparationID, staging: nil,
+      target: target.map(ObjectIdentifier.init) ?? ObjectIdentifier(output),
+      size: target?.layout.pixelSize ?? drawableSize, indices: indices)
+    let result = drawableAcquisition.poll(cut, pools: target.map { target in
+      indices.map { index in
+        let tile = target.tiles[index]
+        return .init(layer: tile.layer, reservation: tile.bytes, owner: tile, byteCeiling: tile.drawableByteCeiling)
+      }
+    } ?? [.init(layer: output, reservation: pageDrawableReservation, owner: physicalAdmission)]) { [weak self] failed in
+      guard let self else { return }
+      self.resumeSpatialDrainIfReady()
+      guard !self.spatialHandoffIsStopping, self.window != nil, self.spatialStagingID == nil else { return }
+      if failed {
+        self.renderFailure = .snapshotPending("ink_drawable")
+        self.failPendingOrderedCut(self.renderFailure!)
+        self.pauseFrameLoop()
+      } else { self.requestFrame() }
+    }
+    switch result {
+    case .ready(let values): return values
+    case .pending: pauseFrameLoop(); return nil
+    case .failed:
+      renderFailure = .snapshotPending("ink_drawable")
+      failPendingOrderedCut(renderFailure!); pauseFrameLoop(); return nil
+    }
+  }
+
   private func renderFrame(pageDrawable: (any CAMetalDrawable)? = nil,
     contactTiming: InkContactFrameTiming? = nil, contactUIObservation: InkContactFrameObservation.UIUpdate? = nil) {
     let renderBegan = onContactFrameResolved == nil ? nil : (contactTiming?.renderBegan ?? CACurrentMediaTime())
@@ -1978,7 +2016,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     }
     // Page crops and retained scene canvases own their MSAA attachment.
     // Apple GPUs keep it in tile memory; do not allocate another implicit copy.
-    sampleCount = spatialDrawableScale == nil && pageRenderRegion == nil ? samples : 1
+    sampleCount = 1
     // A crop can supersede a drawable already queued by the system. Validate
     // it before the retained pass uses it as resolve/blit scratch, and leave
     // the pending ordered cut untouched for the next matching drawable.
@@ -1988,6 +2026,31 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
         pageDrawable.texture.height == Int(drawableSize.height) else {
           continuesPageFrames = true; return
         }
+    }
+    let acquired: [Int: any CAMetalDrawable]
+    if pageDrawable != nil { acquired = [:] }
+    else {
+      let indices: [Int]
+      if let target = spatialTarget {
+        // Tile signatures include the latest measured/predicted contact. Build
+        // its CPU tail before choosing pools; upload only after a flight grant.
+        _ = updateActiveMesh()
+        guard let visible = prepareCommittedBuffers() else { renderFailure = .resourceLimit; return }
+        preparePaintDirectory(visible); prepareTileDirectory(visible)
+        let previous = drawnTiles?.target == ObjectIdentifier(target) ? drawnTiles?.tiles : nil
+        indices = target.tiles.indices.filter { index in
+          if needsRevealedFrame || pendingOrderedCut != nil { return true }
+          guard let previous, index < previous.count else { return true }
+          let clip = target.logicalRect(index)
+          return previous[index].signature != tileSignature(tile: target.tiles[index], clip: clip)
+            || (previous[index].presented == false && clip.intersects(exposedCanvasRect))
+        }
+      } else { indices = [0] }
+      if indices.isEmpty { drawableAcquisition.cancel(); acquired = [:] }
+      else {
+        guard let values = takeLiveDrawables(indices: indices) else { return }
+        acquired = Dictionary(uniqueKeysWithValues: zip(indices, values))
+      }
     }
     guard takeFrameSlotIfAvailable() else {
       continuesPageFrames = true; return
@@ -2113,7 +2176,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
         }
         tileStates.append(.init(signature: signature, submission: submission))
         submittedTiles.append(index)
-        guard let drawable = tile.layer.nextDrawable(),
+        guard let drawable = acquired[index],
           drawable.texture.allocatedSize <= tile.drawableByteCeiling
         else {
           renderFailure = .resourceLimit; return
@@ -2147,12 +2210,11 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       pass.colorAttachments[0].storeAction = pageMultisample == nil ? .store : .multisampleResolve
       passes.append((pass, drawable, nil, nil, visible,nil))
     } else {
-      guard let pass = currentRenderPassDescriptor, let drawable = currentDrawable else { return }
-      if let pageMultisample {
-        pass.colorAttachments[0].texture = pageMultisample
-        pass.colorAttachments[0].resolveTexture = drawable.texture
-        pass.colorAttachments[0].storeAction = .multisampleResolve
-      }
+      guard let drawable = acquired[0] else { return }
+      let pass = MTLRenderPassDescriptor()
+      pass.colorAttachments[0].texture = pageMultisample ?? drawable.texture
+      pass.colorAttachments[0].resolveTexture = pageMultisample == nil ? nil : drawable.texture
+      pass.colorAttachments[0].storeAction = pageMultisample == nil ? .store : .multisampleResolve
       passes.append((pass, drawable, nil, nil, visible,nil))
     }
     lastRenderedTileCount = passes.count
@@ -2566,7 +2628,8 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     return box.insetBy(dx:-2,dy:-2)
   }
   private func invalidateOrderedPaint(from old:NotebookOrderedInkPlan,to new:NotebookOrderedInkPlan,ids:Set<UUID>?) {
-    let changed=ids ?? Set(old.bodies.map(\.sourceID)).union(new.bodies.map(\.sourceID))
+    let changed=(ids ?? Set(old.bodies.map(\.sourceID)).union(new.bodies.map(\.sourceID)))
+      .union(old.suppressedInkIDs.symmetricDifference(new.suppressedInkIDs))
     var box=CGRect.null
     for id in changed {
       for body in [old.body(sourceID:id),new.body(sourceID:id)].compactMap({$0}) {
@@ -2580,7 +2643,12 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     box=box.union(paintBounds(of:raw))
     if installedSpatialSource != nil {
       let ranges=changed.flatMap{(spatialActionRanges[$0] ?? [])+(spatialTailRanges[$0] ?? [])}
-      box=box.union(paintBounds(of:Set(ranges.map(\.batch))))
+      for range in ranges where committedBatches.indices.contains(range.batch) {
+        let batch=committedBatches[range.batch]
+        var transform=batch.mesh.projection.transform(camera:spatialCamera,viewport:spatialViewport)
+        if spatialCamera == nil,let crop=pageRenderRegion {transform.z -= Float(crop.minX);transform.w -= Float(crop.minY)}
+        box=box.union(InkAffine(transform).bounds(batch.mesh.bounds(of:range.chunks)))
+      }
     }
     invalidateAcceptedPaint(in:box.insetBy(dx:-2,dy:-2))
   }
@@ -2896,6 +2964,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
   private func cancelSpatialStaging(id: UUID? = nil) {
     guard let current = spatialStagingID, id == nil || current == id else { return }
     spatialStagingID = nil
+    drawableAcquisition.cancel()
     stagedSpatialFrame?.revoke()
     stagedSpatialFrame = nil
     publishAcceptedMaterialReadiness()
@@ -3055,7 +3124,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     guard !spatialHandoffIsStopping,!pageBackingIsReclaimed,spatialActionBase == nil,
       activeInkStroke == nil,activeEraserStroke == nil,spatialStagingID == nil,
       let commandQueue else { throw CancellationError() }
-    let id=UUID(),oldRequest=orderedPreparationID;spatialStagingID=id;pauseFrameLoop()
+    let id=UUID(),oldRequest=orderedPreparationID;spatialStagingID=id;drawableAcquisition.cancel();pauseFrameLoop()
     publishAcceptedMaterialReadiness()
     var succeeded=false
     defer { if !succeeded { cancelSpatialStaging(id:id) } }
@@ -3087,6 +3156,11 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       guard let device else {throw SceneRenderError.resourceLimit}
       geometry=try await InkOrderedGeometry(candidatePlan,reusing:orderedGeometry,device:device,resources:resources,owner:physicalAdmission)
     }
+    try Task.checkCancellation()
+    guard spatialStagingID == id, orderedPreparationID == oldRequest,
+      spatialSourceGeneration == oldSource, stableContentRevision == oldProjection,
+      !spatialHandoffIsStopping, spatialActionBase == nil,
+      activeInkStroke == nil, activeEraserStroke == nil else { throw CancellationError() }
     let visible:[(Int,Range<Int>)]
     visible=try prepareBuffers(in:&batches,camera:camera,viewport:viewport,size:layout.size,
       pixelScale:Float(layout.displayScale),rasterSize:layout.pixelSize,region:layout.region)
@@ -3097,9 +3171,27 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     else {
       if let installed=spatialTarget,installed.layout == layout {target=installed}
       else {target=try makeSpatialTarget(layout:layout,samples:samples)}
-      for (index,tile) in target!.tiles.enumerated() {
-        guard let drawable=tile.layer.nextDrawable(),drawable.texture.allocatedSize<=tile.drawableByteCeiling else {throw SceneRenderError.resourceLimit}
-        passes.append((spatialRenderPass(target:tile,drawable:drawable),drawable,target!.viewport(index),target!.logicalRect(index)))
+      let candidate = target!
+      let cut = InkCanvasDrawableAcquisition.Cut(source: oldSource, content: oldProjection,
+        preparation: oldRequest, staging: id, target: ObjectIdentifier(candidate),
+        size: layout.pixelSize, indices: Array(candidate.tiles.indices))
+      defer { resumeSpatialDrainIfReady() }
+      let drawables = try await drawableAcquisition.acquire(cut, pools: candidate.tiles.map {
+        .init(layer: $0.layer, reservation: $0.bytes, owner: $0, byteCeiling: $0.drawableByteCeiling)
+      }, isCurrent: {
+        self.spatialStagingID == id && self.orderedPreparationID == oldRequest
+          && self.spatialSourceGeneration == oldSource && self.stableContentRevision == oldProjection
+          && !self.spatialHandoffIsStopping && self.spatialActionBase == nil
+          && self.activeInkStroke == nil && self.activeEraserStroke == nil
+      })
+      try Task.checkCancellation()
+      guard spatialStagingID == id, orderedPreparationID == oldRequest,
+        spatialSourceGeneration == oldSource, stableContentRevision == oldProjection,
+        !spatialHandoffIsStopping, spatialActionBase == nil,
+        activeInkStroke == nil, activeEraserStroke == nil else { throw CancellationError() }
+      for (index, drawable) in drawables.enumerated() {
+        passes.append((spatialRenderPass(target:candidate.tiles[index],drawable:drawable),drawable,
+          candidate.viewport(index),candidate.logicalRect(index)))
       }
     }
     let result=PreparedFrame(id:id,canvas:self,requestGeneration:oldRequest,batches:batches,visible:visible,replacesMesh:replacesMesh,
@@ -3270,7 +3362,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     for waiter in waiters {waiter.resume()}
   }
   private func resumeSpatialDrainIfReady() {
-    if submittedFrameCount == 0, submittedPresentationCount == 0 {
+    if submittedFrameCount == 0, submittedPresentationCount == 0, !drawableAcquisition.isPending {
       let waiters = frameDrainWaiters; frameDrainWaiters.removeAll()
       for waiter in waiters { waiter.resume() }
     }
@@ -3278,6 +3370,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
 
   private func beginStableContentUpdate() {
     cancelSpatialStaging()
+    drawableAcquisition.cancel()
     // A content revision is not a visibility edge. In particular lift may
     // install the accepted stroke after its first drawable was scheduled but
     // before the OS showed it. That drawable still owns the transactional
@@ -3696,9 +3789,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     releaseActiveBuffers()
   }
 
-  private func prepareActiveBuffer(
-    in slot: Int
-  ) -> (buffer: any MTLBuffer, operation: RenderOperation)? {
+  private func updateActiveMesh() -> RenderOperation? {
     let identity: ObjectIdentifier
     let revision: UInt64
     let measured: InkSampleRelations.Contact
@@ -3753,8 +3844,11 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       builtActiveIdentity = identity
       builtActiveRevision = revision
     }
-    guard !activeMesh.nodes.isEmpty else { return nil }
+    return operation
+  }
 
+  private func prepareActiveBuffer(in slot: Int) -> (buffer: any MTLBuffer, operation: RenderOperation)? {
+    guard let operation = updateActiveMesh(), !activeMesh.nodes.isEmpty else { return nil }
     let requiredLength = activeMesh.nodes.count * MemoryLayout<Node>.stride
     if requiredLength > activeBufferCapacities[slot] {
       let capacity = max(4096, nextPowerOfTwo(requiredLength))

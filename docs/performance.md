@@ -156,6 +156,16 @@ as described under the current-page lifecycle below.
 Unmount/reclamation releases canvas backing; submitted work and external leases
 keep their exact resources charged until GPU completion/release.
 
+Spatial canvases and cover curl share `SceneMetalDrawableRequest` with page curl.
+Each physical renderer keeps one finite acquisition; cancelled requests drain
+before replacement. The canvas batches selected live tile pools, updates
+the current contact geometry before choosing them, and uploads into a granted
+flight slot. Private preparation validates source, layout and staging again
+after acquisition. Cancelled pool borrows release on MainActor before terminal
+drain; submitted resources remain charged through their existing GPU fence.
+Suppression changes invalidate the addressed contact's chunk bounds, including
+contacts sharing one prepared part; neighboring history is not traversed.
+
 Ordered selection poses replace only their addressed plan and prepared-body
 search paths. The existing spatial index retains immutable bounds, painter and
 ID roots; each move updates those roots together. Local queries stay bounded

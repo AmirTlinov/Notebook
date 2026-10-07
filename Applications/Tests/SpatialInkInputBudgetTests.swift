@@ -408,6 +408,9 @@ final class SpatialInkInputBudgetTests: XCTestCase {
     XCTAssertTrue(saved, model.persistenceFailure ?? "")
     let durable = try await model.performStoreCommand { try $0.readSpatialInk(surfaces: [.board(boardID)]) }
     XCTAssertEqual(durable.actions.first { $0.id == action.id }, action)
+    // The native writer advances its durable header; a canonical successor
+    // needs the bounded scene read that installs the matching bodies and cut.
+    await model.reloadExternalChanges()?.value
 
     // The protected input allowance cannot strand the old dense picture.
     // First reconcile the committed stroke, then change a real raster source.

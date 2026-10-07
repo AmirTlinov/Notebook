@@ -1,0 +1,19 @@
+{
+  "format": 1,
+  "baseCommit": "d237749e34892f1688502428807ce54ddff00751",
+  "sourceSha256": "505d1660249f7e8ebf1022787e84c0eedb943b7a144a172de08d506033c6bcc8",
+  "sourceCount": 1710,
+  "sourceUnchangedAfterExecution": true,
+  "ipad": {
+    "result": "Passed",
+    "passedTests": 6,
+    "failedTests": 0,
+    "skippedTests": 0,
+    "runtimeWarnings": []
+  },
+  "cleanup": {
+    "ipad-native-test-cleanup-after": 0,
+    "ipad-ui-runner-cleanup-after": 0
+  },
+  "wrapperExitCode": 0
+}

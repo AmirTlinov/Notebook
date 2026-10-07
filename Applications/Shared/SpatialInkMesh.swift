@@ -148,6 +148,33 @@ struct SpatialInkMesh: Sendable {
       while low+1 < high { let mid=(low+high)/2;if starts[mid] <= id { low=mid } else { high=mid } }
       return parts[low].prepare((id-starts[low])..<(selection.upperBound-starts[low]))
     }
+    /// Damage follows the addressed contact's parts, even when one batch
+    /// contains many offscreen contacts. It never decodes their measurements.
+    func bounds(of selection: Range<Int>) -> CGRect {
+      guard !selection.isEmpty else { return .null }
+      precondition(selection.lowerBound >= 0 && selection.upperBound <= chunkCount)
+      var low = 0, high = parts.count
+      while low + 1 < high {
+        let mid = (low + high) / 2
+        if starts[mid] <= selection.lowerBound { low = mid } else { high = mid }
+      }
+      var result = CGRect.null, index = low
+      while index < parts.count, starts[index] < selection.upperBound {
+        let part = parts[index]
+        switch part.storage {
+        case .prepared(_, let descriptors, _):
+          let start = starts[index]
+          let range = (max(selection.lowerBound, start)-start)..<(min(selection.upperBound, start+part.chunkCount)-start)
+          for descriptor in descriptors[range] { result = result.union(descriptor.bounds) }
+        case .relative:
+          // A relative part belongs to one action; its retained source bounds
+          // cover that action without materializing its virtual chunks.
+          result = result.union(part.bounds)
+        }
+        index += 1
+      }
+      return result
+    }
   }
   struct ActionRange:Sendable { let batch:Int;let chunks:Range<Int> }
   let batches: [Batch]

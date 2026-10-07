@@ -1,0 +1,20 @@
+{
+  "programWasReady": "true",
+  "millisecondsFromClosing": {
+    "acquisitionDrained": 19.255,
+    "acquisitionMainActorDelivery": 19.372,
+    "closing": 0.0,
+    "drawableRequested": 16.954,
+    "drawableTaken": 19.526,
+    "encodingBegan": 19.533,
+    "gpuBegan": 33.148,
+    "gpuEnded": 40.408,
+    "materialBegan": 0.537,
+    "materialReady": 16.43,
+    "nextDrawableBegan": 17.075,
+    "nextDrawableReturned": 19.215,
+    "scheduled": 33.842,
+    "submitted": 31.471,
+    "workerBegan": 16.998
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "format": 1,
+  "baseCommit": "c65487712b619f4bafe737867803f1c0a00a05a9",
+  "sourceSha256": "0024515282232dd5447c236dd3347b5c9e8f175340457bc0b8e7b236b7732558",
+  "sourceCount": 1709,
+  "sourceUnchangedAfterExecution": true,
+  "ipad": {
+    "passedTests": 4,
+    "failedTests": 1,
+    "skippedTests": 0,
+    "runtimeWarnings": [],
+    "testFailures": [
+      {
+        "failureText": "XCTAssertLessThanOrEqual failed: (\"134.77595831500366\") is greater than (\"100.0\") - First cold-closing GPU submission includes foreground capture, not OS presentation or photons",
+        "targetName": "NotebookTests",
+        "testIdentifier": 1,
+        "testIdentifierString": "CoverOpeningPhysicsTests/testClosingFromAnInitiallyOpenPageKeepsAnOpaqueCover()",
+        "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/CoverOpeningPhysicsTests/testClosingFromAnInitiallyOpenPageKeepsAnOpaqueCover",
+        "testName": "testClosingFromAnInitiallyOpenPageKeepsAnOpaqueCover()"
+      }
+    ]
+  },
+  "mac": "not-run-after-ipad-failure",
+  "cleanup": {
+    "ipad-native-test-cleanup-after": 0,
+    "ipad-ui-runner-cleanup-after": 0
+  }
+}

@@ -7,6 +7,61 @@ import XCTest
 
 @MainActor
 final class SpatialInkTilePoolTests: XCTestCase {
+  func testExhaustedDrawablePoolKeepsInputResponsiveAndRetainsCancelledCreditUntilDrain() async throws {
+    let resources = SceneRenderResources()
+    let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+    let layer = CAMetalLayer()
+    layer.device = device; layer.pixelFormat = .bgra8Unorm
+    layer.drawableSize = .init(width: 64, height: 64)
+    layer.maximumDrawableCount = 2
+    var grant = try XCTUnwrap(resources.reserveDerivedBytes(64 * 1024, priority: .input)) as RasterReservation?
+    weak var retainedGrant = grant
+    var held: [any CAMetalDrawable] = []
+    // Exhaust the actual driver pool. The helper's autorelease pool drains
+    // each acquisition; only these two deliberate consumers retain drawables.
+    for _ in 0..<2 {
+      let request = SceneMetalDrawableRequest(layer: layer, reservation: grant, measured: false)
+      await withCheckedContinuation { continuation in request.start { continuation.resume() } }
+      held.append(try XCTUnwrap(request.take()).drawable)
+    }
+    let owner = InkCanvasDrawableAcquisition(), preparation = UUID()
+    var poolsBuilt = 0, completions = 0
+    func pools() -> [SceneMetalDrawableRequest.Pool] {
+      poolsBuilt += 1
+      return [.init(layer: layer, reservation: retainedGrant)]
+    }
+    func cut(_ revision: UInt64) -> InkCanvasDrawableAcquisition.Cut {
+      .init(source: revision, content: revision, preparation: preparation, staging: nil,
+        target: ObjectIdentifier(layer), size: layer.drawableSize, indices: [0])
+    }
+    let inputBegan = ContinuousClock.now
+    if case .pending = owner.poll(cut(1), pools: pools(), completed: { _ in completions += 1 }) {}
+    else { XCTFail("An exhausted pool must suspend acquisition") }
+    XCTAssertLessThan(ContinuousClock.now - inputBegan, .milliseconds(100),
+      "Starting a drawable demand must return control to accepted input immediately")
+    grant = nil
+    XCTAssertNotNil(retainedGrant)
+    XCTAssertEqual(resources.reservedBytes, 64 * 1024)
+    // Replacing navigation/source twenty times cannot add blocked workers or
+    // retire the original pool grant while its real nextDrawable is pending.
+    for revision in 2...21 {
+      if case .pending = owner.poll(cut(UInt64(revision)), pools: pools(), completed: { _ in completions += 1 }) {}
+      else { XCTFail("A replacement cannot overtake the physical pool drain") }
+    }
+    XCTAssertEqual(poolsBuilt, 1)
+    XCTAssertTrue(owner.isPending)
+    owner.cancel()
+    held.removeAll()
+    let drained = expectation(description: "Cancelled physical acquisition drained")
+    owner.whenDrained { drained.fulfill() }
+    await fulfillment(of: [drained], timeout: 2)
+    await Task.yield()
+    XCTAssertFalse(owner.isPending)
+    XCTAssertEqual(completions, 1)
+    XCTAssertNil(retainedGrant)
+    XCTAssertEqual(resources.reservedBytes, 0)
+  }
+
   private func waitForInkPresentation(_ canvas:InkCanvasView) async throws {
     let deadline=ContinuousClock.now + .seconds(1)
     while !canvas.isStableFramePresented,ContinuousClock.now<deadline {try await Task.sleep(for:.milliseconds(5))}
@@ -34,6 +89,7 @@ final class SpatialInkTilePoolTests: XCTestCase {
     XCTAssertEqual(canvas.installedSpatialSource?.suppressedInkIDs,[first.id])
     let secondPlan=NotebookOrderedInkPlan(suppressedInkIDs:[first.id,neighbor.id])
     let second=try await canvas.prepareOrderedPlan(secondPlan)
+    let acceptedPasses=canvas.spatialAcceptedPassCount
     let suppressionBegan=ContinuousClock.now
     try await canvas.presentOrderedPlan(second,plan:secondPlan)
     // Transaction completion releases the candidate; it is not the OS's
@@ -43,6 +99,8 @@ final class SpatialInkTilePoolTests: XCTestCase {
       guard canvas.isStableFramePresented else { return false }
       return try self.blackPixels(canvas) == 0
     }
+    XCTAssertEqual(canvas.spatialAcceptedPassCount-acceptedPasses,1,
+      "The neighbor's one physical tile changes; 100k contacts sharing its prepared part do not expand the damage")
     XCTAssertEqual(canvas.spatialMeshInstallCount,installs)
     XCTAssertEqual(canvas.preparedCommittedPointCount,built)
     let neighborReturned=try await canvas.prepareOrderedPlan(firstPlan)
@@ -397,7 +455,9 @@ final class SpatialInkTilePoolTests: XCTestCase {
     let window: UIWindow, host = Host(), canvas: InkCanvasView
     private var retention: SpatialInkCanvasRetention?
     private weak var oldKeyWindow: UIWindow?
-    var reference: NotebookReferenceInk { get throws { try .init(surface: surface, actions: journal.actions) } }
+    var reference: NotebookReferenceInk { get throws {
+      try .init(surface: surface, actions: journal.actions, baselineActionIDs: Set(journal.actions.map(\.id)))
+    } }
 
     static func make(samples: [SpatialInkSample]? = nil,camera: SpatialCamera = .init(scale:1),extraContacts:Int = 0) async throws -> Fixture {
       let fixture = try Fixture(samples:samples,extraContacts:extraContacts)
@@ -430,10 +490,13 @@ final class SpatialInkTilePoolTests: XCTestCase {
       if extraContacts>0 {
         var actions=drawing.actions
         for index in 0..<extraContacts {
-          let visible=index<2,eraser=index == 1
+          // Keep visible and hidden pens in one prepared part. Addressed
+          // suppression must not expand their damage to the whole history.
+          let visible=index == 0,eraser=index == extraContacts-1
           let samples:[SpatialInkSample]=(0..<2).map { point in
             let world:WorldPoint = eraser ? .init(x:-150,y:Double(point)*40-20)
-              : .init(x:visible ? -180+Double(point)*60 : 10_000+Double(index%100),y:visible ? 80 : 10_000+Double(index/100))
+              : .init(x:visible ? -180+Double(point)*60 : -WorldPoint.tileSize/2+Double(index%100),
+                y:visible ? 80 : WorldPoint.tileSize/2+Double(index/100))
             return .init(point:.zero,worldPoint:world,timeOffset:Double(point)/240,
               width:eraser ? 20 : 12,opacity:1,force:1,azimuth:0,altitude:1)
           }
