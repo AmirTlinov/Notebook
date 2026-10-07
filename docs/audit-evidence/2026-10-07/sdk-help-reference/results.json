@@ -1,0 +1,211 @@
+{
+  "format": 1,
+  "recordedAtUTC": "2026-10-07T11:22:16.803790+00:00",
+  "sourceRoot": "/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook",
+  "baseCommit": "ed4e5fc108b806bf8181155a849560f661a050d9",
+  "sourceFreeze": {
+    "Sources/NotebookScriptHost/NotebookScriptReads.swift": "de4cf5be55d2b850f33e697e0336b0bd2962c85e7b7a4279a38cb3b5300bd42c",
+    "Tests/NotebookScriptHostTests/NotebookScriptHelpTests.swift": "f31796c610c55ea5f0b462fd87d38fd76c277d7468d9e22ab24798c6e83e2747",
+    "Sources/NotebookScriptHost/Resources/sdk-reference.json": "6ccabeab5938be84de95676423245455f1d9f9016f828af04680bfe778ef2bc0"
+  },
+  "scope": "isolated SwiftPM Debug HelpTests and one canonical TypeScript resource provenance check; no Xcode, native app, device, live IPC, installation, versions, commit or push",
+  "versions": {
+    "swift": "Apple Swift6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1)",
+    "swiftTesting": "2084",
+    "node": "v24.14.1",
+    "tsx": "v4.23.12"
+  },
+  "runs": [
+    {
+      "phase": "before-measurement",
+      "cwd": "/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook",
+      "argv": [
+        "swift",
+        "test",
+        "--disable-xctest",
+        "--filter",
+        "NotebookScriptHelpTests/repeatedCoordinatorHelpPreservesTheBundledResponseAndMeasuresDecodeCost",
+        "--event-stream-output-path",
+        ".build/sdk-help-reference/before-events.jsonl",
+        "--event-stream-version",
+        "6.4"
+      ],
+      "exitCode": 0,
+      "tests": 1,
+      "passed": 1
+    },
+    {
+      "phase": "after-measurement",
+      "cwd": "/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook",
+      "argv": [
+        "swift",
+        "test",
+        "--disable-xctest",
+        "--filter",
+        "NotebookScriptHelpTests/repeatedCoordinatorHelpPreservesTheBundledResponseAndMeasuresDecodeCost",
+        "--event-stream-output-path",
+        ".build/sdk-help-reference/after-measurement-events.jsonl",
+        "--event-stream-version",
+        "6.4"
+      ],
+      "exitCode": 0,
+      "tests": 1,
+      "passed": 1
+    },
+    {
+      "phase": "old-oracles",
+      "cwd": "/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook",
+      "argv": [
+        "swift",
+        "test",
+        "--disable-xctest",
+        "--skip-build",
+        "--filter",
+        "NotebookScriptHelpTests",
+        "--event-stream-output-path",
+        ".build/sdk-help-reference/selected-events.jsonl",
+        "--event-stream-version",
+        "6.4"
+      ],
+      "exitCode": 1,
+      "tests": 3,
+      "passed": 1,
+      "failed": 2,
+      "cause": [
+        "stale operationCount22 vs canonical20",
+        "removed interactive.block vs canonical files/example"
+      ]
+    },
+    {
+      "phase": "oracle-compile-repair",
+      "cwd": "/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook",
+      "argv": [
+        "swift",
+        "test",
+        "--disable-xctest",
+        "--filter",
+        "NotebookScriptHelpTests",
+        "--event-stream-output-path",
+        ".build/sdk-help-reference/selected-v2-events.jsonl",
+        "--event-stream-version",
+        "6.4"
+      ],
+      "exitCode": 1,
+      "testsExecuted": 0,
+      "cause": "test optional chaining typo; repaired before final run"
+    },
+    {
+      "phase": "final-swift",
+      "cwd": "/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook",
+      "argv": [
+        "swift",
+        "test",
+        "--disable-xctest",
+        "--filter",
+        "NotebookScriptHelpTests",
+        "--event-stream-output-path",
+        ".build/sdk-help-reference/selected-v3-events.jsonl",
+        "--event-stream-version",
+        "6.4"
+      ],
+      "exitCode": 0,
+      "tests": 3,
+      "passed": 3,
+      "failed": 0
+    },
+    {
+      "phase": "canonical-reference",
+      "cwd": "/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/MCP",
+      "argv": [
+        "./node_modules/.bin/tsx",
+        "--test",
+        "--test-name-pattern=^public SDK help covers every method, all 20 operations, native content and all old capabilities$",
+        "test/script-protocol.test.ts"
+      ],
+      "exitCode": 0,
+      "tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0
+    }
+  ],
+  "measurement": {
+    "before": {
+      "fixture": "bundled_reference_real_coordinator",
+      "fullReadDecodeMS": [
+        186.222417,
+        185.174625,
+        184.789666
+      ],
+      "helpRetrievalMS": [
+        186.181291,
+        185.007792,
+        184.167708,
+        182.780042,
+        181.25675
+      ],
+      "referencePayloadBytes": 4240554,
+      "replyBytes": 4921,
+      "sourceBytes": 1827285,
+      "medianFullReadDecodeMS": 185.174625,
+      "medianHelpRetrievalMS": 184.167708
+    },
+    "after": {
+      "fixture": "bundled_reference_real_coordinator",
+      "fullReadDecodeMS": [
+        184.045916,
+        182.482625,
+        182.258834
+      ],
+      "helpRetrievalMS": [
+        182.666917,
+        0.005917,
+        0.001291,
+        0.001042,
+        0.000917
+      ],
+      "referencePayloadBytes": 4240554,
+      "replyBytes": 4921,
+      "sourceBytes": 1827285,
+      "medianFullReadDecodeMS": 182.482625,
+      "medianHelpRetrievalMS": 0.001291,
+      "medianWarmHelpMS": 0.0011665
+    },
+    "scope": "isolated SwiftPM Debug; real Coordinator help; no live IPC or installed runtime measurements"
+  },
+  "memoryMeaning": "referencePayloadBytes4240554 is JSONValue semantic retention estimate, not process RSS or heap measurement",
+  "evidence": {
+    "before.stdout.log": "1f00a44f0e3492bcd8d20059d1eabf0c45ef99913084c44425342fb02f768990",
+    "before.stderr.log": "faf9e576efb044de40f95830cbeacd373cdceb826209060cf31b7d2633ee23d7",
+    "before-events.jsonl": "44ee49b29a667bfdd9ce03ac0e9a798d338891d08107e928b431f12b1763267f",
+    "after-measurement.stdout.log": "aef2b6db8cd825439247634ba32c17f84f70e5d1c329f55232e2c32506a459aa",
+    "after-measurement.stderr.log": "e53a9c28b47c9c35f66b506a637b3ed88b42095496380fec4bda60f636332b9f",
+    "after-measurement-events.jsonl": "a7f13e34c423be20d74767664e2ee266fe0b865f92ad7af184fbc445dd10cf82",
+    "selected.stdout.log": "f9f78852e3ce5e200d669cc191966a54574f315d67b3fa066e7bd902379dee6d",
+    "selected.stderr.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "selected-events.jsonl": "f55a06c4dc857161806fec1cb09cad3a12b0628ff716814de84c4aa7bce384e1",
+    "selected-v2.stdout.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "selected-v2.stderr.log": "2fd0efb2252524f86be2eab7b77413bb61f26e04222e02935393822e491e7466",
+    "selected-v3.stdout.log": "b4daa8d530faae775c3f5e25e7bbf65844fd724ed88ce0bcca552f604781322f",
+    "selected-v3.stderr.log": "f3e595dedee698cbe8ac07ff6029db28b059dfc96e28744888710c85491ab8e1",
+    "selected-v3-events.jsonl": "9ca7f716ae8b2c7c320f655cda62fe3447a6eedc94fc74b52f8d3da446048e6a",
+    "reference.stdout.log": "0b911874496f26c1c42de91f1176be8f34748888ac459960be787822014b98eb",
+    "reference.stderr.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "measurements.json": "38a93cab44279a3e53894569d77476f27fd7fa2438fcc10390180217bcc37f89"
+  },
+  "publishedLogs": [
+    "before.stdout.log",
+    "after-measurement.stdout.log",
+    "selected.stdout.log",
+    "selected-v2.stderr.log",
+    "selected-v3.stdout.log",
+    "reference.stdout.log"
+  ],
+  "publishedLogNormalization": [],
+  "review": {
+    "reviewer": "panel_page_reads",
+    "result": "accepted",
+    "scope": "Production, final oracle changes, final logs and source hashes; no live measurements."
+  },
+  "installed": "Not included in installed pair256; next coordinated release."
+}

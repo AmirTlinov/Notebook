@@ -26,19 +26,24 @@ final class NotebookCommandReaderTests: XCTestCase {
     XCTAssertEqual(captured.target, target); XCTAssertEqual(captured.projection.workspaceID, header.workspaceID)
     XCTAssertEqual(queue.acceptedMutationGeneration, generation,
       "The actual immutable request cut never accepts a mutation")
+    let pixels = try await SceneRasterCompositor.create(size: .init(width: 8, height: 8), scale: 1,
+      resources: SceneRenderResources(byteLimit: 1_048_576, profile: .headless))
+    try await pixels.drawBoardGrid(camera: .init(center: .zero, scale: 1), size: .init(width: 8, height: 8),
+      in: .init(x: 0, y: 0, width: 8, height: 8))
+    let lease = try await pixels.finishRaster(for: .document(id: UUID(), token: "panel_read_refusal"))
+    defer { lease.release() }
+    let layer = try await NotebookPanelRasterLayer.completed(id: "refused-cohort", order: 0,
+      worldOrigin: .zero, frame: .init(x: 0, y: 0, width: 8, height: 8), raster: lease, knownAssets: [])
     do {
       _ = try await model.readCommandCut { cut in
         _ = try cut.readPanel(request, actor: actor)
-        // Actual transport admission raises the same renderer error as a
-        // completed panel which cannot fit its finite response body.
+        // Actual transport admission refuses a completed material cohort
+        // while its encoded pixels remain owned by the existing raster pool.
         var raster = NotebookPanelRasterSet()
-        try raster.append(.init(id: "refused-body", order: 0, worldOrigin: .zero,
-          frame: .init(x: 0, y: 0, width: 1, height: 1), assetID: UUID(),
-          png: Data(count: 9*1_048_576+1), elementID: nil, itemID: nil,
-          subjectFrame: nil, repeatSize: nil, pixelWidth: 1, pixelHeight: 1))
+        for order in 0..<97 { try raster.append(layer.withOrder(order)) }
         return 0
       }
-      XCTFail("The real panel response budget was bypassed")
+      XCTFail("The real panel material cohort limit was bypassed")
     } catch let error as SceneRenderError { XCTAssertEqual(error, .resourceLimit) }
     XCTAssertNil(queue.failure); XCTAssertNil(model.persistenceFailure)
     XCTAssertEqual(queue.pendingCount, 0); XCTAssertEqual(queue.admittedOperationCount, 0)

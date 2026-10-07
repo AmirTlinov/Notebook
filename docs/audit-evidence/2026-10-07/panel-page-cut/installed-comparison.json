@@ -1,0 +1,101 @@
+{
+  "date": "2026-10-07",
+  "scope": "Read-only installed admitted MCP presentation; matched single page passes, not host input-to-pixel or p95",
+  "files": [
+    {
+      "path": "page-read-257-pre258-idle.json",
+      "sha256": "2c4cdda063b75c431286c328aed693fca492520083372a1aa8ec0abeebee7843",
+      "at": "2026-10-07T14:14:55.697Z"
+    },
+    {
+      "path": "page-read-258-postinstall-idle.json",
+      "sha256": "9a22cd075765a39d36702d7438ff699514c384b74693fb2443da6a4184002ec0",
+      "at": "2026-10-07T14:16:44.493Z"
+    },
+    {
+      "path": "page-read-258-warm-idle.json",
+      "sha256": "06e48b937675bed563aed3c2a419e886c6827450e148b90cd80b9ff86aada3b9",
+      "at": "2026-10-07T14:17:23.461Z"
+    }
+  ],
+  "matchedFields": [
+    "pageIndex",
+    "sourceRevision",
+    "camera",
+    "coverage",
+    "bytes",
+    "layers",
+    "encodedChars"
+  ],
+  "pages": [
+    {
+      "page": 1,
+      "beforeMS": 698.693125,
+      "afterMS": 434.02091700000165,
+      "warmAfterMS": 447.00858300000004,
+      "sourceRevision": "d6e78c4c3c487b4f7678c278fb99d8593214b4e833297902934b37f3ae51b565",
+      "responseBytes": 1059910
+    },
+    {
+      "page": 2,
+      "beforeMS": 601.6793339999999,
+      "afterMS": 446.3414589999993,
+      "warmAfterMS": 338.58912499999997,
+      "sourceRevision": "76b8aac5c1e5e714e05cdbdb029bbd4e6d515b44fd9f1cb1a9275f30eef4ad3e",
+      "responseBytes": 2472832
+    },
+    {
+      "page": 3,
+      "beforeMS": 581.3269170000003,
+      "afterMS": 121.35804199999984,
+      "warmAfterMS": 128.2523749999998,
+      "sourceRevision": "02f68040f5035627b3d1f3602ba7bd05ed1d798d0ce6320d33abb56195e5f0bd",
+      "responseBytes": 340037
+    },
+    {
+      "page": 2,
+      "beforeMS": 562.55825,
+      "afterMS": 197.80216699999983,
+      "warmAfterMS": 221.89908300000002,
+      "sourceRevision": "76b8aac5c1e5e714e05cdbdb029bbd4e6d515b44fd9f1cb1a9275f30eef4ad3e",
+      "responseBytes": 2472832
+    }
+  ],
+  "board": {
+    "sourceRevision": "289366ff8d2b8d85f6f4466916998e5fd5e0d855e3efb122ddde13c4c74f6895",
+    "scope": "Current board quality/hit check. Its source revision differs from the earlier 257 board probe; timings are not a matched performance comparison.",
+    "samples": [
+      {
+        "label": "initial-approx-ui",
+        "ms": 543.5689169999999,
+        "cards": 9,
+        "cardFrames": 9,
+        "layers": 14,
+        "responseBytes": 1225927,
+        "pixelDensity": 0.2503486750348675,
+        "diagnostics": []
+      },
+      {
+        "label": "zoom-three-approx-ui",
+        "ms": 515.0828750000001,
+        "cards": 9,
+        "cardFrames": 9,
+        "layers": 13,
+        "responseBytes": 4020945,
+        "pixelDensity": 0.5,
+        "diagnostics": []
+      },
+      {
+        "label": "back-approx-ui",
+        "ms": 505.15658299999996,
+        "cards": 9,
+        "cardFrames": 9,
+        "layers": 14,
+        "responseBytes": 1225927,
+        "pixelDensity": 0.2503486750348675,
+        "diagnostics": []
+      }
+    ]
+  },
+  "physicalAcceptance": false
+}

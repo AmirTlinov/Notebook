@@ -1,18 +1,23 @@
 #!/usr/bin/env python3
 """Execute release guards and an isolated AppKit lifecycle, never live content or a device."""
 import contextlib
+import ctypes
+import errno
 import io
 import json
 import os
 from pathlib import Path
 import plistlib
 import shutil
+import signal
 import socket
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
+from types import SimpleNamespace
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[2]
@@ -21,6 +26,8 @@ import notebook_release as release
 import notebook_verification as verify
 import typesetter_fixture
 import typescript_fixture
+import codex_fixture
+from test_codex import CodexPackagingTests
 from cli_fixture import FakeCLI
 from test_typesetter import TypesetterPackagingTests
 from test_runtime_lifecycle import RuntimeLifecycleTests
@@ -33,6 +40,8 @@ class PairCLI(FakeCLI):
     def __init__(self, source, verification):
         super().__init__(source)
         self.verification = verification
+        self.codex_runtime = release.notebook_codex.admitted_runtime("arm64", self.source / "Applications/NotebookCodexRuntime.lock.json")
+        self.codex_files = codex_fixture.payload()
         self.mac = None
         self.mac_info = {"CFBundleIdentifier": release.MAC_BUNDLE, "LSUIElement": True,
             "NotebookPluginRuntime": True, "CFBundleName": "NotebookRuntime",
@@ -57,6 +66,8 @@ class PairCLI(FakeCLI):
         self.package_fail = False
         self.mutate_packaged_runtime = False
         self.codex_prepare_fail = False
+        self.changed_codex_helper = False
+        self.forged_codex_report = False
         self.xpc_rights = {"com.apple.security.app-sandbox": True}
         self.missing_xpc = False
         self.missing_tex = False
@@ -82,8 +93,20 @@ class PairCLI(FakeCLI):
         elif label == "codex-resources":
             snapshot = Path(cwd)
             assert argv == [sys.executable, "-B", str(snapshot / "Applications/prepare_notebook_codex.py"),
-                            "--stage", str(self.source / ".build/notebook-codex-runtime")]
+                            "--prepare", "--stage-root", str(self.source / ".build/notebook-codex-runtimes")]
             exit_code = 1 if self.codex_prepare_fail else 0
+            if not exit_code:
+                stage = self.source / ".build/notebook-codex-runtimes" / release.notebook_codex.identity(self.codex_runtime)["manifestSHA256"]
+                if not stage.exists(): codex_fixture.stage(stage, self.codex_runtime, self.codex_files)
+                report = codex_fixture.report(stage, self.codex_runtime)
+                if self.forged_codex_report: report["identity"]["manifestSHA256"] = "0" * 64
+                output = json.dumps(report).encode()
+        elif label == "codex-runtime-check":
+            assert argv[:4] == [sys.executable, "-B", str(Path(cwd) / "Applications/prepare_notebook_codex.py"), "--check"]
+            try:
+                output = json.dumps(codex_fixture.report(Path(argv[-1]), self.codex_runtime)).encode()
+            except (OSError, RuntimeError) as failure:
+                exit_code, error = 1, str(failure).encode()
         elif label == "typescript-resources":
             assert "--prepare" in argv and "--stage-root" in argv
             output = json.dumps({"status": "ready", "stage": str(self.source / ".build/fixture-typescript-runtime")}).encode()
@@ -91,7 +114,7 @@ class PairCLI(FakeCLI):
             assert Path(cwd) == self.source
             assert argv == ["node", str(self.source / "MCP/build-surface.mjs"), "--stage", str(self.source / ".build/surface")]
         elif label == "build-mac":
-            assert "NOTEBOOK_CODEX_RUNTIME=" + str(self.source / ".build/notebook-codex-runtime") in argv
+            assert "NOTEBOOK_CODEX_RUNTIME=" + str(self.source / ".build/notebook-codex-runtimes" / release.notebook_codex.identity(self.codex_runtime)["manifestSHA256"]) in argv
             assert "NOTEBOOK_SURFACE_STAGE=" + str(self.source / ".build/surface") in argv
             if self.mac_fail:
                 exit_code = 1
@@ -131,10 +154,10 @@ class PairCLI(FakeCLI):
                     (tools / "dist/index.mjs").write_text("// bundled fixture MCP\n")
                     (tools / "dist/launch-runtime.mjs").write_text("// bundled fixture launcher\n")
                     (tools / "package.json").write_text('{"type":"module"}\n')
-                    node = self.mac / "Contents/Resources/CodexRuntime/node"
-                    node.parent.mkdir()
-                    node.write_bytes(b"fixture bundled node")
-                    node.chmod(0o755)
+                    codex_fixture.stage(self.mac / "Contents/Resources/CodexRuntime", self.codex_runtime, self.codex_files)
+                    if self.changed_codex_helper:
+                        helper = self.mac / "Contents/Resources/CodexRuntime/codex/codex-resources/helper.dat"
+                        helper.write_bytes(b"x" + helper.read_bytes()[1:])
                 if self.mutate_proof:
                     (self.verification / "core.log").write_text("changed proof\n")
                 if self.mutate_ipad:
@@ -284,6 +307,7 @@ class ReleaseTests(unittest.TestCase):
         for key, value in typescript_fixture.inputs(self.source).items():
             type_patch = patch.object(release.notebook_typescript, key, value)
             type_patch.start(); self.addCleanup(type_patch.stop)
+        codex_fixture.source(self.source)
         self.verification = self.root / "verification"
         self.verification.mkdir()
         # This is a selected, fabricated contract for release guard tests.
@@ -355,6 +379,8 @@ class ReleaseTests(unittest.TestCase):
                 self.cli.existing_preview = True
                 receipt = self.build()
                 self.assertEqual(receipt["status"], "verified-build")
+                self.assertEqual(receipt["codexRuntime"], release.notebook_codex.identity(self.cli.codex_runtime))
+                self.assertEqual(receipt["apps"]["mac"]["signature"]["codexRuntime"], receipt["codexRuntime"])
                 self.assertFalse(receipt["installationAttempted"])
                 self.assertEqual(set(receipt["apps"]), {"iPad", "mac"})
                 self.assertEqual(receipt["plugin"], {"path": "plugin", "version": "0.2.0"})
@@ -373,7 +399,7 @@ class ReleaseTests(unittest.TestCase):
                 typesetter = [call for call in self.cli.calls if any(str(arg).endswith("/prepare_notebook_typesetter.py") for arg in call)]
                 self.assertEqual([(argv[argv.index("--platform") + 1], argv[argv.index("--stage") + 1]) for argv in typesetter],
                                  [("iphoneos", expected_stage), ("macosx", expected_stage)])
-                preparation = [call for call in self.cli.calls if any(str(arg).endswith("/prepare_notebook_codex.py") for arg in call)]
+                preparation = [call for call in self.cli.calls if "--prepare" in call and any(str(arg).endswith("/prepare_notebook_codex.py") for arg in call)]
                 self.assertEqual(len(preparation), 1)
                 self.assertLess(self.cli.calls.index(preparation[0]), self.cli.calls.index(builds[1]))
                 packaging = [call for call in self.cli.calls if any(str(arg).endswith("/package-plugin-runtime.mjs") for arg in call)]
@@ -392,6 +418,22 @@ class ReleaseTests(unittest.TestCase):
                 device_calls = [call for call in self.cli.calls if "devicectl" in call]
                 self.assertEqual(len(device_calls), 1)
                 self.assertEqual(device_calls[0][1:5], ["devicectl", "device", "info", "details"])
+
+    def test_changed_codex_helper_refuses_verified_pair_even_with_valid_fixture_signature(self):
+        self.cli.changed_codex_helper = True
+        self.refused("codex-runtime-check")
+
+    def test_forged_preparation_receipt_stops_before_mac_build(self):
+        self.cli.forged_codex_report = True
+        self.refused("Codex runtime contract failed")
+        self.assertIsNone(self.cli.mac)
+
+    def test_portable_only_verification_cannot_claim_native_codex_admission(self):
+        receipt = release.read_json(self.verification / "verification.json")
+        self.assertNotIn("codexRuntime", receipt)
+        receipt["codexRuntime"] = release.notebook_codex.identity(self.cli.codex_runtime)
+        with self.assertRaisesRegex(release.ReleaseError, "did not admit"):
+            verify.validate_selected(self.source, self.verification, receipt)
 
     def test_failed_codex_preparation_stops_before_mac_build_or_verified_pair(self):
         self.cli.codex_prepare_fail = True
@@ -681,6 +723,8 @@ class InstallationCLI(PairCLI):
         self.__dict__.update(built.__dict__)
         self.calls = []
         self.mac = build / "plugin/notebook/runtime/NotebookRuntime.app"
+        self.publication = build.parent / "published-marketplace"
+        self.published_plugin = self.publication / "releases/0.2.0/notebook"
         self.cache = build.parent / "codex-cache/notebook/0.2.0/runtime/NotebookRuntime.app"
         self.preview = {**self.preview, "bundleVersion": "16", "version": "0.3.13"}
         self.existing_preview = True
@@ -690,6 +734,8 @@ class InstallationCLI(PairCLI):
         self.wrong_launcher_args = False
         self.literal_plugin_root = False
         self.previous_runtime = None
+        self.untrusted_previous_runtime = False
+        self.on_plugin_phase = None
         self.on_preinstall = None
         self.on_install = None
         self.storage = {name: self.file(directory=True) for name in
@@ -706,9 +752,16 @@ class InstallationCLI(PairCLI):
         return {"resources": {"isDirectory": directory, "isSymbolicLink": False, "isReadable": True},
                 "metadata": {"size": len(content) if content is not None else size}, "content": content}
 
-    def __call__(self, argv, cwd=None, stdout=None, stderr=None, timeout=None):
+    def __call__(self, argv, cwd=None, stdout=None, stderr=None, timeout=None, pass_fds=()):
+        if pass_fds:
+            assert argv[-2:] == ["--publication-fd", str(pass_fds[0])]
+            assert len(pass_fds) == 1
+            os.fstat(pass_fds[0])
+            argv = argv[:-2]
         label = Path(stdout.name).name.removesuffix(".stdout.log")
         output, exit_code = b"", 0
+        if label in ("publish-plugin", "install-plugin", "installed-plugin") and self.on_plugin_phase:
+            self.on_plugin_phase(label)
         if argv[1:5] == ["devicectl", "device", "info", "files"]:
             assert argv[argv.index("--domain-type") + 1] == "appDataContainer"
             assert argv[argv.index("--domain-identifier") + 1] == release.BUNDLE
@@ -731,8 +784,9 @@ class InstallationCLI(PairCLI):
             if self.on_preinstall:
                 self.on_preinstall()
             return super().__call__(argv, cwd=cwd, stdout=stdout, stderr=stderr, timeout=timeout)
-        elif label == "primary-checkout":
-            output = ("worktree " + str(self.source) + "\0\0").encode()
+        elif label == "plugin-publication-preflight":
+            assert argv == ["/fixture/node", str(self.mac.parents[3] / "source/MCP/install-plugin.mjs"), "preflight"]
+            output = json.dumps({"root": str(self.publication), "plugin": None}).encode()
         elif label == "plugins-before":
             output = json.dumps({"installed": [{"pluginId": "notebook@notebook-local", "version": "0.1.6"}]}).encode()
         elif label == "connected-before":
@@ -740,12 +794,21 @@ class InstallationCLI(PairCLI):
             output = json.dumps({"enabled": True, "transport": {"type": "stdio", "command": previous, "args": []}}).encode()
         elif label == "owners-before-install":
             pass
-        elif label == "package-plugin":
-            assert Path(argv[2]) == self.mac
-            assert Path(argv[3]) == self.source / "MCP/plugin/notebook"
-            shutil.copytree(self.mac, Path(argv[3]) / "runtime/NotebookRuntime.app", symlinks=True)
+        elif label.startswith("installed-runtime-"):
+            assert Path(argv[-1]) == self.previous_runtime
+            if label.endswith("-verify"):
+                assert {"--verify", "--deep", "--strict", "-R"}.issubset(argv)
+                exit_code = 1 if self.untrusted_previous_runtime else 0
+            elif label.endswith("-identity"):
+                output = ("Identifier=" + release.MAC_BUNDLE + "\nTeamIdentifier=" + release.TEAM
+                    + "\nAuthority=Apple Development: Fixture\nCDHash=" + "b" * 40 + "\n").encode()
+        elif label == "publish-plugin":
+            assert Path(argv[1]) == self.mac.parents[3] / "source/MCP/install-plugin.mjs"
+            assert argv[2:] == ["publish", str(self.mac.parents[2])]
+            shutil.copytree(self.mac.parent.parent, self.published_plugin, symlinks=True)
+            output = json.dumps({"root": str(self.publication), "plugin": str(self.published_plugin), "version": "0.2.0"}).encode()
         elif label == "install-plugin":
-            assert argv == ["/fixture/node", str(self.source / "MCP/install-plugin.mjs"), "install"]
+            assert argv == ["/fixture/node", str(self.mac.parents[3] / "source/MCP/install-plugin.mjs"), "install"]
             if self.plugin_fail:
                 exit_code = 1
             else:
@@ -759,6 +822,9 @@ class InstallationCLI(PairCLI):
             output = json.dumps({"enabled": True, "transport": {"type": "stdio",
                 "command": str(runtime / "Contents/Resources/CodexRuntime/node"),
                 "args": [str(runtime / "Contents/Resources/NotebookTools/dist" / ("index.mjs" if self.wrong_launcher_args else "launch-runtime.mjs"))]}}).encode()
+        elif label == "prune-plugin-publications":
+            assert argv == ["/fixture/node", str(self.mac.parents[3] / "source/MCP/install-plugin.mjs"), "prune"]
+            assert len(self.install_calls) == 1, "Old publication stays available until the full pair has installed"
         elif label == "install-ipad":
             result = super().__call__(argv, cwd=cwd, stdout=stdout, stderr=stderr, timeout=timeout)
             if self.on_install:
@@ -789,7 +855,7 @@ class InstallationTests(unittest.TestCase):
         stopped = release.stopped_runtime
         with patch.object(release.shutil, "which", side_effect=lambda name: "/fixture/" + name), \
              patch.object(release, "CANONICAL_MAC", self.root / "legacy/Notebook.app"), \
-             patch.object(release, "stopped_runtime", side_effect=lambda command: stopped(command, self.ipc)):
+             patch.object(release, "stopped_runtime", side_effect=lambda command, approved: stopped(command, approved, self.ipc)):
             return release.install_verified_pair(self.source, self.build_dir, self.evidence, self.cli)
 
     def test_installs_plugin_and_ipad_in_place_and_reads_exact_cached_runtime(self):
@@ -812,6 +878,54 @@ class InstallationTests(unittest.TestCase):
         self.assertEqual(self.cli.install_calls, [])
         self.assertFalse((self.source / "MCP/plugin/notebook/runtime").exists())
         self.assertEqual(release.read_json(self.evidence / "installation.json")["status"], "refused")
+
+    def test_device_preflight_refusal_does_not_request_runtime_shutdown(self):
+        self.cli.device["identifier"] = "foreign-device"
+        with patch.object(release, "stopped_runtime") as handoff:
+            with self.assertRaisesRegex(release.ReleaseError, "не согласованный iPad"):
+                self.install()
+        handoff.assert_not_called()
+        self.assertFalse(self.cli.published_plugin.exists())
+        self.assertEqual(self.cli.install_calls, [])
+
+    def test_installed_cli_runtime_has_its_signature_admitted_before_handoff(self):
+        self.cli.previous_runtime = self.root / "old-cache/NotebookRuntime.app"
+        shutil.copytree(self.cli.mac, self.cli.previous_runtime)
+        receipt = self.install()
+        checks = [call for call in self.cli.calls if call[:1] == ["/usr/bin/codesign"] and call[-1] == str(self.cli.previous_runtime)]
+        self.assertEqual(len(checks), 2)
+        self.assertIn("--verify", checks[0])
+        self.assertIn("--display", checks[1])
+        self.assertEqual(receipt["runtimeShutdown"], [])
+        self.assertEqual(receipt["status"], "installed")
+
+    def test_untrusted_installed_cli_runtime_refuses_before_shutdown_or_publication(self):
+        self.cli.previous_runtime = self.root / "old-cache/NotebookRuntime.app"
+        shutil.copytree(self.cli.mac, self.cli.previous_runtime)
+        self.cli.untrusted_previous_runtime = True
+        with patch.object(release, "stopped_runtime") as handoff:
+            with self.assertRaisesRegex(release.ReleaseError, "installed-runtime-0-verify"):
+                self.install()
+        handoff.assert_not_called()
+        self.assertFalse(self.cli.published_plugin.exists())
+        self.assertEqual(self.cli.install_calls, [])
+
+    def test_writer_lease_remains_held_until_codex_installs_and_admits_its_cache(self):
+        phases, inodes = [], []
+        def check(label):
+            lease = self.ipc / "bridge.sock.owner"
+            inodes.append(lease.stat().st_ino)
+            other = os.open(lease, os.O_RDWR)
+            try:
+                with self.assertRaises(BlockingIOError):
+                    release.fcntl.flock(other, release.fcntl.LOCK_EX | release.fcntl.LOCK_NB)
+            finally:
+                os.close(other)
+            phases.append(label)
+        self.cli.on_plugin_phase = check
+        self.assertEqual(self.install()["status"], "installed")
+        self.assertEqual(phases, ["publish-plugin", "install-plugin", "installed-plugin"])
+        self.assertEqual(len(set(inodes)), 1)
 
     def test_relocated_container_and_checkpointed_wal_preserve_the_workspace(self):
         self.cli.preview.update(appGroupIdentifiers=["group.notebook"],
@@ -858,28 +972,110 @@ class InstallationTests(unittest.TestCase):
         self.assertEqual(self.cli.install_calls, [])
         self.assertFalse(any(call[1:5] == ["devicectl", "device", "copy", "from"] for call in self.cli.calls))
 
-    def test_catalog_change_during_plugin_setup_stops_before_ipad_install(self):
+    def assert_catalog_change_refused(self, phase, change):
         def changed():
             catalog = json.loads(self.cli.storage[self.cli.catalog_path]["content"])
-            catalog["selectedID"] = None
+            change(catalog)
             self.cli.storage[self.cli.catalog_path] = self.cli.file(content=json.dumps(catalog).encode())
-        self.cli.on_preinstall = changed
-        with self.assertRaisesRegex(release.ReleaseError, "изменился во время подготовки"):
+        setattr(self.cli, "on_" + phase, changed)
+        message = "изменился во время подготовки" if phase == "preinstall" else "Каталог или выбранное пространство"
+        with self.assertRaisesRegex(release.ReleaseError, message):
             self.install()
-        self.assertEqual(self.cli.install_calls, [])
-        self.assertEqual(release.read_json(self.evidence / "installation.json")["status"], "incomplete")
+        self.assertEqual(len(self.cli.install_calls), 0 if phase == "preinstall" else 1)
+        receipt = release.read_json(self.evidence / "installation.json")
+        self.assertEqual(receipt["status"], "incomplete")
+        observation = "ipadWorkspacePreinstall" if phase == "preinstall" else "ipadWorkspaceAfter"
+        self.assertNotEqual(receipt["ipadWorkspaceBefore"]["identity"], receipt[observation]["identity"])
+        if phase == "install":
+            self.assertEqual(receipt["step"], "install-ipad")
+
+    def test_catalog_key_order_and_json_formatting_preserve_the_workspace(self):
+        def reordered(value):
+            if isinstance(value, dict):
+                return {key: reordered(item) for key, item in reversed(value.items())}
+            return [reordered(item) for item in value] if isinstance(value, list) else value
+
+        original = json.loads(self.cli.storage[self.cli.catalog_path]["content"])
+        original["entries"][0]["name"] = "Тетрадь"
+        observations = [json.dumps(original, ensure_ascii=False).encode()]
+        self.cli.storage[self.cli.catalog_path] = self.cli.file(content=observations[0])
+
+        def rewrite():
+            value = reordered(json.loads(self.cli.storage[self.cli.catalog_path]["content"]))
+            data = json.dumps(value, ensure_ascii=len(observations) % 2 == 0, indent=len(observations)).encode()
+            observations.append(data)
+            self.cli.storage[self.cli.catalog_path] = self.cli.file(content=data)
+
+        self.cli.on_preinstall = self.cli.on_install = rewrite
+        receipt = self.install()
+        self.assertEqual(receipt["status"], "installed")
+        self.assertEqual(len(self.cli.install_calls), 1)
+        phases = [receipt[key] for key in ("ipadWorkspaceBefore", "ipadWorkspacePreinstall", "ipadWorkspaceAfter")]
+        self.assertTrue(all(phase["identity"] == phases[0]["identity"] for phase in phases))
+        self.assertEqual(len({phase["catalogReadback"]["rawSHA256"] for phase in phases}), 3)
+        for phase, data in zip(phases, observations, strict=True):
+            raw = phase["catalogReadback"]
+            self.assertEqual((self.evidence / raw["file"]).read_bytes(), data)
+            self.assertEqual((raw["rawSHA256"], raw["rawBytes"]), (release.digest(data), len(data)))
+
+    def test_ambiguous_or_nonfinite_catalog_refuses_before_mutation(self):
+        original = self.cli.storage[self.cli.catalog_path]["content"]
+        for index, extra in enumerate((b'"format":1,', b'"invalid":NaN,', b'"invalid":1e999,')):
+            with self.subTest(extra=extra):
+                self.evidence = self.root / ("invalid-catalog-" + str(index))
+                self.cli.storage[self.cli.catalog_path] = self.cli.file(content=b"{" + extra + original[1:])
+                with self.assertRaisesRegex(release.ReleaseError, "JSON"):
+                    self.install()
+                self.assertEqual(self.cli.install_calls, [])
+                self.assertFalse(self.cli.published_plugin.exists())
+                self.assertFalse(self.cli.cache.exists())
+
+    def test_catalog_change_during_plugin_setup_stops_before_ipad_install(self):
+        self.assert_catalog_change_refused("preinstall", lambda value: value.update(selectedID=None))
+
+    def test_catalog_fractional_numbers_are_refused_without_rounding(self):
+        original = self.cli.storage[self.cli.catalog_path]["content"]
+        for index, number in enumerate((b"1e-400", b"0.0", b"9007199254740992.0", b"9007199254740993.0")):
+            with self.subTest(number=number):
+                self.evidence = self.root / ("fractional-catalog-" + str(index))
+                data = b'{"extra":' + number + b"," + original[1:]
+                self.cli.storage[self.cli.catalog_path] = self.cli.file(content=data)
+                with self.assertRaisesRegex(release.ReleaseError, "неподдерживаемое число JSON"):
+                    self.install()
+                self.assertEqual(self.cli.install_calls, [])
+                self.assertFalse(self.cli.published_plugin.exists())
+                self.assertFalse(self.cli.cache.exists())
 
     def test_changed_selected_workspace_cannot_be_claimed_installed_or_retried(self):
-        def changed():
-            catalog = json.loads(self.cli.storage[self.cli.catalog_path]["content"])
-            catalog["selectedID"] = None
-            self.cli.storage[self.cli.catalog_path] = self.cli.file(content=json.dumps(catalog).encode())
-        self.cli.on_install = changed
-        with self.assertRaisesRegex(release.ReleaseError, "Каталог или выбранное пространство"):
-            self.install()
-        self.assertEqual(len(self.cli.install_calls), 1)
-        receipt = release.read_json(self.evidence / "installation.json")
-        self.assertEqual((receipt["status"], receipt["step"]), ("incomplete", "install-ipad"))
+        self.assert_catalog_change_refused("install", lambda value: value.update(selectedID=None))
+
+    def test_catalog_rename_refuses_before_ipad_install(self):
+        self.assert_catalog_change_refused("preinstall", lambda value: value["entries"][0].update(name="Renamed"))
+
+    def test_catalog_rename_cannot_be_claimed_installed(self):
+        self.assert_catalog_change_refused("install", lambda value: value["entries"][0].update(name="Renamed"))
+
+    def test_catalog_entry_change_refuses_before_ipad_install(self):
+        self.assert_catalog_change_refused("preinstall", lambda value: value["entries"].append(
+            {"id": "A1111111-1111-4111-8111-111111111111", "name": "Another"}))
+
+    def test_catalog_entry_change_cannot_be_claimed_installed(self):
+        self.assert_catalog_change_refused("install", lambda value: value["entries"].append(
+            {"id": "A1111111-1111-4111-8111-111111111111", "name": "Another"}))
+
+    def test_catalog_deletion_change_refuses_before_ipad_install(self):
+        self.assert_catalog_change_refused("preinstall", lambda value: value["deleting"].append(
+            "A1111111-1111-4111-8111-111111111111"))
+
+    def test_catalog_deletion_change_cannot_be_claimed_installed(self):
+        self.assert_catalog_change_refused("install", lambda value: value["deleting"].append(
+            "A1111111-1111-4111-8111-111111111111"))
+
+    def test_catalog_array_order_is_preserved(self):
+        value = json.loads(self.cli.storage[self.cli.catalog_path]["content"])
+        value["entries"].append({"id": "A1111111-1111-4111-8111-111111111111", "name": "Another"})
+        self.cli.storage[self.cli.catalog_path] = self.cli.file(content=json.dumps(value).encode())
+        self.assert_catalog_change_refused("preinstall", lambda value: value["entries"].reverse())
 
     def test_lost_catalog_cannot_be_claimed_installed_or_retried(self):
         self.cli.on_install = lambda: self.cli.storage.pop(self.cli.catalog_path)
@@ -926,11 +1122,11 @@ class InstallationTests(unittest.TestCase):
         self.assertEqual(self.cli.install_calls, [])
         self.assertFalse((self.source / "MCP/plugin/notebook/runtime").exists())
 
-    def test_changed_primary_metadata_refuses_before_install(self):
+    def test_changed_authored_metadata_cannot_replace_the_verified_publication(self):
         (self.source / "MCP/plugin/notebook/plugin.json").write_text('{"name":"notebook","version":"9.0.0"}')
-        with self.assertRaisesRegex(release.ReleaseError, "metadata"):
-            self.install()
-        self.assertEqual(self.cli.install_calls, [])
+        receipt = self.install()
+        self.assertEqual(receipt["status"], "installed")
+        self.assertEqual(json.loads((self.cli.published_plugin / "plugin.json").read_text())["version"], "0.2.0")
         self.assertFalse((self.source / "MCP/plugin/notebook/runtime").exists())
 
     def test_newer_cached_runtime_refuses_before_plugin_or_device_mutation(self):
@@ -979,7 +1175,7 @@ class InstallationTests(unittest.TestCase):
             self.install()
         self.assertEqual(self.cli.install_calls, [])
         self.assertEqual(release.read_json(self.evidence / "installation.json")["status"], "incomplete")
-        self.assertTrue((self.source / "MCP/plugin/notebook/runtime/NotebookRuntime.app").is_dir())
+        self.assertTrue((self.cli.published_plugin / "runtime/NotebookRuntime.app").is_dir())
 
     def test_uncertain_ipad_install_is_not_retried_or_claimed_installed(self):
         self.cli.missing_installation_url = True
@@ -990,17 +1186,148 @@ class InstallationTests(unittest.TestCase):
         self.assertEqual((receipt["status"], receipt["step"]), ("incomplete", "install-ipad"))
 
 
+class PluginPublicationOwnershipTests(unittest.TestCase):
+    def test_migration_uses_the_release_lease_and_records_the_adapter_result(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory).resolve()
+            source, publication, evidence = base / "source", base / "publication", base / "evidence"
+            source.mkdir()
+
+            def runner(argv, cwd=None, stdout=None, stderr=None, timeout=None, pass_fds=()):
+                if argv[2] == "location":
+                    self.assertEqual(pass_fds, ())
+                    stdout.write(json.dumps({"root": str(publication)}).encode())
+                else:
+                    self.assertEqual(argv[2], "migrate-source")
+                    self.assertEqual(argv[-2:], ["--publication-fd", str(pass_fds[0])])
+                    os.fstat(pass_fds[0])
+                    with self.assertRaisesRegex(release.ReleaseError, "Другая публикация"):
+                        with release.plugin_publication_lease(publication):
+                            self.fail("Migration must hold the release lease")
+                    stdout.write(json.dumps({"root": str(publication), "cachePreserved": True}).encode())
+                return subprocess.CompletedProcess(argv, 0)
+
+            result = release.migrate_plugin_source(source, evidence, runner)
+            self.assertEqual(result["status"], "migrated")
+            self.assertTrue(result["result"]["cachePreserved"])
+            self.assertEqual(release.read_json(evidence / "source-migration.json"), result)
+
+    def test_exception_releases_the_same_persistent_lease_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve() / "publication"
+            with self.assertRaisesRegex(RuntimeError, "interrupted"):
+                with release.plugin_publication_lease(root) as descriptor:
+                    inode = os.fstat(descriptor).st_ino
+                    with self.assertRaisesRegex(release.ReleaseError, "Другая публикация"):
+                        with release.plugin_publication_lease(root):
+                            self.fail("A second publisher cannot enter")
+                    raise RuntimeError("interrupted")
+            with release.plugin_publication_lease(root) as descriptor:
+                self.assertEqual(os.fstat(descriptor).st_ino, inode)
+
+    def test_inherited_child_retains_lease_after_parent_close_and_kill_releases_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve() / "publication"
+            child = None
+            try:
+                with release.plugin_publication_lease(root) as descriptor:
+                    child = subprocess.Popen([shutil.which("node"), "--input-type=module", "-e",
+                        "import {fstatSync} from 'node:fs'; fstatSync(Number(process.argv[1])); console.log('ready'); process.stdin.resume();",
+                        str(descriptor)],
+                        pass_fds=(descriptor,), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                    self.assertEqual(child.stdout.readline().strip(), "ready")
+                with self.assertRaisesRegex(release.ReleaseError, "Другая публикация"):
+                    with release.plugin_publication_lease(root):
+                        self.fail("The surviving publication child still owns the lease")
+                child.kill()  # This test-created, data-free child only.
+                child.communicate(timeout=5)
+                with release.plugin_publication_lease(root):
+                    self.assertTrue((root / ".publication.owner").is_file())
+            finally:
+                if child is not None:
+                    if child.poll() is None:
+                        child.kill()
+                    child.communicate(timeout=5)
+
+    def test_codex_cli_retains_lease_after_the_adapter_exits(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory).resolve()
+            root, endpoint = base / "publication", base / "ready.sock"
+            cli = base / "codex-fixture"
+            cli.write_text(f"#!{sys.executable}\n"
+                "import json, os, socket\n"
+                "lease = os.fstat(3)\n"
+                "with socket.socket(socket.AF_UNIX) as peer:\n"
+                f"    peer.connect({str(endpoint)!r})\n"
+                "    peer.sendall(json.dumps({'pid': os.getpid(), 'inode': lease.st_ino}).encode())\n"
+                "    peer.recv(1)\n")
+            cli.chmod(0o700)
+            adapter, peer = None, None
+            with socket.socket(socket.AF_UNIX) as listener:
+                listener.bind(str(endpoint)); listener.listen(); listener.settimeout(5)
+                try:
+                    with release.plugin_publication_lease(root) as descriptor:
+                        adapter = subprocess.Popen([shutil.which("node"), ROOT / "MCP/install-plugin.mjs",
+                            "preflight", "--publication-fd", str(descriptor)],
+                            env={**os.environ, "CODEX_BIN": str(cli)}, pass_fds=(descriptor,),
+                            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                        peer, _ = listener.accept(); peer.settimeout(5)
+                        ready = json.loads(peer.recv(1024))
+                        self.assertEqual(ready["inode"], os.fstat(descriptor).st_ino)
+                    adapter.kill()  # Only the adapter spawned by this isolated test.
+                    adapter.communicate(timeout=5)
+                    with self.assertRaisesRegex(release.ReleaseError, "Другая публикация"):
+                        with release.plugin_publication_lease(root):
+                            self.fail("The surviving Codex operation still owns the lease")
+                    peer.sendall(b"x")  # The data-free CLI fixture now completes normally.
+                    self.assertEqual(peer.recv(1), b"")
+                    deadline = time.monotonic() + 2
+                    while True:
+                        try:
+                            with release.plugin_publication_lease(root):
+                                break
+                        except release.ReleaseError:
+                            if time.monotonic() >= deadline:
+                                raise
+                            time.sleep(0.01)
+                finally:
+                    if peer is not None:
+                        peer.close()
+                    if adapter is not None:
+                        if adapter.poll() is None:
+                            adapter.kill()
+                        adapter.communicate(timeout=5)
+
+
 class RuntimeInstallationOwnershipTests(unittest.TestCase):
-    def test_active_runtime_lease_refuses_packaging_until_process_releases_it(self):
+    command = staticmethod(lambda *args, **kwargs: (b"", b""))
+
+    def test_peer_identity_reads_the_kernel_token_of_an_isolated_python_listener(self):
+        with tempfile.TemporaryDirectory(prefix="nb-peer-", dir="/tmp") as directory:
+            endpoint = Path(directory) / "bridge.sock"
+            with socket.socket(socket.AF_UNIX) as server:
+                server.bind(str(endpoint)); server.listen()
+                token = release.runtime_peer(endpoint)
+                identity = release.runtime_process_identity(token)
+                self.assertEqual(identity["pid"], os.getpid())
+                self.assertEqual(identity["uid"], os.geteuid())
+                # Framework Python may exec Python.app rather than sys.executable.
+                expected = subprocess.check_output(["/bin/ps", "-p", str(os.getpid()), "-o", "comm="], text=True).strip()
+                self.assertEqual(identity["executable"], expected)
+                signature = subprocess.run(["/usr/bin/codesign", "--display", "--verbose=4", expected],
+                                           capture_output=True, text=True, check=True)
+                self.assertIn("CDHash=" + identity["cdhash"] + "\n", signature.stderr)
+
+    def test_unknown_runtime_lease_refuses_packaging_and_preserves_its_inode(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "ipc"
-            command = lambda *args, **kwargs: (b"", b"")
-            with release.stopped_runtime(command, root):
-                with self.assertRaisesRegex(release.ReleaseError, "runtime ещё работает"):
-                    with release.stopped_runtime(command, root):
+            with release.stopped_runtime(self.command, root=root):
+                inode = (root / "bridge.sock.owner").stat().st_ino
+                with self.assertRaisesRegex(release.ReleaseError, "Неизвестный владелец"):
+                    with release.stopped_runtime(self.command, root=root):
                         self.fail("Second owner cannot replace its runtime")
-            with release.stopped_runtime(command, root):
-                self.assertTrue((root / "bridge.sock.owner").is_file())
+            with release.stopped_runtime(self.command, root=root):
+                self.assertEqual((root / "bridge.sock.owner").stat().st_ino, inode)
 
     def test_serving_legacy_socket_refuses_install_without_unlinking_it(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1010,7 +1337,7 @@ class RuntimeInstallationOwnershipTests(unittest.TestCase):
             with socket.socket(socket.AF_UNIX) as server:
                 server.bind(str(endpoint)); server.listen()
                 with self.assertRaisesRegex(release.ReleaseError, "обслуживает рабочее пространство"):
-                    with release.stopped_runtime(lambda *args, **kwargs: (b"", b""), root):
+                    with release.stopped_runtime(self.command, root=root):
                         self.fail("Legacy writer must stop first")
                 self.assertTrue(endpoint.is_socket())
 
@@ -1018,8 +1345,142 @@ class RuntimeInstallationOwnershipTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             command = lambda *args, **kwargs: (("42 " + str(release.CANONICAL_MAC / "Contents/MacOS/Notebook") + "\n").encode(), b"")
             with self.assertRaisesRegex(release.ReleaseError, "дождитесь выхода процесса"):
-                with release.stopped_runtime(command, Path(directory) / "ipc"):
+                with release.stopped_runtime(command, root=Path(directory) / "ipc"):
                     self.fail("A closed socket is not process exit")
+
+    @contextlib.contextmanager
+    def runtime_fixture(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "ipc"
+            root.mkdir(mode=0o700)
+            lease = root / "bridge.sock.owner"
+            descriptor = os.open(lease, os.O_RDWR | os.O_CREAT, 0o600)
+            release.fcntl.flock(descriptor, release.fcntl.LOCK_EX | release.fcntl.LOCK_NB)
+            token = bytes(release.RuntimeAuditToken((ctypes.c_uint32 * 8)(0, os.geteuid(), 0, os.getuid(), 0, 42, 0, 1)))
+            identity = {"pid": 42, "uid": os.geteuid(), "executable": str(Path(directory) / "Installed.app/Contents/MacOS/NotebookRuntime"),
+                        "cdhash": "b" * 40}
+            state = SimpleNamespace(root=root, lease=lease, descriptor=descriptor, token=token, identity=identity,
+                                    approved={identity["executable"]: identity["cdhash"]}, peer=token, signals=[], saved=False)
+            def request(pointer, number):
+                raw = bytes(pointer._obj)
+                self.assertEqual(number, signal.SIGTERM)
+                state.signals.append(raw)
+                if raw != state.token:
+                    return errno.ESRCH
+                state.saved = True
+                release.fcntl.flock(state.descriptor, release.fcntl.LOCK_UN)
+                state.peer = None
+                return 0
+            library = SimpleNamespace(proc_signal_with_audittoken=request)
+            with patch.object(release, "runtime_peer", side_effect=lambda endpoint: state.peer), \
+                 patch.object(release, "runtime_process_identity", side_effect=lambda raw: dict(state.identity)), \
+                 patch.object(release.ctypes, "CDLL", return_value=library):
+                try:
+                    yield state
+                finally:
+                    os.close(descriptor)
+
+    def test_saved_quit_claims_the_same_lease_and_excludes_bootstrap_until_publication(self):
+        with self.runtime_fixture() as state:
+            inode = state.lease.stat().st_ino
+            with release.stopped_runtime(self.command, state.approved, state.root) as shutdown:
+                self.assertTrue(state.saved, "Publication starts only after the fixture saves accepted work")
+                self.assertEqual(shutdown, [state.identity])
+                self.assertEqual(state.signals, [state.token])
+                self.assertEqual(state.lease.stat().st_ino, inode)
+                with self.assertRaises(BlockingIOError):
+                    release.fcntl.flock(state.descriptor, release.fcntl.LOCK_EX | release.fcntl.LOCK_NB)
+            release.fcntl.flock(state.descriptor, release.fcntl.LOCK_EX | release.fcntl.LOCK_NB)
+
+    def test_unapproved_running_path_or_cdhash_never_receives_a_signal(self):
+        for field in ("executable", "cdhash"):
+            with self.subTest(field=field), self.runtime_fixture() as state:
+                state.identity[field] += "different"
+                with self.assertRaisesRegex(release.ReleaseError, "Неизвестный владелец"):
+                    with release.stopped_runtime(self.command, state.approved, state.root):
+                        self.fail("Unknown IPC peer must not be retired")
+                self.assertEqual(state.signals, [])
+                self.assertFalse(state.saved)
+
+    def test_reused_pid_cannot_receive_the_old_audit_token_signal(self):
+        with self.runtime_fixture() as state:
+            observed = state.token
+            state.token = bytes(release.RuntimeAuditToken((ctypes.c_uint32 * 8)(0, os.geteuid(), 0, os.getuid(), 0, 42, 0, 2)))
+            self.assertIsNone(release.request_runtime_termination(observed, state.approved))
+            self.assertEqual(state.signals, [observed])
+            self.assertFalse(state.saved, "The recycled PID's new generation keeps its work and lease")
+            other = os.open(state.lease, os.O_RDWR)
+            try:
+                with self.assertRaises(BlockingIOError):
+                    release.fcntl.flock(other, release.fcntl.LOCK_EX | release.fcntl.LOCK_NB)
+            finally:
+                os.close(other)
+
+    def test_refused_saved_shutdown_keeps_owner_and_never_forces_or_repeats_the_signal(self):
+        with self.runtime_fixture() as state:
+            def refuse(raw, approved):
+                state.signals.append(raw)
+                return state.identity
+            with patch.object(release, "request_runtime_termination", side_effect=refuse):
+                with self.assertRaisesRegex(release.ReleaseError, "не завершил сохранение"):
+                    with release.stopped_runtime(self.command, state.approved, state.root, wait_seconds=0):
+                        self.fail("Unsaved accepted work must retain its writer")
+            self.assertEqual(state.signals, [state.token])
+            self.assertFalse(state.saved)
+            other = os.open(state.lease, os.O_RDWR)
+            try:
+                with self.assertRaises(BlockingIOError):
+                    release.fcntl.flock(other, release.fcntl.LOCK_EX | release.fcntl.LOCK_NB)
+            finally:
+                os.close(other)
+
+    def test_verified_auto_relaunch_between_quit_and_flock_is_retired_before_publication(self):
+        with self.runtime_fixture() as state:
+            original = state.token
+            restarted = bytes(release.RuntimeAuditToken((ctypes.c_uint32 * 8)(0, os.geteuid(), 0, os.getuid(), 0, 43, 0, 2)))
+            def restart(raw, approved):
+                state.signals.append(raw)
+                if raw == original:
+                    state.peer = state.token = restarted
+                    state.identity["pid"] = 43
+                else:
+                    state.saved = True
+                    state.peer = None
+                    release.fcntl.flock(state.descriptor, release.fcntl.LOCK_UN)
+                return dict(state.identity)
+            with patch.object(release, "request_runtime_termination", side_effect=restart):
+                with release.stopped_runtime(self.command, state.approved, state.root) as shutdown:
+                    self.assertTrue(state.saved)
+                    self.assertEqual(state.signals, [original, restarted])
+                    self.assertEqual(len(shutdown), 2)
+
+    def test_changed_lease_inode_during_shutdown_cannot_admit_publication(self):
+        with self.runtime_fixture() as state:
+            def replace(raw, approved):
+                state.saved = True
+                state.peer = None
+                release.fcntl.flock(state.descriptor, release.fcntl.LOCK_UN)
+                state.lease.unlink()
+                state.lease.touch(mode=0o600)
+                return state.identity
+            with patch.object(release, "request_runtime_termination", side_effect=replace):
+                with self.assertRaisesRegex(release.ReleaseError, "writer lease изменился"):
+                    with release.stopped_runtime(self.command, state.approved, state.root):
+                        self.fail("A detached lock inode cannot exclude a new bootstrap")
+
+    def test_continuous_auto_relaunch_has_a_bounded_refusal_without_force(self):
+        with self.runtime_fixture() as state:
+            def restart(raw, approved):
+                state.signals.append(raw)
+                generation = len(state.signals) + 1
+                state.peer = bytes(release.RuntimeAuditToken((ctypes.c_uint32 * 8)(0, os.geteuid(), 0, os.getuid(), 0, 42, 0, generation)))
+                return state.identity
+            with patch.object(release, "request_runtime_termination", side_effect=restart):
+                with self.assertRaisesRegex(release.ReleaseError, "повторно запускается"):
+                    with release.stopped_runtime(self.command, state.approved, state.root):
+                        self.fail("Unbounded restarts cannot hold a release attempt forever")
+            self.assertEqual(len(state.signals), 3)
+            self.assertFalse(state.saved)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,122 @@
+{
+  "format": 1,
+  "date": "2026-10-06",
+  "baseCommit": "45fa5c5906930b7d45d036b79d5383046b35cc8a",
+  "scope": "Atomic complete-package publication and one-time marketplace source migration; source-only, no live migration or pair installation.",
+  "sourceBeforeEqualsAfter": true,
+  "sourceSHA256": {
+    "Applications/notebook_release.py": "cca173898b2fb2521a386cf7b50d7397a6b64d27eef66aa519b9b2ccdc4dcf49",
+    "MCP/install-plugin.mjs": "2969e569a9cded01864fc6c0b5698659adce9a6a4a9008c65a3bf56b31cbf8a2",
+    "MCP/package-plugin-runtime.mjs": "37518d9c6a3d59df1d850c6a06abd5bfa4f636f965c390f9c8f2f474193187d3",
+    "MCP/plugin-publication.mjs": "3f95016e7c99fa62459b95b5bc6dc89ddb54d97ad0c8384d01ee68de658a3929",
+    "MCP/test/plugin-publication.test.ts": "c841b5dcacf31cbd942f7893900bb7c1552f8bb12e37f44fe9c5a67462d030d2",
+    "Tests/NotebookRelease/run.py": "bd189ab08ee7ee53a5f3a95f9160a3285360e61a0ce190c0ad8fdf85472022e2"
+  },
+  "checks": [
+    {
+      "command": "node --test MCP/test/plugin-publication.test.ts",
+      "passed": 7,
+      "failed": 0,
+      "durationMilliseconds": 478.461209,
+      "artifact": {
+        "path": ".build/plugin-publication-checks/node-tests.log",
+        "sha256": "70a3c0e1a2400a0a7f6cc3801f2dfcda5f84113c3859ac4c47f06d245f53748f"
+      }
+    },
+    {
+      "command": "python3 -B Tests/NotebookRelease/run.py PluginPublicationOwnershipTests InstallationTests",
+      "passed": 27,
+      "failed": 0,
+      "durationSeconds": 3.349,
+      "artifact": {
+        "path": ".build/plugin-publication-checks/python-reviewed-tests.log",
+        "sha256": "e08b50e59c7b486e2e307e1f00172f1ed200af98a07f9620e7e5dd19bd297402"
+      }
+    },
+    {
+      "command": "node /Users/amir/Documents/projects/Notebook/MCP/node_modules/typescript/bin/tsc --noEmit --target ES2024 --module NodeNext --moduleResolution NodeNext --strict --noUnusedLocals --noUnusedParameters --noUncheckedIndexedAccess --exactOptionalPropertyTypes --types node --typeRoots /Users/amir/Documents/projects/Notebook/MCP/node_modules/@types --skipLibCheck MCP/test/plugin-publication.test.ts",
+      "exit": 0,
+      "artifact": {
+        "path": ".build/plugin-publication-checks/typecheck.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    }
+  ],
+  "officialCLIProbe": {
+    "cli": "codex-cli 0.156.0",
+    "isolation": ".build/plugin-publication-migration-probe/codex-state (isolated CODEX_HOME; HOME unchanged)",
+    "plugin": "publication-probe@notebook-publication-probe",
+    "version": "1.0.0",
+    "artifact": {
+      "path": ".build/plugin-publication-migration-probe/results.json",
+      "sha256": "1abc2615c5e4279d536c7469f55735a712f1eb11c13c63ec80d924376db0191c"
+    },
+    "observations": [
+      "Adding another directory under an existing marketplace name requires removing the old registration first.",
+      "Marketplace remove followed by add preserves the plugin enabled config and exact existing cache including an untracked sentinel.",
+      "Plugin discovery is temporarily empty between remove and add; after add identity/version/enabled remain unchanged.",
+      "Negative control: plugin add for the same version replaces the cache and removes the sentinel. Migration never calls plugin add or remove."
+    ],
+    "sameNameRefusalArtifact": {
+      "path": ".build/plugin-publication-probe/results.json",
+      "sha256": "c95fa82842a2c9175fd8f690e6cd31e44191daeea7876e4165d11f1b7428f1d2"
+    }
+  },
+  "regressions": [
+    "Authored version changes and incomplete, corrupt or rejected copies remain invisible behind the prior complete catalog pointer.",
+    "Same-version changed payload and downgrade refuse; identical bytes permit retry.",
+    "Pair owner prunes older published packages only after complete device and cache readback.",
+    "Migration preserves exact identity, enabled=false and full cache inventory using official marketplace commands.",
+    "A remove operation that succeeds before reporting failure is recovered by observed registry state.",
+    "Failed rollback retains a pinned durable intent; another invocation resumes without reinstalling or rewriting cache.",
+    "One OS flock is inherited by Node and the Codex CLI child; closing Python and killing its isolated Node adapter keeps exclusivity until the CLI completes.",
+    "The next leased attempt discards orphan unpublished copy stages without changing the current package."
+  ],
+  "boundaries": {
+    "liveSourceChanged": false,
+    "liveCacheChanged": false,
+    "liveConfigChanged": false,
+    "installedRuntimeChanged": false,
+    "xcodeRun": false,
+    "deviceInstallation": false,
+    "nodeFixtureSignatureValidation": "Injected validator; production codesign inspection is retained by the publication owner.",
+    "hostConnections": "Existing MCP connections keep their current runtime until normal host reconnection; no connection reset implemented.",
+    "pending": "Independent receipt binding review, actual one-time migration, then next verified pair release."
+  },
+  "sourceBeforeEqualsAfterScope": "Six production/test files match around the final 27-check Python run; the three Node contract inputs and TypeScript test are unchanged since their recorded checks.",
+  "reviewRepair": {
+    "reviewer": "runtime_review",
+    "finding": "A Codex CLI child could outlive a timed-out Node adapter and mutate the registry after its lease was released.",
+    "repair": "Pass the same leased open-file description as Codex fd3 through production command().",
+    "regression": "Actual install-plugin.mjs command spawns an isolated CLI fixture; closing Python and killing only its Node adapter still denies a second publisher until the CLI completes.",
+    "initialCandidate": "c7dbe80fff4075e98f342befa64241fdb3286219",
+    "initialChecks": {
+      "path": ".build/plugin-publication-checks/python-tests.log",
+      "sha256": "4c28297c3a8205cc19a0d5f95067006f8b33f95b754d20a4d73fac09ddb04f80"
+    },
+    "targetedLeaseRepeat": {
+      "path": ".build/plugin-publication-checks/lease-cli-repeat.log",
+      "sha256": "44e166421bfbf839db2b81ddcfef1b717ffb4159bd1e80a7a60e2a72a526a2c4"
+    }
+  },
+  "officialCLILifetimeProbe": {
+    "cli": "codex-cli 0.156.0",
+    "inheritedDescriptor": 3,
+    "pluginInstall": "Official add with Notebook portable metadata completed without starting the MCP fixture; lease was available after exit.",
+    "pluginInstallArtifact": {
+      "path": ".build/plugin-publication-notebook-fd-probe/results.json",
+      "sha256": "6a604f55fbb351f19acfff0a258f86be294d2c09d10ceb5afbea154af198bc6e"
+    },
+    "mcpGet": "Official get of a separately registered isolated stdio fixture returned its exact configuration without starting it; lease was available after exit.",
+    "mcpGetArtifact": {
+      "path": ".build/plugin-publication-notebook-fd-probe/explicit-mcp-get.json",
+      "sha256": "662c2edf23c35a2123c4664a484d1d89399f4a594ea8e3b41e9767526c32eef7"
+    },
+    "limitation": "Plugin MCP discovery in the unauthenticated isolated CODEX_HOME returned no server. This probe does not establish installed Codex panel or plugin MCP discovery.",
+    "nativeRuntimeBoundary": {
+      "path": "MCP/src/runtime-launcher.ts",
+      "sha256": "95fb2589ce4d85664bfc35e0f3441079a8e95c5f2a9f01379e541d856bfb724b",
+      "observation": "Existing spawn(open, stdio=[ignore,ignore,pipe]) and LaunchServices do not pass inherited fd3 into the native app; MCP transport retains its existing signal/EOF lifetime."
+    }
+  }
+}

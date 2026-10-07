@@ -222,6 +222,16 @@ public struct WorkspaceSpatialIndex: Sendable {
   private let entries: [WorkspaceSpatialEntry]
   private let positions: [WorkspaceSpatialID: Int]
   private let nodes: [Node]
+  private let identifierBytes:Int
+
+  /// Retained index storage, including capacity and indirect identifier buffers.
+  /// Computed from the immutable owner without visiting its entries at input.
+  var retainedMetadataBytes:Int {
+    256 + (entries.capacity+paintEntries.capacity)*MemoryLayout<WorkspaceSpatialEntry>.stride
+      + (nodes.capacity+paintNodes.capacity)*MemoryLayout<Node>.stride
+      + positions.capacity*2*(MemoryLayout<WorkspaceSpatialID>.stride+MemoryLayout<Int>.stride+8)
+      + identifierBytes
+  }
 
   public init(entries source: [WorkspaceSpatialEntry]) {
     var entries = source
@@ -239,6 +249,10 @@ public struct WorkspaceSpatialIndex: Sendable {
     paintEntries = ordered
     paintNodes = orderedNodes
     positions = Dictionary(uniqueKeysWithValues: entries.enumerated().map { ($0.element.id, $0.offset) })
+    identifierBytes=source.reduce(0) {total,entry in
+      if case .element(let id)=entry.id {return total+id.utf8.count*2+64}
+      return total
+    }
   }
 
   public func entry(id: WorkspaceSpatialID) -> WorkspaceSpatialEntry? {

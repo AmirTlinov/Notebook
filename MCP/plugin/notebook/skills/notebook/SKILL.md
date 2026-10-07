@@ -9,6 +9,8 @@ Use `notebook_open` when the user wants to open or work together in Notebook.
 Pass a known board/page target; otherwise open the admitted current surface. The panel is an
 editable view of the user's existing workspace. Conversation and agent execution
 belong to Codex.
+The panel opens asynchronously while its runtime starts. Read current material
+and readiness through `notebook_context`.
 
 Start from the shared material and selected context. Read addressed content with
 `notebook_context`; use `notebook_execute` and its `nb` API for agent changes.

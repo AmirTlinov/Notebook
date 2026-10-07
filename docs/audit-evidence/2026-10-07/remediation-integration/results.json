@@ -1,0 +1,90 @@
+{
+  "status": "verified_merge_candidate",
+  "root_parent": "46ad9e89c1caa76381de99e8b103cdb168001795",
+  "common_parent": "594b99ee1757289c73d7c206857c20ef280bdc59",
+  "unique_root_commits": [
+    "46ad9e89c1caa76381de99e8b103cdb168001795",
+    "85fbab1a584bf7b7c827200ebfd67d294ae69538",
+    "84cecdcbf1d522c10a23aef662ec63abbce142dc",
+    "40bd01c85c6639ebede61104abb5d649b02772a4",
+    "46b18b6fc426d0178b0247f0014b2fb0d0158f67",
+    "d58a42f585a08cb76b3da045eb76f31c6b88cae2",
+    "42ae55b9bb12873c1e6d5e383dc7bcc006eb5662",
+    "102b1faf0fe4a33267db5207925855f2e5d343bd",
+    "0f951cbf85d02bbffce27788695b126be70a676c",
+    "d115a7926e9791cf2d11b1a4f0d181031b67db4a",
+    "33724656aaa1abb0962bd09959e6df04fb5ac865",
+    "4ba692a7b3b31dfc6b387f2acedc7ffd4d63c369",
+    "01b6a23ee13d91fdd60cd53f33ce21472b32cbb3"
+  ],
+  "formats": {
+    "database": 29,
+    "wire": 44,
+    "manifest": 26
+  },
+  "final_source": {
+    "sha256": "ab90e9f4b4d5b76b186760eddee5d27d51e0a36c0be1a742392b24879590b65d",
+    "inputs": 1695
+  },
+  "final_checks": {
+    "core": {
+      "functions": 4,
+      "passed": 4,
+      "failed": 0,
+      "skipped": 0,
+      "source_sha256": "fbac0fe63c5db612cd2e7ad039b455b4ea9712195f295a25c53b1ca78c3aafda",
+      "receipt_status": "combined route stopped at later Mac build error"
+    },
+    "physical_ipad": {
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "runtime_warnings": 0,
+      "source_sha256": "fbac0fe63c5db612cd2e7ad039b455b4ea9712195f295a25c53b1ca78c3aafda"
+    },
+    "mac": {
+      "passed": 5,
+      "failed": 0,
+      "skipped": 0,
+      "runtime_warnings": 0,
+      "source_sha256": "ab90e9f4b4d5b76b186760eddee5d27d51e0a36c0be1a742392b24879590b65d",
+      "receipt_status": "passed"
+    }
+  },
+  "cross_scope_reuse": {
+    "source_delta": [
+      "Applications/MacTests/NotebookCommandReaderTests.swift"
+    ],
+    "reason": "only Mac test fixture changed; Core and iPad executable inputs remain byte-identical"
+  },
+  "previous_merge_checks": {
+    "source_sha256": "43084f893ae1b5be2041d2a8d866c1c5c31929cd28efe336ca2f70c3419cad3c",
+    "core_functions": 20,
+    "core_executions": 23,
+    "node_cases": 68,
+    "typescript": "passed",
+    "scope": "fixed main6898 before page-content forwarding and foreground guard repair"
+  },
+  "intersection_repairs": [
+    "delete replaced workspace restoration tail",
+    "reader capability in main help fixture",
+    "restore main panel opener/connect split",
+    "foreground panel uses permitsPanelPreparation after prepareTargetQueue",
+    "single page content cut forwarded through existing borrowed QueryCut",
+    "Mac reader refusal fixture uses the existing raster/PNG owner"
+  ],
+  "preserved_owners": [
+    "single accepted FIFO and source-bound catalog CAS/Retry",
+    "main signed plugin/lifecycle and shutdown writer lease",
+    "main UIKit updates, eraser damage and panel geometry",
+    "Root charged Pencil contact/decode/finish",
+    "main frozenSnapshotID program descriptor"
+  ],
+  "release258_evidence_parent": "594b99ee",
+  "pending": [
+    "NB12 item birth WIP",
+    "NB13 checkpoint credit WIP",
+    "new signed pair for integrated code",
+    "installed Codex/iPad acceptance and full joint measurements"
+  ]
+}

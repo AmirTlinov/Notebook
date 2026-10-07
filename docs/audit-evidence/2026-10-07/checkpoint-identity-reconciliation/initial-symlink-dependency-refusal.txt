@@ -1,0 +1,14 @@
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> notebook-mcp@0.3.39 check
+> tsc --noEmit && node build-script-services.mjs --check
+
+file:///workspace/shared/notebook-checkpoint-identity-main/MCP/build-script-services.mjs:12
+    if(!actual.equals(expected)) throw new Error("Generated resource is stale: "+path+"; run node MCP/build-script-services.mjs");
+                                       ^
+
+Error: Generated resource is stale: ../Sources/NotebookMarkupService/Resources/notebook-markup.js; run node MCP/build-script-services.mjs
+    at resource (file:///workspace/shared/notebook-checkpoint-identity-main/MCP/build-script-services.mjs:12:40)
+    at async file:///workspace/shared/notebook-checkpoint-identity-main/MCP/build-script-services.mjs:20:1
+
+Node.js v24.19.0

@@ -1,0 +1,9 @@
+◇ Test run started.
+↳ Testing Library Version: 2084
+↳ Target Platform: arm64e-apple-macos14.0
+◇ Suite NotebookScriptHelpTests started.
+◇ Test repeatedCoordinatorHelpPreservesTheBundledResponseAndMeasuresDecodeCost() started.
+SDK_HELP_MEASUREMENTS {"fixture":"bundled_reference_real_coordinator","fullReadDecodeMS":[186.22241700000001,185.17462499999999,184.78966600000001],"helpRetrievalMS":[186.18129099999999,185.00779199999999,184.167708,182.78004200000001,181.25675000000001],"referencePayloadBytes":4240554,"replyBytes":4921,"sourceBytes":1827285}
+✔ Test repeatedCoordinatorHelpPreservesTheBundledResponseAndMeasuresDecodeCost() passed after 1.667 seconds.
+✔ Suite NotebookScriptHelpTests passed after 1.667 seconds.
+✔ Test run with 1 test in 1 suite passed after 1.667 seconds.

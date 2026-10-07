@@ -1,0 +1,138 @@
+{
+  "date": "2026-10-06",
+  "scope": "Portable consolidation candidate; no native build, physical acceptance, installation or release claim",
+  "baseMain": "96e009283e702130c7ca989bdee4712e7655e2a1",
+  "includedHeads": {
+    "1": "acddfb63bea118eab5f21cde0d96fdb29aa66e82",
+    "2": "7f9da5fd02b1490eb2ccb5efefa8442deea3ceac",
+    "3": "6a93ed3abcde72ae7cc3b6a47ba498913a496703",
+    "4": "7e53be282b3a5ee6c92344b20a30b02ddb48f4a0"
+  },
+  "preservedPanel": "a4706f026d13cc695ec4ef2008fd25b874860195",
+  "sourceSHA256": {
+    "Applications/NotebookCodexRuntime.lock.json": "f0dae42f2076040e6fe827e9e50f411c7f17e90c348fda00644e9433896f4596",
+    "Applications/TestSupport/NotebookChatRenderingTests.swift": "3a187451814d54f64cfa6d26c1e320722e99ab5685cb2e020f5528c8d6d3d4d1",
+    "Applications/WebResources/chat-shell.html": "76829f77a13e10463485a353bdd8bf4f970523ce950efebef84b7cfe6fad565d",
+    "Applications/WebResources/notebook-program.js": "de19e0a96b465bf5c08fb84a4fb2f4189bb92b584b01e868a4ceafce534bee19",
+    "Applications/notebook_acceptance.py": "f5e084f049ba9b7e67a4d05474a4becfda4d651f728f38da0b4fdad2964489ed",
+    "Applications/notebook_release.py": "246fc7150b1d3a8c93527589740031eb759714bcc97714d03f968dbe0ed61ccf",
+    "Applications/notebook_verification.py": "761e682302e9cd4e2bf0f859c0eee695842cccbdca340bbf216f5fd00d5cd544",
+    "Applications/prepare_notebook_codex.py": "514094884d8785c8cdf4355b4a327e196f4541bca66e2944019960d2892cdb5c",
+    "Applications/project.yml": "4e80187ff0855db5d7b9492a8911621ef12211407d48eb0cdeb28df35260f353",
+    "MCP/package-lock.json": "620df9f40bbac09d59f4695c5365571715152bb1b520970d3c383b4e2fd6881e",
+    "MCP/package.json": "dceb22ba169e33c1e4f19894f4f3fdad5a9657a1610ad468137b13a108b37058",
+    "MCP/panel/panel.ts": "f3b0be93cb15e4c8e8fc90a0e664019bc38893d4f14e0b3f619f372678194f48",
+    "MCP/panel/session.ts": "852941e75436ba1336e433ff124fb6dc2db573541bb5b11e5ac7893a97f44cc5",
+    "MCP/test/chat-mathjax-state.test.ts": "57224e39106c07e779354aeefe1e5b3b0c8ba46eb1fb5aab7b8ac0c11eafc6cd",
+    "MCP/test/chat-render.test.ts": "76bdce1b6d749c20f170ef4c27cc78a0fb819e718cf7535e532991ff059b124a",
+    "MCP/test/panel-input.test.ts": "bec2d17f9ec09eb71c3d2e23da4c3ffee6d212c2b98139007e90aef512f42c05",
+    "MCP/test/panel.test.ts": "23b6083fe9de87fa55d99a97c48e413e214cdf1725f03d03267579d6fbd21c2b",
+    "MCP/test/program-bridge.test.ts": "b6986cb3b7b3e7d2d0329f0bc319d792c4e3b8beb5a9fe77f260628cf1822687",
+    "Tests/NotebookRelease/codex_fixture.py": "2ac1910977aace4b1495779e3c3c030c8e207c59630025e5d4c7aa00a21ef490",
+    "Tests/NotebookRelease/run.py": "55ccb8d165d67d5db584e091cd59d206fd5f5eb94c12aef415d100e34e136cbe",
+    "Tests/NotebookRelease/test_codex.py": "3f44755155e5c0e63ab9064179af24ed0a05b6c199d7c158b5f10ebc88ba060d",
+    "Tests/NotebookVerification/run.py": "253e7f6a0799b8e21879b84dbe274316c1a959605e0c5d5f56205dd8c86d3457",
+    "Tests/NotebookVerification/test_registry.py": "ee8ca01a5f2f548f02034ab32712aad24d9a14aacedc1ab1c6f3c2cd7ac42c41"
+  },
+  "resolution": "Additive docs/verification.md blocks retained; no product conflict; only narrow PR2 repair plus matching tests and CLI documentation differ from published product/test bytes.",
+  "repair": {
+    "finding": "Pinned version admission merged stderr with stdout: benign Codex startup warnings caused false refusal, while stderr-only version text could appear as stdout evidence.",
+    "fix": "Separately drain stdout/stderr under a shared 4096-byte limit and timeout; validate exact stdout only; retain nonzero-exit refusal.",
+    "patchSHA256": "07a3ba9f88da11b3e44f7d263fefbd5a173eb5a19a044f36fcf8a61e4afc9185",
+    "baseline": "Three added tests on the published implementation: warning fixture admission errors; stderr identity subcases fail; combined-bound guard passes. Raw output retained.",
+    "newRegressionTests": 3,
+    "independentReview": {
+      "status": "approved for reported defect",
+      "codexPackagingTestsPassed": 29,
+      "extraProbes": [
+        "exact 4096-byte aggregate bound",
+        "either output stream closes first",
+        "non-UTF-8 diagnostic stderr",
+        "continuous stderr flood"
+      ],
+      "python39Syntax": "passed"
+    },
+    "nativeImpact": "Source-derived Xcode sandbox risk, not an observed native-build failure.",
+    "upstreamSources": [
+      "https://raw.githubusercontent.com/openai/codex/rust-v0.155.0/codex-rs/cli/src/main.rs",
+      "https://raw.githubusercontent.com/openai/codex/rust-v0.155.0/codex-rs/arg0/src/lib.rs"
+    ]
+  },
+  "checks": [
+    {
+      "command": "node --import ./MCP/node_modules/tsx/dist/loader.mjs --test MCP/test/chat-render.test.ts MCP/test/chat-mathjax-state.test.ts MCP/test/program-bridge.test.ts",
+      "passed": 54,
+      "failed": 0,
+      "log": "final-node.txt"
+    },
+    {
+      "command": "Exact 44-case panel CPU selection from panel-contact-ownership/results.json on combined sources",
+      "passed": 44,
+      "failed": 0,
+      "skipped": 0,
+      "log": "combined-panel-cpu.txt"
+    },
+    {
+      "command": "python3 -B Tests/NotebookRelease/run.py CodexPackagingTests ReleaseTests CloudRightsTests TypesetterPackagingTests",
+      "passed": 104,
+      "failed": 0,
+      "log": "final-release.txt"
+    },
+    {
+      "command": "python3 -B Tests/NotebookVerification/run.py",
+      "passed": 117,
+      "failed": 0,
+      "log": "final-verification.txt"
+    },
+    {
+      "command": "npm run check (MCP)",
+      "status": "passed",
+      "scope": "Full strict TypeScript and script-services check",
+      "log": "final-typecheck.txt"
+    },
+    {
+      "command": "Python 3.9 AST parse of four changed production Python modules",
+      "status": "passed"
+    },
+    {
+      "command": "git diff --cached BASE_MAIN --check; git diff --check",
+      "status": "passed"
+    }
+  ],
+  "blockedAttempt": {
+    "scope": "Chat, program, panel-input and panel five-file Node run",
+    "passed": 94,
+    "failed": 4,
+    "reason": "All four native panel fixtures require AF_UNIX and fail listen EPERM; not a full MCP pass. Separate exact CPU selection passes.",
+    "log": "combined-panel-node.txt"
+  },
+  "notRun": [
+    "Real Apple codesign and pinned Apple executables",
+    "Xcode sandbox/build/signing and Swift/native tests",
+    "Native WebKit font metrics, selection, accessibility and visual gestures",
+    "Physical iPad acceptance and installation",
+    "Complete verify.sh acceptance"
+  ],
+  "notIncluded": "Uncommitted 11-file Swift native candidate; installed pair unchanged",
+  "logsSHA256": {
+    "pr2-stderr-before.txt": "cc9111f0f7963bff230828c0fe7109e3913f77cc2e44dcdd1e4ac041948dc75c",
+    "pr2-stderr-after.txt": "8918737f6d8b8f812878da64e017d54cb00670f71b70a36d1a43a0bbf5b5d6dd",
+    "final-release.txt": "cae1eef7fa8368b610e521f17ab58cbc2189f3f7b4237febdd095c7bf243e8ca",
+    "final-verification.txt": "8e4aa91814e5ad556d89cf9617974cb429ab4882307055bf7bd26752b636d2f9",
+    "final-node.txt": "168cba1cc7653ae728e813f302c25a4c22283490511e5becf8bd91a77df40a79",
+    "combined-panel-cpu.txt": "8107f282296f57349002c9e1b05970e0a5781514f5581d23b2d9f3e15f32b8e9",
+    "final-typecheck.txt": "21f40c5bc5c6236f5705927930fd2f394e6a26e5ad432594097ed10c9aa03eec",
+    "combined-panel-node.txt": "25d0049e0449a6fd724ed54ef13b442a2949d3cddf04124a75579dc21bee2cfa"
+  },
+  "logFormatting": "Console text retains all result and error content; trailing line whitespace and extra final blank lines normalized for repository diff checks. Original log hashes recorded separately.",
+  "rawLogsSHA256": {
+    "pr2-stderr-before.txt": "4ff01cc06785066cb4b3c8b64fe7f9a9ed3806c8e8d4e8388cdfad29e0413237",
+    "pr2-stderr-after.txt": "8918737f6d8b8f812878da64e017d54cb00670f71b70a36d1a43a0bbf5b5d6dd",
+    "final-release.txt": "cae1eef7fa8368b610e521f17ab58cbc2189f3f7b4237febdd095c7bf243e8ca",
+    "final-verification.txt": "8e4aa91814e5ad556d89cf9617974cb429ab4882307055bf7bd26752b636d2f9",
+    "final-node.txt": "168cba1cc7653ae728e813f302c25a4c22283490511e5becf8bd91a77df40a79",
+    "combined-panel-cpu.txt": "8107f282296f57349002c9e1b05970e0a5781514f5581d23b2d9f3e15f32b8e9",
+    "final-typecheck.txt": "897ad2eb0934a42a1a0b2d0955338f4b66e21defed0269cea7508fdb91ba3698",
+    "combined-panel-node.txt": "25d0049e0449a6fd724ed54ef13b442a2949d3cddf04124a75579dc21bee2cfa"
+  }
+}

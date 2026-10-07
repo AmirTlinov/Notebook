@@ -1,0 +1,150 @@
+{
+  "status": "installed",
+  "step": "complete",
+  "build": "254",
+  "version": "0.3.184",
+  "pluginVersion": "0.2.6",
+  "buildSHA256": "330db242f73f7fbb96de23f13eb0b62190a22c17ae9b27c5b877e18566019fb8",
+  "runtime": "/Users/amir/.codex/plugins/cache/notebook-local/notebook/0.2.6/runtime/NotebookRuntime.app",
+  "runtimeShutdown": [
+    {
+      "cdhash": "ef82c3187459024a4ab53c97fc97859777a24868",
+      "executable": "/Users/amir/.codex/plugins/cache/notebook-local/notebook/0.2.5/runtime/NotebookRuntime.app/Contents/MacOS/NotebookRuntime",
+      "pid": 29488,
+      "uid": 501
+    }
+  ],
+  "ipadWorkspaceBefore": {
+    "identity": {
+      "activeSQLite": "Library/Application Support/Notebook/notebook.sqlite",
+      "catalogBytes": 400,
+      "catalogSHA256": "bc59b1fa7c8080ebfdceea7bf64aea98ed73f972769b33009f5f83f052a09938",
+      "originalID": "54349f3b-9e0a-4dea-b990-40cae04ef45e",
+      "selectedID": "54349f3b-9e0a-4dea-b990-40cae04ef45e",
+      "state": "catalog",
+      "workspaceIDs": [
+        "54349f3b-9e0a-4dea-b990-40cae04ef45e",
+        "6e14684d-3135-4a86-8e26-289ceb06835e"
+      ]
+    },
+    "sqliteMetadata": {
+      "extendedAttributes": {
+        "com.apple.dataprotection.policy.exception-applied-by": "com.apple.containermanagerd"
+      },
+      "lastModDate": "2026-10-07T07:05:31.000Z",
+      "ownerGid": 501,
+      "ownerUid": 501,
+      "permissions": 420,
+      "size": 368726016
+    }
+  },
+  "ipadWorkspaceAfter": {
+    "identity": {
+      "activeSQLite": "Library/Application Support/Notebook/notebook.sqlite",
+      "catalogBytes": 400,
+      "catalogSHA256": "bc59b1fa7c8080ebfdceea7bf64aea98ed73f972769b33009f5f83f052a09938",
+      "originalID": "54349f3b-9e0a-4dea-b990-40cae04ef45e",
+      "selectedID": "54349f3b-9e0a-4dea-b990-40cae04ef45e",
+      "state": "catalog",
+      "workspaceIDs": [
+        "54349f3b-9e0a-4dea-b990-40cae04ef45e",
+        "6e14684d-3135-4a86-8e26-289ceb06835e"
+      ]
+    },
+    "sqliteMetadata": {
+      "extendedAttributes": {
+        "com.apple.dataprotection.policy.exception-applied-by": "com.apple.containermanagerd"
+      },
+      "lastModDate": "2026-10-07T07:05:31.000Z",
+      "ownerGid": 501,
+      "ownerUid": 501,
+      "permissions": 420,
+      "size": 368726016
+    }
+  },
+  "publication": {
+    "plugin": "/Users/amir/Library/Application Support/NotebookPlugin/marketplace/releases/0.2.6/notebook",
+    "previousVersion": "0.2.5",
+    "root": "/Users/amir/Library/Application Support/NotebookPlugin/marketplace",
+    "sha256": "d08324388a9e1f95c2b167068b76c526a548346d77d6e5a4e8798e25c7235380",
+    "version": "0.2.6"
+  },
+  "standaloneMacAppPresent": false,
+  "readback": {
+    "capturedAt": "2026-10-07T08:17:07.851Z",
+    "finishedAt": "2026-10-07T08:17:09.305Z",
+    "status": "passed",
+    "tools": [
+      "notebook_context",
+      "notebook_execute",
+      "notebook_import_document",
+      "notebook_import_document_resource",
+      "notebook_import_program",
+      "notebook_open",
+      "notebook_panel_edit",
+      "notebook_panel_presentation",
+      "notebook_panel_undo",
+      "notebook_panel_workspace"
+    ],
+    "panelResource": {
+      "uri": "ui://notebook/workspace.html",
+      "mimeType": "text/html;profile=mcp-app",
+      "bytes": 3133136,
+      "sha256": "c98ad6fa6e8aef8cd6c305c61ed7400a5b3b87f136826bfc3a466b3aa7e9957e",
+      "metadata": {
+        "ui": {
+          "csp": {
+            "connectDomains": [],
+            "resourceDomains": [
+              "blob:"
+            ]
+          },
+          "prefersBorder": false
+        },
+        "openai/ui": {
+          "availableDisplayModes": [
+            "fullscreen"
+          ],
+          "preferredDisplayMode": "fullscreen"
+        }
+      }
+    },
+    "open": {
+      "status": "ready",
+      "workspaceID": "54349F3B-9E0A-4DEA-B990-40CAE04EF45E",
+      "target": {
+        "id": "B0BCDACE-99E1-472D-98F0-F83558CA2CC1",
+        "kind": "page"
+      },
+      "cursor": "65584",
+      "socketKey": "1c96b27a4539f36c46a70df7",
+      "runtime": null
+    },
+    "context": {
+      "workspace": {
+        "status": "ready",
+        "cursor": "65584",
+        "workspaceID": "54349F3B-9E0A-4DEA-B990-40CAE04EF45E"
+      },
+      "observation": {
+        "status": "ready",
+        "cursor": "65584",
+        "workspaceID": null
+      },
+      "runtime": {
+        "status": "ready",
+        "cursor": "65584",
+        "workspaceID": null,
+        "runtimeStatus": "connected"
+      }
+    }
+  },
+  "runtimeIdentity": {
+    "observedAt": "2026-10-07T08:14:51Z",
+    "method": "kernel audit token and dynamic signing identity",
+    "pid": 87129,
+    "euid": 501,
+    "path": "/Users/amir/.codex/plugins/cache/notebook-local/notebook/0.2.6/runtime/NotebookRuntime.app/Contents/MacOS/NotebookRuntime",
+    "cdhash": "830d784c7a12883b8c27cd63fbf6b2591275369a"
+  }
+}

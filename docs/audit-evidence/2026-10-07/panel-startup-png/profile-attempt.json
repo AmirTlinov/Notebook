@@ -1,0 +1,24 @@
+{
+  "at": "2026-10-07T11:03:02.320Z",
+  "plugin": "0.2.8",
+  "scope": "Installed MCP read-only presentation timing; not host input-to-pixel latency",
+  "samples": [
+    {
+      "label": "static-opening-card",
+      "ms": 2.637042000000008,
+      "bytes": 230,
+      "error": false
+    },
+    {
+      "label": "connect-first-page",
+      "ms": 35006.284,
+      "bytes": 499,
+      "error": true,
+      "code": "ipc_timeout"
+    }
+  ],
+  "handshakeMS": 101.22604100000001,
+  "status": "failed",
+  "error": "Ответ Notebook не получен в пределах срока. Истечение срока не отменяет принятую запись.",
+  "stderr": "Notebook MCP listens on stdio\n{\"kind\":\"notebook-runtime-startup\",\"launcherPID\":42440,\"phase\":\"startup.begin\",\"startedAt\":\"2026-10-07T11:03:02.390Z\",\"elapsedMilliseconds\":0.43337499999999807,\"attempts\":0,\"launched\":false}\n{\"kind\":\"notebook-runtime-startup\",\"launcherPID\":42440,\"phase\":\"startup.done\",\"startedAt\":\"2026-10-07T11:03:02.390Z\",\"elapsedMilliseconds\":31.105125,\"attempts\":1,\"launched\":false,\"runtimePID\":38006,\"runtimeState\":\"ready\"}\n"
+}

@@ -1,0 +1,79 @@
+{
+  "date": "2026-10-07",
+  "candidate": {
+    "pairBuild": "256",
+    "appVersion": "0.3.186",
+    "pluginVersion": "0.2.8"
+  },
+  "scope": "Bounded immutable-entry PNG/SHA reuse and early MCP startup card; focused verification, no host input-to-pixel or physical iPad acceptance.",
+  "sourceSHA256": "18b8fe0692a4eacd81f42a8bf36bf3f74e23dda6593efc2fc02e83c1da48396e",
+  "sourceFileSHA256": {
+    "Applications/Shared/NotebookPanelRaster.swift": "733a5c7ffa7bf7c1799e27648c0cde0c38c75adf9b79b839260cc648a1fc2de6",
+    "Applications/Shared/SceneRenderResources.swift": "cbc66b4a3de8dada6de4aa66a0461a3e9307d42762a7f36cb68bc474c8315b19",
+    "Applications/Shared/SceneRasterCompositor.swift": "6d956c7b156ce0ea4f0925769d039fdeb204aff3e17efb7134a2665852309fbe",
+    "Applications/MacTests/RasterEncodedRepresentationTests.swift": "16a9f47f912fb1f7bc4ef1b9ebbb439da7ad22dbc6f41352b2d304ece359768b",
+    "Applications/MacTests/NotebookPanelMaterialTests.swift": "41036288668e2de0bf7adf4f02ba085de6847d42b3c08c58f228b7df19b1f46f",
+    "Applications/MacTests/NotebookPanelPresentationTests.swift": "12e998cd786fb38db22f89d1b9a775190b40e36a9dca4e4a0eccd0cec5163c81"
+  },
+  "mcp": {
+    "uniqueNodeTestsPassed": 59,
+    "finalAssertionsRerun": 2,
+    "typescript": "PASS",
+    "details": "startup-checks.json"
+  },
+  "native": {
+    "uniqueMethodsPassed": 9,
+    "skips": 0,
+    "runtimeWarnings": 0,
+    "route": "explicit-only, optimized native Mac",
+    "runs": [
+      {
+        "path": ".build/runtime-256-png-verified",
+        "result": "compile failure in new test; no execution",
+        "details": "initial-native.json"
+      },
+      {
+        "path": ".build/runtime-256-png-verified-v2",
+        "passed": 8,
+        "failed": 1,
+        "details": "second-native-summary.json"
+      },
+      {
+        "path": ".build/runtime-256-png-verified-v3",
+        "passed": 1,
+        "failed": 0,
+        "details": "final-mac-summary.json"
+      }
+    ],
+    "repair": "Zero-reservation assertion now runs after response and its layer copies release encoded backing; all material/pixel/budget assertions retained.",
+    "onlyInputChangesBetweenExecutedRuns": [
+      "Applications/MacTests/NotebookPanelMaterialTests.swift"
+    ],
+    "productionUnchangedAcrossExecutedRuns": true,
+    "verificationReceiptSHA256": "6618ee537030bb55c10bd8ac51688ff7f720d992f6c3a356b5cd011d708ed83c"
+  },
+  "measurement": {
+    "details": "png-measurements.json",
+    "scope": "1024px grid/card fixture, 49945 PNG bytes; wall time of encoder/borrow, not a page or UI latency benchmark"
+  },
+  "review": {
+    "independentReviewer": "panel_page_reads",
+    "result": "accepted",
+    "resolved": "Last-reader cancellation could expose a doomed encoding flight to immediate reborrow; now retire it before joining.",
+    "finalOracleReview": "Pool remains live after the response scope, so a leaked transient charge still fails the zero assertion."
+  },
+  "limits": [
+    "Installed 256 comparison and true Codex panel gestures pending at source verification.",
+    "XProtect cost itself is unchanged; MCP transport/card can start during native admission.",
+    "ImageIO internal codec scratch is outside the measured application-owned output ledger.",
+    "Full acceptance remains GUI-190."
+  ],
+  "installed": {
+    "status": "installed",
+    "details": "installation.json",
+    "comparison": "installed-comparison.json",
+    "trueCodexPanel": "Connected at 11:25 UTC; selection and zoom reproduced blur and lost card hits. See ../panel-occupancy/observed-256.json; full UI acceptance remains open.",
+    "fullAcceptance": "open GUI-190"
+  },
+  "diagnosticLimit": "profiler.json"
+}

@@ -8,6 +8,16 @@ import Observation
 final class DocumentReadingSession {
   enum RestorationEffect { case page(Int), camera(SpatialCamera) }
 
+  struct CameraIntent {
+    let camera: SpatialCamera
+    let fittedScale: Double
+
+    init(camera: SpatialCamera, geometry: WorkspaceItemGeometry, viewport: SpatialPoint) {
+      self.camera = camera
+      fittedScale = geometry.fitScale(viewport: viewport)
+    }
+  }
+
   private struct Measurement {
     let documentID: UUID
     let stamp: VersionStamp
@@ -63,6 +73,24 @@ final class DocumentReadingSession {
       centeredOn: center, viewport: viewport)
   }
 
+  /// A closed cover can start approaching before its PDF has been measured.
+  /// Its provisional fit is a reading intent, not an absolute paper scale.
+  func openingCamera(_ intent: CameraIntent, document: DocumentDocument, page: Int,
+    center: WorldPoint, viewport: SpatialPoint) -> SpatialCamera? {
+    guard let layout = layout(for: document) else { return nil }
+    let geometry = layout.paper(on: page).geometry
+    if isRestoring(document.id), let saved = restoration?.bookmark ?? positions[document.id],
+      layout.reading.page(for: saved.anchor, survivingFileOrder: layout.readingFileOrder,
+        regions: layout.regions) == page,
+      let cameraCenter = center.addressOffset(x: saved.centerOffset.x, y: saved.centerOffset.y) {
+      return geometry.readingCamera(.init(center: cameraCenter,
+        scale: geometry.fitScale(viewport: viewport) * saved.zoomRatio), centeredOn: center, viewport: viewport)
+    }
+    let camera = SpatialCamera(center: intent.camera.center,
+      scale: geometry.fitScale(viewport: viewport) * intent.camera.scale / intent.fittedScale)
+    return geometry.readingCamera(camera, centeredOn: center, viewport: viewport)
+  }
+
   func beginOpening(_ documentID: UUID, restoresReading: Bool) {
     let bookmark = restoration?.documentID == documentID ? restoration?.bookmark : nil
     restoration = restoresReading ? .init(documentID: documentID, bookmark: bookmark) : nil
@@ -87,7 +115,11 @@ final class DocumentReadingSession {
   }
 
   func ownerChanged(to presence: SessionPresence, settled: Bool) {
-    if measurement?.documentID != presence.focusedItemID || (settled && presence.openProgress <= 0) {
+    let preparesMeasurement = measurement.map {
+      restoration?.documentID == $0.documentID || suppressedDocument == $0.documentID
+    } == true
+    if (measurement?.documentID != presence.focusedItemID && !preparesMeasurement)
+      || (settled && presence.openProgress <= 0) {
       measurement = nil
     }
     restoration?.target = nil
@@ -101,12 +133,13 @@ final class DocumentReadingSession {
   }
 
   func accept(_ layout: DocumentPageLayout, document: DocumentDocument,
-    presence: SessionPresence?) -> WorkspaceItemGeometry? {
+    presence: SessionPresence?, preparingPage: Int? = nil) -> WorkspaceItemGeometry? {
+    let isVisible = presence?.focusedItemID == document.id && (presence?.openProgress ?? 0) > 0
     guard let record = layout.record,
       layout.pageCount(for: DocumentPageNavigation.sourceRevision(document)) != nil,
-      presence?.focusedItemID == document.id, (presence?.openProgress ?? 0) > 0 else { return nil }
+      isVisible || (preparingPage != nil && presence?.selectedItemID == document.id) else { return nil }
     measurement = .init(documentID: document.id, stamp: document.contentStamp, layout: record)
-    return record.paper(on: presence?.documentPageIndex ?? 0).geometry
+    return record.paper(on: isVisible ? presence?.documentPageIndex ?? 0 : preparingPage ?? 0).geometry
   }
 
   func restore(document: DocumentDocument, presence: SessionPresence, center: WorldPoint?,

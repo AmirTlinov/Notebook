@@ -1,0 +1,69 @@
+{
+  "scope": "First native run: 4/5 methods pass. The new workload did not force demotion and its pixel oracle sampled a transparent ink layer.",
+  "sourceSHA256": "2d3c9211451c60f4945183ee9120d1330c33bb7c88b15f1ee0cb3f6ae7f0d24e",
+  "native": {
+    "devicesAndConfigurations": [
+      {
+        "device": {
+          "architecture": "arm64",
+          "deviceId": "00006050-001650DA01F9401C",
+          "deviceName": "My Mac",
+          "modelName": "MacBook Pro",
+          "osBuildNumber": "26A434",
+          "osVersion": "27.0.1",
+          "platform": "macOS"
+        },
+        "expectedFailures": 0,
+        "failedTests": 1,
+        "passedTests": 4,
+        "skippedTests": 0,
+        "testPlanConfiguration": {
+          "configurationId": "1",
+          "configurationName": "Test Scheme Action"
+        }
+      }
+    ],
+    "environmentDescription": "NotebookRuntime · Built with macOS 27.0.1",
+    "expectedFailures": 0,
+    "failedTests": 1,
+    "finishTime": 1791363620.137,
+    "passedTests": 4,
+    "result": "Failed",
+    "runtimeWarnings": [],
+    "skippedTests": 0,
+    "startTime": 1791363615.093,
+    "statistics": [],
+    "testFailures": [
+      {
+        "failureText": "XCTAssertFalse failed - Interleaved passive bands force the real aggregate budget to demote bodies",
+        "targetName": "NotebookMacTests",
+        "testIdentifier": 2,
+        "testIdentifierString": "NotebookPanelMaterialTests/testBudgetDemotedElementBodiesNeverCreateDiscardedMaterialRasters()",
+        "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookPanelMaterialTests/testBudgetDemotedElementBodiesNeverCreateDiscardedMaterialRasters",
+        "testName": "testBudgetDemotedElementBodiesNeverCreateDiscardedMaterialRasters()"
+      }
+    ],
+    "title": "Test - NotebookRuntime",
+    "topInsights": [],
+    "totalTestCount": 5
+  },
+  "failedAssertions": [
+    "XCTAssertFalse failed - Interleaved passive bands force the real aggregate budget to demote bodies",
+    "XCTAssertGreaterThan failed: (\"0.0\") is not greater than (\"0.95\") - The last passive body remains above every admitted red subject"
+  ],
+  "artifacts": ".build/runtime-255-panel-verified",
+  "core": {
+    "executed": [
+      "NotebookCoreTests.NotebookPanelPageReadTests/mixedPageMatchesAddressedGeometryAndAppearance()/NotebookPanelPageReadTests.swift:37:4"
+    ],
+    "executions": {
+      "NotebookCoreTests.NotebookPanelPageReadTests/mixedPageMatchesAddressedGeometryAndAppearance()/NotebookPanelPageReadTests.swift:37:4": 1
+    },
+    "failed": [],
+    "format": 1,
+    "planned": [
+      "NotebookCoreTests.NotebookPanelPageReadTests/mixedPageMatchesAddressedGeometryAndAppearance()/NotebookPanelPageReadTests.swift:37:4"
+    ],
+    "skipped": []
+  }
+}

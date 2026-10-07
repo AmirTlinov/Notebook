@@ -3,6 +3,15 @@ import CryptoKit
 import NotebookCore
 
 enum NotebookScriptAPI {
+  /// The signed SDK resource is immutable for this process's lifetime. Every
+  /// help topic shares one decoded reference and the original loading result.
+  private static let bundledReference: Result<JSONValue, Error> = Result {
+    guard let url = Bundle.module.url(forResource: "sdk-reference", withExtension: "json") else {
+      throw CollaborationError("sdk_contract_missing", "Сборка не содержит справочник SDK.")
+    }
+    return try JSONDecoder().decode(JSONValue.self, from: Data(contentsOf: url))
+  }
+
   static let readMethods: Set<String> = ["help", "observe", "read", "readMany", "board", "notebook", "page", "document", "documentStructure", "documentCheck",
     "context", "attention", "code", "search", "reference", "referenceStatus", "action", "render", "pageMap",
     "pageImage", "regions", "place", "prepareTldraw", "exportStatus", "presentation", "wait"]
@@ -26,10 +35,7 @@ enum NotebookScriptAPI {
     "old_receipts": .string("Existing action and undo receipts stay readable except actions touching block-format documents removed by the file-format cutover: those receipts and their recovery paths are invalidated, including mixed actions. A raw retry without an original fingerprint fails request_identity_unavailable."),
   ]) }
   static func documentation(_ topic: String?) throws -> JSONValue {
-    guard let url = Bundle.module.url(forResource: "sdk-reference", withExtension: "json") else {
-      throw CollaborationError("sdk_contract_missing", "Сборка не содержит справочник SDK.")
-    }
-    let reference = try JSONDecoder().decode(JSONValue.self, from: Data(contentsOf: url))
+    let reference = try bundledReference.get()
     guard let topic else {
       var value = help.fields
       value["topics"] = .array((reference["methods"]?.fields.keys.sorted() ?? []).map(JSONValue.string)

@@ -211,3 +211,30 @@ exact first part. Its request identity lives with that one per-peer MessageRead,
 not in a second response cache. A new envelope replaces the transfer; a collision
 with another payload is rejected. Revoking its peer/observation revokes that
 identity and pending asynchronous admission together.
+
+## Cold runtime startup
+
+MCP starts its transport before awaiting the native process. `notebook_open`
+opens the static panel with its exact target/bounds; the app-only
+`notebook_panel_connect` owns the initial admitted read. Startup failure keeps
+the transport alive for retry. Every domain dispatch validates the current
+runtime, including an old panel's addressed socket. Agent tools spend their
+existing response deadline on admission and execution together; an expired
+admission wait cannot send a command later. Only bootstrap and reads may retry
+automatically; uncertain mutations retain their original identities.
+
+The existing admission path emits bounded `RuntimeStartup` OSLog marks with PID
+and monotonic milliseconds from `process.entry`: signature dynamic/static
+begin/end (OSStatus), launch delegate, socket claim/bound and the first
+`runtime_status` handler begin/end. Entry excludes dyld/LaunchServices; socket
+bound precedes workspace readiness; handler end precedes the IPC wire reply.
+
+The launcher's first bootstrap emits stderr JSON `notebook-runtime-startup`:
+UTC start, monotonic elapsed time, attempts, launch begin/end, final status/PID
+and last error code. Its anchor follows module loading and the `plutil` build
+read. Later successful polls emit no startup records.
+`launch.end` means `/usr/bin/open` acknowledged; `startup.done` means a validated
+runtime status arrived, including `opening`. Neither establishes displayed pixels.
+Timeout keeps the last BridgeError as its cause and a bounded reason in its message.
+No paths, workspace/content payloads or keys enter the trace. The native bootstrap
+deadline and signature requirements are independent of MCP transport readiness.

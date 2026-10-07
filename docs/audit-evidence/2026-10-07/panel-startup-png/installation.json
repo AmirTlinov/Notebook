@@ -1,0 +1,133 @@
+{
+  "build": "256",
+  "buildSHA256": "fab41614ba2f8f9eaf892fdae681b9ceec8c2fc8632a7888e2f5416db669a2d3",
+  "canonicalBefore": [],
+  "format": 1,
+  "installationAttempted": true,
+  "ipadAfter": [
+    {
+      "appClip": false,
+      "appGroupIdentifiers": [],
+      "builtByDeveloper": true,
+      "bundleContainerPath": "/private/var/containers/Bundle/Application/ECFECCC9-8AC4-4683-B213-7041D7255546",
+      "bundleIdentifier": "com.amirtlinov.notebook.preview",
+      "bundleVersion": "256",
+      "containerAccessible": true,
+      "dataContainerPath": "/private/var/mobile/Containers/Data/Application/1A31A703-21D9-468D-90BD-3002ACD74D8D",
+      "defaultApp": false,
+      "groupContainerPaths": {},
+      "hidden": false,
+      "internalApp": false,
+      "name": "Notebook Lab",
+      "removable": true,
+      "url": "file:///private/var/containers/Bundle/Application/ECFECCC9-8AC4-4683-B213-7041D7255546/Notebook.app/",
+      "version": "0.3.186"
+    }
+  ],
+  "ipadBefore": [
+    {
+      "appClip": false,
+      "appGroupIdentifiers": [],
+      "builtByDeveloper": true,
+      "bundleContainerPath": "/private/var/containers/Bundle/Application/957FEEDC-A005-4D23-BC7E-1ED5D4B2BBA3",
+      "bundleIdentifier": "com.amirtlinov.notebook.preview",
+      "bundleVersion": "255",
+      "containerAccessible": true,
+      "dataContainerPath": "/private/var/mobile/Containers/Data/Application/976F5087-2502-41A3-942B-1A9CE1168DFC",
+      "defaultApp": false,
+      "groupContainerPaths": {},
+      "hidden": false,
+      "internalApp": false,
+      "name": "Notebook Lab",
+      "removable": true,
+      "url": "file:///private/var/containers/Bundle/Application/957FEEDC-A005-4D23-BC7E-1ED5D4B2BBA3/Notebook.app/",
+      "version": "0.3.185"
+    }
+  ],
+  "ipadWorkspaceAfter": {
+    "identity": {
+      "activeSQLite": "Library/Application Support/Notebook/notebook.sqlite",
+      "catalogBytes": 400,
+      "catalogSHA256": "1c02e665ad8a86dcb4cc9fb83f7cdd6ed1f841ef96bc15431b327eadf211516b",
+      "originalID": "54349f3b-9e0a-4dea-b990-40cae04ef45e",
+      "selectedID": "54349f3b-9e0a-4dea-b990-40cae04ef45e",
+      "state": "catalog",
+      "workspaceIDs": [
+        "54349f3b-9e0a-4dea-b990-40cae04ef45e",
+        "6e14684d-3135-4a86-8e26-289ceb06835e"
+      ]
+    },
+    "sqliteMetadata": {
+      "extendedAttributes": {
+        "com.apple.dataprotection.policy.exception-applied-by": "com.apple.containermanagerd"
+      },
+      "lastModDate": "2026-10-07T10:33:24.000Z",
+      "ownerGid": 501,
+      "ownerUid": 501,
+      "permissions": 420,
+      "size": 369307648
+    }
+  },
+  "ipadWorkspaceBefore": {
+    "identity": {
+      "activeSQLite": "Library/Application Support/Notebook/notebook.sqlite",
+      "catalogBytes": 400,
+      "catalogSHA256": "1c02e665ad8a86dcb4cc9fb83f7cdd6ed1f841ef96bc15431b327eadf211516b",
+      "originalID": "54349f3b-9e0a-4dea-b990-40cae04ef45e",
+      "selectedID": "54349f3b-9e0a-4dea-b990-40cae04ef45e",
+      "state": "catalog",
+      "workspaceIDs": [
+        "54349f3b-9e0a-4dea-b990-40cae04ef45e",
+        "6e14684d-3135-4a86-8e26-289ceb06835e"
+      ]
+    },
+    "sqliteMetadata": {
+      "extendedAttributes": {
+        "com.apple.dataprotection.policy.exception-applied-by": "com.apple.containermanagerd"
+      },
+      "lastModDate": "2026-10-07T10:33:24.000Z",
+      "ownerGid": 501,
+      "ownerUid": 501,
+      "permissions": 420,
+      "size": 369307648
+    }
+  },
+  "marketplace": "/Users/amir/Library/Application Support/NotebookPlugin/marketplace",
+  "pluginVersion": "0.2.8",
+  "publication": {
+    "plugin": "/Users/amir/Library/Application Support/NotebookPlugin/marketplace/releases/0.2.8/notebook",
+    "previousVersion": "0.2.8",
+    "root": "/Users/amir/Library/Application Support/NotebookPlugin/marketplace",
+    "sha256": "b8082f283be3bbcc28918ce982294b690dc83be30718b69352bc2a650ecd5809",
+    "version": "0.2.8"
+  },
+  "runtime": "/Users/amir/.codex/plugins/cache/notebook-local/notebook/0.2.8/runtime/NotebookRuntime.app",
+  "runtimeShutdown": [
+    {
+      "cdhash": "71aedee943a56f4150c9275102343eb1824ee45b",
+      "executable": "/Users/amir/.codex/plugins/cache/notebook-local/notebook/0.2.8/runtime/NotebookRuntime.app/Contents/MacOS/NotebookRuntime",
+      "pid": 37131,
+      "uid": 501
+    }
+  ],
+  "status": "installed",
+  "step": "complete",
+  "version": "0.3.186",
+  "runtimePeer": {
+    "pid": 38006,
+    "uid": 501,
+    "executable": "/Users/amir/.codex/plugins/cache/notebook-local/notebook/0.2.8/runtime/NotebookRuntime.app/Contents/MacOS/NotebookRuntime",
+    "cdhash": "71aedee943a56f4150c9275102343eb1824ee45b"
+  },
+  "runtimePeerMatchesBuildSignature": true,
+  "workspaceReadback": "Installed 0.2.8 MCP read the original workspace and three page targets on 2026-10-07T10:49Z. The chat connection recovered at 11:25Z; actual panel observations are recorded in ../panel-occupancy/observed-256.json.",
+  "iPadLaunch": "Production256 launched at 2026-10-07T10:48Z; no physical gesture acceptance from this installation.",
+  "firstAttempt": {
+    "status": "incomplete",
+    "step": "install-plugin",
+    "iPadInstallStarted": false,
+    "reason": "Only workspace-catalog JSON object-key order changed. Previous raw hash reconstructed exactly from current full values by key permutation. Fresh preflight accepted the same signed pair; no uncertain device installation was retried.",
+    "details": "catalog-comparison.json"
+  },
+  "scope": "Signed pair installation, catalog/SQLite readback and installed MCP response timings; not input-to-pixel or full physical acceptance."
+}

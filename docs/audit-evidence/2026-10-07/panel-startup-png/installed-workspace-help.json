@@ -1,0 +1,57 @@
+{
+  "at": "2026-10-07T10:59:41.730Z",
+  "plugin": "0.2.8",
+  "scope": "Interleaved installed MCP workspace list and SDK help reads; no UI latency claim",
+  "samples": [
+    {
+      "label": "workspace-0",
+      "ms": 712.436375,
+      "bytes": 1402,
+      "error": false
+    },
+    {
+      "label": "help-0",
+      "ms": 148.38545899999997,
+      "bytes": 10168,
+      "error": false
+    },
+    {
+      "label": "workspace-1",
+      "ms": 353.10141699999986,
+      "bytes": 1402,
+      "error": false
+    },
+    {
+      "label": "help-1",
+      "ms": 149.00133400000004,
+      "bytes": 10168,
+      "error": false
+    },
+    {
+      "label": "workspace-2",
+      "ms": 300.15154099999995,
+      "bytes": 1402,
+      "error": false
+    },
+    {
+      "label": "help-2",
+      "ms": 149.5813340000002,
+      "bytes": 10168,
+      "error": false
+    },
+    {
+      "label": "workspace-3",
+      "ms": 269.1808330000001,
+      "bytes": 1402,
+      "error": false
+    },
+    {
+      "label": "help-3",
+      "ms": 151.28245800000013,
+      "bytes": 10168,
+      "error": false
+    }
+  ],
+  "status": "passed",
+  "stderr": "Notebook MCP listens on stdio\n{\"kind\":\"notebook-runtime-startup\",\"launcherPID\":41498,\"phase\":\"startup.begin\",\"startedAt\":\"2026-10-07T10:59:41.792Z\",\"elapsedMilliseconds\":0.4543340000000029,\"attempts\":0,\"launched\":false}\n{\"kind\":\"notebook-runtime-startup\",\"launcherPID\":41498,\"phase\":\"startup.done\",\"startedAt\":\"2026-10-07T10:59:41.792Z\",\"elapsedMilliseconds\":25.136125000000007,\"attempts\":1,\"launched\":false,\"runtimePID\":38006,\"runtimeState\":\"ready\"}\n"
+}

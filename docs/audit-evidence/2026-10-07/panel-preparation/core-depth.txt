@@ -1,0 +1,16 @@
+Building for production...
+[1 / 4] NotebookCoreTests-product
+[2 / 5] NotebookCoreTests-product
+[4 / 5] NotebookCoreTests-product
+[9 / 9] NotebookCoreTests-product
+Build complete! (4,78 с)
+◇ Test run started.
+↳ Testing Library Version: 2084
+↳ Target Platform: arm64e-apple-macos14.0
+◇ Suite "Panel page material reads" started.
+◇ Test groupDepthUsesNativePendingProjectionWithoutDiscardingSource(depth:) started.
+◇ Test case passing 1 argument depth → 63 to groupDepthUsesNativePendingProjectionWithoutDiscardingSource(depth:) started.
+◇ Test case passing 1 argument depth → 64 to groupDepthUsesNativePendingProjectionWithoutDiscardingSource(depth:) started.
+✔ Test groupDepthUsesNativePendingProjectionWithoutDiscardingSource(depth:) with 2 test cases passed after 0.420 seconds.
+✔ Suite "Panel page material reads" passed after 0.420 seconds.
+✔ Test run with 1 test in 1 suite passed after 0.420 seconds.

@@ -1,0 +1,77 @@
+✔ tool controls retain the board shortcuts without an extra focus click (5.8675ms)
+✔ Enter and Space on controls preserve native button activation (0.978959ms)
+✔ a completed shape save preserves the next tool chosen while saving (1.406ms)
+▶ keyboard undo and delete cannot admit another action during a dragged contact
+  ✔ z (1.632208ms)
+  ✔ Delete (1.251125ms)
+✔ keyboard undo and delete cannot admit another action during a dragged contact (3.201ms)
+▶ Enter and double-click cannot open a nested editor or release the current contact
+  ✔ select: Enter (1.206625ms)
+  ✔ select: dblclick (0.990625ms)
+  ✔ pen: Enter (1.199042ms)
+  ✔ pen: dblclick (0.93275ms)
+✔ Enter and double-click cannot open a nested editor or release the current contact (4.718459ms)
+✔ an idle editor still opens, cancels and saves one completed edit (1.093375ms)
+✔ the text tool still admits and saves a new element (0.780125ms)
+▶ lost pointer capture cancels the unfinished preview and resumes the same projection
+  ✔ select (0.941958ms)
+  ✔ pen (0.696833ms)
+✔ lost pointer capture cancels the unfinished preview and resumes the same projection (1.802709ms)
+▶ Escape still cancels an unfinished contact without admitting a competing write
+  ✔ select (0.73175ms)
+  ✔ pen (0.723916ms)
+✔ Escape still cancels an unfinished contact without admitting a competing write (1.6045ms)
+▶ late lost-capture events preserve a completed ink contact and a newer pointer
+  ✔ select: pointer 1 (0.924208ms)
+  ✔ select: pointer 2 (0.995583ms)
+  ✔ pen: pointer 1 (0.952583ms)
+  ✔ pen: pointer 2 (0.727167ms)
+✔ late lost-capture events preserve a completed ink contact and a newer pointer (3.954416ms)
+✔ real pen input retains measured samples through completion and discards only cancelled contact (1.637833ms)
+✔ same-source late coarse material cannot replace sharper pixels at the current zoom (1.901791ms)
+✔ zoom-out admits lower excess density using the current display scale (0.328125ms)
+✔ an inadequate prior admits the current native pixel budget reply and ends demand (0.300834ms)
+▶ coarser material still admits fresh source identity and visible coverage gains
+  ✔ revision (0.290458ms)
+  ✔ workspace (0.204791ms)
+  ✔ endpoint (0.161083ms)
+  ✔ coverage (0.154792ms)
+✔ coarser material still admits fresh source identity and visible coverage gains (1.007708ms)
+▶ session coalesces viewport demand against accepted pixels without delaying required reads
+  ✔ covered (4.160542ms)
+  ✔ needed (0.467875ms)
+  ✔ forced (0.454417ms)
+  ✔ fit (2.771ms)
+✔ session coalesces viewport demand against accepted pixels without delaying required reads (8.207458ms)
+▶ a rejected coarse reply settles idle status while retaining write recovery state
+  ✔ idle (0.557625ms)
+  ✔ synchronizing (0.205084ms)
+  ✔ failedWrite (0.171958ms)
+✔ a rejected coarse reply settles idle status while retaining write recovery state (1.102083ms)
+▶ session teardown releases readers and ignores late read and write completions
+  ✔ read (0.716416ms)
+  ✔ saved (0.45075ms)
+  ✔ conflict (0.417584ms)
+  ✔ uncertain (0.268708ms)
+✔ session teardown releases readers and ignores late read and write completions (2.051083ms)
+✔ navigation publishes ready controls immediately after the new surface is accepted (0.179625ms)
+✔ a confirmed pen contact replaces an in-flight old scene before the next polling tick (0.377125ms)
+✔ an unfinished contact owns mutation admission until completion or cancellation (0.221625ms)
+✔ error Retry repairs ipc_timeout before repeating the same text action (0.440417ms)
+✔ error Retry repairs operation_failed before repeating the same text action (0.27ms)
+✔ workspace recovery preserves an uncertain action and its panel address (0.291667ms)
+✔ session closed during handshake suppresses the late connection failure (0.115167ms)
+✔ Notebook exposes one HTML app resource, a model opener and app-only gesture tools (19.749167ms)
+✔ native presentation stays pinned, bounds pixels and avoids duplicating PNG bytes in text (10.4505ms)
+✔ panel gestures keep the admitted endpoint and exact native sources (7.743667ms)
+✔ panel rejects caller routing/authorship fields and preserves the native conflict detail (5.0975ms)
+✔ workspace bootstrap opens in the same panel without a content owner or desktop window (5.534917ms)
+✔ workspace switching retires an old in-flight read and preserves accepted edit ownership (0.34675ms)
+ℹ tests 60
+ℹ suites 0
+ℹ pass 60
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 407.426584

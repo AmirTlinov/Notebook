@@ -1,0 +1,9 @@
+{
+  "at": "2026-10-07T08:14:24.853Z",
+  "plugin": "0.2.6",
+  "scope": "Installed MCP read-only presentation timing; not host input-to-pixel latency",
+  "samples": [],
+  "status": "failed",
+  "error": "Connection closed",
+  "stderr": "The bundled Notebook runtime has not opened its IPC channel. Reconnect the plugin after resolving its startup error.\n"
+}

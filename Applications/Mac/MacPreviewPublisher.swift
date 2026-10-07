@@ -135,7 +135,11 @@ final class MacPreviewPublisher {
   private var stopped = false
   private var stoppingTask: Task<Void, Never>?
   private var targetTask: Task<Void, Never>?
-  private var targetInProgress: UUID?
+  private enum TargetWork: Equatable {
+    case panel(UUID)
+    case durable(UUID)
+  }
+  private var targetInProgress: TargetWork?
   private struct PanelWaiter {
     let cut: NotebookPanelPresentationCut
     let knownAssets: Set<UUID>
@@ -233,14 +237,14 @@ final class MacPreviewPublisher {
   /// A panel joins the existing pixel scheduler with an ephemeral source cut.
   /// Camera movement does not enqueue durable artifacts or author store state.
   func panelPresentation(_ request: NotebookPanelPresentationRequest) async throws -> JSONValue {
-    guard started, !stopped, let model, model.permitsBackgroundPreparation else {
+    guard started, !stopped, let model, model.permitsPanelPreparation else {
       throw CollaborationError("snapshot_pending", "Представление Notebook ждёт завершения ввода.")
     }
     try await prepareTargetQueue(model)
-    guard started, !stopped, !Task.isCancelled, model.permitsBackgroundPreparation else { throw CancellationError() }
+    guard started, !stopped, !Task.isCancelled, model.permitsPanelPreparation else { throw CancellationError() }
     let cut = try await model.readCommandCut { try $0.requestPanelPresentation(request) }
     try Task.checkCancellation()
-    guard started, !stopped, model.permitsBackgroundPreparation else { throw CancellationError() }
+    guard started, !stopped, model.permitsPanelPreparation else { throw CancellationError() }
     if request.knownRequestID == cut.id, request.knownCursor == String(cut.cursor),
       panelValidations.contains(where: { $0.id == cut.id && $0.cursor == String(cut.cursor)
         && $0.rasterGeneration == SceneRenderResources.shared.rasterGeneration }) {
@@ -251,7 +255,7 @@ final class MacPreviewPublisher {
     return try await withTaskCancellationHandler {
       try Task.checkCancellation()
       return try await withCheckedThrowingContinuation { continuation in
-        guard started, !stopped, model.permitsBackgroundPreparation else { continuation.resume(throwing: CancellationError()); return }
+        guard started, !stopped, model.permitsPanelPreparation else { continuation.resume(throwing: CancellationError()); return }
         panelWaiters[waiterID] = .init(cut: cut, knownAssets: Set(request.knownAssets ?? []),
           enqueuedAt: ContinuousClock.now, continuation: continuation)
         scheduleTargetRender(model)
@@ -260,7 +264,7 @@ final class MacPreviewPublisher {
       Task { @MainActor [weak self] in
         guard let self, let removed = panelWaiters.removeValue(forKey: waiterID) else { return }
         removed.continuation.resume(throwing: CancellationError())
-        if targetInProgress == removed.cut.id && !panelWaiters.values.contains(where: { $0.cut.id == removed.cut.id }) {
+        if targetInProgress == .panel(removed.cut.id) && !panelWaiters.values.contains(where: { $0.cut.id == removed.cut.id }) {
           targetTask?.cancel()
         }
       }
@@ -274,7 +278,7 @@ final class MacPreviewPublisher {
       let snapshot = try await CurrentViewPreviewWriter.panelMaterial(waiter.cut, model: model,
         knownAssets: waiter.knownAssets)
       try Task.checkCancellation()
-      guard started, !stopped, model.permitsBackgroundPreparation else { throw CancellationError() }
+      guard started, !stopped, model.permitsPanelPreparation else { throw CancellationError() }
       // A warmed render can establish the idle shortcut only if no native pixels
       // changed across its whole preparation. First-time captures simply skip it.
       if generation == SceneRenderResources.shared.rasterGeneration {
@@ -301,7 +305,8 @@ final class MacPreviewPublisher {
     receiptRefresh?.permit.revoke()
     currentViewTask?.cancel()
     pageRequestTask?.cancel()
-    targetTask?.cancel()
+    if model?.permitsPanelPreparation != true { targetTask?.cancel() }
+    else if case .durable? = targetInProgress { targetTask?.cancel() }
   }
 
   /// Observation gives immediate updates. This small process-level pass gives
@@ -326,17 +331,27 @@ final class MacPreviewPublisher {
         self?.healthWriteTask = nil
       }
     }
-    guard model.permitsBackgroundPreparation else { targetTask?.cancel(); return }
+    if !model.permitsBackgroundPreparation { suspendForInput() }
     scheduleTargetRender(model)
   }
 
+  private func renderNextPanel(_ model: NotebookAppModel) async -> Bool {
+    guard model.permitsPanelPreparation,
+      let waiter = panelWaiters.values.min(by: { $0.enqueuedAt < $1.enqueuedAt }) else { return false }
+    targetInProgress = .panel(waiter.cut.id)
+    lastTargetWasPanel = true
+    await completePanel(waiter, model: model)
+    return true
+  }
+
   private func scheduleTargetRender(_ model: NotebookAppModel) {
-    guard started, model.permitsBackgroundPreparation, targetTask == nil else { return }
+    guard started, !stopped, targetTask == nil,
+      model.permitsBackgroundPreparation || (model.permitsPanelPreparation && !panelWaiters.isEmpty) else { return }
     let selectedPage = pageKey?.pageID
     targetTask = Task { [weak self, weak model] in
       defer {
         self?.targetInProgress = nil; self?.targetTask = nil
-        if model?.permitsBackgroundPreparation != true {
+        if model?.permitsPanelPreparation != true {
           let waiters = self?.panelWaiters.values.map { $0 } ?? []
           self?.panelWaiters.removeAll()
           for waiter in waiters { waiter.continuation.resume(throwing: CancellationError()) }
@@ -347,12 +362,11 @@ final class MacPreviewPublisher {
       do {
         try await self?.prepareTargetQueue(model)
         try Task.checkCancellation()
-        if let self, !lastTargetWasPanel, let waiter = panelWaiters.values.min(by: { $0.enqueuedAt < $1.enqueuedAt }) {
-          targetInProgress = waiter.cut.id
-          lastTargetWasPanel = true
-          await completePanel(waiter, model: model)
+        if let self, !lastTargetWasPanel || !model.permitsBackgroundPreparation,
+          await renderNextPanel(model) {
           return
         }
+        guard model.permitsBackgroundPreparation else { return }
         let request = try await model.performStoreCommand { store in
           try store.targetRenderRequests().sorted { left, right in
             let leftCurrent = left.pageVisionRevision != nil && left.target.id == selectedPage
@@ -360,19 +374,19 @@ final class MacPreviewPublisher {
             return leftCurrent == rightCurrent ? left.createdAt < right.createdAt : leftCurrent
           }.first { !FileManager.default.fileExists(atPath: store.targetReceiptURL($0.id).path) }
         }
-        guard self?.started == true, !Task.isCancelled, model.permitsBackgroundPreparation else { return }
+        guard self?.started == true, !Task.isCancelled else { return }
+        guard model.permitsBackgroundPreparation else {
+          _ = await self?.renderNextPanel(model)
+          return
+        }
         guard let request else {
-          if let self, let waiter = panelWaiters.values.min(by: { $0.enqueuedAt < $1.enqueuedAt }) {
-            targetInProgress = waiter.cut.id
-            lastTargetWasPanel = true
-            await completePanel(waiter, model: model)
-          }
+          _ = await self?.renderNextPanel(model)
           return
         }
         // Continuous human camera motion shares the pixel worker fairly with
         // the agent's already-admitted durable captures.
         self?.lastTargetWasPanel = false
-        self?.targetInProgress = request.id
+        self?.targetInProgress = .durable(request.id)
         do {
           if !FileManager.default.fileExists(atPath: model.store.targetReceiptURL(request.id).path) {
             try await CurrentViewPreviewWriter.writeTarget(request, model: model)
@@ -392,6 +406,10 @@ final class MacPreviewPublisher {
             programs: request.target.kind == .document ? rendering?.programs ?? [] : nil)
           try await model.performStoreCommand { try $0.saveTargetRender(receipt) }
         }
+      } catch is CancellationError {
+        // The cancelled durable producer releases this task. Eligible panel
+        // waiters retain their foreground demand for the next queue turn.
+        return
       } catch {
         let waiters = self?.panelWaiters.values.map { $0 } ?? []
         self?.panelWaiters.removeAll()

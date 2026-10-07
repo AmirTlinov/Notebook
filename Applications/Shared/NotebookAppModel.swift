@@ -1007,8 +1007,8 @@ final class NotebookAppModel {
     defer { withExtendedLifetime(work) {} }
     return .init(content:try await NotebookClipboard.read(providers,availableSize:availableSize),workLease:work)
   }
-  func reserveElementPreparation() -> NotebookPersistenceAdmission.Reservation? {
-    guard let reservation = persistence.reserveWrite(NotebookElementWriteAllowance.maximumCost) else {
+  func reserveElementPreparation(cost:NotebookPersistenceAdmission.Cost = NotebookElementWriteAllowance.maximumCost) -> NotebookPersistenceAdmission.Reservation? {
+    guard let reservation = persistence.reserveWrite(cost) else {
       showCue("Сохранение заполнено. Повторите после восстановления записи."); return nil
     }
     return reservation
@@ -1084,7 +1084,7 @@ final class NotebookAppModel {
   private var pencilUndoHistory = PencilUndoHistory()
   @ObservationIgnored private var pendingCollaborationCommands:[UUID:Task<Bool,Never>]=[:]
   private(set) var graphicCommandTask: Task<NotebookElementCommandResult?, Never>?
-  @ObservationIgnored var pendingMaterialAdmissions:[SurfaceID:(id:UUID,task:Task<Void,Never>)] = [:]
+  @ObservationIgnored var pendingMaterialAdmissions:[SurfaceID:NotebookMaterialAdmission] = [:]
   @ObservationIgnored private var graphicCommandGeneration = UUID()
   @ObservationIgnored var workingGraphics: [NotebookWorkingGraphic] = []
   @ObservationIgnored var workingGraphicSignals:[SurfaceID:NotebookWorkingGraphicSignal] = [:]
@@ -1223,6 +1223,13 @@ final class NotebookAppModel {
         && $0.publication == nil }
   }
   #if os(macOS)
+    /// The foreground Codex reader owns its pinned stored cut. Local input and
+    /// shutdown keep their preparation fence; remote contact owns publication
+    /// to its device independently from this read.
+    var permitsPanelPreparation: Bool {
+      loadState == .ready && !isStopped && !inputIsActive
+    }
+
     @ObservationIgnored var codexHost: NotebookCodexHost?
     @ObservationIgnored private var codexSidecar: NotebookCodexSidecar?
     @ObservationIgnored private var codexStartupTask: Task<Void, Never>?
@@ -2778,7 +2785,7 @@ final class NotebookAppModel {
     documents[documentID].flatMap { documentReading.layout(for: $0) }
   }
 
-  private func documentGeometry(_ documentID: UUID, page: Int) -> WorkspaceItemGeometry {
+  func documentGeometry(_ documentID: UUID, page: Int) -> WorkspaceItemGeometry {
     readingLayout(documentID)?.paper(on: page).geometry ?? documentPaperSizes[documentID] ?? .uncompiledDocument
   }
 
@@ -2790,14 +2797,35 @@ final class NotebookAppModel {
     documentReading.camera(for: documentID, geometry: documentGeometry(documentID, page: page), center: center, viewport: viewport)
   }
 
+  func documentCameraIntent(for presence: SessionPresence) -> DocumentReadingSession.CameraIntent? {
+    guard presence.mode == .document, let id = presence.focusedItemID else { return nil }
+    return .init(camera: presence.camera, geometry: documentGeometry(id, page: presence.documentPageIndex),
+      viewport: presence.viewport)
+  }
+
+  func resolvedDocumentOpening(_ presence: SessionPresence,
+    cameraIntent: DocumentReadingSession.CameraIntent) -> SessionPresence {
+    guard presence.mode == .document, let id = presence.focusedItemID, let document = documents[id],
+      let center = boardHierarchy?.focusedCenter(of: id, in: presence.boardID),
+      let camera = documentReading.openingCamera(cameraIntent, document: document, page: presence.documentPageIndex,
+        center: center, viewport: presence.viewport) else { return presence }
+    return presence.replacingCamera(camera)
+  }
+
   func beginDocumentCameraInteraction() {
     guard let id = presence?.focusedItemID, documents[id] != nil else { return }
     documentReading.beginContact(id)
   }
 
   func acceptDocumentReadingLayout(_ layout: DocumentPageLayout, documentID: UUID) {
+    let preparingPage: Int?
+    if let opening = documentOpening, opening.request.documentID == documentID,
+      opening.outcome == nil || opening.outcome == .completed {
+      preparingPage = opening.request.pageIndex
+    } else { preparingPage = nil }
     guard let document = documents[documentID],
-      let geometry = documentReading.accept(layout, document: document, presence: presence) else { return }
+      let geometry = documentReading.accept(layout, document: document, presence: presence,
+        preparingPage: preparingPage) else { return }
     if documentPaperSizes[documentID] != geometry {
       documentPaperSizes[documentID] = geometry; scheduleScenePreparation()
     }
@@ -3589,9 +3617,6 @@ final class NotebookAppModel {
     presentation:NotebookSelectionPresentation? = nil) -> Bool {
     guard let source=frozen ?? selectionEditSource(deleting:deleting),selectionEditSourceIsCurrent(source),
       deleting || (edits.count == source.members.count && Set(edits.map(\.id)) == Set(source.members.map(\.id))) else { return false }
-    guard let reservation = reserveElementPreparation() else { return false }
-    var transferred = false
-    defer { if !transferred { releaseElementPreparation(reservation) } }
     // Authored-only patches contain bounded poses/styles, never a measured
     // body. Preserve their synchronous draft admission through the same helper.
     if !source.needsOrderedPresentation {
@@ -3608,11 +3633,13 @@ final class NotebookAppModel {
           presentation.claim()
         }
         guard enqueueElementCommand(target:source.address.target,ready:plan,presentation:presentation,
-          reservation:reservation) != nil else { presentation?.commandFailed(); return false }
-        transferred = true
+          reservation:nil) != nil else { presentation?.commandFailed(); return false }
         if deleting { clearSelection() };return true
       } catch { showCue(error.localizedDescription);return false }
     }
+    guard let reservation = reserveElementPreparation() else { return false }
+    var transferred = false
+    defer { if !transferred { releaseElementPreparation(reservation) } }
     let working:[NotebookWorkingGraphic]
     do { working=try source.presentationWorking(for:edits,deleting:deleting) }
     catch { showCue(error.localizedDescription);return false }
@@ -3659,7 +3686,7 @@ final class NotebookAppModel {
         self?.pendingMaterialAdmissions[source.address.surface]=nil
       }
     }
-    pendingMaterialAdmissions[source.address.surface]=(batch.id,admission)
+    pendingMaterialAdmissions[source.address.surface] = .init(id:batch.id,task:admission)
     return true
   }
 
@@ -4398,12 +4425,21 @@ final class NotebookAppModel {
     presentation:NotebookSelectionPresentation? = nil,
     batch:NotebookElementCommandBatch = .init(),
     reservation suppliedReservation:NotebookPersistenceAdmission.Reservation? = nil) -> NotebookElementCommandBatch? {
-    guard let reservation = suppliedReservation ?? persistence.reserveWrite(NotebookElementWriteAllowance.maximumCost) else {
-      showCue("Сохранение заполнено. Повторите после восстановления записи."); return nil
-    }
+    let cost:NotebookPersistenceAdmission.Cost
     if let ready {
-      do { _ = try NotebookElementWriteAllowance.cost(ready) }
-      catch { persistence.releaseWriteReservation(reservation); showCue(error.localizedDescription); return nil }
+      do {
+        let measured=try NotebookElementWriteAllowance.cost(ready)
+        // A plain ready plan already holds its exact source. A dependency's
+        // receipt can still add causal metadata; its supplied region bound or
+        // the existing maximum covers that unresolved source.
+        cost=ready.sourceTasks.isEmpty ? measured : NotebookElementWriteAllowance.maximumCost
+      } catch {
+        if let suppliedReservation { persistence.releaseWriteReservation(suppliedReservation) }
+        showCue(error.localizedDescription);return nil
+      }
+    } else { cost=NotebookElementWriteAllowance.maximumCost }
+    guard let reservation = suppliedReservation ?? persistence.reserveWrite(cost) else {
+      showCue("Сохранение заполнено. Повторите после восстановления записи."); return nil
     }
     let actor=actorID
     let commandID=batch.id,generation=batch.generation

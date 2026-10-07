@@ -1,4 +1,6 @@
 import CoreGraphics
+import CryptoKit
+import Darwin
 import Foundation
 import ImageIO
 import NotebookCore
@@ -414,17 +416,102 @@ final class SceneRasterCut {
   }
 }
 
+/// A bounded, geometrically grown output for the existing ImageIO encoder.
+/// The callback owns no full-frame copy and checks pool admission before growth.
+private final class BoundedPNGOutput: @unchecked Sendable {
+  static let overhead = 4096
+  private let maximumBytes: Int
+  private let resizeCharge: @MainActor @Sendable (Int) -> Bool
+  private let lock = NSLock()
+  private var buffer: UnsafeMutableRawPointer?
+  private var capacity = 0
+  private var count = 0
+  private var failure: SceneRenderError?
+  private var finished = false
+
+  init(maximumBytes: Int, resizeCharge: @escaping @MainActor @Sendable (Int) -> Bool) {
+    self.maximumBytes = maximumBytes; self.resizeCharge = resizeCharge
+  }
+  deinit { free(buffer) }
+
+  func consumer() -> CGDataConsumer? {
+    var callbacks = CGDataConsumerCallbacks(putBytes: { info, bytes, count in
+      guard let info else { return 0 }
+      return Unmanaged<BoundedPNGOutput>.fromOpaque(info).takeUnretainedValue().write(bytes, count: count)
+    }, releaseConsumer: { info in
+      if let info { Unmanaged<BoundedPNGOutput>.fromOpaque(info).release() }
+    })
+    let info = Unmanaged.passRetained(self).toOpaque()
+    guard let value = CGDataConsumer(info: info, cbks: &callbacks) else {
+      Unmanaged<BoundedPNGOutput>.fromOpaque(info).release(); return nil
+    }
+    return value
+  }
+
+  private func charge(_ bytes: Int) -> Bool {
+    // encodePNG is async off-main; neither caller nor this callback blocks
+    // MainActor waiting for ImageIO. Only the synchronous ledger is entered.
+    assert(!Thread.isMainThread)
+    return DispatchQueue.main.sync { MainActor.assumeIsolated { resizeCharge(bytes) } }
+  }
+
+  private func write(_ bytes: UnsafeRawPointer, count incoming: Int) -> Int {
+    lock.lock(); defer { lock.unlock() }
+    guard !finished, failure == nil, !Task.isCancelled,
+      incoming >= 0, incoming <= maximumBytes - count else {
+      failure = .resourceLimit; return 0
+    }
+    let needed = count + incoming
+    if needed > capacity {
+      let requested = min(maximumBytes, max(4096, needed, capacity * 2))
+      let next = malloc_good_size(requested)
+      guard charge(capacity + next + Self.overhead), let replacement = realloc(buffer, next) else {
+        failure = .resourceLimit; return 0
+      }
+      buffer = replacement; capacity = malloc_size(replacement)
+      guard charge(capacity + Self.overhead) else { failure = .resourceLimit; return 0 }
+    }
+    if incoming > 0 { memcpy(buffer!.advanced(by: count), bytes, incoming) }
+    count = needed
+    return incoming
+  }
+
+  func check() throws {
+    lock.lock(); defer { lock.unlock() }
+    if let failure { throw failure }
+  }
+
+  func finish() throws -> (Data, Int) {
+    lock.lock(); defer { lock.unlock() }
+    guard !finished, failure == nil, let buffer, count > 0 else { throw SceneRenderError.resourceLimit }
+    finished = true; self.buffer = nil
+    return (Data(bytesNoCopy: buffer, count: count, deallocator: .free), capacity + Self.overhead)
+  }
+}
+
 /// Pixel allocation, blending and PNG encoding run outside the UI actor. This
 /// actor serializes one composition; it is neither a source cache nor a writer.
 actor CompositionPixels {
-  static func encodePNG(_ image: CGImage) async throws -> Data {
+  /// ImageIO writes only admitted output bytes. Growth charges old and new
+  /// allocations together before realloc; the completed Data adopts the buffer.
+  /// The synchronous pool callback is short and never waits for this encoder.
+  static func encodePNG(_ image: CGImage, maximumBytes: Int,
+    resizeCharge: @escaping @MainActor @Sendable (Int) -> Bool) async throws -> RasterEncodedBytes {
+    assert(!Thread.isMainThread, "PNG encoding must not run on the UI thread")
     try Task.checkCancellation()
-    let data = NSMutableData()
-    guard let destination = CGImageDestinationCreateWithData(data, UTType.png.identifier as CFString, 1, nil)
+    let output = BoundedPNGOutput(maximumBytes: maximumBytes, resizeCharge: resizeCharge)
+    guard let consumer = output.consumer(),
+      let destination = CGImageDestinationCreateWithDataConsumer(consumer, UTType.png.identifier as CFString, 1, nil)
     else { throw SceneRenderError.snapshotPending("png_encoding") }
     CGImageDestinationAddImage(destination, image, nil)
-    guard CGImageDestinationFinalize(destination) else { throw SceneRenderError.snapshotPending("png_encoding") }
-    return data as Data
+    let completed = CGImageDestinationFinalize(destination)
+    try Task.checkCancellation()
+    try output.check()
+    guard completed else { throw SceneRenderError.snapshotPending("png_encoding") }
+    let (data, cost) = try output.finish()
+    let hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    try Task.checkCancellation()
+    return RasterEncodedBytes(png: data, sha256: hash, accountedByteCount: cost)
   }
 
   /// Pure, cancellable pixel work uses the same non-UI execution boundary as

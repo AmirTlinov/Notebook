@@ -1,0 +1,126 @@
+{
+  "build": "255",
+  "buildSHA256": "8f5482bf87574c570921948caf88895052a29ff16b4837d4281212bc85353dbc",
+  "canonicalBefore": [],
+  "format": 1,
+  "installationAttempted": true,
+  "ipadAfter": [
+    {
+      "appClip": false,
+      "appGroupIdentifiers": [],
+      "builtByDeveloper": true,
+      "bundleContainerPath": "/private/var/containers/Bundle/Application/957FEEDC-A005-4D23-BC7E-1ED5D4B2BBA3",
+      "bundleIdentifier": "com.amirtlinov.notebook.preview",
+      "bundleVersion": "255",
+      "containerAccessible": true,
+      "dataContainerPath": "/private/var/mobile/Containers/Data/Application/976F5087-2502-41A3-942B-1A9CE1168DFC",
+      "defaultApp": false,
+      "groupContainerPaths": {},
+      "hidden": false,
+      "internalApp": false,
+      "name": "Notebook Lab",
+      "removable": true,
+      "url": "file:///private/var/containers/Bundle/Application/957FEEDC-A005-4D23-BC7E-1ED5D4B2BBA3/Notebook.app/",
+      "version": "0.3.185"
+    }
+  ],
+  "ipadBefore": [
+    {
+      "appClip": false,
+      "appGroupIdentifiers": [],
+      "builtByDeveloper": true,
+      "bundleContainerPath": "/private/var/containers/Bundle/Application/913B6F5F-337E-4844-8764-4596E8A0348C",
+      "bundleIdentifier": "com.amirtlinov.notebook.preview",
+      "bundleVersion": "254",
+      "containerAccessible": true,
+      "dataContainerPath": "/private/var/mobile/Containers/Data/Application/09A73BA3-0269-4232-A70D-AB01E732F278",
+      "defaultApp": false,
+      "groupContainerPaths": {},
+      "hidden": false,
+      "internalApp": false,
+      "name": "Notebook Lab",
+      "removable": true,
+      "url": "file:///private/var/containers/Bundle/Application/913B6F5F-337E-4844-8764-4596E8A0348C/Notebook.app/",
+      "version": "0.3.184"
+    }
+  ],
+  "ipadWorkspaceAfter": {
+    "identity": {
+      "activeSQLite": "Library/Application Support/Notebook/notebook.sqlite",
+      "catalogBytes": 400,
+      "catalogSHA256": "f13f1e1b0916c9c4dca489af6fc92a13b1533d0ab7e8b19069ad5a03d2f7ce83",
+      "originalID": "54349f3b-9e0a-4dea-b990-40cae04ef45e",
+      "selectedID": "54349f3b-9e0a-4dea-b990-40cae04ef45e",
+      "state": "catalog",
+      "workspaceIDs": [
+        "54349f3b-9e0a-4dea-b990-40cae04ef45e",
+        "6e14684d-3135-4a86-8e26-289ceb06835e"
+      ]
+    },
+    "sqliteMetadata": {
+      "extendedAttributes": {
+        "com.apple.dataprotection.policy.exception-applied-by": "com.apple.containermanagerd"
+      },
+      "lastModDate": "2026-10-07T08:14:43.000Z",
+      "ownerGid": 501,
+      "ownerUid": 501,
+      "permissions": 420,
+      "size": 368779264
+    }
+  },
+  "ipadWorkspaceBefore": {
+    "identity": {
+      "activeSQLite": "Library/Application Support/Notebook/notebook.sqlite",
+      "catalogBytes": 400,
+      "catalogSHA256": "f13f1e1b0916c9c4dca489af6fc92a13b1533d0ab7e8b19069ad5a03d2f7ce83",
+      "originalID": "54349f3b-9e0a-4dea-b990-40cae04ef45e",
+      "selectedID": "54349f3b-9e0a-4dea-b990-40cae04ef45e",
+      "state": "catalog",
+      "workspaceIDs": [
+        "54349f3b-9e0a-4dea-b990-40cae04ef45e",
+        "6e14684d-3135-4a86-8e26-289ceb06835e"
+      ]
+    },
+    "sqliteMetadata": {
+      "extendedAttributes": {
+        "com.apple.dataprotection.policy.exception-applied-by": "com.apple.containermanagerd"
+      },
+      "lastModDate": "2026-10-07T08:14:43.000Z",
+      "ownerGid": 501,
+      "ownerUid": 501,
+      "permissions": 420,
+      "size": 368779264
+    }
+  },
+  "marketplace": "/Users/amir/Library/Application Support/NotebookPlugin/marketplace",
+  "pluginVersion": "0.2.7",
+  "publication": {
+    "plugin": "/Users/amir/Library/Application Support/NotebookPlugin/marketplace/releases/0.2.7/notebook",
+    "previousVersion": "0.2.6",
+    "root": "/Users/amir/Library/Application Support/NotebookPlugin/marketplace",
+    "sha256": "69fdf3899173c7491932318b7659da5ab01f9c59371c8e96d0af73e505177ead",
+    "version": "0.2.7"
+  },
+  "runtime": "/Users/amir/.codex/plugins/cache/notebook-local/notebook/0.2.7/runtime/NotebookRuntime.app",
+  "runtimeShutdown": [
+    {
+      "cdhash": "830d784c7a12883b8c27cd63fbf6b2591275369a",
+      "executable": "/Users/amir/.codex/plugins/cache/notebook-local/notebook/0.2.6/runtime/NotebookRuntime.app/Contents/MacOS/NotebookRuntime",
+      "pid": 87129,
+      "uid": 501
+    }
+  ],
+  "status": "installed",
+  "step": "complete",
+  "version": "0.3.185",
+  "runtimePeer": {
+    "pid": 90905,
+    "uid": 501,
+    "executable": "/Users/amir/.codex/plugins/cache/notebook-local/notebook/0.2.7/runtime/NotebookRuntime.app/Contents/MacOS/NotebookRuntime",
+    "cdhash": "adc1991fba899250616193d6fca10dad8f46ae5e"
+  },
+  "workspaceID": "54349F3B-9E0A-4DEA-B990-40CAE04EF45E",
+  "workspaceReadback": "Installed MCP board and three page targets succeeded; current chat notebook_open succeeded after reconnect at 2026-10-07T09:34Z.",
+  "iPadLaunch": "Production 255 launched successfully at 2026-10-07T09:31Z; separate native-test app used afterward by coordinated Pencil task.",
+  "scope": "Installation, kernel peer identity and readback; not physical interaction acceptance."
+}

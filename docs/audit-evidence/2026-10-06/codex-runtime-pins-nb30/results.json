@@ -1,0 +1,164 @@
+{
+  "date": "2026-10-06",
+  "registry": "NB30 / GUI-488",
+  "baseline": "7274f6c193b264fccd3c84a15a474a31b35b657a",
+  "scope": "portable source implementation, fabricated native runner contracts and real official archive payload checks; not native or physical acceptance",
+  "checks": [
+    {
+      "command": "python -B Tests/NotebookRelease/run.py CodexPackagingTests ReleaseTests CloudRightsTests",
+      "passed": 95
+    },
+    {
+      "command": "python -B Tests/NotebookVerification/run.py CodexReceiptTests SelectionTests FullPrerequisiteTests NativeIPadUIArtifactTests UIOnlyBuildTests UICleanupTests",
+      "passed": 95
+    },
+    {
+      "check": "Python AST parse of all changed Python sources using Python3.9 grammar",
+      "status": "passed"
+    },
+    {
+      "check": "Official source-lock inventory vs unchanged Xcode xcfilelist",
+      "status": "passed",
+      "paths": 57,
+      "missing": 0,
+      "extra": 0
+    },
+    {
+      "check": "Staged and unstaged git diff --check",
+      "status": "passed"
+    }
+  ],
+  "blockedAttempts": [
+    {
+      "command": "python -B Tests/NotebookVerification/run.py",
+      "attempted": 111,
+      "passed": 104,
+      "failures": 2,
+      "errors": 5,
+      "reason": "all seven failures are existing RegistryReportTests requiring unavailable Swift executable; no full PASS claimed"
+    },
+    {
+      "command": "python -B Tests/NotebookRelease/run.py CodexPackagingTests ReleaseTests CloudRightsTests InstallationTests",
+      "attempted": 108,
+      "passed": 92,
+      "errors": 16,
+      "reason": "all sixteen existing installation flows reach sandbox-denied AF_UNIX socket; unaffected selected tests rerun separately"
+    }
+  ],
+  "notRun": [
+    "real Apple codesign validation",
+    "actual pinned Apple Codex and Node --version",
+    "Xcode sandbox/build/signing",
+    "native AppKit RuntimeLifecycleTests",
+    "physical iPad",
+    "installation/deployment",
+    "complete verify.sh aggregate"
+  ],
+  "review": {
+    "status": "approved",
+    "scope": "code and portable/cooperative-cache tests only",
+    "candidatePatchSHA256": "b1c1f42e65126fd205ca0a83b7df2ed1c8f57b60448c13076870d6ecb56cb363",
+    "independentChecks": {
+      "releaseAdmissionTests": 95,
+      "selectionReceiptTests": 95,
+      "additionalProbes": [
+        "parent directory swap refused",
+        "original root swap refused",
+        "previously hashed file mutation refused",
+        "late extra entry refused",
+        "hardlink refused",
+        "bundle succeeds without hashlib.file_digest"
+      ],
+      "stagedPatchHash": "verified"
+    },
+    "nativeAcceptance": "not established"
+  },
+  "preservation": "only isolated cloud worktree and temporary fixture caches; no old flat cache, active254, live data, identity or trust changes",
+  "files": [
+    {
+      "path": "Applications/NotebookCodexRuntime.lock.json",
+      "sha256": "f0dae42f2076040e6fe827e9e50f411c7f17e90c348fda00644e9433896f4596"
+    },
+    {
+      "path": "Applications/prepare_notebook_codex.py",
+      "sha256": "f0d082e1e914c2149a858790dc4814a580513d3e5b64d7e8fe6b4c165d41a95e"
+    },
+    {
+      "path": "Applications/notebook_release.py",
+      "sha256": "246fc7150b1d3a8c93527589740031eb759714bcc97714d03f968dbe0ed61ccf"
+    },
+    {
+      "path": "Applications/notebook_verification.py",
+      "sha256": "761e682302e9cd4e2bf0f859c0eee695842cccbdca340bbf216f5fd00d5cd544"
+    },
+    {
+      "path": "Applications/notebook_acceptance.py",
+      "sha256": "f5e084f049ba9b7e67a4d05474a4becfda4d651f728f38da0b4fdad2964489ed"
+    },
+    {
+      "path": "Applications/project.yml",
+      "sha256": "4e80187ff0855db5d7b9492a8911621ef12211407d48eb0cdeb28df35260f353"
+    },
+    {
+      "path": "Tests/NotebookRelease/run.py",
+      "sha256": "55ccb8d165d67d5db584e091cd59d206fd5f5eb94c12aef415d100e34e136cbe"
+    },
+    {
+      "path": "Tests/NotebookRelease/codex_fixture.py",
+      "sha256": "2ac1910977aace4b1495779e3c3c030c8e207c59630025e5d4c7aa00a21ef490"
+    },
+    {
+      "path": "Tests/NotebookRelease/test_codex.py",
+      "sha256": "b5e79be6a693a58951dbe1aeb91462a24d1a77b9d46c8700cab50890d2ec362d"
+    },
+    {
+      "path": "Tests/NotebookVerification/run.py",
+      "sha256": "253e7f6a0799b8e21879b84dbe274316c1a959605e0c5d5f56205dd8c86d3457"
+    }
+  ],
+  "supersededCandidateBenchmark": {
+    "scope": "Linux payload admission only, local archives; includes cold extraction and fsync; warm OS page cache; no network timing or native performance claim",
+    "manifestSHA256": "2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a",
+    "payloadBytes": 439213968,
+    "nativeChecks": "Apple codesign, actual Codex/Node execution, Xcode sandbox and final signed app not run",
+    "results": [
+      {
+        "phase": "cold-local-archives",
+        "seconds": 7.783462,
+        "payloadSHABytes": 439214291,
+        "payloadSHAFiles": 45,
+        "payloadCopyBytes": 439213968,
+        "archiveReadHashCopyBytes": 175822039,
+        "archiveOpens": 2
+      },
+      {
+        "phase": "reuse-1",
+        "seconds": 0.622203,
+        "payloadSHABytes": 439214291,
+        "payloadSHAFiles": 45,
+        "payloadCopyBytes": 0,
+        "archiveReadHashCopyBytes": 0,
+        "archiveOpens": 0
+      },
+      {
+        "phase": "reuse-2",
+        "seconds": 0.562247,
+        "payloadSHABytes": 439214291,
+        "payloadSHAFiles": 45,
+        "payloadCopyBytes": 0,
+        "archiveReadHashCopyBytes": 0,
+        "archiveOpens": 0
+      },
+      {
+        "phase": "reuse-3",
+        "seconds": 0.547428,
+        "payloadSHABytes": 439214291,
+        "payloadSHAFiles": 45,
+        "payloadCopyBytes": 0,
+        "archiveReadHashCopyBytes": 0,
+        "archiveOpens": 0
+      }
+    ]
+  },
+  "threatBoundary": "Cooperative code never mutates or removes published cache stages. Anchored fd traversal, no-follow/single-link leaves and retained fingerprints reject changes during admission/use; this is not an OS immutable flag or security against arbitrary same-UID changes after completed checks."
+}

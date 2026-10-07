@@ -1,0 +1,55 @@
+{
+  "scope": "Second native run: demotion and resource assertions pass. Added grid-count assertion and single-layer pixel oracle fail.",
+  "sourceSHA256": "e5cf7f3bc02999d7f41d539945263065c51d42a67e30a71acdf9d37697c3d8bf",
+  "native": {
+    "devicesAndConfigurations": [
+      {
+        "device": {
+          "architecture": "arm64",
+          "deviceId": "00006050-001650DA01F9401C",
+          "deviceName": "My Mac",
+          "modelName": "MacBook Pro",
+          "osBuildNumber": "26A434",
+          "osVersion": "27.0.1",
+          "platform": "macOS"
+        },
+        "expectedFailures": 0,
+        "failedTests": 1,
+        "passedTests": 0,
+        "skippedTests": 0,
+        "testPlanConfiguration": {
+          "configurationId": "1",
+          "configurationName": "Test Scheme Action"
+        }
+      }
+    ],
+    "environmentDescription": "NotebookRuntime · Built with macOS 27.0.1",
+    "expectedFailures": 0,
+    "failedTests": 1,
+    "finishTime": 1791364399.335,
+    "passedTests": 0,
+    "result": "Failed",
+    "runtimeWarnings": [],
+    "skippedTests": 0,
+    "startTime": 1791364396.958,
+    "statistics": [],
+    "testFailures": [
+      {
+        "failureText": "XCTAssertEqual failed: (\"25\") is not equal to (\"9\") - Every passive band must cross nine actual composition cells",
+        "targetName": "NotebookMacTests",
+        "testIdentifier": 1,
+        "testIdentifierString": "NotebookPanelMaterialTests/testBudgetDemotedElementBodiesNeverCreateDiscardedMaterialRasters()",
+        "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookPanelMaterialTests/testBudgetDemotedElementBodiesNeverCreateDiscardedMaterialRasters",
+        "testName": "testBudgetDemotedElementBodiesNeverCreateDiscardedMaterialRasters()"
+      }
+    ],
+    "title": "Test - NotebookRuntime",
+    "topInsights": [],
+    "totalTestCount": 1
+  },
+  "failedAssertions": [
+    "XCTAssertEqual failed: (\"25\") is not equal to (\"9\") - Every passive band must cross nine actual composition cells",
+    "XCTAssertGreaterThan failed: (\"0.0\") is not greater than (\"0.95\") - The last passive body remains above every admitted red subject"
+  ],
+  "artifacts": ".build/runtime-255-panel-verified-v2"
+}

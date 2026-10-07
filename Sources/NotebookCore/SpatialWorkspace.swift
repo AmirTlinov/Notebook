@@ -328,6 +328,9 @@ public struct BoardDocument: Codable, Equatable, Sendable {
   public private(set) var collaboration: CollaborativeContent?
   private var layout: WorkspacePlacementLayout
   private var elementLookupCache=BoardElementLookupCache()
+  public var elementSourceSnapshot:NotebookElementSourceSnapshot {
+    .init(elements:elements,lookup:elementLookupCache.value(for:elements),metadata:collaboration)
+  }
   public var freeItems: [FreeItemPlacement] { layout.freeItems }
   public var stacks: [WorkspaceItemStack] { layout.stacks }
 

@@ -1,5 +1,76 @@
 import Foundation
 
+extension InkSampleRelations {
+  public enum DisplayPredecessor: Equatable, Sendable {
+    case point(Address), none, unproven
+  }
+
+  /// The last raw point before `index` that survives its immediate raw
+  /// successor. Only source summaries and bounded ambiguous leaves are read;
+  /// an unproved long near-coincident chain retains conservative damage.
+  public func lastDisplayPredecessor(before index:Int,projection:InkSampleProjection)
+    -> (result:DisplayPredecessor,cost:AccessCost) {
+    precondition((0..<count).contains(index))
+    var cost=AccessCost(),remaining=2048
+    guard index > 0 else {return (.none,cost)}
+    guard storage.root.worldEvents == 0 || projection.origin != nil,
+      projection.scale.isFinite,projection.offset.x.isFinite,projection.offset.y.isFinite else {
+      return (.unproven,cost)
+    }
+    func consume(_ read:AccessCost)->Bool {
+      cost.visitedNodes += read.visitedNodes;cost.jumps += read.jumps;cost.decodedSamples += read.decodedSamples
+      remaining -= read.visitedNodes+read.decodedSamples
+      return remaining >= 0
+    }
+    func point(at index:Int)->SpatialInkGeometry.RenderPoint? {
+      guard remaining > 0 else {return nil}
+      var read=AccessCost()
+      let sample=storage.root.sample(at:index,cost:&read)
+      guard consume(read) else {return nil}
+      return SpatialInkGeometry.renderPoint(from:sample,color:.init(repeating:1),projection:projection)
+    }
+    func visit(_ range:Range<Int>,next:SpatialInkGeometry.RenderPoint)->DisplayPredecessor {
+      guard remaining > 0 else {return .unproven}
+      var read=AccessCost()
+      let summary=storage.root.geometryCovering(range,cost:&read)
+      guard consume(read),let last=point(at:range.upperBound-1) else {return .unproven}
+      if !SpatialInkGeometry.areCoincident(last,next) {return .point(address(at:range.upperBound-1))}
+      if summary.stationary {return .none}
+      let error=Sequence.projectionError(summary,projection:projection)
+      if Sequence.hasDistinctDisplayInterior(summary,projection:projection,error:error) {
+        return range.count > 1 ? .point(address(at:range.upperBound-2)):.none
+      }
+      if range.count <= Self.blockSize {
+        guard remaining >= range.count else {return .unproven}
+        remaining -= range.count;cost.decodedSamples += range.count
+        var points:[SpatialInkGeometry.RenderPoint]=[]
+        points.reserveCapacity(range.count)
+        storage.root.forEachSample(in:range) {
+          points.append(SpatialInkGeometry.renderPoint(from:$0,color:.init(repeating:1),projection:projection))
+        }
+        var successor=next
+        for offset in points.indices.reversed() {
+          let previous=points[offset]
+          if !SpatialInkGeometry.areCoincident(previous,successor) {
+            return .point(address(at:range.lowerBound+offset))
+          }
+          // Always advance to the RAW predecessor, including discarded points.
+          successor=previous
+        }
+        return .none
+      }
+      let middle=range.lowerBound+range.count/2
+      let right=visit(middle..<range.upperBound,next:next)
+      guard case .none=right else {return right}
+      guard let boundary=point(at:middle) else {return .unproven}
+      return visit(range.lowerBound..<middle,next:boundary)
+    }
+    guard let next=point(at:index) else {return (.unproven,cost)}
+    let result=visit(0..<index,next:next)
+    return (result,cost)
+  }
+}
+
 /// A derived view of the accepted sequence, not another authored ink source.
 /// A point survives the existing normalizer exactly when its RAW successor is
 /// distinct (or absent). Testing against a previously retained point would
@@ -21,8 +92,7 @@ extension InkSampleRelations.Sequence {
       return survives(point(last)) ? slice((count-1)..<count) : Self.empty
     }
     let error=Self.projectionError(geometry,projection:projection)
-    if error.isFinite,geometry.minimumSpacing*abs(projection.scale)
-      > Double(InkStrokeGeometry.minimumDistanceSquared.squareRoot())+error {
+    if Self.hasDistinctDisplayInterior(geometry,projection:projection,error:error) {
       // The entire interior is proven distinct without visiting its children.
       if next == nil || survives(point(sample(at:count-1,cost:&cost))) { return self }
       return slice(0..<(count-1))
@@ -56,6 +126,12 @@ extension InkSampleRelations.Sequence {
     let a=left.normalizedForDisplay(projection:projection,next:boundary,cost:&cost)
     let b=right.normalizedForDisplay(projection:projection,next:next,cost:&cost)
     return a === left && b === right ? self : Self.balance(a,b)
+  }
+
+  static func hasDistinctDisplayInterior(_ geometry:InkSampleRelations.Geometry,
+    projection:InkSampleProjection,error:Double)->Bool {
+    error.isFinite && geometry.minimumSpacing*abs(projection.scale)
+      > Double(InkStrokeGeometry.minimumDistanceSquared.squareRoot())+error
   }
 
   static func projectionError(_ geometry:InkSampleRelations.Geometry,projection:InkSampleProjection) -> Double {

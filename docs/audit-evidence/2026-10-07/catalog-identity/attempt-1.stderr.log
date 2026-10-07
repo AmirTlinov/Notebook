@@ -1,0 +1,55 @@
+test_catalog_key_order_and_json_formatting_preserve_the_workspace (__main__.InstallationTests.test_catalog_key_order_and_json_formatting_preserve_the_workspace) ... ok
+test_ambiguous_or_nonfinite_catalog_refuses_before_mutation (__main__.InstallationTests.test_ambiguous_or_nonfinite_catalog_refuses_before_mutation) ...
+  test_ambiguous_or_nonfinite_catalog_refuses_before_mutation (__main__.InstallationTests.test_ambiguous_or_nonfinite_catalog_refuses_before_mutation) (extra=b'"format":1,') ... FAIL
+  test_ambiguous_or_nonfinite_catalog_refuses_before_mutation (__main__.InstallationTests.test_ambiguous_or_nonfinite_catalog_refuses_before_mutation) (extra=b'"invalid":NaN,') ... FAIL
+  test_ambiguous_or_nonfinite_catalog_refuses_before_mutation (__main__.InstallationTests.test_ambiguous_or_nonfinite_catalog_refuses_before_mutation) (extra=b'"invalid":1e999,') ... FAIL
+test_catalog_change_during_plugin_setup_stops_before_ipad_install (__main__.InstallationTests.test_catalog_change_during_plugin_setup_stops_before_ipad_install) ... ok
+test_changed_selected_workspace_cannot_be_claimed_installed_or_retried (__main__.InstallationTests.test_changed_selected_workspace_cannot_be_claimed_installed_or_retried) ... ok
+test_catalog_rename_refuses_before_ipad_install (__main__.InstallationTests.test_catalog_rename_refuses_before_ipad_install) ... ok
+test_catalog_rename_cannot_be_claimed_installed (__main__.InstallationTests.test_catalog_rename_cannot_be_claimed_installed) ... ok
+test_catalog_entry_change_refuses_before_ipad_install (__main__.InstallationTests.test_catalog_entry_change_refuses_before_ipad_install) ... ok
+test_catalog_entry_change_cannot_be_claimed_installed (__main__.InstallationTests.test_catalog_entry_change_cannot_be_claimed_installed) ... ok
+test_catalog_deletion_change_refuses_before_ipad_install (__main__.InstallationTests.test_catalog_deletion_change_refuses_before_ipad_install) ... ok
+test_catalog_deletion_change_cannot_be_claimed_installed (__main__.InstallationTests.test_catalog_deletion_change_cannot_be_claimed_installed) ... ok
+test_catalog_array_order_is_preserved (__main__.InstallationTests.test_catalog_array_order_is_preserved) ... ok
+test_untrusted_installed_cli_runtime_refuses_before_shutdown_or_publication (__main__.InstallationTests.test_untrusted_installed_cli_runtime_refuses_before_shutdown_or_publication) ... ok
+test_relocated_container_and_checkpointed_wal_preserve_the_workspace (__main__.InstallationTests.test_relocated_container_and_checkpointed_wal_preserve_the_workspace) ... ok
+test_installed_unopened_app_keeps_an_empty_baseline (__main__.InstallationTests.test_installed_unopened_app_keeps_an_empty_baseline) ... ok
+test_data_without_catalog_refuses_before_plugin_or_device_mutation (__main__.InstallationTests.test_data_without_catalog_refuses_before_plugin_or_device_mutation) ... ok
+test_oversized_catalog_is_not_copied_or_installed (__main__.InstallationTests.test_oversized_catalog_is_not_copied_or_installed) ... ok
+test_lost_active_sqlite_cannot_be_claimed_installed_or_retried (__main__.InstallationTests.test_lost_active_sqlite_cannot_be_claimed_installed_or_retried) ... ok
+test_symlinked_active_sqlite_refuses_before_plugin_or_device_mutation (__main__.InstallationTests.test_symlinked_active_sqlite_refuses_before_plugin_or_device_mutation) ... ok
+test_managed_workspace_uses_its_catalog_address (__main__.InstallationTests.test_managed_workspace_uses_its_catalog_address) ... ok
+test_lost_catalog_cannot_be_claimed_installed_or_retried (__main__.InstallationTests.test_lost_catalog_cannot_be_claimed_installed_or_retried) ... ok
+
+======================================================================
+FAIL: test_ambiguous_or_nonfinite_catalog_refuses_before_mutation (__main__.InstallationTests.test_ambiguous_or_nonfinite_catalog_refuses_before_mutation) (extra=b'"format":1,')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/Tests/NotebookRelease/run.py", line 1030, in test_ambiguous_or_nonfinite_catalog_refuses_before_mutation
+    self.assertFalse(self.cli.publication.exists())
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: True is not false
+
+======================================================================
+FAIL: test_ambiguous_or_nonfinite_catalog_refuses_before_mutation (__main__.InstallationTests.test_ambiguous_or_nonfinite_catalog_refuses_before_mutation) (extra=b'"invalid":NaN,')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/Tests/NotebookRelease/run.py", line 1030, in test_ambiguous_or_nonfinite_catalog_refuses_before_mutation
+    self.assertFalse(self.cli.publication.exists())
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: True is not false
+
+======================================================================
+FAIL: test_ambiguous_or_nonfinite_catalog_refuses_before_mutation (__main__.InstallationTests.test_ambiguous_or_nonfinite_catalog_refuses_before_mutation) (extra=b'"invalid":1e999,')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/Tests/NotebookRelease/run.py", line 1030, in test_ambiguous_or_nonfinite_catalog_refuses_before_mutation
+    self.assertFalse(self.cli.publication.exists())
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: True is not false
+
+----------------------------------------------------------------------
+Ran 20 tests in 3.158s
+
+FAILED (failures=3)

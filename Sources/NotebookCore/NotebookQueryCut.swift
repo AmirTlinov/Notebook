@@ -46,8 +46,12 @@ public struct NotebookQueryCut {
   public func referenceRevision(target: CollaborationTarget, elementID: String? = nil) throws -> String {
     try requireActive(); return try store.referenceRevision(target: target, elementID: elementID)
   }
-  public func readPanel(_ request: NotebookPanelReadRequest, actor: UUID) throws -> JSONValue {
-    try requireActive(); return try store.readPanel(request, actor: actor)
+  public func readPanel(_ request: NotebookPanelReadRequest, actor: UUID,
+    reusing pageContent: NotebookPanelPageContent? = nil) throws -> JSONValue {
+    try requireActive(); return try store.readPanel(request, actor: actor, reusing: pageContent)
+  }
+  public func capturePanelPageContent(_ cut: NotebookPanelPresentationCut) throws -> NotebookPanelPageContent {
+    try requireActive(); return try store.capturePanelPageContent(cut)
   }
   public func requestPanelPresentation(_ request: NotebookPanelPresentationRequest) throws -> NotebookPanelPresentationCut {
     try requireActive(); return try store.requestPanelPresentation(request)

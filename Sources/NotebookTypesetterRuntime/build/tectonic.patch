@@ -1119,3 +1119,161 @@ index cab0dd2..8092a61 100755
      )
  
      # -----------------------------------------------------------------
+diff --git a/crates/engine_xetex/xetex/xetex-ini.c b/crates/engine_xetex/xetex/xetex-ini.c
+--- a/crates/engine_xetex/xetex/xetex-ini.c
++++ b/crates/engine_xetex/xetex/xetex-ini.c
+@@ -384,58 +384,53 @@
+ 
+ #if !defined (WORDS_BIGENDIAN)
+ 
+-/* This macro is always invoked as a statement.  It assumes a variable
+-   `temp'.  */
+-
+-#define SWAP(x, y) temp = (x); (x) = (y); (y) = temp
+-
+-
+-/* Make the NITEMS items pointed at by P, each of size SIZE, be the
+-   opposite-endianness of whatever they are now.  */
+-
++/* Swap complete words using unaligned-safe loads. The WASM kernel can then
++   check each word once instead of addressing every byte separately. */
+ static void
+-swap_items (char *p, size_t nitems, size_t size)
++swap_items(char *p, size_t nitems, size_t size)
+ {
+-    char temp;
+-
+     switch (size) {
+     case 16:
+         while (nitems--) {
+-            SWAP (p[0], p[15]);
+-            SWAP (p[1], p[14]);
+-            SWAP (p[2], p[13]);
+-            SWAP (p[3], p[12]);
+-            SWAP (p[4], p[11]);
+-            SWAP (p[5], p[10]);
+-            SWAP (p[6], p[9]);
+-            SWAP (p[7], p[8]);
++            uint64_t low, high;
++            memcpy(&low, p, sizeof(low));
++            memcpy(&high, p + sizeof(low), sizeof(high));
++            low = __builtin_bswap64(low);
++            high = __builtin_bswap64(high);
++            memcpy(p, &high, sizeof(high));
++            memcpy(p + sizeof(high), &low, sizeof(low));
+             p += size;
+         }
+         break;
+     case 8:
+         while (nitems--) {
+-            SWAP (p[0], p[7]);
+-            SWAP (p[1], p[6]);
+-            SWAP (p[2], p[5]);
+-            SWAP (p[3], p[4]);
++            uint64_t word;
++            memcpy(&word, p, sizeof(word));
++            word = __builtin_bswap64(word);
++            memcpy(p, &word, sizeof(word));
+             p += size;
+         }
+         break;
+     case 4:
+         while (nitems--) {
+-            SWAP (p[0], p[3]);
+-            SWAP (p[1], p[2]);
++            uint32_t word;
++            memcpy(&word, p, sizeof(word));
++            word = __builtin_bswap32(word);
++            memcpy(p, &word, sizeof(word));
+             p += size;
+         }
+         break;
+     case 2:
+         while (nitems--) {
+-            SWAP (p[0], p[1]);
++            uint16_t word;
++            memcpy(&word, p, sizeof(word));
++            word = __builtin_bswap16(word);
++            memcpy(p, &word, sizeof(word));
+             p += size;
+         }
+         break;
+     case 1:
+-        break; /* Nothing to do. */
++        break;
+     default:
+         _tt_abort("can't swap a %"PRIuZ"-byte item for (un)dumping", size);
+     }
+@@ -2451,6 +2446,26 @@
+ }
+ 
+ 
++/* Expand a format run with bounded block copies. Source and destination are
++   disjoint because each block is no larger than the initialized prefix. */
++static void
++repeat_memory_word(memory_word *base, size_t count, memory_word value)
++{
++    if (count == 0)
++        return;
++    base[0] = value;
++    for (size_t copied = 1; copied < count;) {
++        size_t n = count - copied;
++        if (n > copied)
++            n = copied;
++        if (n > 65536)
++            n = 65536;
++        memcpy(base + copied, base, n * sizeof(*base));
++        copied += n;
++    }
++}
++
++
+ static bool
+ load_fmt_file(void)
+ {
+@@ -2509,19 +2524,16 @@
+ 
+     yhash = xmalloc_array(b32x2, 1 + hash_top - hash_offset);
+     hash = yhash - hash_offset;
+-    hash[HASH_BASE].s0 = 0;
+-    hash[HASH_BASE].s1 = 0;
+-
+-    for (x = HASH_BASE + 1; x <= hash_top; x++)
+-        hash[x] = hash[HASH_BASE];
++    memset(&hash[HASH_BASE], 0,
++           (size_t)(hash_top - HASH_BASE + 1) * sizeof(hash[0]));
+ 
+     eqtb = xmalloc_array(memory_word, eqtb_top + 1);
+     eqtb[UNDEFINED_CONTROL_SEQUENCE].b16.s1 = UNDEFINED_CS;
+     eqtb[UNDEFINED_CONTROL_SEQUENCE].b32.s1 = TEX_NULL;
+     eqtb[UNDEFINED_CONTROL_SEQUENCE].b16.s0 = LEVEL_ZERO;
+ 
+-    for (x = EQTB_SIZE + 1; x <= eqtb_top; x++)
+-        eqtb[x] = eqtb[UNDEFINED_CONTROL_SEQUENCE];
++    repeat_memory_word(&eqtb[EQTB_SIZE + 1], eqtb_top - EQTB_SIZE,
++                       eqtb[UNDEFINED_CONTROL_SEQUENCE]);
+ 
+     max_reg_num = 32767;
+     max_reg_help_line = "A register number must be between 0 and 32767.";
+@@ -2648,18 +2660,17 @@
+ 
+     do {
+         undump_int(x);
+-        if (x < 1 || k + x > EQTB_SIZE + 1)
++        if (x < 1 || x > EQTB_SIZE + 1 - k)
+             goto bad_fmt;
+ 
+         undump_things(eqtb[k], x);
+         k = k + x;
+ 
+         undump_int(x);
+-        if (x < 0 || k + x > EQTB_SIZE + 1)
++        if (x < 0 || x > EQTB_SIZE + 1 - k)
+             goto bad_fmt;
+ 
+-        for (j = k; j <= k + x - 1; j++)
+-            eqtb[j] = eqtb[k - 1];
++        repeat_memory_word(&eqtb[k], x, eqtb[k - 1]);
+ 
+         k = k + x;
+     } while (k <= EQTB_SIZE);

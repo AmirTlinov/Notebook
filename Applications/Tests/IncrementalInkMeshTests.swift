@@ -80,6 +80,28 @@ final class IncrementalInkMeshTests: XCTestCase {
     XCTAssertEqual(mesh.nodes, SpatialInkGeometry.compact(points: points, color: color))
   }
 
+  func testEraserDamageRetainsVacatedTailWithoutIncludingTheSealedPrefix() {
+    let color=SIMD4<Float>(repeating:1)
+    var points=(0..<100_000).map {sample($0)}
+    var mesh=IncrementalInkMesh(eraser:true)
+    mesh.update(points:points,changedFrom:0,color:color)
+    points.append(sample(points.count))
+    mesh.update(points:points,changedFrom:points.count-1,color:color)
+    XCTAssertGreaterThan(mesh.changedBounds.minX,9_900,
+      "A new tail must not repaint the complete ten-thousand-point-wide contact")
+    let old=mesh.changedBounds
+    points[points.count-1]=sample(points.count-1,x:9_870)
+    mesh.update(points:points,changedFrom:points.count-1,color:color)
+    XCTAssertTrue(mesh.changedBounds.contains(old),"The previous tail's pixels must be restored after correction")
+    XCTAssertLessThan(mesh.changedBounds.minX,9_870)
+    let corrected=mesh.changedBounds
+    points.removeLast()
+    mesh.update(points:points,changedFrom:points.count,color:color)
+    XCTAssertTrue(mesh.changedBounds.contains(CGPoint(x:9_870,y:50)),
+      "Retracting the corrected sample must restore the displaced erasure")
+    XCTAssertLessThanOrEqual(mesh.changedBounds.width,corrected.width)
+  }
+
   private func sample(_ index: Int, x: Double? = nil) -> PKStrokePoint {
     .init(location: .init(x: x ?? Double(index) * 0.1, y: x == nil ? 100 + sin(Double(index) / 10) : 50),
       timeOffset: Double(index) / 240, size: .init(width: 2 + Double(index % 7) / 10, height: 2),

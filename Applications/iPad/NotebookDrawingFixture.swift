@@ -22,6 +22,7 @@
     static let documentProseArgument = "--notebook-document-prose-fixture"
     static let documentLinksArgument = "--notebook-document-links-fixture"
     static let documentLetterArgument = "--notebook-document-letter-fixture"
+    static let documentFitArgument = "--notebook-document-fit-fixture"
     static let selectionTransitionArgument = "--notebook-selection-transition-fixture"
     static let agentElementArgument = "--notebook-agent-element-fixture"
     static let collaborationArgument = "--notebook-collaboration-fixture"
@@ -76,6 +77,7 @@
       let startsInDocument = ProcessInfo.processInfo.arguments.contains(
         documentArgument
       )
+      let documentFit = ProcessInfo.processInfo.arguments.contains(documentFitArgument)
       let startsOnLaterDocumentPage = ProcessInfo.processInfo.arguments.contains(
         documentPageArgument
       )
@@ -115,7 +117,8 @@
       } else if ProcessInfo.processInfo.arguments.contains(pointerArgument) {
         fixtureName = "SharedPointer"
       } else if startsInDocument {
-        fixtureName = ProcessInfo.processInfo.arguments.contains(documentLinksArgument) ? "DocumentLinks"
+        fixtureName = documentFit ? "DocumentFit"
+          : ProcessInfo.processInfo.arguments.contains(documentLinksArgument) ? "DocumentLinks"
           : ProcessInfo.processInfo.arguments.contains(documentProseArgument) ? "DocumentProse" : "DocumentRuntime"
       } else if startsInStack {
         fixtureName = startsOnStackBoard
@@ -343,6 +346,13 @@
               .init(id: "lc-css", path: "programs/lc/style.css", source: try lcSource("css")),
               .init(id: "lc-js", path: "programs/lc/main.js", source: try lcSource("js"))]
             body = #"\NotebookInteractive[id=lc,width=\linewidth,height=500pt]{programs/lc}"#
+          } else if documentFit {
+            // Fresh launches must not borrow a previous run's canonical print.
+            body = "% cold-cover \(UUID().uuidString)\n"
+              + #"\section{Custom paper: 900 by 600 bp}"# + "\n"
+              + "The complete first page stays visible when this closed document opens.\n"
+              + #"\clearpage\section{Second custom page}"# + "\n"
+              + "Reading continues on the same paper size.\n"
           } else if ProcessInfo.processInfo.arguments.contains(documentLinksArgument) {
             body = "\\section{Оглавление проверки}\\label{contents}\n\\hyperref[destination]{К дальней главе}\n"
               + String(repeating: "Промежуточный текст занимает настоящие листы.\n\n", count: 120)
@@ -368,7 +378,8 @@
               + #"\NotebookInteractive[id=square,width=\linewidth,height=150pt]{programs/square}"# + "\n"
               + (1...36).map { "\\section{Раздел \($0)}\nСодержание течёт из листа в лист, а размер бумаги остаётся конечным." }.joined(separator: "\n\n")
           }
-          let paper = ProcessInfo.processInfo.arguments.contains(documentLetterArgument) ? "letterpaper" : "a4paper"
+          let paper = documentFit ? "paperwidth=900bp,paperheight=600bp"
+            : ProcessInfo.processInfo.arguments.contains(documentLetterArgument) ? "letterpaper" : "a4paper"
           let source = "\\documentclass{article}\n\\usepackage{fontspec}\n\\setmainfont{Libertinus Serif}\n\\usepackage[\(paper),margin=25mm]{geometry}\n\\usepackage{amsmath}\n\\usepackage{hyperref}\n\\usepackage{notebook}\n\\begin{document}\n\(body)\n\\end{document}\n"
           files.insert(.init(id: "main", path: "main.tex", source: source), at: 0)
           let document = DocumentDocument(id: documentID, actor: actor, files: files)
@@ -391,14 +402,15 @@
           try store.savePresence(
             SessionPresence(
               boardID: index.rootBoardID,
-              mode: .document,
+              mode: documentFit ? .cover : .document,
               camera: SpatialCamera(
                 center: center,
-                scale: WorkspaceItemGeometry.uncompiledDocument.fitScale(viewport: viewport)
+                scale: documentFit ? WorkspaceItemGeometry.uncompiledDocument.coverScale(viewport: viewport)
+                  : WorkspaceItemGeometry.uncompiledDocument.fitScale(viewport: viewport)
               ),
               viewport: viewport,
               focusedItemID: documentID,
-              openProgress: 1,
+              openProgress: documentFit ? 0 : 1,
               documentPageIndex: startsOnLaterDocumentPage ? 2 : 0
             )
           )

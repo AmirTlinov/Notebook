@@ -1,0 +1,9 @@
+{
+  "baseline": "7274f6c193b264fccd3c84a15a474a31b35b657a",
+  "scope": "fabricated cache, native signature owner mocked; no official executable run",
+  "outcome": "baseline cached prepare accepted forged helper without hashing payload or running either version probe",
+  "signatureCalls": [
+    "codex/bin/codex",
+    "node"
+  ]
+}

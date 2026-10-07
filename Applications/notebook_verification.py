@@ -47,7 +47,7 @@ def owners(path):
     """An unclassified implementation never silently falls back to all tests."""
     if path == "AGENTS.md" or path.startswith("docs/") or path == "README.md":
         return []
-    if path in ("verify.sh", "Applications/notebook_verification.py", "Applications/notebook_release.py", "Applications/notebook_check_registry.py", "Applications/notebook_check_reports.py", "Applications/notebook_python_checks.py", "Applications/notebook_node_reporter.mjs") or path.startswith(("Tests/NotebookVerification/", "Tests/NotebookRelease/")):
+    if path in ("verify.sh", "Applications/notebook_verification.py", "Applications/notebook_release.py", "Applications/notebook_check_registry.py", "Applications/notebook_check_reports.py", "Applications/notebook_python_checks.py", "Applications/notebook_node_reporter.mjs", "Applications/prepare_notebook_codex.py", "Applications/NotebookCodexRuntime.lock.json", "Applications/NotebookCodexResources.xcfilelist") or path.startswith(("Tests/NotebookVerification/", "Tests/NotebookRelease/")):
         return ["verification"]
     if path.startswith("MCP/"):
         return ["mcp"]
@@ -398,6 +398,20 @@ def prepared_typescript(evidence, origin):
     return Path(stage)
 
 
+def prepared_codex(evidence, origin):
+    report = release.read_json(evidence / "codex-resources.stdout.log")
+    release.validate_codex_report(report, origin, origin / ".build/notebook-codex-runtimes")
+    return report
+
+
+def prepared_codex_stage(plan):
+    value = plan.get("codexRuntimeStage")
+    release.require(isinstance(value, str) and Path(value).is_absolute()
+                    and str(Path(value).resolve()) == value and re.fullmatch(r"[0-9a-f]{64}", Path(value).name),
+                    "Нет точного подготовленного Codex runtime в плане проверки.")
+    return Path(value)
+
+
 def native_test_bundle(node, inherited=""):
     if node.get("nodeType") in ("Unit test bundle", "UI test bundle"):
         name = node.get("name", "")
@@ -518,7 +532,7 @@ def validate_prerequisites(plan, evidence, commands):
         "typescript": ([sys.executable, "-B", str(origin / "Applications/prepare_notebook_typescript.py"),
                         "--prepare", "--stage-root", str(origin / ".build/notebook-typescript-runtime")], origin),
         "codex": ([sys.executable, "-B", str(origin / "Applications/prepare_notebook_codex.py"),
-                   "--stage", str(origin / ".build/notebook-codex-runtime")], origin),
+                   "--prepare", "--stage-root", str(origin / ".build/notebook-codex-runtimes")], origin),
         "surface": (["node", str(origin / "MCP/build-surface.mjs"), "--stage", str(origin / ".build/surface")], origin),
         "ipc-host": (["swift", "build", "--product", "notebook-ipc-test-host"], origin),
         "physical-ipad": (["xcrun", "devicectl", "device", "info", "details", "--device", release.DEVICE,
@@ -533,6 +547,9 @@ def validate_prerequisites(plan, evidence, commands):
         check_command(commands, labels.get(prerequisite, prerequisite), argv, cwd)
     if "typescript" in required:
         prepared_typescript(evidence, origin)
+    if "codex" in required:
+        release.require(str(prepared_codex_stage(plan)) == prepared_codex(evidence, origin)["stage"],
+                        "Codex prerequisite names another native build stage.")
     for platform, sdk in (("mac", "macosx"), ("ipad", "iphoneos")):
         if plan["checks"][platform]:
             check_command(commands, "typesetter-resources-" + sdk,
@@ -567,7 +584,8 @@ def native_arguments(root, evidence, plan, platform, selectors, action, typescri
         argv.extend(native_mac_signing_settings() if platform == "mac" else native_ipad_signing_settings())
         argv.append("NOTEBOOK_TYPESETTER_RUNTIME=" + str(prepared_typesetter_stage(plan)))
         if platform == "mac":
-            argv.extend(("NOTEBOOK_SURFACE_STAGE=" + str(root / ".build/surface"), "NOTEBOOK_TYPESCRIPT_RUNTIME=" + str(typescript)))
+            argv.extend(("NOTEBOOK_SURFACE_STAGE=" + str(root / ".build/surface"), "NOTEBOOK_TYPESCRIPT_RUNTIME=" + str(typescript),
+                         "NOTEBOOK_CODEX_RUNTIME=" + str(prepared_codex_stage(plan))))
     argv.extend("-only-testing:" + selector for selector in selectors)
     return argv
 
@@ -667,6 +685,11 @@ def validate_selected(source, evidence, receipt):
                     == release.read_json(evidence / "source-before.json") == release.read_json(evidence / "source-after.json"),
                     "Маршрут проверял другой набор исходников.")
     release.require(any(checks.values()), "Пустой план не выдаёт PASS.")
+    if "codex" in prerequisites(plan):
+        release.require(receipt.get("codexRuntime") == prepared_codex(evidence, Path(plan["sourceRoot"]))["identity"],
+                        "Codex verification receipt differs from its source pin.")
+    else:
+        release.require("codexRuntime" not in receipt, "This verification did not admit a Codex runtime.")
     actual = validate_check_evidence(source, plan, evidence, read_commands(evidence))
     release.require(release.read_json(evidence / "completed.json") == {"format": 2, "checks": actual}, "Не все выбранные проверки исполнены.")
     release.require(release.read_json(evidence / "toolchain.json") == release.read_json(evidence / "toolchain-after.json"), "Инструменты изменились во время проверки.")
@@ -848,7 +871,8 @@ def run_selected(root, plan, evidence):
         plan["typesetterRuntime"] = str(typesetter)
         release.write_json(evidence / "selection.json", plan)
         if platform == "mac":
-            release.prepare_codex_runtime(root, command)
+            plan["codexRuntimeStage"] = str(release.prepare_codex_runtime(root, command))
+            release.write_json(evidence / "selection.json", plan)
             release.prepare_surface_stage(root, command)
         try:
             command(platform + "-build-for-testing", native_arguments(root, evidence, plan, platform,

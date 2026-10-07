@@ -1,0 +1,73 @@
+{
+  "baseline": {
+    "commit": "b5e350288443921086d2487b9d3e08a72be6c802",
+    "sameCurrentTests": 38,
+    "passed": 36,
+    "failed": 2,
+    "log": "baseline.txt",
+    "fixture": "Exact baseline notebook-program.js + document-program.js and bundledLC asset, with current test source"
+  },
+  "scope": "NB13 independent frozen-window identity / ABA correction only",
+  "sourceSHA256": {
+    "Applications/WebResources/notebook-program.js": "c1df7e5bf549b267325d11a8347fb95b2913daf64e59fc52490454abddb89e92",
+    "MCP/test/program-bridge.test.ts": "ea6af1d2376e89659193a657ce2ea9a6a89e156ba29104c8c647b72b58670f94"
+  },
+  "unchangedBaselineBlobs": {
+    "Applications/WebResources/document-program.js": "cfe9de080c58507d1da467b16f21ebcde9f03d6b",
+    "Applications/WebResources/document-shell.html": "0c9edc5c58bbe548d45e012cee54b859b485d1d2",
+    "Applications/Shared/NotebookProgramBridge.swift": "56cc68eb96d55ddfcd7e2b0d69e746a623c79c14",
+    "Applications/Shared/AgentWebElementView.swift": "715d3b3b812ce9ac76647038142845709d9212e0",
+    "Applications/Shared/DocumentBlockRuntime.swift": "990779a7ba3d039e97519702ac75b45d05eceab5",
+    "Applications/Shared/DocumentWebView.swift": "857772be8aa12af8e9631d1167be570a6ce7c1bc",
+    "Applications/TestSupport/ProgramStateTransferTests.swift": "21cb2ae20a2a0562d4363ad41d6a6ef89cb9ea2e"
+  },
+  "checks": [
+    {
+      "command": "node --import ./MCP/node_modules/tsx/dist/loader.mjs --test MCP/test/program-bridge.test.ts MCP/test/chat-render.test.ts MCP/test/chat-mathjax-state.test.ts",
+      "passed": 58,
+      "failed": 0,
+      "log": "node.txt"
+    },
+    {
+      "command": "node MCP/node_modules/typescript/bin/tsc --noEmit -p MCP/tsconfig.json",
+      "exit": 0,
+      "log": "tsc.txt"
+    },
+    {
+      "command": "node --check Applications/WebResources/notebook-program.js",
+      "result": "PASS"
+    },
+    {
+      "command": "git diff --cached --check; git diff --check",
+      "result": "PASS"
+    }
+  ],
+  "regressions": [
+    "Idempotent checkpoint returns same identity",
+    "Failed resume retains exact accepted identity without rerunning checkpoint",
+    "Successful resume/new freeze cannot alias an old read",
+    "Actual unchanged document adapter forwards descriptor/read identity and rejects old reads",
+    "Accepted numeric FIFO remains readable after disposal until idempotent ACK",
+    "Author disposal preserves an already-frozen descriptor through a partial Unicode-safe pull and unchanged adapter; new lifecycle work still rejects"
+  ],
+  "dependencies": "No dependency on the pending physical-settlement token, iframe retirement fence or new producer API. Existing native Snapshot.revision is opaque and forwarded unchanged.",
+  "unrun": [
+    "Native Swift/WebKit compilation/execution",
+    "Physical iPad/Mac save/resume/acceptance",
+    "Installation",
+    "Full NB13 admission-before-copy acceptance"
+  ],
+  "preserved": [
+    "Stored JSON, instance/document identity, history and trust",
+    "Public authored callbacks",
+    "Existing native admission owner and accepted writer/FIFO",
+    "Earlier merged repairs including runtime stdout/stderr identity fix"
+  ],
+  "rejectedCandidate": {
+    "sameCurrentTests": 38,
+    "passed": 35,
+    "failed": 3,
+    "log": "rejected-disposal-v1.txt",
+    "finding": "Earlier reviewed full proposal incorrectly revoked frozen reads on author dispose; independent subset review found the data-drain regression. That source approval was withdrawn; corrected candidate preserves existing disposal transport lifetime."
+  }
+}

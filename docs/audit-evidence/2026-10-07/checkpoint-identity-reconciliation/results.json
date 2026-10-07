@@ -1,0 +1,52 @@
+{
+  "date": "2026-10-07",
+  "scope": "PR6 docs-only reconciliation with new main; no changes to its reviewed program implementation or tests",
+  "main": "3b7dc0fac89831657baf2879c8a37d3375610569",
+  "previousHead": "aaf09d8ebcbf8341b2877f19922f40cccf275fb4",
+  "plannedParents": [
+    "aaf09d8ebcbf8341b2877f19922f40cccf275fb4",
+    "3b7dc0fac89831657baf2879c8a37d3375610569"
+  ],
+  "alreadyIntegrated": false,
+  "preservation": "preservation.json",
+  "implementationSHA256": {
+    "Applications/WebResources/notebook-program.js": "c1df7e5bf549b267325d11a8347fb95b2913daf64e59fc52490454abddb89e92",
+    "MCP/test/program-bridge.test.ts": "ea6af1d2376e89659193a657ce2ea9a6a89e156ba29104c8c647b72b58670f94"
+  },
+  "checks": [
+    {
+      "command": "node --import ./MCP/node_modules/tsx/dist/loader.mjs --test MCP/test/program-bridge.test.ts MCP/test/chat-render.test.ts MCP/test/chat-mathjax-state.test.ts",
+      "passed": 58,
+      "failed": 0,
+      "skipped": 0,
+      "log": "node.txt"
+    },
+    {
+      "command": "node --test Tests/NotebookDocumentAcceptance/test_link_activation.mjs Tests/NotebookDocumentAcceptance/test_page_phase_observation.mjs",
+      "passed": 15,
+      "failed": 0,
+      "skipped": 0,
+      "log": "document-browser.txt"
+    },
+    {
+      "command": "npm --prefix MCP run check",
+      "result": "PASS: strict TypeScript and generated script-service resources",
+      "log": "mcp-check.txt"
+    },
+    {
+      "command": "git diff --cached --check; git diff --check",
+      "result": "PASS"
+    }
+  ],
+  "environmentCorrection": {
+    "firstAttempt": "MCP check refused because symlinked dependency location changed esbuild source-path comments; initial-symlink-dependency-refusal.txt retained",
+    "resolution": "Copied the same existing dependency bytes to worktree-local node_modules, then reran full MCP check and Node tests. No generated resource or source was changed to make the check pass."
+  },
+  "reviewScope": "Exact original production/test bytes plus additive document reconciliation and current portable checks",
+  "limits": [
+    "No merge to main or installation",
+    "Full native read-settlement proposal remains held for owner overlap and native validation",
+    "No producer API migration",
+    "Native Swift/WebKit/physical acceptance not executed in this Linux environment"
+  ]
+}

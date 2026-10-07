@@ -1,0 +1,54 @@
+{
+  "scope": "Third native run: only single-layer pixel oracle fails. Transparent ink lies above elements; replace oracle with source-over of the delivered cohort.",
+  "sourceSHA256": "784116e4b3d7bd9781ac8212ce4afb95fd6a6c8c47fda2c0dbc87c3df5ae3427",
+  "native": {
+    "devicesAndConfigurations": [
+      {
+        "device": {
+          "architecture": "arm64",
+          "deviceId": "00006050-001650DA01F9401C",
+          "deviceName": "My Mac",
+          "modelName": "MacBook Pro",
+          "osBuildNumber": "26A434",
+          "osVersion": "27.0.1",
+          "platform": "macOS"
+        },
+        "expectedFailures": 0,
+        "failedTests": 1,
+        "passedTests": 0,
+        "skippedTests": 0,
+        "testPlanConfiguration": {
+          "configurationId": "1",
+          "configurationName": "Test Scheme Action"
+        }
+      }
+    ],
+    "environmentDescription": "NotebookRuntime · Built with macOS 27.0.1",
+    "expectedFailures": 0,
+    "failedTests": 1,
+    "finishTime": 1791364537.856,
+    "passedTests": 0,
+    "result": "Failed",
+    "runtimeWarnings": [],
+    "skippedTests": 0,
+    "startTime": 1791364535.771,
+    "statistics": [],
+    "testFailures": [
+      {
+        "failureText": "XCTAssertGreaterThan failed: (\"0.0\") is not greater than (\"0.95\") - The last passive body remains above every admitted red subject",
+        "targetName": "NotebookMacTests",
+        "testIdentifier": 1,
+        "testIdentifierString": "NotebookPanelMaterialTests/testBudgetDemotedElementBodiesNeverCreateDiscardedMaterialRasters()",
+        "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookPanelMaterialTests/testBudgetDemotedElementBodiesNeverCreateDiscardedMaterialRasters",
+        "testName": "testBudgetDemotedElementBodiesNeverCreateDiscardedMaterialRasters()"
+      }
+    ],
+    "title": "Test - NotebookRuntime",
+    "topInsights": [],
+    "totalTestCount": 1
+  },
+  "failedAssertions": [
+    "XCTAssertGreaterThan failed: (\"0.0\") is not greater than (\"0.95\") - The last passive body remains above every admitted red subject"
+  ],
+  "artifacts": ".build/runtime-255-panel-verified-v3"
+}

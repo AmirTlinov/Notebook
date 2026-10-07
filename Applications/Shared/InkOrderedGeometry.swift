@@ -8,6 +8,7 @@ import NotebookCore
 @MainActor final class InkOrderedGeometry {
   let plan:NotebookOrderedInkPlan
   private let bodies:[UUID:InkMaterialRenderer.OrderedBody]
+  private let elementSources:[String:UUID]
   private let index:WorkspaceSpatialIndex
   private let overridden:Set<UUID>
   private static func bounds(_ body:NotebookOrderedInkPlan.Body)->WorkspaceSpatialBounds {
@@ -20,6 +21,7 @@ import NotebookCore
   init(_ plan:NotebookOrderedInkPlan,reusing previous:InkOrderedGeometry?,device:any MTLDevice,
     resources:SceneRenderResources,owner:ScenePhysicalOwnerLease?) async throws {
     self.plan=plan;index=Self.makeIndex(plan.bodies);overridden=[]
+    elementSources=Dictionary(uniqueKeysWithValues:plan.bodies.map{($0.elementID,$0.sourceID)})
     if !plan.isEmpty {try await InkRasterRenderer.shared.prepareOrdered()}
     var values:[UUID:InkMaterialRenderer.OrderedBody]=[:]
     for source in plan.bodies {
@@ -33,6 +35,8 @@ import NotebookCore
   private init(plan:NotebookOrderedInkPlan,bodies:[UUID:InkMaterialRenderer.OrderedBody],
     indexSource:InkOrderedGeometry?,changed:Set<UUID> = []) {
     self.plan=plan;self.bodies=bodies
+    if changed.isEmpty,let indexSource {elementSources=indexSource.elementSources}
+    else {elementSources=Dictionary(uniqueKeysWithValues:plan.bodies.map{($0.elementID,$0.sourceID)})}
     index=indexSource?.index ?? Self.makeIndex(plan.bodies)
     overridden=indexSource.map{$0.overridden.union(changed)} ?? []
   }
@@ -76,6 +80,17 @@ import NotebookCore
     }
     return .init(plan:.init(bodies:sources,suppressedInkIDs:plan.suppressedInkIDs),bodies:prepared,indexSource:self)
   }
+  /// Addressed lookup avoids walking the ordered plane on every Pencil sample.
+  func erasureDamage(_ next:InkElementErasureMap,replacing previous:InkElementErasureMap)->CGRect {
+    var damage=CGRect.null
+    for id in Set(next.map(\.key)).union(previous.map(\.key)) {
+      guard let sourceID=elementSources[id],let source=bodies[sourceID]?.source else {continue}
+      let local=InkMaterialRenderer.erasureDamage(next[id] ?? [],replacing:previous[id] ?? [],
+        transform:source.graphic.transform,layout:source.layout)
+      damage=damage.union(local.offsetBy(dx:source.layout.frame.x,dy:source.layout.frame.y))
+    }
+    return damage
+  }
   func events(raw:[(NotebookInkPaintKey,InkRasterRenderer.Draw)],camera:SpatialCamera?,viewport:SpatialPoint,
     region:CGRect,pixels:CGSize,device:any MTLDevice,resources:SceneRenderResources,owner:ScenePhysicalOwnerLease?,liveCuts:InkElementErasureMap = [:],damage:CGRect? = nil) throws
     -> (events:[InkRasterRenderer.OrderedEvent],reservations:[RasterReservation]) {
@@ -91,7 +106,7 @@ import NotebookCore
         !(liveCuts[source.elementID] ?? []).contains(where:{$0.target.wholeElement}) else {return}
       guard let body=bodies[source.sourceID] else {throw SceneRenderError.snapshotPending("ordered_ink_body")}
       let prepared=try body.prepare(camera:camera,viewport:viewport,region:region,pixels:pixels,
-        device:device,resources:resources,owner:owner,extraCuts:liveCuts[source.elementID] ?? [])
+        device:device,resources:resources,owner:owner,extraCuts:liveCuts[source.elementID] ?? [],damage:damage)
       result.append(prepared.event);held += prepared.reservations
     }
     // Raw ranges come from the existing painter-ordered mesh index. Neither

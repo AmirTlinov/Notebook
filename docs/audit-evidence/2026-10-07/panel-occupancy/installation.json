@@ -1,0 +1,42 @@
+{
+  "date": "2026-10-07",
+  "sourceSHA256": "b6f75eba9754353e76f30b922b9cc13ddeeb4d2615840bafff9407a78fbf9f92",
+  "buildSHA256": "c31f79d439c4ca40be0922a479bb5616dee91192d3f93c728970bfb475728ce6",
+  "build": "257",
+  "version": "0.3.187",
+  "plugin": "0.2.9",
+  "status": "installed",
+  "step": "complete",
+  "servingPeer": {
+    "pid": 625,
+    "uid": 501,
+    "executable": "/Users/amir/.codex/plugins/cache/notebook-local/notebook/0.2.9/runtime/NotebookRuntime.app/Contents/MacOS/NotebookRuntime",
+    "cdhash": "68996f9b84f192a96fd76fbea604e97c5a75eb5f"
+  },
+  "servingPeerMatchesSignedBuild": true,
+  "runtimeShutdown": [
+    {
+      "cdhash": "71aedee943a56f4150c9275102343eb1824ee45b",
+      "executable": "/Users/amir/.codex/plugins/cache/notebook-local/notebook/0.2.8/runtime/NotebookRuntime.app/Contents/MacOS/NotebookRuntime",
+      "pid": 38006,
+      "uid": 501
+    }
+  ],
+  "ipad": {
+    "installedBuild": "257",
+    "selectedWorkspace": "54349f3b-9e0a-4dea-b990-40cae04ef45e",
+    "catalogIdentityUnchanged": true,
+    "sqliteMetadataUnchanged": true,
+    "appGroupIDsUnchanged": true,
+    "rawCatalogHashes": {
+      "ipadWorkspaceBefore": "e1b27767e4f2cf58cc21df1d868b373b10ad72a7be62f0fd5363bd5803bf6d31",
+      "ipadWorkspacePreinstall": "e33fb2b769bd2c9ade3302c9eee63ccc691302db8586d5b7802e6a1819c1fcee",
+      "ipadWorkspaceAfter": "e33fb2b769bd2c9ade3302c9eee63ccc691302db8586d5b7802e6a1819c1fcee"
+    },
+    "historicalApplicationUnchanged": true
+  },
+  "readback": "Installed admitted MCP read original root board and pages, cursor66814; no domain writes made by probes.",
+  "standaloneDesktopApplicationPresent": false,
+  "receipt": ".build/runtime-install-257-panel/installation.json",
+  "receiptSHA256": "bf174b50e25d3a2cf5af9989622b78788485dc665dd8a4bc6b62d9295264a10a"
+}

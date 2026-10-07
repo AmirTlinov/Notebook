@@ -3,11 +3,15 @@ import type { SceneBounds } from "../src/spatial.js";
 import type { PanelSnapshot, PanelAddress, PanelMutation, PanelSelection, PanelTarget, PanelView } from "./model.js";
 
 type ToolResult={structuredContent?:Record<string,unknown>;content?:{type:string;text?:string}[];isError?:boolean};
+type OpenRequest={target?:PanelTarget;bounds?:SceneBounds};
 export type RuntimeStatus={kind:"notebookRuntime";ready:boolean;pid:number;state:"opening"|"ready"|"workspaceRequired"|"failed";workspaceID?:string;socketKey?:string;message?:string};
 export type WorkspaceRequest={action:"list"|"create"|"select"|"rename"|"retry";id?:string;name?:string};
 export type WorkspaceResult={status:RuntimeStatus;workspaces:{id:string;name:string;local:boolean;remote:boolean;deleting:boolean}[];error?:string;catalogError?:string;snapshot?:PanelSnapshot};
 export class PanelError extends Error {
   constructor(readonly code:string,message:string){super(message);}
+}
+function retryable(error:unknown):boolean {
+  return !(error instanceof PanelError)||["ipc_timeout","ipc_unavailable","ipc_protocol","operation_failed","runtime_starting","runtime_startup_failed"].includes(error.code);
 }
 function body(result:ToolResult):Record<string,unknown> {
   const value=result.structuredContent??JSON.parse(result.content?.find(c=>c.type==="text")?.text??"{}");
@@ -26,14 +30,20 @@ function sameAddress(a:PanelAddress,b:PanelAddress):boolean {
 export class NotebookSession {
   readonly app=new App({name:"Notebook",version:"1.0.0"},{availableDisplayModes:["fullscreen"]});
   snapshot:PanelSnapshot|undefined;
-  busy=false;
+  private working=false;
+  get busy(){return this.working;}
+  set busy(value:boolean){
+    if(this.working===value)return;
+    this.working=value;
+    if(!this.closed)this.onStateChange();
+  }
   private synchronizing=false;
   private failedWrite=false;
   private contextSelection:PanelSelection|null=null;
   private contextTimer:ReturnType<typeof setTimeout>|undefined;
   private contextWriting=false;
   private contextDirty=false;
-  get mutationReady(){return this.presented&&!this.busy&&!this.pending&&!this.synchronizing;}
+  get mutationReady(){return this.presented&&!this.suspended&&!this.busy&&!this.pending&&!this.synchronizing;}
   get hasPending(){return !!this.pending;}
   suspended=false;
   onSnapshot:(snapshot:PanelSnapshot)=>void=()=>{};
@@ -41,6 +51,7 @@ export class NotebookSession {
   onCancelSnapshotPreparation:()=>Promise<void>=async()=>{};
   onClose:()=>void|Promise<void>=()=>{};
   onStatus:(text:string)=>void=()=>{};
+  onStateChange:()=>void=()=>{};
   onError:(message:string,retry:(()=>Promise<void>)|null)=>void=()=>{};
   onRuntime:(status:RuntimeStatus)=>void=()=>{};
   bounds:()=>SceneBounds|undefined=()=>undefined;
@@ -53,6 +64,8 @@ export class NotebookSession {
   private closed=false;
   private boundsDirty=true;
   private initialClaimed=false;
+  private openingRequest:OpenRequest|undefined;
+  private openingTimer:ReturnType<typeof setTimeout>|undefined;
   private presented=false;
   private presentedView:PanelView|undefined;
   private generation=0;
@@ -66,20 +79,23 @@ export class NotebookSession {
 
   async connect() {
     this.app.ontoolresult=result=>{
-      // The host hands this view its initial surface. Later tool calls cannot
+      // The host hands this view its immutable opening request. Later calls cannot
       // redirect a mounted view or an in-progress human gesture.
       if(this.closed||this.initialClaimed)return;
-      try { const value=body(result as ToolResult);if(isSnapshot(value)){
-        this.initialClaimed=true;this.snapshot=value;this.onStatus("Подготовка поверхности…");void this.refresh(true);
-      }else if(value.runtime){this.onRuntime(value.runtime as RuntimeStatus);} }
+      try {
+        const value=body(result as ToolResult);
+        if(!value.open||typeof value.open!=="object"||Array.isArray(value.open))throw new Error("Notebook не передал запрос открытия панели.");
+        this.initialClaimed=true;this.openingRequest=structuredClone(value.open) as OpenRequest;
+        void this.connectSurface();
+      }
       catch(error){this.report(error,null);}
     };
     this.app.onteardown=async()=>{
       if(this.closed)return {};
       this.closed=true;this.presented=false;++this.generation;
       this.cancelNavigation();
-      clearInterval(this.timer);clearTimeout(this.refreshTimer);clearTimeout(this.contextTimer);
-      this.timer=undefined;this.refreshTimer=undefined;this.contextTimer=undefined;
+      clearInterval(this.timer);clearTimeout(this.refreshTimer);clearTimeout(this.contextTimer);clearTimeout(this.openingTimer);
+      this.timer=undefined;this.refreshTimer=undefined;this.contextTimer=undefined;this.openingTimer=undefined;this.openingRequest=undefined;
       this.pending?.reject(new Error("Панель закрыта."));this.pending=undefined;
       this.busy=false;this.releaseReaders();
       this.onStatus("Панель закрыта");await this.onClose();return {};
@@ -87,6 +103,36 @@ export class NotebookSession {
     try{await this.app.connect();}catch(error){if(!this.closed)throw error;}
     if(this.closed)return;
     this.timer=setInterval(()=>{if(!document.hidden&&!this.suspended&&!this.busy)void this.refresh();},1500);
+  }
+  private async connectSurface(){
+    if(this.closed||this.busy||!this.openingRequest)return;
+    clearTimeout(this.openingTimer);this.openingTimer=undefined;
+    const request=this.openingRequest;
+    this.busy=true;this.onError("",null);this.onStatus("Открываем Notebook…");
+    let again=false,runtime:RuntimeStatus|undefined;
+    try{
+      const value=body(await this.app.callServerTool({name:"notebook_panel_connect",arguments:request}) as ToolResult);
+      if(this.closed||this.openingRequest!==request)return;
+      if(isSnapshot(value)){
+        this.openingRequest=undefined;this.snapshot=value;this.onStatus("Подготовка поверхности…");
+      }else if(value.runtime){
+        runtime=value.runtime as RuntimeStatus;
+        // An admitted process can still be opening its workspace. Retry this
+        // same read, preserving target/bounds without selecting another focus.
+        if(runtime.state==="opening"){again=true;this.onStatus(runtime.message??"Открываем пространство…");}
+      }else throw new Error("Notebook вернул неполный результат подключения.");
+    }catch(error){
+      if(this.closed)return;
+      if(error instanceof PanelError&&error.code==="runtime_starting")again=true;
+      else this.report(error,retryable(error)?()=>this.connectSurface():null);
+    }finally{
+      this.busy=false;
+      if(!this.closed){
+        if(again&&this.openingRequest===request)this.openingTimer=setTimeout(()=>{void this.connectSurface();},250);
+        else if(runtime)this.onRuntime(runtime);
+        else if(this.snapshot)void this.refresh(true);
+      }
+    }
   }
   address():PanelAddress {
     if(!this.snapshot)throw new Error("Notebook ещё подключается.");
@@ -96,7 +142,8 @@ export class NotebookSession {
     if(this.closed||this.busy||(this.pending&&request.action!=="list"&&request.action!=="retry"))return;
     this.busy=true;this.onStatus("Открытие пространства…");
     const recovering=request.action==="retry"&&this.snapshot!==undefined;
-    const command=recovering?{...request,id:this.snapshot!.workspaceID}:request;
+    const command={...(recovering?{...request,id:this.snapshot!.workspaceID}:request),
+      ...(!recovering&&this.openingRequest?{open:this.openingRequest}:{})};
     let repaired=false;
     try{
       const value=body(await this.app.callServerTool({name:"notebook_panel_workspace",arguments:command}) as ToolResult) as WorkspaceResult;
@@ -114,6 +161,7 @@ export class NotebookSession {
           // action. The runtime's current focus belongs to another surface.
           if(repaired)this.failedWrite=false;
         }else{
+          this.openingRequest=undefined;clearTimeout(this.openingTimer);this.openingTimer=undefined;
           ++this.generation;this.cancelNavigation();
           this.initialClaimed=true;this.presented=false;this.snapshot=value.snapshot;
           this.presentedView=undefined;this.boundsDirty=true;this.failedWrite=false;
@@ -226,7 +274,15 @@ export class NotebookSession {
         this.synchronizing=false;if(!this.failedWrite)this.onError("",null);this.onStatus("Подключено");return this.snapshot;
       }
       if(!isSnapshot(value)||!sameAddress(request,value))throw new Error("Notebook вернул другую поверхность.");
-      if(!(await this.onPrepareSnapshot(value,request.appearance))||this.stale(request,generation))return;
+      const prepared=await this.onPrepareSnapshot(value,request.appearance);
+      if(this.stale(request,generation))return;
+      if(!prepared){
+        this.boundsDirty=this.needsPresentation();
+        if(this.presented&&!this.boundsDirty&&!this.synchronizing&&!this.failedWrite){
+          this.onError("",null);this.onStatus("Подключено");
+        }
+        return;
+      }
       if(!this.failedWrite)this.onError("",null);this.accept(value,request.appearance);
       // Camera motion does not invalidate world-placed pixels. Keep the current
       // camera and coalesce the latest projection after accepting useful coverage.
@@ -273,9 +329,9 @@ export class NotebookSession {
       this.pending=undefined;this.synchronizing=true;this.onError("",null);pending.resolve();
     }catch(error) {
       if(this.closed||this.pending!==pending)return;
-      const retryable=!(error instanceof PanelError)||["ipc_timeout","ipc_unavailable","ipc_protocol","operation_failed"].includes(error.code);
-      if(!retryable){this.pending=undefined;this.failedWrite=true;pending.reject(error);}
-      this.report(error,retryable?()=>this.retryPending():null);
+      const canRetry=retryable(error);
+      if(!canRetry){this.pending=undefined;this.failedWrite=true;pending.reject(error);}
+      this.report(error,canRetry?()=>this.retryPending():null);
     }finally {
       this.busy=false;
       // The accepted command retires any pre-contact read. Its replacement

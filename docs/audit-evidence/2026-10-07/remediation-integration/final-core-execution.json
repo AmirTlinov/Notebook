@@ -1,0 +1,23 @@
+{
+  "executed": [
+    "NotebookCoreTests.NotebookPanelPageReadTests/contentReuseRefreshesNavigationPresenceHistoryAndCursorAfterAwait()/NotebookPanelPageReadTests.swift:134:4",
+    "NotebookCoreTests.NotebookPanelPageReadTests/retainedContentRejectsChangedSourceTargetAndWorkspace()/NotebookPanelPageReadTests.swift:174:4",
+    "NotebookCoreTests.NotebookQueryCutTests/escapedCutCannotReenterAReusedHandleOrAWriter()/NotebookQueryCutTests.swift:50:4",
+    "NotebookCoreTests.NotebookQueryCutTests/panelAndPixelReadsBorrowOneCutAndExpireWithoutAcceptingWrites()/NotebookQueryCutTests.swift:7:4"
+  ],
+  "executions": {
+    "NotebookCoreTests.NotebookPanelPageReadTests/contentReuseRefreshesNavigationPresenceHistoryAndCursorAfterAwait()/NotebookPanelPageReadTests.swift:134:4": 1,
+    "NotebookCoreTests.NotebookPanelPageReadTests/retainedContentRejectsChangedSourceTargetAndWorkspace()/NotebookPanelPageReadTests.swift:174:4": 1,
+    "NotebookCoreTests.NotebookQueryCutTests/escapedCutCannotReenterAReusedHandleOrAWriter()/NotebookQueryCutTests.swift:50:4": 1,
+    "NotebookCoreTests.NotebookQueryCutTests/panelAndPixelReadsBorrowOneCutAndExpireWithoutAcceptingWrites()/NotebookQueryCutTests.swift:7:4": 1
+  },
+  "failed": [],
+  "format": 1,
+  "planned": [
+    "NotebookCoreTests.NotebookPanelPageReadTests/contentReuseRefreshesNavigationPresenceHistoryAndCursorAfterAwait()/NotebookPanelPageReadTests.swift:134:4",
+    "NotebookCoreTests.NotebookPanelPageReadTests/retainedContentRejectsChangedSourceTargetAndWorkspace()/NotebookPanelPageReadTests.swift:174:4",
+    "NotebookCoreTests.NotebookQueryCutTests/escapedCutCannotReenterAReusedHandleOrAWriter()/NotebookQueryCutTests.swift:50:4",
+    "NotebookCoreTests.NotebookQueryCutTests/panelAndPixelReadsBorrowOneCutAndExpireWithoutAcceptingWrites()/NotebookQueryCutTests.swift:7:4"
+  ],
+  "skipped": []
+}

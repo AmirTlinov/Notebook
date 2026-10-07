@@ -1,0 +1,221 @@
+{
+  "format": 1,
+  "result": "PASS",
+  "date": "2026-10-06",
+  "scope": "Bounded lasso source admission and temporary JSON decoding allocations; selected Core and real-iPad controller checks.",
+  "commits": [
+    "61073392453ab167ecf77ac7f5d263cdf15643ee",
+    "ac9d2da329cdfee0a25aab06474aef6399eaeded"
+  ],
+  "sourceSHA256": "acf477aa3394dfee52a6c19ba26b6e55ff3d38b7196168186e922786a495526c",
+  "sourceBeforeEqualsAfter": true,
+  "optimized": true,
+  "sourceFiles": {
+    "Applications/Shared/NotebookAppModel.swift": "392d47e9bcebca3a014e2ed5096307a483c9950655f0459c14a5b0435c03baca",
+    "Applications/Shared/NotebookDrawingToolController.swift": "4ba6dbcee1fbf7ce4431ae53fd90cfeb785a7fa28d1d9c995e630889c755be23",
+    "Applications/Shared/NotebookLassoSelection.swift": "0e352a98d8b015bc69b0abc28398c86cf897baa2304fe018414d19eb11300923",
+    "Applications/Shared/NotebookRegionEditing.swift": "92265e033e7ee6b028c973e76e93fbd66a83f2054bcf0d656a225362b360b1f2",
+    "Applications/Shared/NotebookRegionWriteAllowance.swift": "47f464d30fbcade2e7f8a19e6124e3fd15cda4df914ffd56c7aa320107a05064",
+    "Applications/Shared/NotebookSelectionSession.swift": "81850708145bb7c6e3440574d824e8b7c4a6c8d64e1242f1a4800c336d4d4df6",
+    "Applications/Tests/NotebookLassoAcceptanceTests.swift": "34812f79e0de22301d7d19535e01a712f4c02f35a18fbccb1c1490caef8694aa",
+    "Applications/Tests/NotebookLassoMotionTests.swift": "8e41bf501b7366e307f49934014b4d48de75bb755a5997e19bf4451b64097446",
+    "Sources/NotebookCore/InkContactBoundsIndex.swift": "5c653265a2b98843e0dd1855091febeb29d932a21116c3a9f0dc69f5a2d071a7",
+    "Sources/NotebookCore/InkElementErasureMap.swift": "8ec8d26bf81ae84b783891afdac4037a8554ad6ee2066924fc52858297184410",
+    "Sources/NotebookCore/InkMeasurements.swift": "49a70f1fc61cb0588394cb14c0b689a3fbb85cb41fe1e56f00bfe294b4e6ebc2",
+    "Sources/NotebookCore/InkSampleRelations.swift": "0a97a6988a936a1479354da1c541cd6958c5cb5f1a27bd30c2036ef5af931e77",
+    "Sources/NotebookCore/NotebookElementSourceSnapshot.swift": "801547e97f88d365714d5570cd493550f7549d91c7a0481b4eb366448a936bc7",
+    "Sources/NotebookCore/NotebookGraphicConnection.swift": "2fb09b19cac6913642f1a029a7cfe5fe891cf61b80bf0850d5e093214fb69d18",
+    "Sources/NotebookCore/NotebookGraphicSelection.swift": "2c2be8f0e1e276fd9bc6ac68dbc42cb4b8debaad4732e3a4a3a6eba997c629f8",
+    "Sources/NotebookCore/NotebookInkReadSet.swift": "088a1cfbd020b8c9d41cc5ce1937a267a0fef9092b20bea9fc8ff49293d2133f",
+    "Sources/NotebookCore/PageDocument.swift": "87318143c8bd7552734b138571e474ecb8b789c85006c52b17379aae9f507e94",
+    "Sources/NotebookCore/PageInkDrawing.swift": "346721c43d0e67f5ef307578d4d9c4f1d8710a822938f9c71057350bdc0d19b4",
+    "Sources/NotebookCore/SpatialInkActionStorage.swift": "4d1a53eccc471e15a1465567bada785aab70a6ca259239b96e839519cb8ea961",
+    "Sources/NotebookCore/SpatialInkJournal.swift": "a9e5bb1d4681761e50b6fefba244c7ee5c48090f63694b2eea51efc0ef52814f",
+    "Sources/NotebookCore/SpatialWorkspace.swift": "d64ae4bf7a5aa91bae8900b3470f119a3ca1f41d326595b50f9e05bb352b70e8",
+    "Sources/NotebookCore/WorkspaceSpatialIndex.swift": "7d45f597c5b5988dba41b7a4e82ef04971426f47569cd2ed20281feb68b9f1e9",
+    "Tests/NotebookCoreTests/NotebookCapturedSourceSizeTests.swift": "1d89080e8eb6026034c2610d23e6ce93ce3c151b0fd122c2923672e812dc3fed",
+    "Sources/NotebookCore/JSONValue.swift": "2d6bd2e24e0339fa3b93d4ec59ba821c28d898b3634296ed23a354ef74be338b",
+    "Applications/Tests/NotebookDrawingToolsTests.swift": "08f83469fcfd9b4b629b51c72471660f4e43fd1d02fed8d782d4aca1b5da2048"
+  },
+  "native": {
+    "passed": 12,
+    "failed": 0,
+    "skipped": 0,
+    "runtimeWarnings": [],
+    "durationSeconds": 200.048,
+    "selectors": [
+      "NotebookTests/NotebookDrawingToolsTests/testLassoCandidateOverflowKeepsPreviousSelectionInBothModes",
+      "NotebookTests/NotebookLassoAcceptanceTests/testAcceptedPendingDeleteCannotBorrowAForeignReplacement",
+      "NotebookTests/NotebookLassoAcceptanceTests/testCapturedAllowanceCoversTheReadyPlanAndRejectsKnownOverflow",
+      "NotebookTests/NotebookLassoAcceptanceTests/testColdFirstLassoAcceptsMoveDeleteAndPencilWhileExactInkPreparationIsSuspended",
+      "NotebookTests/NotebookLassoAcceptanceTests/testColdFirstLassoWithOneHundredThousandContactsAcceptsMoveDeleteAndPencil",
+      "NotebookTests/NotebookLassoAcceptanceTests/testColdSmallLassoAdmissionDoesNotGrowWithOneHundredThousandForeignBodies",
+      "NotebookTests/NotebookLassoAcceptanceTests/testDeleteAfterEarlyMoveAddressesTheAcceptedFragmentBeforeEitherPreparationFinishes",
+      "NotebookTests/NotebookLassoAcceptanceTests/testDeleteBeforePreparationSurvivesNewFocusAndInkAndKeepsUndoOrder",
+      "NotebookTests/NotebookLassoAcceptanceTests/testEarlyMixedInkCutKeepsMeasurementsTransparencyErasureAndLaterStrokeThroughUndo",
+      "NotebookTests/NotebookLassoAcceptanceTests/testPendingLassoRefusesTheSameFullWriterBudgetAndCanBeRetried",
+      "NotebookTests/NotebookLassoAcceptanceTests/testSmallPendingInkCutExcludesOneHundredThousandForeignMeasurementsFromTheResultCredit",
+      "NotebookTests/NotebookLassoAcceptanceTests/testTwoEarlyLiftsAndNextLassoChainAcceptedMaterialWithoutWaitingForSave"
+    ],
+    "device": {
+      "architecture": "arm64",
+      "deviceId": "00008103-001E059934D9001E",
+      "deviceName": "iPad (Елизавета)",
+      "modelName": "iPad Pro (11-inch) (3rd generation)",
+      "osBuildNumber": "24A435",
+      "osVersion": "27.0",
+      "platform": "iOS"
+    },
+    "sourceBeforeEqualsAfter": true,
+    "isolatedBundleCleanupBeforeAfter": "PASS",
+    "measurements": [
+      "LASSO_COLD_CONTROLLER contacts=1 down=5.7541e-05 seconds lift=0.00018725 seconds move_delete=0.000249709 seconds admitted_bytes=6946440",
+      "LASSO_COLD_CONTROLLER contacts=100000 down=6.5167e-05 seconds lift=0.000195583 seconds move_delete=0.000124667 seconds admitted_bytes=6946440",
+      "LASSO_COLD_ADMISSION bodies=1 causal_fields=1 scene_index=4.025e-05 seconds cold_capture=0.000179916 seconds admitted_bytes=6196088",
+      "LASSO_COLD_ADMISSION bodies=100000 causal_fields=100000 scene_index=0.681627875 seconds cold_capture=0.000140041 seconds admitted_bytes=6196088"
+    ],
+    "artifacts": [
+      {
+        "path": ".build/runtime-253-lasso-admission-verification-r6/verification.json",
+        "sha256": "34133a8839783e338cb217f752a45556084e580a721b65df895f54a128537389"
+      },
+      {
+        "path": ".build/runtime-253-lasso-admission-verification-r6/source-before.json",
+        "sha256": "13df9c6bfc646fa5e523b73511567357728d7eeccd8fec6bf4cf90eb9d5b9700"
+      },
+      {
+        "path": ".build/runtime-253-lasso-admission-verification-r6/source-after.json",
+        "sha256": "13df9c6bfc646fa5e523b73511567357728d7eeccd8fec6bf4cf90eb9d5b9700"
+      },
+      {
+        "path": ".build/runtime-253-lasso-admission-verification-r6/ipad-summary.json",
+        "sha256": "d8291aa7df0d7f87bd700795a8c1def262da3705feaa269707cf543ab60fcd31"
+      },
+      {
+        "path": ".build/runtime-253-lasso-admission-verification-r6/ipad-tests.json",
+        "sha256": "5725332ad44a459e628f2a29f20e926e53c0364754fed7cf8f8ff13d1fedabb3"
+      },
+      {
+        "path": ".build/runtime-253-lasso-admission-verification-r6/selection.json",
+        "sha256": "6eadb2e9670e27e043131d026380e5d64ca24bb349f689e57f16b0803b941fa2"
+      },
+      {
+        "path": ".build/runtime-253-lasso-admission-verification-r6/production-profile-resume.json",
+        "sha256": "eea3ec3debddfd406ee307eb7d48a815897324806f7cea57cfcf05502004c9d3"
+      },
+      {
+        "path": ".build/runtime-253-lasso-admission-verification-r6/diagnostics/0_Test_iPad (Елизавета)_Diagnostics/NotebookTests-A03D69F0-BA24-4204-9F75-E6F2B8B523CE-Configuration-Test Scheme Action-Iteration-1/NotebookTests-25296360-196B-4F5E-B0F6-3B941BEB429E/StandardOutputAndStandardError.txt",
+        "sha256": "3d60e21d3d9de64d2ea6b8454fef56d0d5d5881a27d1ff8dfc3eddc978008f07"
+      }
+    ]
+  },
+  "local": {
+    "core": {
+      "passed": 24,
+      "suites": 4,
+      "durationSeconds": 10.329,
+      "command": "swift test --scratch-path .build/lasso-core --filter 'NotebookCapturedSourceSizeTests|SpatialInkJournalTests|contactReadSetIgnoresUnrelatedAppendButTracksLaterCutsAndVisibility|livePageAdmissionRequiresPreparedRootAndSharesAcceptedSource|InkShortBodyTests|InkCurveSummaryTests'",
+      "sourceManifest": {
+        "path": ".build/runtime-253-lasso-admission-local-proof/initial-source.json",
+        "sha256": "6d406729f080997875d22f9dc1a0917bd810721adcfe74898d8e1a0b56471134"
+      },
+      "log": {
+        "path": ".build/runtime-253-lasso-admission-local-proof/core-tests.log",
+        "sha256": "3f1d20ef1ebfe19da09fefd27434ead8072a1e4932586e4e560f7549711766ac"
+      },
+      "measurements": [
+        "LASSO_COLD_SOURCE bodies=1 causal_fields=1 scene_index=0.000417167 seconds cold_capture=0.00044175 seconds retained_bytes=6172",
+        "SPATIAL_JOURNAL_100K inverses=32 appends=32 gateNewNodesMax=17 appendNewNodesMax=37 gateTime=0.049451332 seconds appendTime=0.040325584 seconds",
+        "SPATIAL_JOURNAL_100K tailUndoTime=0.001625125 seconds",
+        "LASSO_CONTACT_OWNER contacts=100000 preparation=2.150886875 seconds sparse_query=0.000226167 seconds all_excluded_query=0.007997875 seconds interleaved_query=0.010414875 seconds append=0.001024875 seconds visibility=0.000957458 seconds grouped_visibility_255=0.002398333 seconds material_bytes=1624 captured_bytes=1944 root_bytes=266735520",
+        "LASSO_COLD_SOURCE bodies=100000 causal_fields=100000 scene_index=1.284905417 seconds cold_capture=0.000220833 seconds retained_bytes=6172",
+        "LASSO_MASK_OWNER history=true entries=100000 page_preparation=5.570211 seconds spatial_preparation=2.499897584 seconds page_capture_and_size=3.6584e-05 seconds spatial_capture_and_size=2.3167e-05 seconds captured_bytes=146600922",
+        "LASSO_MASK_OWNER history=false entries=100000 page_preparation=0.964227583 seconds spatial_preparation=0.463831667 seconds page_capture_and_size=1.3625e-05 seconds spatial_capture_and_size=2.3667e-05 seconds captured_bytes=2388"
+      ]
+    },
+    "codec": {
+      "passed": 20,
+      "suites": 7,
+      "durationSeconds": 0.071,
+      "scope": "Transient JSON canonical envelopes, exact ink measurements and WorldPoint coding.",
+      "log": {
+        "path": ".build/runtime-253-lasso-admission-local-proof/codec-pool-core.log",
+        "sha256": "6b261e3bcf259e1ebf88c0f02f67ee8fef2f84676fb8d343ab0efc281d40aef5"
+      }
+    },
+    "admissionPreflight": {
+      "scope": "Actual compact Prepared/Allowance/Admission owners on host; not physical UI timing.",
+      "measurements": [
+        "LASSO_INK_HOST_PREFLIGHT journal_bytes=3996654 captured_bytes=6836 candidate_body_bytes=4488 cold_query=7.6916e-05 seconds first_action=5230112 second_action=7564112 total_with_pen=147011952",
+        "LASSO_MASK_ADMISSION masks=100000 capture_and_refusal=2.0333e-05 seconds captured_bytes=167400394",
+        "LASSO_CONTACT_HOST_PREFLIGHT contacts=100000 root_bytes=266735520 captured_bytes=1944 material_bytes=1624 admission_bytes=3182528 total_with_next_delete_and_pen=142936608"
+      ],
+      "log": {
+        "path": ".build/runtime-253-lasso-admission-local-proof/ink-probe.log",
+        "sha256": "eedc065832fbf0cc9b8886b048f76f5d75b8c6da14526c3953f6160e5910e15c"
+      }
+    }
+  },
+  "diagnosis": {
+    "initialNative": "r2:9/12PASS; mixed-ink fixture expected nil instead of the accepted causal stamp; two workloads killed before first gesture.",
+    "osCause": "r2 OS log: both killed at per-process-limit5120MB. r3/r4 phase markers located the growth in savePage JSON normalization/record creation before Controller input.",
+    "repair": "JSONValue releases Objective-C temporary decoding probes after each member; value ownership, numeric precision and durable representation unchanged.",
+    "comparison": {
+      "testColdFirstLassoWithOneHundredThousand/records_encoded_200017": {
+        "r4FootprintBytes": 3678342768,
+        "r5FootprintBytes": 483493400,
+        "ratioBeforeAfter": 7.60784483924703
+      },
+      "testLassoCandidateOverflow/save_encoded": {
+        "r4FootprintBytes": 3660942816,
+        "r5FootprintBytes": 176997456,
+        "ratioBeforeAfter": 20.683590028548206
+      },
+      "testColdFirstLassoWithOneHundredThousand/save_encoded": {
+        "r4FootprintBytes": 350569792,
+        "r5FootprintBytes": 388138496,
+        "ratioBeforeAfter": 0.9032079930561693
+      },
+      "r5MaxSampledFootprintBytes": 1028983136,
+      "r5MaxResidentPeakBytes": 1937096704,
+      "r4Outcome": "Both killed before first gesture; equivalent r2 OS receipts identify per-process-limit at5120MB.",
+      "r5Outcome": "Both passed including100k Move/Delete/Pencil andUndo3; Debug single invocation."
+    },
+    "artifacts": [
+      {
+        "path": ".build/runtime-253-lasso-admission-verification-r2/diagnosis.json",
+        "sha256": "b2694be622fc677381d6fa650e8b378a540a694a26aa098179e585e64708ba9c"
+      },
+      {
+        "path": ".build/runtime-253-lasso-admission-verification-r2/os-termination.txt",
+        "sha256": "cde37cab34a13b8019eff1513cfc2c43290ca3f3b8f64573896ba1a9a2dffd45"
+      },
+      {
+        "path": ".build/runtime-253-lasso-admission-verification-r4/phase-memory.json",
+        "sha256": "cd4dab72c46c8c1515de69fca5f758ff97fd760173af1e9a2266f12eec52e0b0"
+      },
+      {
+        "path": ".build/runtime-253-lasso-admission-verification-r5/phase-memory.json",
+        "sha256": "92f59ab4884a0771083e8cb03495200b9d500dd362727bd655c419bc112f374f"
+      },
+      {
+        "path": ".build/runtime-253-lasso-admission-verification-r5/verification.json",
+        "sha256": "2e82d7c14b6d8c8fbf5b6790c2fb82b35cba007ad160e00fe9d742c7b6fdac04"
+      }
+    ]
+  },
+  "review": {
+    "reviewer": "mounted_review",
+    "lasso": "Frozen24 source owners reviewed; full-scene sizing, raw-root retention, causal frontier loss and mask-history traversal findings repaired before commit.",
+    "jsonAndFixture": "Final2-file delta reviewed; no findings. Temporary production/test diagnostic markers removed."
+  },
+  "boundaries": {
+    "productionPairChanged": false,
+    "installedProduction": "253/0.3.183/plugin0.2.5 remained installed; foreground resumed with --notebook-profile-input without terminateExistingInstances.",
+    "inputTiming": "Single controller invocations after normal input-ready publication; exact lasso preparation suspended. No hardware Pencil or input-to-presented-pixels latency claim.",
+    "limits": "192MiB command /256MiB queue unchanged. Pencil keeps its existing128MiB reserve. Oversized selected masks refuse by the existing2048-mask graphic limit before array disclosure.",
+    "spatial": "Existing spatial window remains bounded to8192; no whole-spatial100k pointer sequence claimed.",
+    "remaining": "Bulk causal rebuild is quadratic and full page persistence/readback remains expensive; a separate owner repair. Ten repetitions, OS frame/CPU/GPU measurements and30minutes joint acceptance remain open."
+  },
+  "physicalAcceptance": false
+}

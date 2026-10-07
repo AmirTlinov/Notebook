@@ -42,6 +42,9 @@ final class NotebookChatRenderingTests: XCTestCase {
         await window.updateMessages({conversation:'fixture',reset:false,order:messages.map(m=>m.id),
           upserts:messages.filter(m=>JSON.stringify(previous.get(m.id))!==JSON.stringify(m)),
           removed:window.fixturePrevious.filter(m=>!messages.some(n=>n.id===m.id)).map(m=>m.id),work:null,turnStatuses:{},focus:null});
+        // Native visual assertions wait for math explicitly. Production acceptance
+        // returns after the plain transcript is installed, independently of math.
+        await MathJax.startup.promise;while(mathRendering)await mathRendering;
         window.fixturePrevious=messages;
       };true
       """)

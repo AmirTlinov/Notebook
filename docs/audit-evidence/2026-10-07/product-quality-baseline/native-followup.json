@@ -1,0 +1,229 @@
+{
+  "date": "2026-10-07",
+  "sourceCommit": "9a907c0b53cde95caf07aabdc3a760b86e88fbc6",
+  "sourceAggregateSHA256": "da4555ca3c4caa10e7146c96844717fb3b0bd8ac90de684e12aa1a5bdc8ac2e5",
+  "sourceReceiptSHA256": "06c899ddb98e6c1deb56628494619977c9de6329aca3d14d62eaa0d8be087761",
+  "scope": "Physical iPad selected native tests, optimized Debug, isolated native-test bundle; uncommitted source followups included in source receipt.",
+  "build": "PASS",
+  "inventory": "PASS",
+  "tests": {
+    "totalTestCount": 14,
+    "passedTests": 10,
+    "failedTests": 4,
+    "skippedTests": 0,
+    "runtimeWarnings": []
+  },
+  "failures": [
+    {
+      "test": "NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOnAnotherBoard()",
+      "failure": "XCTAssertLessThanOrEqual failed: (\"1.0468664999934845 seconds\") is greater than (\"1.0 seconds\") - History request → native paper accepting input retains the original 1 s budget; this is not camera settlement or OS presentation"
+    },
+    {
+      "test": "NotebookInteractionUXTests/testInkEraserMeetsTwentyMillisecondPresentationBudget()",
+      "failure": "20 ms presentation budget exceeded"
+    },
+    {
+      "test": "NotebookInteractionUXTests/testPencilReplayCannotHideBacklogBySlowingItsInputSchedule()",
+      "failure": "20 ms presentation budget exceeded"
+    },
+    {
+      "test": "InkCanvasLifecycleTests/testRetainedEraserRepairsItsOldTailAndPreservesBorrowedOrderedPixels()",
+      "failure": "Test crashed with signal trap."
+    }
+  ],
+  "observations": {
+    "documentOtherBoardMilliseconds": {
+      "nativeCompiler": 818.393667,
+      "closedCover": 120.963,
+      "paperInstalled": 887.845,
+      "firstOpening": 895.235,
+      "linksReady": 941.616,
+      "nativeInput": 1046.805
+    },
+    "presentationP95Milliseconds": {
+      "pen": 32.335958327,
+      "eraser": 41.153124999
+    },
+    "eraserUniqueFrameGPU95Milliseconds": 0.916,
+    "eraserGPUDeadlineMisses": 0,
+    "eraserMinimumDeadlineHeadroomMilliseconds": 5.757,
+    "eraserLateFirstInputOrdinals": [
+      0,
+      12
+    ],
+    "eraserP95Sample6Milliseconds": {
+      "GPUFinished": 9.236,
+      "plannedPresentation": 24.479,
+      "actualPresentation": 41.153
+    }
+  },
+  "uiAttempt": {
+    "path": ".build/product-quality-ui-20261007-v4",
+    "build": "PASS",
+    "inventory": "FAIL",
+    "executedTests": 0,
+    "failure": "Timed out while enabling automation mode",
+    "passcodeRequired": false
+  },
+  "limitations": [
+    "Native fixed-rate replay is not hardware Pencil sensing-to-photon timing or a before/after comparison to the human build253 trace.",
+    "The 1-second opening and 20-ms input budgets remain unchanged and failed.",
+    "v3b/v5 fixture trap diagnosed and corrected; v6 targeted physical pixel regression passed with the early drawable size guard.",
+    "Full gesture and joint-work acceptance remain open. This candidate is not in installed production254."
+  ],
+  "localEvidence": ".build/product-quality-native-20261007-v3b/ipad.xcresult",
+  "comparisonEvidence": ".build/v3b/presentation-comparison.json",
+  "crashDiagnosticRerun": {
+    "path": ".build/product-quality-eraser-crash-20261007-v5",
+    "sourceAggregateSHA256": "ee03f0add4adb82ff0e100cdb83182c01338dd27f80557bffd6cbf0300dae148",
+    "tests": {
+      "totalTestCount": 1,
+      "passedTests": 0,
+      "failedTests": 1,
+      "skippedTests": 0
+    },
+    "diagnosis": "The test used graphic transform d=1,ty=0.4375; its unit-square y=1 maps to1.4375. InkElementTarget.init precondition(isValid) traps before requesting the first eraser frame. Checkpoint gap matches this deterministic invalid fixture.",
+    "followup": "Only this fixture now uses valid nonidentity d=0.25,ty=0.625, keeping source y40 at y110. v6 physical native rerun PASS. Production target validation and all pixel assertions remain unchanged.",
+    "drawableGuard": "An independent real size-before-scratch invariant was fixed; the repeated fixture trap is not attributed to that GPU path.",
+    "diagnosticCollection": "Xcode on-failure diagnosed the failed test; device-wide diagnose child stalled for over5min and was terminated after cause was identified. Xcode then finalized the xcresult and cleanup. No device crash report was recovered."
+  },
+  "eraserCorrectedFixtureRerun": {
+    "path": ".build/product-quality-eraser-20261007-v6",
+    "sourceAggregateSHA256": "1093fe8521f407f0fdcfea57b6d64a777c66c2d10e001cca79a584974e8d5d51",
+    "sourceReceiptSHA256": "02feb821af135701b66eb94179999456416de2c862552bf5d5c34878a187bd13",
+    "sourcesUnchangedDuringRun": true,
+    "build": "PASS",
+    "inventory": "PASS",
+    "nativeTests": {
+      "totalTestCount": 1,
+      "passedTests": 1,
+      "failedTests": 0,
+      "skippedTests": 0,
+      "runtimeWarnings": []
+    },
+    "test": "InkCanvasLifecycleTests/testRetainedEraserRepairsItsOldTailAndPreservesBorrowedOrderedPixels",
+    "durationSeconds": 0.7977529764175415,
+    "wrapperExit": 1,
+    "wrapperRejection": "Changed UI document-fit fixture requires a named gesture scenario; eraser-only selection did not execute that separate scenario.",
+    "scope": "Physical native GPU pixel correctness, old/new eraser-tail repair, borrowed accepted texture preservation, stationary-sample normalization, transformed ordered masks, cancellation and retirement.",
+    "remaining": "Actual Pencil latency and custom-paper gestures remain open; native PASS does not establish full acceptance."
+  },
+  "manualPencilV6": {
+    "binarySHA256": "919d7614533ed2b133c9733c70c1a6361c9fe66ba1f5205c5c4b6a704651d036",
+    "sourceAggregateSHA256": "1093fe8521f407f0fdcfea57b6d64a777c66c2d10e001cca79a584974e8d5d51",
+    "bundleIdentifier": "com.amirtlinov.notebook.native-test",
+    "launchedAtUTC": "2026-10-07T09:34:00.230628+00:00",
+    "closedAtUTC": "2026-10-07T10:23:13.613681+00:00",
+    "status": "No saved input trace retrieved; no latency result.",
+    "userSurfaceConfirmation": "No reply received for completion or visible test page.",
+    "fixtureState": "Isolated DrawingResponsiveness store exists; no pencil-input.json found before or immediately after returning production foreground.",
+    "productionForegroundRestored": true,
+    "productionDataModified": false,
+    "collectionLimitation": "Final copy completed about 175 ms after restoring production foreground. Background checkpoint follows async finishProgramBoundary and finishPendingInteraction; its completion was not established. Missing trace does not establish whether input occurred or whether a later flush succeeded.",
+    "nextCapture": "Before user input, background the same freshly launched process and await a readable empty JSON with current startedAt/testProcess=false. Then foreground, verify actual input events after a short stroke/lift, and collect the updated JSON before any relaunch or test-app cleanup."
+  },
+  "manualPencilV9": {
+    "status": "NO_INPUT_CAPTURED",
+    "userReportedFinished": true,
+    "candidate": {
+      "preparedAtUTC": "2026-10-07T11:37:18.605080+00:00",
+      "app": "/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/aa0be493480ac108/ipad/Build/Products/Debug-iphoneos/Notebook.app",
+      "bundleIdentifier": "com.amirtlinov.notebook.native-test",
+      "binarySHA256": "7396b0c664cf334c9f32a94b59e32af394faa8bc5ca7f8899f27a0cde7ffb4c2",
+      "build": "253",
+      "sourceBefore": "a6c8693e9bfccf494d94ded4031bfed8421201d4f515b1e097543b53d48d35c8",
+      "arguments": [
+        "--notebook-drawing-responsiveness-fixture",
+        "--notebook-profile-input"
+      ]
+    },
+    "trace": {
+      "metadata": {
+        "systemUptime": 461978.4332842917,
+        "scope": "pencil/page",
+        "startedAt": 813065971.726165,
+        "mediaTime": 461978.4332792918,
+        "build": "253",
+        "testProcess": false,
+        "operatingSystem": "Version 27.0 (Build 24A435)"
+      },
+      "startedAtUTC": "2026-10-07T11:39:31.726165+00:00",
+      "sameMetadataAsPrime": true,
+      "sameDecodedCaptureAs1146": true,
+      "eventCounts": {
+        "activity": 1
+      },
+      "outcomes": 0,
+      "droppedEvents": 0,
+      "droppedSamples": 0,
+      "writeFailures": 0,
+      "activities": [
+        {
+          "mode": "page",
+          "began": 462249.52284845844,
+          "ended": 462249.5594242501,
+          "durationMilliseconds": 36.57579165883362,
+          "beganAtUTC": "2026-10-07T11:44:02.815734+00:00"
+        }
+      ]
+    },
+    "fixture": {
+      "quickCheck": [
+        "ok"
+      ],
+      "seededActionsExpected": 80,
+      "storedActions": 80,
+      "additionalDurableInkActions": 0,
+      "presenceMode": "page",
+      "openProgress": 1
+    },
+    "files": [
+      {
+        "path": ".build/pencil-candidate-v9/capture-after-done.json",
+        "bytes": 392,
+        "sha256": "74c2d835357267bd9a2a94b85019987c2d9936a5743271b9e38fb9e6fd57c1c1"
+      },
+      {
+        "path": ".build/pencil-candidate-v9/capture-1146.json",
+        "bytes": 392,
+        "sha256": "74c2d835357267bd9a2a94b85019987c2d9936a5743271b9e38fb9e6fd57c1c1"
+      },
+      {
+        "path": ".build/pencil-candidate-v9/primed-input.json",
+        "bytes": 304,
+        "sha256": "eae45e8b654ed13ec7c462b4b6baddc62d6d463824d19d5e7df7510f10f093ae"
+      },
+      {
+        "path": ".build/pencil-candidate-v9/provenance.json",
+        "bytes": 562,
+        "sha256": "4f0b085835c80d927ba89e7879572cc8e804ee5db87f123b7317eb801b368717"
+      },
+      {
+        "path": ".build/product-quality-ui-20261007-v9/source-before.json",
+        "bytes": 316236,
+        "sha256": "6123596729bfd92d329ec93d95cf63c8b65ec596389e698dd98eaf8d6d2133d7"
+      },
+      {
+        "path": ".build/pencil-candidate-v9/fixture-after-done/notebook.sqlite",
+        "bytes": 1626112,
+        "sha256": "1278adf41ed2736ccc3d965cbe33c5c64839491f298538a9ae15ea0bf043905f"
+      },
+      {
+        "path": ".build/pencil-candidate-v9/fixture-after-done/notebook.sqlite-wal",
+        "bytes": 74192,
+        "sha256": "7d83219602771b0c50a99864936b7e839d84fb9c39345c8761caad94ad4641a9"
+      },
+      {
+        "path": ".build/pencil-candidate-v9/fixture-after-done/notebook.sqlite-shm",
+        "bytes": 32768,
+        "sha256": "9b94f55b5f285729db820a6bedd064d332492236b8df717639696867313765cc"
+      }
+    ],
+    "analysis": {
+      "path": ".build/pencil-candidate-v9/capture-analysis.json",
+      "sha256": "91d0e42b7e572e6f2f32421d420cd45f01bb4f019abc62d538473c7e718cb293"
+    },
+    "scope": "Same primed monitor and PID resumed before the requested real Pencil drawing/erasing. Two collected files match after the user reported finishing. No recorded Pencil samples or new durable fixture ink; this is not a latency result. Aggregate activity also includes finger input.",
+    "next": "Confirm what the user saw, then observe one visible real Pencil stroke and its input/action before another timed comparison. Production 256 restored after isolated checks."
+  }
+}

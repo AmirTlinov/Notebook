@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import test, {type TestContext} from 'node:test';
 import {randomUUID} from 'node:crypto';
 import {chmod, mkdtemp, rm} from 'node:fs/promises';
 import {createServer, type Socket} from 'node:net';
@@ -9,7 +9,8 @@ import {McpServer} from '@modelcontextprotocol/server';
 import {RESOURCE_MIME_TYPE} from '@modelcontextprotocol/ext-apps/server';
 import {panelResourceURI, registerNotebookPanel} from '../src/panel-tools.js';
 import {NotebookSession} from '../panel/session.js';
-import type {PanelMutation, PanelSnapshot} from '../panel/model.js';
+import {Surface} from '../panel/surface.js';
+import type {PanelMutation, PanelSnapshot, PanelView} from '../panel/model.js';
 
 type Value = Record<string, unknown>;
 type Reply = {result: Value} | {error: Value};
@@ -19,6 +20,112 @@ const workspaceID = randomUUID();
 const target = {kind: 'board', id: randomUUID()};
 const address = {workspaceID, target, socketKey};
 const origin = {tileX: 7, tileY: -3, localX: 40, localY: 60};
+
+function materialFixture(t:TestContext) {
+  const display={devicePixelRatio:1},dimensions={width:800,height:600};
+  class NodePort {
+    children:NodePort[]=[];attributes=new Map<string,string>();style={};clientWidth=800;clientHeight=600;
+    parentNode:NodePort|null=null;
+    ownerDocument={defaultView:display};
+    setAttribute(key:string,value:string){this.attributes.set(key,value);}
+    removeAttribute(key:string){this.attributes.delete(key);}
+    append(...nodes:NodePort[]){this.children.push(...nodes);}
+    insertBefore(node:NodePort,before:NodePort|null){if(node===before)return;node.remove();this.children.splice(before?this.children.indexOf(before):this.children.length,0,node);node.parentNode=this;}
+    remove(){if(this.parentNode){const siblings=this.parentNode.children;siblings.splice(siblings.indexOf(this),1);this.parentNode=null;}}
+    replaceChildren(...nodes:NodePort[]){this.children=nodes;}
+    get firstChild():NodePort|null{return this.children[0]??null;}
+    get nextSibling():NodePort|null{const siblings=this.parentNode?.children;return siblings?.[siblings.indexOf(this)+1]??null;}
+  }
+  const priorDocument=Object.getOwnPropertyDescriptor(globalThis,'document'),priorImage=Object.getOwnPropertyDescriptor(globalThis,'Image');
+  Object.defineProperty(globalThis,'document',{configurable:true,value:{activeElement:null,
+    createElementNS:()=>new NodePort(),createDocumentFragment:()=>new NodePort()}});
+  Object.defineProperty(globalThis,'Image',{configurable:true,value:class {
+    naturalWidth=dimensions.width;naturalHeight=dimensions.height;src='';async decode(){}
+  }});
+  const svg=new NodePort();
+  const surface=new Surface(svg as unknown as SVGSVGElement,new NodePort() as unknown as SVGGElement,new NodePort() as unknown as SVGGElement);
+  surface.setCamera({x:0,y:0,scale:1});
+  t.after(()=>{surface.dispose();for(const [key,prior] of [['document',priorDocument],['Image',priorImage]] as const){
+    if(prior)Object.defineProperty(globalThis,key,prior);else Reflect.deleteProperty(globalThis,key);
+  }});
+  const anchor={tileX:0,tileY:0,localX:0,localY:0};
+  const snapshot=(density:number,width=800,height=600,revision='same-source'):PanelSnapshot=>({
+    ...address,target:{kind:'board',id:target.id},cursor:'10',worldOrigin:anchor,size:{width:1600,height:1200},elements:[],cards:[],rawInkPresent:false,
+    unsupportedElements:[],history:{},truncated:false,appearance:{status:'ready',requestID:randomUUID(),sourceRevision:revision,
+      camera:{center:{...anchor,localX:width/2,localY:height/2},scale:800/width},viewport:{x:800,y:600},
+      coverage:{anchor,region:{x:0,y:0,width,height},level:0,pixelDensity:density},layers:[{
+        id:'native-material',assetID:randomUUID(),worldOrigin:anchor,frame:{x:0,y:0,width,height},order:0,
+        pixelWidth:width*density,pixelHeight:height*density,pngBase64:'iVBORw0KGgo=',sha256:'a'.repeat(64)}]}});
+  const prepare=(value:PanelSnapshot,pixelScale=1)=>{
+    dimensions.width=value.appearance!.layers[0]!.pixelWidth;dimensions.height=value.appearance!.layers[0]!.pixelHeight;
+    const view:PanelView={viewport:{x:800,y:600},pixelScale,camera:value.appearance!.camera};
+    return surface.prepare(value,view);
+  };
+  return {surface,display,snapshot,prepare,hits:()=>svg.children[0]!.children};
+}
+
+test('cover selection keeps native painter order when pixels merge into tiles',async t=>{
+  const {surface,snapshot,prepare,hits}=materialFixture(t);
+  const frame={x:40,y:50,width:300,height:400};
+  let retained:ReturnType<typeof hits>|undefined;
+  for(const separated of ['front','rear',null]){
+    const value=snapshot(1);
+    value.cards=['rear','front'].map(id=>({item:{id,kind:'notebook',title:id},center:value.worldOrigin!,
+      worldOrigin:value.worldOrigin!,frame,editable:id===separated,source:{id,placements:[]}}));
+    if(separated)value.appearance!.layers[0]!.itemID=separated;
+    assert.equal(await prepare(value),true);surface.render(value);
+    assert.deepEqual(hits().map(hit=>hit.attributes.get('data-card-id')),['rear','front'],
+      'The upper card remains the last SVG hit regardless of separate pixels');
+    if(retained)assert.deepEqual(hits(),retained,'Changing raster admission keeps the same focusable nodes');
+    retained=[...hits()];
+    assert.deepEqual(surface.selectionFrame({kind:'item',id:'front'}),frame);
+    surface.select({kind:'item',id:'front'});
+    assert.equal(hits()[1]!.attributes.get('aria-pressed'),'true');
+    assert.equal(surface.hasItemSubject('front'),separated==='front',
+      'Hit geometry alone does not grant independent movement');
+  }
+});
+
+test('same-source late coarse material cannot replace sharper pixels at the current zoom',async t=>{
+  const {surface,snapshot,prepare}=materialFixture(t),sharp=snapshot(1),coarse=snapshot(.5,1600,1200);
+  assert.equal(await prepare(sharp),true);surface.render(sharp);
+  const held=surface.assetIDs;
+  assert.equal(await prepare(coarse),false,'Equal visible coverage must not reduce current pixel adequacy');
+  assert.deepEqual(surface.assetIDs,held);
+});
+
+test('zoom-out admits lower excess density using the current display scale',async t=>{
+  const {surface,display,snapshot,prepare}=materialFixture(t),sharp=snapshot(1,1600,1200),coarse=snapshot(.5,1600,1200);
+  display.devicePixelRatio=2;assert.equal(await prepare(sharp,2),true);surface.render(sharp);
+  display.devicePixelRatio=1;surface.setCamera({x:0,y:0,scale:.5});
+  assert.equal(await prepare(coarse,2),true,'Stale request DPR must not outweigh the current adequate density');
+  surface.render(coarse);assert.deepEqual(surface.assetIDs,[coarse.appearance!.layers[0]!.assetID]);
+});
+
+test('an inadequate prior admits the current native pixel budget reply and ends demand',async t=>{
+  const {surface,snapshot,prepare}=materialFixture(t),prior=snapshot(1.5),bounded=snapshot(1);
+  prior.appearance!.camera.scale=1.5;surface.setCamera({x:0,y:0,scale:2});
+  assert.equal(await prepare(prior),true);surface.render(prior);
+  bounded.appearance!.camera={center:{tileX:0,tileY:0,localX:200,localY:150},scale:2};
+  const view={viewport:{x:800,y:600},pixelScale:1,camera:bounded.appearance!.camera};
+  const bounds={anchor:bounded.worldOrigin!,region:{x:0,y:0,width:400,height:300}};
+  assert.equal(surface.covers(bounds,view),false);
+  assert.equal(await prepare(bounded),true);surface.render(bounded);
+  assert.equal(surface.covers(bounds,view),true,'The same bounded projection must not rerender every polling tick');
+});
+
+test('coarser material still admits fresh source identity and visible coverage gains',async t=>{
+  for(const change of ['revision','workspace','endpoint','coverage'] as const)await t.test(change,async t=>{
+    const {surface,snapshot,prepare}=materialFixture(t),sharp=snapshot(1),coarse=snapshot(.5,1600,1200);
+    assert.equal(await prepare(sharp),true);surface.render(sharp);
+    if(change==='revision')coarse.appearance!.sourceRevision='new-source';
+    if(change==='workspace')coarse.workspaceID=randomUUID();
+    if(change==='endpoint')coarse.socketKey='abcdef0123456789abcdef0123456789';
+    if(change==='coverage')surface.setCamera({x:400,y:0,scale:1});
+    assert.equal(await prepare(coarse),true,change);surface.render(coarse);
+    assert.deepEqual(surface.assetIDs,[coarse.appearance!.layers[0]!.assetID]);
+  });
+});
 
 test('session coalesces viewport demand against accepted pixels without delaying required reads', async t => {
   for (const scenario of ['covered', 'needed', 'forced', 'fit'] as const) await t.test(scenario, async t => {
@@ -181,6 +288,35 @@ test('resize during navigation decode installs its destination and coalesces the
   await close();
 });
 
+test('a rejected coarse reply settles idle status while retaining write recovery state',async t=>{
+  for(const state of ['idle','synchronizing','failedWrite'] as const)await t.test(state,async t=>{
+    t.mock.timers.enable({apis:['setTimeout','setInterval']});
+    const material=materialFixture(t),{session,calls,close}=await controlledSession();
+    const sharp=material.snapshot(1),coarse=material.snapshot(.5,1600,1200);
+    assert.equal(await material.prepare(sharp),true);material.surface.render(sharp);session.snapshot=sharp;
+    const view={viewport:{x:800,y:600},pixelScale:1,camera:sharp.appearance!.camera};
+    const bounds={anchor:sharp.worldOrigin!,region:{x:0,y:0,width:800,height:600}};
+    session.needsPresentation=()=>!material.surface.covers(bounds,view);
+    session.onPrepareSnapshot=value=>material.prepare(value);
+    let accepted=0;const statuses:string[]=[],errors:string[]=[];
+    session.onSnapshot=()=>{accepted++;};session.onStatus=text=>statuses.push(text);session.onError=message=>errors.push(message);
+    if(state!=='idle')Object.defineProperty(session,state,{value:true,writable:true});
+    const held=material.surface.assetIDs,read=session.refresh(true);
+    assert.equal(statuses.at(-1),'Подготовка поверхности…');
+    calls[1]!.resolve({content:[],structuredContent:coarse});await read;
+    assert.equal(accepted,0);assert.equal(session.snapshot,sharp);assert.deepEqual(material.surface.assetIDs,held);
+    if(state==='idle'){
+      assert.equal(statuses.at(-1),'Подключено');assert.equal(errors.at(-1),'');assert.equal(session.mutationReady,true);
+    }else{
+      assert.equal(statuses.at(-1),'Подготовка поверхности…');assert.equal(errors.length,0);
+      assert.equal((session as unknown as Record<string,unknown>)[state],true);
+      if(state==='synchronizing')assert.equal(session.mutationReady,false,'Retained pixels do not confirm accepted-write history');
+    }
+    assert.equal(calls.length,2,'No idle timer was needed to settle the retained frame');
+    await close();
+  });
+});
+
 test('session teardown releases readers and ignores late read and write completions', async t => {
   for (const outcome of ['read', 'saved', 'conflict', 'uncertain'] as const) await t.test(outcome, async t => {
     t.mock.timers.enable({apis: ['setTimeout', 'setInterval']});
@@ -217,6 +353,29 @@ test('session teardown releases readers and ignores late read and write completi
     assert.equal(session.snapshot?.cursor, '1');
     assert.equal(session.mutationReady, false);
   });
+});
+
+test('navigation publishes ready controls immediately after the new surface is accepted',async t=>{
+  t.mock.timers.enable({apis:['setTimeout','setInterval']});
+  const {session,calls,close}=await controlledSession();
+  session.needsPresentation=()=>false;
+  const availability:boolean[]=[];
+  session.onStateChange=()=>availability.push(session.mutationReady);
+  const destination={kind:'board' as const,id:randomUUID()};
+  const opening=session.openSurface(destination);
+  assert.equal(availability.at(-1),false);
+  calls[1]!.resolve({content:[],structuredContent:{...sessionSnapshot('2'),target:destination}});
+  assert.equal(await opening,true);
+  assert.equal(availability.at(-1),true,'Controls must update without waiting for the next polling tick');
+  assert.equal(calls.length,2);
+  const next=session.openSurface(sessionSnapshot().target);
+  assert.equal(calls.length,3,'An immediately repeated navigation can start');
+  calls[2]!.resolve({content:[],structuredContent:sessionSnapshot('3')});
+  assert.equal(await next,true);
+  await close();
+  const count=availability.length;
+  session.busy=true;session.busy=false;
+  assert.equal(availability.length,count,'Disposed controls receive no activity notifications');
 });
 
 test('a confirmed pen contact replaces an in-flight old scene before the next polling tick', async t => {
@@ -262,7 +421,28 @@ test('a confirmed pen contact replaces an in-flight old scene before the next po
   await close();
 });
 
-for(const code of ['ipc_timeout','operation_failed'])test(`error Retry repairs ${code} before repeating the same text action`, async t => {
+test('an unfinished contact owns mutation admission until completion or cancellation',async t=>{
+  t.mock.timers.enable({apis:['setTimeout','setInterval']});
+  const {session,calls,close,mutation}=await controlledSession();
+  session.snapshot!.history.undoActionID=randomUUID();
+  session.suspended=true;
+  assert.equal(session.mutationReady,false);
+  await assert.rejects(session.save(mutation),/Дождитесь/);
+  await assert.rejects(session.undo(),/Дождитесь/);
+  assert.equal(calls.length,1,'No competing action reaches the runtime');
+  assert.equal(session.hasPending,false);
+  session.suspended=false;
+  assert.equal(session.mutationReady,true);
+  const saved=session.save(mutation);
+  assert.equal(calls[1]!.name,'notebook_panel_edit');
+  calls[1]!.resolve({content:[],structuredContent:{status:'saved'}});await saved;
+  calls[2]!.resolve({content:[],structuredContent:sessionSnapshot('2')});
+  await new Promise<void>(resolve=>setImmediate(resolve));
+  assert.equal(session.mutationReady,true);
+  await close();
+});
+
+for(const code of ['ipc_timeout','operation_failed','runtime_starting','runtime_startup_failed'])test(`error Retry repairs ${code} before repeating the same text action`, async t => {
   t.mock.timers.enable({apis: ['setTimeout', 'setInterval']});
   const {session, calls, close, mutation, retry} = await controlledSession();
   const saved = session.save(mutation);
@@ -334,6 +514,88 @@ test('session closed during handshake suppresses the late connection failure', a
   assert.equal(session.hasAppearance, false);
 });
 
+async function openingSession(){
+  const session=new NotebookSession();
+  const calls:{name:string;arguments:Value;resolve:(value:Awaited<ReturnType<typeof session.app.callServerTool>>)=>void}[]=[];
+  const events:string[]=[],runtimes:unknown[]=[];
+  let disposed=false,retry:(()=>Promise<void>)|null=null;
+  const observe=(value:string)=>{assert.equal(disposed,false,'No callback after teardown');events.push(value);};
+  session.app.connect=async()=>{};
+  session.app.callServerTool=async input=>new Promise(resolve=>calls.push({name:input.name,arguments:input.arguments!,resolve}));
+  session.app.updateModelContext=async()=>({});
+  session.onStatus=observe;
+  session.onError=(_message,action)=>{observe('error');retry=action;};
+  session.onRuntime=value=>{observe('runtime');runtimes.push(value);};
+  session.onSnapshot=()=>observe('snapshot');
+  session.onClose=()=>{observe('closed');disposed=true;};
+  await session.connect();
+  return {session,calls,events,runtimes,retry:()=>retry,close:()=>session.app.onteardown!({},{} as never)};
+}
+
+test('initial connect keeps exact target and bounds through startup and native opening without workspace transitions',async t=>{
+  t.mock.timers.enable({apis:['setTimeout','setInterval']});
+  const {session,calls,runtimes,close}=await openingSession();
+  const request={target:{kind:'page' as const,id:randomUUID()},bounds:{anchor:origin,region:{x:-20,y:30,width:400,height:300}}};
+  const snapshot={...sessionSnapshot(),target:request.target};
+  session.app.ontoolresult!({content:[],structuredContent:{open:request}});
+  assert.equal(calls[0]!.name,'notebook_panel_connect');assert.deepEqual(calls[0]!.arguments,request);
+  calls[0]!.resolve({content:[],isError:true,structuredContent:{status:'error',code:'runtime_starting',message:'Starting'}});
+  await new Promise<void>(resolve=>setImmediate(resolve));
+  t.mock.timers.tick(250);
+  assert.equal(calls[1]!.name,'notebook_panel_connect');assert.deepEqual(calls[1]!.arguments,request);
+  calls[1]!.resolve({content:[],structuredContent:{runtime:{kind:'notebookRuntime',ready:true,pid:42,state:'opening'}}});
+  await new Promise<void>(resolve=>setImmediate(resolve));
+  session.app.ontoolresult!({content:[],structuredContent:{open:{target:{kind:'board',id:randomUUID()}}}});
+  t.mock.timers.tick(250);
+  assert.equal(calls[2]!.name,'notebook_panel_connect');assert.deepEqual(calls[2]!.arguments,request);
+  assert.deepEqual(runtimes,[],'An opening workspace does not go through workspace retry or selection');
+  calls[2]!.resolve({content:[],structuredContent:snapshot});
+  await new Promise<void>(resolve=>setImmediate(resolve));
+  assert.equal(calls[3]!.name,'notebook_panel_presentation');assert.deepEqual(calls[3]!.arguments.target,request.target);
+  calls[3]!.resolve({content:[],structuredContent:snapshot});
+  await new Promise<void>(resolve=>setImmediate(resolve));
+  assert.equal(session.hasAppearance,true);assert.deepEqual(session.snapshot?.target,request.target);
+  session.app.ontoolresult!({content:[],structuredContent:{open:{}}});
+  assert.equal(calls.length,4,'A second host result cannot redirect the mounted panel');
+  await close();
+});
+
+for(const afterWait of [false,true])test(`startup failure ${afterWait?'after':'before'} bounded waiting leaves an explicit retry with the same opening request`,async t=>{
+  t.mock.timers.enable({apis:['setTimeout','setInterval']});
+  const {session,calls,retry,close}=await openingSession();
+  const request={target:{kind:'page' as const,id:randomUUID()},bounds:{anchor:origin,region:{x:10,y:20,width:500,height:600}}};
+  session.app.ontoolresult!({content:[],structuredContent:{open:request}});
+  if(afterWait){
+    calls[0]!.resolve({content:[],isError:true,structuredContent:{status:'error',code:'runtime_starting',message:'Still starting'}});
+    await new Promise<void>(resolve=>setImmediate(resolve));t.mock.timers.tick(250);
+  }
+  calls.at(-1)!.resolve({content:[],isError:true,structuredContent:{status:'error',code:'runtime_startup_failed',message:'Launch failed'}});
+  await new Promise<void>(resolve=>setImmediate(resolve));
+  const count=calls.length;t.mock.timers.tick(1000);
+  assert.equal(calls.length,count,'A failed startup waits for an explicit retry');
+  const action=retry();assert.ok(action);const retried=action();
+  assert.deepEqual(calls.at(-1)!.arguments,request);assert.equal(calls.at(-1)!.name,'notebook_panel_connect');
+  calls.at(-1)!.resolve({content:[],structuredContent:{...sessionSnapshot(),target:request.target}});
+  await retried;assert.deepEqual(session.snapshot?.target,request.target);
+  await close();
+});
+
+test('closing during startup cancels queued reads and ignores late native admission',async t=>{
+  for(const stage of ['waiting','in-flight'] as const)await t.test(stage,async t=>{
+    t.mock.timers.enable({apis:['setTimeout','setInterval']});
+    const {session,calls,events,close}=await openingSession();
+    session.app.ontoolresult!({content:[],structuredContent:{open:{}}});
+    if(stage==='waiting'){
+      calls[0]!.resolve({content:[],isError:true,structuredContent:{status:'error',code:'runtime_starting',message:'Starting'}});
+      await new Promise<void>(resolve=>setImmediate(resolve));
+    }
+    await close();const after=events.slice();
+    if(stage==='in-flight')calls[0]!.resolve({content:[],structuredContent:sessionSnapshot()});
+    t.mock.timers.tick(3000);await new Promise<void>(resolve=>setImmediate(resolve));
+    assert.equal(calls.length,1);assert.deepEqual(events,after);assert.equal(session.snapshot,undefined);
+  });
+});
+
 async function connectedPanel(socketPath: string) {
   const server = new McpServer({name: 'panel-contract', version: '1'});
   registerNotebookPanel(server, socketPath, html);
@@ -392,7 +654,7 @@ test('Notebook exposes one HTML app resource, a model opener and app-only gestur
   try {
     const {tools} = await panel.client.listTools();
     assert.deepEqual(tools.map(tool => tool.name).sort(),
-      ['notebook_open', 'notebook_panel_edit', 'notebook_panel_presentation', 'notebook_panel_undo', 'notebook_panel_workspace']);
+      ['notebook_open', 'notebook_panel_connect', 'notebook_panel_edit', 'notebook_panel_presentation', 'notebook_panel_undo', 'notebook_panel_workspace']);
     const opener = tools.find(tool => tool.name === 'notebook_open')!;
     assert.deepEqual(opener._meta?.ui, {resourceUri: panelResourceURI});
     assert.deepEqual(opener._meta?.['openai/ui'], {entrypoints: [{type: 'thread'}, {type: 'global'}]});
@@ -465,9 +727,11 @@ test('panel gestures keep the admitted endpoint and exact native sources', async
     return {result: undone};
   });
   try {
-    const opened = await panel.client.callTool({name: 'notebook_open', arguments: {}});
+    const opened = await panel.client.callTool({name: 'notebook_panel_connect', arguments: {}});
     assert.notEqual(opened.isError, true);
     assert.deepEqual(opened.structuredContent, readValue);
+    assert.deepEqual(JSON.parse((opened.content[0] as {text:string}).text),{workspaceID,target,cursor,status:'ready'},
+      'Only structuredContent carries the full initial scene');
     assert.deepEqual(panel.requests, [{endpoint:'default',request:{command:'runtimeStatus'}},
       {endpoint: 'pinned', request: {command: 'panelRead', panelRead: {workspaceID}}}]);
 
@@ -528,6 +792,7 @@ test('workspace bootstrap opens in the same panel without a content owner or des
   let ready=false;
   const id=randomUUID(),status=()=>({kind:'notebookRuntime',ready:true,pid:42,state:ready?'ready':'workspaceRequired',...(ready?{workspaceID,socketKey}:{})});
   const snapshot=sessionSnapshot();
+  const open={target,bounds:{anchor:origin,region:{x:-20,y:30,width:500,height:400}}};
   const panel=await nativeFixture((endpoint,request)=>{
     assert.equal(endpoint,request.command==='panelRead'?'pinned':'default');
     if(request.command==='runtimeStatus')return {result:status()};
@@ -536,14 +801,14 @@ test('workspace bootstrap opens in the same panel without a content owner or des
       ready=true;return {result:{status:status(),workspaces:[{id,name:'Личное пространство',local:true,remote:false,deleting:false}]}};
     }
     assert.equal(ready,true,'An empty library must not cause a content read');
-    assert.equal(request.command,'panelRead');return {result:snapshot};
+    assert.equal(request.command,'panelRead');assert.deepEqual(request.panelRead,{...open,workspaceID});return {result:snapshot};
   });
   try{
-    const opened=await panel.client.callTool({name:'notebook_open',arguments:{}});
+    const opened=await panel.client.callTool({name:'notebook_panel_connect',arguments:open});
     assert.notEqual(opened.isError,true);
     assert.deepEqual(opened.structuredContent,{runtime:status()});
     assert.equal(panel.requests.length,1);
-    const created=await panel.client.callTool({name:'notebook_panel_workspace',arguments:{action:'create',id,name:'Личное пространство'}});
+    const created=await panel.client.callTool({name:'notebook_panel_workspace',arguments:{action:'create',id,name:'Личное пространство',open}});
     assert.deepEqual((created.structuredContent as Value).snapshot,snapshot);
     assert.equal(panel.requests.length,3);
   }finally{await panel.close();}

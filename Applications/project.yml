@@ -24,7 +24,7 @@ settings:
     NOTEBOOK_IPAD_ENTITLEMENTS: ""
     NOTEBOOK_CLOUD_CONTAINER: ""
     NOTEBOOK_TYPESETTER_RUNTIME: $(SRCROOT)/../.build/notebook-typesetter-runtime
-    NOTEBOOK_CODEX_RUNTIME: $(SRCROOT)/../.build/notebook-codex-runtime
+    NOTEBOOK_CODEX_RUNTIME: ""
     NOTEBOOK_SURFACE_STAGE: $(SRCROOT)/../.build/surface
 
 targets:
@@ -100,8 +100,8 @@ targets:
         PRODUCT_NAME: Notebook
         OTHER_LDFLAGS: "$(inherited) $(NOTEBOOK_TYPESETTER_RUNTIME)/$(PLATFORM_NAME)/libnotebook_typesetter_runtime.a -liconv -lresolv -framework Security"
         NOTEBOOK_DISPLAY_NAME: Notebook
-        MARKETING_VERSION: 0.3.182
-        CURRENT_PROJECT_VERSION: 252
+        MARKETING_VERSION: 0.3.188
+        CURRENT_PROJECT_VERSION: 258
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_ENTITLEMENTS: $(NOTEBOOK_IPAD_ENTITLEMENTS)
         DEVELOPMENT_TEAM: M94V58FCVP
@@ -197,6 +197,7 @@ targets:
           /usr/bin/python3 "$SRCROOT/prepare_notebook_codex.py" --stage "$NOTEBOOK_CODEX_RUNTIME" --bundle "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/CodexRuntime"
         inputFiles:
           - $(SRCROOT)/prepare_notebook_codex.py
+          - $(SRCROOT)/NotebookCodexRuntime.lock.json
           - $(SRCROOT)/NotebookCodexResources.xcfilelist
           - $(NOTEBOOK_CODEX_RUNTIME)
         outputFileLists:
@@ -268,8 +269,8 @@ targets:
         PRODUCT_NAME: NotebookRuntime
         PRODUCT_MODULE_NAME: Notebook
         OTHER_LDFLAGS: "$(inherited) $(NOTEBOOK_TYPESETTER_RUNTIME)/$(PLATFORM_NAME)/libnotebook_typesetter_runtime.a -liconv -lresolv -framework Security"
-        MARKETING_VERSION: 0.3.182
-        CURRENT_PROJECT_VERSION: 252
+        MARKETING_VERSION: 0.3.188
+        CURRENT_PROJECT_VERSION: 258
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: M94V58FCVP
         GENERATE_INFOPLIST_FILE: false

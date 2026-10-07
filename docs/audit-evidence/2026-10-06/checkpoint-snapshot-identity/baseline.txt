@@ -1,0 +1,78 @@
+✔ one API owns canonical commits, copied JSON state and revision-guarded external state (20.231686ms)
+✔ native focus admission rejects timers before true and preserves every already accepted snapshot (8.346141ms)
+✔ missing, rejected and hung ready never complete as ready; static markup needs no declaration (52.181767ms)
+✔ ready waits for every declared setup and the paint boundary (2.018135ms)
+✔ checkpoint stops the author before reading its actual playhead; no optimistic writer commit (9.822276ms)
+✔ a parked program checkpoints without waiting for a hidden viewport paint (4.516453ms)
+✔ a completed frozen checkpoint is idempotent until resume (6.084904ms)
+✔ failed checkpoint retains last explicit state and permits owner-controlled recovery (3.413442ms)
+✔ timeout aborts the author request; late completion cannot change state (35.082775ms)
+✔ dispose or return supersedes an in-flight checkpoint, without a late state publication (8.808419ms)
+✔ a failed program cannot serialize checkpoints or block an independent program (35.772174ms)
+✔ invalid lifecycle registration and non-JSON state are rejected before mutation (7.229439ms)
+✔ LC uses one analytic model: quarter-period signs, SI units and conserved energy (6.498495ms)
+✔ semantic selection is copied only after a successful pause and never read from a running scene (4.632292ms)
+✔ unbounded, asynchronous and throwing author semantics never fail the saved checkpoint or become late evidence (11.282094ms)
+✔ author vector export pauses the isolated executor and receives the exact saved state without commits (1.382219ms)
+✔ missing, throwing, unbounded or cancelled author SVG is an error, never a raster fallback (49.277345ms)
+✔ raster export waits for the authored saved frame at exact scale and never checkpoints or commits (9.358484ms)
+✔ video requires explicit author timeline, receives absolute times and never advances the saved state (2.184523ms)
+✔ PDF vectors are opt-in, bounded copied replacement regions; declared author failures never fall back (11.622544ms)
+✔ explicit retry continues the failed stage without running resume or replaying a completed pause (3.610945ms)
+✔ native-timeout retry revokes the old generation before its browser watchdog fires (19.299401ms)
+✔ resume failure keeps the accepted frozen model and retry never checkpoints it again (2.62093ms)
+✔ admitted snapshots are immutable FIFO and overload refuses before true without changing state (5.631184ms)
+✔ large-to-small writes borrow old-state admission until the addressed merge completes (386.335802ms)
+✔ a model larger than 4MiB acquires credit and transfers exact surrogate-safe bounded windows (678.796195ms)
+✔ native timeout cancels lifecycle immediately, even while accepted commits drain (14.722347ms)
+✔ external state windows publish atomically and stale or replaced presentation never rolls back a commit (435.302173ms)
+✔ a lost ACK reply retries idempotently without double credit or removing the next snapshot (7.70078ms)
+✔ reentrant author serialization cannot freeze after cancellation, resume or disposal (20.178601ms)
+✔ a reentrant checkpoint retry owns the new generation without the old result or failure overwriting it (3.320075ms)
+✔ serialization errors remain the original failure and a retry can freeze normally (1.828857ms)
+✔ reentrant cancellation preserves accepted snapshot acknowledgement and grants no extra credit (1.780768ms)
+✔ an original serialization error is preserved even when its callback supersedes the lifecycle (5.902088ms)
+✖ frozen read addresses are immutable, retryable and cannot alias a resumed checkpoint (3.720465ms)
+✖ the unchanged document adapter round-trips frozen identities and rejects an old resumed window (12.044236ms)
+✔ frozen-address revocation leaves accepted numeric FIFO snapshots readable until their idempotent ACK (7.514873ms)
+✔ author disposal during a partial frozen pull preserves every remaining window but forbids new lifecycle work (21.65815ms)
+ℹ tests 38
+ℹ suites 0
+ℹ pass 36
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2402.288065
+
+✖ failing tests:
+
+test at ../notebook-checkpoint-identity-evidence/baseline-fixture/MCP/test/program-bridge.test.ts:498:1
+✖ frozen read addresses are immutable, retryable and cannot alias a resumed checkpoint (3.720465ms)
+  AssertionError [ERR_ASSERTION]: A stale window must not read the new frozen model
+      at TestContext.<anonymous> (file:///workspace/shared/notebook-checkpoint-identity-evidence/baseline-fixture/MCP/test/program-bridge.test.ts:516:10)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'frozen',
+    expected: 'frozen',
+    operator: 'notStrictEqual',
+    diff: 'simple'
+  }
+
+test at ../notebook-checkpoint-identity-evidence/baseline-fixture/MCP/test/program-bridge.test.ts:524:1
+✖ the unchanged document adapter round-trips frozen identities and rejects an old resumed window (12.044236ms)
+  AssertionError [ERR_ASSERTION]: Expected "actual" to be strictly unequal to:
+
+  'frozen'
+      at TestContext.<anonymous> (file:///workspace/shared/notebook-checkpoint-identity-evidence/baseline-fixture/MCP/test/program-bridge.test.ts:551:10)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'frozen',
+    expected: 'frozen',
+    operator: 'notStrictEqual',
+    diff: 'simple'
+  }

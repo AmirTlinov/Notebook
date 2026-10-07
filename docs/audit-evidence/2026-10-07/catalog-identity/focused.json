@@ -1,0 +1,65 @@
+{
+  "format": 1,
+  "argv": [
+    "/opt/homebrew/opt/python@3.14/bin/python3.14",
+    "-B",
+    "Tests/NotebookRelease/run.py",
+    "InstallationTests.test_catalog_key_order_and_json_formatting_preserve_the_workspace",
+    "InstallationTests.test_ambiguous_or_nonfinite_catalog_refuses_before_mutation",
+    "InstallationTests.test_catalog_change_during_plugin_setup_stops_before_ipad_install",
+    "InstallationTests.test_changed_selected_workspace_cannot_be_claimed_installed_or_retried",
+    "InstallationTests.test_catalog_rename_refuses_before_ipad_install",
+    "InstallationTests.test_catalog_rename_cannot_be_claimed_installed",
+    "InstallationTests.test_catalog_entry_change_refuses_before_ipad_install",
+    "InstallationTests.test_catalog_entry_change_cannot_be_claimed_installed",
+    "InstallationTests.test_catalog_deletion_change_refuses_before_ipad_install",
+    "InstallationTests.test_catalog_deletion_change_cannot_be_claimed_installed",
+    "InstallationTests.test_catalog_array_order_is_preserved",
+    "InstallationTests.test_untrusted_installed_cli_runtime_refuses_before_shutdown_or_publication",
+    "InstallationTests.test_relocated_container_and_checkpointed_wal_preserve_the_workspace",
+    "InstallationTests.test_installed_unopened_app_keeps_an_empty_baseline",
+    "InstallationTests.test_data_without_catalog_refuses_before_plugin_or_device_mutation",
+    "InstallationTests.test_oversized_catalog_is_not_copied_or_installed",
+    "InstallationTests.test_lost_active_sqlite_cannot_be_claimed_installed_or_retried",
+    "InstallationTests.test_symlinked_active_sqlite_refuses_before_plugin_or_device_mutation",
+    "InstallationTests.test_managed_workspace_uses_its_catalog_address",
+    "InstallationTests.test_lost_catalog_cannot_be_claimed_installed_or_retried",
+    "InstallationTests.test_catalog_fractional_numbers_are_refused_without_rounding"
+  ],
+  "cwd": "/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook",
+  "python": "3.14.6 (main, Jun 10 2026, 10:03:53) [Clang 21.0.0 (clang-2100.0.123.102)]",
+  "startedAt": "2026-10-07T11:00:43.624423+00:00",
+  "elapsedSeconds": 3.5253590830252506,
+  "exitCode": 0,
+  "selectedTests": 21,
+  "sourceSHA256": {
+    "Applications/notebook_release.py": "0c248d2a5b1f5492b22c1ec0f4fa1508dd53b2898929177c326b73fe638fbd0e",
+    "Tests/NotebookRelease/run.py": "4ed33c081dc33fcdfc6ade7875d977210113c67060a5d76460310ce439886f7d",
+    "docs/release-build-contract.md": "f10a926a1191a5a3827d0e1bc0020e933fb5ccd5c7e7ba3b3d3f17c542617c25"
+  },
+  "scope": "Isolated InstallationCLI release guards; no live runtime, install, Xcode, or device.",
+  "baseCommit": "591d817f2919245e9453afeb2f29b7a2888a45dd",
+  "diffCheck": {
+    "argv": [
+      "git",
+      "diff",
+      "--check",
+      "--",
+      "Applications/notebook_release.py",
+      "Tests/NotebookRelease/run.py",
+      "docs/release-build-contract.md"
+    ],
+    "exitCode": 0
+  },
+  "logs": {
+    "before-numeric-review.stdout.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "attempt-1.stderr.log": "f55969a69ba6744c9b955e6ef1322842f82e6393d6cc2a218ef7803324df1db9",
+    "diff-check.stdout.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused.stderr.log": "0c5bd2f3acfca3a8b441b1ed605d3c13850779ac619579c9974d136e871ebdac",
+    "before-numeric-review.stderr.log": "98079c142271f5122be68c9235dd9dabd750fed71d351d007816ca4d18fca930",
+    "attempt-1.stdout.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "diff-check.stderr.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused.stdout.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "frozenAt": "2026-10-07T11:00:47.175053+00:00"
+}

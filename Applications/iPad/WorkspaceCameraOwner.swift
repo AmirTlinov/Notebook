@@ -42,9 +42,10 @@ final class CameraGestureSnapshot {
 final class WorkspaceSettlement {
   let id=UUID()
   let origin:SessionPresence
-  let target:SessionPresence
+  var target:SessionPresence
   let handoff:SessionPresence?
   let approach:SessionPresence?
+  let documentCameraIntent: DocumentReadingSession.CameraIntent?
   @ObservationIgnored private(set) var approached = false
   var isApproaching:Bool { approach != nil && !approached }
   var destination:SessionPresence { approached ? target : approach ?? target }
@@ -59,10 +60,10 @@ final class WorkspaceSettlement {
   private var completion:(()->Void)?
   private(set) var outcome: SceneCameraSettlement.Outcome?
   @ObservationIgnored var started=false
-  init(origin:SessionPresence,target:SessionPresence,handoff:SessionPresence?,approach:SessionPresence?,duration:TimeInterval,bounce:Double,navigationID:UUID?,
+  init(origin:SessionPresence,target:SessionPresence,handoff:SessionPresence?,approach:SessionPresence?,documentCameraIntent:DocumentReadingSession.CameraIntent?,duration:TimeInterval,bounce:Double,navigationID:UUID?,
     portal:(UUID,BoardPortalCamera)?,completion:@escaping ()->Void) {
     self.origin=origin;self.target=target;self.handoff=handoff;self.approach=approach;self.duration=duration;self.bounce=bounce;self.navigationID=navigationID
-    self.portal=portal;self.completion=completion
+    self.documentCameraIntent=documentCameraIntent;self.portal=portal;self.completion=completion
   }
   func resolve(_ outcome: SceneCameraSettlement.Outcome) {
     guard self.outcome == nil else { return }
@@ -232,7 +233,21 @@ final class WorkspaceCameraOwner {
     return source.state(refinesDetails: refine).isReady
   }
   private func isPrepared(_ pending: WorkspaceSettlement) -> Bool {
-    if pending.isApproaching { return hasPreparedSurface(pending.destination) }
+    if pending.isApproaching {
+      let destination = pending.destination
+      if let model, model.presence?.boardID != destination.boardID {
+        // The native planes mount the actual board. A cross-board handoff
+        // must first accept its prepared closed cover, otherwise waiting for
+        // that board's native paint would also prevent it from ever mounting.
+        // The following opening stage still requires installed paint and paper.
+        guard let cohort = model.compositionTiles.published,
+          cohort.plan.rootBoardID == destination.boardID,
+          cohort.plan.presentations[.board(destination.boardID)] != nil,
+          let item = destination.focusedItemID else { return false }
+        return cohort.plan.allowsLive(.item(item), in: .board(destination.boardID))
+      }
+      return hasPreparedSurface(destination)
+    }
     let stationary = model?.presence.map { $0.boardID == pending.target.boardID
       && $0.camera == pending.target.camera && $0.viewport == pending.target.viewport } == true
     return hasPreparedSurface(pending.preparation, refinesDetails: stationary)
@@ -271,6 +286,14 @@ final class WorkspaceCameraOwner {
     }
     if case .settling(let pending) = state, !pending.started {
       if let item = pending.preparation.focusedItemID, model.isItemBeingDeleted(item) { cancelUnavailable(pending); return }
+      if !pending.isApproaching, let intent = pending.documentCameraIntent {
+        let resolved = model.resolvedDocumentOpening(pending.target, cameraIntent: intent)
+        if resolved != pending.target {
+          pending.target = resolved
+          preparationChanged()
+          return
+        }
+      }
       if case .failed(let failure) = pending.paperReadiness?.state(refinesDetails: false) {
         let target = pending.target, duration = pending.duration, bounce = pending.bounce
         let portal = pending.portal, handoff = pending.handoff, origin = pending.origin
@@ -370,14 +393,15 @@ final class WorkspaceCameraOwner {
     let destination = selectedDestination.mode == .page
       ? model.constrainedPaperPresence(selectedDestination) : selectedDestination
     let pending = WorkspaceSettlement(origin: rollback ?? origin, target: destination, handoff: handoff,
-      approach: closedApproach(to: destination, from: origin), duration: duration, bounce: bounce,
+      approach: closedApproach(to: destination, from: origin), documentCameraIntent: model.documentCameraIntent(for: destination),
+      duration: duration, bounce: bounce,
       navigationID: navigationID, portal: portal, completion: completion)
     acceptPagePreparation(pending.preparation, operationID: pending.id)
     endCurrent(outcome: .superseded, settlesPose: false, notifyingIdle: false); panStart = nil; failure = nil
     state = .settling(pending)
     observePaint()
     model.updatePresence(origin, settled: false)
-    if isPrepared(pending) { start(pending) }
+    advance()
   }
   private func start(_ pending: WorkspaceSettlement) {
     guard current(pending), !pending.started, let model, let actual = model.presence else { return }

@@ -1,0 +1,578 @@
+{
+  "admission": "100000 shapes create 1000001 fields: pure-owner scaling stress beyond the unchanged 100000-field admission limit. The flat-field workload tests exactly 100000 causal fields.",
+  "afterRepetitions": 3,
+  "afterRunSourceStillCurrent": true,
+  "algorithm": "one addressed adoption/reconstruction pass; existing canonical sorting of nonpreferred concurrent survivors retained",
+  "baseCommit": "7274f6c193b264fccd3c84a15a474a31b35b657a",
+  "baselineTimeoutSeconds": 30,
+  "coreChecks": {
+    "failed": 0,
+    "passed": 10,
+    "route": "./verify.sh --only with 10 explicit pure Core selectors",
+    "selectors": [
+      "NotebookCoreTests.CausalContentMergeTests/aConcurrentRemovalDoesNotReauthorTheSurvivingPayloadOnReplay()/CausalContentMergeTests.swift:175:4",
+      "NotebookCoreTests.CausalContentMergeTests/aNewEditAfterTheJoinSupersedesAllConcurrentValues()/CausalContentMergeTests.swift:109:4",
+      "NotebookCoreTests.CausalContentMergeTests/clearedOptionalGeometrySurvivesReorderingReplayAndSnapshotJoins()/CausalContentMergeTests.swift:241:4",
+      "NotebookCoreTests.CausalContentMergeTests/documentSourceAndBoardGeometryRetainTheSameIndependentHuman()/CausalContentMergeTests.swift:275:4",
+      "NotebookCoreTests.CausalContentMergeTests/lateHumanEditSurvivesEveryDeliveryOrderAndParenthesization()/CausalContentMergeTests.swift:66:4",
+      "NotebookCoreTests.CausalContentMergeTests/pagePayloadUsesTheSameCausalOwner()/CausalContentMergeTests.swift:265:4",
+      "NotebookCoreTests.CausalContentMergeTests/receivedContextCanAdvanceWithoutChangingTheAuthorOrValue()/CausalContentMergeTests.swift:91:4",
+      "NotebookCoreTests.CausalContentMergeTests/retainedFootprintIncludesTheNonwinningAuthoredValue()/CausalContentMergeTests.swift:6:4",
+      "NotebookCoreTests.CausalContentMergeTests/sparseAdoptionKeepsExactEscapedMembershipAndCanBeCausallyUndone()/CausalContentMergeTests.swift:200:4",
+      "NotebookCoreTests.CausalContentMergeTests/streamedBoardClocksMatchTheCanonicalFieldsAndPreserveExistingAuthors()/CausalContentMergeTests.swift:19:4"
+    ],
+    "skipped": 0,
+    "sourceAfterSHA256": "79e7a3c92093a340bff0ee40edda1dda2e1cc7f897c8d17427f54e421bad40cb",
+    "sourceBeforeSHA256": "79e7a3c92093a340bff0ee40edda1dda2e1cc7f897c8d17427f54e421bad40cb",
+    "sourceUnchangedDuringRun": true,
+    "status": "passed",
+    "warnings": 0
+  },
+  "fixtureRepair": {
+    "baselineCommit": "7274f6c193b264fccd3c84a15a474a31b35b657a",
+    "baselineExitCode": 1,
+    "candidateOwnerRestored": true,
+    "candidateOwnerSHA256": "78e31f36817cd793e960b39c89b9bd2044698b0c2e1c04dcdbe483ac7ac2f187",
+    "correctOwnerKey": "files/body/content",
+    "failure": "24 identical issues in documentSourceAndBoardGeometryRetainTheSameIndependentHuman on the original and candidate owner",
+    "finalStatus": "passed",
+    "originalKey": "blocks/body/content",
+    "originalOwnerSHA256": "4d457d83848e836ee17b14beadf74ee1b05b9312624959f5675de75915879a18",
+    "originalOwnerUnchangedDuringRun": true
+  },
+  "issue": "GUI-507",
+  "measurements": [
+    {
+      "afterMicrosecondsPerField": 5.99508799120088,
+      "afterPeakRSSBytesMax": 19087360,
+      "afterSystemCPUSecondsMedian": 0.0007639999999999999,
+      "afterUserCPUSecondsMedian": 0.058891000000000006,
+      "afterWallSecondsMedian": 0.059956875,
+      "baselinePeakRSSBytes": 18399232,
+      "baselineProcessSystemCPUSeconds": 0.0,
+      "baselineProcessUserCPUSeconds": 0.15,
+      "baselineStatus": "complete",
+      "baselineWallSeconds": 0.127338667,
+      "count": 1000,
+      "fields": 10001,
+      "operation": "record-sparse",
+      "speedup": 2.1238376249596063
+    },
+    {
+      "afterMicrosecondsPerField": 6.463450757853116,
+      "afterPeakRSSBytesMax": 46743552,
+      "afterSystemCPUSecondsMedian": 0.003926,
+      "afterUserCPUSecondsMedian": 0.25905300000000003,
+      "afterWallSecondsMedian": 0.264814041,
+      "baselinePeakRSSBytes": 46743552,
+      "baselineProcessSystemCPUSeconds": 0.01,
+      "baselineProcessUserCPUSeconds": 1.51,
+      "baselineStatus": "complete",
+      "baselineWallSeconds": 1.43849,
+      "count": 4097,
+      "fields": 40971,
+      "operation": "record-sparse",
+      "speedup": 5.432076012918062
+    },
+    {
+      "afterMicrosecondsPerField": 7.759622365377635,
+      "afterPeakRSSBytesMax": 1042448384,
+      "afterSystemCPUSecondsMedian": 0.11678599999999999,
+      "afterUserCPUSecondsMedian": 7.535802,
+      "afterWallSecondsMedian": 7.759630125,
+      "baselinePeakRSSBytes": 1039630336.0,
+      "baselineProcessSystemCPUSeconds": 0.36,
+      "baselineProcessUserCPUSeconds": 32.47,
+      "baselineStatus": "timeout",
+      "baselineWallSeconds": null,
+      "count": 100000,
+      "fields": 1000001,
+      "operation": "record-sparse"
+    },
+    {
+      "afterMicrosecondsPerField": 6.092374062593741,
+      "afterPeakRSSBytesMax": 20643840,
+      "afterSystemCPUSecondsMedian": 0.0008860000000000001,
+      "afterUserCPUSecondsMedian": 0.059482999999999994,
+      "afterWallSecondsMedian": 0.060929833,
+      "baselinePeakRSSBytes": 19136512,
+      "baselineProcessSystemCPUSeconds": 0.0,
+      "baselineProcessUserCPUSeconds": 0.11,
+      "baselineStatus": "complete",
+      "baselineWallSeconds": 0.090201542,
+      "count": 1000,
+      "fields": 10001,
+      "operation": "record-all",
+      "speedup": 1.480416695053144
+    },
+    {
+      "afterMicrosecondsPerField": 6.907397915598838,
+      "afterPeakRSSBytesMax": 54198272,
+      "afterSystemCPUSecondsMedian": 0.0040809999999999996,
+      "afterUserCPUSecondsMedian": 0.27319699999999997,
+      "afterWallSecondsMedian": 0.283003,
+      "baselinePeakRSSBytes": 49659904,
+      "baselineProcessSystemCPUSeconds": 0.01,
+      "baselineProcessUserCPUSeconds": 0.92,
+      "baselineStatus": "complete",
+      "baselineWallSeconds": 0.828987292,
+      "count": 4097,
+      "fields": 40971,
+      "operation": "record-all",
+      "speedup": 2.9292526651660937
+    },
+    {
+      "afterMicrosecondsPerField": 7.620794754205246,
+      "afterPeakRSSBytesMax": 1105018880,
+      "afterSystemCPUSecondsMedian": 0.13350599999999999,
+      "afterUserCPUSecondsMedian": 7.368798,
+      "afterWallSecondsMedian": 7.620802375,
+      "baselinePeakRSSBytes": 1098383360.0,
+      "baselineProcessSystemCPUSeconds": 0.37,
+      "baselineProcessUserCPUSeconds": 32.47,
+      "baselineStatus": "timeout",
+      "baselineWallSeconds": null,
+      "count": 100000,
+      "fields": 1000001,
+      "operation": "record-all"
+    },
+    {
+      "afterMicrosecondsPerField": 8.695388761123887,
+      "afterPeakRSSBytesMax": 28180480,
+      "afterSystemCPUSecondsMedian": 0.0018810000000000003,
+      "afterUserCPUSecondsMedian": 0.08440399999999999,
+      "afterWallSecondsMedian": 0.086962583,
+      "baselinePeakRSSBytes": 26836992,
+      "baselineProcessSystemCPUSeconds": 0.0,
+      "baselineProcessUserCPUSeconds": 0.24,
+      "baselineStatus": "complete",
+      "baselineWallSeconds": 0.217895958,
+      "count": 1000,
+      "fields": 10001,
+      "operation": "merge-shapes",
+      "speedup": 2.5056288633928916
+    },
+    {
+      "afterMicrosecondsPerField": 9.450423250591882,
+      "afterPeakRSSBytesMax": 86589440,
+      "afterSystemCPUSecondsMedian": 0.008535999999999998,
+      "afterUserCPUSecondsMedian": 0.374384,
+      "afterWallSecondsMedian": 0.387193291,
+      "baselinePeakRSSBytes": 79937536,
+      "baselineProcessSystemCPUSeconds": 0.03,
+      "baselineProcessUserCPUSeconds": 3.29,
+      "baselineStatus": "complete",
+      "baselineWallSeconds": 3.248267791,
+      "count": 4097,
+      "fields": 40971,
+      "operation": "merge-shapes",
+      "speedup": 8.389266721566207
+    },
+    {
+      "afterMicrosecondsPerField": 11.450703841296159,
+      "afterPeakRSSBytesMax": 1732345856,
+      "afterSystemCPUSecondsMedian": 0.255841,
+      "afterUserCPUSecondsMedian": 10.932955,
+      "afterWallSecondsMedian": 11.450715292,
+      "baselinePeakRSSBytes": 1731461120.0,
+      "baselineProcessSystemCPUSeconds": 0.4,
+      "baselineProcessUserCPUSeconds": 32.58,
+      "baselineStatus": "timeout",
+      "baselineWallSeconds": null,
+      "count": 100000,
+      "fields": 1000001,
+      "operation": "merge-shapes"
+    },
+    {
+      "afterMicrosecondsPerField": 4.551417000000001,
+      "afterPeakRSSBytesMax": 10846208,
+      "afterSystemCPUSecondsMedian": 0.0004060000000000001,
+      "afterUserCPUSecondsMedian": 0.003942,
+      "afterWallSecondsMedian": 0.004551417,
+      "baselinePeakRSSBytes": 10895360,
+      "baselineProcessSystemCPUSeconds": 0.0,
+      "baselineProcessUserCPUSeconds": 0.01,
+      "baselineStatus": "complete",
+      "baselineWallSeconds": 0.008712917,
+      "count": 1000,
+      "fields": 1000,
+      "operation": "merge-fields",
+      "speedup": 1.914330635931623
+    },
+    {
+      "afterMicrosecondsPerField": 4.182908225530876,
+      "afterPeakRSSBytesMax": 15319040,
+      "afterSystemCPUSecondsMedian": 0.0008990000000000001,
+      "afterUserCPUSecondsMedian": 0.015844999999999998,
+      "afterWallSecondsMedian": 0.017137375,
+      "baselinePeakRSSBytes": 15302656,
+      "baselineProcessSystemCPUSeconds": 0.0,
+      "baselineProcessUserCPUSeconds": 0.09,
+      "baselineStatus": "complete",
+      "baselineWallSeconds": 0.095246875,
+      "count": 4097,
+      "fields": 4097,
+      "operation": "merge-fields",
+      "speedup": 5.557845060868424
+    },
+    {
+      "afterMicrosecondsPerField": 6.00243958,
+      "afterPeakRSSBytesMax": 184156160,
+      "afterSystemCPUSecondsMedian": 0.01429,
+      "afterUserCPUSecondsMedian": 0.581163,
+      "afterWallSecondsMedian": 0.600243958,
+      "baselinePeakRSSBytes": 182337536.0,
+      "baselineProcessSystemCPUSeconds": 0.2,
+      "baselineProcessUserCPUSeconds": 29.69,
+      "baselineStatus": "timeout",
+      "baselineWallSeconds": null,
+      "count": 100000,
+      "fields": 100000,
+      "operation": "merge-fields"
+    }
+  ],
+  "rawArtifactRoot": "/Users/amir/.codex/artifacts/notebook/causal-content-scaling-20261007-7274f6c1",
+  "rawArtifacts": [
+    {
+      "bytes": 1389,
+      "path": "core-baseline-fixture/commands.json",
+      "sha256": "cf300b5162155d9efe3a9ce2796a9e4c964abbd7cc72987f12fd4fdc4e86fb13"
+    },
+    {
+      "bytes": 25389,
+      "path": "core-baseline-fixture/core-NotebookCoreTests-events.jsonl",
+      "sha256": "e4c3e6688b28f7430f54316345e169893c38482299a46c5a0d5cf223f76d87d4"
+    },
+    {
+      "bytes": 0,
+      "path": "core-baseline-fixture/core-NotebookCoreTests.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 8254,
+      "path": "core-baseline-fixture/core-NotebookCoreTests.stdout.log",
+      "sha256": "f725f00d11c257687b8a142a60dd7186aca2362af14b24df3fb68a36caeb80a1"
+    },
+    {
+      "bytes": 1048856,
+      "path": "core-baseline-fixture/core-inventory.jsonl",
+      "sha256": "48de10616d07054451eb2c172a22d90f12016cddc4b71ba6a0c613d1a3f81397"
+    },
+    {
+      "bytes": 2452,
+      "path": "core-baseline-fixture/core-inventory.stderr.log",
+      "sha256": "7036dd69429eb38f859b258d6e81f5267336b8bb6a936c2e84ba2538a7543cc4"
+    },
+    {
+      "bytes": 1124036,
+      "path": "core-baseline-fixture/core-inventory.stdout.log",
+      "sha256": "8bf04478fe1341e77347b18be506730d2dad73f2d75c3be868d44b8ac4ebac21"
+    },
+    {
+      "bytes": 2620,
+      "path": "core-baseline-fixture/selection.json",
+      "sha256": "f5d90eccaba88874db9d6c6127baa653445d0c4de9ea4ee044fe2613fcfacf68"
+    },
+    {
+      "bytes": 315526,
+      "path": "core-baseline-fixture/source-before.json",
+      "sha256": "ec33cc6a74dae7a603f9325258dcd2ace0f745ddabd1e902ae33579bf0d236f5"
+    },
+    {
+      "bytes": 0,
+      "path": "core-baseline-fixture/toolchain-python.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 14,
+      "path": "core-baseline-fixture/toolchain-python.stdout.log",
+      "sha256": "917601090ffb73a030e3eaa8b7a01c41400cad4b61366b4218d7756a5733b66c"
+    },
+    {
+      "bytes": 30,
+      "path": "core-baseline-fixture/toolchain-swift.stderr.log",
+      "sha256": "bbc8b176d3c74d4c5a7fd00b40280f98168e116d5272273bfe8e71407625540e"
+    },
+    {
+      "bytes": 98,
+      "path": "core-baseline-fixture/toolchain-swift.stdout.log",
+      "sha256": "04630ab8fa201f57c63c59730e638135e32584a97e16e004a417eb8ed283dc83"
+    },
+    {
+      "bytes": 178,
+      "path": "core-baseline-fixture/toolchain.json",
+      "sha256": "6032850b3f5d2c1584f34ae33bf0925786333e1b8e3b54336a6e52f77b1debf7"
+    },
+    {
+      "bytes": 2676,
+      "path": "core-checks/commands.json",
+      "sha256": "cec6b056ca3f0281cf0962fcaa4862c6c18c270efe6456d82801f127f06f13d7"
+    },
+    {
+      "bytes": 35980,
+      "path": "core-checks/core-NotebookCoreTests-events.jsonl",
+      "sha256": "ca523075b84d893cae6473c66662e390ac7ecab986322a2eb8b09f95bc24363d"
+    },
+    {
+      "bytes": 0,
+      "path": "core-checks/core-NotebookCoreTests.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 9807,
+      "path": "core-checks/core-NotebookCoreTests.stdout.log",
+      "sha256": "ffd8a3cef7d215fea89ae8a327ceff43586d9992384956084f12e105abcb4fa4"
+    },
+    {
+      "bytes": 1048855,
+      "path": "core-checks/core-inventory.jsonl",
+      "sha256": "6dbe6f2231bf0e6d7d99e404cf5a1c7354f01095860c6e08cc93350f4846a7d3"
+    },
+    {
+      "bytes": 103250,
+      "path": "core-checks/core-inventory.stderr.log",
+      "sha256": "e3b43b76b13ca15c9e6c6d04228a0e030b068f073582b75aebd0ce203d57bafc"
+    },
+    {
+      "bytes": 1124035,
+      "path": "core-checks/core-inventory.stdout.log",
+      "sha256": "fbc271ce1133ad97136185d5d40ada32e720e3fc6196b713a23253a764131579"
+    },
+    {
+      "bytes": 2253,
+      "path": "core-checks/selection.json",
+      "sha256": "adca7b1a80f32f9072e774a51043b4172cdea7f07ea4157a00e4d1d8005410a9"
+    },
+    {
+      "bytes": 315526,
+      "path": "core-checks/source-before.json",
+      "sha256": "1d438d96439d74917700ed6ea378b66e8f8647e6e93560ee334d79d91bfa56f3"
+    },
+    {
+      "bytes": 0,
+      "path": "core-checks/toolchain-python.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 14,
+      "path": "core-checks/toolchain-python.stdout.log",
+      "sha256": "917601090ffb73a030e3eaa8b7a01c41400cad4b61366b4218d7756a5733b66c"
+    },
+    {
+      "bytes": 30,
+      "path": "core-checks/toolchain-swift.stderr.log",
+      "sha256": "bbc8b176d3c74d4c5a7fd00b40280f98168e116d5272273bfe8e71407625540e"
+    },
+    {
+      "bytes": 98,
+      "path": "core-checks/toolchain-swift.stdout.log",
+      "sha256": "04630ab8fa201f57c63c59730e638135e32584a97e16e004a417eb8ed283dc83"
+    },
+    {
+      "bytes": 178,
+      "path": "core-checks/toolchain.json",
+      "sha256": "6032850b3f5d2c1584f34ae33bf0925786333e1b8e3b54336a6e52f77b1debf7"
+    },
+    {
+      "bytes": 2987,
+      "path": "core-final/commands.json",
+      "sha256": "24fd2beef1ec37929c443ad47bbd0df2ad3964c92241d56a06c7dc1b48652e8e"
+    },
+    {
+      "bytes": 4656,
+      "path": "core-final/completed.json",
+      "sha256": "5f930a5ec1c07a4f9615bee1cb9baa569e9dc29f285bda7d4af30b9cdb08a31b"
+    },
+    {
+      "bytes": 13321,
+      "path": "core-final/core-NotebookCoreTests-events.jsonl",
+      "sha256": "b5ed8e2fb1c4189e688f5aec4276a7bf6af6034ab2811448213ecda478fb4684"
+    },
+    {
+      "bytes": 0,
+      "path": "core-final/core-NotebookCoreTests.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 2001,
+      "path": "core-final/core-NotebookCoreTests.stdout.log",
+      "sha256": "370115553144231f718ef4283f4200683d04a40cca4ced6303a1feab448924f9"
+    },
+    {
+      "bytes": 4447,
+      "path": "core-final/core-execution.json",
+      "sha256": "d8836a4915d2c20e7c5313b117f915f271b467f9ed9c6978dbc2d9f5fda08abb"
+    },
+    {
+      "bytes": 1048857,
+      "path": "core-final/core-inventory.jsonl",
+      "sha256": "8a2af5f97ac01aa95c81014fe5116b60124ede280654a9a1806dfa251c480f7b"
+    },
+    {
+      "bytes": 2571,
+      "path": "core-final/core-inventory.stderr.log",
+      "sha256": "4fded86d403bde312f94b633f8a0802dcc903b0f8bc42f8b7d09523e92fe2491"
+    },
+    {
+      "bytes": 1124037,
+      "path": "core-final/core-inventory.stdout.log",
+      "sha256": "052b8a9daa184eb723d1fab025f5184c97b293a29b362b2bba5cf5039247d5b9"
+    },
+    {
+      "bytes": 5323,
+      "path": "core-final/selection.json",
+      "sha256": "d075c299c359596f0f8ae5706896c38b001ba97d21e2aa8c5f9d321e41a26c1c"
+    },
+    {
+      "bytes": 315526,
+      "path": "core-final/source-after.json",
+      "sha256": "86757520c1503e87f34a4c81e4a22ca08fe5d9a3a336d3dc2a0eb98d43ac270f"
+    },
+    {
+      "bytes": 315526,
+      "path": "core-final/source-before.json",
+      "sha256": "86757520c1503e87f34a4c81e4a22ca08fe5d9a3a336d3dc2a0eb98d43ac270f"
+    },
+    {
+      "bytes": 0,
+      "path": "core-final/toolchain-after-python.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 14,
+      "path": "core-final/toolchain-after-python.stdout.log",
+      "sha256": "917601090ffb73a030e3eaa8b7a01c41400cad4b61366b4218d7756a5733b66c"
+    },
+    {
+      "bytes": 30,
+      "path": "core-final/toolchain-after-swift.stderr.log",
+      "sha256": "bbc8b176d3c74d4c5a7fd00b40280f98168e116d5272273bfe8e71407625540e"
+    },
+    {
+      "bytes": 98,
+      "path": "core-final/toolchain-after-swift.stdout.log",
+      "sha256": "04630ab8fa201f57c63c59730e638135e32584a97e16e004a417eb8ed283dc83"
+    },
+    {
+      "bytes": 178,
+      "path": "core-final/toolchain-after.json",
+      "sha256": "6032850b3f5d2c1584f34ae33bf0925786333e1b8e3b54336a6e52f77b1debf7"
+    },
+    {
+      "bytes": 0,
+      "path": "core-final/toolchain-python.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 14,
+      "path": "core-final/toolchain-python.stdout.log",
+      "sha256": "917601090ffb73a030e3eaa8b7a01c41400cad4b61366b4218d7756a5733b66c"
+    },
+    {
+      "bytes": 30,
+      "path": "core-final/toolchain-swift.stderr.log",
+      "sha256": "bbc8b176d3c74d4c5a7fd00b40280f98168e116d5272273bfe8e71407625540e"
+    },
+    {
+      "bytes": 98,
+      "path": "core-final/toolchain-swift.stdout.log",
+      "sha256": "04630ab8fa201f57c63c59730e638135e32584a97e16e004a417eb8ed283dc83"
+    },
+    {
+      "bytes": 178,
+      "path": "core-final/toolchain.json",
+      "sha256": "6032850b3f5d2c1584f34ae33bf0925786333e1b8e3b54336a6e52f77b1debf7"
+    },
+    {
+      "bytes": 335773,
+      "path": "core-final/verification.json",
+      "sha256": "f58982871d9a6e8c533dcd29c743d1a140139b605a81263076b7ec9195566a54"
+    },
+    {
+      "bytes": 356,
+      "path": "fixture-baseline.json",
+      "sha256": "b0b88f3647719bcea8f5949926f7dbd5a270959e56c0dae03f1fe09203406a05"
+    },
+    {
+      "bytes": 159420,
+      "path": "source-after-semantics.json",
+      "sha256": "bf16dfdc3a56f8c99c8478728c05e2635a1081bd1a6959c47207d045bc6a13e8"
+    },
+    {
+      "bytes": 145833,
+      "path": "source-after.json",
+      "sha256": "2d1bb0278a107cf779bf9778fb81f1ec49e92306e5f8f79e91efc635016f5bf6"
+    },
+    {
+      "bytes": 159420,
+      "path": "source-before-semantics.json",
+      "sha256": "bf16dfdc3a56f8c99c8478728c05e2635a1081bd1a6959c47207d045bc6a13e8"
+    },
+    {
+      "bytes": 105485,
+      "path": "source-before.json",
+      "sha256": "d892eed769fb216a457fe0f766a4df03139cf2d504bb44ac1dca3121f2e97ff3"
+    }
+  ],
+  "runtimePath": {
+    "bulkExecution": "NotebookPersistenceQueue.drain: existing Task.detached(priority: .utility)",
+    "localInput": "no Shared production direct replaceElements/upsertElement callers; no gesture/queue code changed",
+    "owner": "CollaborativeContent.record/merge and private rebuildContent",
+    "physical20msAcceptance": false,
+    "release254Included": false
+  },
+  "scope": "one in-memory Core owner; optimized CPU/wall/peak RSS; no storage/native/device/live helper",
+  "semanticEquality": "byte-identical sorted JSON including field versions, observations and hidden heads",
+  "semanticSHA256": "bf16dfdc3a56f8c99c8478728c05e2635a1081bd1a6959c47207d045bc6a13e8",
+  "semanticSnapshotCount": 42,
+  "sourceAfterUnchangedDuringRun": true,
+  "sourceBeforeUnchangedDuringRun": true,
+  "sources": {
+    "after": {
+      "digest": "4074b387a935b041bd297529cf4884e730c5fb5c835f4a0eb847cc1cb678c14e",
+      "fileCount": 255,
+      "focusedFiles": [
+        {
+          "path": "Sources/NotebookCore/CollaborativeContent.swift",
+          "sha256": "78e31f36817cd793e960b39c89b9bd2044698b0c2e1c04dcdbe483ac7ac2f187"
+        },
+        {
+          "path": "Tests/NotebookCausalContentHarness/main.swift",
+          "sha256": "63faccc71d04138aef0490b29cafda363001a3cb02a70992f3de1dcc9909c9f0"
+        },
+        {
+          "path": "Tests/NotebookCausalContentHarness/run.py",
+          "sha256": "c310897ca6b8835c7cef4f0a994a1474a3771db8a73336d8d9e5231a3f327143"
+        }
+      ],
+      "gitHead": "7274f6c193b264fccd3c84a15a474a31b35b657a",
+      "platform": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+      "probeSHA256": "846911a3aa637d4ab06be01bee2272fe52a7d177e260f057d4681df91af7eeea",
+      "scope": "Package.swift, all Core/Surface Swift sources, pure harness",
+      "toolchain": "Apple Swift version 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1)\nTarget: arm64-apple-macosx27.0.0"
+    },
+    "before": {
+      "digest": "44135df6cc0ba82c2ebca2907615eb5aeceb38b6b6f27a5d1917b5b3c52ad119",
+      "fileCount": 255,
+      "focusedFiles": [
+        {
+          "path": "Sources/NotebookCore/CollaborativeContent.swift",
+          "sha256": "4d457d83848e836ee17b14beadf74ee1b05b9312624959f5675de75915879a18"
+        },
+        {
+          "path": "Tests/NotebookCausalContentHarness/main.swift",
+          "sha256": "63faccc71d04138aef0490b29cafda363001a3cb02a70992f3de1dcc9909c9f0"
+        },
+        {
+          "path": "Tests/NotebookCausalContentHarness/run.py",
+          "sha256": "c310897ca6b8835c7cef4f0a994a1474a3771db8a73336d8d9e5231a3f327143"
+        }
+      ],
+      "gitHead": "7274f6c193b264fccd3c84a15a474a31b35b657a",
+      "platform": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+      "probeSHA256": "54c25306ed5cf142eda17f4cc92a30acc07c846266af4950022f08c665eeba9e",
+      "scope": "Package.swift, all Core/Surface Swift sources, pure harness",
+      "toolchain": "Apple Swift version 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1)\nTarget: arm64-apple-macosx27.0.0"
+    }
+  }
+}

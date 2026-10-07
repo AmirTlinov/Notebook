@@ -1,0 +1,510 @@
+{
+  "trace": ".build/pencil-baseline-253/pencil-input.json",
+  "sha256": "d8469eded6a75fe7b137328b51763373d2bc4e0c00e48e0ba8221bbaa6c7073a",
+  "metadata": {
+    "scope": "pencil/page",
+    "testProcess": false,
+    "operatingSystem": "Version 27.0 (Build 24A435)",
+    "mediaTime": 445492.48910408345,
+    "startedAt": 813049485.950906,
+    "build": "253",
+    "systemUptime": 445492.489104625
+  },
+  "startedAtUTC": "2026-10-07T07:04:45.950906+00:00",
+  "droppedEvents": 0,
+  "droppedSamples": 0,
+  "writeFailures": 0,
+  "tools": {
+    "pen": {
+      "inputBatches": 3356,
+      "uniqueFrames": 825,
+      "shownFrames": 820,
+      "discardedFrames": 5,
+      "unresolved": {
+        "contactEnded": 103
+      },
+      "actualToOSMS": {
+        "count": 2228,
+        "min": 27.38675,
+        "p50": 39.97475,
+        "p95": 57.392667,
+        "p99": 141.238917,
+        "max": 225.238917
+      },
+      "correctionToOSMS": {
+        "count": 2125,
+        "min": 20.072083,
+        "p50": 32.057625,
+        "p95": 49.058958,
+        "p99": 58.348167,
+        "max": 135.424292
+      },
+      "handlerMS": {
+        "count": 3356,
+        "min": 0.015708,
+        "p50": 0.0525,
+        "p95": 0.216,
+        "p99": 0.387458,
+        "max": 4.093375
+      },
+      "sameContactRenderIntervalMS": {
+        "count": 795,
+        "min": 5.375292,
+        "p50": 8.351833,
+        "p95": 16.734417,
+        "p99": 16.954458,
+        "max": 110.925542
+      },
+      "stages": {
+        "renderBeganToTargetPresentationMS": {
+          "count": 820,
+          "min": 13.551333,
+          "p50": 16.616167,
+          "p95": 16.628792,
+          "p99": 16.636792,
+          "max": 16.6585
+        },
+        "renderBeganToGpuEndedMS": {
+          "count": 820,
+          "min": 0.607875,
+          "p50": 0.884708,
+          "p95": 1.212083,
+          "p99": 1.394625,
+          "max": 1.753708
+        },
+        "gpuEndedToOsPresentedMS": {
+          "count": 820,
+          "min": 12.18775,
+          "p50": 15.898042,
+          "p95": 32.350583,
+          "p99": 32.515125,
+          "max": 32.635667
+        },
+        "targetPresentationToOsPresentedMS": {
+          "count": 820,
+          "min": -0.0015,
+          "p50": 0.003083,
+          "p95": 16.675,
+          "p99": 16.676292,
+          "max": 16.731333
+        },
+        "osPresentedToDeliveredMS": {
+          "count": 820,
+          "min": 0.328958,
+          "p50": 1.106125,
+          "p95": 1.859917,
+          "p99": 10.3055,
+          "max": 84.888667
+        },
+        "renderBeganToUiTargetPresentationMS": {
+          "count": 819,
+          "min": -61.609667,
+          "p50": 16.614042,
+          "p95": 16.626,
+          "p99": 16.631917,
+          "max": 16.638875
+        },
+        "uiTargetPresentationToTargetPresentationMS": {
+          "count": 819,
+          "min": 0.000417,
+          "p50": 0.00225,
+          "p95": 0.004167,
+          "p99": 0.004958,
+          "max": 78.263125
+        },
+        "renderBeganToNormalCommitMS": {
+          "count": 807,
+          "min": 0.243125,
+          "p50": 1.040917,
+          "p95": 1.476208,
+          "p99": 1.938,
+          "max": 9.285917
+        },
+        "renderBeganToLowLatencyCommitMS": {
+          "count": 0
+        },
+        "normalCommitToOsPresentedMS": {
+          "count": 807,
+          "min": 11.813667,
+          "p50": 15.905958,
+          "p95": 32.385375,
+          "p99": 32.565375,
+          "max": 33.016917
+        },
+        "lowLatencyCommitToOsPresentedMS": {
+          "count": 0
+        },
+        "uiDeadlineToCommitReturnedMS": {
+          "count": 819,
+          "min": -8.202708,
+          "p50": -8.058875,
+          "p95": -7.75075,
+          "p99": -5.348292,
+          "max": 70.071167
+        },
+        "targetDeadlineToCommitReturnedMS": {
+          "count": 820,
+          "min": -8.207875,
+          "p50": -8.058083,
+          "p95": -7.757208,
+          "p99": -7.211083,
+          "max": -4.53275
+        },
+        "lowLatencyDeferredToLowLatencyDispatchedMS": {
+          "count": 0
+        },
+        "enteredToRenderBeganMS": {
+          "count": 3253,
+          "min": 0.0935,
+          "p50": 7.383625,
+          "p95": 16.059708,
+          "p99": 24.426542,
+          "max": 110.681292
+        },
+        "returnedToRenderBeganMS": {
+          "count": 3253,
+          "min": 0.044333,
+          "p50": 7.308417,
+          "p95": 15.997083,
+          "p99": 24.379083,
+          "max": 110.623833
+        },
+        "enteredToOsPresentedMS": {
+          "count": 3253,
+          "min": 20.072083,
+          "p50": 32.143667,
+          "p95": 49.09175,
+          "p99": 57.723792,
+          "max": 138.22975
+        },
+        "gpuStartedToGpuEndedMS": {
+          "count": 820,
+          "p50": 0.389833,
+          "p95": 0.509917,
+          "p99": 0.594292,
+          "max": 0.902708
+        },
+        "commitReturnedToGpuStartedMS": {
+          "count": 820,
+          "p50": 0.281708,
+          "p95": 0.378792,
+          "p99": 0.505417,
+          "max": 1.071
+        },
+        "renderBeganToCommitBeganMS": {
+          "count": 820,
+          "p50": 0.199792,
+          "p95": 0.372917,
+          "p99": 0.525667,
+          "max": 0.814667
+        }
+      },
+      "ui": {
+        "branch": {
+          "metalDisplayLink": 825
+        },
+        "phase": {
+          "normal": 824,
+          "unavailable": 1
+        },
+        "lowLatencyDispatchConfirmed": {
+          "False": 824,
+          "absent": 1
+        },
+        "immediatePresentationExpected": {
+          "False": 824,
+          "absent": 1
+        }
+      },
+      "commitCoverage": {
+        "normalCommit": 812,
+        "lowLatencyCommit": 0
+      },
+      "actualP95Chain": {
+        "inputID": 1375,
+        "sourceID": "C524A1DB-0CB0-4FF1-BD1E-07EB666E82AF",
+        "kind": "coalesced",
+        "inputRevision": 2750,
+        "frameID": "E384A63D-EBB3-41B8-97DD-CE810E7D3641",
+        "frameRevision": 2758,
+        "actualToOSMS": 57.39266681484878,
+        "stagesMS": {
+          "timestampToEntered": 8.208791783545166,
+          "enteredToReturned": 0.15774997882544994,
+          "returnedToRenderBegan": 15.785083349328488,
+          "renderBeganToGpuEnded": 0.7843749481253326,
+          "gpuEndedToTargetPresentation": 15.780291694682091,
+          "targetPresentationToOsPresented": 16.676375060342252
+        },
+        "uiUpdate": {
+          "normalCommit": {
+            "phase": "afterCATransactionCommit",
+            "observed": 445502.4889020834,
+            "deadline": 445502.4963824167,
+            "targetPresentation": 445502.5047156667,
+            "immediatePresentationExpected": false,
+            "modelTime": 445502.4880491667
+          },
+          "targetPresentation": 445502.5047156667,
+          "deadline": 445502.4963824167,
+          "modelTime": 445502.4880491667,
+          "lowLatencyDispatchConfirmed": false,
+          "branch": "metalDisplayLink",
+          "immediatePresentationExpected": false,
+          "phase": "normal",
+          "decisionModelTime": 445502.4880491667
+        }
+      }
+    },
+    "eraser": {
+      "inputBatches": 3524,
+      "uniqueFrames": 899,
+      "shownFrames": 890,
+      "discardedFrames": 9,
+      "unresolved": {
+        "contactEnded": 15
+      },
+      "actualToOSMS": {
+        "count": 2351,
+        "min": 27.980792,
+        "p50": 36.77475,
+        "p95": 57.431,
+        "p99": 74.575417,
+        "max": 116.251333
+      },
+      "correctionToOSMS": {
+        "count": 2336,
+        "min": 19.813167,
+        "p50": 31.421417,
+        "p95": 48.959042,
+        "p99": 60.742458,
+        "max": 89.791458
+      },
+      "handlerMS": {
+        "count": 3524,
+        "min": 0.016375,
+        "p50": 0.071542,
+        "p95": 0.238458,
+        "p99": 0.418917,
+        "max": 3.221167
+      },
+      "sameContactRenderIntervalMS": {
+        "count": 893,
+        "min": 6.720083,
+        "p50": 8.35075,
+        "p95": 16.729292,
+        "p99": 24.989333,
+        "max": 63.411542
+      },
+      "stages": {
+        "renderBeganToTargetPresentationMS": {
+          "count": 890,
+          "min": 15.511458,
+          "p50": 16.611083,
+          "p95": 16.628292,
+          "p99": 16.630917,
+          "max": 16.654875
+        },
+        "renderBeganToGpuEndedMS": {
+          "count": 890,
+          "min": 1.253458,
+          "p50": 4.024375,
+          "p95": 14.612208,
+          "p99": 29.228625,
+          "max": 37.786667
+        },
+        "gpuEndedToOsPresentedMS": {
+          "count": 890,
+          "min": 2.590542,
+          "p50": 13.992583,
+          "p95": 27.665333,
+          "p99": 31.502958,
+          "max": 31.975875
+        },
+        "targetPresentationToOsPresentedMS": {
+          "count": 890,
+          "min": 0.0005,
+          "p50": 0.017125,
+          "p95": 16.679833,
+          "p99": 20.850792,
+          "max": 25.020583
+        },
+        "osPresentedToDeliveredMS": {
+          "count": 890,
+          "min": 0.335792,
+          "p50": 1.2005,
+          "p95": 2.111917,
+          "p99": 7.841417,
+          "max": 57.801833
+        },
+        "renderBeganToUiTargetPresentationMS": {
+          "count": 890,
+          "min": -38.46,
+          "p50": 16.616417,
+          "p95": 16.639792,
+          "p99": 16.646583,
+          "max": 16.654208
+        },
+        "uiTargetPresentationToTargetPresentationMS": {
+          "count": 890,
+          "min": -0.029125,
+          "p50": -0.0055,
+          "p95": 0.001375,
+          "p99": 0.003417,
+          "max": 55.085
+        },
+        "renderBeganToNormalCommitMS": {
+          "count": 886,
+          "min": 0.49025,
+          "p50": 1.145333,
+          "p95": 1.89525,
+          "p99": 3.124792,
+          "max": 13.308833
+        },
+        "renderBeganToLowLatencyCommitMS": {
+          "count": 0
+        },
+        "normalCommitToOsPresentedMS": {
+          "count": 886,
+          "min": 3.265292,
+          "p50": 15.649083,
+          "p95": 32.395458,
+          "p99": 35.897167,
+          "max": 36.624417
+        },
+        "lowLatencyCommitToOsPresentedMS": {
+          "count": 0
+        },
+        "uiDeadlineToCommitReturnedMS": {
+          "count": 890,
+          "min": -8.172875,
+          "p50": -7.792458,
+          "p95": -7.329458,
+          "p99": -6.988292,
+          "max": 47.798917
+        },
+        "targetDeadlineToCommitReturnedMS": {
+          "count": 890,
+          "min": -8.156417,
+          "p50": -7.78325,
+          "p95": -7.328417,
+          "p99": -7.050042,
+          "max": -6.3955
+        },
+        "lowLatencyDeferredToLowLatencyDispatchedMS": {
+          "count": 0
+        },
+        "enteredToRenderBeganMS": {
+          "count": 3509,
+          "min": 0.51825,
+          "p50": 7.338333,
+          "p95": 16.057125,
+          "p99": 24.007042,
+          "max": 78.562333
+        },
+        "returnedToRenderBeganMS": {
+          "count": 3509,
+          "min": 0.424458,
+          "p50": 7.245917,
+          "p95": 16.002833,
+          "p99": 23.9525,
+          "max": 77.691208
+        },
+        "enteredToOsPresentedMS": {
+          "count": 3509,
+          "min": 19.329083,
+          "p50": 29.733042,
+          "p95": 49.1255,
+          "p99": 60.809292,
+          "max": 103.503875
+        },
+        "gpuStartedToGpuEndedMS": {
+          "count": 890,
+          "p50": 3.15025,
+          "p95": 13.619917,
+          "p99": 27.993125,
+          "max": 36.32625
+        },
+        "commitReturnedToGpuStartedMS": {
+          "count": 890,
+          "p50": 0.291208,
+          "p95": 0.474042,
+          "p99": 0.543042,
+          "max": 3.236583
+        },
+        "renderBeganToCommitBeganMS": {
+          "count": 890,
+          "p50": 0.42975,
+          "p95": 0.880375,
+          "p99": 1.058958,
+          "max": 1.615458
+        }
+      },
+      "ui": {
+        "branch": {
+          "metalDisplayLink": 899
+        },
+        "phase": {
+          "normal": 899
+        },
+        "lowLatencyDispatchConfirmed": {
+          "False": 899
+        },
+        "immediatePresentationExpected": {
+          "False": 899
+        }
+      },
+      "commitCoverage": {
+        "normalCommit": 895,
+        "lowLatencyCommit": 0
+      },
+      "actualP95Chain": {
+        "inputID": 3829,
+        "sourceID": "259215D1-1E22-471D-96D1-7724CCD86D43",
+        "kind": "coalesced",
+        "inputRevision": 318,
+        "frameID": "EE2C1C97-9974-4110-B35E-6D8E4D644EFD",
+        "frameRevision": 319,
+        "actualToOSMS": 57.431000110227615,
+        "stagesMS": {
+          "timestampToEntered": 8.17762507358566,
+          "enteredToReturned": 0.1772083342075348,
+          "returnedToRenderBegan": 15.780583373270929,
+          "renderBeganToGpuEnded": 3.001249919179827,
+          "gpuEndedToTargetPresentation": 13.610333378892392,
+          "targetPresentationToOsPresented": 16.684000031091273
+        },
+        "uiUpdate": {
+          "normalCommit": {
+            "phase": "afterCATransactionCommit",
+            "observed": 445527.1833633751,
+            "deadline": 445527.1894209167,
+            "targetPresentation": 445527.1977541667,
+            "immediatePresentationExpected": false,
+            "modelTime": 445527.1810876667
+          },
+          "targetPresentation": 445527.1977541667,
+          "deadline": 445527.1894209167,
+          "modelTime": 445527.1810876667,
+          "lowLatencyDispatchConfirmed": false,
+          "branch": "metalDisplayLink",
+          "immediatePresentationExpected": false,
+          "phase": "normal",
+          "decisionModelTime": 445527.1810876667
+        }
+      }
+    }
+  },
+  "source": {
+    "installedBuild": "253",
+    "diagnosticCommit": "ccd2d51021375b3f59137f61d08f91f399046f8f",
+    "inspectedBaseCommit": "b5e350288443921086d2487b9d3e08a72be6c802",
+    "traceMatchesInstalled253": true,
+    "baseOwnerFilesSHA256": {
+      "Applications/Shared/InkCanvasView.swift": "38c2e2ccef5e14a2935c4f055c29d21e8e0d01884994c55461f2596cb646fc49",
+      "Applications/iPad/InputFrameMonitor.swift": "e37538f1d14e8a9c0c0fcf384d7535a09d0ed71e6d08d56928a8635726ba8bcf",
+      "Applications/iPad/PencilCanvasView.swift": "a76f7ef0a13d1fb411d0af6bba9dabfb8947f97e5425495d195daafff0855828"
+    }
+  },
+  "scope": "Fresh physical Pencil in installed253; actual/coalesced inputs join complete positive OS receipts, corrections start at dispatch. Stage populations must not be added; actualP95Chain is additive for one sample. Unresolved terminal batches retained; no photon or instrumentation-overhead claim."
+}

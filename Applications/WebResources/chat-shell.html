@@ -5,6 +5,7 @@
 *{box-sizing:border-box}
 body{font:15px -apple-system,BlinkMacSystemFont,system-ui,sans-serif;margin:0;padding:16px 22px 24px;color:#242424;background:#fcfcfa;overflow-wrap:anywhere;-webkit-text-size-adjust:100%}
 article{position:relative;margin:0 0 22px;line-height:1.55}
+.math-stage{position:fixed;left:-100000px;top:0;visibility:hidden;pointer-events:none}
 .role{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 article[data-role="user"]{display:flex;justify-content:flex-end}
 article[data-role="user"] .content{max-width:88%;padding:10px 16px;border-radius:20px;background:#eaf3fd}
@@ -74,7 +75,87 @@ function workHeading(labelText,active,disclosure=true){
  return summary;
 }
 const messagesByID=new Map(),articles=new Map(),groups=new Map();
-let order=[],pending=[],rendering=null,shownConversation=null;
+let order=[],shownConversation=null;
+// One producer prepares an active batch outside the live transcript. Only its
+// exact TeX ranges are committed; prose, links and disclosure nodes keep their
+// identity, selection and focus. Rendered roots retain exact source coordinates.
+const pendingMath=new Set(),mathSources=new WeakMap();
+let mathRendering=null;
+function cloneMathSource(article,sources){
+ const prepared=article.cloneNode(true),entry={article,body:article.querySelector('.content'),prepared};
+ const pair=(source,copy)=>{
+  sources.set(copy,{source,entry});
+  for(let i=0;i<source.childNodes.length;i++)pair(source.childNodes[i],copy.childNodes[i]);
+ };
+ pair(article,prepared);
+ for(const node of prepared.querySelectorAll('[id]'))node.removeAttribute('id');
+ return entry;
+}
+function scheduleMath(){
+ if(mathRendering||!pendingMath.size)return;
+ mathRendering=(async()=>{
+  await MathJax.startup.promise;
+  while(pendingMath.size){
+   const root=document.getElementById('messages'),width=root.getBoundingClientRect().width,sources=new Map(),matches=new Map();
+   const batch=[...pendingMath].filter(article=>articles.get(article.dataset.itemId)===article).map(article=>cloneMathSource(article,sources));
+   pendingMath.clear();if(!batch.length)continue;
+   // Connected and invisible, not display:none: the same inherited fonts and
+   // container width supply MathJax metrics without changing the live layout.
+   const stage=document.createElement('div');stage.className='math-stage';stage.style.width=width+'px';
+   stage.setAttribute('aria-hidden','true');stage.inert=true;
+   const nodes=batch.map(item=>item.prepared),mathDocument=MathJax.startup.document;
+   stage.append(...nodes);document.body.append(stage);
+   try{
+    // MathJax 4's find(10) has exact UTF-16 source boundaries. Capture them
+    // before compile(20)/typeset/update can split or replace the cloned nodes.
+    mathDocument.addRenderAction('notebookChatSource',15,doc=>{
+     for(const math of doc.math)if(!matches.has(math)){
+      const start=sources.get(math.start.node),end=sources.get(math.end.node);
+      if(!start||!end||start.entry!==end.entry)throw new Error('Unmapped transcript math source');
+      const range=document.createRange();range.setStart(math.start.node,math.start.n);range.setEnd(math.end.node,math.end.n);
+      matches.set(math,{entry:start.entry,start:start.source,end:end.source,from:math.start.n,to:math.end.n,text:range.toString()});
+     }
+     return false;
+    });
+    let ready=false;
+    try{await MathJax.typesetPromise(nodes);ready=true;}
+    catch(error){console.error('Transcript math preparation failed',error);}
+    finally{
+     mathDocument.removeRenderAction('notebookChatSource');
+     // Clear ownership while output still belongs to the prepared nodes. A
+     // rejected item otherwise poisons later jobs in MathJax's global list.
+     MathJax.typesetClear(nodes);
+    }
+    if(!ready)continue;
+    const current=new Set(batch.filter(({article,body})=>articles.get(article.dataset.itemId)===article&&article.querySelector('.content')===body));
+    if(root.getBoundingClientRect().width!==width){for(const {article} of current)pendingMath.add(article);continue;}
+    const edits=[];
+    for(const [math,match] of matches)if(current.has(match.entry)){
+     const range=document.createRange();range.setStart(match.start,match.from);range.setEnd(match.end,match.to);
+     if(!match.entry.body.contains(match.start)||!match.entry.body.contains(match.end)||range.toString()!==match.text||!math.typesetRoot)
+      throw new Error('Transcript math source changed before commit');
+     edits.push({range,output:math.typesetRoot,text:match.text});
+    }
+    edits.sort((a,b)=>a.range.compareBoundaryPoints(0,b.range));
+    for(let i=1;i<edits.length;i++){
+     const previous=edits[i-1].range.cloneRange(),next=edits[i].range.cloneRange();previous.collapse(false);next.collapse(true);
+     if(previous.compareBoundaryPoints(0,next)>0)throw new Error('Overlapping transcript math sources');
+    }
+    if(!edits.length)continue;
+    const viewport=transcriptViewport(root,false);
+    // All ranges exist before mutation. Native Range adjustment preserves
+    // prose endpoints through splitText; focusable live nodes are not replaced.
+    // A selection inside the replaced TeX follows ordinary DOM Range collapse.
+    for(const {range,output,text} of edits.reverse()){
+     range.deleteContents();range.insertNode(output);mathSources.set(output,text);
+    }
+    restoreTranscriptViewport(viewport);
+   }finally{stage.remove();}
+  }
+ })().catch(error=>{
+  pendingMath.clear();console.error('Transcript math unavailable',error);
+ }).finally(()=>{mathRendering=null;scheduleMath();});
+}
 window.revealMessage=id=>{const item=articles.get(id);if(item){item.querySelectorAll('details').forEach(x=>x.open=true);if(item.parentElement?.matches('details'))item.parentElement.open=true;item.scrollIntoView({block:'start'});}};
 function reconcileChildren(parent,children){
  for(let i=0;i<children.length;i++)if(parent.children[i]!==children[i])parent.insertBefore(children[i],parent.children[i]||null);
@@ -111,16 +192,37 @@ function renderMessage(m,expanded,article=document.createElement('article')){
  article.dataset.role=m.role==='user'?'user':'assistant';const role=document.createElement('b');role.className='role';role.textContent=m.role==='user'?'Вы':'Codex';article.append(role);
  const content=document.createElement('div');content.className='content';content.innerHTML=DOMPurify.sanitize(marked.parse(m.text),{ALLOWED_URI_REGEXP:/^(?:(?:https?|mailto|notebook):|[#/]|[^a-zA-Z])/,FORBID_TAGS:['img','iframe','form','input','button','style'],FORBID_ATTR:['style']});if(m.role==='user'&&m.text.length>900){const full=document.createElement('details');full.className='long-message';full.dataset.key='message:'+m.id;full.open=expanded.has(full.dataset.key);const preview=document.createElement('summary');const previewText=document.createElement('span');previewText.textContent=m.text.slice(0,180)+'…';preview.append(activityIcon('files'),previewText);full.append(preview);while(content.firstChild)full.append(content.firstChild);content.append(full);}if(m.role==='user'&&m.attachments?.length){const list=document.createElement('div');list.className='attachments';list.setAttribute('aria-label','Прикреплённые файлы');for(const name of m.attachments){const file=document.createElement('span'),label=document.createElement('span');file.className='attachment';label.textContent=name;file.append(activityIcon(/\.(png|jpe?g|gif|webp|heic)$/i.test(name)?'image':'files'),label);list.append(file);}content.prepend(list);}article.append(content);updateMessageActions(m,article);return article;
 }
-// Keep a human selection in a streamed message at the same rendered text offsets.
-// Unchanged messages keep their actual text nodes and need no reconstruction.
+// Rendered math is an opaque source span. Use its captured original text length
+// when a later streamed Markdown update rebuilds a body around selected prose.
+function* sourceTextNodes(node){
+ const math=mathSources.get(node);
+ if(math!==undefined){yield {node,text:math,math:true};return;}
+ if(node.nodeType===3){yield {node,text:node.data,math:false};return;}
+ for(const child of node.childNodes)yield* sourceTextNodes(child);
+}
+function sourceTextOffset(scope,node,offset){
+ let length=0,found=false,invalid=false;
+ const visit=current=>{
+  const math=mathSources.get(current);
+  if(math!==undefined){if(current===node||current.contains(node))invalid=true;else length+=math.length;return;}
+  if(current===node){
+   if(current.nodeType===3)length+=offset;
+   else for(const child of [...current.childNodes].slice(0,offset))for(const part of sourceTextNodes(child))length+=part.text.length;
+   found=true;return;
+  }
+  if(current.nodeType===3){length+=current.length;return;}
+  for(const child of current.childNodes){visit(child);if(found||invalid)break;}
+ };
+ visit(scope);return found&&!invalid?length:null;
+}
 function textSelection(dirty){
  const selection=window.getSelection?.();if(!selection||selection.isCollapsed)return null;
  const endpoint=(node,offset)=>{
   const item=(node.nodeType===1?node:node.parentElement)?.closest('article');
   if(!item)return null;
   const content=item.querySelector('.content'),scope=content?.contains(node)?content:item;
-  const range=document.createRange();range.selectNodeContents(scope);range.setEnd(node,offset);
-  return {id:item.dataset.itemId,content:scope===content,offset:range.toString().length};
+  const position=sourceTextOffset(scope,node,offset);if(position===null)return null;
+  return {id:item.dataset.itemId,content:scope===content,offset:position};
  };
  const anchor=endpoint(selection.anchorNode,selection.anchorOffset),focus=endpoint(selection.focusNode,selection.focusOffset);
  return anchor&&focus&&(dirty.has(anchor.id)||dirty.has(focus.id))?{anchor,focus,text:selection.toString()}:null;
@@ -130,8 +232,14 @@ function restoreTextSelection(saved){
  const endpoint=({id,content,offset})=>{
   const item=articles.get(id);if(!item)return null;
   const scope=content?item.querySelector('.content'):item;if(!scope)return null;
-  const walker=document.createTreeWalker(scope,NodeFilter.SHOW_TEXT);let node;
-  while(node=walker.nextNode()){if(offset<=node.length)return [node,offset];offset-=node.length;}
+  for(const {node,text,math} of sourceTextNodes(scope)){
+   if(offset<=text.length){
+    if(!math)return [node,offset];
+    if(offset!==0&&offset!==text.length)return null;
+    return [node.parentNode,[...node.parentNode.childNodes].indexOf(node)+(offset===text.length?1:0)];
+   }
+   offset-=text.length;
+  }
   return null;
  };
  const anchor=endpoint(saved.anchor),focus=endpoint(saved.focus);if(!anchor||!focus)return;
@@ -139,76 +247,73 @@ function restoreTextSelection(saved){
  // A changed prefix is not the same selection: never silently select other text.
  if(selection.toString()!==saved.text)selection.removeAllRanges();
 }
-window.updateMessages=function(update){
- pending.push(update);
- if(rendering)return rendering;
- rendering=(async()=>{
-  await MathJax.startup.promise;
-  while(pending.length){
-   const root=document.getElementById('messages');
-   let changed=false,latest,dirty=new Set(),controls=new Set();
-   for(const update of pending.splice(0)){
-    if(update.reset||update.conversation!==shownConversation){
-     changed=true;shownConversation=update.conversation;messagesByID.clear();dirty.clear();controls.clear();
-     MathJax.typesetClear([root]);root.replaceChildren();articles.clear();groups.clear();
-    }
-    for(const id of update.removed)messagesByID.delete(id);
-    for(const m of update.upserts){
-     const old=messagesByID.get(m.id);messagesByID.set(m.id,m);
-     if(old&&old.isTruncated!==m.isTruncated)controls.add(m.id);
-     if(!old||old.text!==m.text||old.role!==m.role||old.phase!==m.phase||
-       JSON.stringify(old.activity)!==JSON.stringify(m.activity)||JSON.stringify(old.attachments)!==JSON.stringify(m.attachments))dirty.add(m.id);
-    }
-    order=update.order;latest=update;
-   }
-   const {focus,work,turnStatuses}=latest;
-   const messages=order.map(id=>messagesByID.get(id));
-   if(messages.some(x=>!x))throw new Error('Incomplete transcript delta');
-   const follows=changed||!root.childElementCount||scrollY+innerHeight>=document.documentElement.scrollHeight-60;
-   const anchor=!changed&&[...root.querySelectorAll('article')].find(x=>{const r=x.getBoundingClientRect();return r.height>0&&r.bottom>0});
-   const position=anchor?{id:anchor.dataset.itemId,top:anchor.getBoundingClientRect().top}:null;
-   const expanded=new Set([...root.querySelectorAll('details[open]')].map(x=>x.dataset.key));
-   const selection=changed?null:textSelection(dirty);
-   const live=new Set(order),typeset=[];
-   for(const [id,article] of articles)if(!live.has(id)){MathJax.typesetClear([article]);article.remove();articles.delete(id);}
-   for(const id of controls)if(!dirty.has(id)&&articles.has(id))updateMessageActions(messagesByID.get(id),articles.get(id));
-   for(const m of messages)if(dirty.has(m.id)||!articles.has(m.id)){
-    const old=articles.get(m.id);if(old)MathJax.typesetClear([old]);
-    const article=renderMessage(m,expanded,old);articles.set(m.id,article);
-    if(!isWorkMessage(m))typeset.push(article);
-   }
-   const children=[],usedGroups=new Set();let activeWorkShown=false;
-   for(let i=0;i<messages.length;i++){
-    const m=messages[i];
-    if(!isWorkMessage(m)){children.push(articles.get(m.id));continue;}
-    let end=i;while(end+1<messages.length&&isWorkMessage(messages[end+1])&&messages[end+1].turnID===m.turnID)end++;
-    const items=messages.slice(i,end+1);
-    // Earlier history can extend this same work block. Its first message is
-    // not its DOM identity: retain the group that already owns a member.
-    let group=items.map(x=>articles.get(x.id).parentElement).find(node=>node&&groups.get(node.dataset.key)===node&&!usedGroups.has(node.dataset.key));
-    const key=group?.dataset.key??'work:'+m.id;usedGroups.add(key);
-    group??=groups.get(key);
-    if(!group){group=document.createElement('details');group.className='work';group.dataset.key=key;group.open=expanded.has(key);group.append(workHeading('',false));groups.set(key,group);}
-    const failed=items.some(x=>['failed','declined'].includes(x.activity?.status));
-    const active=work&&work.turnID===m.turnID&&end===messages.findLastIndex(x=>isWorkMessage(x)&&x.turnID===m.turnID);
-    const count=items.filter(x=>x.activity).length,word=count%10===1&&count%100!==11?'действие':count%10>=2&&count%10<=4&&(count%100<12||count%100>14)?'действия':'действий';
-    const status=turnStatuses[m.turnID],outcome=status==='interrupted'?'Остановлено':status==='failed'?'Есть ошибка':status==='completed'?'Выполнено':failed?'Есть ошибка':'Работа Codex';
-    const title=active?work.title:outcome+(count?' · '+count+' '+word:'');
-    const label=group.firstElementChild.querySelector('.work-label');
-    if(label.textContent!==title)label.textContent=title;label.dataset.running=String(!!(active&&work.running));
-    reconcileChildren(group,[group.firstElementChild,...items.map(x=>articles.get(x.id))]);children.push(group);
-    if(active)activeWorkShown=true;i=end;
-   }
-   for(const [key,group] of groups)if(!usedGroups.has(key)){group.remove();groups.delete(key);}
-   if(work&&!activeWorkShown){const status=document.createElement('div');status.className='work';status.append(workHeading(work.title,work.running,false));children.push(status);}
-   reconcileChildren(root,children);
-   if(typeset.length)await MathJax.typesetPromise(typeset);
-   restoreTextSelection(selection);
-   if(focus)window.revealMessage(focus);
-   else if(follows)scrollTo(0,document.documentElement.scrollHeight);
-   else if(position){const anchor=articles.get(position.id);if(anchor)scrollBy(0,anchor.getBoundingClientRect().top-position.top);}
-  }
- })().finally(()=>{rendering=null;});
- return rendering;
+function transcriptViewport(root,changed){
+ const follows=changed||!root.childElementCount||scrollY+innerHeight>=document.documentElement.scrollHeight-60;
+ const anchor=!changed&&[...root.querySelectorAll('article')].find(x=>{const r=x.getBoundingClientRect();return r.height>0&&r.bottom>0});
+ return {follows,position:anchor?{id:anchor.dataset.itemId,top:anchor.getBoundingClientRect().top}:null};
+}
+function restoreTranscriptViewport({follows,position}){
+ if(follows)scrollTo(0,document.documentElement.scrollHeight);
+ else if(position){const anchor=articles.get(position.id);if(anchor)scrollBy(0,anchor.getBoundingClientRect().top-position.top);}
+}
+window.updateMessages=async function(update){
+ const root=document.getElementById('messages');
+ let changed=false,dirty=new Set(),controls=new Set();
+ if(update.reset||update.conversation!==shownConversation){
+  changed=true;shownConversation=update.conversation;messagesByID.clear();dirty.clear();controls.clear();
+  pendingMath.clear();
+  root.replaceChildren();articles.clear();groups.clear();
+ }
+ for(const id of update.removed)messagesByID.delete(id);
+ for(const m of update.upserts){
+  const old=messagesByID.get(m.id);messagesByID.set(m.id,m);
+  if(old&&old.isTruncated!==m.isTruncated)controls.add(m.id);
+  if(!old||old.text!==m.text||old.role!==m.role||old.phase!==m.phase||
+    JSON.stringify(old.activity)!==JSON.stringify(m.activity)||JSON.stringify(old.attachments)!==JSON.stringify(m.attachments))dirty.add(m.id);
+ }
+ order=update.order;
+ const {focus,work,turnStatuses}=update;
+ const messages=order.map(id=>messagesByID.get(id));
+ if(messages.some(x=>!x))throw new Error('Incomplete transcript delta');
+ const viewport=transcriptViewport(root,changed);
+ const expanded=new Set([...root.querySelectorAll('details[open]')].map(x=>x.dataset.key));
+ const selection=changed?null:textSelection(dirty);
+ const live=new Set(order);
+ for(const [id,article] of articles)if(!live.has(id)){pendingMath.delete(article);article.remove();articles.delete(id);}
+ for(const id of controls)if(!dirty.has(id)&&articles.has(id))updateMessageActions(messagesByID.get(id),articles.get(id));
+ for(const m of messages)if(dirty.has(m.id)||!articles.has(m.id)){
+  const article=renderMessage(m,expanded,articles.get(m.id));articles.set(m.id,article);
+  pendingMath.delete(article);
+  if(!isWorkMessage(m))pendingMath.add(article);
+ }
+ const children=[],usedGroups=new Set();let activeWorkShown=false;
+ for(let i=0;i<messages.length;i++){
+  const m=messages[i];
+  if(!isWorkMessage(m)){children.push(articles.get(m.id));continue;}
+  let end=i;while(end+1<messages.length&&isWorkMessage(messages[end+1])&&messages[end+1].turnID===m.turnID)end++;
+  const items=messages.slice(i,end+1);
+  // Earlier history can extend this same work block. Its first message is
+  // not its DOM identity: retain the group that already owns a member.
+  let group=items.map(x=>articles.get(x.id).parentElement).find(node=>node&&groups.get(node.dataset.key)===node&&!usedGroups.has(node.dataset.key));
+  const key=group?.dataset.key??'work:'+m.id;usedGroups.add(key);
+  group??=groups.get(key);
+  if(!group){group=document.createElement('details');group.className='work';group.dataset.key=key;group.open=expanded.has(key);group.append(workHeading('',false));groups.set(key,group);}
+  const failed=items.some(x=>['failed','declined'].includes(x.activity?.status));
+  const active=work&&work.turnID===m.turnID&&end===messages.findLastIndex(x=>isWorkMessage(x)&&x.turnID===m.turnID);
+  const count=items.filter(x=>x.activity).length,word=count%10===1&&count%100!==11?'действие':count%10>=2&&count%10<=4&&(count%100<12||count%100>14)?'действия':'действий';
+  const status=turnStatuses[m.turnID],outcome=status==='interrupted'?'Остановлено':status==='failed'?'Есть ошибка':status==='completed'?'Выполнено':failed?'Есть ошибка':'Работа Codex';
+  const title=active?work.title:outcome+(count?' · '+count+' '+word:'');
+  const label=group.firstElementChild.querySelector('.work-label');
+  if(label.textContent!==title)label.textContent=title;label.dataset.running=String(!!(active&&work.running));
+  reconcileChildren(group,[group.firstElementChild,...items.map(x=>articles.get(x.id))]);children.push(group);
+  if(active)activeWorkShown=true;i=end;
+ }
+ for(const [key,group] of groups)if(!usedGroups.has(key)){group.remove();groups.delete(key);}
+ if(work&&!activeWorkShown){const status=document.createElement('div');status.className='work';status.append(workHeading(work.title,work.running,false));children.push(status);}
+ reconcileChildren(root,children);
+ restoreTextSelection(selection);
+ if(focus)window.revealMessage(focus);
+ else restoreTranscriptViewport(viewport);
+ scheduleMath();
 };
 </script></body></html>

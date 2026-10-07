@@ -1,6 +1,7 @@
 import type { Camera, Frame, PanelElement, PanelSelection, PanelSnapshot, PanelView, Point } from './model.js';
 import type { WorldPoint } from '../src/domain.js';
 import { TILE_SIZE } from '../src/spatial.js';
+import { panelProjection } from './projection.js';
 
 const NS='http://www.w3.org/2000/svg';
 const zero:WorldPoint={tileX:0,tileY:0,localX:0,localY:0};
@@ -83,7 +84,8 @@ export class Surface {
   }
   private useful(snapshot:PanelSnapshot):boolean{
     const previous=this.accepted?.snapshot;
-    if(!previous||previous.target.kind!==snapshot.target.kind||previous.target.id!==snapshot.target.id
+    if(!previous||previous.workspaceID!==snapshot.workspaceID||previous.socketKey!==snapshot.socketKey
+      ||previous.target.kind!==snapshot.target.kind||previous.target.id!==snapshot.target.id
       ||previous.appearance?.sourceRevision!==snapshot.appearance?.sourceRevision)return true;
     const width=this.svg.clientWidth/this.camera.scale,height=this.svg.clientHeight/this.camera.scale;
     const coverage=(value:PanelSnapshot)=>{
@@ -96,7 +98,31 @@ export class Surface {
       return Math.max(0,Math.min(this.camera.x+width,left+w)-Math.max(this.camera.x,left))
         *Math.max(0,Math.min(this.camera.y+height,top+h)-Math.max(this.camera.y,top));
     };
-    return coverage(snapshot)+width*height*1e-6>=coverage(previous);
+    const priorCoverage=coverage(previous),nextCoverage=coverage(snapshot),tolerance=width*height*1e-6;
+    if(nextCoverage+tolerance<priorCoverage)return false;
+    if(nextCoverage>priorCoverage+tolerance)return true;
+    // Equal visible coverage should preserve useful pixels, while zoom-out
+    // may retire excess density. Read the current display, not the late reply.
+    const desired=panelProjection(this.svg.clientWidth,this.svg.clientHeight,
+      this.svg.ownerDocument.defaultView?.devicePixelRatio??1,{center:zero,scale:this.camera.scale},true);
+    const density=desired.camera!.scale*desired.pixelScale;
+    const adequacy=(value:PanelSnapshot)=>{
+      let quality=1;
+      for(const layer of value.appearance!.layers){
+        if(layer.repeatSize)continue;
+        if(!validFrame(layer.frame)||!validPoint(layer.worldOrigin))return 1;
+        const origin=delta(layer.worldOrigin,previous.worldOrigin??zero),f=layer.frame,x=origin.x+f.x,y=origin.y+f.y;
+        if(x>=this.camera.x+width||y>=this.camera.y+height||x+f.width<=this.camera.x||y+f.height<=this.camera.y)continue;
+        const pixels=Math.min(layer.pixelWidth/f.width,layer.pixelHeight/f.height);
+        if(!Number.isFinite(pixels)||pixels<=0)return 1; // Preparation reports malformed material.
+        quality=Math.min(quality,pixels/density);
+      }
+      return quality;
+    };
+    // Preserve an already sharp, covering cohort. An inadequate prior must
+    // still admit the current bounded reply so covers() records that attempt.
+    return adequacy(previous)<.995||!this.covers({anchor:previous.worldOrigin??zero,
+      region:{x:this.camera.x,y:this.camera.y,width,height}},desired)||adequacy(snapshot)>=.995;
   }
   async prepare(snapshot:PanelSnapshot,view:PanelView):Promise<boolean>{
     if(this.disposed)return false;
@@ -113,8 +139,8 @@ export class Surface {
   private async prepareCandidate(snapshot:PanelSnapshot,view:PanelView,generation:number):Promise<boolean>{
     const a=snapshot.appearance;
     if(a?.status!=='ready')throw new Error('Notebook ещё готовит изображение поверхности.');
-    if(!this.useful(snapshot))return false;
     if(a.layers.length>96)throw new Error('Слишком большая область. Приблизьте нужный участок.');
+    if(!this.useful(snapshot))return false;
     const assets=new Map<string,Asset>(),decode:Promise<void>[]=[];let encoded=0,pixels=0;
     try{
       for(const layer of a.layers){
@@ -167,17 +193,21 @@ export class Surface {
         }
         fragment.append(group);
       }
-      for(const card of snapshot.cards){
+      // Native geometry supplies every card in painter order, including covers
+      // merged into a tile. Pixel separation cannot change selection priority.
+      for(const [index,card] of snapshot.cards.entries()){
         if(!card.frame||!validFrame(card.frame))continue;
         const selection:PanelSelection={kind:'item',id:card.item.id},id=key(selection),offset=delta(card.worldOrigin??origin,origin);
         const frame={...card.frame,x:card.frame.x+offset.x,y:card.frame.y+offset.y};frames.set(id,frame);
-        hits.set(id,{selection,frame,label:card.item.title||'Без названия',editable:card.editable===true&&!!card.source&&groups.has(id),order:orders.get(id)??cardOrder});
+        hits.set(id,{selection,frame,label:card.item.title||'Без названия',editable:card.editable===true&&!!card.source&&groups.has(id),order:cardOrder+index});
       }
       for(const element of snapshot.elements){
         if((element.appearance as {state?:string}|undefined)?.state==='erased'||element.source.graphic?.visible===false)continue;
         const selection:PanelSelection={kind:'element',id:element.source.id},id=key(selection),frame=frames.get(id)??sourceFrame(element,origin);
         if(!validFrame(frame))continue;frames.set(id,frame);
-        hits.set(id,{selection,frame,label:element.source.kind==='nativeText'?element.source.source:String(element.source.graphic?.label??element.source.kind),
+        const label=(element.source.kind==='nativeText'?element.source.source:String(element.source.graphic?.label??element.source.kind)).trim()
+          ||(element.source.kind==='nativeText'?'Текст':'Фигура');
+        hits.set(id,{selection,frame,label,
           editable:groups.has(id)&&editable(element)&&!snapshot.unsupportedElements.some(value=>value.id===selection.id),order:orders.get(id)??-1});
       }
       this.discardPrepared();this.prepared={snapshot,fragment,assets,groups,frames,hits,backdrop,view:{...view,camera:a.camera}};return true;

@@ -1382,7 +1382,8 @@ struct SpatialWorkspaceView: View {
       // The reference is a requested destination. A camera settlement cannot
       // publish it as the native page before its physical landing.
       let actualPage = model.presence?.focusedItemID == itemID ? model.presence?.documentPageIndex ?? 0 : 0
-      animateSettlement(to:.init(boardID:boardID,mode:mode,camera:.init(center:center,scale:mode == .cover ? geometry.coverScale(viewport:viewport) : geometry.fitScale(viewport:viewport)),
+      let cameraGeometry = mode == .document ? model.documentGeometry(itemID, page: actualPage) : geometry
+      animateSettlement(to:.init(boardID:boardID,mode:mode,camera:.init(center:center,scale:mode == .cover ? cameraGeometry.coverScale(viewport:viewport) : cameraGeometry.fitScale(viewport:viewport)),
         viewport:viewport,focusedItemID:itemID,openProgress:mode == .cover ? 0 : 1,documentPageIndex:mode == .document ? actualPage : pageIndex),duration:0.3,
         navigationID: reference.id) { model.completeShow(reference) }
       if target.kind == .document {

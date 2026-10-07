@@ -4,6 +4,33 @@ import NotebookCore
 
 /// Pins accepted vector content, never a screenshot or a visibility mask.
 enum NotebookLassoInkSource: Sendable {
+  struct Snapshot:Sendable {
+    let task:Task<Prepared?,Error>?
+    let source:NotebookLassoInkSource
+    let excluded:Set<UUID>
+    var value:Prepared? {get async throws {try await task?.value}}
+  }
+  var retainedPayloadBytes:Int? {
+    switch self {
+    case .paper(let page,let excluded):
+      guard page.preparedDrawing != nil else {return nil}
+      return page.retainedPayloadBytes.map {$0+excluded.count*64}
+    case .spatial(let journal,let excluded,_):return journal.retainedPayloadBytes+excluded.count*64
+    }
+  }
+  func regionCapture(polygon:[SpatialPoint],surface:SurfaceID,origin:WorldPoint?,elements:Set<String>,
+    excluding:Set<UUID>) throws ->NotebookInkRegionCapture? {
+    let area=polygon.reduce(CGRect.null) {$0.union(.init(x:$1.x,y:$1.y,width:0,height:0))}
+    let origin=origin ?? .zero
+    guard !area.isNull,[area.minX,area.minY,area.width,area.height].allSatisfy(\.isFinite) else {throw CancellationError()}
+    let bounds=WorkspaceSpatialBounds(origin:origin.offsetBy(x:area.minX,y:area.minY),width:area.width,height:area.height)
+    switch self {
+    case .paper(let page,let suppressed):return try page.regionCapture(in:bounds,elements:elements,
+      excluding:excluding.union(suppressed),maximumCount:NotebookLassoQuery.maximumCandidates)
+    case .spatial(let journal,let suppressed,_):return try journal.regionCapture(on:surface,in:bounds,elements:elements,
+      excluding:excluding.union(suppressed),maximumCount:NotebookLassoQuery.maximumCandidates)
+    }
+  }
   case paper(PageInkSource, Set<UUID>)
   static func page(_ page:PageDocument) -> Self {
     .paper(page.inkSource,page.graphicPresentation.suppressedInkIDs)
@@ -135,6 +162,12 @@ enum NotebookLassoInkSource: Sendable {
     private let excluded: Set<UUID>
     fileprivate let pageCursor:PageInkDrawing.ActionCursor?
     private let readSetSource:NotebookLassoInkSource?
+    convenience init(capture:NotebookInkRegionCapture,revision:String,surface:SurfaceID,origin:WorldPoint?,excluding:Set<UUID>) throws {
+      let entries=capture.contacts.map {Entry(id:$0.id,tool:$0.tool,color:$0.color,
+        sources:$0.sources,allowsWholeContact:$0.allowsWholeContact)}
+      try self.init(revision:revision,entries:entries,surface:surface,origin:origin,
+        excluding:excluding.intersection(Set(capture.contacts.map(\.id))))
+    }
     // Changing presentation claims must not rebuild unchanged measured source.
     func excluding(_ ids: Set<UUID>) -> Prepared {
       ids == excluded ? self : Prepared(reusing:self,excluding:ids)

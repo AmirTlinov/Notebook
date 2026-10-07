@@ -1,0 +1,19 @@
+{
+  "executed": [
+    "NotebookMacTests/NotebookArchiveLaunchTests/testRuntimeBootstrapAndCreateRetryKeepTheAcceptedOwnerAndWorkspaceAddress",
+    "NotebookMacTests/NotebookCommandReaderTests/testPanelReadRefusalAndCancellationKeepTheAcceptedWriteTailUsable",
+    "NotebookMacTests/NotebookPanelPageContentTests/testPagePublicationRefreshesPresenceAndMembershipChangedDuringNativePreparation",
+    "NotebookMacTests/NotebookPanelPageContentTests/testPagePublicationRejectsSourceChangedDuringNativePreparation",
+    "NotebookMacTests/NotebookPanelPresentationTests/testForegroundPanelSurvivesPeerInputDuringQueuedCaptureAndKeepsLocalFence"
+  ],
+  "failed": [],
+  "format": 1,
+  "planned": [
+    "NotebookMacTests/NotebookArchiveLaunchTests/testRuntimeBootstrapAndCreateRetryKeepTheAcceptedOwnerAndWorkspaceAddress",
+    "NotebookMacTests/NotebookCommandReaderTests/testPanelReadRefusalAndCancellationKeepTheAcceptedWriteTailUsable",
+    "NotebookMacTests/NotebookPanelPageContentTests/testPagePublicationRefreshesPresenceAndMembershipChangedDuringNativePreparation",
+    "NotebookMacTests/NotebookPanelPageContentTests/testPagePublicationRejectsSourceChangedDuringNativePreparation",
+    "NotebookMacTests/NotebookPanelPresentationTests/testForegroundPanelSurvivesPeerInputDuringQueuedCaptureAndKeepsLocalFence"
+  ],
+  "skipped": []
+}

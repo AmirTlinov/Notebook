@@ -20,7 +20,7 @@ test("sidecar bundle initializes and exposes shared content tools without node_m
       child.stdin.write(JSON.stringify({jsonrpc:"2.0",method:"notifications/initialized"})+"\n");
       child.stdin.write(JSON.stringify({jsonrpc:"2.0",id:2,method:"tools/list"})+"\n");
       const names = JSON.parse((await iterator.next()).value!).result.tools.map((tool:{name:string})=>tool.name);
-      assert.deepEqual(names.sort(),["notebook_context","notebook_execute","notebook_import_document","notebook_import_document_resource","notebook_import_program","notebook_open","notebook_panel_edit","notebook_panel_presentation","notebook_panel_undo"]);
+      assert.deepEqual(names.sort(),["notebook_context","notebook_execute","notebook_import_document","notebook_import_document_resource","notebook_import_program","notebook_open","notebook_panel_connect","notebook_panel_edit","notebook_panel_presentation","notebook_panel_undo","notebook_panel_workspace"]);
       child.stdin.write(JSON.stringify({jsonrpc:"2.0",id:3,method:"resources/read",params:{uri:"ui://notebook/workspace.html"}})+"\n");
       const panel=JSON.parse((await iterator.next()).value!).result.contents[0];
       assert.equal(panel.mimeType,"text/html;profile=mcp-app");

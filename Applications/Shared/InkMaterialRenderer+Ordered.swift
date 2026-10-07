@@ -101,17 +101,18 @@ extension InkMaterialRenderer {
       clip = .init(mask:mask,size:size,projection:projection,buffer:buffer,count:polygon.count,reservation:reservation)
     }
     func prepare(camera:SpatialCamera?,viewport:SpatialPoint,region:CGRect,pixels:CGSize,device:any MTLDevice,resources:SceneRenderResources,
-      owner:ScenePhysicalOwnerLease?,extraCuts:[InkElementErasure] = []) throws -> (event:InkRasterRenderer.OrderedEvent,reservations:[RasterReservation]) {
+      owner:ScenePhysicalOwnerLease?,extraCuts:[InkElementErasure] = [],damage:CGRect? = nil) throws -> (event:InkRasterRenderer.OrderedEvent,reservations:[RasterReservation]) {
       guard let clip else {throw SceneRenderError.snapshotPending("ink_region_mask")}
       let size=CGSize(width:source.layout.frame.width,height:source.layout.frame.height)
       let position=camera.map { $0.worldToScreen(source.layout.origin.offsetBy(x:source.layout.frame.x,y:source.layout.frame.y),viewport:viewport) }
         ?? .init(x:source.layout.frame.x,y:source.layout.frame.y)
       let scale=camera?.scale ?? 1
       let local=CGRect(x:(region.minX-position.x)/scale,y:(region.minY-position.y)/scale,width:region.width/scale,height:region.height/scale)
-      let b=try body.prepareDraws(region:local,sourceSize:size,pixels:pixels,device:device,resources:resources,owner:owner)
+      let localDamage=damage.map{CGRect(x:($0.minX-position.x)/scale,y:($0.minY-position.y)/scale,width:$0.width/scale,height:$0.height/scale)}
+      let b=try body.prepareDraws(region:local,sourceSize:size,pixels:pixels,device:device,resources:resources,owner:owner,damage:localDamage)
       cuts.update(.init(freehand:nil,erasures:source.erasures+extraCuts.filter{!source.erasures.contains($0)},
         transform:source.graphic.transform,layout:source.layout,mask:source.graphic.mask))
-      let c=try cuts.prepareDraws(region:local,sourceSize:size,pixels:pixels,device:device,resources:resources,owner:owner)
+      let c=try cuts.prepareDraws(region:local,sourceSize:size,pixels:pixels,device:device,resources:resources,owner:owner,damage:localDamage)
       func project(_ draw:InkRasterRenderer.Draw)->InkRasterRenderer.Draw {
         .init(buffer:draw.buffer,offset:draw.offset,count:draw.count,flags:draw.flags,color:draw.color,
           affine:.init(x:draw.affine.x*Float(scale),y:draw.affine.y*Float(scale)),

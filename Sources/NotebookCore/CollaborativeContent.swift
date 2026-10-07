@@ -283,22 +283,31 @@ public struct CollaborativeContent: Codable, Equatable, Sendable {
     stamp: VersionStamp, human: Bool) {
     let a = contentFields(before), b = contentFields(after)
     guard a != b else { return }
+    var adopted: Set<String> = []
     for key in Set(a.keys).union(b.keys) {
       let previous = fields[key] ?? .init(stamp: beforeStamp, human: true)
+      let changed = a[key] != b[key]
       if let exists = memberExistenceField(key), a[exists] == .bool(true), b[exists] == nil {
         fields[key] = previous.retainingValue(a[key])
-      } else if a[key] != b[key] {
+      } else if changed {
         fields[key] = .init(stamp: stamp, human: human, previous: previous)
       } else if fields[key] == nil { fields[key] = previous }
+      if changed, b[key] != nil {
+        // Each changed address names its own existence ancestors. Discover
+        // them here rather than searching every flat field for every member.
+        var prefix = key[...]
+        while let slash = prefix.lastIndex(of: "/") {
+          let exists = String(prefix[...slash]) + "exists"
+          if b[exists] != nil { adopted.insert(exists) }
+          prefix = prefix[..<slash]
+        }
+      }
     }
     // A hand editing a member also adopts its existence. A concurrent removal
     // then leaves that complete member available rather than a partial object.
-    for key in b.keys where key.hasSuffix("/exists") {
-      let prefix = String(key.dropLast("exists".count))
-      if b.keys.contains(where: { $0.hasPrefix(prefix) && a[$0] != b[$0] }) {
-        fields[key] = .init(stamp: stamp, human: human,
-          previous: fields[key] ?? .init(stamp: beforeStamp, human: true))
-      }
+    for key in adopted {
+      fields[key] = .init(stamp: stamp, human: human,
+        previous: fields[key] ?? .init(stamp: beforeStamp, human: true))
     }
   }
 
@@ -403,33 +412,51 @@ func contentFields(_ value: JSONValue) -> [String: JSONValue] {
   return result
 }
 
+/// A reconstruction-local body, discarded after the resolved snapshot is
+/// materialized. Causal versions and retained alternatives stay in fields.
+private struct ContentMemberBody {
+  var exists = false
+  var values: [String: JSONValue] = [:]
+  var graphic: [String: JSONValue] = [:]
+  var connection: [String: JSONValue] = [:]
+
+  mutating func include(_ field: String, value: JSONValue) {
+    if field == "exists" { exists = value == .bool(true) }
+    else if field == "content" {
+      for (part, value) in value.object { values[part] = value }
+    } else if field.hasPrefix("graphic/connection/") {
+      connection[String(field.dropFirst("graphic/connection/".count))] = value
+    } else if field.hasPrefix("graphic/") {
+      graphic[String(field.dropFirst("graphic/".count))] = value
+    } else { values[field] = value }
+  }
+
+  var value: JSONValue {
+    var result = values, graphic = graphic
+    if !connection.isEmpty { graphic["connection"] = .object(connection) }
+    if !graphic.isEmpty { result["graphic"] = .object(graphic) }
+    return .object(result)
+  }
+}
+
 private func rebuildContent(base: JSONValue, fields: [String: JSONValue]) -> JSONValue {
-  var result = base
+  var members: [String: [String: ContentMemberBody]] = [:]
+  for (key, value) in fields {
+    let parts = key.split(separator: "/", maxSplits: 2, omittingEmptySubsequences: false)
+    guard parts.count == 3, parts[0] == "elements" || parts[0] == "files" else { continue }
+    members[String(parts[0]), default: [:]][String(parts[1]), default: .init()]
+      .include(String(parts[2]), value: value)
+  }
+  // Detach the root dictionary once, including snapshots with many scalars.
+  var result = base.object
   for name in base.object.keys where !["collaboration", "stamp", "agentStamp", "contentStamp", "drawingStamp", "drawingData", "format", "id", "size", "paperSize", "placements"].contains(name) {
     if ["elements", "files"].contains(name) {
-      let prefix = fieldKey([name]) + "/"
-      let existing = fields.keys.filter { $0.hasPrefix(prefix) && $0.hasSuffix("/exists") && fields[$0] == .bool(true) }
-      let ids = existing.map { String($0.dropFirst(prefix.count).dropLast("/exists".count)) }
+      let collection = members[name] ?? [:]
+      let ids = collection.compactMap { $0.value.exists ? $0.key : nil }
       let preferred = fields[fieldKey([name, "order"])]?.array.compactMap(\.string) ?? []
       let order = contentMemberOrder(preferred: preferred, escapedMembers: ids)
-      let items: [JSONValue] = order.map { id in
-        let memberPrefix = fieldKey([name, id]) + "/"
-        var object: [String: JSONValue] = [:]
-        for (key, val) in fields where key.hasPrefix(memberPrefix) {
-          let field = String(key.dropFirst(memberPrefix.count))
-          if field == "content" {
-            for (part, value) in val.object { object[part] = value }
-          }
-          else if field.hasPrefix("graphic/") {
-            let parts = field.dropFirst(8).components(separatedBy: "/").map(CollaborationPathComponent.field)
-            object["graphic"] = (object["graphic"] ?? .object([:])).setting(at: parts[...], to: val)
-          }
-          else if field != "exists" { object[field] = val }
-        }
-        return .object(object)
-      }
-      result = result.setting(name, .array(items))
-    } else if let value = fields[fieldKey([name])] { result = result.setting(name, value) }
+      result[name] = .array(order.compactMap { collection[fieldKey([$0])]?.value })
+    } else if let value = fields[fieldKey([name])] { result[name] = value }
   }
-  return result
+  return .object(result)
 }

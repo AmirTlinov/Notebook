@@ -1,0 +1,217 @@
+{
+  "date": "2026-10-07",
+  "issue": "GUI-315",
+  "scenario": "NotebookDocumentLifecycleUITests/testColdCoverOpeningFitsCustomPaperAndPreservesReadingZoom",
+  "device": {
+    "architecture": "arm64e",
+    "deviceId": "00008103-001E059934D9001E",
+    "deviceName": "iPad (Елизавета)",
+    "modelName": "iPad Pro (11-inch) (3rd generation)",
+    "osBuildNumber": "24A435",
+    "osVersion": "27.0",
+    "platform": "iOS"
+  },
+  "scope": [
+    "Fresh source forces cold canonical preparation",
+    "Custom 900 by 600 bp page fits one full viewport dimension, preserving 3:2 and centered margins",
+    "Portrait to landscape to portrait",
+    "Three immediate close/reopen cycles",
+    "Real synthesized pinch followed by close/reopen preserves the full accepted paper width, height and center"
+  ],
+  "runs": [
+    {
+      "run": "v9",
+      "sourceAggregateSHA256": "a6c8693e9bfccf494d94ded4031bfed8421201d4f515b1e097543b53d48d35c8",
+      "summary": {
+        "path": ".build/product-quality-ui-20261007-v9/ui-summary.json",
+        "sha256": "5f55a9b3fca5aac72ff44ddde6c9ca097d1ccf54e8113531e77003eca9867026"
+      },
+      "tests": {
+        "path": ".build/product-quality-ui-20261007-v9/ui-tests.json",
+        "sha256": "3b2974322179f36ef967c13b99b29db82dec3fbca7f4673a114af5135ed8a625"
+      },
+      "result": "Failed",
+      "passed": 0,
+      "failed": 1,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "failures": [
+        {
+          "failureText": "XCTAssertLessThan failed: (\"1528.2978185622796\") is not less than (\"1192.0\")",
+          "targetName": "NotebookUITests",
+          "testIdentifier": 1,
+          "testIdentifierString": "NotebookDocumentLifecycleUITests/testColdCoverOpeningFitsCustomPaperAndPreservesReadingZoom()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookUITests/NotebookDocumentLifecycleUITests/testColdCoverOpeningFitsCustomPaperAndPreservesReadingZoom",
+          "testName": "testColdCoverOpeningFitsCustomPaperAndPreservesReadingZoom()"
+        }
+      ],
+      "startTime": 1791372805.505,
+      "finishTime": 1791372860.934,
+      "changedSourcePathsFromV8": []
+    },
+    {
+      "run": "v10",
+      "sourceAggregateSHA256": "6e66d54d2a2cbe3415f6d4f919e330d33d679976c011dc1cc525a636e41bbd7d",
+      "summary": {
+        "path": ".build/product-quality-ui-20261007-v10/ipad-summary.json",
+        "sha256": "5d4c5ed9f133ccafd8da160d0db5cc377bbd9a3860ce364625385ceca8e4c0c5"
+      },
+      "tests": {
+        "path": ".build/product-quality-ui-20261007-v10/ipad-tests.json",
+        "sha256": "abd587f522fe6749cb57f9bf60b4efeea61c5fec1b124c54de24a36a6f161f9e"
+      },
+      "result": "Passed",
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "failures": [],
+      "startTime": 1791373932.505,
+      "finishTime": 1791373997.485,
+      "sourceBeforeAfterEqual": true,
+      "changedSourcePathsFromV8": [
+        "Applications/UITests/NotebookDocumentLifecycleUITests.swift"
+      ]
+    },
+    {
+      "run": "v11",
+      "sourceAggregateSHA256": "bf84bdc5ce673b5d1e5b90335bc949b2017eb5f9dcd645a2fcb171dbada5d473",
+      "summary": {
+        "path": ".build/product-quality-ui-20261007-v11/ipad-summary.json",
+        "sha256": "330557fc3c6a6847ec73268257e542998803bf9d4bd81e4b3d424b1b3d37a390"
+      },
+      "tests": {
+        "path": ".build/product-quality-ui-20261007-v11/ipad-tests.json",
+        "sha256": "94fb007f7cebac12b9e0a756ac982499763198cf63ac055e6884c2860d44b7dc"
+      },
+      "result": "Passed",
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "failures": [],
+      "startTime": 1791374535.358,
+      "finishTime": 1791374601.414,
+      "sourceBeforeAfterEqual": true,
+      "changedSourcePathsFromV8": [
+        "Applications/UITests/NotebookDocumentLifecycleUITests.swift"
+      ],
+      "attachments": [
+        {
+          "name": "custom-paper-reopened-at-reading-zoom",
+          "path": ".build/product-quality-ui-20261007-v11/attachments/F3BD9B06-6296-4AC4-9BCC-CB4D6F15B471.png",
+          "sha256": "c104d2824ab6b6b349e7336642e2a43afa76fd840c732f638bdf1d23943fece4"
+        },
+        {
+          "name": "custom-paper-reopened-at-reading-zoom-geometry",
+          "path": ".build/product-quality-ui-20261007-v11/attachments/5A461908-4F92-4ABD-B69F-340636AD9B7A.txt",
+          "sha256": "31a7b5ef7ce6834f7a8d819efe070d5ef6aa6895f8f0df8262ccb96dd963acd9",
+          "geometry": "application=(0.0, 0.0, 834.0, 1194.0), window=(0.0, 0.0, 834.0, 1194.0), paper=(-772.9417910153371, -87.58137197073735, 2292.4467278434195, 1528.2978185622796), deviceOrientation=1, imageSize=(834.0, 1194.0), imageScale=2.0, imageOrientation=0"
+        },
+        {
+          "name": "custom-paper-zoomed",
+          "path": ".build/product-quality-ui-20261007-v11/attachments/BFEECEC2-C365-4422-A786-5E7E55ACB21C.png",
+          "sha256": "c104d2824ab6b6b349e7336642e2a43afa76fd840c732f638bdf1d23943fece4"
+        },
+        {
+          "name": "custom-paper-zoomed-geometry",
+          "path": ".build/product-quality-ui-20261007-v11/attachments/AF62C9AE-CF55-469D-8C64-8B43D0B4CC9F.txt",
+          "sha256": "31a7b5ef7ce6834f7a8d819efe070d5ef6aa6895f8f0df8262ccb96dd963acd9",
+          "geometry": "application=(0.0, 0.0, 834.0, 1194.0), window=(0.0, 0.0, 834.0, 1194.0), paper=(-772.9417910153371, -87.58137197073735, 2292.4467278434195, 1528.2978185622796), deviceOrientation=1, imageSize=(834.0, 1194.0), imageScale=2.0, imageOrientation=0"
+        },
+        {
+          "name": "custom-paper-immediate-reopen-3",
+          "path": ".build/product-quality-ui-20261007-v11/attachments/8DE805FA-A9D1-4179-9FCD-8654F00ED3F2.png",
+          "sha256": "b619bc859b409a3e43e6ce3a297684333f8b437f20a21a57157d6338be4cd1e9"
+        },
+        {
+          "name": "custom-paper-immediate-reopen-3-geometry",
+          "path": ".build/product-quality-ui-20261007-v11/attachments/FE0C20EE-6639-4CD6-B507-ABFB88CCDECC.txt",
+          "sha256": "0a90205e9d37b46b8b7df7f7c01d9dac47da23566d30b0ac26874e7df3066103",
+          "geometry": "application=(0.0, 0.0, 834.0, 1194.0), window=(0.0, 0.0, 834.0, 1194.0), paper=(-5.684341886080803e-14, 319.00000000000006, 834.0000000000002, 556.0000000000002), deviceOrientation=1, imageSize=(834.0, 1194.0), imageScale=2.0, imageOrientation=0"
+        },
+        {
+          "name": "custom-paper-immediate-reopen-2",
+          "path": ".build/product-quality-ui-20261007-v11/attachments/4D830948-933E-4858-AB55-919E95774286.png",
+          "sha256": "b619bc859b409a3e43e6ce3a297684333f8b437f20a21a57157d6338be4cd1e9"
+        },
+        {
+          "name": "custom-paper-immediate-reopen-2-geometry",
+          "path": ".build/product-quality-ui-20261007-v11/attachments/2DED7CBF-4662-4F2C-A5ED-F5A228FE7411.txt",
+          "sha256": "0a90205e9d37b46b8b7df7f7c01d9dac47da23566d30b0ac26874e7df3066103",
+          "geometry": "application=(0.0, 0.0, 834.0, 1194.0), window=(0.0, 0.0, 834.0, 1194.0), paper=(-5.684341886080803e-14, 319.00000000000006, 834.0000000000002, 556.0000000000002), deviceOrientation=1, imageSize=(834.0, 1194.0), imageScale=2.0, imageOrientation=0"
+        },
+        {
+          "name": "custom-paper-immediate-reopen-1",
+          "path": ".build/product-quality-ui-20261007-v11/attachments/CBF5FBCD-750F-40FA-A9CB-E89B58A7B6E3.png",
+          "sha256": "b619bc859b409a3e43e6ce3a297684333f8b437f20a21a57157d6338be4cd1e9"
+        },
+        {
+          "name": "custom-paper-immediate-reopen-1-geometry",
+          "path": ".build/product-quality-ui-20261007-v11/attachments/CB97A21E-F2CD-49D5-9B40-91049F813B9D.txt",
+          "sha256": "0a90205e9d37b46b8b7df7f7c01d9dac47da23566d30b0ac26874e7df3066103",
+          "geometry": "application=(0.0, 0.0, 834.0, 1194.0), window=(0.0, 0.0, 834.0, 1194.0), paper=(-5.684341886080803e-14, 319.00000000000006, 834.0000000000002, 556.0000000000002), deviceOrientation=1, imageSize=(834.0, 1194.0), imageScale=2.0, imageOrientation=0"
+        },
+        {
+          "name": "custom-paper-portrait-return",
+          "path": ".build/product-quality-ui-20261007-v11/attachments/2E3ECC8B-C5B7-4CE7-857A-BA53011A2185.png",
+          "sha256": "b619bc859b409a3e43e6ce3a297684333f8b437f20a21a57157d6338be4cd1e9"
+        },
+        {
+          "name": "custom-paper-portrait-return-geometry",
+          "path": ".build/product-quality-ui-20261007-v11/attachments/6BF2AFBA-1E91-425E-9129-C0A05711D244.txt",
+          "sha256": "0a90205e9d37b46b8b7df7f7c01d9dac47da23566d30b0ac26874e7df3066103",
+          "geometry": "application=(0.0, 0.0, 834.0, 1194.0), window=(0.0, 0.0, 834.0, 1194.0), paper=(-5.684341886080803e-14, 319.00000000000006, 834.0000000000002, 556.0000000000002), deviceOrientation=1, imageSize=(834.0, 1194.0), imageScale=2.0, imageOrientation=0"
+        },
+        {
+          "name": "custom-paper-landscape",
+          "path": ".build/product-quality-ui-20261007-v11/attachments/C3673006-BEF3-40E5-9D3D-7711E55D1D9E.png",
+          "sha256": "368ecda7efc0a4bba3e2baa6595c60ddbcc66920574cdc3c7f4b228043d218c6"
+        },
+        {
+          "name": "custom-paper-landscape-geometry",
+          "path": ".build/product-quality-ui-20261007-v11/attachments/A2F2ED54-A501-4065-9E0E-77101EEAA946.txt",
+          "sha256": "e33ca4841e3d6610a5090df72581cb458e7550ff30dccbb9240f3f0dd1ef6517",
+          "geometry": "application=(0.0, 0.0, 1194.0, 834.0), window=(0.0, 0.0, 1194.0, 834.0), paper=(0.0, 19.0, 1194.0, 796.0), deviceOrientation=3, imageSize=(1194.0, 834.0), imageScale=2.0, imageOrientation=2"
+        },
+        {
+          "name": "custom-paper-first-cold-cover-opening",
+          "path": ".build/product-quality-ui-20261007-v11/attachments/6133090D-AA98-4C57-BBA8-462DDC77C3CB.png",
+          "sha256": "b619bc859b409a3e43e6ce3a297684333f8b437f20a21a57157d6338be4cd1e9"
+        },
+        {
+          "name": "custom-paper-first-cold-cover-opening-geometry",
+          "path": ".build/product-quality-ui-20261007-v11/attachments/1FD04BDB-3B92-4DD8-B59F-7B36050F8683.txt",
+          "sha256": "0a90205e9d37b46b8b7df7f7c01d9dac47da23566d30b0ac26874e7df3066103",
+          "geometry": "application=(0.0, 0.0, 834.0, 1194.0), window=(0.0, 0.0, 834.0, 1194.0), paper=(-5.684341886080803e-14, 319.00000000000006, 834.0000000000002, 556.0000000000002), deviceOrientation=1, imageSize=(834.0, 1194.0), imageScale=2.0, imageOrientation=0"
+        }
+      ]
+    }
+  ],
+  "initialOracleFailure": {
+    "reason": "Requested XCTest scale is applied after recognition movement; raw synthesized down-to-lift separation is 2.8212187581180754. The original expectation that enlarged paper remain shorter than the viewport was invalid. Production gesture implementation was unchanged.",
+    "analysis": {
+      "path": ".build/product-quality-ui-20261007-v9/pinch-event-analysis.json",
+      "sha256": "7131ca1e6dc08be8ee2551226cbc73202d3a0e01e1e7d95b657f378824fdd778"
+    },
+    "synthesizedDownToLiftRatio": 2.8212187581180754
+  },
+  "captureRepair": {
+    "reason": "XCUIApplication.screenshot produced orientation/crop artifacts after rotation; screen video showed a complete stable landscape. Capture now uses XCUIScreen.main and records image/window/paper geometry.",
+    "productSourceChanged": false,
+    "video": {
+      "path": ".build/product-quality-ui-20261007-v9/attachments/AB8EFCC7-FBD4-45DE-A457-192D71FD7BF3.mp4",
+      "sha256": "2e4b6255f5f0c71c2bf765598c2c3f52d7288cf2a7f1a708a5669957011b05de"
+    },
+    "videoLandscapeFrame": {
+      "path": ".build/product-quality-ui-20261007-v9/attachments/viewport-landscape-video13.2-native.png",
+      "sha256": "0bea56de20eb8eb8019a99e6d1ffe380c4cd9f7adb375e4f80d1b4d9b05e0776"
+    },
+    "finalLandscapeVisual": "Reviewed v11 physical screen image: complete 3:2 paper, no black region or missing right side; window1194x834, paper1194x796, top/bottom19pt.",
+    "finalRestoredZoomVisual": "Reviewed v11 restored zoom image; accepted paper pose matches pre-close geometry within2pt."
+  },
+  "limitations": [
+    "XCTest remote gesture/AX time is not application input or display latency.",
+    "This scenario does not establish system FPS, sustained performance, full-product or Pencil acceptance."
+  ]
+}

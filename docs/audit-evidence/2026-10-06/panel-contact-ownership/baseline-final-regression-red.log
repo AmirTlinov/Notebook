@@ -1,0 +1,187 @@
+▶ keyboard undo and delete cannot admit another action during a dragged contact
+  ✖ z (15.843359ms)
+  ✖ Delete (4.244031ms)
+✖ keyboard undo and delete cannot admit another action during a dragged contact (21.944678ms)
+▶ Enter and double-click cannot open a nested editor or release the current contact
+  ✖ select: Enter (5.255287ms)
+  ✖ select: dblclick (3.297421ms)
+  ✔ pen: Enter (3.152268ms)
+  ✖ pen: dblclick (2.020454ms)
+✖ Enter and double-click cannot open a nested editor or release the current contact (15.012429ms)
+✔ an idle editor still opens, cancels and saves one completed edit (5.835417ms)
+✔ the text tool still admits and saves a new element (2.682415ms)
+▶ lost pointer capture cancels the unfinished preview and resumes the same projection
+  ✖ select (3.756736ms)
+  ✖ pen (1.711421ms)
+✖ lost pointer capture cancels the unfinished preview and resumes the same projection (6.725161ms)
+▶ Escape still cancels an unfinished contact without admitting a competing write
+  ✔ select (2.921485ms)
+  ✔ pen (1.345815ms)
+✔ Escape still cancels an unfinished contact without admitting a competing write (5.111882ms)
+▶ late lost-capture events preserve a completed ink contact and a newer pointer
+  ✔ select: pointer 1 (2.006048ms)
+  ✔ select: pointer 2 (3.412271ms)
+  ✔ pen: pointer 1 (2.454896ms)
+  ✔ pen: pointer 2 (2.006031ms)
+✔ late lost-capture events preserve a completed ink contact and a newer pointer (10.776847ms)
+✖ real pen input retains measured samples through completion and discards only cancelled contact (6.480113ms)
+ℹ tests 22
+ℹ suites 0
+ℹ pass 11
+ℹ fail 11
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1024.193248
+
+✖ failing tests:
+
+test at ../../../../../tmp/notebook-panel-baseline.Oo9Gmt/test/panel-input.test.ts:1:6643
+✖ z (15.843359ms)
+  AssertionError [ERR_ASSERTION]: z cannot interrupt the gesture's mutation boundary
+  
+  1 !== 0
+  
+      at TestContext.<anonymous> (/tmp/notebook-panel-baseline.Oo9Gmt/test/panel-input.test.ts:116:14)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async TestContext.<anonymous> (/tmp/notebook-panel-baseline.Oo9Gmt/test/panel-input.test.ts:110:35)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at ../../../../../tmp/notebook-panel-baseline.Oo9Gmt/test/panel-input.test.ts:1:6643
+✖ Delete (4.244031ms)
+  AssertionError [ERR_ASSERTION]: Delete cannot interrupt the gesture's mutation boundary
+  
+  1 !== 0
+  
+      at TestContext.<anonymous> (/tmp/notebook-panel-baseline.Oo9Gmt/test/panel-input.test.ts:116:14)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async TestContext.<anonymous> (/tmp/notebook-panel-baseline.Oo9Gmt/test/panel-input.test.ts:110:35)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at ../../../../../tmp/notebook-panel-baseline.Oo9Gmt/test/panel-input.test.ts:1:7423
+✖ select: Enter (5.255287ms)
+  AssertionError [ERR_ASSERTION]: Editor dismissal cannot admit undo while the original contact survives
+  
+  1 !== 0
+  
+      at TestContext.<anonymous> (/tmp/notebook-panel-baseline.Oo9Gmt/test/panel-input.test.ts:134:14)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async TestContext.<anonymous> (/tmp/notebook-panel-baseline.Oo9Gmt/test/panel-input.test.ts:128:80)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at ../../../../../tmp/notebook-panel-baseline.Oo9Gmt/test/panel-input.test.ts:1:7423
+✖ select: dblclick (3.297421ms)
+  AssertionError [ERR_ASSERTION]: Editor dismissal cannot admit undo while the original contact survives
+  
+  1 !== 0
+  
+      at TestContext.<anonymous> (/tmp/notebook-panel-baseline.Oo9Gmt/test/panel-input.test.ts:134:14)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async TestContext.<anonymous> (/tmp/notebook-panel-baseline.Oo9Gmt/test/panel-input.test.ts:128:80)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at ../../../../../tmp/notebook-panel-baseline.Oo9Gmt/test/panel-input.test.ts:1:7423
+✖ pen: dblclick (2.020454ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  false !== true
+  
+      at TestContext.<anonymous> (/tmp/notebook-panel-baseline.Oo9Gmt/test/panel-input.test.ts:135:14)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async TestContext.<anonymous> (/tmp/notebook-panel-baseline.Oo9Gmt/test/panel-input.test.ts:128:80)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at ../../../../../tmp/notebook-panel-baseline.Oo9Gmt/test/panel-input.test.ts:1:9538
+✖ select (3.756736ms)
+  AssertionError [ERR_ASSERTION]: select cannot retain input after capture is stolen
+  
+  true !== false
+  
+      at TestContext.<anonymous> (/tmp/notebook-panel-baseline.Oo9Gmt/test/panel-input.test.ts:173:12)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async TestContext.<anonymous> (/tmp/notebook-panel-baseline.Oo9Gmt/test/panel-input.test.ts:166:38)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: true,
+    expected: false,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at ../../../../../tmp/notebook-panel-baseline.Oo9Gmt/test/panel-input.test.ts:1:9538
+✖ pen (1.711421ms)
+  AssertionError [ERR_ASSERTION]: pen cannot retain input after capture is stolen
+  
+  true !== false
+  
+      at TestContext.<anonymous> (/tmp/notebook-panel-baseline.Oo9Gmt/test/panel-input.test.ts:173:12)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async TestContext.<anonymous> (/tmp/notebook-panel-baseline.Oo9Gmt/test/panel-input.test.ts:166:38)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: true,
+    expected: false,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at ../../../../../tmp/notebook-panel-baseline.Oo9Gmt/test/panel-input.test.ts:1:12414
+✖ real pen input retains measured samples through completion and discards only cancelled contact (6.480113ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  true !== false
+  
+      at TestContext.<anonymous> (/tmp/notebook-panel-baseline.Oo9Gmt/test/panel-input.test.ts:262:10)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: true,
+    expected: false,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

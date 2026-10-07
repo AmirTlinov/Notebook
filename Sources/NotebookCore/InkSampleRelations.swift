@@ -179,13 +179,24 @@ public struct InkSampleRelations: Sendable {
       }
     }
   }
-  final class Storage: Sendable {
+  final class Storage: @unchecked Sendable {
     let root: Sequence
     /// Exit of the typed translation state, independent of the last emitted
     /// measurement. Empty event bodies may still carry a nonzero exit.
     let exit: InkRepeatStep
+    private let allocationLock=NSLock()
+    private var measuredAllocation:(nodes:Int,bytes:Int)?
     init(_ root: Sequence, exit: InkRepeatStep = .zero) { self.root=root;self.exit=exit }
-    var byteCount: Int { MemoryLayout<InkRepeatStep>.stride+32 }
+    var byteCount: Int { MemoryLayout<InkRepeatStep>.stride+MemoryLayout<(Int,Int)?>.stride+128 }
+    /// The immutable body owns one measurement, warmed by action accounting
+    /// before input admission. Reading a mask or relation never rewalks its DAG.
+    var allocationSummary:(nodes:Int,bytes:Int) { allocationLock.withLock {
+      if let measuredAllocation {return measuredAllocation}
+      var seen=Set<ObjectIdentifier>()
+      let tree=root.allocationSummary(seen:&seen)
+      let value=(nodes:tree.nodes,bytes:byteCount+tree.bytes)
+      measuredAllocation=value;return value
+    } }
   }
   public let sourceID: UUID
   public let span: Int
@@ -405,9 +416,7 @@ public struct InkSampleRelations: Sendable {
     }
   }
   public var allocationSummary: (nodes: Int, bytes: Int) {
-    var seen=Set<ObjectIdentifier>()
-    let tree=storage.root.allocationSummary(seen:&seen)
-    return (tree.nodes,storage.byteCount+tree.bytes)
+    storage.allocationSummary
   }
   public var payloadBytes: Int {
     MemoryLayout<Self>.stride + frames.count * MemoryLayout<InkExactFrame>.stride + allocationSummary.bytes

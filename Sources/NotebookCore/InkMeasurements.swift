@@ -57,8 +57,7 @@ public struct InkMeasurements: RandomAccessCollection, ExpressibleByArrayLiteral
   public var isWorld: Bool { storage.root.worldEvents == count }
   public var hasVisibleInk: Bool { storage.root.hasVisibleInk }
   public var payloadBytes: Int {
-    var seen=Set<ObjectIdentifier>()
-    return MemoryLayout<Self>.stride+storage.byteCount+storage.root.allocationSummary(seen:&seen).bytes
+    MemoryLayout<Self>.stride+storage.allocationSummary.bytes
   }
   public func materialized(in range: Range<Int>? = nil) -> [SpatialInkSample] {
     let range=range ?? 0..<count

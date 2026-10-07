@@ -1,0 +1,11 @@
+{
+  "executed": [
+    "NotebookTests/NotebookPersistenceAdmissionTests/testWorldContactAndEraserMetadataShareARealDecodeAndFinishBudget"
+  ],
+  "failed": [],
+  "format": 1,
+  "planned": [
+    "NotebookTests/NotebookPersistenceAdmissionTests/testWorldContactAndEraserMetadataShareARealDecodeAndFinishBudget"
+  ],
+  "skipped": []
+}

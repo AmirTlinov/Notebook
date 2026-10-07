@@ -1,0 +1,53 @@
+▶ keyboard undo and delete cannot admit another action during a dragged contact
+  ✔ z (17.939457ms)
+  ✖ Delete (5.900207ms)
+✖ keyboard undo and delete cannot admit another action during a dragged contact (26.459656ms)
+▶ lost pointer capture cancels the unfinished preview and resumes the same projection
+  ✔ select (3.478477ms)
+  ✔ pen (2.373656ms)
+✔ lost pointer capture cancels the unfinished preview and resumes the same projection (6.686276ms)
+▶ Escape still cancels an unfinished contact without admitting a competing write
+  ✔ select (2.145774ms)
+  ✔ pen (1.572604ms)
+✔ Escape still cancels an unfinished contact without admitting a competing write (4.804801ms)
+▶ late lost-capture events preserve a completed ink contact and a newer pointer
+  ✔ select: pointer 1 (2.214311ms)
+  ✔ select: pointer 2 (1.63537ms)
+  ✔ pen: pointer 1 (1.670562ms)
+  ✔ pen: pointer 2 (2.111345ms)
+✔ late lost-capture events preserve a completed ink contact and a newer pointer (8.817203ms)
+ℹ tests 14
+ℹ suites 0
+ℹ pass 12
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 701.329091
+
+✖ failing tests:
+
+test at test/panel-input.test.ts:1:5830
+✖ Delete (5.900207ms)
+  AssertionError [ERR_ASSERTION]: Delete cannot remove the active gesture's preview
+  + actual - expected
+  
+    {
+  +   clears: 1,
+  -   clears: 0,
+      inkClears: 0,
+      previews: 1
+    }
+  
+      at TestContext.<anonymous> (/workspace/scratch/3c9061d33fe2/notebook-consolidation/MCP/test/panel-input.test.ts:100:14)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async TestContext.<anonymous> (/workspace/scratch/3c9061d33fe2/notebook-consolidation/MCP/test/panel-input.test.ts:93:35)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: { previews: 1, clears: 1, inkClears: 0 },
+    expected: { previews: 1, clears: 0, inkClears: 0 },
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }

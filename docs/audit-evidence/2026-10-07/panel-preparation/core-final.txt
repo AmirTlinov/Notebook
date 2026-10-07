@@ -1,0 +1,36 @@
+Building for production...
+[1 / 2] NotebookCore
+[3 / 5] NotebookCore
+[6 / 6] NotebookCore
+[7 / 8] NotebookCoreTests-product
+[9 / 9] NotebookCoreTests-product
+Build complete! (137,81 с)
+Test Suite 'All tests' started at 2026-10-07 11:48:34.143.
+Test Suite 'All tests' passed at 2026-10-07 11:48:34.145.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.002) seconds
+◇ Test run started.
+↳ Testing Library Version: 2084
+↳ Target Platform: arm64e-apple-macos14.0
+◇ Suite "Panel page material reads" started.
+◇ Test "Панель доски читает нативные стирания текста и фигуры" started.
+◇ Test "Панель: автор пользователя, CAS, точный повтор и отмена сохраняют дальнейшую правку агента" started.
+◇ Test "Представление панели закрепляет источник, пространство и физическую проекцию" started.
+◇ Test "Native ink contacts stay in their ordered material when the panel grants subjects" started.
+◇ Test mixedPageMatchesAddressedGeometryAndAppearance() started.
+◇ Test case passing 1 argument fullyErased → false to "Панель доски читает нативные стирания текста и фигуры" started.
+◇ Test case passing 1 argument fullyErased → true to "Панель доски читает нативные стирания текста и фигуры" started.
+◇ Test case passing 1 argument onBoard → false to "Панель: автор пользователя, CAS, точный повтор и отмена сохраняют дальнейшую правку агента" started.
+◇ Test case passing 1 argument onBoard → true to "Панель: автор пользователя, CAS, точный повтор и отмена сохраняют дальнейшую правку агента" started.
+◇ Test case passing 1 argument onBoard → false to "Представление панели закрепляет источник, пространство и физическую проекцию" started.
+◇ Test case passing 1 argument onBoard → true to "Представление панели закрепляет источник, пространство и физическую проекцию" started.
+✔ Test "Native ink contacts stay in their ordered material when the panel grants subjects" passed after 0.001 seconds.
+✔ Test "Представление панели закрепляет источник, пространство и физическую проекцию" with 2 test cases passed after 0.102 seconds.
+✔ Test "Панель доски читает нативные стирания текста и фигуры" with 2 test cases passed after 0.191 seconds.
+✔ Test "Панель: автор пользователя, CAS, точный повтор и отмена сохраняют дальнейшую правку агента" with 2 test cases passed after 0.270 seconds.
+PANEL_PAGE_MIXED elements=12 SQL=51 addressed=0 erasures=0 elapsed=0.078760333 seconds bytes=118453
+✔ Test mixedPageMatchesAddressedGeometryAndAppearance() passed after 0.746 seconds.
+◇ Test hundredThousandPageElementsUseOneSourceRead() started.
+PANEL_PAGE_SCALE elements=100000 SQL=51 addressed=0 erasures=0 elapsed=18.86234075 seconds bytes=59837152
+✔ Test hundredThousandPageElementsUseOneSourceRead() passed after 54.487 seconds.
+✔ Suite "Panel page material reads" passed after 55.234 seconds.
+✔ Test run with 6 tests in 1 suite passed after 55.234 seconds.

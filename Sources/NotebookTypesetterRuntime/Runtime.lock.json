@@ -59,9 +59,9 @@
   },
   "kernels": {
     "tectonic.wasm": {
-      "bytes": 5189552,
-      "sha256": "7ad4136fb67ceeb4a2bb72b01d1a5feaa7afce87c82a1cd335732b61b0764e9f",
-      "packedSHA256": "26499c3a0d64d1ccb4b63861bf64f466c743cc7412724b39c47b56af3b2fe1e6"
+      "bytes": 5206914,
+      "sha256": "8d8f9fb45bc3e33677c20e9be69d0dd3c25d899aef7b1eb40cfd8903fb4f2ffe",
+      "packedSHA256": "54b28932b08f1ddb1409a67fa531b9636d84d7af510c245f6cda354cbd99d85a"
     },
     "image.wasm": {
       "bytes": 5125796,

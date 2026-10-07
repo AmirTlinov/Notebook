@@ -145,6 +145,41 @@ See figure~\ref{fig:live}. \cite{example}\bibliographystyle{plain}\bibliography{
         assert!(compile("../main.tex", files).unwrap_err().contains("entrypoint_invalid"));
         let cancelled = AtomicBool::new(true);
         assert!(runtime.compile("main.tex", vec![("main.tex".into(), document.as_bytes().to_vec())], 0, Duration::from_secs(30), &cancelled).unwrap_err().contains("cancelled"));
+        // Every compile starts a fresh guest, including format loading. The
+        // short bounds exercise guest startup before it opens the source;
+        // the TeX loop below checks a running-document deadline.
+        let startup_source = r"\documentclass{article}\begin{document}Startup\end{document}";
+        let before_input = |error: &str| error.contains("running TeX pass 1") && !error.contains("(/input/");
+        let mut deadline_before_input = false;
+        let mut cancelled_before_input = false;
+        for millis in [1, 2, 5, 10] {
+            let started = Instant::now();
+            let error = runtime.compile("main.tex", vec![("main.tex".into(), startup_source.as_bytes().to_vec())],
+                0, Duration::from_millis(millis), &AtomicBool::new(false)).unwrap_err();
+            assert!(error.starts_with("typesetter_deadline"), "{error}");
+            assert!(started.elapsed() < Duration::from_secs(2), "startup deadline did not join");
+            deadline_before_input |= before_input(&error);
+
+            let cancelled = AtomicBool::new(false);
+            let (result, joined, requested) = std::thread::scope(|scope| {
+                let request = scope.spawn(|| {
+                    std::thread::sleep(Duration::from_millis(millis));
+                    let requested = Instant::now();
+                    cancelled.store(true, Ordering::Relaxed);
+                    requested
+                });
+                let result = runtime.compile("main.tex", vec![("main.tex".into(), startup_source.as_bytes().to_vec())],
+                    0, Duration::from_secs(30), &cancelled);
+                let joined = Instant::now();
+                (result, joined, request.join().expect("cancellation request"))
+            });
+            let error = result.unwrap_err();
+            assert!(error.starts_with("typesetter_cancelled"), "{error}");
+            assert!(joined.saturating_duration_since(requested) < Duration::from_secs(2), "startup cancellation did not join");
+            cancelled_before_input |= before_input(&error);
+        }
+        assert!(deadline_before_input, "no deadline observed in pre-input guest startup");
+        assert!(cancelled_before_input, "no cancellation observed in pre-input guest startup");
         let loop_source = r"\documentclass{article}\begin{document}\def\forever{\forever}\forever\end{document}";
         assert!(runtime.compile("main.tex", vec![("main.tex".into(), loop_source.as_bytes().to_vec())], 0, Duration::from_millis(100), &AtomicBool::new(false)).unwrap_err().contains("deadline"));
         assert!(compile("main.tex", vec![("main.tex", document), ("chapters/one.tex", "Recovered"), ("styles/local.sty", "\\ProvidesPackage{styles/local}"), ("refs/library.bib", "@book{example,title={Recovery},year={2026}}")]).is_ok());

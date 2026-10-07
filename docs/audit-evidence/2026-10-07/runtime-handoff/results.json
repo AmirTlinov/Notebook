@@ -1,0 +1,35 @@
+{
+  "format": 1,
+  "date": "2026-10-07",
+  "baseCommit": "7274f6c193b264fccd3c84a15a474a31b35b657a",
+  "integrationTargetObserved": "b5e350288443921086d2487b9d3e08a72be6c802",
+  "scope": "release runtime quit and existing writer-lease handoff",
+  "sourceSHA256": {
+    "Applications/notebook_release.py": "007c643d63a02123193870bd769cc075f16f1edf9c36f119636ac695c6a897a1",
+    "Tests/NotebookRelease/run.py": "7d151bebb1cd5018009fac9a90399aaff63a2d4fad44513209ad7a7cde0bf045"
+  },
+  "verification": {
+    "command": "python3 -B Tests/NotebookRelease/run.py RuntimeInstallationOwnershipTests InstallationTests",
+    "status": "passed",
+    "tests": 38,
+    "failures": 0,
+    "errors": 0,
+    "skips": 0,
+    "elapsedSeconds": 6.266,
+    "log": "tests.txt",
+    "logSHA256": "c9d21834f2e9a27462019cbe07166e3d61143e13905f5882095aa16dcd491f16",
+    "execution": "isolated Python fixtures; fabricated pair/install CLI; own Python listener kernel identity readback; token SIGTERM mocked"
+  },
+  "review": {
+    "agent": "audit_handoff",
+    "method": "independent static source and SDK review",
+    "verdict": "no new blocking findings",
+    "resolved": "writer lease now spans publication, plugin installation and actual cache validation",
+    "existingBoundary": "Node global-MCP, migration and reused-version guards can still refuse after saved quit"
+  },
+  "installationAttempted": false,
+  "physicalAcceptance": false,
+  "productionSignals": false,
+  "xcodeOrCompiledHelperExecuted": false,
+  "remaining": "Integrate into current sources, run exact source verification, build a new signed pair, then install and verify its serving peer. Existing pair 254 snapshot and signed bundles remain unchanged."
+}

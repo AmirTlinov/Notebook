@@ -1,0 +1,15 @@
+✔ MCP clients join the ready owner even before a workspace exists (9.20575ms)
+✔ cold clients wait for bundled runtime admission on one isolated endpoint (104.927666ms)
+✔ an incompatible or unsafe owner cannot trigger a second runtime (3.45275ms)
+✔ startup timeout is bounded and launches at most once per client (152.615167ms)
+✔ startup summary counts retries without logging successful polls or private reply fields (205.2585ms)
+✔ timeout retains the last owner refusal without tracing its message or private context (153.47875ms)
+✔ a live MCP connection recovers its crashed runtime before an addressed retry without replaying uncertain writes (152.578459ms)
+ℹ tests 7
+ℹ suites 0
+ℹ pass 7
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1143.801792

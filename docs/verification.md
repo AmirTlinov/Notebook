@@ -1,32 +1,217 @@
 # Текущее состояние проверки Notebook
 
-**6 октября 2026.** Установлены iPad/runtime **253 / 0.3.183** и plugin **0.2.5**,
-срез `1a1f3f25190c`, DB28. Root remediation с DB29 проверяется изолированно.
-Каждое свидетельство относится к указанным в нём исходникам и сценарию.
+**7 октября 2026.** Установлены iPad/runtime **258 / 0.3.188** и plugin **0.2.10**.
+Подпись работающего владельца, пространство и каталог iPad проверены.
+Самостоятельного Mac-приложения нет. Изолированные native-проверки используют
+отдельную test-идентичность; каждый результат относится к своим исходникам.
+
+В 258 native painter и ответ панели используют один захват страницы вместо трёх.
+На совпадающих source/camera/coverage/bytes страницы 1→2→3→2 отвечают
+**699/602/581/563 → 434/446/121/198 мс**; повтор — **447/339/128/222 мс**.
+Это отдельные installed MCP-проходы, без измерения показа и p95. Текущая доска
+сохраняет 9/9 зон выбора и плотность 0,250/0,5; zoom/возврат **515/505 мс** ещё
+велики. Её source revision изменился с замера 257; сравнение времени неприменимо.
+Kernel peer PID50512/CDHash совпал со сборкой. Каталог, выбранная SQLite и metadata
+iPad сохранены; прежний runtime завершён штатно. Чат пока удерживает MCP257
+и отклоняет runtime258; реальная панель ждёт обновления подключения.
+[Сравнение](audit-evidence/2026-10-07/panel-page-cut/installed-comparison.json),
+[установка](audit-evidence/2026-10-07/panel-page-cut/installation.json).
+
+В 257 устранены расход бюджета на пустые области чернил и зависимость выбора
+карточек от отдельных растров. На той же доске/камере все **9/9** карточек сохраняют
+геометрию; `quality_limit` исчез, плотность **0,077→0,250** и **0,154→0,5**.
+Повторный обзор отвечает за **67 мс**, увеличение/возврат — **540/533 мс**: чёткость
+исправлена, эти задержки ещё требуют работы. Три страницы и возврат —
+**749/649/117/379 мс**; это MCP-ответы, без измерения показа. В 13:30 UTC
+чат подключился к 257; открытая панель показывает «Подключено» и девять зон
+выбора при 10%. Снимок новой панели пока не получен: API захвата завершился
+таймаутом. Этот отказ автоматизации не является замером задержки интерфейса.
+**44 Node + TypeScript и 6 optimized native Mac PASS**, независимое ревью принято.
+Нагрузка 100 000 контактов + 100 000 объектов: 16 адресных probes за **0,135 мс**
+после подготовки fixture, сохранена единственная непустая область.
+[Проверки](audit-evidence/2026-10-07/panel-occupancy/results.json),
+[установка и сохранность](audit-evidence/2026-10-07/panel-occupancy/installation.json),
+[оба прохода](audit-evidence/2026-10-07/panel-occupancy/installed-comparison.json).
+
+В 256 **59 Node, TypeScript и 9 уникальных
+optimized native Mac проверок PASS**, независимое ревью принято. PNG/SHA повторно
+используется в том же владельце неизменных растров; выдача сохраняет учёт памяти
+до освобождения ответа. На сцене 1024 px прямое кодирование: медиана **4,88 мс**,
+ограниченное PNG+SHA — **4,97 мс**, повторное получение — **0,001 мс**; PNG совпадает
+побайтово. MCP открывает карточку во время запуска runtime, сохраняет выбранную
+страницу при Retry и исключает позднюю отправку просроченной команды. Это прицельные
+проверки; 7 октября подключение чата восстановилось, а проверка настоящей панели
+выявила отдельный дефект детализации и геометрии выбора, описанный ниже.
+Два исходных отказа относились к типу константы и моменту проверки освобождения
+ответа в тестах; production между native-прогонами не менялся.
+[Проверки, установка и исходные отказы](audit-evidence/2026-10-07/panel-startup-png/results.json).
+
+Установленная 256 возвращает карточку за **2–3 мс**. На прежних страницах
+900×800/DPR2 повторный проход **700/532/103/492 → 858/618/121/395 мс**:
+возврат ускорился, первые посещения в этих замерах медленнее. Источники, камера,
+покрытие и размеры ответов совпадают. Первый проход 256 включал до **1,2 с**;
+он совпал с запуском iPad. Это отдельные MCP-ответы, без p95 и измерения показа.
+[Все проходы и сравнение](audit-evidence/2026-10-07/panel-startup-png/installed-comparison.json).
+Системный `sample` не завершился в заданное время; его остановили без перезапуска
+runtime. Одновременный запрос страницы истёк за 35 с; после остановки профилировщика
+тот же owner прочитал справку и страницу. Этот проход исключён из сравнения.
+[Исходный отказ и восстановление](audit-evidence/2026-10-07/panel-startup-png/profiler.json).
+
+В 255 **7 Node + TypeScript, 7 Core-методов / 11 случаев и 5 optimized native Mac PASS**;
+0 skips/runtime warnings. Native fixture потребовал исправления нагрузки и пиксельного
+oracle: итоговое изображение проверяется с учётом прозрачности всех слоёв. Между
+четырьмя прогонами менялся только этот тест; исходные отказы сохранены. Независимое
+ревью принято. [Исходники и результаты](audit-evidence/2026-10-07/panel-preparation/results.json).
+
+На неизменных страницах при 900×800/DPR2 время installed MCP ответа
+**814/1174/811/779 → 698/609/133/517 мс**; следующий проход — **700/532/103/492 мс**.
+Source revision, camera, coverage и размеры ответов совпадают. Тяжёлые страницы
+остаются медленными; это измерение ответа, а не задержки до изображения.
+[Точное сравнение](audit-evidence/2026-10-07/panel-preparation/navigation-comparison.json).
+
+Переносимый подпункт NB13: повторный вход из `toJSON`/getter больше не позволяет
+отменённому checkpoint установить frozen. На исходном JS три регрессии FAIL;
+с исправлением **34 Node tests PASS**, строгий MCP TypeScript и diff-check PASS.
+Основной admission-before-copy и native WebKit/physical проверка остаются открыты;
+native owner/credit/writer не менялись. Независимое ревью принято: 34/34, tsc и
+diff повторены; отдельные 64 варианта повторного входа и credit/ACK probes PASS.
+[Контрпримеры и точный scope](audit-evidence/2026-10-06/checkpoint-generation-nb13/results.json).
+
+## Локальный интеграционный срез
+
+В отдельном checkout сведены Root `46ad9e89` и main `6898e843`, затем включены
+только `8959a13d` и `cc270679`; merge ещё не зафиксирован. Schema 29 вводит локальную search recipe, wire 44 и
+manifest 26 сохранены. Прежние доказательства относятся к указанным в них
+исходникам; перенос в этот срез требует адресной повторной проверки.
+
+До этих двух delta-коммитов: **20 Swift-функций / 23 исполнения и 68 Node-случаев
+PASS**, strict MCP TypeScript PASS, inventory `43084f89…`. Новый page-content cut
+сохранён через `readCommandCut`; forwarding и обновлённый кандидат ещё не проверены.
+Проверки остановлены по лимиту задачи. Точный source freeze, прежние отказы и pending
+сохранены в `.build/remediation-integration/summary.json` выделенного checkout.
+
+| Владелец Root | Точное доказательство |
+|---|---|
+| Чтения, наблюдения и workspace cut | [Read boundary](audit-evidence/2026-10-06/panel-read-boundary/results.json), [workspace cut](audit-evidence/2026-10-06/observations-and-workspace-cuts/results.json). |
+| Авторский текст и search recipe 29 | [Семантика, миграция и rollback](audit-evidence/2026-10-06/search-source-semantics/results.json), [стоимость](audit-evidence/2026-10-06/search-source-semantics/attribution-README.md). |
+| Portable import, IPC и program resources | [Импорт](audit-evidence/2026-10-06/portable-import-and-ipc/results.json), [ресурсы и cloud](audit-evidence/2026-10-07/cloud-and-program-resources/results.json). |
+| Каталог и принятая публикация через Retry | [Владельцы и отказы](audit-evidence/2026-10-07/catalog-publication/results.json). |
+| Idle cloud spool | [Адресная проверка](audit-evidence/2026-10-06/cloud-idle-spool/results.json). |
+| Исторический recovery 253 | [Scope](audit-evidence/2026-10-06/plugin-recovery-253/results.json), [установка](audit-evidence/2026-10-06/plugin-recovery-253/installation.json). |
 
 ## Установленная пара
 
-Восемь native Mac проверок recovery-пары прошли без предупреждений;
-установка завершилась `installed/complete`. Подпись serving PID41679 совпала.
-Свежий установленный MCP прочитал ресурс панели, заголовок, observation и Codex status;
-после запуска физического iPad image smoke вернул `ready`, адаптер — `connected`.
-Совпали восемь прежних полей содержания, каталог и SQLite metadata iPad.
-[Сборка](audit-evidence/2026-10-06/plugin-recovery-253/results.json),
-[установка, readback и фактические ограничения](audit-evidence/2026-10-06/plugin-recovery-253/installation.json).
+Самостоятельные Mac-окна, ввод и установщик удалены из исходников; старые bundles
+и MCP helpers удалены после штатного завершения. Подписанный runtime работает
+из кеша плагина и остаётся владельцем данных после закрытия MCP-клиента.
+В первой проверке 252 SIGTERM завершил сохранение за **114,511 мс**;
+обычный MCP-запуск восстановил владельца.
 
-Прежний runtime252 удерживал устаревшую preview-публикацию в accepted FIFO.
-После прямого разрешения Амира PID74380 принудительно завершён; сохранность
-несохранённого RAM-tail не подтверждена. Вмешательство отладчиком остановлено
+Сохранены прежнее пространство, каталог iPad, активная SQLite, идентичности и
+доверие пары; после запуска iPad подтверждён authenticated `awdl0`.
+Исторические архивы и ключи не переносились. Установка 252 фактически выполнена,
+но её квитанция осталась `incomplete`: прежний установщик сравнивал абсолютный
+путь перемещённого системой контейнера. Успешная установка и данные проверены
+отдельно; повторной установки не было. Новый установщик сравнивает логическое
+пространство и app-group IDs: **23 адресные проверки PASS**, независимое ревью принято.
+[Подписи, readback, исходная квитанция и точный scope](audit-evidence/2026-10-06/plugin-cutover-252/results.json).
+
+В runtime252 `CurrentViewPreviewWriter.PreviewError.sourceChanged` попал в accepted
+FIFO как ошибка хранения и удерживал устаревший closure. После прямого разрешения
+Амира PID74380 завершён принудительно: SIGTERM не освободил очередь; сохранность её
+несохранённого RAM-tail не подтверждена. Предложение вмешательства отладчиком остановлено
 автоматической проверкой до обращения к живому процессу.
 
-Идентичности и доверие пары сохранены, authenticated `awdl0` подтверждён.
-Повторные подключения и POSIX60 требуют проверки устойчивости. Старое подключение
-этого чата пока ожидает 252: `notebook_open` вернул `runtime_update_required`.
-Observation без изображения читает store fallback и не подтверждает admitted host.
-Полный сценарий панели ещё открыт. Исторические архивы и ключи не переносились.
-[Установка 252 и 23 проверки исправленного логического container guard](audit-evidence/2026-10-06/plugin-cutover-252/results.json).
+Установка 255 завершилась `installed/complete`: прежний runtime254 остановлен обычным
+SIGTERM под writer lease. Кеш 0.2.7 и kernel peer CDHash PID90905 совпадают со сборкой;
+установленный MCP прочитал доску и три страницы. Каталог и SQLite metadata iPad
+совпали до/после обновления, production-приложение запущено. Подключение текущего чата
+восстановлено к 255, `notebook_open` прошёл. Устойчивость прямой связи после наблюдавшихся
+в 254 переподключений/POSIX60 остаётся открытой.
+[Установка и readback](audit-evidence/2026-10-07/panel-preparation/installation.json).
+
+Установка 256 завершилась `installed/complete`, kernel peer PID38006/CDHash совпал
+с подписанной сборкой. Каталог, выбранная SQLite и app-group IDs сохранены; iPad
+запущен. Первая попытка остановилась до установки iPad из-за перестановки ключей
+JSON; полное прежнее значение подтверждено восстановлением исходного raw hash.
+Повтор прошёл с новым preflight той же подписанной пары. Установщик теперь сравнивает
+полное каноническое содержание, сохраняя исходные readback отдельно: **21 проверка /
+26 случаев PASS**, независимое ревью принято; значения и порядок массивов значимы.
+[Установка](audit-evidence/2026-10-07/panel-startup-png/installation.json),
+[ремонт проверки каталога](audit-evidence/2026-10-07/catalog-identity/results.json).
+
+В настоящем Codex на 254 просмотрена новая компоновка, проверены выбор инструментов
+и три последовательных увеличения. После перелистывания чтение DOM дважды завершилось
+timeout; конечное состояние перехода не подтверждено. В 11:25 UTC текущий чат
+подключился к 256, настоящая панель открыла доску из девяти карточек. Выбор работал,
+но после увеличения 10→18% появились размытие и `quality_limit`, исчезли все зоны
+выбора; возврат к 10% их не восстановил. Причины — расход бюджета на пустые ink tiles
+и зависимость геометрии карточки от отдельного растра.
+[Наблюдение и воспроизведение](audit-evidence/2026-10-07/panel-occupancy/observed-256.json).
+Повторные отказы DOM/evaluate относятся к автоматизации, не служат замерами UI.
+Перелистывание и полная UX-приёмка остаются открыты.
+
+Первое подключение после установки 255 заняло **8,46 с**: около **7,61 с** прошло до
+native `process.entry`, проверка static signature внутри runtime — **541 мс**,
+socket bound — **656 мс** от entry. Системный журнал связал главный интервал с
+Gatekeeper (**7,43 с**), включая XProtect scan (**6,32 с**); entry следует через
+28 мс после результата проверки. Стоимость отдельных файлов и ускорение упаковки
+ещё не измерены. Это один запуск, без заявления OS-cold/p95. Прежний 10-секундный
+deadline и проверка подписи сохранены. [Launch trace](audit-evidence/2026-10-07/panel-preparation/startup.json),
+[системная стадия](audit-evidence/2026-10-07/panel-preparation/startup-preentry.json).
 
 ## Проверенные исправления
+
+В установленной 258 native painter и финальный ответ панели используют один захват
+страницы; три полные загрузки заменены одной. Навигация, история, basis и cursor
+обновляются в финальном WAL-чтении. **6 Core-методов / 7 случаев и 4 optimized
+native Mac PASS**, независимое ревью принято. На 100 000 объектов полный JSON
+совпал: Debug capture **19,07 с**, final reuse **115 мс**; ответ 59,84 МБ превышает
+лимит панели. Первичная загрузка и установленный UI этим числом не ускорены.
+Installed comparison приведён выше. [Scope](audit-evidence/2026-10-07/panel-page-cut/results.json).
+
+Шапка открытого документа показывает значок меню файлов без имени исходника. На физическом iPad один оптимизированный UI-сценарий **PASS / 0 runtime warnings**: область меню 44×44 pt, переходы «Лист/Код/Рядом» без пересечений, A4 сохраняет вертикальные пропорции при повороте устройства. Оба снимка листа просмотрены; исходники до/после совпадают. Исправление включено в установленную 258. [Результат и точный scope](audit-evidence/2026-10-07/document-quiet-header/results.json).
+
+Установленная 257 сохраняет один разобранный immutable SDK reference у
+`NotebookScriptAPI`. Прежний `help` заново читал и декодировал 1,83 МБ на каждый
+запрос. В изолированном SwiftPM Debug медиана повторной выдачи **184 → 0,0012 мс**;
+первый разбор — **183 мс**, ответы совпали. **3 Swift + 1 canonical SDK PASS**,
+независимое ревью принято. Два прежних oracle обновлены к действующим 20 операциям
+и файлам интерактивной программы. В 257 этот срез установлен; число относится к изолированному измерению.
+[Исходники, замеры и первоначальные отказы](audit-evidence/2026-10-07/sdk-help-reference/results.json).
+
+В 255 страница использует один загруженный graph и набор стираний. Mixed Core fixture:
+**270 → 51 SQL**, **323 → 79 мс**, тот же ответ 118 453 байта. Отдельные GPU/PNG тела
+готовятся после окончательного допуска в кадр; исключённые тела рисуются в обычных
+tiles без предварительно выброшенной работы. Порядок слоёв, качество, resource limits,
+leases и source fences сохранены. 100 000 объектов проверены только полным Core-чтением:
+18,862 с и 59,84 МБ, сверх лимита ответа панели. [Scope](audit-evidence/2026-10-07/panel-preparation/results.json).
+
+Панель Codex теперь уведомляет кнопки о завершении навигации сразу; прежняя
+задержка до следующего опроса 1,5 с удалена. Выбор следующего инструмента сохраняется
+во время записи, горячие клавиши работают после фокуса toolbar, Enter/Space сохраняют
+нативное нажатие кнопки. Инструменты получили единые SVG-значки и адаптивную компоновку.
+Запоздалый грубый кадр сохраняет уже достаточный чёткий материал, при этом новые
+области и ограниченный текущий native-ответ принимаются. Адресная подготовка панели
+доступна при удерживаемом вводе другого устройства; собственный ввод сохраняет fence.
+Всё вошло в 254. HTML/CSS просмотрен при 320/540/900 px и на реальной панели Codex.
+Задержки подготовки страниц и оставшийся растровый путь требуют следующего ремонта.
+
+Управляемая остановка выполняет device/signature/storage preflight, audit-token SIGTERM
+и удерживает прежний writer lease до проверки установленного кеша. Неизвестный owner,
+PID reuse, отказ сохранения и повторные запуски дают адресный исход. **38 изолированных
+Python PASS**, независимое ревью принято. В установке 254 этот путь штатно завершил
+253 без принудительной остановки. [Scope и результаты](audit-evidence/2026-10-07/runtime-handoff/results.json).
+
+Подготовлен единый владелец публикации: каталог Codex переключается только на целый
+проверенный пакет; новая authored-версия сама по себе его не меняет. **7 Node + 27 Python
+PASS**, строгая проверка TypeScript PASS. Изолированный официальный CLI подтвердил
+перенос marketplace без переустановки плагина и потери кеша; проверены неопределённый
+исход удаления, повтор миграции и освобождение OS-блокировки. Независимое ревью принято.
+Живой источник переключён на immutable-пакеты с сохранением runtime253; затем через
+тот же маршрут опубликована и установлена 254/0.2.6. Свежий установленный MCP прошёл
+open/header/observe/runtime; подключение текущего чата к 254 восстановлено 7 октября. [Проверки](audit-evidence/2026-10-06/plugin-publication/results.json),
+[живая миграция](audit-evidence/2026-10-06/plugin-publication/migration.json).
 
 Устаревший источник и отзыв подготовки теперь дают адресный отказ публикации,
 освобождая её место в FIFO. После начала I/O сохраняются точные PNG/receipt и
@@ -54,93 +239,121 @@ warnings. Подготовленный кадр переживает удерж�
 CA flush и OS receipt; её контракт прошёл, аппаратный замер ещё ожидается.
 [Точные исходники, исходный warning, повтор и снимки](audit-evidence/2026-10-06/presented-contact-boundary/results.json).
 
-Быстрые цепочки лассо ещё исправляются. Подготовка резервировала 192 МиБ из
-общего бюджета 256 МиБ и блокировала следующий жест. Независимое ревью нового
-решения обнаружило полный обход содержания на MainActor и зависимость маленького
-выделения от размера всей доски. Оба P1 устраняются адресным захватом источников
-до интеграции; прежние локальные PASS не закрывают эти причины.
+В срезе `ac9d2da3` **12 оптимизированных native-сценариев iPad PASS / 0 warnings**:
+ранние Move/Delete и следующий Pencil принимаются до завершения первой подготовки,
+сохраняют причинные адреса и порядок Undo. Резерв учитывает адресный материал;
+лимиты 192/256 МиБ сохранены. На 100 000 контактах один холодный callback лассо
+занял 0,196 мс, Move/Delete — 0,125 мс; это измерения контроллера, аппаратный показ
+остаётся открытым. 24 проверки Core покрывают компактность, чужую замену, маски и
+нагрузки в 100 000 объектов; ещё 20 проверяют точность JSON/координат. Отдельное
+сравнение Debug-сборок подтвердило устранение jetsam: освобождение временных объектов
+после декодирования каждого значения снизило память при подготовке 200 017 записей
+с 3,68 ГБ до 483 МБ. Массовое восстановление причинного состояния и полное чтение
+страницы требуют отдельного ускорения. Исправление включено
+в установленную 254; новое аппаратное измерение лассо после установки ещё открыто. [Исходные отказы, сравнение и окончательные результаты](audit-evidence/2026-10-06/lasso-admission/results.json).
 
-## Remediation 104
+## Облачный кандидат границы ввода панели
 
-NB14/NB01: catalog I/O принадлежит Library actor; selection ticket сохраняет
-source/candidate через unknown publication и Retry. Name/delete/account callbacks
-проверяют исходный revision/epoch, source seal закрывает новый допуск.
-**21 native Mac PASS**, после переноса **2 Core + 2 native Mac PASS** на
-`6c25cedb31b7` / 1675 inputs, без пропусков и runtime warnings.
-Исходные четыре отказа сохранены вместе с исправлениями; iPad-жесты выбора и
-установленная пара ещё требуют приёмки.
-[Scope и transfer binding](audit-evidence/2026-10-07/catalog-publication/results.json).
+На базе `ccd2d510` исправлены конкурирующие действия в удержанном жесте панели:
+Undo/Delete и открытие редактора не отзывают его владельца; потеря pointer capture
+отменяет только незавершённый контакт. Нормальный release, повторное использование
+pointer ID, исходные measured samples и уже принятая запись сохранены.
+Независимое ревью обнаружило и закрыло две дополнительные причины: очистку preview
+при отклонённом Delete и вложенное открытие редактора через Enter.
 
-QF01/DP08: cloud-plan проверяет source/account/cursor до filesystem work.
-Один CloudSync владеет независимыми incoming/outgoing runs; deferred source
-сохраняет cursor, остальные источники и отправка продолжаются. **5 Core-сценариев
-PASS**, затем **2 PASS** после исправления indexed head query. В локальном fixture
-100 002 строк / три heads: **559,72 → 1,22 мс**. Stop сохраняет accepted FIFO и
-дожидается его результата. **9 native CloudWire-сценариев PASS на физическом iPad**,
-включая 144 deferred generations, независимый source и возврат после Pencil-up.
-[Исходный idle fixture](audit-evidence/2026-10-06/cloud-idle-spool/results.json),
-[текущий scope и source binding](audit-evidence/2026-10-07/cloud-and-program-resources/results.json).
+**44 адресные CPU-проверки и TypeScript/script-services PASS**, без пропущенных
+тестов выбранного набора. DOM/геометрия/GPU — ограниченные fixtures; реальный
+InkInput проверяется отдельно внутри этого же набора. В полном четырёхфайловом
+наборе ещё **8 отказов окружения**: Unix sockets запрещены (`EPERM`). Это не PASS
+всего MCP. Настоящая панель Codex, IME/offline, физический iPad и полная приёмка
+не проверены этим кандидатом; установленная пара 252 не обновлялась.
+[Точные исходники, команды, RED→GREEN и границы](audit-evidence/2026-10-06/panel-contact-ownership/results.json).
 
-NB24: immutable resource descriptor проверяется при регистрации; окно до 1 МиБ
-читает только затронутые parts в одном SQLite cut. **4 Core-сценария PASS**.
-20 окон по 32 байта при 16 384 parts: **25,16 мс** с admitted descriptor,
-**487,51 мс** с полной raw validation. Native range/revocation и offline scientific
-checkpoint прошли на физическом iPad; scientific import — на Mac. Общий native
-scope **12 PASS**, без пропусков и runtime warnings, final source `f4109fb5e30e`.
-Сохранены первоначальный отказ платформенного selector, гонка idle fixture и
-ошибка окружения Mac preflight; production между повторами не менялся.
-Выпуск этого DB29-среза и полная совместная приёмка ещё открыты.
-[Точный scope и исходники](audit-evidence/2026-10-07/cloud-and-program-resources/results.json).
+## Переносимый срез DP19: публикация чата
 
-Импорт `.notex` резервирует каждую фазу до чтения и decode, переносит один
-immutable create в обычный FIFO и возвращает полезный результат до необязательного
-print-cache. Оригинал/копия научного документа дают одинаковые checkpoint,
-MathJax-векторы и offline-экспорт; относительные ресурсы сохраняют авторский каталог.
-IPC отменяет реальное чистое чтение, сохраняя accepted writes; опубликованный файл
-и его журнал переживают Stop, поздний отказ COMMIT и Retry скрытого владельца.
-**46 Core-функций / 49 исполнений, 9 Node, 11 native-сценариев PASS**.
-Первый native-набор сохранил отказ нового retirement fixture; после исправления
-момента инъекции три адресных сценария прошли без warnings. Между наборами изменён
-только этот тест. [Точный scope, исходный отказ и повтор](audit-evidence/2026-10-06/portable-import-and-ipc/results.json).
-Физический iPad и установленная панель этого среза ещё ожидают проверки.
+Отдельный срез подготовлен поверх `7274f6c1`: transcript delta принимается без
+ожидания MathJax. Один producer готовит активную batch в скрытом подключённом
+контейнере той же ширины. До typesetting фиксируются точные source nodes/UTF-16
+ranges; готовый результат синхронно заменяет только найденные TeX spans.
+Prose, links и disclosure nodes сохраняют идентичность, selection и focus;
+последующее streaming использует исходные координаты известных math spans.
+Старые source bodies и пересекающиеся ranges не принимаются. MathJax records
+освобождаются до переноса output; failed jobs оставляют plain text и не удерживают
+очередь. Прежняя блокирующая очередь и whole-body math replacement удалены.
+**20 Node regressions и полный строгий MCP TypeScript PASS** на Linux.
+Проверки используют настоящий DOM Range/Selection; три также проверяют bundled
+MathJax4.1.3, включая assistive MathML, rejected-job cleanup и сохранение SVG.
+Baseline renderer даёт ожидаемый FAIL на финальном regression.
+Два прохода независимого ревью выявили lifecycle/selection/focus замечания;
+они исправлены. Третье ревью принято в границах кода и переносимых проверок:
+20/20 повторены независимо; отдельные math/selection probes также прошли. Native visual fixture явно ждёт math
+readiness. WebKit/font metrics, физические жесты, сборка и установка не выполнялись;
+GUI-498/DP19 ещё не имеет физической приёмки.
+[Точные исходники, результаты и ограничения](audit-evidence/2026-10-06/chat-math-publication-dp19/results.json).
 
-Приняты **NB27, NB31, NB05 — 3 из 104**. Статус и зависимости —
-[Linear, GUI-306](https://linear.app/main-cluster/issue/GUI-306).
+Переносимый срез NB30 связывает весь Codex/Node payload с manifest из закреплённых
+официальных архивов. Подмены bytes/type/mode, symlink, частичный cache, поддельный
+marker/receipt и неверная фактическая версия отклоняются. Content-addressed stage
+атомарно публикуется одним preparer и проходит через существующие build/verification
+receipts; старый flat cache и действующий254 не менялись. **95 release/admission +
+95 selection/receipt Python PASS** в Linux, включая реальные конкурентные fixture
+процессы. Подписи Apple и версии проверялись только тестовыми fixtures: настоящие
+codesign, Xcode sandbox, signed pair и установка **не исполнены**. Полный aggregate
+здесь не пройден: Swift отсутствует, Unix sockets запрещены средой.
+На официальном payload 439 213 968 байт измерены только Linux I/O: cold из локальных
+архивов 5,838 с; reuse 0,569–0,657 с с полным SHA-проходом, без копирования/распаковки.
+Это не сравнение с прежним кешем и не Mac performance gate. Первое независимое
+ревью выявило гонки подмены каталогов/уже проверенных файлов, hardlink alias и
+зависимость нового Xcode-пути от Python3.11 API. Исправлены anchored-дескрипторами,
+проверкой всех fingerprints до/после операции, nlink=1 и потоковым SHA; добавлены
+7 регрессий. Повторное независимое ревью принято в переносимой области: обе серии
+95/95 проверены независимо; дополнительные race/extra-entry/Python API probes PASS. [Границы и результаты](audit-evidence/2026-10-06/codex-runtime-pins-nb30/results.json).
 
-Срез observation/accepted-write/workspace: **127 Core/Codex/ScriptHost функций,
-167 исполнений; 54 native Mac; 27 panel Node — PASS**, без пропусков; native runtime
-warnings отсутствуют. Core-свидетельство связано с итоговым срезом точным совпадением
-всех 797 входов SwiftPM; native source `9ec8381009e7` неизменен во время проверки.
-Проверены COUNT/sort до первой строки, сохранение accepted COMMIT при отмене чтения,
-общий decode/output budget, fixed writer prefix, два drop с Undo, source-retaining
-workspace Retry и поздний page worker после отзыва derived admission. Production
-panel DOM/Session/Surface/pinned WASM проверены жестами в отдельном Chrome host;
-installed Codex и физический iPad этого среза ещё ожидают проверки.
-[Точные scopes, hashes и результаты](audit-evidence/2026-10-06/observations-and-workspace-cuts/results.json).
-Scoped owner frontiers, полный admission остальных producer путей и новая модель
-Undo остаются в Linear; весь реестр 104 позиций этим срезом не закрыт.
+## Объединённая переносимая проверка
 
-Search / DocumentFile references, source `3a449fef242e`: **21 Core-функция /
-27 исполнений PASS**, без пропусков. Literal angles, bounded HTML, graphic labels,
-index-only DB28→29 rebuild, старые handles и immutable historical pinned sources.
-DB29 остаётся изолированным до согласованного cutover; wire44/manifest26 сохранены.
-[Точный scope и результаты](audit-evidence/2026-10-06/search-source-semantics/results.json).
+Поверх `96e00928` совместно проверены панель и PR #1–#4. Найденная при
+интеграционном ревью ошибка NB30 исправлена: диагностический stderr больше не
+подменяет stdout версии. Обе трубы ограничены общим лимитом и timeout; exact
+version и ненулевой exit остаются отказом. Три новые регрессии включают настоящий
+hash-matching fixture с предупреждением при prepare/reuse/bundle. Исправлена
+устаревшая команда подготовки runtime. Независимый повтор: 29 packaging tests
+и дополнительные stream/boundary probes PASS.
 
-NB10 baseline `b46361ab`: writer для 1 KiB / 1 MiB / 4 MiB —
-**20,96 / 184,13 / 640,95 мс**, `updateSearchIndex` — **5,57 / 128,20 / 542,99 мс**.
-Planner ещё не изменён; текущие allowances требуют замера при его изменении.
-[Атрибуция](audit-evidence/2026-10-06/search-source-semantics/attribution-README.md).
+Общий результат: **54 chat/program + 44 panel CPU + 104 release/resource +
+117 verifier PASS**, строгий TypeScript и script-services PASS. В более широком
+пятифайловом Node-прогоне 94 PASS и 4 отказа AF_UNIX (`EPERM`); он не объявляется
+полным PASS. Native Xcode/WebKit, signing, физический iPad и установка не
+выполнялись. Незакоммиченный Swift-кандидат в этот срез не включён.
+[Точные исходники, исходный отказ и повторные проверки](audit-evidence/2026-10-06/main-consolidation/results.json).
 
-Политика NB11: вся авторская история бессрочно; очистка доказанно бесхозных данных
-и производных кешей. Состав устройств: этот Mac и iPad Елизаветы. Immutable Undo
-transition, остальные native producer admission и полная приёмка остаются открыты.
+## Причинное содержание — GUI-507, 7 октября
 
-Панельный read-cut, source `ccc955657762`: **3 Core + 9 native Mac PASS**, без
-пропусков и runtime warnings, точные исходники обоих маршрутов совпали. Request cut,
-материалы и финальная pixel validation используют один serial reader/fixed writer
-prefix; отказ/отмена observation сохраняет принятый хвост. Проверены expired cut,
-stale dependencies, canonical board/region и Stop. iPad и installed Codex gestures
-ещё открыты. [Точный scope](audit-evidence/2026-10-06/panel-read-boundary/results.json).
+`CollaborativeContent` собирает adoption по изменённым адресам и восстанавливает
+member bodies одним временным проходом. Прежние вложенные scans удалены; версии,
+observed frontiers, tombstones и канонический порядок сохраняет тот же owner.
+**10 чистых Core-проверок PASS**, без пропусков и предупреждений. 42 причинных
+снимка до/после совпали побайтно: конкурентные insert/edit/delete, скрытая голова,
+повторы доставки и причинная обратная запись. Устаревший ключ document fixture
+`blocks/body/content` заменён на `files/body/content`; исходный owner давал те же
+24 отказы этого fixture.
+
+Оптимизированный host/Core probe: три повтора после ремонта, времена — медианы.
+
+| Нагрузка | 1 000 | 4 097 | 100 000 | Peak RSS на 100k |
+| --- | ---: | ---: | ---: | ---: |
+| Sparse record | 59,96 мс | 264,81 мс | 7,76 с | 994 МиБ |
+| Bulk record | 60,93 мс | 283,00 мс | 7,62 с | 1 054 МиБ |
+| Merge фигур | 86,96 мс | 387,19 мс | 11,45 с | 1 652 МиБ |
+| Merge плоских полей | 4,55 мс | 17,14 мс | 600,24 мс | 176 МиБ |
+
+Исходный merge 4 097 фигур занимал 3,25 с в этом Release probe; все четыре
+исходные нагрузки 100k остановлены по лимиту 30 с. 100k фигур создают 1 000 001
+поле и проверяют чистого владельца за пределом сохранённого admission 100k полей;
+отдельная строка проверяет ровно 100k полей. Адресные проходы линейны; сортировка
+непредпочтительных concurrent survivors сохранена. Массовая работа остаётся на
+worker существующей FIFO. Исходники неизменны во время каждого замера. Срез
+отдельный от 254; аппаратный контракт ввода 20 мс здесь не измерялся.
+[Исходники, CPU/RSS, повторы и точный scope](audit-evidence/2026-10-07/causal-content-scaling/results.json).
 
 ## Условия завершения
 
@@ -161,12 +374,49 @@ GUI-196, GUI-197, GUI-183 и длительная GUI-250 остаются от�
 
 ## Открытые измерения
 
-- **Pencil/eraser, ≤ 20 мс по контракту.** Реальный trace 247: 5830 batches, без
-  потерянных событий/сэмплов и ошибок записи; handler p95 ≤ 0,25 мс, actual→OS
-  pen/eraser p95 **57,82/57,42 мс**, 139 unresolved lift batches. GPU занимает
-  около 1 мс; нужна связь выбранной UI-фазы, CA commit и OS receipt этого кадра.
-  Новая диагностика прошла ревью, scheduling сохранён. Накладные расходы trace
-  не откалиброваны. [Реальный Pencil и доставка 247](audit-evidence/2026-10-05/surface-consolidation/delivery-247.json).
+- **Pencil/eraser, ≤ 20 мс по контракту.** Настоящий Pencil в установленной 253:
+  6880 input batches, без потерь событий/сэмплов и ошибок записи; actual→OS
+  pen/eraser p95 **57,39/57,43 мс**, 118 unresolved lift batches. GPU execution
+  p95 **0,51/13,62 мс**; стоимость ластика растёт внутри длинного контакта.
+  Все 1723 кадра с UI-данными идут в normal-фазе без low-latency/immediate
+  presentation. Проверяются участие текущего UIKit update и повторная отрисовка
+  области ластика. Накладные расходы trace не откалиброваны; бюджет не принят.
+  [Фазы, OS receipts и точный baseline](audit-evidence/2026-10-07/product-quality-baseline/pencil-253.json).
+  Candidate `9a907c0b` с последующими исправлениями: физический v3b **10 PASS / 4 FAIL**,
+  без runtime warnings; прежний [v2](audit-evidence/2026-10-07/product-quality-baseline/native-candidate.json) — 7/6.
+  Синтетический 120 Hz pen/eraser p95
+  **32,34/41,15 мс**, GPU deadline misses0; основной хвост ластика приходится
+  на первые13 входов. Это не сравнение с настоящим Pencil253.
+  Crash одного нового pixel-сценария локализован в недопустимой геометрии fixture;
+  исправленный v6 на iPad **1 PASS / 0 FAIL**, 0,798 с, без runtime warnings,
+  исходники неизменны между build и завершением. Финальная проверка маршрута
+  отклонена из-за отдельной изменённой UI-фикстуры без жестового сценария.
+  Ручной повтор v6 завершён без сохранённого input trace; результата latency нет.
+  В ручном v9 checkpoint сохранился: одна общая activity, ноль Pencil samples;
+  SQLite содержит только 80 исходных штрихов. Доставка ввода на тестовую страницу
+  ещё не подтверждена, сравнения задержки нет.
+  [Точные области проверки, фазы и отказы](audit-evidence/2026-10-07/product-quality-baseline/native-followup.json).
+- **Холодное открытие документа, ≤ 1 с.** Междосочный цикл устранён; бумага и
+  установленные слои проверяются до начала раскрытия. GUI-508 ускоряет загрузку
+  формата TeX: Mac paired cold median **516,61 → 466,51 мс**, одинаковый PDF,
+  два прохода TeX; проверки формата, отмены и восстановления PASS.
+  Слайс вошёл в `main` как `f7af0e45`; повторная проверка 7 октября подтвердила
+  неизменные pinned-входы и kernel, ASan/UBSan и runtime **1 PASS / 0 FAIL**,
+  exact-source stage для Mac/iPad. [Проверка текущего main](audit-evidence/2026-10-07/product-quality-baseline/typesetter-current-main.json).
+  После расчёта камеры для предстоящего кадра с завершением по реальному сроку
+  физический v8 с уникальными исходниками: **5 PASS / 0 FAIL**, без runtime warnings;
+  исходники неизменны. Native input на текущей доске **878,31 мс**, на другой —
+  **986,33 мс**, native compiler **648,95 / 741,74 мс**. Оба открытия уложились в 1 с;
+  прежний v7 дал **886,41 / 1037,96 мс**. Это одиночные сценарии, устойчивость
+  бюджета остаётся открыта. Recorder отдельно подтверждает **57,04 / 61,80 мс**
+  до подготовки печатного источника и **3,22 / 1,73 мс** от её конца до бумаги
+  (другая/текущая доска). Физический UI v11: **1 PASS / 0 warnings**; холодный лист
+  900×600 занимает одну полную сторону viewport с сохранением пропорций, проходит
+  повороты и три быстрых reopen, сохраняет увеличение и положение после pinch.
+  Системные снимки просмотрены; ошибка orientation/crop в `app.screenshot`
+  устранена захватом экрана в тесте. [Жест, геометрия и снимки](audit-evidence/2026-10-07/product-quality-baseline/document-fit-ui.json).
+  Эти кандидаты пока не входят в установленную 256.
+  [Точный runtime, исходники и фазы v7/v8](audit-evidence/2026-10-07/product-quality-baseline/typesetter-cold.json).
 - **Undo обложки, 100 мс.** Первый 252 native-прогон: **114,956 мс** и неверное первое
   изображение. После ремонта изображения два диагностических прохода дали
   **90,566 / 95,681 мс** до CA commit, inverse SQL **31,7–31,9 мс**. Функционального
@@ -192,6 +442,8 @@ GUI-196, GUI-197, GUI-183 и длительная GUI-250 остаются от�
 
 | Срез | Результат и свидетельство |
 | --- | --- |
+| Панель 254 | 60 Node + TypeScript, 12 Core, 12 optimized native Mac PASS; 0 skips/warnings. Исправлен порядок завершения ввода в fixture; production между повторами неизменен. [Scope и исходный отказ](audit-evidence/2026-10-07/panel-responsiveness/results.json). |
+| Portable integration | PR #1–#3 совместно: 54 Node + 101 release/resource + 117 verifier PASS, strict MCP TypeScript PASS. Исправлена только host discovery в fabricated-runner tests; отдельный base suite 113 PASS. Production Swift prerequisite сохранён. Local integration tree не опубликован; native/physical/install gates открыты. [Точные исходники и результаты](audit-evidence/2026-10-06/verification-fixture-discovery/results.json). |
 | Runtime 252 | 4 native Mac + 89 release + 111 verifier PASS; 8 подписанных lifecycle/integrity сценариев PASS. [Receipt](audit-evidence/2026-10-06/plugin-runtime-lifecycle/results.json). |
 | Первый iPad 252 | 4 PASS / 5 FAIL: раннее лассо, Undo/первый кадр и cancellation. 100 000 объектов, текст, cold launch и чужая замена PASS. [Исходные отказы](audit-evidence/2026-10-06/plugin-cutover-252/results.json). |
 | Ремонт 252 | [Первичная диагностика](audit-evidence/2026-10-06/scene-lifecycle-diagnostic/results.json), [Undo/menu](audit-evidence/2026-10-06/menu-and-ink-diagnostic/results.json), [mounted lifecycle](audit-evidence/2026-10-06/mounted-lifecycle-repair/results.json). Ошибки GPU fixtures lifetime/unit transform исправлены. |
@@ -215,3 +467,32 @@ GUI-196, GUI-197, GUI-183 и длительная GUI-250 остаются от�
 215–240 — [в прежней ревизии](https://github.com/AmirTlinov/Notebook/blob/1ee54dc9e4444fee3aa9fec4a4a435636d11aa03/docs/verification.md).
 Текущие задачи и зависимости ведутся в Linear; контракт ввода —
 [interaction ownership](interaction-ownership.md).
+
+
+## 2026-10-06: NB13 immutable frozen-window address
+
+Isolated baseline: main `b5e350288443921086d2487b9d3e08a72be6c802`. The existing
+program owner now assigns a stored commit identity to each frozen descriptor.
+Late reads cannot alias a new freeze after resume. Failed resume and idempotent
+checkpoint retry retain the accepted address; numeric FIFO snapshots/ACK remain
+unchanged. The shipped document adapter and all native files are unchanged.
+
+The same 38 program tests fail twice against the baseline producer (36 PASS /
+2 FAIL), including through the actual unchanged iframe adapter. The corrected
+producer passes 38/38; combined program/chat checks pass58/58 and strict TypeScript
+passes. Exact commands, source hashes and limits are in
+[audit evidence](audit-evidence/2026-10-06/checkpoint-snapshot-identity/results.json).
+
+This is independent of the still-unpublished native read-settlement proposal.
+No producer API migration or memory-admission redesign is included. Native
+Swift/WebKit/physical acceptance and installation have not been run here.
+
+## 2026-10-07: remediation integration
+
+13 Root commits joined with main through installed-258 evidence `594b99ee`.
+Final checks: Core4 and physical iPad1 PASS; Mac5 PASS. Only a Mac test fixture
+changed between those runs; executable Core/iPad inputs are unchanged. Earlier
+20 Core functions/23 executions,68 Node and TypeScript retain their original scope.
+[Exact sources, intersections and results](audit-evidence/2026-10-07/remediation-integration/results.json).
+DB29/wire44/manifest26: search admission changes derived data in one transaction.
+Birth/checkpoint WIP, a new integrated signed pair and joint acceptance remain pending.

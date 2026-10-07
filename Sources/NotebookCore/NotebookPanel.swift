@@ -202,7 +202,8 @@ extension NotebookStore {
     }
   }
 
-  public func readPanel(_ request: NotebookPanelReadRequest, actor: UUID) throws -> JSONValue {
+  public func readPanel(_ request: NotebookPanelReadRequest, actor: UUID,
+    reusing pageContent: NotebookPanelPageContent? = nil) throws -> JSONValue {
     try readTransaction { _ in
       let workspaceID = try requirePanelWorkspace(request.workspaceID)
       let presence = try readObservedPresenceIfAvailable()
@@ -210,6 +211,7 @@ extension NotebookStore {
       try requirePanelTarget(target)
       if target.kind == .board { try requireLiveBoard(target.id) }
       else { _ = try readContentHeader(target: target) }
+      try pageContent?.validate(in: self, workspaceID: workspaceID, target: target)
       let cursor = String(try currentReadCursor())
       if request.knownCursor == cursor && request.includeFitBounds != true {
         return .object(["workspaceID": try .encode(workspaceID), "target": try .encode(target),
@@ -219,23 +221,16 @@ extension NotebookStore {
       var navigation: JSONValue = .null
       var truncated = false, rawInkPresent = false
       if target.kind == .page {
-        let page = try loadPage(target.id)
+        let page = try pageContent?.page ?? loadPage(target.id)
         if let itemID = try ownerItemID(ofPage: target.id), let boardID = try ownerBoardID(of: itemID),
           let position = try resolveNotebookPage(target.id, in: itemID) {
           navigation = .object(["parentBoard": try .encode(CollaborationTarget(kind: .board, id: boardID)),
             "itemID": try .encode(itemID), "position": try .encode(position),
             "directory": try .encode(readNotebookPageDirectory(itemID: itemID, from: max(0, position.index - 1), limit: 3))])
         }
-        let ink = try page.inkDrawing()
-        rawInkPresent = ink.baselinePNG?.isEmpty == false || ink.actions.contains { $0.isActive && $0.tool == .pen }
         size = try .encode(page.size)
-        for element in page.elements {
-          let read = try readPageElementSnapshot(pageID: target.id, elementID: element.id)
-          var value: [String: JSONValue] = ["source": try .encode(element)]
-          if element.graphic != nil { value["graphicResolution"] = try readGraphicResolution(target: target, elementID: element.id).readProjection(includeGeometry: true) }
-          value["appearance"] = read?.appearance
-          elements.append(.object(value))
-        }
+        if let pageContent { elements = pageContent.elements; rawInkPresent = pageContent.rawInkPresent }
+        else { (elements, rawInkPresent) = try NotebookPanelPageContent.projection(page) }
       } else {
         let bounds: WorkspaceSpatialBounds
         if let supplied = request.bounds { bounds = try supplied.validated() }

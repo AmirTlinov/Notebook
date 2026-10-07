@@ -81,7 +81,9 @@ function createNotebookProgram({state = null, onCommit = () => {}, report = () =
     return {revision, units:json.length, cost:Math.max(bytes*8 + nodes*64, previousCost)};
   };
   const drained = () => snapshots.size ? new Promise(resolve => drainWaiters.push(resolve)) : Promise.resolve();
-  const checkpointResult = serialized => serialized ? describe(valueJSON, 'frozen', valueNodes, valueBytes, checkpointCost) : copy(value);
+  // Frozen windows have a commit identity, independent of lifecycle retries.
+  let frozenSnapshotID = null, frozenSnapshotSequence = 0n;
+  const checkpointResult = serialized => serialized ? describe(valueJSON, frozenSnapshotID, valueNodes, valueBytes, checkpointCost) : copy(value);
   let hooks = {}, registered = false, generation = 0, operation = null, started = null;
   let checkpointOperation = null, pauseCompleted = false, phase = 'running', failedStage = null;
   let semantic = null, semanticValue = null, exportFrame = null, exportTimeline = false, exportVectors = false;
@@ -179,7 +181,7 @@ function createNotebookProgram({state = null, onCommit = () => {}, report = () =
       dispatchEvent(new CustomEvent('notebookcapacity'));
     },
     readSnapshot({revision, offset = 0}) {
-      const json = revision === 'frozen' && frozen ? valueJSON : snapshots.get(revision)?.json;
+      const json = revision === frozenSnapshotID && frozen ? valueJSON : snapshots.get(revision)?.json;
       if (typeof json !== 'string' || !Number.isSafeInteger(offset) || offset < 0 || offset > json.length)
         throw error('program_state_snapshot_missing');
       // 262144 UTF-16 units fit in the existing 1 MiB resource-read window.
@@ -240,7 +242,7 @@ function createNotebookProgram({state = null, onCommit = () => {}, report = () =
       if(request.format==='raster'&&(!Number.isFinite(request.pixelRatio)||request.pixelRatio<=0||request.pixelRatio>8))throw error('program_export_extent');
       if(request.time!==undefined&&(!exportTimeline||!Number.isFinite(request.time)||request.time<0))throw error('program_export_timeline_unavailable');
       const input = copy(request.state);
-      suspended = true; frozen = false; abort();
+      suspended = true; frozen = false; frozenSnapshotID = null; abort();
       const expected = generation, operationRequest = new AbortController(); operation = operationRequest;
       try {
         const result = await bounded(async () => {
@@ -296,12 +298,17 @@ function createNotebookProgram({state = null, onCommit = () => {}, report = () =
         alive();
         if (expected !== generation) throw error('program_superseded');
         const encoded = serialize(next), accepted = JSON.parse(encoded.json);
+        // JSON conversion can reenter the owner through authored toJSON/getters.
+        // Only the still-current lifecycle may commit the resulting freeze.
+        alive();
+        if (request.signal.aborted || expected !== generation) throw error('program_superseded');
         // Do not wait for rAF here: WebKit may already have parked this
         // viewport. The author has finished its model/DOM update; the existing
         // native snapshot owner establishes the pixel boundary afterwards.
         // No optimistic commit: the native checkpoint owner must admit this
         // value and confirm the existing writer before disposing the surface.
         checkpointCost = Math.max(valueBytes*8+valueNodes*64, encoded.bytes*8+encoded.nodes*64);
+        frozenSnapshotID = 'frozen:' + String(++frozenSnapshotSequence);
         value = accepted; valueJSON = encoded.json; valueNodes = encoded.nodes; valueBytes = encoded.bytes; frozen = true; phase = 'frozen'; failedStage = null; semanticValue = null;
         if (semantic && hooks.pause && hooks.checkpoint) {
           try {
@@ -333,7 +340,7 @@ function createNotebookProgram({state = null, onCommit = () => {}, report = () =
         await bounded(() => hooks.resume?.({signal:request.signal}), request.signal, 'program_resume');
         alive();
         if (expected !== generation) throw error('program_superseded');
-        suspended = false; frozen = false; pauseCompleted = false; phase = 'running'; failedStage = null; return true;
+        suspended = false; frozen = false; frozenSnapshotID = null; pauseCompleted = false; phase = 'running'; failedStage = null; return true;
       } catch (reason) { request.abort(); if (expected === generation && !disposed) { phase = 'failed'; failedStage = 'resuming'; announce(reason); } throw reason; }
       finally { if (operation === request) operation = null; }
     },

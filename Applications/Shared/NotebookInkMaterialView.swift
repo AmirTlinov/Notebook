@@ -173,7 +173,14 @@ final class InkMaterialRenderer {
           if previous == cut.samples { source=old }
           else {
             let prefix=cut.samples.unchangedPrefix(comparedTo:previous)
-            source.buffers=old.buffers.filter { $0.value.prepared.descriptor.range.upperBound+2 < prefix }
+            let damage=Self.erasureSourceDamage(cut.samples,from:prefix,target:cut.target)
+              .union(Self.erasureSourceDamage(previous,from:prefix,target:cut.target))
+              .applying(.init(scaleX:1/frame.width,y:1/frame.height))
+            // Chunk ordinals address NORMALIZED points. Raw prefix ordinals
+            // cannot prove a cached tail unchanged after coincident samples.
+            if damage.minX.isFinite,damage.minY.isFinite,damage.width.isFinite,damage.height.isFinite {
+              source.buffers=old.buffers.filter { !$0.value.prepared.descriptor.bounds.intersects(damage) }
+            }
           }
         }
       }
@@ -184,19 +191,72 @@ final class InkMaterialRenderer {
   /// Maps normalized source coordinates through the captured body and current
   /// whole transform. Erasures retain their authored basis under shear/rotation.
   private func basis(for source:Source, sourceSize:CGSize) -> CGAffineTransform {
-    let layout=content?.layout, size=layout?.projection?.size ?? sourceSize
+    Self.basis(target:source.target,transform:source.transform,layout:content?.layout,sourceSize:sourceSize)
+  }
+  private static func basis(target:InkElementTarget?,transform:NotebookGraphicTransform?,
+    layout:NotebookGraphicLayout?,sourceSize:CGSize) -> CGAffineTransform {
+    let size=layout?.projection?.size ?? sourceSize
     func point(_ unit:SpatialPoint) -> CGPoint {
       var p=unit
-      if let target=source.target {
+      if let target {
         p=target.elementTransform?.unapplying(p) ?? p
         p=(target.graphicTransform ?? .identity).unapplying(p)
       }
-      p=(source.transform ?? .identity).applying(p)
+      p=(transform ?? .identity).applying(p)
       let result=CGPoint(x:p.x*size.width,y:p.y*size.height)
       return layout?.projection.map { result.applying($0.transform) } ?? result
     }
     let a=point(.zero),b=point(.init(x:1,y:0)),c=point(.init(x:0,y:1))
     return .init(a:b.x-a.x,b:b.y-a.y,c:c.x-a.x,d:c.y-a.y,tx:a.x,ty:a.y)
+  }
+
+  /// The changed measured sweep in the body's current basis. Retractions need
+  /// the previous suffix too; a captured erasure need not share the raw plane's
+  /// current transform. This uses the same basis as its rendered geometry.
+  static func erasureDamage(_ next:[InkElementErasure],replacing previous:[InkElementErasure],
+    transform:NotebookGraphicTransform?,layout:NotebookGraphicLayout) -> CGRect {
+    var damage=CGRect.null
+    let size=CGSize(width:layout.frame.width,height:layout.frame.height)
+    let wasWhole=previous.contains{$0.target.wholeElement},isWhole=next.contains{$0.target.wholeElement}
+    if wasWhole || isWhole {return wasWhole == isWhole ? .null:CGRect(origin:.zero,size:size)}
+    for index in 0..<max(next.count,previous.count) {
+      let old=previous.indices.contains(index) ? previous[index]:nil
+      let new=next.indices.contains(index) ? next[index]:nil
+      if old == new {continue}
+      let prefix:Int
+      if let old,let new,old.target == new.target {prefix=new.samples.unchangedPrefix(comparedTo:old.samples)}
+      else {prefix=0}
+      for cut in [old,new].compactMap({$0}) {
+        let sweep=erasureSourceDamage(cut.samples,from:prefix,target:cut.target)
+        guard sweep.minX.isFinite,sweep.minY.isFinite,sweep.width.isFinite,sweep.height.isFinite else {
+          if sweep.isNull {continue}
+          return CGRect(origin:.zero,size:size)
+        }
+        guard !sweep.isNull else {continue}
+        let basis=Self.basis(target:cut.target,transform:transform,layout:layout,sourceSize:size)
+        let frame=cut.target.frame
+        let affine=CGAffineTransform(a:basis.a/frame.width,b:basis.b/frame.width,
+          c:basis.c/frame.height,d:basis.d/frame.height,tx:basis.tx,ty:basis.ty)
+        damage=damage.union(sweep.applying(affine))
+      }
+    }
+    return damage
+  }
+  private static func erasureSourceDamage(_ samples:InkMeasurements,from prefix:Int,target:InkElementTarget)->CGRect {
+    let source=InkSampleRelations(sourceID:samples.revision,measurements:samples,header:.init(tool:.eraser,color:.black))
+    let edge=min(prefix,samples.count)
+    var start=0
+    if edge > 0 {
+      let projection=InkSampleProjection(origin:target.worldOrigin,offset:.init(x:-target.frame.x,y:-target.frame.y))
+      switch source.lastDisplayPredecessor(before:edge-1,projection:projection).result {
+      case .point(let address):start=address.index
+      case .none:start=edge-1
+      case .unproven:break
+      }
+    }
+    let measured=try! source.bounds(in:start..<samples.count).bounds
+    let origin=target.worldOrigin.flatMap{target in source.geometry.origin.map{target.delta(to:$0)}} ?? .zero
+    return measured.offsetBy(dx:origin.x-target.frame.x,dy:origin.y-target.frame.y)
   }
   private func affine(_ basis:CGAffineTransform,unit:CGSize,region:CGRect) -> InkAffine {
     .init(x:.init(Float(basis.a/unit.width),Float(basis.c/unit.height),Float(basis.tx-region.minX),0),
@@ -232,10 +292,10 @@ final class InkMaterialRenderer {
   }
 
   func prepareDraws(region:CGRect, sourceSize:CGSize, pixels:CGSize,
-    device:any MTLDevice, resources:SceneRenderResources, owner:ScenePhysicalOwnerLease?) throws
+    device:any MTLDevice, resources:SceneRenderResources, owner:ScenePhysicalOwnerLease?,damage:CGRect? = nil) throws
     -> (draws:[InkRasterRenderer.Draw],reservations:[RasterReservation]) {
     let density=max(pixels.width/region.width,pixels.height/region.height)
-    let queryRegion=Self.queryRegion(content!,region:region,sourceSize:sourceSize,density:density)
+    let queryRegion=Self.queryRegion(content!,region:damage.map{region.intersection($0)} ?? region,sourceSize:sourceSize,density:density)
     guard !queryRegion.isNull,!queryRegion.isEmpty else {
       for i in sources.indices { sources[i].buffers.removeAll() }
       return ([],[])

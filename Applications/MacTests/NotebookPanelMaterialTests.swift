@@ -7,6 +7,124 @@ final class NotebookPanelMaterialTests: XCTestCase {
   override func setUp() async throws { try await InkRasterRenderer.shared.prepareInk() }
 
   @MainActor
+  func testBudgetDemotedElementBodiesNeverCreateDiscardedMaterialRasters() async throws {
+    let (fixture, header, target) = try await fixture()
+    // Wide passive bodies keep the interleaved bands over the aggregate
+    // budget until independent bodies rejoin the ordinary painter.
+    let center = WorldPoint.zero
+    let optional = Set((0..<16).map { String(format: "budget-%02d", $0 * 2 + 1) })
+    try await fixture.apply((0..<33).map { index in
+      let id = String(format: "budget-%02d", index)
+      let color = index.isMultiple(of: 2) ? SpatialInkColor(red: 0, green: 0, blue: 1)
+        : SpatialInkColor(red: 0.5 + Double(index) / 80, green: 0, blue: 0)
+      return .init(kind: .insertElement, target: target, id: id, values: ["kind": .string("graphic"),
+        "source": .string(""), "graphic": try .encode(NotebookGraphic(shape: .rectangle,
+          style: .init(stroke: color, strokeWidth: 1, fill: color))),
+        "worldOrigin": try .encode(center),
+        "frame": try .encode(index.isMultiple(of: 2)
+          ? PageRect(x: -768, y: -768, width: 1536, height: 1536)
+          : PageRect(x: -10, y: -10, width: 20, height: 20))])
+    })
+    let current = try fixture.store.workspaceHeader()
+    let source = SceneCompositionSource(store: fixture.store, revision: current.cursor,
+      workspaceID: header.workspaceID, recordPixelDependencies: true)
+    // Keep every produced entry resident so absence cannot be explained by eviction.
+    let resources = SceneRenderResources(byteLimit: 512 * 1024 * 1024, profile: .headless)
+    let renderer = SceneCompositionRenderer(source: source, resources: resources)
+    let projection = NotebookPanelRenderProjection(workspaceID: header.workspaceID,
+      camera: .init(center: center, scale: 1), viewport: .init(x: 1536, y: 1536), pixelScale: 1)
+    let presence = SessionPresence(boardID: target.id, mode: .board,
+      camera: projection.camera, viewport: projection.viewport)
+    // The response owns small PNG grants until its last layer borrow ends.
+    do {
+      let result = try await renderer.renderPanel(presence: presence, projection: projection,
+        editableIDs: optional, movableItemIDs: [], knownAssets: [])
+      let admitted = Set(result.layers.compactMap(\.elementID)), discarded = optional.subtracting(admitted)
+      XCTAssertFalse(discarded.isEmpty, "Interleaved passive bands force the real aggregate budget to demote bodies")
+      for id in discarded {
+        let value = try await source.readElementForPaint(id, boardID: target.id)
+        let read = try XCTUnwrap(value)
+        let presentation = read.placement.map { NotebookElementPresentation(read.element, placement: $0) }
+        let key = try await source.elementMaterialKey(read, boardID: target.id, presentation: presentation, density: 1)
+        let unexpected = resources.retainMaterial(key)
+        XCTAssertNil(unexpected, "A demoted body must not begin raster/PNG preparation before admission")
+        unexpected?.release()
+      }
+      XCTAssertEqual(resources.rasterCount, Set(result.layers.map(\.assetID)).count,
+        "Only final cohort pixels were produced; no discarded material or eviction hides wasted work")
+      XCTAssertLessThan(resources.peakAccountedBytes, resources.byteLimit)
+      XCTAssertLessThanOrEqual(result.layers.count, 96)
+      XCTAssertLessThanOrEqual(result.layers.reduce(0) { $0 + $1.pixelWidth * $1.pixelHeight },
+        NotebookPanelRenderProjection.maximumDecodedPixels)
+      for layer in result.layers where layer.repeatSize == nil {
+        XCTAssertGreaterThanOrEqual(min(Double(layer.pixelWidth) / layer.frame.width,
+          Double(layer.pixelHeight) / layer.frame.height), 0.995)
+      }
+      let sample = center.offsetBy(x: -5, y: -5)
+      let covering = result.layers.filter { layer in
+        let point = layer.worldOrigin.delta(to: sample)
+        return layer.repeatSize == nil && point.x >= layer.frame.x && point.y >= layer.frame.y
+          && point.x < layer.frame.x + layer.frame.width && point.y < layer.frame.y + layer.frame.height
+      }.sorted { $0.order < $1.order }
+      // Empty ink tiles still cover this point above the element bands. Check
+      // the displayed source-over result, not the highest layer's clear pixel.
+      var pixel = (red: CGFloat(0), blue: CGFloat(0), alpha: CGFloat(0))
+      for layer in covering {
+        let point = layer.worldOrigin.delta(to: sample)
+        let image = try bitmap(layer.encoded)
+        let color = try XCTUnwrap(image.colorAt(x: Int((point.x - layer.frame.x) * Double(layer.pixelWidth) / layer.frame.width),
+          y: Int((point.y - layer.frame.y) * Double(layer.pixelHeight) / layer.frame.height))?.usingColorSpace(.deviceRGB))
+        let alpha = color.alphaComponent
+        pixel = (color.redComponent * alpha + pixel.red * (1 - alpha),
+          color.blueComponent * alpha + pixel.blue * (1 - alpha), alpha + pixel.alpha * (1 - alpha))
+      }
+      XCTAssertGreaterThan(pixel.alpha, 0.95)
+      XCTAssertGreaterThan(pixel.blue, 0.95, "The last passive body remains above every admitted red subject")
+      XCTAssertLessThan(pixel.red, 0.05)
+      let repeated = try await renderer.renderPanel(presence: presence, projection: projection,
+        editableIDs: optional, movableItemIDs: [], knownAssets: Set(result.layers.map(\.assetID)))
+      XCTAssertEqual(repeated.layers.map(\.assetID), result.layers.map(\.assetID))
+      XCTAssertEqual(repeated.layers.map(\.order), result.layers.map(\.order))
+      XCTAssertTrue(repeated.layers.allSatisfy { $0.png == nil })
+    }
+    XCTAssertEqual(resources.reservedBytes, 0, "Every transient grant ends with the response; entry PNG residency stays charged")
+  }
+
+  @MainActor
+  func testBudgetDemotedCoverCellsNeverAllocateIndependentMaterialPixels() async throws {
+    let (fixture, header, target) = try await fixture()
+    let ids = (0..<16).map { _ in UUID() }, center = WorldPoint(x: 2048, y: 2048)
+    try await fixture.apply(ids.map { id in
+      .init(kind: .createNotebook, target: target, id: id.uuidString,
+        values: ["center": try .encode(center), "pageID": try .encode(UUID())])
+    })
+    let current = try fixture.store.workspaceHeader()
+    let source = SceneCompositionSource(store: fixture.store, revision: current.cursor,
+      workspaceID: header.workspaceID, recordPixelDependencies: true)
+    let resources = SceneRenderResources(byteLimit: 512 * 1024 * 1024, profile: .headless)
+    let renderer = SceneCompositionRenderer(source: source, resources: resources)
+    let projection = NotebookPanelRenderProjection(workspaceID: header.workspaceID,
+      camera: .init(center: center, scale: 1), viewport: .init(x: 2048, y: 2048), pixelScale: 2)
+    let result = try await renderer.renderPanel(presence: .init(boardID: target.id, mode: .board,
+      camera: projection.camera, viewport: projection.viewport), projection: projection,
+      editableIDs: [], movableItemIDs: Set(ids), knownAssets: [])
+    XCTAssertLessThan(Set(result.layers.compactMap(\.itemID)).count, ids.count,
+      "The crowded cohort still demotes bodies before preparing any pixels")
+    XCTAssertFalse(result.diagnostics.contains { $0.kind == "quality_limit" }, "Empty ink cannot consume the cover budget")
+    for layer in result.layers where layer.repeatSize == nil {
+      XCTAssertGreaterThanOrEqual(min(Double(layer.pixelWidth) / layer.frame.width,
+        Double(layer.pixelHeight) / layer.frame.height) + 0.000001, projection.camera.scale * projection.pixelScale)
+    }
+    XCTAssertEqual(resources.rasterCount, Set(result.layers.map(\.assetID)).count,
+      "No independent cover cells may be prepared and then thrown away")
+    XCTAssertEqual(resources.reservedBytes, 0)
+    XCTAssertLessThan(resources.peakAccountedBytes, resources.byteLimit)
+    XCTAssertLessThanOrEqual(result.layers.count, 96)
+    XCTAssertLessThanOrEqual(result.layers.reduce(0) { $0 + $1.pixelWidth * $1.pixelHeight },
+      NotebookPanelRenderProjection.maximumDecodedPixels)
+  }
+
+  @MainActor
   func testLocalEditAndTranslationReuseUnchangedPixelsWhileTextAndSizeRefresh() async throws {
     let (fixture, header, target) = try await fixture()
     let ids = ["caption", "neighbor"] + (0..<14).map { "note-\($0)" }

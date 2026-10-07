@@ -65,22 +65,33 @@ public enum JSONValue: Codable, Equatable, Sendable {
   }
 
   public init(from decoder: Decoder) throws {
+    #if canImport(ObjectiveC)
+    // Foundation's failed scalar/container probes can retain autoreleased
+    // errors until the surrounding app event ends. A decoded member owns its
+    // Swift value; temporary probes need not survive the rest of a large tree.
+    self = try autoreleasepool { try Self.decodedValue(from: decoder) }
+    #else
+    self = try Self.decodedValue(from: decoder)
+    #endif
+  }
+
+  private static func decodedValue(from decoder: Decoder) throws -> Self {
     let container = try decoder.singleValueContainer()
     // Ink samples are predominantly numbers. JSONDecoder distinguishes JSON
     // numbers from booleans; do not construct a type-mismatch error per sample
     // coordinate before taking the numeric path.
     if container.decodeNil() {
-      self = .null
+      return .null
     } else if let value = try? container.decode(Double.self) {
-      self = .number(value)
+      return .number(value)
     } else if let value = try? container.decode(Bool.self) {
-      self = .bool(value)
+      return .bool(value)
     } else if let value = try? container.decode(String.self) {
-      self = .string(value)
+      return .string(value)
     } else if let value = try? container.decode([JSONValue].self) {
-      self = .array(value)
+      return .array(value)
     } else {
-      self = .object(try container.decode([String: JSONValue].self))
+      return .object(try container.decode([String: JSONValue].self))
     }
   }
 

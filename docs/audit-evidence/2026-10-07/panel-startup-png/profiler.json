@@ -1,0 +1,17 @@
+{
+  "scope": "Failed diagnostic attempt, excluded from latency comparison.",
+  "command": [
+    "/usr/bin/sample",
+    "38006",
+    "4",
+    "1",
+    "-file",
+    ".build/panel-debug-20261007/runtime256-navigation.sample.txt"
+  ],
+  "beganAt": "2026-10-07T11:03:02Z",
+  "result": "No sample output file; profiler stayed active beyond requested duration. SIGINT printed Interrupted but did not exit. Stopped only profiler PID42416 with SIGTERM at 11:04:51Z, exit143. Runtime PID38006 was not stopped.",
+  "concurrentMCP": "profile-attempt.json",
+  "recovery": "profile-recovery.json",
+  "recoveryHelp": "profile-recovery-help.json",
+  "interpretation": "Concurrent page connect timed out at35s. After profiler exit, the same runtime returned help and the original page. The sampling attempt supplies no useful stack or normal-latency evidence."
+}

@@ -274,6 +274,15 @@ capacity improvement, even with a stationary camera. Accepted Pencil still gates
 background geometry publication. Screen partial composition is not written into a
 second disk PNG cache; exact export uses sequential painter completion.
 
+Panel PNG/SHA belongs to the exact immutable raster entry. Concurrent borrowers
+share one encoding; only a representation smaller than its pixels remains cached.
+ImageIO output grows under the same pool budget, charging old and new allocation
+before growth. Encoding pins its source until completion; delivery retains only
+encoded backing. Eviction transfers that backing's charge to a reservation until
+the final response releases it. Cancellation of the last borrower retires its
+flight before a new request can join. The 9 MiB PNG bound follows the panel's
+12 MiB Base64 limit; a known asset needs no encoded payload.
+
 ## Camera, geometry and contact
 
 Opened paper is temporarily above closed covers and below a finger-lifted item.

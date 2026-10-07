@@ -75,8 +75,7 @@ import XCTest
   func selectNotebookDocumentFile(_ path: String, in app: XCUIApplication) {
     let menu = app.buttons["document-source-menu"]
     XCTAssertTrue(menu.waitForExistence(timeout: 5)); menu.tap()
-    // The header also displays the current path. Only the presented menu's
-    // collection owns a file-selection action.
+    // File-selection actions belong to the presented menu's collection.
     let file = app.collectionViews.buttons[path]
     XCTAssertTrue(file.waitForExistence(timeout: 5)); XCTAssertTrue(file.isHittable)
     file.tap()

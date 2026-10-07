@@ -1,0 +1,15 @@
+{
+  "slowest": [
+    {
+      "seconds": 1.3023980855941772,
+      "target": "NotebookMacTests",
+      "test": "NotebookPanelMaterialTests/testBudgetDemotedElementBodiesNeverCreateDiscardedMaterialRasters()"
+    }
+  ],
+  "targets": {
+    "NotebookMacTests": {
+      "seconds": 1.3023980855941772,
+      "tests": 1
+    }
+  }
+}

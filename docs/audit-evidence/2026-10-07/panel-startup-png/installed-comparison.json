@@ -1,0 +1,61 @@
+{
+  "date": "2026-10-07",
+  "scope": "Sequential read-only installed MCP presentations at 900x800, DPR2, same sources; single passes, no p95 or UI input-to-pixel claim.",
+  "samples": [
+    {
+      "pageIndex": 0,
+      "label": "page-1",
+      "255WarmMilliseconds": 699.8703750000002,
+      "256FirstMilliseconds": 691.0621659999999,
+      "256WarmMilliseconds": 857.6315,
+      "equal": {
+        "sourceRevision": true,
+        "camera": true,
+        "coverage": true,
+        "bytes": true
+      }
+    },
+    {
+      "pageIndex": 1,
+      "label": "page-2",
+      "255WarmMilliseconds": 531.8065000000001,
+      "256FirstMilliseconds": 1204.438125,
+      "256WarmMilliseconds": 617.933708,
+      "equal": {
+        "sourceRevision": true,
+        "camera": true,
+        "coverage": true,
+        "bytes": true
+      }
+    },
+    {
+      "pageIndex": 2,
+      "label": "page-3",
+      "255WarmMilliseconds": 102.68624999999997,
+      "256FirstMilliseconds": 614.136,
+      "256WarmMilliseconds": 120.69516700000008,
+      "equal": {
+        "sourceRevision": true,
+        "camera": true,
+        "coverage": true,
+        "bytes": true
+      }
+    },
+    {
+      "pageIndex": 1,
+      "label": "page-2",
+      "255WarmMilliseconds": 491.5473749999999,
+      "256FirstMilliseconds": 381.5632499999997,
+      "256WarmMilliseconds": 394.8819590000003,
+      "equal": {
+        "sourceRevision": true,
+        "camera": true,
+        "coverage": true,
+        "bytes": true
+      }
+    }
+  ],
+  "conclusion": "Return to page2 improves, first visits remain mixed/slower in these samples. No general first-open speedup established. First256 pass overlapped iPad launch/background activity.",
+  "transport": "Static notebook_open card returned in 2.406/3.295 ms; native connection/read still takes longer.",
+  "helpProbe": "Small help replies still cost 117-153 ms. The native help implementation decodes the full bundled SDK reference per call; this probe alone does not establish IPC or runtime-admission cost. Workspace list also refreshes catalog/cloud state."
+}

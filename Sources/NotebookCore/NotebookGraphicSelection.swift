@@ -12,6 +12,46 @@ public struct NotebookNativeElementSource: Equatable, Sendable {
     versions: [String: ContentFieldVersion]? = nil) {
     self.target = target; self.id = id; self.page = page; self.spatial = spatial; self.versions = versions
   }
+
+  /// The immutable source's resident buffers, including losing causal heads.
+  /// Only addressed captured sources are measured; no content is re-encoded.
+  public var retainedPayloadBytes: Int {
+    Self.retainedPayloadBytes(id: id, page: page, spatial: spatial, versions: versions)
+  }
+
+  static func retainedPayloadBytes(id: String, page: AgentElement? = nil, spatial: SpatialElement? = nil,
+    versions: [String: ContentFieldVersion]? = nil) -> Int {
+    var bytes = MemoryLayout<Self>.stride + id.utf8.count * 2
+    func text(_ style: NativeTextStyle?) -> Int {
+      guard let style else { return 0 }
+      var result = MemoryLayout<NativeTextStyle>.stride
+      if let format = style.format { result += ((format.fontName?.utf8.count ?? 0) + (format.link?.utf8.count ?? 0)) * 2 }
+      if let runs = style.runs {
+        result += runs.capacity * MemoryLayout<NativeTextRun>.stride
+        for run in runs { result += ((run.format.fontName?.utf8.count ?? 0) + (run.format.link?.utf8.count ?? 0)) * 2 }
+      }
+      return result
+    }
+    if let page {
+      bytes += MemoryLayout<AgentElement>.stride + page.state.retainedPayloadBytes
+        + (page.graphic?.retainedPayloadBytes ?? 0) + text(page.textStyle)
+      for value in [page.source, page.html, page.css, page.javaScript, page.programPackage ?? "", page.parentID ?? ""] {
+        bytes += value.utf8.count * 2
+      }
+    }
+    if let spatial {
+      bytes += MemoryLayout<SpatialElement>.stride + spatial.state.retainedPayloadBytes
+        + (spatial.graphic?.retainedPayloadBytes ?? 0) + text(spatial.textStyle)
+      for value in [spatial.source, spatial.html, spatial.css, spatial.javaScript, spatial.programPackage ?? "", spatial.parentID ?? ""] {
+        bytes += value.utf8.count * 2
+      }
+    }
+    if let versions {
+      bytes += versions.capacity * (MemoryLayout<String>.stride + MemoryLayout<ContentFieldVersion>.stride + 32)
+      for (key, value) in versions { bytes += key.utf8.count * 2 + value.retainedPayloadBytes }
+    }
+    return bytes
+  }
 }
 
 extension CollaborativeContent {

@@ -1,0 +1,115 @@
+{
+  "format": 1,
+  "date": "2026-10-06",
+  "sourceCommit": "5714e1f7",
+  "scope": "One-time publication-source migration of the already installed pair 253; no new pair installed.",
+  "migration": {
+    "status": "migrated",
+    "plugin": {
+      "enabled": true,
+      "pluginId": "notebook@notebook-local",
+      "version": "0.2.5"
+    },
+    "runtimeBuild": "253",
+    "cachePreserved": true,
+    "inventorySHA256": "5bdc9ed06293bb9cea64b8ba61256217c21ccfbc266df07d407896a31fcd682f",
+    "previousRoot": "/Users/amir/Documents/projects/Notebook/MCP/plugin",
+    "root": "/Users/amir/Library/Application Support/NotebookPlugin/marketplace"
+  },
+  "runtime": {
+    "pidBefore": 41679,
+    "pidAfter": 41679,
+    "servingPath": "/Users/amir/.codex/plugins/cache/notebook-local/notebook/0.2.5/runtime/NotebookRuntime.app/Contents/MacOS/NotebookRuntime"
+  },
+  "freshInstalledMCP": {
+    "status": "passed",
+    "stage": "complete",
+    "toolCount": 10,
+    "workspaceID": "54349F3B-9E0A-4DEA-B990-40CAE04EF45E",
+    "requests": [
+      {
+        "method": "tools/list"
+      },
+      {
+        "method": "resources/list"
+      },
+      {
+        "method": "resources/read",
+        "params": {
+          "uri": "ui://notebook/workspace.html"
+        }
+      },
+      {
+        "method": "tools/call",
+        "params": {
+          "name": "notebook_open",
+          "arguments": {}
+        }
+      },
+      {
+        "method": "tools/call",
+        "params": {
+          "name": "notebook_context",
+          "arguments": {
+            "method": "read",
+            "args": {
+              "kind": "workspaceHeader"
+            }
+          }
+        }
+      },
+      {
+        "method": "tools/call",
+        "params": {
+          "name": "notebook_context",
+          "arguments": {
+            "method": "observe",
+            "args": {
+              "includeImage": false
+            }
+          }
+        }
+      },
+      {
+        "method": "tools/call",
+        "params": {
+          "name": "notebook_context",
+          "arguments": {
+            "method": "read",
+            "args": {
+              "kind": "runtime"
+            }
+          }
+        }
+      }
+    ],
+    "visibleHostUI": "not_checked"
+  },
+  "currentChatConnection": {
+    "status": "runtime_update_required",
+    "expectedBuild": "252",
+    "activeBuild": "253",
+    "normalHostReconnectionPending": true
+  },
+  "boundaries": {
+    "pluginReinstalled": false,
+    "runtimeRestarted": false,
+    "deviceInstallation": false,
+    "contentOrKeysMigrated": false,
+    "physicalOrPanelAcceptance": false
+  },
+  "rawReceipts": [
+    {
+      "path": ".build/plugin-publication-source-migration-253/source-migration.json",
+      "sha256": "5da2980ededa7e6db254e0934bac9a5b38653618889175d171ad9a2cf2802611"
+    },
+    {
+      "path": ".build/plugin-publication-source-migration-253/mcp-readback.json",
+      "sha256": "ea6718ff3bb608604facff3c83e06de363bb89e905455851b67814c67ceab271"
+    },
+    {
+      "path": ".build/plugin-publication-source-migration-253/commands.json",
+      "sha256": "384c0541bda8b173c1925e03bb568c98b59308f2c1eb547733324264e1c5eca6"
+    }
+  ]
+}

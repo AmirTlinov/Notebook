@@ -1,0 +1,39 @@
+{
+  "at": "2026-10-07T10:53:49.567Z",
+  "plugin": "0.2.8",
+  "scope": "Five small installed MCP reads through runtime admission and native dispatch; no UI latency claim",
+  "samples": [
+    {
+      "label": "help-0",
+      "ms": 152.6355,
+      "bytes": 10168,
+      "error": false
+    },
+    {
+      "label": "help-1",
+      "ms": 120.69545800000003,
+      "bytes": 10168,
+      "error": false
+    },
+    {
+      "label": "help-2",
+      "ms": 120.17129200000005,
+      "bytes": 10168,
+      "error": false
+    },
+    {
+      "label": "help-3",
+      "ms": 118.15350000000001,
+      "bytes": 10168,
+      "error": false
+    },
+    {
+      "label": "help-4",
+      "ms": 116.98133299999995,
+      "bytes": 10168,
+      "error": false
+    }
+  ],
+  "status": "passed",
+  "stderr": "Notebook MCP listens on stdio\n{\"kind\":\"notebook-runtime-startup\",\"launcherPID\":39561,\"phase\":\"startup.begin\",\"startedAt\":\"2026-10-07T10:53:49.628Z\",\"elapsedMilliseconds\":0.39570900000000364,\"attempts\":0,\"launched\":false}\n{\"kind\":\"notebook-runtime-startup\",\"launcherPID\":39561,\"phase\":\"startup.done\",\"startedAt\":\"2026-10-07T10:53:49.628Z\",\"elapsedMilliseconds\":24.414874999999995,\"attempts\":1,\"launched\":false,\"runtimePID\":38006,\"runtimeState\":\"ready\"}\n"
+}

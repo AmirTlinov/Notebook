@@ -22,10 +22,12 @@ by archive hashes and vendor signatures. `prepare_notebook_codex.py` currently
 admits arm64 and validates inventory before bundling:
 
 ```sh
-python3 Applications/prepare_notebook_codex.py --stage "$PWD/.build/notebook-codex-runtime"
+python3 Applications/prepare_notebook_codex.py --prepare --stage-root "$PWD/.build/notebook-codex-runtimes"
 ```
 
-Replacement removes the old runtime as a unit. A permitted standard-location signed
+The returned `stage` is the exact content-addressed input to subsequent builds.
+Preparation never replaces or removes an existing consumer stage. Pair replacement
+replaces the installed runtime as a unit. A permitted standard-location signed
 CLI fallback is version-checked; private Desktop Node is not used. Never update a
 running runtime in place: finish active tasks/terminals before pair replacement.
 Current transport is wire 37; containers, keys and identities remain unchanged.

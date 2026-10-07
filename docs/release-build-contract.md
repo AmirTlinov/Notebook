@@ -39,6 +39,13 @@ Use `--base HEAD^`, for example, to describe the last committed slice.
   Explicit selection retains them in the receipt; unresolved automatic selection
   stops. A shared UI fixture requires a named gesture.
 
+Registry/parser unit tests with explicitly fabricated command runners also own
+an explicit fixture capability inventory. That discovery replacement is scoped
+to the fake-runner call and restored afterwards; it never changes production
+prerequisite checks. A separate negative test requires production to reject a
+missing Swift toolchain before invoking it. These portable contracts are not
+Swift compilation or native-execution evidence.
+
 An empty selection, unexecuted selector, failure, skip, runtime warning or tool
 version change prevents PASS. UI changes require the affected gesture; Node and
 native unit checks do not substitute for it. A 100,000-item load is relevant when
@@ -180,6 +187,47 @@ Release validates the inventory in both apps. `--check` neither downloads nor
 builds. TypeScript uses its separate signed child of the markup XPC service and
 inherits its sandbox. The current print route has no native TeX/image helper.
 
+## Pinned Codex build inputs
+
+`Applications/NotebookCodexRuntime.lock.json` is the reviewed source pin, derived
+from the complete, SHA-verified official Codex archive and the exact Node binary
+and license members. It specifies every payload path, file hash, byte count,
+type and mode. A cache's `runtime.json` is only an identity receipt, never an
+alternative trust source. Updating these inputs requires reviewing the archive
+pins and their complete inventory together.
+
+The existing `prepare_notebook_codex.py --prepare --stage-root <root>` owner
+returns the exact immutable `<root>/<manifestSHA256>` stage. The default root is
+`.build/notebook-codex-runtimes`. Each admission checks the complete payload,
+official Codex/Node signatures and both actual executable versions. Reuse makes
+one full payload SHA pass, without downloading, extracting or copying. This adds
+hashing cost compared with the old marker-only reuse; it is not a startup speed
+claim. The preparer is a build prerequisite, not a live-runtime startup path.
+
+Admission holds every parent directory by descriptor, opens leaf files relative
+to those parents without following links, and rejects hardlinked payload files.
+Root/name bindings and all file/directory fingerprints must remain unchanged
+through the complete hash and use operation, including already-hashed files.
+The streaming hash works without Python 3.11-only APIs.
+
+A bounded per-manifest OS lease serializes writers. Only a complete, checked
+private temporary stage is atomically renamed into its final name. A published
+stage is never overwritten or deleted by this owner, including when invalid:
+invalid/partial stages fail closed. This is cooperative-owner immutability, not
+an OS immutable flag or protection against arbitrary same-user changes after
+admission. Changes during the checked operation are detected. Cancelled attempts clean their own temporary
+files; process-death leftovers are ignored. The former flat
+`.build/notebook-codex-runtime` is neither read nor removed, so an older active
+build can finish using its own input. There is no fallback to its old marker.
+
+The same returned stage is supplied explicitly to release, selected native checks
+and acceptance Xcode builds. Xcode has no default cache lookup. Bundling checks
+the source and copied output against the same lock; release rechecks the final
+bundle and records the identity in `build.json` and signature evidence. Selected
+verification records that identity only when it actually admits Codex, and binds
+the command, stage and receipt to the source pin. Existing final plugin
+publication and installer owners remain unchanged.
+
 ## Build versus installation
 
 A `build.json` with `verified-build` records signatures, binary UUIDs and bundle
@@ -194,26 +242,59 @@ python3 -B Applications/notebook_release.py install-pair \
   --evidence-dir /absolute/new-installation-directory
 ```
 
-Before installation, finish the serving runtime through ordinary quit and wait
-for its process to exit. On the first plugin transition, unregister the former
-Notebook login item. The installer refuses a live owner, stale plugin metadata,
-downgrades and changed signed bytes. It packages the runtime into the primary
-checkout's plugin source, installs the plugin, checks its actual cached payload,
-then updates iPad in place and reads back the installed identity. Unknown outcomes
-remain `incomplete`; it never restores data or retries an uncertain installation.
+The installer completes device, signature and storage preflight before requesting
+the installed runtime's saved quit. It admits only bundle paths resolved from the
+current publication and Codex cache, matching the IPC peer's kernel audit token,
+running path and CDHash. Token-bound SIGTERM cannot target a reused PID. The same
+writer-lease FD stays held through publication, plugin installation and cached
+payload validation. Up to three verified relaunches may be retired; unsaved work,
+an unknown owner or a 30-second drain timeout refuses publication without force.
+On the first plugin transition, unregister the former Notebook login item.
+Downgrades and changed signed bytes refuse installation. The installer then
+updates iPad in place and reads back its identity. Unknown outcomes remain
+`incomplete`; it never restores data or retries an uncertain installation.
 
-The iPad preservation check uses its bundle domain. It compares the bounded
-workspace catalog bytes and IDs before preparation, immediately before the iPad
-update, and afterward; the selected SQLite must remain a readable nonempty file.
+The iPad preservation check uses its bundle domain. Before preparation, immediately
+before the iPad update, and afterward, it compares the full catalog's canonical
+JSON hash and IDs. Object-key order and JSON formatting are insignificant; array
+order and every value remain significant. Numbers must use integer notation,
+matching the current catalog format. Duplicate keys and nonfinite numbers refuse
+admission. Each readback retains its raw bytes, hash and size as diagnostics.
+The selected SQLite must remain a readable nonempty file.
 An installed app with neither a catalog nor a store has an empty baseline. Data
 without a provable catalog refuses installation. App-group IDs stay unchanged;
 iPadOS container paths and SQLite/WAL sizes are diagnostic. The installer reads
 only the small catalog and file metadata, never copies SQLite or archives.
 
-Bump the plugin manifest version together with each native pair release: Codex
-caches plugin payloads by that version. Commit the matching static plugin files
-and installation scripts into the primary checkout before installing a worktree
-build. Verify the live IPC peer and current data/trust separately after delivery.
+`MCP/plugin` is authored input. `install-pair` publishes its frozen metadata and
+signed runtime together into `~/Library/Application Support/NotebookPlugin/marketplace`.
+The publisher validates the copied package before atomically changing the catalog
+pointer to `releases/<version>/notebook`. A version binds all metadata and runtime
+bytes; reusing it for changed content is refused. Installation scripts come from
+the verified snapshot. Edits in the primary checkout cannot change a published pair.
+After the complete installed pair is confirmed, obsolete published packages are
+removed; Codex's own cache and active connections remain host-owned.
+
+Before the next authored version change, migrate an existing source registration once:
+
+```sh
+python3 -B Applications/notebook_release.py migrate-plugin-source \
+  --source-root "$PWD" --evidence-dir /absolute/new-migration-directory
+```
+
+This adopts the currently installed signed cache as the first immutable publication,
+then uses official `codex plugin marketplace remove/add` commands to retain the
+`notebook@notebook-local` identity, version and enabled state at the new source.
+It does not reinstall the plugin or change its cache. A failed registration restores
+the previous source; an unfinished transition keeps a pinned receipt for the next
+invocation with a new evidence directory. The catalog can briefly
+disappear between the two CLI commands. Existing chats reconnect through the host's
+normal lifecycle. Complete this transition before bumping the manifest; each later
+native pair receives a new plugin version and is released only by `install-pair`.
+The release owner holds an OS `flock` shared with its Node adapter and Codex CLI
+through an inherited descriptor. The last process exit releases it; the next admitted attempt discards unpublished
+copy stages. There is no persistent directory lock to remove after a crash.
+Verify the live IPC peer and current data/trust separately after delivery.
 
 Ordinary in-place updates preserve containers, identities and keys.
 Historical archive conversion is a separate explicitly authorized operation, not

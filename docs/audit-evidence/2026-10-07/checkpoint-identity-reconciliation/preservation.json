@@ -1,0 +1,46 @@
+{
+  "baseMain": "3b7dc0fac89831657baf2879c8a37d3375610569",
+  "previousPR6": "aaf09d8ebcbf8341b2877f19922f40cccf275fb4",
+  "previousPR6Base": "b5e350288443921086d2487b9d3e08a72be6c802",
+  "alreadyIntegrated": false,
+  "checks": {
+    "Applications/WebResources/notebook-program.js": {
+      "sameAsPublishedPR6": true,
+      "sha256": "c1df7e5bf549b267325d11a8347fb95b2913daf64e59fc52490454abddb89e92"
+    },
+    "MCP/test/program-bridge.test.ts": {
+      "sameAsPublishedPR6": true,
+      "sha256": "ea6af1d2376e89659193a657ce2ea9a6a89e156ba29104c8c647b72b58670f94"
+    },
+    "docs/audit-evidence/2026-10-06/checkpoint-snapshot-identity/baseline.txt": {
+      "sameAsPublishedPR6": true,
+      "sha256": "d36652e4fb5797ba6d2f3da2d36615e68f6e3c4f079b3e1f6a931be02483f45b"
+    },
+    "docs/audit-evidence/2026-10-06/checkpoint-snapshot-identity/node.txt": {
+      "sameAsPublishedPR6": true,
+      "sha256": "e66b2093ba749be240696c6cc5487f208ad095e40ac95e855e8a13311071e7a9"
+    },
+    "docs/audit-evidence/2026-10-06/checkpoint-snapshot-identity/rejected-disposal-v1.txt": {
+      "sameAsPublishedPR6": true,
+      "sha256": "6814ccb3b4a31bbc72780f3437ec987e79e34b1f274e891a389505b2c8efb722"
+    },
+    "docs/audit-evidence/2026-10-06/checkpoint-snapshot-identity/results.json": {
+      "sameAsPublishedPR6": true,
+      "sha256": "2b1d79d61caa780e9785dfe8729313a4a9bfdd2d8c3121952c1f6da84e6806d9"
+    },
+    "docs/audit-evidence/2026-10-06/checkpoint-snapshot-identity/tsc.txt": {
+      "sameAsPublishedPR6": true,
+      "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+    },
+    "docs/document-program-fragments.md": {
+      "sameAsPublishedPR6": true,
+      "sha256": "cccdc86508e84fd09f11b09637f74da744abc9471d343c2e313407a7204fb99f"
+    },
+    "docs/verification.md": {
+      "allMainBytesPreserved": true,
+      "exactPR6AdditionPreservedOnce": true,
+      "sha256": "c9dd9dc2840f5551790665c09ced902c8f2d3e9c1f99d7aed621fa60c074b844"
+    }
+  },
+  "otherMainFilesUnchanged": true
+}

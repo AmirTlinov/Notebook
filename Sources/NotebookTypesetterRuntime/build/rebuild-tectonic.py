@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Rebuild the pinned guest kernel; never installs or changes a tracked pin."""
 from pathlib import Path
-import argparse, gzip, json, os, platform, shutil, subprocess, sys, tarfile
+import argparse, gzip, json, os, platform, re, shutil, subprocess, sys, tarfile
 
 ROOT = Path(__file__).resolve().parents[3]
 SOURCE = ROOT / "Sources/NotebookTypesetterRuntime"
@@ -31,6 +31,44 @@ def test_fontmap(upstream, work):
     if digest(source) != source_sha:
         raise RuntimeError("Font-map regression changed during execution")
     return {"sourceSHA256": source_sha, "logSHA256": digest(log), "passed": True}
+
+
+def test_format(upstream, work):
+    source = SOURCE / "build/format-test.c"
+    source_sha = digest(source)
+    owner = (upstream / "crates/engine_xetex/xetex/xetex-ini.c").read_text()
+    types = (upstream / "crates/engine_xetex/xetex/xetex-xetexd.h").read_text()
+    layout = re.search(r"(?s)#ifdef WORDS_BIGENDIAN\n\ntypedef struct b32x2.*?\} memory_word;", types)
+    if layout is None:
+        raise RuntimeError("Pinned format word definitions changed")
+    functions = []
+    for name in ["swap_items", "repeat_memory_word"]:
+        matches = re.findall(r"(?ms)^static void\n" + name + r"\([^)]*\)\n\{.*?^\}", owner)
+        if len(matches) != 1:
+            raise RuntimeError("Pinned format helper changed: " + name)
+        functions.append(matches[0])
+    guards = re.findall(r"if \((x < [01] \|\| x > EQTB_SIZE \+ 1 - k)\)", owner)
+    if len(guards) != 2 or not guards[0].startswith("x < 1") or not guards[1].startswith("x < 0"):
+        raise RuntimeError("Pinned format run admission changed")
+    constants = upstream / "crates/engine_xetex/xetex/xetex_format.h"
+    limit = re.findall(r"(?m)^#define EQTB_SIZE .+$", constants.read_text())
+    if len(limit) != 1:
+        raise RuntimeError("Pinned format table limit changed")
+    header = work / "format-test-owner.h"
+    text = limit[0] + "\n" + layout[0] + "\n" + "\n".join(functions) + "\n"
+    for name, guard in zip(["literal_run_admitted", "repeat_run_admitted"], guards):
+        text += f"static bool {name}(int32_t k, int32_t x) {{ return !({guard}); }}\n"
+    header.write_text(text)
+    binary, log = work / "format-test", work / "format-test.log"
+    with log.open("w") as output:
+        run(["xcrun", "clang", "-std=c11", "-O1", "-g", "-Wall", "-Wextra", "-Werror",
+             "-fsanitize=address,undefined", "-fno-omit-frame-pointer", "-I" + str(work),
+             source, "-o", binary], stdout=output, stderr=subprocess.STDOUT)
+        run([binary], stdout=output, stderr=subprocess.STDOUT)
+    if digest(source) != source_sha:
+        raise RuntimeError("Format regression changed during execution")
+    return {"sourceSHA256": source_sha, "ownerSHA256": digest(header),
+            "constantsSHA256": digest(constants), "logSHA256": digest(log), "passed": True}
 
 
 def main():
@@ -87,6 +125,7 @@ def main():
     run(["git", "-C", upstream, "apply", "--check", patch])
     run(["git", "-C", upstream, "apply", patch])
     fontmap_regression = test_fontmap(upstream, work)
+    format_regression = test_format(upstream, work)
     dependency_sources = upstream / "wasi-deps/src"
     dependency_sources.mkdir(parents=True)
     for artifact in pin["dependencies"]:
@@ -106,7 +145,7 @@ def main():
         raise RuntimeError("Tracked kernel inputs changed during build; preserved output is not verified")
     receipt = {"format": 1, "upstreamRevision": revision, "patchSHA256": digest(patch),
                "lockSHA256": digest(work / "Runtime.lock.json"), "cargoLockSHA256": digest(upstream / "Cargo.lock"),
-               "rustToolchain": toolchain, "buildInputs": pin, "fontmapRegression": fontmap_regression,
+               "rustToolchain": toolchain, "buildInputs": pin, "fontmapRegression": fontmap_regression, "formatRegression": format_regression,
                "kernel": {"bytes": kernel.stat().st_size, "sha256": digest(kernel), "packedSHA256": digest(packed)},
                "compiler": subprocess.check_output([sdk / "bin/clang", "--version"], text=True),
                "rustc": subprocess.check_output(["rustc", "+" + toolchain, "-vV"], text=True)}

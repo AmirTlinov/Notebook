@@ -1,0 +1,164 @@
+{
+  "at": "2026-10-07T08:51:07.318Z",
+  "plugin": "0.2.6",
+  "scope": "Installed MCP read-only presentation timing; not host input-to-pixel latency",
+  "samples": [
+    {
+      "label": "open-first-page",
+      "ms": 378.853709,
+      "bytes": 84676,
+      "error": false,
+      "cursor": "65701"
+    },
+    {
+      "label": "page-1",
+      "ms": 814.447125,
+      "bytes": 1059910,
+      "error": false,
+      "layers": 29,
+      "encodedChars": 1004976,
+      "cursor": "65701",
+      "pageIndex": 0,
+      "diagnostics": [],
+      "sourceRevision": "d6e78c4c3c487b4f7678c278fb99d8593214b4e833297902934b37f3ae51b565",
+      "camera": {
+        "center": {
+          "localY": 597,
+          "localX": 417,
+          "tileY": 0,
+          "tileX": 0
+        },
+        "scale": 0.6700167504187605
+      },
+      "coverage": {
+        "anchor": {
+          "localY": 6236.220472440945,
+          "localX": 6236.220472440945,
+          "tileY": -1,
+          "tileX": -1
+        },
+        "pixelDensity": 2.463030303030303,
+        "level": 1,
+        "region": {
+          "x": 0,
+          "y": 0,
+          "width": 1662.9921259842522,
+          "height": 1662.9921259842522
+        }
+      }
+    },
+    {
+      "label": "page-2",
+      "ms": 1174.081292,
+      "bytes": 2472832,
+      "error": false,
+      "layers": 24,
+      "encodedChars": 657128,
+      "cursor": "65701",
+      "pageIndex": 1,
+      "diagnostics": [],
+      "sourceRevision": "76b8aac5c1e5e714e05cdbdb029bbd4e6d515b44fd9f1cb1a9275f30eef4ad3e",
+      "camera": {
+        "scale": 0.6700167504187605,
+        "center": {
+          "localY": 597,
+          "localX": 417,
+          "tileX": 0,
+          "tileY": 0
+        }
+      },
+      "coverage": {
+        "pixelDensity": 2.463030303030303,
+        "level": 1,
+        "region": {
+          "y": 0,
+          "x": 0,
+          "width": 1662.9921259842522,
+          "height": 1662.9921259842522
+        },
+        "anchor": {
+          "localY": 6236.220472440945,
+          "tileX": -1,
+          "tileY": -1,
+          "localX": 6236.220472440945
+        }
+      }
+    },
+    {
+      "label": "page-3",
+      "ms": 811.2396250000002,
+      "bytes": 340037,
+      "error": false,
+      "layers": 18,
+      "encodedChars": 329928,
+      "cursor": "65701",
+      "pageIndex": 2,
+      "diagnostics": [],
+      "sourceRevision": "02f68040f5035627b3d1f3602ba7bd05ed1d798d0ce6320d33abb56195e5f0bd",
+      "camera": {
+        "scale": 0.6700167504187605,
+        "center": {
+          "localX": 417,
+          "tileX": 0,
+          "localY": 597,
+          "tileY": 0
+        }
+      },
+      "coverage": {
+        "region": {
+          "width": 1662.9921259842522,
+          "y": 0,
+          "x": 0,
+          "height": 1662.9921259842522
+        },
+        "anchor": {
+          "localX": 6236.220472440945,
+          "tileX": -1,
+          "localY": 6236.220472440945,
+          "tileY": -1
+        },
+        "level": 1,
+        "pixelDensity": 2.463030303030303
+      }
+    },
+    {
+      "label": "page-2",
+      "ms": 778.5258749999998,
+      "bytes": 2472832,
+      "error": false,
+      "layers": 24,
+      "encodedChars": 657128,
+      "cursor": "65701",
+      "pageIndex": 1,
+      "diagnostics": [],
+      "sourceRevision": "76b8aac5c1e5e714e05cdbdb029bbd4e6d515b44fd9f1cb1a9275f30eef4ad3e",
+      "camera": {
+        "scale": 0.6700167504187605,
+        "center": {
+          "localX": 417,
+          "tileY": 0,
+          "tileX": 0,
+          "localY": 597
+        }
+      },
+      "coverage": {
+        "level": 1,
+        "anchor": {
+          "localX": 6236.220472440945,
+          "tileY": -1,
+          "tileX": -1,
+          "localY": 6236.220472440945
+        },
+        "region": {
+          "y": 0,
+          "x": 0,
+          "height": 1662.9921259842522,
+          "width": 1662.9921259842522
+        },
+        "pixelDensity": 2.463030303030303
+      }
+    }
+  ],
+  "status": "passed",
+  "stderr": "Notebook MCP listens on stdio\n"
+}

@@ -7,7 +7,8 @@ import XCTest
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-document-runtime-fixture"]
     defer { XCUIDevice.shared.orientation = .portrait }
     app.launch()
-    XCTAssertTrue(app.otherElements["page-turn-surface"].waitForExistence(timeout: 30))
+    let paper = app.otherElements["page-turn-surface"]
+    XCTAssertTrue(paper.waitForExistence(timeout: 30))
     for orientation in [UIDeviceOrientation.portrait, .landscapeLeft] {
       rotateNotebook(to: orientation, in: app)
       let landscape = orientation == .landscapeLeft
@@ -20,6 +21,28 @@ import XCTest
       }, object: nil)
       XCTAssertEqual(XCTWaiter.wait(for: [adapted], timeout: 8), .completed)
       XCTAssertEqual(app.buttons["Рядом"].exists, landscape)
+      let fileMenu = app.buttons["document-source-menu"]
+      let header = app.otherElements["document-source-header"]
+      XCTAssertEqual(fileMenu.label, "Файлы документа")
+      XCTAssertEqual(fileMenu.frame.width, 44, accuracy: 2)
+      XCTAssertEqual(fileMenu.frame.height, 44, accuracy: 2)
+      XCTAssertFalse(header.staticTexts["main.tex"].exists)
+      let settledPaper = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+        guard paper.exists else { return false }
+        let frame = paper.frame, window = app.windows.firstMatch.frame
+        return frame.width > 0 && frame.height > 0
+          && abs(frame.width / frame.height - 210.0 / 297.0) <= 0.005
+          && abs(frame.midX - window.midX) <= 2 && abs(frame.midY - window.midY) <= 2
+          && frame.minX >= window.minX - 2 && frame.maxX <= window.maxX + 2
+          && frame.minY >= window.minY - 2 && frame.maxY <= window.maxY + 2
+      }, object: nil)
+      XCTAssertEqual(XCTWaiter.wait(for: [settledPaper], timeout: 8), .completed)
+      XCTAssertEqual(paper.frame.width / paper.frame.height, 210.0 / 297.0, accuracy: 0.005,
+        "A4 remains portrait paper in either device orientation")
+      let paperGeometry = XCTAttachment(string: "paper=\(paper.frame), window=\(app.windows.firstMatch.frame), header=\(header.frame), orientation=\(orientation.rawValue)")
+      paperGeometry.name = "A4 paper geometry \(orientation.rawValue)"; paperGeometry.lifetime = .keepAlways; add(paperGeometry)
+      let paperImage = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+      paperImage.name = "A4 paper and compact header \(orientation.rawValue)"; paperImage.lifetime = .keepAlways; add(paperImage)
       let code = modes.buttons["Код"]
       let modeButtons = landscape ? [modes.buttons["Лист"], modes.buttons["Рядом"], code] : [modes.buttons["Лист"], code]
       let controls = [app.buttons["document-source-menu"]] + modeButtons

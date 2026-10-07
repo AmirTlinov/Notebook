@@ -1,0 +1,33 @@
+{
+  "executed": [
+    "NotebookMacTests/NotebookPanelPresentationTests/testCanonicalBoardMaterialsSplitSubjectsBeforeFirstDragAndJoinCachedRequests",
+    "NotebookMacTests/NotebookPanelPresentationTests/testForegroundPanelSurvivesPeerInputDuringQueuedCaptureAndKeepsLocalFence",
+    "NotebookMacTests/NotebookPanelPresentationTests/testNotebookCardFirstPageOpensNativePixelsAndNavigationWithoutMovingPresence",
+    "NotebookMacTests/NotebookPanelPresentationTests/testRegionalMaterialPreparationPreservesOrderedCutsAndBaselineAcrossRegionsAndReleasesGeometry",
+    "NotebookMacTests/NotebookPanelPresentationTests/testRepeatingGridKeepsNativePhaseAndOpaqueBackgroundAcrossCameraTilesAndZoomSteps",
+    "NotebookMacTests/NotebookPanelPresentationTests/testStoppingTheOwnerCompletesQueuedPanelReadBeforeCapacityReturns",
+    "NotebookMacTests/NotebookPreviewPublicationTests/testPartialFilePublicationRetriesTheExactAdmittedBytesAfterRevocation",
+    "NotebookMacTests/NotebookPreviewPublicationTests/testRevocationBeforeAdmissionDoesNotBlockLaterAcceptedWork",
+    "NotebookMacTests/NotebookPreviewPublicationTests/testStaleReceiptRefusesOnlyItsOwnSlotAndPreservesTheAcceptedTail",
+    "NotebookMacTests/NotebookPreviewPublicationTests/testTargetReceiptRetriesItsAdmittedFingerprintAfterPartialPublication",
+    "NotebookMacTests/PageVisionDemandTests/testQueuedCurrentViewDoesNotPublishAfterPublisherCancellation",
+    "NotebookMacTests/PageVisionDemandTests/testQueuedCurrentViewDoesNotPublishDuringNewInput"
+  ],
+  "failed": [],
+  "format": 1,
+  "planned": [
+    "NotebookMacTests/NotebookPanelPresentationTests/testCanonicalBoardMaterialsSplitSubjectsBeforeFirstDragAndJoinCachedRequests",
+    "NotebookMacTests/NotebookPanelPresentationTests/testForegroundPanelSurvivesPeerInputDuringQueuedCaptureAndKeepsLocalFence",
+    "NotebookMacTests/NotebookPanelPresentationTests/testNotebookCardFirstPageOpensNativePixelsAndNavigationWithoutMovingPresence",
+    "NotebookMacTests/NotebookPanelPresentationTests/testRegionalMaterialPreparationPreservesOrderedCutsAndBaselineAcrossRegionsAndReleasesGeometry",
+    "NotebookMacTests/NotebookPanelPresentationTests/testRepeatingGridKeepsNativePhaseAndOpaqueBackgroundAcrossCameraTilesAndZoomSteps",
+    "NotebookMacTests/NotebookPanelPresentationTests/testStoppingTheOwnerCompletesQueuedPanelReadBeforeCapacityReturns",
+    "NotebookMacTests/NotebookPreviewPublicationTests/testPartialFilePublicationRetriesTheExactAdmittedBytesAfterRevocation",
+    "NotebookMacTests/NotebookPreviewPublicationTests/testRevocationBeforeAdmissionDoesNotBlockLaterAcceptedWork",
+    "NotebookMacTests/NotebookPreviewPublicationTests/testStaleReceiptRefusesOnlyItsOwnSlotAndPreservesTheAcceptedTail",
+    "NotebookMacTests/NotebookPreviewPublicationTests/testTargetReceiptRetriesItsAdmittedFingerprintAfterPartialPublication",
+    "NotebookMacTests/PageVisionDemandTests/testQueuedCurrentViewDoesNotPublishAfterPublisherCancellation",
+    "NotebookMacTests/PageVisionDemandTests/testQueuedCurrentViewDoesNotPublishDuringNewInput"
+  ],
+  "skipped": []
+}
