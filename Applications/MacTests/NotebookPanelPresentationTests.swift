@@ -496,7 +496,13 @@ final class NotebookPanelPresentationTests: XCTestCase {
       XCTFail("Local input must retain its foreground preparation fence")
     } catch let error as CollaborationError { XCTAssertEqual(error.code, "snapshot_pending") }
     fixture.model.inputGate.endContact(source: contact)
+    try await fixture.waitUntil(seconds: 5) {
+      !fixture.model.inputGate.isActive && fixture.model.permitsPanelPreparation
+    }
+    XCTAssertTrue(fixture.model.peerInputIsActive, "Local settlement restores the panel while the remote contact stays held")
     XCTAssertTrue(fixture.model.permitsPanelPreparation)
+    fixture.model.peerDisconnected(peerID: peer, generation: generation)
+    XCTAssertFalse(fixture.model.peerInputIsActive)
     let stopped = await fixture.model.shutdown()
     XCTAssertTrue(stopped)
     XCTAssertFalse(fixture.model.permitsPanelPreparation)
