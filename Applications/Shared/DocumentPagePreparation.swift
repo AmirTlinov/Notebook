@@ -262,6 +262,8 @@ final class DocumentPagePreparation {
   private(set) var measurementCount = 0
   private(set) var compiledPageCount = 0
   private(set) var preparationPhasesMS: [String: Double] = [:]
+  private(set) var preparationBeganAt: TimeInterval?
+  private(set) var preparationCompletedAt: TimeInterval?
   var onLayoutAccepted: (DocumentLayoutRecord) throws -> Void = { _ in }
   var pendingReaderCount: Int { readers.count }
   var preparedSourceBlockCount: Int { artifact == nil ? 0 : document.files.count }
@@ -322,6 +324,8 @@ final class DocumentPagePreparation {
   private func loadPrint(priority: NotebookTypesetter.Priority, compilerDemand: NotebookTypesetterDemand,
     onAdmissionWait: @escaping (Bool) -> Void) async throws {
     let start = ContinuousClock.now
+    preparationBeganAt = ProcessInfo.processInfo.systemUptime
+    preparationCompletedAt = nil
     let document = document, store = store
     let value = try await DocumentCanonicalPrint.store.artifact(for: document, priority: priority, demand: compilerDemand, inputFactory: {
       let worker = Task.detached(priority: .userInitiated) {
@@ -346,6 +350,7 @@ final class DocumentPagePreparation {
       layout = rebound; browserRegions = previous.regions; reuse = nil
       try onLayoutAccepted(rebound)
       preparationPhasesMS["canonicalPrint"] = printPreparationMilliseconds(since: start)
+      preparationCompletedAt = ProcessInfo.processInfo.systemUptime
       preparation = nil; return
     }
     reuse = nil
@@ -388,6 +393,7 @@ final class DocumentPagePreparation {
       printSource = printed; layout = measured; browserRegions = prepared.browserRegions
       try onLayoutAccepted(measured)
       preparationPhasesMS["canonicalPrint"] = printPreparationMilliseconds(since: start)
+      preparationCompletedAt = ProcessInfo.processInfo.systemUptime
       preparation = nil
     } catch { charge.release(); throw error }
   }

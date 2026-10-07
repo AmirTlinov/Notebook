@@ -17,7 +17,7 @@ final class NotebookDocumentOpeningTests: XCTestCase {
   }
 
   private func assertHistoryOpening(onAnotherBoard: Bool) async throws {
-    let (model, _, destination) = try await fixture(secondOnAnotherBoard: onAnotherBoard)
+    let (model, _, destination) = try await fixture(secondOnAnotherBoard: onAnotherBoard, coldCanonical: true)
     defer {
       if let data = try? JSONEncoder().encode(model.documentMeasurements.records) {
         let measurements = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
@@ -47,24 +47,46 @@ final class NotebookDocumentOpeningTests: XCTestCase {
         "A visible closed cover must approach while preparing; it need not straddle the viewport edge")
       XCTAssertNotEqual(origin.camera, destinationCamera)
     }
-    func paperReady() -> Bool {
-      guard model.documents[destination.id] == destination, let state = model.documentStates[destination.id] else { return false }
-      return DocumentRenderRegistry.shared.hasLiveSurface(document: destination, state: state, pageIndex: 0, scope: .paper)
+    func containsInstalledPaper(_ view: UIView) -> Bool {
+      if let paper = view as? DocumentPaperView, let raster = paper.raster,
+        raster.page.artifact.document == destination, raster.page.pageIndex == 0,
+        paper.window === window {
+        var ancestor = paper.superview
+        while let native = ancestor {
+          if let host = native as? DocumentWebHost {
+            return !host.hasSnapshot && host.hasCanonicalPaperProjection
+          }
+          ancestor = native.superview
+        }
+      }
+      return view.subviews.contains(where: containsInstalledPaper)
     }
-    let readyAtRequest = paperReady()
+    func paperReady(in controller: UIViewController) -> Bool {
+      // Opening admits the exact native print in the installed current sheet.
+      // Registry .paper additionally requires transparent DOM links; the final
+      // settled/input checks below retain that independent readiness boundary.
+      if let owner = controller as? IPadPageTurnController,
+        let current = owner.sheetController.page?.viewIfLoaded,
+        containsInstalledPaper(current) { return true }
+      return controller.children.contains(where: paperReady)
+    }
+    let readyAtRequest = paperReady(in: host)
     XCTAssertFalse(readyAtRequest)
     var closedAt: TimeInterval?, closedWhilePreparing = false, firstOpeningAt: TimeInterval?
-    var openedBeforeReady = false
+    var openedBeforeReady = false, openedBeforePaint = false
     let observation = DocumentOpeningCameraObservation { sample in
       guard sample.focusedItemID == destination.id else { return }
       if closedAt == nil, sample.mode == .cover, sample.camera == destinationCamera,
         sample.viewport == viewport, sample.openProgress == 0 {
         closedAt = ProcessInfo.processInfo.systemUptime
-        closedWhilePreparing = !paperReady()
+        closedWhilePreparing = !paperReady(in: host)
       }
       if firstOpeningAt == nil, sample.openProgress > 0 {
         firstOpeningAt = ProcessInfo.processInfo.systemUptime
-        openedBeforeReady = !paperReady()
+        openedBeforeReady = !paperReady(in: host)
+        let cohort = model.compositionTiles.published
+        openedBeforePaint = cohort?.isPaintInstalled != true
+          || cohort?.plan.presentations[.board(sample.boardID)] == nil
       }
     }
     // The registry holds distinct weak ObjectIdentifiers: this passive fixture
@@ -72,7 +94,7 @@ final class NotebookDocumentOpeningTests: XCTestCase {
     model.nativeCameraProjection.register(observation)
     defer {
       model.nativeCameraProjection.remove(observation)
-      let phase = XCTAttachment(string: "closedAt=\(String(describing: closedAt)); closedWhilePreparing=\(closedWhilePreparing); firstOpeningAt=\(String(describing: firstOpeningAt)); openedBeforeReady=\(openedBeforeReady)")
+      let phase = XCTAttachment(string: "closedAt=\(String(describing: closedAt)); closedWhilePreparing=\(closedWhilePreparing); firstOpeningAt=\(String(describing: firstOpeningAt)); openedBeforeReady=\(openedBeforeReady); openedBeforePaint=\(openedBeforePaint)")
       phase.name = "document-closed-approach"; phase.lifetime = .keepAlways; add(phase)
     }
     let openingStarted = ProcessInfo.processInfo.systemUptime
@@ -102,6 +124,7 @@ final class NotebookDocumentOpeningTests: XCTestCase {
     }
     XCTAssertNotNil(firstOpeningAt)
     XCTAssertFalse(openedBeforeReady, "A positive opening sample requires the exact installed current paper")
+    XCTAssertFalse(openedBeforePaint, "The closed board handoff must install native paint before opening")
     if let closedAt, let firstOpeningAt { XCTAssertLessThanOrEqual(closedAt, firstOpeningAt) }
     // The predicate above verifies eventual settled navigation and exact
     // content. Its 20 ms polling interval is only a correctness watchdog; it
@@ -113,6 +136,8 @@ final class NotebookDocumentOpeningTests: XCTestCase {
     XCTAssertEqual(record.installationBoundary, "native_paper_input")
     XCTAssertNil(record.failure)
     XCTAssertEqual(record.sourcePreparationMeasurement, 1)
+    XCTAssertGreaterThan(record.sourcePreparationPhasesMS?["artifact.native"] ?? 0, 0,
+      "Every cold-opening measurement must execute the native compiler, including repeated test runs")
     let elapsed = Duration.seconds(installedAt - openingStarted)
     XCTAssertLessThanOrEqual(elapsed, NotebookUXObservation.opening,
       "History request → native paper accepting input retains the original 1 s budget; this is not camera settlement or OS presentation")
@@ -512,10 +537,12 @@ final class NotebookDocumentOpeningTests: XCTestCase {
       "A cancelled passage cannot restore its stale preparation demand")
   }
 
-  private func fixture(secondOnAnotherBoard: Bool = false) async throws -> (NotebookAppModel, DocumentDocument, DocumentDocument) {
+  private func fixture(secondOnAnotherBoard: Bool = false, coldCanonical: Bool = false) async throws -> (NotebookAppModel, DocumentDocument, DocumentDocument) {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("document-opening-" + UUID().uuidString)
     let store = NotebookStore(root: root), actor = UUID()
     let pageSize = NotebookAppModel.defaultPageSize
+    // The canonical cache is shared by content across temporary workspaces.
+    let sourceNonce = coldCanonical ? "\n% cold-opening \(UUID().uuidString)\n" : ""
     // The cold-opening probe is plain text, as before the file-model cutover.
     // Packages for links/programs belong only to fixtures that actually use them.
     let mainSource = #"""
@@ -549,7 +576,7 @@ final class NotebookDocumentOpeningTests: XCTestCase {
       XCTAssertTrue(hierarchy.addItem(second.id, to: secondBoard, near: .init(x: 2_000, y: 0), actor: actor))
       let b = DocumentDocument(id: second.id, actor: actor, files: [
         .init(id: "main", path: "main.tex", source: mainSource),
-        .init(id: "text", path: "sections/text.tex", source: "Second closed body")])
+        .init(id: "text", path: "sections/text.tex", source: "Second closed body" + sourceNonce)])
       _ = index.selectItem(first.id, actor: actor)
       try store.saveDocumentWorkspaceBundle(index: index, document: b, state: .init(id: b.id, actor: actor), board: hierarchy)
       try store.savePresence(.init(boardID: index.rootBoardID, mode: .cover, camera: .init(),

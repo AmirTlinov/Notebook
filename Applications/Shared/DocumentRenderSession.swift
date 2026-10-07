@@ -190,6 +190,8 @@ final class DocumentSourceSnapshot {
   var measurementCount: Int { preparation?.measurementCount ?? 0 }
   var preparedSourceBlockCount: Int { preparation?.preparedSourceBlockCount ?? 0 }
   var preparationPhasesMS: [String: Double] { preparation?.preparationPhasesMS ?? [:] }
+  var preparationBeganAt: TimeInterval? { preparation?.preparationBeganAt }
+  var preparationCompletedAt: TimeInterval? { preparation?.preparationCompletedAt }
   var lastPreparationLayoutMismatch: String? { receiptLayoutMismatch ?? preparation?.lastLayoutMismatch }
 
   func retryPagePreparation(_ pageIndex: Int) {

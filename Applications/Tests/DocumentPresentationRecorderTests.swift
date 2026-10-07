@@ -50,7 +50,8 @@ final class DocumentPresentationRecorderTests: XCTestCase {
     let request = try XCTUnwrap(recorder.request(documentID: id, pageIndex: 3, cause: .page))
     XCTAssertEqual(recorder.request(documentID: id, pageIndex: 3, cause: .page), request)
     probe.time = 10.1; recorder.demand(documentID: id, pageIndex: 3, token: "source-1")
-    probe.time = 10.2; recorder.contentReady(documentID: id, pageIndex: 3, token: "source-1")
+    probe.time = 10.2; recorder.contentReady(documentID: id, pageIndex: 3, token: "source-1",
+      sourcePreparationBeganAt: 10.05, sourcePreparationCompletedAt: 10.15)
     recorder.installationChanged(documentID: id, pageIndex: 3, token: "source-1", installed: false,
       publish: { probe.published = $0 })
     XCTAssertNil(recorder.records.first?.installedAt)
@@ -63,6 +64,8 @@ final class DocumentPresentationRecorderTests: XCTestCase {
     let record = try XCTUnwrap(recorder.records.first)
     XCTAssertEqual(try XCTUnwrap(record.requestToInstalledMS), 400, accuracy: 0.001)
     XCTAssertEqual(try XCTUnwrap(record.demandToContentReadyMS), 100, accuracy: 0.001)
+    XCTAssertEqual(record.sourcePreparationBeganAt, 10.05)
+    XCTAssertEqual(record.sourcePreparationCompletedAt, 10.15)
     XCTAssertEqual(try JSONDecoder().decode(DocumentPresentationRecorder.Record.self, from: Data(probe.published.utf8)), record)
     XCTAssertEqual(record.installationBoundary, "native_paper_input")
     XCTAssertNotEqual(recorder.request(documentID: id, pageIndex: 3, cause: .open), request,

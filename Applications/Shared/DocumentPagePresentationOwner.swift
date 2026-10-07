@@ -1262,6 +1262,7 @@ final class DocumentPagePresentationOwner {
       }
       measurements.contentReady(documentID: documentID, pageIndex: entry.input.pageIndex, token: installedToken,
         sourcePreparationPhasesMS: source?.preparationPhasesMS ?? [:], sourcePreparationMeasurement: source?.measurementCount,
+        sourcePreparationBeganAt: source?.preparationBeganAt, sourcePreparationCompletedAt: source?.preparationCompletedAt,
         pagePreparation: paper.pagePreparationTrace)
       recordInstallation(on: entry)
     }

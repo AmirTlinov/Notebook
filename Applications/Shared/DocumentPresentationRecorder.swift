@@ -104,6 +104,8 @@ final class DocumentPresentationRecorder {
     var sourceToken: String?
     var sourcePreparationPhasesMS: [String: Double]?
     var sourcePreparationMeasurement: Int?
+    var sourcePreparationBeganAt: TimeInterval?
+    var sourcePreparationCompletedAt: TimeInterval?
     var pagePreparationPhasesMS: [String: Double]?
     var pagePreparationIdentity: DocumentPagePreparationIdentity?
     var pagePreparationBrowserPhasesMS: [String: Double]?
@@ -187,12 +189,15 @@ final class DocumentPresentationRecorder {
 
   func contentReady(documentID: UUID, pageIndex: Int, token: String,
     sourcePreparationPhasesMS: [String: Double] = [:], sourcePreparationMeasurement: Int? = nil,
+    sourcePreparationBeganAt: TimeInterval? = nil, sourcePreparationCompletedAt: TimeInterval? = nil,
     pagePreparation: DocumentPagePreparationTrace? = nil) {
     guard let index = pendingIndex(documentID, pageIndex), records[index].sourceToken == token,
       records[index].contentReadyAt == nil else { return }
     records[index].contentReadyAt = now()
     records[index].sourcePreparationPhasesMS = sourcePreparationPhasesMS.isEmpty ? nil : sourcePreparationPhasesMS
     records[index].sourcePreparationMeasurement = sourcePreparationMeasurement
+    records[index].sourcePreparationBeganAt = sourcePreparationBeganAt
+    records[index].sourcePreparationCompletedAt = sourcePreparationCompletedAt
     if let pagePreparation, pagePreparation.identity.requestID == records[index].id,
       pagePreparation.identity.documentID == documentID, pagePreparation.identity.pageIndex == pageIndex,
       pagePreparation.identity.token == token {
