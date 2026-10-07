@@ -347,7 +347,9 @@
               .init(id: "lc-js", path: "programs/lc/main.js", source: try lcSource("js"))]
             body = #"\NotebookInteractive[id=lc,width=\linewidth,height=500pt]{programs/lc}"#
           } else if documentFit {
-            body = #"\section{Custom paper: 900 by 600 bp}"# + "\n"
+            // Fresh launches must not borrow a previous run's canonical print.
+            body = "% cold-cover \(UUID().uuidString)\n"
+              + #"\section{Custom paper: 900 by 600 bp}"# + "\n"
               + "The complete first page stays visible when this closed document opens.\n"
               + #"\clearpage\section{Second custom page}"# + "\n"
               + "Reading continues on the same paper size.\n"

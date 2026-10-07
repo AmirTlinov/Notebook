@@ -16,7 +16,13 @@ import XCTest
       .matching(identifier: "workspace-item-7e7a1000-0000-4000-8000-000000000006").firstMatch
 
     func capture(_ name: String) {
-      let image = XCTAttachment(screenshot: app.screenshot())
+      let screen = XCUIScreen.main.screenshot()
+      let geometry = XCTAttachment(string: "application=\(app.frame), window=\(app.windows.firstMatch.frame), "
+        + "paper=\(surface.frame), deviceOrientation=\(XCUIDevice.shared.orientation.rawValue), "
+        + "imageSize=\(screen.image.size), imageScale=\(screen.image.scale), "
+        + "imageOrientation=\(screen.image.imageOrientation.rawValue)")
+      geometry.name = "\(name)-geometry"; geometry.lifetime = .keepAlways; add(geometry)
+      let image = XCTAttachment(screenshot: screen)
       image.name = name; image.lifetime = .keepAlways; add(image)
     }
     func openCover() {
@@ -70,25 +76,35 @@ import XCTest
       assertFit("custom-paper-immediate-reopen-\(cycle)")
     }
 
-    // Portrait leaves vertical room for a real zoom even if AX clips the
-    // wider horizontal extent at the window. Reopening must retain that zoom.
-    let fittedHeight = surface.frame.height
+    // XCTest includes recognition movement in its synthesized pinch. Read the
+    // accepted paper pose from its unclipped AX frame before testing restoration.
+    let fittedPaper = surface.frame
     surface.pinch(withScale: 1.35, velocity: 0.5)
     let enlarged = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-      surface.frame.height > fittedHeight * 1.1
+      surface.exists && surface.frame.height > fittedPaper.height * 1.1
     }, object: nil)
-    XCTAssertEqual(XCTWaiter.wait(for: [enlarged], timeout: 5), .completed)
-    let zoomedHeight = surface.frame.height
-    XCTAssertLessThan(zoomedHeight, app.windows.firstMatch.frame.height - 2)
+    let enlargement = XCTWaiter.wait(for: [enlarged], timeout: 5)
+    let zoomedPaper = surface.frame
     capture("custom-paper-zoomed")
+    XCTAssertEqual(enlargement, .completed)
+    XCTAssertEqual(zoomedPaper.width / zoomedPaper.height, 1.5, accuracy: 0.005,
+      "The enlarged AX rectangle must retain the full paper geometry")
     notebookBack(in: app)
     openCover()
     let restoredZoom = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-      surface.exists && abs(surface.frame.height - zoomedHeight) <= 2
+      guard surface.exists else { return false }
+      let paper = surface.frame
+      return abs(paper.width - zoomedPaper.width) <= 2 && abs(paper.height - zoomedPaper.height) <= 2
+        && abs(paper.midX - zoomedPaper.midX) <= 2 && abs(paper.midY - zoomedPaper.midY) <= 2
     }, object: nil)
-    XCTAssertEqual(XCTWaiter.wait(for: [restoredZoom], timeout: 5), .completed)
-    XCTAssertEqual(surface.frame.height, zoomedHeight, accuracy: 2, "The reading zoom survives closing and reopening")
+    let restoration = XCTWaiter.wait(for: [restoredZoom], timeout: 5)
     capture("custom-paper-reopened-at-reading-zoom")
+    XCTAssertEqual(restoration, .completed)
+    let restoredPaper = surface.frame
+    XCTAssertEqual(restoredPaper.width, zoomedPaper.width, accuracy: 2)
+    XCTAssertEqual(restoredPaper.height, zoomedPaper.height, accuracy: 2, "The reading zoom survives closing and reopening")
+    XCTAssertEqual(restoredPaper.midX, zoomedPaper.midX, accuracy: 2)
+    XCTAssertEqual(restoredPaper.midY, zoomedPaper.midY, accuracy: 2, "The reading position survives closing and reopening")
     XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "persistence-failure").firstMatch.exists)
   }
 

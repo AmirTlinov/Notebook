@@ -1,0 +1,138 @@
+{
+  "date": "2026-10-07",
+  "sourceCommit": "9a907c0b53cde95caf07aabdc3a760b86e88fbc6",
+  "route": "physical iPad, selected tests, optimized Debug; isolated native-test application",
+  "device": {
+    "architecture": "arm64",
+    "deviceId": "00008103-001E059934D9001E",
+    "deviceName": "iPad (Елизавета)",
+    "modelName": "iPad Pro (11-inch) (3rd generation)",
+    "osBuildNumber": "24A435",
+    "osVersion": "27.0",
+    "platform": "iOS"
+  },
+  "build": "PASS",
+  "inventory": "PASS",
+  "nativeTests": {
+    "result": "Failed",
+    "totalTestCount": 13,
+    "passedTests": 7,
+    "failedTests": 6,
+    "skippedTests": 0,
+    "runtimeWarnings": [],
+    "startTime": 1791358677.777,
+    "finishTime": 1791358702.205
+  },
+  "failures": [
+    {
+      "test": "NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOnAnotherBoard()",
+      "diagnosis": "Closed approach waited for native paint on a destination board that could mount only after the board handoff."
+    },
+    {
+      "test": "NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera()",
+      "diagnosis": "Opening oracle required interactive WebKit registry readiness after exact native paper was already installed; final fitted paper passed."
+    },
+    {
+      "test": "NotebookInteractionUXTests/testInkEraserMeetsTwentyMillisecondPresentationBudget()",
+      "diagnosis": "All 120 OS-presented synthetic fixed-120Hz samples exceeded 20 ms."
+    },
+    {
+      "test": "InkCanvasLifecycleTests/testPageCoalescesNewMaterialUntilTheSystemSuppliesADrawable()",
+      "diagnosis": "Fixture raced asynchronous first-use pipeline preparation before testing drawable coalescing."
+    },
+    {
+      "test": "InkCanvasLifecycleTests/testPageLiftKeepsThePendingFirstRevealUntilItsOwnResolution()",
+      "diagnosis": "Fixture required exactly two drawables; OS discarded the first two sequentially and accepted the third."
+    },
+    {
+      "test": "NotebookInteractionUXTests/testPencilReplayCannotHideBacklogBySlowingItsInputSchedule()",
+      "diagnosis": "All 120 OS-presented synthetic fixed-120Hz samples exceeded 20 ms."
+    }
+  ],
+  "syntheticPresentationMilliseconds": {
+    "pen": {
+      "p50": 23.21199997095391,
+      "p95": 31.348583346698433,
+      "p99": 39.67858332907781,
+      "max": 44.092124968301505
+    },
+    "eraser": {
+      "p50": 22.737416671589017,
+      "p95": 26.68983332114294,
+      "p99": 39.20145833399147,
+      "max": 39.56012497656047
+    }
+  },
+  "limitations": [
+    "Synthetic direct-controller replay does not establish actual Pencil input latency or physical photons.",
+    "Do not compare these measurements as a before/after improvement against the human Pencil253 baseline.",
+    "Document/lifecycle follow-up fixes and the custom-paper UI scenario require a physical rerun.",
+    "No release acceptance; these candidates are excluded from release254."
+  ],
+  "earlierAttempt": {
+    "route": ".build/product-quality-native-20261007-v1",
+    "result": "inventory could not enable UI automation",
+    "executedTests": 0
+  },
+  "localEvidence": ".build/product-quality-native-20261007-v2/ipad.xcresult",
+  "sourceReceipt": {
+    "path": "source-before.json",
+    "file_sha256": "248cefcb80433692a1f0d3c7f0363a4ccd96eac2753dcd3be9e3c4087f17d707",
+    "aggregate_sha256": "026a86b449c7b5031099828cbb1b18901749a80caeecad73c96e3c6bb71887ea"
+  },
+  "phaseAnalysis": {
+    "scriptSHA256": "5613c595c3012a948a046defb36a9cbb996f40bf10524097727a829f49393756",
+    "summarySHA256": "c7680a86de0ce9f1df9cf500406bf0df235881e9611c8d091c02f00309cf08a9",
+    "method": "nearest rank: sorted[ceil(n*p)-1]",
+    "lanes": {
+      "pen": {
+        "csvSHA256": "53dd672231418ed6961070f8d3dc32c865522a21eb072be587f2e600e8982607",
+        "presentedSamples": 120,
+        "uniquePresentedFrames": 115,
+        "gpuExecutionP95Milliseconds": 0.501,
+        "gpuDeadlineMisses": 0,
+        "minimumDeadlineHeadroomMilliseconds": 6.217583,
+        "renderToPlannedPresentationP50Milliseconds": 16.55025,
+        "sameSampleP95Chain": {
+          "sample": 4,
+          "frame_id": "1E823D15-7B3B-411D-8BA7-2834FAC39213",
+          "input_revision": 10,
+          "encoded_revision": 12,
+          "chain_ms": {
+            "due_to_entered": 1.110958,
+            "handler_execution": 0.050167,
+            "handler_to_render": 13.646667,
+            "render_to_gpu_end": 0.856167,
+            "gpu_end_to_planned_presentation": 15.683542,
+            "planned_to_os_presentation": 0.001083
+          },
+          "total_ms": 31.348583
+        }
+      },
+      "eraser": {
+        "csvSHA256": "2280b0db475ab83af4f4cffb93efcff0ab9cf345523f8c8e6b137f7714e60dd2",
+        "presentedSamples": 120,
+        "uniquePresentedFrames": 116,
+        "gpuExecutionP95Milliseconds": 0.582125,
+        "gpuDeadlineMisses": 0,
+        "minimumDeadlineHeadroomMilliseconds": 5.95275,
+        "renderToPlannedPresentationP50Milliseconds": 16.540208,
+        "sameSampleP95Chain": {
+          "sample": 0,
+          "frame_id": "9294C344-B3FE-4F19-95F2-388D8B6D151A",
+          "input_revision": 1,
+          "encoded_revision": 1,
+          "chain_ms": {
+            "due_to_entered": 0.0205,
+            "handler_execution": 1.186375,
+            "handler_to_render": 3.71,
+            "render_to_gpu_end": 0.940417,
+            "gpu_end_to_planned_presentation": 15.713792,
+            "planned_to_os_presentation": 5.11875
+          },
+          "total_ms": 26.689833
+        }
+      }
+    }
+  }
+}
