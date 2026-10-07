@@ -1,0 +1,178 @@
+{
+  "status": "core_and_selected_native_passed",
+  "positions": [
+    "QF01",
+    "DP08",
+    "NB24"
+  ],
+  "core": [
+    {
+      "gate": "core-v1",
+      "status": "passed",
+      "sourceSHA256": "94f7d699539d061cc3d6e6ee3357a9454d6bdf9049a832457eefa115584ae5bb",
+      "sourceInputCount": 1674,
+      "sourceUnchanged": true,
+      "executions": 9,
+      "failed": 0,
+      "skipped": 0,
+      "changedSinceGate": [
+        "Applications/Shared/NotebookCloudSync.swift",
+        "Applications/Shared/NotebookProgramAssets.swift",
+        "Applications/TestSupport/NotebookCloudWireTests.swift",
+        "Sources/NotebookCore/NotebookCloudStorage.swift",
+        "Tests/NotebookCoreTests/NotebookCloudDeliveryTests.swift"
+      ],
+      "artifacts": [
+        {
+          "path": "core-v1-core-execution.json",
+          "sha256": "52f5d06e8e7e149dc2755dd9bb411f07804be2ca2192f37bb95da42da99da307"
+        },
+        {
+          "path": "core-v1-selection.json",
+          "sha256": "cd1c1c2f346266739f43c139a341bcdeccb864471cfbf1c22ee22e255188665d"
+        },
+        {
+          "path": "core-v1-commands.json",
+          "sha256": "25547aad6ac9b9f22a0ca6ddfda40279451401994e104d8edf63de74ab9b0cee"
+        }
+      ]
+    },
+    {
+      "gate": "core-v2",
+      "status": "passed",
+      "sourceSHA256": "3a7b081f3141096f15541eee8ef62c43ed276dc0b8641b0fd6ee95b6701615dc",
+      "sourceInputCount": 1674,
+      "sourceUnchanged": true,
+      "executions": 2,
+      "failed": 0,
+      "skipped": 0,
+      "changedSinceGate": [
+        "Applications/Shared/NotebookCloudSync.swift",
+        "Applications/Shared/NotebookProgramAssets.swift",
+        "Applications/TestSupport/NotebookCloudWireTests.swift"
+      ],
+      "artifacts": [
+        {
+          "path": "core-v2-core-execution.json",
+          "sha256": "572304091f8172635815090f890444ff0598c1731a150a2cf0be3792b69d43b7"
+        },
+        {
+          "path": "core-v2-selection.json",
+          "sha256": "3665a04c3f05e97e517d89728015f89c85c8392df4a9f538c78cb82118082088"
+        },
+        {
+          "path": "core-v2-commands.json",
+          "sha256": "b465563133df5852d420d9befac4f35698b63a680d32ae3576705719850955c1"
+        }
+      ]
+    }
+  ],
+  "binding": {
+    "sourceSHA256": "737db0d197cc32f60cc748c67a3f17c17dd94c0730dec002357f71f1550a1eb5",
+    "sourceInputCount": 1674,
+    "coreOwnerUnchangedSinceV2": true,
+    "scope": "Core binding before additional native scheduling repair; final native freeze pending",
+    "finalSourceSHA256": "f4109fb5e30e2a4ef6fd4b51eda03e5452e0d7fb46bf411c52d33a6383f0acc8",
+    "finalSourceInputCount": 1674,
+    "finalSourceUnchangedDuringV4": true
+  },
+  "measurements": {
+    "scope": "single local Core fixture execution; no system frame/CPU/GPU acceptance",
+    "cloudInbox": {
+      "rows": 100002,
+      "selectedHeads": 3,
+      "beforeSeconds": 0.559723666,
+      "afterSeconds": 0.001223709
+    },
+    "programRanges": {
+      "parts": 16384,
+      "windows": 20,
+      "bytesPerWindow": 32,
+      "admittedSeconds": 0.02515875,
+      "rawValidatedSeconds": 0.48750825
+    }
+  },
+  "native": {
+    "status": "combined_selected_passed",
+    "physicalDevice": "00008103-001E059934D9001E",
+    "selectedMethods": 12,
+    "sourceSHA256": "8c2f107005b713cb13ab480093dec20f74496c50aa4220af10202c960eed62dd",
+    "sourceInputCount": 1674,
+    "initialAttempt": {
+      "path": ".build/remediation-cloud-resources-native-20261007-v1",
+      "result": "selector refusal before test execution; selected portable archive import is macOS-only",
+      "executed": 0,
+      "sourceSHA256": "8c2f107005b713cb13ab480093dec20f74496c50aa4220af10202c960eed62dd",
+      "sourceObservedUnchangedAfterTerminal": true,
+      "commandExitCodes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "currentAttempt": ".build/remediation-cloud-resources-native-20261007-v2",
+    "platformScope": {
+      "mac": 1,
+      "physicalIPad": 11
+    },
+    "v2": {
+      "physicalIPadExecuted": 11,
+      "passed": 10,
+      "failed": 1,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "sourceSHA256": "8c2f107005b713cb13ab480093dec20f74496c50aa4220af10202c960eed62dd",
+      "failedMethod": "NotebookCloudWireTests/testActualCloudActorLeavesIdleSpoolPathUntouchedAndResumesAfterALocalEdit()",
+      "macExecuted": 0,
+      "summary": "native-v2-ipad-summary.json"
+    },
+    "v3": {
+      "physicalIPadExecuted": 1,
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "sourceSHA256": "f4109fb5e30e2a4ef6fd4b51eda03e5452e0d7fb46bf411c52d33a6383f0acc8",
+      "changedSinceV2": [
+        "Applications/TestSupport/NotebookCloudWireTests.swift"
+      ],
+      "macExecuted": 0,
+      "macPreflightFailure": "surface-resources official Swift6.4.0 WASM toolchain missing from command environment",
+      "summary": "native-v3-ipad-summary.json"
+    },
+    "v4": {
+      "macExecuted": 1,
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "sourceSHA256": "f4109fb5e30e2a4ef6fd4b51eda03e5452e0d7fb46bf411c52d33a6383f0acc8",
+      "sourceUnchanged": true,
+      "summary": "native-v4-mac-summary.json"
+    },
+    "combined": {
+      "physicalIPad": 11,
+      "mac": 1,
+      "uniqueMethods": 12,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "binding": "v2 10 passed; v3 idle passed; v4 import passed. v2 to v3 changes only CloudWire test. All production inputs identical. v3 before == v4 before == v4 after."
+    }
+  },
+  "fullPhysicalAcceptance": false
+}

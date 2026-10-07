@@ -783,7 +783,7 @@ final class ProgramAssetTests: XCTestCase {
   func testRangesNamespacesAndRevocationUseBoundedReads() async throws {
     let f = try fixture(); defer { f.close() }
     let assets = NotebookProgramAssets(), web = WKWebView()
-    let url = assets.register(store: f.store, package: f.package) { _ in .init(before: "<head></head><body>", after: "</body>") }
+    let url = try assets.register(store: f.store, package: f.package) { _ in .init(before: "<head></head><body>", after: "</body>") }
     let html = Request(url.appendingPathComponent("view.html"), range: "bytes=0-3")
     assets.webView(web, start: html); try await wait { html.finished || html.error != nil }
     XCTAssertNil(html.error); XCTAssertEqual(html.bytes, Data("<!--".utf8))

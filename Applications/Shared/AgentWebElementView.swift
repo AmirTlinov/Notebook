@@ -1778,7 +1778,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
       do {
         if case .prepared(let encoded) = try NotebookProgramStateEncoding.prepareImmediately(element.state,
           resources: resources, forHTML: true) {
-          installProgramNavigation(element, encoded: encoded, token: token, in: webView)
+          try installProgramNavigation(element, encoded: encoded, token: token, in: webView)
           return
         }
       } catch {
@@ -1799,9 +1799,9 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
         if let hash = element.programPackage {
           guard let store = programStore ?? programOwner?.store else { throw SceneRenderError.snapshotPending("program_store") }
           let package = try await Task.detached(priority: .userInitiated) { try store.readProgramPackage(hash) }.value
-          installProgramNavigation(element, encoded: encoded, token: token, in: webView, assets: (store, package))
+          try installProgramNavigation(element, encoded: encoded, token: token, in: webView, assets: (store, package))
         } else {
-          installProgramNavigation(element, encoded: encoded, token: token, in: webView)
+          try installProgramNavigation(element, encoded: encoded, token: token, in: webView)
         }
       } catch {
         guard !Task.isCancelled, accepts(token) else { return }
@@ -1812,7 +1812,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   }
 
   private func installProgramNavigation(_ element: AgentElement, encoded: NotebookProgramStateEncoding,
-    token: String, in webView: WKWebView, assets: (store: NotebookStore, package: NotebookProgramPackage)? = nil) {
+    token: String, in webView: WKWebView, assets: (store: NotebookStore, package: NotebookProgramPackage)? = nil) throws {
     guard !Task.isCancelled, accepts(token), attachedWebView === webView else { return }
     initialStateEncoding = encoded
     // Initial state owns its admission before the program can reserve commit
@@ -1821,7 +1821,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     stateTransfer = NotebookProgramStateTransfer(resources: resources,
       grantsInitialCredit: !snapshotOnly && (lease.priority == .input || lease.priority == .liveProgram))
     if let assets {
-      let url = programAssets.register(store: assets.store, package: assets.package) { origin in
+      let url = try programAssets.register(store: assets.store, package: assets.package) { origin in
         Self.document(for: element, stateJSON: encoded.htmlJSON, token: token, package: assets.package, origin: origin,
           stateCredit: stateTransfer?.initialCredit ?? 0, commitsEnabled: !snapshotOnly && allowsStateCommits)
       }

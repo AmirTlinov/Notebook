@@ -144,31 +144,4 @@ extension NotebookStore {
     }
   }
 
-  /// The caller carries a descriptor read from its admitted publication. A
-  /// browser never supplies a blob hash; the scoped adapter resolves its path.
-  /// Each read owns one SQLite snapshot and at most the existing 1 MiB window.
-  public func readProgramFile(_ file: NotebookProgramPackage.File, offset: Int64, maxBytes: Int) throws -> Data {
-    guard offset >= 0, offset <= file.byteCount, (1...1_048_576).contains(maxBytes),
-      file.byteCount >= 0, file.parts.count <= 16_384,
-      file.parts.dropLast().allSatisfy({ $0.byteCount == NotebookProgramPackage.partBytes }),
-      file.parts.allSatisfy({ NotebookProgramPackage.validHash($0.sha256) && (1...NotebookProgramPackage.partBytes).contains($0.byteCount) }),
-      file.parts.reduce(Int64(0), { $0 + Int64($1.byteCount) }) == file.byteCount else {
-      throw NotebookStorageError.invalidTransaction("program resource range")
-    }
-    return try readTransaction { snapshot in
-      var result = Data(), position = offset
-      let end = offset + min(Int64(maxBytes), file.byteCount - offset)
-      while position < end {
-        try Task.checkCancellation()
-        let partIndex = Int(position / Int64(NotebookProgramPackage.partBytes))
-        let part = file.parts[partIndex], inside = position % Int64(NotebookProgramPackage.partBytes)
-        guard try snapshot.blobSize(hash: part.sha256) == part.byteCount else { throw NotebookStorageError.blobHashMismatch }
-        let count = Int(min(end - position, Int64(part.byteCount) - inside))
-        let data = try snapshot.readBlobChunk(hash: part.sha256, offset: inside, maxBytes: count)
-        guard data.count == count else { throw NotebookStorageError.blobHashMismatch }
-        result.append(data); position += Int64(count)
-      }
-      return result
-    }
-  }
 }

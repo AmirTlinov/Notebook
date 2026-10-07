@@ -20,15 +20,46 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
   private let source: NotebookReplicationSource
   private let zoneID: CKRecordZone.ID
   private let apply: @Sendable (NotebookReplicationDelivery, String) async throws -> Void
+  private let waitForInputIdle: @Sendable () async -> UInt64?
   private let report: @Sendable (NotebookCloudStatus) async -> Void
   private var engine: CKSyncEngine?
   private var account: String?
   private var contentEnabled = false
+  private var stopped = false
   private var accountObserver: (account: String, changed: @Sendable (Bool) async -> Void)?
   private let accountZoneID = CKRecordZone.ID(zoneName: NotebookAccountCloud.zoneName, ownerName: CKCurrentUserDefaultName)
   private var assets: [String: URL] = [:]
-  private var pumping = false
-  private var pumpAgain = false
+  private struct Flight {
+    let id: UUID
+    let task: Task<Void, Never>
+  }
+  private enum Deferred {
+    case input, dependencies, semantic(String)
+    var wake: DeferredWake {
+      switch self { case .input: .input; case .dependencies: .dependencies; case .semantic: .semantic }
+    }
+  }
+  private struct DeferredWake: OptionSet, Sendable {
+    let rawValue: UInt8
+    static let input = Self(rawValue: 1)
+    static let dependencies = Self(rawValue: 2)
+    static let semantic = Self(rawValue: 4)
+  }
+  private var inbound: Flight?
+  private var outbound: Flight?
+  private var inputWait: Flight?
+  private var inboundRequested = false
+  private var outboundRequested = false
+  private var inboundPaused = false
+  private var outboundPaused = false
+  private var deferred: [NotebookReplicationSource: Deferred] = [:]
+  private var overflowWake: DeferredWake = []
+  private var overflowReported = false
+  private var afterSource: NotebookReplicationSource?
+  private var sweepAgain = false
+  private var sweepProgressed = false
+  private var materialWake: UInt64 = 0
+  private var lastInputWake: (generation: UInt64, material: UInt64)?
   private var epoch = UUID()
   private var hasFailure = false
   private var resuming = false
@@ -37,11 +68,12 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
 
   init(store: NotebookStore, writer: NotebookPersistenceQueue, source: NotebookReplicationSource, workspaceID: UUID,
     apply: @escaping @Sendable (NotebookReplicationDelivery, String) async throws -> Void,
+    waitForInputIdle: @escaping @Sendable () async -> UInt64?,
     report: @escaping @Sendable (NotebookCloudStatus) async -> Void) {
     self.store = store; self.writer = writer; self.source = source
     uploadReader = NotebookCloudUploadReader(store: store)
     zoneID = .init(zoneName: "Notebook-" + workspaceID.uuidString.lowercased(), ownerName: CKCurrentUserDefaultName)
-    self.apply = apply; self.report = report
+    self.apply = apply; self.waitForInputIdle = waitForInputIdle; self.report = report
   }
 
   private func container() throws -> CKContainer {
@@ -105,6 +137,7 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
   func enable(account expected: String) async {
     let token = await stopEngine()
     guard epoch == token else { return }
+    stopped = false
     do {
       let container = try container(), current = try await currentAccount(container)
       guard epoch == token else { return }
@@ -119,6 +152,7 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
   }
 
   func resume() async {
+    stopped = false
     guard engine == nil, !resuming else { return }
     resuming = true
     defer { resuming = false }
@@ -174,7 +208,7 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
     engine.state.remove(pendingRecordZoneChanges: engine.state.pendingRecordZoneChanges)
     if enabled && state == nil { engine.state.add(pendingDatabaseChanges: [.saveZone(CKRecordZone(zoneID: zoneID))]) }
     await report(enabled ? .init(enabled: true, message: "Синхронизация iCloud включена.") : .off)
-    await pump()
+    if enabled { try await activateContent(account: account) }
   }
 
   func disable() async {
@@ -194,72 +228,293 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
 
   private func invalidate() -> CKSyncEngine? {
     resumeRetry?.cancel(); resumeRetry = nil
-    uploadPreparation?.cancel(); uploadPreparation = nil
+    uploadPreparation?.cancel()
+    inbound?.task.cancel(); outbound?.task.cancel(); inputWait?.task.cancel()
+    inboundRequested = false; outboundRequested = false
+    deferred.removeAll(); overflowWake = []; overflowReported = false
+    afterSource = nil; sweepAgain = false; sweepProgressed = false; lastInputWake = nil
     epoch = UUID(); let previous = engine; engine = nil; account = nil; contentEnabled = false
     return previous
   }
 
-  func stop() async { accountObserver = nil; _ = await stopEngine() }
+  func stop() async { stopped = true; accountObserver = nil; _ = await stopEngine() }
 
   private func stopEngine() async -> UUID {
     let previous = invalidate(), files = Array(assets.values); assets.removeAll()
+    let joining = [inbound?.task, outbound?.task, inputWait?.task].compactMap { $0 }
     let token = epoch
     await previous?.cancelOperations()
+    for task in joining { await task.value }
     for file in files { try? FileManager.default.removeItem(at: file) }
     return token
   }
 
   private func stopFromDelegate() {
     let previous = invalidate(), files = Array(assets.values); assets.removeAll()
+    let joining = [inbound?.task, outbound?.task, inputWait?.task].compactMap { $0 }
     // A delegate must return before waiting for its own operation to cancel.
     Task {
       await previous?.cancelOperations()
+      for task in joining { await task.value }
       for file in files { try? FileManager.default.removeItem(at: file) }
     }
   }
 
   func notifyLocalChanges() async {
-    if engine == nil { await resume() }
-    await pump()
+    guard !stopped else { return }
+    if engine == nil, !contentEnabled { await resume() }
+    guard !stopped, contentEnabled else { return }
+    materialWake &+= 1
+    deferred = deferred.filter { if case .input = $0.value { return true }; return false }
+    overflowWake.formIntersection(.input)
+    if overflowWake.isEmpty { overflowReported = false }
+    inboundPaused = false; outboundPaused = false
+    requestInbound(sweep: true); requestOutbound(); watchInput()
   }
 
-  private func pump() async {
-    pumpAgain = true
-    guard !pumping else { return }; pumping = true
-    defer {
-      pumping = false
-      // A replacement engine can request work while the cancelled worker is
-      // unwinding. Preserve that request after this old pump relinquishes it.
-      if pumpAgain, contentEnabled { Task { await self.pump() } }
+  func inputChanged() { watchInput() }
+
+  /// Durable content scheduling is bound to the locally enabled account. The
+  /// CloudKit adapter uses this same seam after authenticating its account;
+  /// preparing a local outbox needs neither an engine nor a network session.
+  func activateContent(account expected: String) async throws {
+    let token = epoch
+    let configuration = try await writer.submit { try $0.cloudConfiguration() }
+    guard epoch == token else { throw CancellationError() }
+    guard configuration.enabled, configuration.account == expected,
+      account == nil || account == expected else { throw NotebookTransportError.disconnected }
+    account = expected; stopped = false; contentEnabled = true; hasFailure = false
+    resumeRetry?.cancel(); resumeRetry = nil
+    inboundPaused = false; outboundPaused = false
+    requestInbound(sweep: true); requestOutbound()
+  }
+
+  /// Retry belongs to the existing FIFO. A retained apply/batch task keeps its
+  /// original accepted result; waking the other run never creates its retry.
+  func writerRecovered() {
+    guard !stopped, contentEnabled else { return }
+    inboundPaused = false; outboundPaused = false
+    requestInbound(sweep: true); requestOutbound(); watchInput()
+  }
+
+  /// Join the work already owned by this actor, leaving a rejected contact's
+  /// idle subscription in place. No delivery or retry is admitted by this join.
+  func waitForContentRuns() async {
+    while inbound != nil || outbound != nil {
+      let joining = [inbound?.task, outbound?.task].compactMap { $0 }
+      for task in joining { await task.value }
     }
-    while pumpAgain {
-      pumpAgain = false
-      guard contentEnabled, let engine, let account else { return }
-      let token = epoch
+  }
+
+  var deferredSourceCount: Int { deferred.count }
+
+  private func matches(_ token: UUID, account expected: String) -> Bool {
+    !stopped && epoch == token && contentEnabled && account == expected
+  }
+
+  @MainActor private static func admitWrite<Value: Sendable>(_ writer: NotebookPersistenceQueue,
+    _ operation: @escaping @Sendable (NotebookStore) throws -> Value) async throws -> Value {
+    // Stop can run while this task crosses to MainActor. Cancellation is
+    // checked at FIFO admission; an already accepted slot retains its result.
+    try Task.checkCancellation()
+    return try await writer.submit(writesStore: true, operation)
+  }
+
+  private func requestInbound(sweep: Bool = false) {
+    inboundRequested = true
+    if sweep { sweepAgain = true }
+    guard !stopped, inbound == nil, !inboundPaused, contentEnabled, let account else { return }
+    let id = UUID(), token = epoch
+    let task = Task { [weak self] in
+      guard let self else { return }
+      await self.runInbound(id: id, token: token, account: account)
+    }
+    inbound = .init(id: id, task: task)
+  }
+
+  private func requestOutbound() {
+    outboundRequested = true
+    guard !stopped, outbound == nil, !outboundPaused, contentEnabled, let account else { return }
+    let id = UUID(), token = epoch
+    let task = Task { [weak self] in
+      guard let self else { return }
+      await self.runOutbound(id: id, token: token, account: account)
+    }
+    outbound = .init(id: id, task: task)
+  }
+
+  private func finishInbound(_ id: UUID) {
+    guard inbound?.id == id else { return }
+    inbound = nil
+    if inboundRequested { requestInbound() }
+  }
+
+  private func finishOutbound(_ id: UUID) {
+    guard outbound?.id == id else { return }
+    outbound = nil
+    if outboundRequested { requestOutbound() }
+  }
+
+  private func watchInput() {
+    guard !stopped, contentEnabled, inputWait == nil,
+      overflowWake.contains(.input) || deferred.values.contains(where: { if case .input = $0 { return true }; return false }) else { return }
+    let id = UUID(), token = epoch, material = materialWake
+    let task = Task { [weak self, waitForInputIdle] in
+      let generation = await waitForInputIdle()
+      await self?.inputDidBecomeIdle(id: id, token: token, material: material, generation: generation)
+    }
+    inputWait = .init(id: id, task: task)
+  }
+
+  private func inputDidBecomeIdle(id: UUID, token: UUID, material: UInt64, generation: UInt64?) {
+    guard inputWait?.id == id else { return }
+    inputWait = nil
+    guard epoch == token else { watchInput(); return }
+    guard !stopped, contentEnabled, let generation else { return }
+    // A rejected packet may outlive the contact captured before its FIFO wait.
+    // Retry that cut once, then require another actual input/material epoch.
+    guard lastInputWake?.generation != generation || lastInputWake?.material != material else { return }
+    lastInputWake = (generation, material)
+    deferred = deferred.filter { if case .input = $0.value { return false }; return true }
+    overflowWake.remove(.input)
+    if overflowWake.isEmpty { overflowReported = false }
+    requestInbound(sweep: true)
+  }
+
+  func contentWasFetched() {
+    deferred = deferred.filter { if case .dependencies = $0.value { return false }; return true }
+    overflowWake.remove(.dependencies)
+    if overflowWake.isEmpty { overflowReported = false }
+    requestInbound(sweep: true); requestOutbound()
+  }
+
+  private static func deferredReason(_ error: Error) -> Deferred? {
+    if let accepted = error as? NotebookAcceptedWriteError {
+      guard case .rejected = accepted.outcome else { return nil }
+      return deferredReason(accepted.underlying)
+    }
+    if let failure = error as? CollaborationError {
+      if failure.code == "input_active" { return .input }
+      guard !["storage_error", "operation_failed", "conversion_required", "publication_pending",
+        "edit_receipt_unavailable", "action_version_unavailable", "request_identity_unavailable"].contains(failure.code) else { return nil }
+      return .semantic(String(failure.localizedDescription.prefix(1024)))
+    }
+    if let failure = error as? NotebookStorageError {
+      switch failure {
+      case .transactionConflict, .invalidTransaction, .limitExceeded, .unsupportedFormat:
+        return .semantic(String(failure.localizedDescription.prefix(1024)))
+      default: return nil
+      }
+    }
+    if let failure = error as? NotebookTransportError {
+      switch failure {
+      case .invalidFrame, .frameTooLarge, .unsupportedVersion, .identityMismatch,
+        .invalidSequence, .invalidBlob, .blobTooLarge, .unexpectedBlob, .invalidAcknowledgement, .resourceLimit:
+        return .semantic(String(describing: failure))
+      default: return nil
+      }
+    }
+    return nil
+  }
+
+  private func deferSource(_ source: NotebookReplicationSource, reason: Deferred) async {
+    if deferred[source] != nil || deferred.count < 128 { deferred[source] = reason }
+    else {
+      // The cursor still visits every journal once in this finite sweep. The
+      // existing inbox retains uncached heads; only their wake kinds stay here.
+      overflowWake.insert(reason.wake)
+      if !overflowReported {
+        overflowReported = true
+        await report(.init(enabled: true, message: "Входящие материалы iCloud ожидают применения. Сохранённые источники продолжают обмен."))
+      }
+    }
+    switch reason {
+    case .input: watchInput()
+    case .dependencies: break
+    case .semantic(let message):
+      Logger(subsystem: "com.amirtlinov.notebook", category: "CloudSync")
+        .error("Cloud source deferred: \(source.deviceID, privacy: .public)/\(source.generation, privacy: .public), \(message, privacy: .public)")
+      await report(.init(enabled: true, message: message))
+    }
+  }
+
+  private func runInbound(id: UUID, token: UUID, account: String) async {
+    defer { finishInbound(id) }
+    while inboundRequested {
+      inboundRequested = false
+      guard matches(token, account: account), !Task.isCancelled, !inboundPaused else { return }
+      if afterSource == nil { sweepAgain = false; sweepProgressed = false }
       do {
-        // Asset reconstruction and reads never occupy the application's writer.
-        while let blob = try await writer.submit({ try $0.nextCompleteCloudBlob(account: account) }) {
+        // One complete immutable blob per round. Its actual assembly is joined
+        // before the temporary file is released, even when this epoch stops.
+        if let blob = try await writer.submit({ try $0.nextCompleteCloudBlob(account: account) }) {
+          guard matches(token, account: account), !Task.isCancelled else { return }
           let file = FileManager.default.temporaryDirectory.appendingPathComponent("notebook-cloud-" + UUID().uuidString)
           defer { try? FileManager.default.removeItem(at: file) }
           try await Task.detached(priority: .utility) { [store] in try store.assembleCloudBlob(blob, account: account, file: file) }.value
-          guard epoch == token else { return }
-          try await writer.submit(writesStore: true) { try $0.installCloudBlob(blob, account: account, file: file) }
+          guard matches(token, account: account), !Task.isCancelled else { return }
+          try await Self.admitWrite(writer) { try $0.installCloudBlob(blob, account: account, file: file) }
+          guard matches(token, account: account), !Task.isCancelled else { return }
+          deferred = deferred.filter { if case .dependencies = $0.value { return false }; return true }
+          overflowWake.remove(.dependencies)
+          sweepAgain = true
+          inboundRequested = true
         }
-        var progressed = true
-        while progressed {
-          progressed = false
-          let deliveries = try await writer.submit { try $0.cloudInbox(account: account) }
-          for delivery in deliveries {
-            guard epoch == token else { return }
+        let exclusions = Set(deferred.keys), cursor = afterSource
+        let heads = try await writer.submit { try $0.cloudInbox(account: account, excluding: exclusions, afterSource: cursor) }
+        guard matches(token, account: account), !Task.isCancelled else { return }
+        if heads.isEmpty {
+          if cursor != nil, sweepProgressed || sweepAgain {
+            afterSource = nil; inboundRequested = true; continue
+          }
+          if inboundRequested || sweepAgain { continue }
+          return
+        }
+        // Every nonempty batch advances the exact-source cursor. One final
+        // empty read closes the sweep, including a partial rejected batch.
+        inboundRequested = true
+        for delivery in heads {
+          guard matches(token, account: account), !Task.isCancelled else { return }
+          afterSource = delivery.source
+          do {
             if try await writer.submit({ try $0.deliveryNeedsContent(delivery) }) {
-              let missing = try await writer.submit(writesStore: true) { try $0.missingBlobHashes(for: delivery.change, limit: 1) }
-              if !missing.isEmpty { continue }
+              guard matches(token, account: account), !Task.isCancelled else { return }
+              let missing = try await Self.admitWrite(writer) { try $0.missingBlobHashes(for: delivery.change, limit: 1) }
+              guard matches(token, account: account), !Task.isCancelled else { return }
+              if !missing.isEmpty { await deferSource(delivery.source, reason: .dependencies); continue }
             }
-            try await apply(delivery, account); progressed = true
+            // One attempt. A revoked input observation cannot occupy this
+            // actor or the independent outbound plan while its source waits.
+            guard matches(token, account: account), !Task.isCancelled else { return }
+            try await apply(delivery, account)
+            guard matches(token, account: account), !Task.isCancelled else { return }
+            deferred[delivery.source] = nil
+            sweepProgressed = true
+            inboundRequested = true; requestOutbound()
+          } catch {
+            guard matches(token, account: account), !Task.isCancelled else { return }
+            guard let reason = Self.deferredReason(error) else { throw error }
+            await deferSource(delivery.source, reason: reason)
           }
         }
-        guard epoch == token else { return }
-        var preparation = try await writer.submit(writesStore: true) { try $0.pendingCloudUploadPlan(account: account) }
+        await Task.yield()
+      } catch {
+        guard matches(token, account: account), !Task.isCancelled else { return }
+        inboundPaused = true
+        await reportFailure(error)
+        return
+      }
+    }
+  }
+
+  private func runOutbound(id: UUID, token: UUID, account: String) async {
+    defer { finishOutbound(id) }
+    while outboundRequested {
+      outboundRequested = false
+      guard matches(token, account: account), !Task.isCancelled, !outboundPaused else { return }
+      do {
+        var preparation = try await Self.admitWrite(writer) { try $0.pendingCloudUploadPlan(account: account) }
+        guard matches(token, account: account), !Task.isCancelled else { return }
         if preparation == nil {
           let preparationTask = Task { [uploadReader, source] in
             try await uploadReader.prepare(account: account, source: source)
@@ -269,13 +524,13 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
           do { plan = try await preparationTask.value }
           catch { uploadPreparation = nil; throw error }
           uploadPreparation = nil
-          guard epoch == token else {
+          guard matches(token, account: account), !Task.isCancelled else {
             if let plan { try? await uploadReader.discard(plan.id) }
             return
           }
           if let plan {
             do {
-              if try await writer.submit(writesStore: true, { try $0.beginCloudUpload(plan, account: account) }) { preparation = plan.id }
+              if try await Self.admitWrite(writer, { try $0.beginCloudUpload(plan, account: account) }) { preparation = plan.id }
               else { try? await uploadReader.discard(plan.id) }
             } catch {
               try? await uploadReader.discard(plan.id)
@@ -285,30 +540,34 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
         }
         if let preparation {
           while true {
-            guard epoch == token else { return }
+            guard matches(token, account: account), !Task.isCancelled else { return }
             guard let batch = try await uploadReader.batch(preparation, account: account) else {
               try await uploadReader.discard(preparation); break
             }
-            guard epoch == token else { return }
-            let complete = try await writer.submit(writesStore: true) { try $0.installCloudUploadBatch(batch, account: account) }
+            guard matches(token, account: account), !Task.isCancelled else { return }
+            let complete = try await Self.admitWrite(writer) { try $0.installCloudUploadBatch(batch, account: account) }
             if complete { try await uploadReader.discard(preparation); break }
-            // Each transaction ends before the next FIFO admission. Accepted
-            // Pencil/program writes can pass while an initial export is built.
             await Task.yield()
           }
         }
+        guard matches(token, account: account), !Task.isCancelled else { return }
         let pending = try await writer.submit { try $0.cloudOutbox(account: account) }
-        guard epoch == token else { return }
+        guard matches(token, account: account), !Task.isCancelled else { return }
         let records = pending.map { CKSyncEngine.PendingRecordZoneChange.saveRecord(.init(recordName: $0.id, zoneID: zoneID)) }
-        if !records.isEmpty { engine.state.add(pendingRecordZoneChanges: records) }
-        if !hasFailure {
+        if !records.isEmpty { engine?.state.add(pendingRecordZoneChanges: records) }
+        if !hasFailure, !overflowWake.contains(.semantic), !deferred.values.contains(where: { if case .semantic = $0 { return true }; return false }) {
           let uploaded = try await writer.submit { try $0.cloudHasUploadedCurrentContent(account: account) }
-          guard epoch == token else { return }
+          guard matches(token, account: account), !Task.isCancelled else { return }
           await report(.init(enabled: true, message: uploaded
             ? "Изменения отправлены в iCloud."
             : "Сохранено на устройстве. Ожидаем отправку в iCloud."))
         }
-      } catch { if epoch == token { await reportFailure(error) }; return }
+      } catch {
+        guard matches(token, account: account), !Task.isCancelled else { return }
+        outboundPaused = true
+        await reportFailure(error)
+        return
+      }
     }
   }
 
@@ -359,6 +618,7 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
 
   func handleEvent(_ event: CKSyncEngine.Event, syncEngine: CKSyncEngine) async {
     guard syncEngine === engine, let account else { return }
+    let token = epoch
     do {
       switch event {
       case .stateUpdate(let value):
@@ -384,14 +644,15 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
           throw CloudFailure("Удалены неизменяемые облачные записи. Обмен остановлен; локальные данные сохранены.")
         }
         for modification in value.modifications where modification.record.recordID.zoneID == zoneID {
-          guard syncEngine === engine else { return }
+          guard epoch == token, syncEngine === engine else { return }
           let (record, data) = try Self.decode(modification.record)
           if let delivery = record.delivery { try await writer.submit(writesStore: true) { [source] in try $0.stageCloudDelivery(delivery, account: account, localSource: source) } }
           else if let data { try await writer.submit(writesStore: true) { try $0.stageCloudChunk(record, data: data, account: account) } }
         }
         // Returning from this event is the fetch checkpoint boundary. Every
         // asset and envelope is durable before a later stateUpdate is saved.
-        await pump()
+        guard epoch == token, syncEngine === engine else { return }
+        contentWasFetched()
       case .sentRecordZoneChanges(let value):
         guard contentEnabled else { return }
         var accepted = value.savedRecords.map { $0.recordID.recordName }
@@ -410,11 +671,13 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
           }
         }
         for ids in stride(from: 0, to: accepted.count, by: 16).map({ Array(accepted[$0..<min($0 + 16, accepted.count)]) }) {
+          guard epoch == token, syncEngine === engine else { return }
           try await writer.submit(writesStore: true) { try $0.acknowledgeCloudRecords(ids, account: account) }
         }
+        guard epoch == token, syncEngine === engine else { return }
         if value.failedRecordSaves.isEmpty, !accepted.isEmpty { hasFailure = false }
         for id in accepted { if let file = assets.removeValue(forKey: id) { try? FileManager.default.removeItem(at: file) } }
-        await pump()
+        requestOutbound()
       case .sentDatabaseChanges(let value):
         for failure in value.failedZoneSaves { await reportFailure(failure.error) }
       case .didFetchRecordZoneChanges(let value):
@@ -424,7 +687,7 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
     } catch {
       // Never advance a fetch checkpoint after a failed durable stage. Drop
       // this engine; resume replays from its last persisted serialization.
-      if syncEngine === engine { stopFromDelegate(); await reportFailure(error) }
+      if epoch == token, syncEngine === engine { stopFromDelegate(); await reportFailure(error) }
     }
   }
 
@@ -440,8 +703,10 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
   }
 
   private func reportFailure(_ error: Error) async {
+    let token = epoch
     hasFailure = true
     let enabled = (try? await writer.submit { try $0.cloudConfiguration().enabled }) ?? false
+    guard epoch == token else { return }
     let code = (error as? CKError)?.code
     Logger(subsystem: "com.amirtlinov.notebook", category: "CloudSync")
       .error("Cloud delivery failed: code \(code?.rawValue ?? -1), type \(String(reflecting: type(of: error)), privacy: .public)")
@@ -499,8 +764,7 @@ private actor NotebookCloudUploadReader {
   let store: NotebookStore
   init(store: NotebookStore) { self.store = store }
   func prepare(account: String, source: NotebookReplicationSource) throws -> NotebookCloudUploadPlan? {
-    try store.retireUnclaimedCloudUploadSpools()
-    return try store.prepareCloudUploadPlan(account: account, source: source)
+    try store.prepareCloudUploadPlan(account: account, source: source)
   }
   func batch(_ id: UUID, account: String) throws -> NotebookCloudUploadBatch? {
     try store.prepareCloudUploadBatch(id, account: account)

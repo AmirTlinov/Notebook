@@ -44,6 +44,15 @@ extension NotebookSQLConnection {
 }
 
 extension NotebookStore {
+  /// An accepted writer's effect before the outer COMMIT publishes its journal.
+  /// Cursor/ACK, staging and local witness rows never enter this content set.
+  public func transactionHasContentChanges() throws -> Bool {
+    guard let database = currentSQL, database.writable else {
+      throw NotebookStorageError.invalidTransaction("content effect requires a writer transaction")
+    }
+    return database.pendingChangeCount > 0
+  }
+
   /// One manifest and its ordered parts commit with the changed values. The
   /// largest in-memory record page is the existing 16,384-record wire part.
   func publishPendingChanges(database: NotebookSQLConnection) throws {

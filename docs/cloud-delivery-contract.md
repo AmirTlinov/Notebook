@@ -11,6 +11,16 @@ The SQLite file itself is never synchronized.
 validation and removal of the accepted staging package in the same transaction.
 Cloud delivery preserves field versions, ink, placement, undo and public CAS
 preconditions. Direct transport owns low-latency presence and Codex interaction.
+The same CloudSync actor coalesces independent inbound and outbound runs through
+the ordinary writer. Each inbox round selects one head per exact source generation.
+A contact rejection waits on the input owner's accepted idle boundary; a semantic
+rejection remains staged until a real material commit, and missing dependencies
+resume when content arrives. None advances that source's cursor or blocks another
+source or outgoing preparation. ACKs and cloud bookkeeping publish no material wake.
+The resident reason cache holds at most 128 exact sources. Overflow keeps its
+envelopes in the existing inbox and aggregates only wake kinds. A finite sweep
+continues to later sources and sleeps after an unchanged rejected pass; input
+idle, fetched dependencies, actual material or explicit Retry starts another pass.
 CloudKit does not deliver chat, audio, terminal, drafts, jobs or presence and
 cannot issue a `shownOnIPad` receipt.
 
@@ -80,8 +90,13 @@ exceed 1 MiB. Encoding, hashing and spool reads stay outside writer admission.
 
 Only a completely imported export is sendable or accepts ACKs. Restart resumes
 its exact durable spool; a missing unsealed spool revokes the unexposed export
-and rebuilds the cut. Stop/account change cancels preparation. Sealing releases
-the spool; startup retires unclaimed files, including interrupted SQLite journals.
+and rebuilds the cut. Stop/account change cancels new admission and joins the old
+run, including any accepted writer result, before releasing its files. Sealing
+releases the spool. Explicit Stop also closes local wake admission until account
+activation/resume; a late accepted material event cannot reopen the stopped owner.
+Idle preparation checks account, generation and journal work
+before touching the spool path; only a later real plan retires unclaimed files,
+including interrupted SQLite journals.
 
 Incoming chunks may precede their envelope and arrive out of order. They are
 persisted before returning from the fetch event and advancing the engine token.

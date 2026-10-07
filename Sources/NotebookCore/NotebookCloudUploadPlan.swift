@@ -59,6 +59,8 @@ extension NotebookStore {
       try cloudUploadWork(account: account, source: source) != nil
     }) else { return nil }
     try Task.checkCancellation()
+    try retireUnclaimedCloudUploadSpools()
+    try Task.checkCancellation()
     let id = UUID(), url = cloudPlanURL(id)
     try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
     var completed = false

@@ -1,0 +1,17 @@
+{
+  "executed": [
+    "NotebookCoreTests.NotebookCloudDeliveryTests/hundredThousandInboxRowsContributeOneHeadPerExactSourceGeneration()/NotebookCloudDeliveryTests.swift:109:4",
+    "NotebookCoreTests.NotebookCloudDeliveryTests/unfinishedExportSurvivesRestartAndNeverAcknowledgesItsPartialCut()/NotebookCloudDeliveryTests.swift:159:4"
+  ],
+  "executions": {
+    "NotebookCoreTests.NotebookCloudDeliveryTests/hundredThousandInboxRowsContributeOneHeadPerExactSourceGeneration()/NotebookCloudDeliveryTests.swift:109:4": 1,
+    "NotebookCoreTests.NotebookCloudDeliveryTests/unfinishedExportSurvivesRestartAndNeverAcknowledgesItsPartialCut()/NotebookCloudDeliveryTests.swift:159:4": 1
+  },
+  "failed": [],
+  "format": 1,
+  "planned": [
+    "NotebookCoreTests.NotebookCloudDeliveryTests/hundredThousandInboxRowsContributeOneHeadPerExactSourceGeneration()/NotebookCloudDeliveryTests.swift:109:4",
+    "NotebookCoreTests.NotebookCloudDeliveryTests/unfinishedExportSurvivesRestartAndNeverAcknowledgesItsPartialCut()/NotebookCloudDeliveryTests.swift:159:4"
+  ],
+  "skipped": []
+}

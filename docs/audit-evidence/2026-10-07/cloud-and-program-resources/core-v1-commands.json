@@ -1,0 +1,73 @@
+[
+  {
+    "argv": [
+      "/opt/homebrew/opt/python@3.14/bin/python3.14",
+      "--version"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "toolchain-python"
+  },
+  {
+    "argv": [
+      "swift",
+      "--version"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "toolchain-swift"
+  },
+  {
+    "argv": [
+      "swift",
+      "test",
+      "list",
+      "--disable-xctest",
+      "--event-stream-output-path",
+      "/dev/stdout",
+      "--event-stream-version",
+      "6.4"
+    ],
+    "cwd": "/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook",
+    "exitCode": 0,
+    "label": "core-inventory",
+    "stdoutMode": "pipe"
+  },
+  {
+    "argv": [
+      "swift",
+      "test",
+      "--disable-xctest",
+      "--skip-build",
+      "--test-product",
+      "NotebookCoreTests",
+      "--filter",
+      "^(?:NotebookCoreTests\\.NotebookCloudDeliveryTests/hundredThousandInboxRowsContributeOneHeadPerExactSourceGeneration\\(\\)/NotebookCloudDeliveryTests\\.swift:109:4|NotebookCoreTests\\.NotebookCloudDeliveryTests/idlePreparationNeverTouchesSpoolStorageAndLaterWorkStillResumes\\(\\)/NotebookCloudDeliveryTests\\.swift:78:4|NotebookCoreTests\\.NotebookCloudDeliveryTests/missingUnsealedSpoolRevokesOnlyItsUnexposedExport\\(\\)/NotebookCloudDeliveryTests\\.swift:225:4|NotebookCoreTests\\.NotebookCloudDeliveryTests/preparedPlanCannotMoveToAnotherAccountWithTheSameCursor\\(\\)/NotebookCloudDeliveryTests\\.swift:209:4|NotebookCoreTests\\.NotebookCloudDeliveryTests/unfinishedExportSurvivesRestartAndNeverAcknowledgesItsPartialCut\\(\\)/NotebookCloudDeliveryTests\\.swift:150:4|NotebookCoreTests\\.NotebookProgramPackageTests/admittedResourceKeepsItsDescriptorAndChecksOnlyTouchedBlobLengths\\(\\)/NotebookProgramPackageTests\\.swift:71:4|NotebookCoreTests\\.NotebookProgramPackageTests/largeSourceAndThreeHundredMiBFileReadAcrossPartsWithoutLargeBuffers\\(\\)/NotebookProgramPackageTests\\.swift:112:4|NotebookCoreTests\\.NotebookProgramPackageTests/maximumPartNamespaceKeepsBoundedRangeWorkAfterAdmission\\(\\)/NotebookProgramPackageTests\\.swift:94:4|NotebookCoreTests\\.NotebookProgramPackageTests/namespaceMIMEEntryAndPartInvariantsRejectAmbiguousPublications\\(\\)/NotebookProgramPackageTests\\.swift:23:4)$",
+      "--event-stream-output-path",
+      "/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook/.build/remediation-cloud-and-resources-core-20261007-v1/core-NotebookCoreTests-events.jsonl",
+      "--event-stream-version",
+      "6.4"
+    ],
+    "cwd": "/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook",
+    "exitCode": 0,
+    "label": "core-NotebookCoreTests"
+  },
+  {
+    "argv": [
+      "/opt/homebrew/opt/python@3.14/bin/python3.14",
+      "--version"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "toolchain-after-python"
+  },
+  {
+    "argv": [
+      "swift",
+      "--version"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "toolchain-after-swift"
+  }
+]

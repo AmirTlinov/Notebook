@@ -68,6 +68,47 @@ struct NotebookProgramPackageTests {
     }
   }
 
+  @Test func admittedResourceKeepsItsDescriptorAndChecksOnlyTouchedBlobLengths() throws {
+    try fixture { store, _ in
+      let bytes = Data(repeating: 29, count: NotebookProgramPackage.partBytes), stored = part(bytes)
+      try store.stageBlob(data: bytes, expectedHash: stored.sha256)
+      let absent = NotebookProgramPackage.Part(sha256: String(repeating: "a", count: 64), byteCount: bytes.count)
+      let file = NotebookProgramPackage.File(path: "data.bin", mimeType: "application/octet-stream",
+        byteCount: Int64(bytes.count * 2), parts: [stored, absent])
+      let resource = try NotebookProgramResource(file)
+      #expect(try store.readProgramResource(resource, offset: 0, maxBytes: 7) == Data(repeating: 29, count: 7))
+      #expect(throws: (any Error).self) {
+        try store.readProgramResource(resource, offset: Int64(bytes.count), maxBytes: 1)
+      }
+      var changed = file.parts
+      changed[1] = .init(sha256: "invalid", byteCount: bytes.count)
+      let invalid = NotebookProgramPackage.File(path: file.path, mimeType: file.mimeType,
+        byteCount: file.byteCount, parts: changed)
+      #expect(throws: (any Error).self) { try store.readProgramFile(invalid, offset: 0, maxBytes: 1) }
+      #expect(try store.readProgramResource(resource, offset: 0, maxBytes: 1) == Data([29]))
+      #expect(throws: (any Error).self) { try store.readProgramResource(resource, offset: -1, maxBytes: 1) }
+      #expect(throws: (any Error).self) { try store.readProgramResource(resource, offset: 0, maxBytes: 1_048_577) }
+    }
+  }
+
+  @Test func maximumPartNamespaceKeepsBoundedRangeWorkAfterAdmission() throws {
+    try fixture { store, _ in
+      let bytes = Data(repeating: 37, count: NotebookProgramPackage.partBytes), piece = part(bytes)
+      try store.stageBlob(data: bytes, expectedHash: piece.sha256)
+      for count in [1, 16_384] {
+        let file = NotebookProgramPackage.File(path: "data.bin", mimeType: "application/octet-stream",
+          byteCount: Int64(count) * Int64(bytes.count), parts: Array(repeating: piece, count: count))
+        let resource = try NotebookProgramResource(file), start = ContinuousClock.now
+        for _ in 0..<20 {
+          #expect(try store.readProgramResource(resource, offset: file.byteCount - 32, maxBytes: 32) == Data(repeating: 37, count: 32))
+        }
+        let admitted = start.duration(to: .now), rawStart = ContinuousClock.now
+        for _ in 0..<20 { _ = try store.readProgramFile(file, offset: file.byteCount - 32, maxBytes: 32) }
+        print("PROGRAM_RESOURCE parts=\(count) windows=20 admitted=\(admitted) raw_validation=\(rawStart.duration(to: .now)) range_bytes=32")
+      }
+    }
+  }
+
   @Test func largeSourceAndThreeHundredMiBFileReadAcrossPartsWithoutLargeBuffers() throws {
     try fixture { store, root in
       let file = root.appendingPathComponent("large.bin")

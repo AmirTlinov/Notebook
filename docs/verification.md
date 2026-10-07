@@ -62,12 +62,26 @@ CA flush и OS receipt; её контракт прошёл, аппаратный
 
 ## Remediation 104
 
-Пустой cloud-plan проверяет source/account/cursor до создания SQLite spool;
-повторный реальный cut сохраняет точность отправки. **4 Core-сценария PASS**:
-блокированный idle spool-path, новая правка/возобновление, account gate и missing
-unsealed spool. Восстановление spool остаётся записью accepted FIFO.
-[Точный scope и исходный отказ fixture](audit-evidence/2026-10-06/cloud-idle-spool/results.json).
-Независимость incoming sources/outbound при конфликте ещё исправляется.
+QF01/DP08: cloud-plan проверяет source/account/cursor до filesystem work.
+Один CloudSync владеет независимыми incoming/outgoing runs; deferred source
+сохраняет cursor, остальные источники и отправка продолжаются. **5 Core-сценариев
+PASS**, затем **2 PASS** после исправления indexed head query. В локальном fixture
+100 002 строк / три heads: **559,72 → 1,22 мс**. Stop сохраняет accepted FIFO и
+дожидается его результата. **9 native CloudWire-сценариев PASS на физическом iPad**,
+включая 144 deferred generations, независимый source и возврат после Pencil-up.
+[Исходный idle fixture](audit-evidence/2026-10-06/cloud-idle-spool/results.json),
+[текущий scope и source binding](audit-evidence/2026-10-07/cloud-and-program-resources/results.json).
+
+NB24: immutable resource descriptor проверяется при регистрации; окно до 1 МиБ
+читает только затронутые parts в одном SQLite cut. **4 Core-сценария PASS**.
+20 окон по 32 байта при 16 384 parts: **25,16 мс** с admitted descriptor,
+**487,51 мс** с полной raw validation. Native range/revocation и offline scientific
+checkpoint прошли на физическом iPad; scientific import — на Mac. Общий native
+scope **12 PASS**, без пропусков и runtime warnings, final source `f4109fb5e30e`.
+Сохранены первоначальный отказ платформенного selector, гонка idle fixture и
+ошибка окружения Mac preflight; production между повторами не менялся.
+Выпуск этого DB29-среза и полная совместная приёмка ещё открыты.
+[Точный scope и исходники](audit-evidence/2026-10-07/cloud-and-program-resources/results.json).
 
 Импорт `.notex` резервирует каждую фазу до чтения и decode, переносит один
 immutable create в обычный FIFO и возвращает полезный результат до необязательного

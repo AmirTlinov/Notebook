@@ -106,6 +106,56 @@ struct NotebookCloudDeliveryTests {
     #expect(try pair.b.readItemHeader(item)?.title == "New work after idle")
   }
 
+  @Test func hundredThousandInboxRowsContributeOneHeadPerExactSourceGeneration() throws {
+    let pair = try Pair()
+    let device = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+    let a = NotebookReplicationSource(deviceID: device, generation: device)
+    let nextA = NotebookReplicationSource(deviceID: device, generation: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!)
+    let bID = UUID(uuidString: "10000000-0000-0000-0000-000000000001")!
+    let b = NotebookReplicationSource(deviceID: bID, generation: bID)
+    let change = try #require(pair.a.changeJournal(after: 0).first)
+    let first = NotebookReplicationDelivery(source: a, change: change, isSnapshot: true)
+    let otherGeneration = NotebookReplicationDelivery(source: nextA, change: change, isSnapshot: true)
+    let independent = NotebookReplicationDelivery(source: b, change: change, isSnapshot: true)
+    for delivery in [first, otherGeneration, independent] {
+      try pair.b.stageCloudDelivery(delivery, account: pair.account, localSource: pair.sourceB)
+    }
+    try pair.b.commandTransaction {
+      // Only the first A envelope is readable. Metadata selection must neither
+      // decode the other 99,999 bodies nor let them consume another head slot.
+      try pair.b.currentSQL!.run("""
+        WITH RECURSIVE rows(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM rows WHERE n<99999)
+        INSERT INTO cloud_inbox(account,id,source,sequence,snapshot,delivery)
+        SELECT ?, 'queued-a-' || n, ?, ?+n, 1, X'00' FROM rows
+        """, [.text(pair.account), .text(a.cursorKey), .integer(Int64(change.sequence))])
+    }
+    let started = ContinuousClock.now
+    #expect(try pair.b.cloudInbox(account: pair.account) == [first, otherGeneration, independent])
+    print("cloud-inbox rows=100002 selected=3 elapsed=\(started.duration(to: .now))")
+    #expect(try pair.b.cloudInbox(account: pair.account, afterSource: a, limit: 1) == [otherGeneration])
+    #expect(try pair.b.cloudInbox(account: pair.account, excluding: [a]) == [otherGeneration, independent])
+    // An excluded heavy source body is never fetched or decoded. Excluding a
+    // journal must preserve another generation of that same physical device.
+    try pair.b.commandTransaction {
+      try pair.b.currentSQL!.run("UPDATE cloud_inbox SET delivery=zeroblob(8388608) WHERE account=? AND id=?",
+        [.text(pair.account), .text(try NotebookCloudRecord(delivery: first).id)])
+    }
+    #expect(try pair.b.cloudInbox(account: pair.account, excluding: [a]) == [otherGeneration, independent])
+    let gapID = UUID(uuidString: "05000000-0000-0000-0000-000000000001")!
+    let gap = NotebookReplicationSource(deviceID: gapID, generation: gapID)
+    try pair.b.commandTransaction {
+      // Metadata alone proves the earliest delta cannot bridge its gap. Its
+      // body must remain unread, including at the maximum cursor boundary.
+      try pair.b.currentSQL!.run("INSERT INTO cloud_inbox VALUES(?,'gap',?,?,0,X'00')",
+        [.text(pair.account), .text(gap.cursorKey), .integer(Int64.max)])
+    }
+    #expect(try pair.b.cloudInbox(account: pair.account, excluding: [a, nextA], afterSource: nextA) == [independent])
+    #expect(try pair.b.incomingCursor(source: a) == 0)
+    #expect(try pair.b.incomingCursor(source: nextA) == 0)
+    #expect(try pair.b.incomingCursor(source: b) == 0)
+    #expect(try pair.b.incomingCursor(source: gap) == 0)
+  }
+
   @Test func unfinishedExportSurvivesRestartAndNeverAcknowledgesItsPartialCut() throws {
     let pair = try Pair(), item = try pair.a.loadIndex().selectedItemID
     let beforeTitle = try pair.a.readItemHeader(item)?.title

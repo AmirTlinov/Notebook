@@ -1129,7 +1129,7 @@ final class NotebookAppModel {
   @ObservationIgnored private var selectionSurfaceIsActive = false
   private let startsNearbySync: Bool
   var cloudStatus = NotebookCloudStatus.off
-  @ObservationIgnored private var cloudSync: NotebookCloudSync?
+  @ObservationIgnored private(set) var cloudSync: NotebookCloudSync?
   @ObservationIgnored private var sync: NearbySync?
   @ObservationIgnored private var transportReader: NotebookTransportReader?
   private(set) var connectionState = NotebookConnectionState.waiting
@@ -1320,10 +1320,15 @@ final class NotebookAppModel {
       guard let self else { return }
       persistenceFailure = message ?? arrivalFailure ?? publicationFailure
       surfaceHistory.setWriterBlocked(message != nil)
+      if message == nil, let cloudSync { Task { await cloudSync.writerRecovered() } }
     }
     persistence.onContentMerged = { [weak self] in self?.reloadExternalChanges() }
     persistence.onCommit = { [weak self] owner in self?.didCommitDurableChanges(owner: owner) }
-    inputGate.onNewAcceptedContact = { [weak self] in self?.cancelRequestedNavigation() }
+    inputGate.onNewAcceptedContact = { [weak self] in
+      guard let self else { return }
+      cancelRequestedNavigation()
+      if let cloudSync { Task { await cloudSync.inputChanged() } }
+    }
     inputGate.onActivityChange = { [weak self] active in
       guard let self else { return }
       inputIsActive = active
@@ -1556,7 +1561,8 @@ final class NotebookAppModel {
     try await applyDurableDelivery(.init(source: .init(deviceID: peerID, generation: peerID), change: change))
   }
 
-  func applyDurableDelivery(_ delivery: NotebookReplicationDelivery, cloudAccount: String? = nil) async throws -> UInt64 {
+  func applyDurableDelivery(_ delivery: NotebookReplicationDelivery, cloudAccount: String? = nil,
+    waitsForInput: Bool = true) async throws -> UInt64 {
     guard !isClosing else { throw CollaborationError("owner_unavailable", "Notebook завершает работу.") }
     let applied: (cursor: UInt64, changed: Bool)
     while true {
@@ -1564,26 +1570,25 @@ final class NotebookAppModel {
       try Task.checkCancellation()
       let targets = localInputTargets
       do {
-        applied = try await persistence.submit(publishesChanges: true) { store in
-          let needsContent = try store.deliveryNeedsContent(delivery)
+        applied = try await persistence.submit(writesStore: true) { store in
           let cursor: UInt64
           if let cloudAccount {
             cursor = try store.applyCloudDelivery(delivery, account: cloudAccount, protectingInputOn: targets)
           } else {
             cursor = try store.applyDelivery(delivery, protectingInputOn: targets)
           }
-          return (cursor, needsContent)
+          return (cursor, try store.transactionHasContentChanges())
         }
         break
       } catch let error as CollaborationError where error.code == "input_active" {
+        guard waitsForInput else { throw error }
         // A conflicting merge rolled back, including its cursor. Wait outside
         // the writer for the contact and accepted tail, not on a polling timer.
         // Independent material does not enter this wait at all.
-        await withCheckedContinuation { continuation in
-          inputGate.performAfterIdle { continuation.resume() }
-        }
+        guard await inputGate.waitUntilIdle() else { throw CancellationError() }
       }
     }
+    if applied.changed { didCommitDurableChanges(owner: nil) }
     // A returning known transaction still validates and durably advances its
     // peer cursor. It did not publish content: rebuilding the scene for that
     // echo queues expensive reads ahead of the next actual peer edit.
@@ -1606,23 +1611,32 @@ final class NotebookAppModel {
     }
   }
 
-  private func prepareCloudSync() async {
-    guard cloudSync == nil else { return }
+  func prepareCloudSync() async {
+    guard cloudSync == nil, !isClosing else { return }
     do {
       let writer = persistence, actor = actorID
-      let identity = try await writer.submit { store in
+      let identity = try await writer.submit(writesStore: true) { store in
         try store.prepareCloudStorage()
         return try (store.replicationSource(deviceID: actor), store.storedWorkspaceID())
       }
+      guard cloudSync == nil, !isClosing else { return }
       let cloud = NotebookCloudSync(store: store, writer: writer, source: identity.0, workspaceID: identity.1,
         apply: { [weak self] delivery, account in
           guard let self else { throw NotebookTransportError.disconnected }
-          _ = try await self.applyDurableDelivery(delivery, cloudAccount: account)
-        }, report: { [weak self] status in await self?.acceptCloudStatus(status) })
+          _ = try await self.applyDurableDelivery(delivery, cloudAccount: account, waitsForInput: false)
+        }, waitForInputIdle: { [weak self] in await self?.cloudInputIdleGeneration() },
+        report: { [weak self] status in await self?.acceptCloudStatus(status) })
       cloudSync = cloud
       // Account connection alone authorizes automatic content sync.
       // No second account-discovery loop races the device owner.
     } catch { cloudStatus = .init(enabled: false, message: error.localizedDescription) }
+  }
+
+  /// Cloud keeps its rejected head; this borrows the existing contact and
+  /// publication join without retaining a delivery or accepting another write.
+  func cloudInputIdleGeneration() async -> UInt64? {
+    guard !isClosing, await inputGate.waitUntilIdle(), !isClosing else { return nil }
+    return inputGate.acceptedContactGeneration
   }
 
   private func acceptCloudStatus(_ value: NotebookCloudStatus) { cloudStatus = value }

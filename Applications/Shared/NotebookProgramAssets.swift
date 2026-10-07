@@ -10,12 +10,12 @@ final class NotebookProgramAssets: NSObject, WKURLSchemeHandler {
   static let scheme = "notebook-program"
   struct Document { let before: String; let after: String }
   private enum Segment: Sendable {
-    case bytes(Data), file(NotebookProgramPackage.File)
+    case bytes(Data), file(NotebookProgramResource)
     var count: Int64 { switch self { case .bytes(let data): Int64(data.count); case .file(let file): file.byteCount } }
   }
   private struct Scope: Sendable {
     let store: NotebookStore
-    let files: [String: NotebookProgramPackage.File]
+    let files: [String: NotebookProgramResource]
     let documentPath: String
     let document: [Segment]
     func read(_ segments: [Segment], offset: Int64, count: Int) throws -> Data {
@@ -28,7 +28,7 @@ final class NotebookProgramAssets: NSObject, WKURLSchemeHandler {
         let start = max(offset, position) - position, finish = min(end, upper) - position
         switch segment {
         case .bytes(let data): output.append(data.subdata(in: Int(start)..<Int(finish)))
-        case .file(let file): output.append(try store.readProgramFile(file, offset: start, maxBytes: Int(finish - start)))
+        case .file(let file): output.append(try store.readProgramResource(file, offset: start, maxBytes: Int(finish - start)))
         }
       }
       guard output.count == count else { throw NotebookStorageError.blobHashMismatch }
@@ -50,16 +50,18 @@ final class NotebookProgramAssets: NSObject, WKURLSchemeHandler {
     #endif
   }
 
-  func register(store: NotebookStore, package: NotebookProgramPackage, document: (URL) throws -> Document) rethrows -> URL {
+  func register(store: NotebookStore, package: NotebookProgramPackage, document: (URL) throws -> Document) throws -> URL {
+    try package.validate()
+    let resources = try package.files.map(NotebookProgramResource.init)
     let host = UUID().uuidString.lowercased(), url = URL(string: "\(Self.scheme)://\(host)/")!
     let wrapper = try document(url)
     var segments: [Segment] = [.bytes(Data(wrapper.before.utf8))]
-    if let path = package.html, let file = package.files.first(where: { $0.path == path }) { segments.append(.file(file)) }
+    if let path = package.html, let file = resources.first(where: { $0.path == path }) { segments.append(.file(file)) }
     segments.append(.bytes(Data(wrapper.after.utf8)))
     let documentPath = package.html.flatMap { path in
       path.lastIndex(of: "/").map { String(path[...$0]) }
     } ?? ""
-    scopes[host] = Scope(store: store, files: Dictionary(uniqueKeysWithValues: package.files.map { ($0.path, $0) }), documentPath: documentPath, document: segments)
+    scopes[host] = Scope(store: store, files: Dictionary(uniqueKeysWithValues: resources.map { ($0.path, $0) }), documentPath: documentPath, document: segments)
     // The wrapper lives beside the authored HTML. File URLs keep their exact
     // immutable bytes; relative markup resolves within its authored directory.
     return documentPath.isEmpty ? url : url.appendingPathComponent(documentPath, isDirectory: true)
@@ -112,7 +114,7 @@ final class NotebookProgramAssets: NSObject, WKURLSchemeHandler {
       "Content-Security-Policy": Self.policy(origin: URL(string: "\(Self.scheme)://\(host)/")!)]
     if rangeHeader != nil { headers["Content-Range"] = "bytes \(range.lowerBound)-\(range.upperBound - 1)/\(size)" }
     let response = HTTPURLResponse(url: url, statusCode: rangeHeader == nil ? 200 : 206, httpVersion: "HTTP/1.1", headerFields: headers)!
-    observeResource("accepted \(url.absoluteString); status=\(response.statusCode); mime=\(mime); bytes=\(size); range=\(range); parts=\(scope.files[path]?.parts.prefix(3).map(\.sha256).joined(separator: ",") ?? "document")")
+    observeResource("accepted \(url.absoluteString); status=\(response.statusCode); mime=\(mime); bytes=\(size); range=\(range); resource=\(scope.files[path]?.path ?? "document")")
     let task = Task { @MainActor [weak self] in
       guard let self, reads[id] != nil else { return }
       do {

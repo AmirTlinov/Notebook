@@ -1,0 +1,59 @@
+{
+  "baseCommit": "84cecdcbf1d522c10a23aef662ec63abbce142dc",
+  "changedFiles": [
+    "Applications/Shared/AgentWebElementView.swift",
+    "Applications/Shared/NotebookAppModel.swift",
+    "Applications/Shared/NotebookCloudSync.swift",
+    "Applications/Shared/NotebookProgramAssets.swift",
+    "Applications/TestSupport/NotebookCloudWireTests.swift",
+    "Applications/TestSupport/ProgramAssetTests.swift",
+    "Sources/NotebookCore/NotebookCloudStorage.swift",
+    "Sources/NotebookCore/NotebookCloudUploadPlan.swift",
+    "Sources/NotebookCore/NotebookPendingChanges.swift",
+    "Sources/NotebookCore/NotebookProgramPackage.swift",
+    "Sources/NotebookCore/NotebookProgramResource.swift",
+    "Tests/NotebookCoreTests/NotebookCloudDeliveryTests.swift",
+    "Tests/NotebookCoreTests/NotebookProgramPackageTests.swift",
+    "docs/audit-evidence/2026-10-07/cloud-and-program-resources/core-v1-commands.json",
+    "docs/audit-evidence/2026-10-07/cloud-and-program-resources/core-v1-core-execution.json",
+    "docs/audit-evidence/2026-10-07/cloud-and-program-resources/core-v1-selection.json",
+    "docs/audit-evidence/2026-10-07/cloud-and-program-resources/core-v2-commands.json",
+    "docs/audit-evidence/2026-10-07/cloud-and-program-resources/core-v2-core-execution.json",
+    "docs/audit-evidence/2026-10-07/cloud-and-program-resources/core-v2-selection.json",
+    "docs/audit-evidence/2026-10-07/cloud-and-program-resources/native-v2-commands.json",
+    "docs/audit-evidence/2026-10-07/cloud-and-program-resources/native-v2-ipad-summary.json",
+    "docs/audit-evidence/2026-10-07/cloud-and-program-resources/native-v2-selection.json",
+    "docs/audit-evidence/2026-10-07/cloud-and-program-resources/native-v3-ipad-summary.json",
+    "docs/audit-evidence/2026-10-07/cloud-and-program-resources/results.json",
+    "docs/cloud-delivery-contract.md",
+    "docs/document-program-fragments.md",
+    "docs/verification.md"
+  ],
+  "checks": {
+    "commands": [],
+    "core": [],
+    "ipad": [],
+    "mac": [
+      "NotebookMacTests/ProgramAssetTests/testPortableArchiveImportsRealScientificResourcesWithoutExecutingBeforeOpen"
+    ]
+  },
+  "format": 2,
+  "manualSelection": true,
+  "optimized": false,
+  "profiles": [],
+  "selectionMode": "explicit-only",
+  "sourceRoot": "/Users/amir/.codex/worktrees/notebook-remediation-104/Notebook",
+  "typesetterRuntime": "/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/.build/surface-ink-runtime",
+  "unclassified": [
+    "Applications/Shared/NotebookAppModel.swift",
+    "Applications/Shared/NotebookCloudSync.swift",
+    "Applications/Shared/NotebookProgramAssets.swift",
+    "Sources/NotebookCore/NotebookCloudStorage.swift",
+    "Sources/NotebookCore/NotebookCloudUploadPlan.swift",
+    "Sources/NotebookCore/NotebookPendingChanges.swift",
+    "Sources/NotebookCore/NotebookProgramPackage.swift",
+    "Sources/NotebookCore/NotebookProgramResource.swift",
+    "Tests/NotebookCoreTests/NotebookCloudDeliveryTests.swift",
+    "Tests/NotebookCoreTests/NotebookProgramPackageTests.swift"
+  ]
+}

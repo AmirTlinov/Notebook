@@ -1,0 +1,11 @@
+{
+  "executed": [
+    "NotebookMacTests/ProgramAssetTests/testPortableArchiveImportsRealScientificResourcesWithoutExecutingBeforeOpen"
+  ],
+  "failed": [],
+  "format": 1,
+  "planned": [
+    "NotebookMacTests/ProgramAssetTests/testPortableArchiveImportsRealScientificResourcesWithoutExecutingBeforeOpen"
+  ],
+  "skipped": []
+}

@@ -46,7 +46,8 @@ extension NotebookStore {
         "CREATE TABLE IF NOT EXISTS cloud_outbox(account TEXT NOT NULL,id TEXT NOT NULL,delivery BLOB,hash TEXT,offset INTEGER NOT NULL,total INTEGER NOT NULL,PRIMARY KEY(account,id))",
         "CREATE TABLE IF NOT EXISTS cloud_uploaded(account TEXT NOT NULL,id TEXT NOT NULL,PRIMARY KEY(account,id))",
         "CREATE TABLE IF NOT EXISTS cloud_inbox(account TEXT NOT NULL,id TEXT NOT NULL,source TEXT NOT NULL,sequence INTEGER NOT NULL,snapshot INTEGER NOT NULL,delivery BLOB NOT NULL,PRIMARY KEY(account,id))",
-        "CREATE INDEX IF NOT EXISTS cloud_inbox_source ON cloud_inbox(account,source,sequence)",
+        "CREATE INDEX IF NOT EXISTS cloud_inbox_head ON cloud_inbox(account,source,snapshot DESC,sequence,id)",
+        "DROP INDEX IF EXISTS cloud_inbox_source",
         "CREATE TABLE IF NOT EXISTS cloud_chunks(account TEXT NOT NULL,hash TEXT NOT NULL,offset INTEGER NOT NULL,total INTEGER NOT NULL,data BLOB NOT NULL,PRIMARY KEY(account,hash,offset))"
       ] { try db.run(sql) }
       let columns = Set(try db.rows("PRAGMA table_info(cloud_exports)").compactMap { $0[1].text })
@@ -201,15 +202,48 @@ extension NotebookStore {
     }
   }
 
-  public func cloudInbox(account: String) throws -> [NotebookReplicationDelivery] {
-    try sqlRead { db in
+  /// Each admitted source journal contributes one head. A source's snapshots
+  /// and returning old heads cannot fill the batch ahead of another journal.
+  /// Pagination/exclusion carry only scalar identities, never delivery bodies.
+  public func cloudInbox(account: String, excluding: Set<NotebookReplicationSource> = [],
+    afterSource: NotebookReplicationSource? = nil, limit: Int = 16) throws -> [NotebookReplicationDelivery] {
+    guard (1...16).contains(limit), excluding.count <= 128 else { throw NotebookTransportError.resourceLimit }
+    return try sqlRead { db in
       try requireCloudAccount(account)
-      return try db.rows("""
-        SELECT i.delivery FROM cloud_inbox i LEFT JOIN peer_cursors p ON p.peer_id=i.source AND p.direction='incoming'
-        LEFT JOIN metadata r ON r.key='retired_peer:' || substr(i.source,1,36)
-        WHERE i.account=? AND r.key IS NULL AND (i.snapshot=1 OR i.sequence<=COALESCE(p.sequence,0)+1)
-        ORDER BY i.snapshot DESC,i.sequence,i.id LIMIT 16
-        """, [.text(account)]).map { try JSONDecoder().decode(NotebookReplicationDelivery.self, from: $0[0].blob!) }
+      var key = afterSource?.cursorKey ?? "", result: [NotebookReplicationDelivery] = []
+      while result.count < limit {
+        // Strict seek skips the whole previous journal's rows. DISTINCT with
+        // cursor/retirement joins still walks every snapshot of a busy source.
+        guard let next = try db.rows("SELECT source FROM cloud_inbox WHERE account=? AND source>? ORDER BY source LIMIT 1",
+          [.text(account), .text(key)]).first?[0].text else { break }
+        key = next
+        guard let source = NotebookReplicationSource(cursorKey: key) else {
+          throw NotebookStorageError.corruptRecord("cloud inbox source")
+        }
+        if excluding.contains(source) { continue }
+        if try !db.rows("SELECT 1 FROM metadata WHERE key=? LIMIT 1",
+          [.text("retired_peer:" + source.deviceID.uuidString.lowercased())]).isEmpty { continue }
+        guard let head = try db.rows("""
+          SELECT id,sequence,snapshot FROM cloud_inbox WHERE account=? AND source=?
+          ORDER BY snapshot DESC,sequence,id LIMIT 1
+          """, [.text(account), .text(key)]).first,
+          let id = head[0].text, let sequence = head[1].integer, sequence > 0,
+          let snapshot = head[2].integer, snapshot == 0 || snapshot == 1 else { throw NotebookStorageError.corruptRecord("cloud inbox head") }
+        if snapshot == 0 {
+          let incoming = try db.rows("SELECT sequence FROM peer_cursors WHERE peer_id=? AND direction='incoming'",
+            [.text(key)]).first?[0].integer ?? 0
+          guard incoming >= 0 else { throw NotebookStorageError.corruptRecord("cloud inbox cursor") }
+          // The lowest delta is enough to prove a gap; no later delta can be
+          // eligible. Compare by subtraction to preserve the Int64 boundary.
+          if sequence > incoming, sequence - incoming > 1 { continue }
+        }
+        guard let data = try db.rows("SELECT delivery FROM cloud_inbox WHERE account=? AND id=?",
+          [.text(account), .text(id)]).first?[0].blob else { throw NotebookStorageError.corruptRecord("cloud inbox head") }
+        let delivery = try JSONDecoder().decode(NotebookReplicationDelivery.self, from: data)
+        guard delivery.source == source else { throw NotebookStorageError.corruptRecord("cloud inbox source") }
+        result.append(delivery)
+      }
+      return result
     }
   }
 
