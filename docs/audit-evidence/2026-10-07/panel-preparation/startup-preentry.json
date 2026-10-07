@@ -1,0 +1,167 @@
+{
+  "scope": "Read-only existing unified logs for first installed runtime255 launch; no restart, Xcode, device or security changes.",
+  "runtimePID": 90905,
+  "launcherPID": 90902,
+  "bundleIdentifier": "com.amirtlinov.notebook.mac",
+  "teamID": "M94V58FCVP",
+  "cdhash": "adc1991fba899250616193d6fca10dad8f46ae5e",
+  "window": {
+    "start": "2026-10-07T12:30:41+03:00",
+    "end": "2026-10-07T12:30:50+03:00"
+  },
+  "timestamps": {
+    "launcherBegin": "2026-10-07T12:30:41.110+03:00",
+    "launchdSpawned": "2026-10-07T12:30:41.249696+03:00",
+    "gatekeeperScanBegin": "2026-10-07T12:30:41.258929+03:00",
+    "xprotectScanBegin": "2026-10-07T12:30:42.374742+03:00",
+    "xprotectScanReply": "2026-10-07T12:30:48.692929+03:00",
+    "gatekeeperScanResult": "2026-10-07T12:30:48.693322+03:00",
+    "processProvenance": "2026-10-07T12:30:48.700934+03:00",
+    "processEntry": "2026-10-07T12:30:48.721213+03:00",
+    "staticSealBegin": "2026-10-07T12:30:48.736371+03:00",
+    "staticSealEnd": "2026-10-07T12:30:49.277397+03:00",
+    "socketBound": "2026-10-07T12:30:49.375634+03:00",
+    "runtimeStatusEnd": "2026-10-07T12:30:49.453439+03:00"
+  },
+  "seconds": {
+    "launcherToEntry": 7.611213,
+    "gatekeeperScan": 7.434393,
+    "xprotectScan": 6.318187,
+    "gatekeeperResultToEntry": 0.027891,
+    "staticSeal": 0.541026
+  },
+  "correlation": {
+    "gatekeeperTargetPathHash": "48586a9fd9a6c3a9",
+    "provenanceTarget": "a44aae7818ddda11, 2",
+    "xprotectThread": 20331622,
+    "xprotectPeerPID": 692,
+    "events": "Same Gatekeeper target hash is identified as Notebook at result; PID90905 receives its provenance. The XProtect peer[692] request, single direct scan and reply end immediately before Gatekeeper result."
+  },
+  "established": [
+    "Launchd spawned the process before the long delay.",
+    "Gatekeeper spans 7.434393 seconds; a correlated XProtect scan spans 6.318187 seconds within it.",
+    "Native process.entry follows the Gatekeeper result by 27.891 milliseconds.",
+    "Native self-admission static seal is a separate later 541-millisecond interval.",
+    "Main arm64 Mach-O has no mod_init_func/init_offsets/LC_ROUTINES; dependencies are system libraries/frameworks."
+  ],
+  "unknown": [
+    "XProtect per-file cost is private/unrecorded; texlive.zip cost is not established.",
+    "Notarization daemon error3 and GatekeeperPolicyScanError-67018 occur before direct scan; exact policy cause is not decoded.",
+    "No warm-launch comparison or host input-to-pixel claim."
+  ],
+  "packaging": {
+    "allocatedKiB": 2031620,
+    "mainExecutableBytes": 86250624,
+    "texliveZipBytes": 1481187938,
+    "codexRuntimeGroupBytes": 439214291,
+    "signatureAuthorityKind": "Apple Development",
+    "hardenedRuntimeFlag": false,
+    "quarantineAttributePresentOnBundleOrExecutable": false
+  },
+  "raw": [
+    {
+      "path": "runtime-events.json",
+      "bytes": 256474,
+      "sha256": "400ceaddd4b315fe9c0672444c4d80e9d5a42394cc68ce17096e721f2ad706dc"
+    },
+    {
+      "path": "launch-system.json",
+      "bytes": 33834,
+      "sha256": "86fb0ec619c0b481b5d3e534512398b92c32662ebd57427a807e358dc1f46b07"
+    },
+    {
+      "path": "security-system.json",
+      "bytes": 1114025,
+      "sha256": "d3808f3ec1bce4b8b36768da7845a9ac7f5758a81ba38ef86706087d42fc87b8"
+    },
+    {
+      "path": "xprotect-system.json",
+      "bytes": 66884,
+      "sha256": "2f96502e8a9916bebb9af898b559f09baafdb58afad53f78ef77dd4a7fd2fce6"
+    },
+    {
+      "path": "kernel-dyld.json",
+      "bytes": 2,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "path": "macho-initializers.json",
+      "bytes": 154,
+      "sha256": "99c8adf3df802ed7f5fb31917a49d1ac0ee96fa1fc046be7173d0e5dd8f60736"
+    },
+    {
+      "path": "bundle-size.json",
+      "bytes": 2134,
+      "sha256": "5f794c353dd32e352602d6d943bfa0fb552a50ad164cf826db1d9158dff6e906"
+    }
+  ],
+  "rawRoot": ".build/startup-preentry-255 (local diagnostic files; hashes below)",
+  "selectedEvents": [
+    {
+      "timestamp": "2026-10-07 12:30:41.165202+0300",
+      "processID": 1,
+      "threadID": 20330576,
+      "eventMessage": "xpcproxy spawned with pid 90905"
+    },
+    {
+      "timestamp": "2026-10-07 12:30:41.249696+0300",
+      "processID": 1,
+      "threadID": 20328960,
+      "eventMessage": "Successfully spawned NotebookRuntime[90905] because launch job demand"
+    },
+    {
+      "timestamp": "2026-10-07 12:30:41.258929+0300",
+      "processID": 692,
+      "threadID": 20329908,
+      "eventMessage": "GK performScan: PST: (path: 48586a9fd9a6c3a9), (team: M94V58FCVP), (id: (null)), (bundle_id: (null))"
+    },
+    {
+      "timestamp": "2026-10-07 12:30:42.374613+0300",
+      "processID": 4642,
+      "threadID": 20206221,
+      "eventMessage": "[0x7863090140] activating connection: mach=false listener=false peer=true name=com.apple.XprotectFramework.AnalysisService.peer[692].0x7863090140"
+    },
+    {
+      "timestamp": "2026-10-07 12:30:42.374742+0300",
+      "processID": 4642,
+      "threadID": 20331622,
+      "eventMessage": "Xprotect is performing a direct malware and dylib scan: <private>"
+    },
+    {
+      "timestamp": "2026-10-07 12:30:48.692929+0300",
+      "processID": 4642,
+      "threadID": 20331622,
+      "eventMessage": "XPAssessment handleExecutableAssessment replyDictionary: <private>"
+    },
+    {
+      "timestamp": "2026-10-07 12:30:48.693322+0300",
+      "processID": 692,
+      "threadID": 20331599,
+      "eventMessage": "GK evaluateScanResult: 2, PST: (path: 48586a9fd9a6c3a9), (team: M94V58FCVP), (id: com.amirtlinov.notebook.mac), (bundle_id: com.amirtlinov.notebook.mac), 0, 0, 1, 0, 0, 0, 0"
+    },
+    {
+      "timestamp": "2026-10-07 12:30:48.700366+0300",
+      "processID": 692,
+      "threadID": 20331599,
+      "eventMessage": "Found provenance data on target: TA(a44aae7818ddda11, 2), PST: (path: 48586a9fd9a6c3a9), (team: M94V58FCVP), (id: com.amirtlinov.notebook.mac), (bundle_id: com.amirtlinov.notebook.mac)"
+    },
+    {
+      "timestamp": "2026-10-07 12:30:48.700928+0300",
+      "processID": 692,
+      "threadID": 20331599,
+      "eventMessage": "Created provenance data for target: TA(a44aae7818ddda11, 2), PST: (path: 48586a9fd9a6c3a9), (team: M94V58FCVP), (id: com.amirtlinov.notebook.mac), (bundle_id: com.amirtlinov.notebook.mac)"
+    },
+    {
+      "timestamp": "2026-10-07 12:30:48.700934+0300",
+      "processID": 692,
+      "threadID": 20331599,
+      "eventMessage": "Putting process into provenance tracking with metadata: 90905, TA(a44aae7818ddda11, 2)"
+    },
+    {
+      "timestamp": "2026-10-07 12:30:48.733688+0300",
+      "processID": 973,
+      "threadID": 20330024,
+      "eventMessage": "[0x76239e6f80] activating connection: mach=false listener=false peer=true name=com.apple.lsd.mapdb.peer[90905].0x76239e6f80"
+    }
+  ]
+}

@@ -63,10 +63,12 @@ timeout; конечное состояние перехода не подтве�
 
 Первое подключение после установки 255 заняло **8,46 с**: около **7,61 с** прошло до
 native `process.entry`, проверка static signature внутри runtime — **541 мс**,
-socket bound — **656 мс** от entry. Главная задержка предшествует entry; конкретная
-работа LaunchServices/dyld/системы ещё выясняется. Это один запуск, без заявления
-OS-cold/p95. Прежний 10-секундный deadline и проверка подписи сохранены.
-[Launch trace](audit-evidence/2026-10-07/panel-preparation/startup.json).
+socket bound — **656 мс** от entry. Системный журнал связал главный интервал с
+Gatekeeper (**7,43 с**), включая XProtect scan (**6,32 с**); entry следует через
+28 мс после результата проверки. Стоимость отдельных файлов и ускорение упаковки
+ещё не измерены. Это один запуск, без заявления OS-cold/p95. Прежний 10-секундный
+deadline и проверка подписи сохранены. [Launch trace](audit-evidence/2026-10-07/panel-preparation/startup.json),
+[системная стадия](audit-evidence/2026-10-07/panel-preparation/startup-preentry.json).
 
 ## Проверенные исправления
 

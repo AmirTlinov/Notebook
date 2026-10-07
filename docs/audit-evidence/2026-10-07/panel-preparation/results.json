@@ -94,7 +94,7 @@
   "limits": [
     "Actual Codex frontend acceptance remains open; installed MCP connection and exact page read succeed in this chat after reconnect.",
     "100000 items exercised Core projection only; response exceeds 16 MiB panel limit; not a panel latency claim.",
-    "First native launch still spends about 7.6 seconds before process.entry; tracing does not fix startup latency.",
+    "First launch spends about 7.6 seconds before process.entry, dominated by Gatekeeper/XProtect. Packaging repair and warm process comparison remain open.",
     "No OS-frame/CPU/GPU/memory, ten-repeat or 30-minute joint acceptance."
   ],
   "nativeFixtureOnlyChanges": [
@@ -111,5 +111,6 @@
   "startupTraceCommit": "032268f209c5190fe2880d5270c567b28eb269aa",
   "installation": "installation.json",
   "performance": "navigation-comparison.json",
-  "startup": "startup.json"
+  "startup": "startup.json",
+  "startupPreentry": "startup-preentry.json"
 }

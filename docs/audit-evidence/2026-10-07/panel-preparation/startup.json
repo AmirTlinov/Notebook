@@ -77,7 +77,7 @@
     "launchServicesReturnToProcessEntryMilliseconds": 7454.932,
     "nativeStaticSignatureMilliseconds": 541.022,
     "nativeEntryToSocketBoundMilliseconds": 656.057,
-    "cause": "Dominant delay precedes process.entry; LaunchServices/dyld/system startup work not yet distinguished.",
+    "cause": "Gatekeeper assessment precedes native entry: 7.434 seconds, including a correlated 6.318-second XProtect scan. See startup-preentry.json; per-file cost remains unknown.",
     "limits": "Monotonic clocks within each process; cross-process wall-time comparison approximate. One first launch after installation, not OS-cold or p95. Native runtime_status.end is not wire receipt."
   }
 }
