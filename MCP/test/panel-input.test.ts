@@ -9,7 +9,7 @@ import {NotebookSession,PanelError} from '../panel/session.js';
 import {InkInput} from '../panel/ink-input.js';
 import {InkGPU} from '../panel/ink-gpu.js';
 import type {SwiftSurface} from '../panel/swift-surface.js';
-import type {PanelMutation, PanelSnapshot} from '../panel/model.js';
+import {capturedSource,type PanelMutation,type PanelSnapshot} from '../panel/model.js';
 
 // Execute the shipped controller listeners against the real session. DOM,
 // geometry and GPU ports are bounded fixtures, not browser/Swift/host evidence.
@@ -21,10 +21,14 @@ function section(start:string,end:string){
 }
 const listeners=transformSync([
   section('function active(){','function activeCard(){'),
+  section('function buttons(){','function cameraScaleBounds(){'),
+  section('function mutation(','async function save(request:PanelMutation){'),
   section('async function save(request:PanelMutation){','session.bounds='),
+  section('session.onClose=()=>{','let first=true;'),
   section('function newElement(','paper.addEventListener("pointerdown"'),
   section('paper.addEventListener("pointerdown"','async function openCard('),
   section('paper.addEventListener("dblclick"','paper.addEventListener("wheel"'),
+  section('function toolButtons(){','async function remove(){'),
   section('async function remove(){','el("delete").addEventListener'),
   section('const handleShortcut=','window.addEventListener("keyup"'),
 ].join('\n'),{loader:'ts',target:'es2022'}).code;
@@ -42,6 +46,8 @@ async function fixture(){
   const calls:{name:string;arguments:Record<string,unknown>}[]=[];
   const writes:{resolve:(value:Awaited<ReturnType<NotebookSession['app']['callServerTool']>>)=>void}[]=[];
   const session=new NotebookSession(panelIdentity);session.snapshot=snapshot;
+  let retry:(()=>Promise<void>)|null=null;
+  session.onError=(_message,action)=>{retry=action;};
   session.app.updateModelContext=async()=>({});
   session.app.callServerTool=async request=>{
     calls.push({name:request.name,arguments:request.arguments!});
@@ -52,8 +58,10 @@ async function fixture(){
   await session.refresh(true);calls.length=0;
   const paperListeners=new Map<string,(event:unknown)=>void>(),keyListeners=new Map<string,(event:unknown)=>void>(),
     editorListeners=new Map<string,(event:unknown)=>void>(),controlListeners=new Map<string,(event:unknown)=>void>();
+  let editorFocused=false;
+  const blurFocusedEditor=()=>{if(editorFocused){editorFocused=false;editorListeners.get('blur')?.({});}};
   const captures=new Set<number>();
-  let previews=0,clears=0,inkClears=0;
+  let previews=0,clears=0,inkClears=0,editorFocus=0,workspaceFocus=0,disposals=0;
   const ink={pointer:undefined as number|undefined,hasPreview:false,ready:true,
     begin(event:{pointerId:number}){this.pointer=event.pointerId;this.hasPreview=true;return true;},
     append(){},finish(){this.pointer=undefined;return {points:[{x:1,y:1,force:1}],worldOrigin:snapshot.worldOrigin};},
@@ -63,31 +71,42 @@ async function fixture(){
   const blank={hasAttribute:()=>false,closest:()=>null};
   const surface={point:(x:number,y:number)=>({x,y}),selectionFrame:()=>snapshot.elements[0]!.source.frame,
     authoredFrame:()=>snapshot.elements[0]!.source.frame,
-    preview(){previews++;},clearPreview(){clears++;},select(){},hideSubject(){}};
-  const editor={value:'',hidden:true,style:{},scrollHeight:80,focus(){},select(){},
+    preview(){previews++;},clearPreview(){clears++;},select(){},hideSubject(){},dispose:async()=>{disposals++;}};
+  const editor={value:'',hidden:true,readOnly:false,style:{},scrollHeight:80,focus(){editorFocused=true;editorFocus++;},select(){},
     addEventListener:(name:string,callback:(event:unknown)=>void)=>editorListeners.set(name,callback)};
-  const context=createContext({session,ink,surface,PanelError,crypto:{randomUUID},events:{},
-    document:{createElementNS:(_namespace:string,tagName:string)=>({tagName,setAttribute(){}})},
+  type ToolEvent={button:number;preventDefault:()=>void};
+  type ToolControl={dataset:{tool:string};disabled:boolean;pressed:string;listeners:Map<string,(event:ToolEvent)=>void>;
+    focus:()=>void;setAttribute:(name:string,value:string)=>void;addEventListener:(name:string,callback:(event:ToolEvent)=>void)=>void};
+  const toolControls=new Map(['select','hand','pen','text','rectangle','ellipse','connector'].map((tool):[string,ToolControl]=>[tool,
+    {dataset:{tool},disabled:false,pressed:tool==='select'?'true':'false',listeners:new Map(),
+      focus(){blurFocusedEditor();},
+      setAttribute(name:string,value:string){if(name==='aria-pressed')this.pressed=value;},
+      addEventListener(name:string,callback:(event:ToolEvent)=>void){this.listeners.set(name,callback);}}]));
+  const otherControls=new Map<string,{disabled:boolean;hidden:boolean;textContent:string}>();
+  const context=createContext({session,ink,surface,PanelError,capturedSource,crypto:{randomUUID},events:{},
+    document:{createElementNS:(_namespace:string,tagName:string)=>({tagName,setAttribute(){}}),
+      querySelectorAll:()=>[...toolControls.values()]},
+    el(id:string){if(!otherControls.has(id))otherControls.set(id,{disabled:false,hidden:false,textContent:''});return otherControls.get(id);},
     selection:{replaceChildren(){},append(){}},
     paper:{addEventListener:(name:string,callback:(event:unknown)=>void)=>paperListeners.set(name,callback),
       ownerDocument:{elementFromPoint:()=>hit},
       setPointerCapture:(pointer:number)=>captures.add(pointer),hasPointerCapture:(pointer:number)=>captures.has(pointer),
       releasePointerCapture:(pointer:number)=>captures.delete(pointer),getBoundingClientRect:()=>({left:0,top:0})},
-    workspace:{clientWidth:800,clientHeight:600,
-      addEventListener:(name:string,callback:(event:unknown)=>void)=>keyListeners.set(name,callback),focus(){}},
+    workspace:{clientWidth:800,clientHeight:600,dataset:{},
+      addEventListener:(name:string,callback:(event:unknown)=>void)=>keyListeners.set(name,callback),focus(){blurFocusedEditor();workspaceFocus++;}},
     controls:{addEventListener:(name:string,callback:(event:unknown)=>void)=>controlListeners.set(name,callback)},
-    gesture:null,draft:null,selected:{kind:'element',id:'text'},tool:'select',space:false,closed:false,editor,
+    gesture:null,draft:null,editorFinish:null,toolIntent:0,selected:{kind:'element',id:'text'},tool:'select',space:false,closed:false,editor,
+    path:[],geometryLoaded:false,lifetime:new AbortController(),resizeObserver:{disconnect(){}},
     camera:{x:0,y:0,scale:1},worldCamera:snapshot.appearance!.camera,viewport:()=>({x:800,y:600}),
     geometry:{manipulateFrame:(_mode:string,frame:{x:number;y:number},delta:{x:number;y:number})=>
       ({...frame,x:frame.x+delta.x,y:frame.y+delta.y}),offset:(origin:object,x:number,y:number)=>({...origin,localX:x,localY:y})},
-    choose(value:unknown){context.selected=value;},buttons(){},toolButtons(){},
-    canMove:()=>true,canEdit:()=>true,canMoveCard:()=>true,activeCard:()=>undefined,
+    choose(value:unknown){context.selected=value;context.buttons();},
+    canMove:()=>true,canEdit:()=>true,canMoveCard:()=>true,activeCard:()=>undefined,neighbor:()=>undefined,
     setCamera(){},openCard(){},
     operation:(kind:string,elementID:string,values:Record<string,unknown>)=>({kind,target,id:elementID,values}),
-    mutation:(summary:string,operation:PanelMutation['operations'][number])=>
-      ({...session.address(),actionID:randomUUID(),summary,operations:[operation],sources:operation.kind==='appendInkStroke'?[]:[{id:operation.id}]}),
   });
   runInContext(listeners,context);
+  session.onStateChange=()=>context.buttons();context.buttons();
   const dispatch=async(name:string,event:unknown)=>{
     paperListeners.get(name)?.(event);
     await turn();
@@ -107,8 +126,25 @@ async function fixture(){
     editorListeners.get('keydown')?.({key:value,isComposing:false,metaKey:false,ctrlKey:control,preventDefault(){}});
     await turn();
   };
-  return {session,snapshot,context,calls,writes,ink,captures,pointer,dispatch,key,editor,editorKey,
-    counts:()=>({previews,clears,inkClears}),complete:async()=>{
+  const activateTool=async(tool:string)=>{
+    const button=toolControls.get(tool)!;if(button.disabled)return false;
+    button.listeners.get('click')?.({button:0,preventDefault(){}});await turn();return true;
+  };
+  const pressTool=async(tool:string)=>{
+    const button=toolControls.get(tool)!;if(button.disabled)return false;
+    let prevented=false;
+    button.listeners.get('pointerdown')?.({button:0,preventDefault(){prevented=true;}});
+    if(!prevented)button.focus();
+    await turn();return prevented;
+  };
+  const clickTool=async(tool:string)=>{if(toolControls.get(tool)!.disabled)return false;await pressTool(tool);return activateTool(tool);};
+  const blurEditor=async()=>{blurFocusedEditor();await turn();};
+  const close=async()=>{
+    session.app.connect=async()=>{};await session.connect();
+    await session.app.onteardown!({},{} as never);await turn();
+  };
+  return {session,snapshot,context,calls,writes,ink,captures,pointer,dispatch,key,editor,editorKey,clickTool,pressTool,activateTool,blurEditor,toolControls,close,retry:()=>retry,
+    counts:()=>({previews,clears,inkClears,editorFocus,workspaceFocus,disposals}),complete:async()=>{
       for(const write of writes.splice(0))write.resolve({content:[],structuredContent:{status:'saved'}});
       await turn();
     }};
@@ -180,6 +216,9 @@ test('an idle editor still opens, cancels and saves one completed edit',async()=
   const f=await fixture();await f.key('Enter');
   assert.ok(f.context.draft);assert.equal(f.editor.hidden,false);
   await f.editorKey('Escape');assert.equal(f.context.draft,null);assert.equal(f.writes.length,0);
+  await f.key('Enter');assert.ok(f.context.draft);
+  await f.clickTool('hand');assert.equal(f.context.draft,null);assert.equal(f.context.tool,'hand');
+  assert.equal(f.writes.length,0,'An unchanged draft finishes without a recursive completion');
   await f.pointer('dblclick');assert.ok(f.context.draft);f.editor.value='After';
   await f.editorKey('Enter',true);assert.equal(f.writes.length,1);
   assert.equal(f.calls.at(-1)!.name,'notebook_panel_edit');
@@ -191,11 +230,94 @@ test('an idle editor still opens, cancels and saves one completed edit',async()=
 test('the text tool still admits and saves a new element',async()=>{
   const f=await fixture();f.context.tool='text';await f.pointer('pointerdown');
   assert.equal(f.context.draft?.isNew,true);assert.equal(f.editor.hidden,false);
+  await f.clickTool('hand');assert.equal(f.context.draft,null);assert.equal(f.context.tool,'hand');
+  assert.equal(f.writes.length,0,'An empty new draft finishes without a recursive completion');
+  f.context.tool='text';await f.pointer('pointerdown');
+  const reopened:unknown=Reflect.get(f.context,'draft');
+  assert.ok(reopened&&typeof reopened==='object'&&'isNew' in reopened);
+  assert.equal(reopened.isNew,true);
   f.editor.value='New text';await f.editorKey('Enter',true);assert.equal(f.writes.length,1);
   const operation=(f.calls.at(-1)!.arguments.operations as PanelMutation['operations'])[0]!;
   assert.equal(operation.kind,'insertElement');assert.equal(operation.values.source,'New text');
   await f.complete();assert.equal(f.context.draft,null);assert.equal(f.editor.hidden,true);
   assert.equal(f.session.mutationReady,true);
+});
+
+test('blur and tool changes share one editor completion and preserve the latest intent',async t=>{
+  for(const outcome of ['saved-toolbar','saved-shortcut','conflict','uncertain','cancel','closed'])await t.test(outcome,async()=>{
+    const f=await fixture();await f.key('Enter');f.editor.value='After';
+    await f.blurEditor();assert.equal(f.writes.length,1);
+    const request=f.calls.find(call=>call.name==='notebook_panel_edit')!.arguments;
+    const selected=f.context.selected;
+    assert.equal(f.toolControls.get('rectangle')!.disabled,false,'A draft cannot disable finishing through its toolbar');
+    await f.clickTool('rectangle');await f.clickTool('ellipse');await f.key('p',false,true);
+    if(outcome==='saved-toolbar')await f.clickTool('hand');
+    assert.equal(f.writes.length,1,'Blur, rapid clicks and a shortcut share the original addressed write');
+    assert.equal(f.context.tool,'select');assert.ok(f.context.draft);assert.equal(f.editor.readOnly,true);
+    if(outcome==='cancel'){
+      await f.editorKey('Escape');assert.ok(f.context.draft);assert.equal(f.editor.value,'After');
+      assert.equal(f.writes.length,1,'Escape cannot discard a dispatched save or admit another action');
+    }
+    if(outcome==='conflict'||outcome==='uncertain'){
+      f.writes.shift()!.resolve({content:[],isError:true,structuredContent:{status:'error',
+        code:outcome==='conflict'?'revision_conflict':'ipc_timeout',message:'Save was not confirmed'}});
+      await turn();assert.ok(f.context.draft);assert.equal(f.editor.value,'After');
+      assert.deepEqual(f.context.selected,selected);assert.equal(f.context.tool,'select');
+      if(outcome==='conflict'){assert.equal(f.session.hasPending,false);assert.equal(f.editor.readOnly,false);return;}
+      assert.equal(f.session.hasPending,true);assert.equal(f.editor.readOnly,true);
+      await f.clickTool('hand');assert.equal(f.calls.filter(call=>call.name==='notebook_panel_edit').length,1,
+        'An unknown outcome remains owned by the same Session action');
+      const retry=f.retry();assert.ok(retry);const recovery=retry();await turn();
+      f.writes.shift()!.resolve({content:[],structuredContent:{status:{kind:'notebookRuntime',ready:true,pid:2,state:'ready',
+        workspaceID:f.snapshot.workspaceID,socketKey:f.snapshot.socketKey},workspaces:[],snapshot:f.snapshot}});
+      await recovery;await turn();
+      assert.deepEqual(f.calls.filter(call=>call.name==='notebook_panel_edit')[1]!.arguments,request,
+        'Recovery retries the authentic command, including its actionID and captured sources');
+    }
+    if(outcome==='closed'){
+      await f.close();const afterClose=f.counts();assert.equal(f.context.closed,true);
+      await f.complete();assert.deepEqual(f.counts(),afterClose,'Late receipts cannot refocus or recreate a closed controller');
+      assert.equal(f.context.tool,'select');assert.equal(f.context.draft,null);assert.equal(f.editor.hidden,true);return;
+    }
+    await f.complete();
+    assert.equal(f.context.draft,null);assert.equal(f.editor.hidden,true);assert.equal(f.session.hasPending,false);
+    assert.equal(f.context.tool,outcome==='cancel'?'select':outcome==='saved-toolbar'||outcome==='uncertain'?'hand':'pen');
+    assert.equal(f.toolControls.get(f.context.tool)!.pressed,'true');
+    assert.equal(f.calls.filter(call=>call.name==='notebook_panel_edit').length,outcome==='uncertain'?2:1);
+  });
+});
+
+test('one pointer activation cannot retry a fast editor refusal before its click',async()=>{
+  const f=await fixture();await f.key('Enter');f.editor.value='After';
+  const before=structuredClone(f.snapshot.elements[0]!.source),selected=f.context.selected;
+  const peer={...before,source:'Peer changed the text',frame:{...before.frame,width:150}};
+  const refuse=async()=>{
+    f.snapshot.cursor='2';f.snapshot.appearance!.sourceRevision='2';
+    f.snapshot.checkpoint={...f.snapshot.checkpoint!,id:randomUUID(),readCursor:'2',changeCursor:'2'};
+    f.snapshot.elements=[{source:peer}];
+    f.writes.shift()!.resolve({content:[],isError:true,structuredContent:{status:'error',code:'revision_conflict',message:'Peer source changed'}});
+    await turn();
+  };
+  const prevented=await f.pressTool('hand');
+  // A default focus change would reject its blur write before mouseup/click.
+  // A prevented default must never be replaced by a synthetic blur in this port.
+  if(f.writes.length)await refuse();
+  await f.activateTool('hand');
+  assert.equal(f.calls.filter(call=>call.name==='notebook_panel_edit').length,1,
+    'Pointerdown and click are one activation, not two addressed writes after a fast conflict');
+  assert.equal(prevented,true);assert.equal(f.writes.length,1);
+  const first=f.calls.find(call=>call.name==='notebook_panel_edit')!.arguments;
+  assert.deepEqual(structuredClone(first.sources),[capturedSource(f.snapshot.target,before)]);
+  await refuse();
+  assert.equal(f.editor.value,'After');assert.equal(f.editor.hidden,false);assert.equal(f.context.tool,'select');
+  assert.deepEqual(f.context.selected,selected);assert.deepEqual(f.context.draft.element.source,peer);
+  assert.equal(f.session.snapshot!.cursor,'2');assert.equal(f.session.hasPending,false);
+  assert.equal(f.calls.filter(call=>call.name==='notebook_panel_edit').length,1,'Refusal never invents a new save intent');
+  await f.clickTool('hand');
+  const retry=f.calls.filter(call=>call.name==='notebook_panel_edit')[1]!.arguments;
+  assert.notEqual(retry.actionID,first.actionID);assert.deepEqual(structuredClone(retry.sources),[capturedSource(f.snapshot.target,peer)]);
+  assert.equal((retry.operations as PanelMutation['operations'])[0]!.values.source,'After');
+  await f.complete();assert.equal(f.context.draft,null);assert.equal(f.context.tool,'hand');
 });
 
 test('lost pointer capture cancels the unfinished preview and resumes the same projection',async t=>{
@@ -279,7 +401,7 @@ test('real pen input retains measured samples through completion and discards on
   const request=f.calls.at(-1)!.arguments;
   const operation=(request.operations as PanelMutation['operations'])[0]!;
   const points=operation.values.points as {force:number;timeOffset:number;azimuth:number;altitude:number}[];
-  assert.equal(operation.kind,'appendInkStroke');assert.deepEqual(request.sources,[]);
+  assert.equal(operation.kind,'appendInkStroke');assert.deepEqual(structuredClone(request.sources),[]);
   assert.deepEqual(points.map(point=>point.force),[.2,.3,.4,.5,.6]);
   assert.deepEqual(points.map(point=>point.timeOffset),[0,.01,.02,.03,.04]);
   assert.deepEqual(points.map(point=>point.azimuth),[.1,.2,.3,.4,.5]);

@@ -194,6 +194,15 @@
     }
   ],
   "startupScope": "One cold post-install launch. Launch begin precedes process.entry by about8.26s; native socket bound878.555ms after entry. First client ended at its3.9s opening budget. Next client joined the ready owner. Not a measured cold-ready distribution or OS display timing.",
+  "processBirthReadback": {
+    "observedAt": "2026-10-07T22:05:38Z",
+    "processID": 75677,
+    "utcStartSecond": "2026-10-07T21:21:02Z",
+    "source": "TZ=UTC ps -p 75677 -o pid=,lstart=,etime=,command=",
+    "rawEvidence": ".build/panel-debug-20261007/runtime260-process-birth-220206.txt",
+    "scope": "Read-only OS start time for the same installed process, at one-second precision; launch and first native markers retain their original timestamps",
+    "inference": "The process was created in the launch-request second. Most of the approximately eight-second gap is after process creation and before the first native marker. The exact pre-marker stage remains unidentified; the native signature and store phases follow that marker."
+  },
   "chatConnection": {
     "status": "runtime_update_required",
     "activeBuild": "260",

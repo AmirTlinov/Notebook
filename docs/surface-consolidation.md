@@ -77,6 +77,11 @@ inside the actual preparation window. Visible bodies receive the sixteen-subject
 grant before prefetch. Grid coarsening preserves that window; budget clipping
 rebuilds admission before raster preparation. Excluded bodies retain their native
 painter bands, authored source and hit geometry.
+The panel controller owns one text-editor completion. Blur, toolbar and shortcuts
+join it; only the latest tool intent applies after a successful save. Primary
+pointer activation defers focus until that completion is owned, preventing a fast
+blur refusal from becoming a second write. Conflicts retain the entered text;
+uncertain results keep the Session's original addressed action for recovery.
 The runtime is now packaged inside the plugin;
 `NotebookRuntimeLifecycle` owns its process, while `NotebookApplicationLaunch`
 owns admission, the workspace catalog and persistence recovery. The panel opens,

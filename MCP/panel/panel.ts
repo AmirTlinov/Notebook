@@ -61,6 +61,8 @@ let selected:PanelSelection|null=null;
 let tool="select",space=false;
 let retry:(()=>Promise<void>)|null=null;
 let draft:{element:PanelElement;isNew:boolean}|null=null;
+let editorFinish:Promise<boolean>|null=null;
+let toolIntent=0;
 type Gesture={pointer:number;start:Point;last:Point;client:Point;lastClient:Point;camera:SurfaceCamera;viewport:Point;mode:"pan"|"move"|"resize"|"create";element?:PanelElement;card?:PanelCard;subject?:PanelSelection;frame?:Frame;bounds?:Frame;shown?:Frame};
 let gesture:Gesture|null=null;
 const path:{target:PanelTarget;camera:NonNullable<PanelView["camera"]>;selection:PanelSelection|null}[]=[];
@@ -86,8 +88,8 @@ function buttons(){
   el<HTMLButtonElement>("delete").disabled=!active()||!canEdit(active()!)||waiting;
   el<HTMLButtonElement>("workspaces").disabled=session.busy||drawing||!!draft||!!gesture;
   el<HTMLButtonElement>("undo").disabled=!session.snapshot?.history.undoActionID||waiting;
-  editor.readOnly=waiting;
-  document.querySelectorAll<HTMLButtonElement>("[data-tool]").forEach(button=>button.disabled=!session.hasAppearance||!!draft||!!gesture||drawing||(button.dataset.tool==="pen"&&!ink.ready));
+  editor.readOnly=waiting||!!editorFinish;
+  document.querySelectorAll<HTMLButtonElement>("[data-tool]").forEach(button=>button.disabled=!canChooseTool(button.dataset.tool!));
   el<HTMLButtonElement>("back").hidden=path.length===0&&!session.snapshot?.navigation?.parentBoard;
   el<HTMLButtonElement>("back").disabled=waiting;
   for(const id of ["zoom-in","zoom-out","zoom-fit"])el<HTMLButtonElement>(id).disabled=!session.hasAppearance||!!draft||!!gesture||drawing;
@@ -181,7 +183,7 @@ function newElement(point:Point,kind:string):PanelElement {
     textStyle:{fontSize:24,weight:.4,red:.1,green:.1,blue:.1,alpha:1}}};
 }
 function openEditor(element:PanelElement,isNew=false){
-  if(!session.mutationReady||gesture||ink.hasPreview)return;
+  if(editorFinish||!session.mutationReady||gesture||ink.hasPreview)return;
   if(!isNew&&!canEdit(element))return;
   draft={element,isNew};
   const font=element.source.kind==="nativeText"?element.source.textStyle?.fontSize??34:24;
@@ -204,36 +206,49 @@ function positionEditor(element:PanelElement,isNew:boolean){
   editor.style.fontSize=`${fontSize*camera.scale}px`;
   editor.style.fontWeight=String(weight<.2?300:weight<.4?400:weight<.6?500:weight<.8?600:700);
 }
-async function finishEditor(cancel=false):Promise<boolean>{
-  if(closed)return false;
-  const captured=draft;if(!captured)return true;
-  if(session.busy||session.hasPending)return false;
-  if(cancel){if(!captured.isNew)surface.hideSubject(captured.element.source.id,false);draft=null;editor.hidden=true;session.suspended=false;await session.refresh();if(closed)return false;workspace.focus();return true;}
+function finishEditor(cancel=false):Promise<boolean>{
+  if(cancel)++toolIntent;
+  if(closed)return Promise.resolve(false);
+  // Blur and a subsequent tool click own one completion, including an unknown
+  // accepted write. Escape cannot discard or replace that dispatched action.
+  if(editorFinish)return editorFinish;
+  const captured=draft;if(!captured)return Promise.resolve(true);
+  if(session.busy||session.hasPending)return Promise.resolve(false);
   const value=editor.value,element=captured.element;
-  if(captured.isNew&&!value.trim())return finishEditor(true);
   const previous=element.source.kind==="nativeText"?element.source.source:String(element.source.graphic?.label??"");
-  if(!captured.isNew&&value===previous)return finishEditor(true);
-  const values:Record<string,unknown>=element.source.kind==="nativeText"?{source:value}:{graphic:{label:value}};
-  if(element.source.kind==="nativeText")values.frame={...element.source.frame,
-    height:Math.max(element.source.frame.height,editor.scrollHeight/camera.scale)};
-  if(captured.isNew){
-    Object.assign(values,{kind:"nativeText",textStyle:element.source.textStyle});
-    if(element.source.worldOrigin)values.worldOrigin=element.source.worldOrigin;
-  }
-  const request=mutation("Изменить текст",operation(captured.isNew?"insertElement":"updateElement",element.source.id,values),captured.isNew?undefined:element);
-  try{
-    await session.save(request);if(closed)return false;
-    draft=null;editor.hidden=true;session.suspended=false;
-    await session.refresh();if(closed)return false;
-    choose({kind:"element",id:element.source.id});workspace.focus();return true;
-  }catch(error){
-    if(closed)return false;
-    session.suspended=false;await session.refresh();
-    if(closed)return false;
-    const current=session.snapshot?.elements.find(e=>e.source.id===element.source.id);
-    if(error instanceof PanelError&&error.code==="revision_conflict"&&current&&!captured.isNew){draft={element:current,isNew:false};session.onError("Элемент изменился. Ваш текст остался в редакторе; проверьте его и сохраните ещё раз.",null);}
-    editor.focus();return false;
-  }
+  const finishing=(async()=>{
+    if(cancel||(captured.isNew?!value.trim():value===previous)){
+      if(!captured.isNew)surface.hideSubject(element.source.id,false);
+      draft=null;editor.hidden=true;session.suspended=false;
+      await session.refresh();if(closed)return false;
+      workspace.focus();return true;
+    }
+    const values:Record<string,unknown>=element.source.kind==="nativeText"?{source:value}:{graphic:{label:value}};
+    if(element.source.kind==="nativeText")values.frame={...element.source.frame,
+      height:Math.max(element.source.frame.height,editor.scrollHeight/camera.scale)};
+    if(captured.isNew){
+      Object.assign(values,{kind:"nativeText",textStyle:element.source.textStyle});
+      if(element.source.worldOrigin)values.worldOrigin=element.source.worldOrigin;
+    }
+    const request=mutation("Изменить текст",operation(captured.isNew?"insertElement":"updateElement",element.source.id,values),captured.isNew?undefined:element);
+    try{
+      await session.save(request);if(closed)return false;
+      draft=null;editor.hidden=true;session.suspended=false;
+      await session.refresh();if(closed)return false;
+      choose({kind:"element",id:element.source.id});workspace.focus();return true;
+    }catch(error){
+      if(closed)return false;
+      session.suspended=false;await session.refresh();
+      if(closed)return false;
+      const current=session.snapshot?.elements.find(e=>e.source.id===element.source.id);
+      if(error instanceof PanelError&&error.code==="revision_conflict"&&current&&!captured.isNew){draft={element:current,isNew:false};session.onError("Элемент изменился. Ваш текст остался в редакторе; проверьте его и сохраните ещё раз.",null);}
+      editor.focus();return false;
+    }
+  })();
+  editorFinish=finishing;buttons();
+  const release=()=>{if(editorFinish===finishing){editorFinish=null;if(!closed)buttons();}};
+  void finishing.then(release,release);
+  return finishing;
 }
 editor.addEventListener("keydown",event=>{
   if(event.isComposing)return;
@@ -363,7 +378,7 @@ async function finishGesture(event:PointerEvent,cancel=false){
     const graphic:Record<string,unknown>={shape:tool,style:{stroke:{red:.12,green:.12,blue:.12},strokeWidth:2},label:"",representation:"geometry",visible:true,sourceInkIDs:[]};
     if(tool==="connector")graphic.connection={start:{point:{x:g.start.x-frame.x,y:g.start.y-frame.y}},end:{point:{x:g.last.x-frame.x,y:g.last.y-frame.y}},bend:0,startArrowhead:"none",endArrowhead:"arrow",labelPosition:.5,routing:"straight"};
     const values:Record<string,unknown>={kind:"graphic",source:"",frame,graphic};if(session.snapshot?.worldOrigin)values.worldOrigin=session.snapshot.worldOrigin;
-    tool="select";toolButtons();
+    selectTool("select");
     if(await save(mutation("Добавить фигуру",operation("insertElement",id,values))))choose({kind:"element",id});
   }
 }
@@ -404,7 +419,23 @@ function zoom(factor:number,point:Point={x:workspace.clientWidth/2,y:workspace.c
   publishCamera(transformPanelCamera(geometry,worldCamera,viewport(),point,point,factor));
 }
 function toolButtons(){document.querySelectorAll<HTMLButtonElement>("[data-tool]").forEach(button=>button.setAttribute("aria-pressed",String(button.dataset.tool===tool)));buttons();}
-document.querySelectorAll<HTMLButtonElement>("[data-tool]").forEach(button=>button.addEventListener("click",()=>{void(async()=>{if(ink.pointer===undefined&&!gesture&&await finishEditor()){tool=button.dataset.tool!;toolButtons();workspace.focus();}})();},events));
+function canChooseTool(next:string){return !closed&&session.hasAppearance&&!gesture&&ink.pointer===undefined&&(next!=="pen"||ink.ready);}
+function selectTool(next:string){++toolIntent;tool=next;toolButtons();}
+async function requestTool(next:string){
+  if(!canChooseTool(next))return;
+  const intent=++toolIntent;
+  if(!(await finishEditor())||intent!==toolIntent||!canChooseTool(next))return;
+  selectTool(next);workspace.focus();
+}
+document.querySelectorAll<HTMLButtonElement>("[data-tool]").forEach(button=>{
+  // One pointer activation finishes the draft at click. Moving focus first
+  // could save on blur, then retry a fast refusal as a second automatic write.
+  button.addEventListener("pointerdown",event=>{if(event.button===0&&draft)event.preventDefault();},events);
+  button.addEventListener("click",()=>{
+    if(!canChooseTool(button.dataset.tool!))return;
+    void requestTool(button.dataset.tool!);button.focus();
+  },events);
+});
 async function remove(){if(!session.mutationReady)return;const element=active();if(ink.pointer===undefined&&element&&canEdit(element)&&!draft)await save(mutation("Удалить элемент",operation("removeElement",element.source.id,{}),element));}
 el("delete").addEventListener("click",()=>{void remove();},events);
 el("undo").addEventListener("click",()=>{if(ink.pointer===undefined)void session.undo().catch(()=>{});},events);
@@ -423,11 +454,11 @@ const handleShortcut=(event:KeyboardEvent)=>{
   if(card&&event.key==="Enter"){event.preventDefault();void openCard(card);return;}
   if(card&&event.key===" "){event.preventDefault();choose({kind:"item",id:card});return;}
   if(event.code==="Space"){space=true;buttons();event.preventDefault();}
-  if(event.key==="Escape"){event.preventDefault();cancelGesture();choose(null);tool="select";toolButtons();}
+  if(event.key==="Escape"){event.preventDefault();cancelGesture();choose(null);selectTool("select");}
   if(event.key==="Delete"||event.key==="Backspace"){event.preventDefault();void remove();}
   if(event.key.toLowerCase()==="z"&&(event.metaKey||event.ctrlKey)&&!event.shiftKey){event.preventDefault();if(ink.pointer===undefined)void session.undo().catch(()=>{});}
   if(event.key==="Enter"){if(activeCard()){event.preventDefault();void openCard(activeCard()!.item.id);}else if(active())openEditor(active()!);}
-  if(!event.metaKey&&!event.ctrlKey&&!event.altKey){const key=event.key.toLowerCase(),next=({v:"select",h:"hand",p:"pen",t:"text",r:"rectangle",o:"ellipse",a:"connector"} as Record<string,string>)[key];if(next&&!gesture&&ink.pointer===undefined){tool=next;toolButtons();}}
+  if(!event.metaKey&&!event.ctrlKey&&!event.altKey){const key=event.key.toLowerCase(),next=({v:"select",h:"hand",p:"pen",t:"text",r:"rectangle",o:"ellipse",a:"connector"} as Record<string,string>)[key];if(next)void requestTool(next);}
 };
 workspace.addEventListener("keydown",handleShortcut,events);
 controls.addEventListener("keydown",handleShortcut,events);

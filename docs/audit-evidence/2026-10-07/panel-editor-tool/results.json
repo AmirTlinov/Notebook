@@ -1,0 +1,86 @@
+{
+  "format": 1,
+  "scope": "panel text-editor completion and tool intent",
+  "status": "passed",
+  "baseCommit": "9b969ff005df8716d93a4ced91adad791f87c3c3",
+  "source": {
+    "sha256": "f81994d0c9298498408ccf8016124058aa3c30b2e45a07a28725b10682f807a0",
+    "fileCount": 1715,
+    "beforeEqualsAfter": true
+  },
+  "changedOwners": [
+    "MCP/panel/panel.ts",
+    "MCP/test/panel-input.test.ts"
+  ],
+  "rawEvidence": ".build/editor-tool-switch-20261008-v2",
+  "node": {
+    "version": "v24.21.0",
+    "absoluteExecutable": "/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a/node",
+    "beforeEqualsAfter": true,
+    "scope": "Checked Node stage; login shell disabled and child PATH restricted to that stage and system tools"
+  },
+  "checks": [
+    {
+      "route": "checked-node node_modules/tsx/dist/cli.mjs --test --test-reporter=tap test/panel-input.test.ts",
+      "workingDirectory": "MCP",
+      "exitCode": 0,
+      "tests": 33,
+      "pass": 33,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0,
+      "durationMS": 404.284041
+    },
+    {
+      "route": "checked-node node_modules/typescript/bin/tsc --noEmit",
+      "workingDirectory": "MCP",
+      "exitCode": 0,
+      "diagnostics": 0
+    }
+  ],
+  "scenarios": [
+    "Toolbar and keyboard join blur completion; rapid choices apply only the latest tool intent",
+    "Unchanged and empty drafts dismiss without another save; accepted writes survive Escape and panel teardown",
+    "Definitive conflict preserves entered text and selection; a separate retry captures current peer source",
+    "Unknown result retains the Session command and addressed action ID for recovery",
+    "One pointer activation cannot turn a fast blur refusal into a second automatic write",
+    "Existing pointer capture, pen samples, shape completion and native button shortcuts"
+  ],
+  "independentReview": {
+    "status": "PASS",
+    "reviewer": "density",
+    "sourceFreezeUTC": "2026-10-07T22:22:44Z",
+    "scope": "Final two-file diff; actual Codex focus remains unaccepted"
+  },
+  "previousAttempts": [
+    {
+      "status": "preparation_failed",
+      "reason": "Fingerprint output parent did not exist; created before verification, no tests started in that attempt"
+    },
+    {
+      "rawEvidence": ".build/editor-tool-switch-20261008-v1",
+      "status": "failed",
+      "panelInput": {
+        "pass": 31,
+        "fail": 2
+      },
+      "typescript": "TS2339 at panel-input.test.ts235",
+      "repair": "Fixture select pressed baseline now matches shipped HTML; draft is freshly observed after async pointer input without weakening assertions"
+    }
+  ],
+  "logSHA256": {
+    "panel-input.stdout.log": "6a3dfee0d692b211d6174eb8fae6a555fee167243412a548419be84aa8a67a54",
+    "panel-input.stderr.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "typescript.stdout.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "typescript.stderr.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "installedPair": 260,
+  "repairInstalled": false,
+  "physicalAcceptance": false,
+  "remaining": [
+    "Fresh installed Codex panel: pointer activation, focus, rapid tool changes and actual display latency",
+    "Single next pair release with the accepted page-window and NB19/B16 memory slices",
+    "System frame/CPU/GPU/memory measurements, ten repetitions and thirty minutes of joint work"
+  ]
+}
