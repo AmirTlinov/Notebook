@@ -1941,7 +1941,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     guard window != nil, !spatialHandoffIsStopping, spatialStagingID == nil,
       !pageBackingIsReclaimed else { pauseFrameLoop(); return }
     guard pendingTransaction == nil else { pauseFrameLoop(); return }
-    if currentPageContactIsSubmitted { pauseFrameLoop(); return }
+    if currentPageContactIsSubmitted { parkSatisfiedFrameDemand(); return }
     isRenderingFrame = true
     defer { isRenderingFrame = false }
     // MetalKit may request the same static material more than once during
@@ -2470,9 +2470,10 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     frameSlot = (frameSlot + 1) % Self.framesInFlight
     continuesPageFrames = true
 
-    // Each measured/predicted change asks for one cut. The contact keeps its
-    // passive late-input participation while its unchanged pixels remain held.
-    if usesPageDisplayLink || pendingTransaction != nil || (activeInkStroke == nil && activeEraserStroke == nil) { pauseFrameLoop() }
+    // A page contact's completed cut still belongs to this UIKit update.
+    // Keep its participation through late dispatch and CA commit; the final
+    // phase parks unchanged material without submitting another frame.
+    if usesPageDisplayLink || pendingTransaction != nil || (activeInkStroke == nil && activeEraserStroke == nil) { parkSatisfiedFrameDemand() }
   }
 
   private var exposedCanvasRect: CGRect {
@@ -3376,6 +3377,14 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     return .init(png:png,texture:texture,reservation:allocation)
   }
 
+  private func parkSatisfiedFrameDemand() {
+    #if os(iOS)
+    if usesPageDisplayLink, activeContactFrame != nil, pendingTransaction == nil,
+      pageUIUpdates?.isEnabled == true { return }
+    #endif
+    pauseFrameLoop()
+  }
+
   private func pauseFrameLoop() {
     isPaused = true
     pageDisplayLink?.isPaused = true
@@ -3450,9 +3459,11 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
         // A retired contact/window cannot leave a drawable parked indefinitely.
         // The next actual demand, rather than a timeout, resumes its own clock.
         deferredContactUpdate = nil
-        // The first submission parks Metal, but its actual reveal still owns
-        // this policy until the OS acknowledges the presentation.
-        updatePageUIParticipation()
+        // Late dispatch may have changed the contact after its normal-phase
+        // submission. Keep that demand; an unchanged held contact can now
+        // park without withdrawing participation from its earlier CA phases.
+        if currentPageContactIsSubmitted { pauseFrameLoop() }
+        else { updatePageUIParticipation() }
       }
       updates.requiresContinuousUpdates = true
       updates.wantsLowLatencyEventDispatch = true
@@ -3483,7 +3494,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     if presentEmptyContentIfReady() { return }
     guard baselinePipelineState != nil, inkPipelineState != nil, eraserPipelineState != nil else { return }
     guard pendingTransaction == nil else { pauseFrameLoop(); return }
-    if currentPageContactIsSubmitted { pauseFrameLoop(); return }
+    if currentPageContactIsSubmitted { parkSatisfiedFrameDemand(); return }
     // Layout, mesh and old GPU callbacks cannot reacquire a reclaimed neighbour.
     // Its existing page-role promotion is the only route back to pixel demand.
     guard !pageBackingIsReclaimed else { pauseFrameLoop(); return }

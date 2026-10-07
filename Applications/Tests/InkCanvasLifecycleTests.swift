@@ -545,6 +545,51 @@ final class InkCanvasLifecycleTests: XCTestCase {
   }
 
   @MainActor
+  func testPageContactKeepsItsUpdateThroughCommitThenParksWhileHeld() async throws {
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow)
+    let window = UIWindow(windowScene: scene), controller = UIViewController()
+    window.rootViewController = controller; controller.view.backgroundColor = .white
+    let canvas = InkCanvasView(frame: .zero), observer = UIUpdateLink(view: window)
+    defer {
+      observer.isEnabled = false; canvas.onContactFrameResolved = nil
+      canvas.removeFromSuperview(); window.isHidden = true; window.rootViewController = nil
+      previous?.makeKey()
+    }
+    canvas.projectPage(region: .init(x: 0, y: 0, width: 160, height: 160),
+      sourceSize: .init(width: 160, height: 160), pixelDensity: 2)
+    canvas.apply(.init()); controller.view.addSubview(canvas); window.makeKeyAndVisible()
+    try await waitForStableFrame(canvas)
+    var observedCount = canvas.drawableRequestCount
+    var participationAtCommit: Bool?
+    observer.addAction(to: .afterCATransactionCommit) { _, _ in
+      guard canvas.drawableRequestCount > observedCount else { return }
+      observedCount = canvas.drawableRequestCount
+      participationAtCommit = !canvas.isFrameLoopPaused
+    }
+    observer.isEnabled = true
+    var shown = false
+    let stroke = handoffPencil()
+    canvas.onContactFrameResolved = { receipt in
+      if receipt.contact.sourceID == stroke.measured.sourceID, receipt.completion.isReady { shown = true }
+    }
+    canvas.displayActiveStroke(stroke)
+    let deadline = ContinuousClock.now + .seconds(2)
+    while (!shown || !canvas.isFrameLoopPaused), ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(1))
+    }
+    XCTAssertEqual(participationAtCommit, true,
+      "Submitting Metal work must keep the contact's UIKit participation through the same update's CA phase")
+    XCTAssertTrue(shown)
+    XCTAssertTrue(canvas.isFrameLoopPaused, "An unchanged held contact parks at the final update phase")
+    let submitted = canvas.drawableRequestCount
+    try await Task.sleep(for: .milliseconds(50))
+    XCTAssertEqual(canvas.drawableRequestCount, submitted, "A held contact must not submit idle GPU frames")
+    canvas.commitActiveStroke()
+    try await waitForStableFrame(canvas)
+  }
+
+  @MainActor
   func testPageCoalescesNewMaterialUntilTheSystemSuppliesADrawable() async throws {
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let window = UIWindow(windowScene: scene), controller = UIViewController()
