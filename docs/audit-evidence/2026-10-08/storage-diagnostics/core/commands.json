@@ -1,0 +1,122 @@
+[
+  {
+    "argv": [
+      "/opt/homebrew/opt/python@3.14/bin/python3.14",
+      "--version"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "toolchain-python"
+  },
+  {
+    "argv": [
+      "swift",
+      "--version"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "toolchain-swift"
+  },
+  {
+    "argv": [
+      "swift",
+      "package",
+      "describe",
+      "--type",
+      "json"
+    ],
+    "cwd": "/Users/amir/.codex/worktrees/notebook-storage-diagnostics/Notebook",
+    "exitCode": 0,
+    "label": "core-package"
+  },
+  {
+    "argv": [
+      "swift",
+      "test",
+      "list",
+      "--disable-xctest",
+      "--test-product",
+      "NotebookCoreTests",
+      "--event-stream-output-path",
+      "/Users/amir/.codex/worktrees/notebook-storage-diagnostics/Notebook/.build/nb11-storage-20261008-core-v4/core-NotebookCoreTests-inventory.jsonl",
+      "--event-stream-version",
+      "6.4"
+    ],
+    "cwd": "/Users/amir/.codex/worktrees/notebook-storage-diagnostics/Notebook",
+    "exitCode": 0,
+    "label": "core-inventory-NotebookCoreTests"
+  },
+  {
+    "argv": [
+      "swift",
+      "test",
+      "list",
+      "--disable-xctest",
+      "--test-product",
+      "NotebookScriptHostTests",
+      "--event-stream-output-path",
+      "/Users/amir/.codex/worktrees/notebook-storage-diagnostics/Notebook/.build/nb11-storage-20261008-core-v4/core-NotebookScriptHostTests-inventory.jsonl",
+      "--event-stream-version",
+      "6.4"
+    ],
+    "cwd": "/Users/amir/.codex/worktrees/notebook-storage-diagnostics/Notebook",
+    "exitCode": 0,
+    "label": "core-inventory-NotebookScriptHostTests"
+  },
+  {
+    "argv": [
+      "swift",
+      "test",
+      "--disable-xctest",
+      "--skip-build",
+      "--test-product",
+      "NotebookCoreTests",
+      "--filter",
+      "^(?:NotebookCoreTests\\.NotebookAcceptedWriteTests/acceptedNoOpWithANestedReadRevisionOwnerAndWitnessFlushKeepsEveryCursor\\(\\)/NotebookAcceptedWriteTests\\.swift:320:4|NotebookCoreTests\\.NotebookAcceptedWriteTests/anUnreadableWitnessRetainsTheOriginalOutputAndNeverReexecutesItsBody\\(\\)/NotebookAcceptedWriteTests\\.swift:303:4|NotebookCoreTests\\.NotebookAcceptedWriteTests/coldPageRetryReturnsItsOriginalReceiptWithoutOverwritingAPeerAfterUnknownCommit\\(\\)/NotebookAcceptedWriteTests\\.swift:213:4|NotebookCoreTests\\.NotebookCloudDeliveryTests/idlePreparationNeverTouchesSpoolStorageAndLaterWorkStillResumes\\(\\)/NotebookCloudDeliveryTests\\.swift:95:4|NotebookCoreTests\\.NotebookCloudDeliveryTests/unfinishedExportSurvivesRestartAndNeverAcknowledgesItsPartialCut\\(\\)/NotebookCloudDeliveryTests\\.swift:176:4|NotebookCoreTests\\.NotebookReadSessionTests/cancellationStopsTheNextReadEnvelopeButNeverAnAcceptedCommand\\(\\)/NotebookReadSessionTests\\.swift:7:4|NotebookCoreTests\\.NotebookReadSessionTests/readBudgetsAndDecodedContentEndWithTheirSnapshot\\(\\)/NotebookReadSessionTests\\.swift:65:4|NotebookCoreTests\\.NotebookReadSessionTests/repeatedReadsReuseTheHandleAndObserveNewCommits\\(\\)/NotebookReadSessionTests\\.swift:35:4|NotebookCoreTests\\.NotebookSQLiteTests/admissionConnectionOwnsTheTransactionWithoutCachingAdmissionAcrossReads\\(\\)/NotebookSQLiteTests\\.swift:139:4|NotebookCoreTests\\.NotebookStorageUsageTests/aHundredThousandHistoryRowsShareTheSQLBudgetAndCancellation\\(\\)/NotebookStorageUsageTests\\.swift:174:4|NotebookCoreTests\\.NotebookStorageUsageTests/anExhaustedEnclosingReadCannotBeRenewedByInventory\\(\\)/NotebookStorageUsageTests\\.swift:159:4|NotebookCoreTests\\.NotebookStorageUsageTests/diagnosticsRequireCurrentReadAdmissionAndNeverInitializeOrMigrate\\(\\)/NotebookStorageUsageTests\\.swift:209:4|NotebookCoreTests\\.NotebookStorageUsageTests/inventoryDeduplicatesCurrentAndHistoryWithoutReadingBodiesOrWriting\\(changePhysicalSample:\\)/NotebookStorageUsageTests\\.swift:43:4|NotebookCoreTests\\.NotebookStorageUsageTests/knownPeerPendingDeliveryDeduplicatesGenerationsAndBoundsItsOutput\\(\\)/NotebookStorageUsageTests\\.swift:125:4|NotebookCoreTests\\.NotebookStorageUsageTests/pendingIncomingReferencesDistinguishPresentAndMissingWithoutClaimingOrphans\\(\\)/NotebookStorageUsageTests\\.swift:105:4)$",
+      "--event-stream-output-path",
+      "/Users/amir/.codex/worktrees/notebook-storage-diagnostics/Notebook/.build/nb11-storage-20261008-core-v4/core-NotebookCoreTests-events.jsonl",
+      "--event-stream-version",
+      "6.4"
+    ],
+    "cwd": "/Users/amir/.codex/worktrees/notebook-storage-diagnostics/Notebook",
+    "exitCode": 0,
+    "label": "core-NotebookCoreTests"
+  },
+  {
+    "argv": [
+      "swift",
+      "test",
+      "--disable-xctest",
+      "--skip-build",
+      "--test-product",
+      "NotebookScriptHostTests",
+      "--filter",
+      "^(?:NotebookScriptHostTests\\.NotebookSDKV2ReadTests/oneReadReturnsDataBasisAndCoverageWithoutValuesEnvelope\\(\\)/NotebookSDKV2ReadTests\\.swift:24:4|NotebookScriptHostTests\\.NotebookSDKV2ReadTests/storageDiagnosticUsesTheObservationCutWithoutAdvancingContent\\(\\)/NotebookSDKV2ReadTests\\.swift:36:4)$",
+      "--event-stream-output-path",
+      "/Users/amir/.codex/worktrees/notebook-storage-diagnostics/Notebook/.build/nb11-storage-20261008-core-v4/core-NotebookScriptHostTests-events.jsonl",
+      "--event-stream-version",
+      "6.4"
+    ],
+    "cwd": "/Users/amir/.codex/worktrees/notebook-storage-diagnostics/Notebook",
+    "exitCode": 0,
+    "label": "core-NotebookScriptHostTests"
+  },
+  {
+    "argv": [
+      "/opt/homebrew/opt/python@3.14/bin/python3.14",
+      "--version"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "toolchain-after-python"
+  },
+  {
+    "argv": [
+      "swift",
+      "--version"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "toolchain-after-swift"
+  }
+]

@@ -251,7 +251,8 @@ final class NotebookSQLConnection {
 
   init(url: URL, writable: Bool, create: Bool = false) throws {
     var pointer: OpaquePointer?
-    let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX | (create ? SQLITE_OPEN_CREATE : 0)
+    let flags = (writable ? SQLITE_OPEN_READWRITE : SQLITE_OPEN_READONLY)
+      | SQLITE_OPEN_FULLMUTEX | (create ? SQLITE_OPEN_CREATE : 0)
     guard sqlite3_open_v2(url.path, &pointer, flags, nil) == SQLITE_OK, let pointer else {
       if let pointer { sqlite3_close(pointer) }
       throw NotebookStorageError.corruptRecord("database")
@@ -587,7 +588,8 @@ extension NotebookStore {
 
   @discardableResult
   func prepareDatabase(initialWorkspaceID: UUID? = nil,
-    reusing connection: NotebookSQLConnection? = nil) throws -> NotebookSQLConnection {
+    reusing connection: NotebookSQLConnection? = nil,
+    requiringCurrentFormat: Bool = false) throws -> NotebookSQLConnection {
     if let currentSQL { guard initialWorkspaceID == nil else { throw NotebookStorageError.invalidTransaction("workspace identity already initialized") }; return currentSQL }
     let manager = FileManager.default
     // Rejection happens before mkdir/open; the external converter is the only
@@ -597,9 +599,14 @@ extension NotebookStore {
       throw NotebookStorageError.legacyStoreRequiresConversion
     }
     guard initialWorkspaceID == nil || !manager.fileExists(atPath: databaseURL.path) else { throw NotebookStorageError.invalidTransaction("workspace identity already initialized") }
-    try manager.createDirectory(at: root, withIntermediateDirectories: true)
-    let database = try connection ?? NotebookSQLConnection(url: databaseURL, writable: true, create: true)
-    database.writable = true
+    if requiringCurrentFormat {
+      _ = try manager.attributesOfItem(atPath: databaseURL.path)
+    } else {
+      try manager.createDirectory(at: root, withIntermediateDirectories: true)
+    }
+    let database = try connection ?? NotebookSQLConnection(url: databaseURL,
+      writable: !requiringCurrentFormat, create: !requiringCurrentFormat)
+    database.writable = !requiringCurrentFormat
     let applicationID = try database.rows("PRAGMA application_id").first?.first?.integer ?? 0
     let version = try database.rows("PRAGMA user_version").first?.first?.integer ?? 0
     guard applicationID == 0 || (applicationID == 1_313_999_665 && (2...Self.currentDatabaseVersion).contains(version)) else { throw NotebookStorageError.unsupportedFormat }
@@ -608,6 +615,7 @@ extension NotebookStore {
       try Self.requireSearchRecipe(database: database)
       return database
     }
+    guard !requiringCurrentFormat else { throw NotebookStorageError.unsupportedFormat }
     try database.run("PRAGMA journal_mode=WAL")
     try database.run("PRAGMA wal_autocheckpoint=1000")
     if applicationID == 0 {
@@ -874,9 +882,10 @@ extension NotebookStore {
 
   /// All typed reads in the closure observe the same WAL snapshot. A read
   /// transaction cannot be upgraded into a command behind the caller's back.
-  public func readTransaction<T>(_ read: (NotebookStore) throws -> T) throws -> T {
+  public func readTransaction<T>(requiringCurrentFormat: Bool = false,
+    _ read: (NotebookStore) throws -> T) throws -> T {
     if currentSQL != nil { return try read(self) }
-    return try readTransaction(using: prepareDatabase(), read)
+    return try readTransaction(using: prepareDatabase(requiringCurrentFormat: requiringCurrentFormat), read)
   }
 
   /// A serial reader may retain its idle handle, never the prior read cut.

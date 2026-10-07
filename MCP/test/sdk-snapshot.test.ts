@@ -12,7 +12,7 @@ test('generated output contracts accept actual same-snapshot native content, bas
   const root=await mkdtemp(join(tmpdir(),'notebook-sdk-v2-ipc-'));
   try {
     await writeFixture(root); const store=new NotebookStore(fixtureSocket(root));
-    const queries=[{kind:'workspaceHeader'},{kind:'itemHeaders'},{kind:'itemHeader',id:itemID},{kind:'itemLifecycle',id:itemID},
+    const queries=[{kind:'workspaceHeader'},{kind:'storageUsage'},{kind:'itemHeaders'},{kind:'itemHeader',id:itemID},{kind:'itemLifecycle',id:itemID},
       {kind:'pageHeader',id:pageID},{kind:'page',id:pageID},{kind:'notebookDirectory',id:itemID},
       {kind:'boardItem',id:rootBoardID},{kind:'boardItem',id:itemID},{kind:'presence'},{kind:'selection'},{kind:'contexts'}];
     for(const query of queries) {
@@ -21,6 +21,13 @@ test('generated output contracts accept actual same-snapshot native content, bas
       const parsed=snapshotSchema(schema).safeParse(result);
       assert.equal(parsed.success,true,query.kind+': '+JSON.stringify(parsed));
       assert.equal(typeof result.cursor,'string'); assert.equal(result.values,undefined);
+      if(query.kind==='storageUsage') {
+        assert.equal(result.data.cut.readRevision,Number(result.cursor));
+        assert.equal(result.data.cut.workspaceID,result.basis.workspaceID);
+        assert.deepEqual(result.basis.owners,[]);
+        assert.equal(result.data.logicalStatus,'snapshot');
+        assert.equal(result.data.reachability,'partial');
+      }
     }
     const [initial]=await store.command<any[]>({command:'read',readSnapshots:true,queries:[{kind:'pageHeader',id:pageID}]});
     const id=randomUUID(),target={kind:'page',id:pageID};

@@ -19,6 +19,14 @@ test('SDK v2 declarations type addressed reads, tuples, bases and results withou
     await writeFile(join(root,'notebook-sdk.d.ts'),declarations);
     await writeFile(join(root,'script.ts'),`async function program() {
       const input=args as {pageID:string; elementID:string; documentID:string};
+      const usage=await nb.read({kind:'storageUsage'});
+      const bytes:number=usage.data.blobs.bytes;
+      const snapshotID:string=usage.data.cut.snapshotID;
+      const reachability:'partial'=usage.data.reachability;
+      for(const peer of usage.data.outgoing.peers) { const peerID:string=peer.peerID; await emit(peerID); }
+      // @ts-expect-error: an unclassified hash inventory is not an orphan proof
+      const orphanBytes=usage.data.orphanBytes;
+      await emit({bytes,snapshotID,reachability});
       const s=await nb.page({id:input.pageID,elementID:input.elementID});
       if (!s.data) throw new Error('missing');
       const source:string=s.data.element.source;

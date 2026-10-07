@@ -1,0 +1,29 @@
+{
+  "format": 1,
+  "files": {
+    "completed.json": {
+      "bytes": 344357,
+      "sha256": "3788e83a71260f5e08bec975e51c5cb7b76bcfe607ad2b15da728d71a8dd2978"
+    },
+    "sdk-execution.json": {
+      "bytes": 3258,
+      "sha256": "1cd216936bfca929de38d30ad018d97e49db5fceea72174f45a17010f7402794"
+    },
+    "sdk-inventory.json": {
+      "bytes": 1619,
+      "sha256": "5aad85f356ad1ecc7096a76ac97c48ebe00ad5e52f400c0f32d274e84f18b605"
+    },
+    "sdk-reads.stdout.log": {
+      "bytes": 12464,
+      "sha256": "6ae3d4e7bb73714cb23aa1941bf449180453e9d0907cea6a8c9b4537352d29de"
+    },
+    "commands.json": {
+      "bytes": 9509,
+      "sha256": "2bac0ca8eae6a634d728c783095b61c2a1a0c0fdee0fe9aca28fe75718716f00"
+    },
+    "node-before.stdout.log": {
+      "bytes": 9,
+      "sha256": "f2ec568164f99546161909b0189b57bb5be3e80f8e2ccd8a51a4aed8c4055a04"
+    }
+  }
+}

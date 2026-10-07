@@ -4,6 +4,12 @@ extension NotebookStore {
   /// Called after the query in the SAME WAL snapshot. Reading metadata here
   /// cannot freshen content that the caller has already seen.
   func queryBasis(_ query: NotebookReadQuery, data: JSONValue) throws -> NotebookReadBasis {
+    if query.kind == .storageUsage {
+      guard let workspaceID = data["cut"]?["workspaceID"]?.string.flatMap(UUID.init(uuidString:)) else {
+        throw NotebookStorageError.corruptRecord("storage usage cut")
+      }
+      return .init(workspaceID: workspaceID, owners: [])
+    }
     let header = try workspaceHeader()
     let catalogue = CollaborationTarget(kind: .workspace, id: header.rootBoardID)
     var targets: [CollaborationTarget] = []
@@ -75,6 +81,9 @@ extension NotebookStore {
     next.next = nil
     var incomplete = false
     switch query.kind {
+    case .storageUsage:
+      return .init(complete: data["outgoing"]?["truncated"] != .bool(true)
+        && data["physical"]?["sampleStatus"] == .string("sampled"))
     case .pageInkActions:
       if let after = data["nextActionID"]?.string.flatMap(UUID.init(uuidString:)) { incomplete = true; next.after = after }
     case .notebookDirectory:

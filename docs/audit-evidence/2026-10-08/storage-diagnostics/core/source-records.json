@@ -1,0 +1,85 @@
+{
+  "format": 1,
+  "sourceSHA256": "c6ddf18e55f34e25b42bc75675491659fc21f22c13b2f2488316f61edb4e6b03",
+  "sourceFiles": 1717,
+  "beforeAndAfterEqual": true,
+  "productFiles": {
+    "MCP/src/sdk-contracts.ts": "9a6cbf760f9486c64b76c013e773dcddc6f4343f429fea449ba9d1fd41646f34",
+    "MCP/src/sdk-results.ts": "bc436a3064b8a609ac40b3afcec4fd1ebb137f30a68f504a89a4d0ebb395d695",
+    "MCP/test/sdk-snapshot.test.ts": "36af650258b7fb50ad1c5b0dea628e0070700f21162340ad52b93a26414a21df",
+    "MCP/test/sdk-types.test.ts": "f34a86bc0ee452632b1b3fe24dec4c2481b57f62df90efaff64decfcb533785c",
+    "Sources/NotebookCore/NotebookCommandDispatcher.swift": "2bc0e7a760f85d903f7e8770d5f766cde162d6f6e6efed102e24c514d6167b5b",
+    "Sources/NotebookCore/NotebookReadSession.swift": "184225f265ed377d6be0fdfc02cc4b39fbcbb63e98f0c759669bf4a0a6b24c75",
+    "Sources/NotebookCore/NotebookReadSnapshot.swift": "7fc5a3567ff77f5f86b6823c89540a9955c26e015ad8848c81197a97d3ac86f0",
+    "Sources/NotebookCore/NotebookSQLite.swift": "af539116f984b049598262f8c54b4459d80d996698be14d8fbb30aef7f4f1efa",
+    "Sources/NotebookCore/NotebookStorageUsage.swift": "cf7742a2d376e05aa7d94e68c49e27e40408baff71224eab9bd8df7dedcaf002",
+    "Sources/NotebookScriptHost/Resources/notebook-sdk.d.ts": "06e58303672b2936e96627c17b82986a354cd248451d73930c2be7e42aa5734f",
+    "Sources/NotebookScriptHost/Resources/sdk-reference.json": "47ae46632b22cdb8664f6d0cb5a605f07d826a4291021b78baec9fb8a463cfc2",
+    "Tests/NotebookCoreTests/NotebookStorageUsageTests.swift": "da76c854503f93e3dd272c0a94f9962879b58747614a0a60bc8c1e1585af15d9",
+    "Tests/NotebookScriptHostTests/NotebookSDKV2ReadTests.swift": "52c348401a1fa5991b7529bc84adc4d459ddc96daa2674564b03aee40f9ee30b"
+  },
+  "differencesFromSDK": {
+    "Applications/notebook_check_reports.py": {
+      "sdk": {
+        "executable": false,
+        "path": "Applications/notebook_check_reports.py",
+        "sha256": "a58fc260e650b474a6968aaf22d0c9f3aa1782f9a2164dbff752d0b987df3404"
+      },
+      "core": {
+        "executable": false,
+        "path": "Applications/notebook_check_reports.py",
+        "sha256": "8277990b40a84ec194cd7a4363989dd5547614e3812f0f77e122924c7c4ce812"
+      }
+    },
+    "Applications/notebook_verification.py": {
+      "sdk": {
+        "executable": false,
+        "path": "Applications/notebook_verification.py",
+        "sha256": "07331690e4a0930c0ba9db116a62a20167b7f4be1ff7b7986aca607f52d4088c"
+      },
+      "core": {
+        "executable": false,
+        "path": "Applications/notebook_verification.py",
+        "sha256": "daaba4a594184d2c83936883b667f7f1c0e5756419e770f1d84af67ba28912bd"
+      }
+    },
+    "Tests/NotebookVerification/test_registry.py": {
+      "sdk": {
+        "executable": false,
+        "path": "Tests/NotebookVerification/test_registry.py",
+        "sha256": "a67125ba25b46df6f097b6805e62fdb1eb046cd2a2782ea50bf881d08ef873ed"
+      },
+      "core": {
+        "executable": false,
+        "path": "Tests/NotebookVerification/test_registry.py",
+        "sha256": "d04a79e8116a85203f354b43bdfb21538191fd37bfe26e1a6a59f929b24bcba7"
+      }
+    }
+  },
+  "rawSourceRecords": {
+    "before": {
+      "bytes": 326965,
+      "sha256": "12089f5a6c6def234e3b60fa12beebb68f48c1b735a767a7bcf5a67f54949807"
+    },
+    "after": {
+      "bytes": 326965,
+      "sha256": "12089f5a6c6def234e3b60fa12beebb68f48c1b735a767a7bcf5a67f54949807"
+    }
+  },
+  "inventories": {
+    "NotebookCoreTests": {
+      "bytes": 938676,
+      "sha256": "f0efe8cd4628e000a909e74b8cafbf1c3c5710fafb8da8126fc06c995f656de6",
+      "records": 1643,
+      "functions": 1443,
+      "suites": 200
+    },
+    "NotebookScriptHostTests": {
+      "bytes": 30896,
+      "sha256": "7cfb0c69631d482a977346ea22826b13610f28327b8f79bd7df564601b9aa901",
+      "records": 54,
+      "functions": 42,
+      "suites": 12
+    }
+  }
+}

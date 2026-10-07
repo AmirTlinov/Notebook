@@ -5,6 +5,16 @@
 Самостоятельного Mac-приложения нет. Изолированные native-проверки используют
 отдельную test-идентичность; каждый результат относится к своим исходникам.
 
+**8 октября, GUI-504:** `storageUsage` читает bounded metadata одного committed
+SQLite snapshot; readonly admission отвергает missing/old format до изменения БД.
+Тела blobs не читаются; история сохранена, physical DB/WAL/SHM — отдельные samples.
+**17 Core/ScriptHost functions / 18 cases и 12 SDK cases + TypeScript PASS**,
+0 failures/skips; source `c6ddf18e…`/1717 (Core), `cf343108…`/1717 (SDK) неизменен.
+Между ними изменены только три Python-файла сборщика; production/tests совпадают.
+Проверены 100000 history rows, cancellation, finite nested SQL lease, recovery и
+current-format admission. Очистка и installed/physical acceptance ещё открыты.
+[Точные исходники, scope и исправленные отказы](audit-evidence/2026-10-08/storage-diagnostics/results.json).
+
 **8 октября, Swift inventory:** machine reports пишутся в отдельный файл каждого
 выбранного test product; доступные продукты берутся из SwiftPM description.
 Прежний stdout потерял UTF-8 chunk 8192 байта и склеил две Core JSON-строки.

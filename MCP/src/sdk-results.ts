@@ -129,6 +129,23 @@ const exportOptions=object({moment:z.enum(["saved","presented"]).optional(),atte
 const exportJob=object({status:z.enum(["missing","queued","running","saved","failed","interrupted","cancelled"]),jobID:id.optional(),documentID:id.optional(),contentRevision:text.optional(),stateRevision:text.optional(),cutSHA256:text.optional(),moment:z.enum(["saved","presented"]).optional(),options:exportOptions.optional(),receipt:object({cutSHA256:text,stateRevision:text,cut:printMapArtifact,documentID:id,options:exportOptions,artifact:printMapArtifact,source:printMapArtifact.optional(),log:text,packageSHA256:text.optional(),assets:z.array(object({path:text,sha256:text})).optional(),sourceMap:printMapArtifact.optional(),syncTeX:printMapArtifact.optional()}).optional(),error:json.optional()});
 const presentation=object({status:text.optional(),id:id.optional(),view:object({deviceID:id,sessionID:id,sequence:number,nonce:id}).optional(),reason:text.optional()});
 const search=object({results:z.array(object({id,target:targetSchema,elementID:text.optional(),title:text,path:z.array(text),preview:text,revision:text,reference:referenceSchema})),total:number});
+const storageCount=z.number().int().nonnegative();
+const storagePayload=z.object({count:storageCount,bytes:storageCount}).strict();
+const storageFileSample=z.object({status:z.enum(["unchanged","changed","missing","unavailable"]),bytes:storageCount.optional()}).strict();
+const storageUsage=z.object({
+  cut:z.object({workspaceID:id,snapshotID:id,readRevision:storageCount,changeSequence:storageCount,journalGeneration:id.optional()}).strict(),
+  logicalStatus:z.literal("snapshot"),blobs:storagePayload,
+  currentRecords:z.object({recordCount:storageCount,payload:storagePayload}).strict(),
+  retainedHistory:z.object({changeCount:storageCount,changeRecordCount:storageCount,manifestCount:storageCount,
+    manifestRecordCount:storageCount,changeManifestBytes:storageCount,payload:storagePayload}).strict(),
+  incoming:z.object({pendingPartCount:storageCount,pendingOrderNodeCount:storageCount,presentPayload:storagePayload,missingBlobCount:storageCount}).strict(),
+  outgoing:z.object({knownPeerCount:storageCount,peers:z.array(z.object({peerID:id,retired:z.boolean(),acknowledgedSequence:storageCount,
+    pendingChangeCount:storageCount,pendingManifestBytes:storageCount}).strict()).max(64),truncated:z.boolean()}).strict(),
+  indexedReferences:storagePayload,unclassifiedBlobs:storagePayload,reachability:z.literal("partial"),
+  physical:z.object({database:storageFileSample,wal:storageFileSample,shm:storageFileSample,pageSize:storageCount,
+    pageCount:storageCount,freelistPages:storageCount,startedAt:number,finishedAt:number,
+    sampleStatus:z.enum(["sampled","changed","incomplete"])}).strict(),
+}).strict();
 export const readDataSchemas = {
   observation, workspaceHeader:header, itemHeaders:z.array(item), itemHeader:item.nullable(), itemLifecycle:object({item,target:coverTargetSchema,revision:text,bodyRecordCount:number.int().nonnegative()}).nullable(),
   workingSet:object({header,items:z.array(item),boards:z.array(board),pages:z.record(text,page),documents:z.record(text,document),states:z.record(text,documentState),ink}),
@@ -138,7 +155,7 @@ export const readDataSchemas = {
   notebookPages:object({header:directoryHeader,pages:z.array(object({position,document:page}))}),notebookDirectory:directory,notebookPosition:position.nullable(),
   spatialInk:ink,presence,selection,attentionEvidence:object({reference:referenceSchema,payload:json,image:object({sha256:text,pixelWidth:number,pixelHeight:number}).optional()}).nullable(),
   contexts,contextEntries,actions:z.array(receipt),currentViewReceipt:viewReceipt.nullable(),pageVisionReceipt:vision.nullable(),targetRenderReceipt:render.nullable(),
-  renderRequests:z.array(renderRequest),delivery:z.array(delivery),actionSnapshots:z.array(object({request:renderRequest,pngSHA256:text.optional(),diagnostics:renderDiagnostics.optional()})),runtime,codeFragment:code,codeFragments:z.array(codeFragment),
+  renderRequests:z.array(renderRequest),delivery:z.array(delivery),actionSnapshots:z.array(object({request:renderRequest,pngSHA256:text.optional(),diagnostics:renderDiagnostics.optional()})),runtime,codeFragment:code,codeFragments:z.array(codeFragment),storageUsage,
 };
 export const methodDataSchemas = {
   observe:observation,page:z.union([page,pageElement]),document:z.union([documentDirectory,documentFile,documentFileBytes]),documentStructure,documentCheck:render.extend({programs:documentProgramChecks,code:text.optional()}),board:scene,notebook:directory,context:z.union([contexts,contextEntries]),

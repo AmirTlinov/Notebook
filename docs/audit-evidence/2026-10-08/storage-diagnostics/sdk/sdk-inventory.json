@@ -1,0 +1,17 @@
+{
+  "format": 1,
+  "tests": [
+    "MCP/test/sdk-snapshot.test.ts:1:12639:an addressed stack read supplies the containing board basis for public extraction and undo",
+    "MCP/test/sdk-snapshot.test.ts:1:3881:native lifecycle commit, retry and undo match the generated result and exact-version detail schemas",
+    "MCP/test/sdk-snapshot.test.ts:1:555:generated output contracts accept actual same-snapshot native content, bases and immutable action pages",
+    "MCP/test/sdk-snapshot.test.ts:1:6987:native deletion and restoration expose compact headers and readable exact-version details",
+    "MCP/test/sdk-snapshot.test.ts:1:9985:native board delete and undo preserve compact immutable public results",
+    "MCP/test/sdk-snapshot.test.ts:1:9985:native document delete and undo preserve compact immutable public results",
+    "MCP/test/sdk-types.test.ts:1:526:SDK v2 declarations type addressed reads, tuples, bases and results without a second hand-written API",
+    "MCP/test/sdk-types.test.ts:214:1779:every method has a generated output schema and start only accepts v2, defaulting to bounded completion wait",
+    "MCP/test/sdk-types.test.ts:214:2550:region selection keeps its polygon instead of becoming an unknown UI choice",
+    "MCP/test/sdk-types.test.ts:214:3008:region selection publication accepts all 8192 contour points and rejects overflow",
+    "MCP/test/sdk-types.test.ts:214:3670:whole ink selection publishes a separate namespace and one combined member budget",
+    "MCP/test/sdk-types.test.ts:214:466:ActionResult has discriminated compact lifecycle events and keeps field events intact"
+  ]
+}

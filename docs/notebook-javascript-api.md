@@ -60,6 +60,12 @@ coverages from one snapshot, not `values[0]`.
 | Code and its notes | `code({id})` or bounded file query |
 | Actual selection | read selection |
 | Whole-item lifecycle basis | read itemLifecycle |
+| Storage sizes and pending delivery | read storageUsage |
+
+`storageUsage` returns bounded metadata from one current-format SQL cut, with no
+content owners in its basis. Physical file samples have their own status; incomplete
+samples or more than 64 peers have `coverage.complete:false` without a continuation.
+See [retention policy and diagnostic limits](reliability-transition.md#data-policy).
 
 A missing element is null; a missing owner is an error, not an empty page.
 Appearance is intact/partial/erased with `sourceIsCompleteAppearance`.

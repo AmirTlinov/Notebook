@@ -20,6 +20,16 @@ may remove only proven unowned data and derived caches. Age, memory pressure and
 the local Undo window do not retire history. Active reads, exports, accepted writes
 and pending delivery keep their source leases until actual completion.
 
+`nb.read({kind:'storageUsage'})` inventories metadata in one current-format SQLite
+read cut. It separates unique blob bytes, current records, retained history,
+pending incoming references and known outgoing peers. Categories can overlap.
+DB/WAL/SHM lengths are physical samples; changed/incomplete samples and a truncated
+peer list produce incomplete coverage. `unclassifiedBlobs` may contain valid
+staged or transitively owned content. `reachability: partial` authorizes no cleanup.
+The diagnostic neither creates nor migrates storage, checkpoints it or vacuums it.
+Full cleanup still requires immutable action-event roots and complete typed proof
+of staging references and active leases, tracked in GUI-504 and its dependencies.
+
 ## Current ownership
 
 | Behavior | Contract |

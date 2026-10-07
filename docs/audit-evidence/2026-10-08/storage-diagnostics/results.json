@@ -1,0 +1,96 @@
+{
+  "format": 1,
+  "date": "2026-10-08",
+  "issue": "https://linear.app/main-cluster/issue/GUI-504",
+  "status": "diagnostic_slice_verified",
+  "baseCommit": "8cc2b7ff48dd133996861f5a777675ab631fc2df",
+  "change": "The existing nb.read storageUsage query borrows one committed current-format readonly SQL cut and its finite allowance. Metadata distinguishes current/history/incoming/known outgoing references and physical samples; it never traverses payload bodies or authorizes deletion. Read sessions open actual readonly handles and reject unknown/old/missing formats before initialization or migration.",
+  "core": {
+    "sourceSHA256": "c6ddf18e55f34e25b42bc75675491659fc21f22c13b2f2488316f61edb4e6b03",
+    "sourceFiles": 1717,
+    "unchanged": true,
+    "functionsPassed": 17,
+    "casesPassed": 18,
+    "failed": 0,
+    "skipped": 0,
+    "selectedExecution": "core/core-execution.json",
+    "sourceRecords": "core/source-records.json",
+    "receiptArtifacts": "core/artifacts.json",
+    "rawVerificationSHA256": "6c7171ca698b74e73b80f1f1fb0e1ce27432b0cb31403878fca9616fe33d608c",
+    "route": "./verify.sh:selected",
+    "counterexamples": [
+      "metadata-only SQL columns, hash deduplication and zero writes",
+      "physical change status independent of the logical snapshot",
+      "present/missing pending part and order references",
+      "logical peer generations, retirement and the 64-peer output cap",
+      "nested and 100000-history-row SQL budget/cancellation",
+      "current committed read admission refuses missing/old/writer cuts before mutation",
+      "reused read session sees a later commit, cancellation does not cancel an accepted command",
+      "unknown-COMMIT witness recovery and no-op nested read cursor preservation",
+      "read-only cloud TEMP/spool admission and unfinished restart delivery",
+      "SDK host storage query keeps the exact observation cut"
+    ]
+  },
+  "sdk": {
+    "sourceSHA256": "cf3431088cea1e901c5adce9e5ad479e6cea39f5d2177f073509c574eb0a88e1",
+    "sourceFiles": 1717,
+    "unchanged": true,
+    "casesPassed": 12,
+    "failed": 0,
+    "skipped": 0,
+    "node": "24.21.0",
+    "typeScriptAndGeneratedConsistency": "passed",
+    "productionAndTestsMatchFinalCore": true,
+    "onlySourceDifferences": "the three repaired verification Python files, named and hashed in core/source-records.json",
+    "selectedExecution": "sdk/sdk-execution.json",
+    "receiptArtifacts": "sdk/artifacts.json"
+  },
+  "earlierAttempts": [
+    {
+      "attempt": "core-v1",
+      "outcome": "fixture_compile_failure",
+      "sourceSHA256": "59eed1565a38a16af4fff199948afe2220368f9f227e0446d3d5484ef876c0d8",
+      "sourceFiles": 1717,
+      "unchanged": true,
+      "note": "Swift Testing throwing-closure expression was split into a value and its assertion; production unchanged.",
+      "commandsSHA256": "3da610b0323776b1f59e7a7f7bed387b0545502cb236e8002a9ba3a7f308f112"
+    },
+    {
+      "attempt": "core-v2",
+      "outcome": "one_fixture_expectation_failure",
+      "sourceSHA256": "433a1a84ce2cd8cb5ce4f86e425bb8375f962068f2d95d635f966647482408a2",
+      "sourceFiles": 1717,
+      "unchanged": true,
+      "note": "15 functions executed:14PASS/1FAIL. The fixture now expects the original enclosing SQL lease reason read_sql_work; production unchanged.",
+      "commandsSHA256": "0dbddc09fc195505ad29d3e585caabf25ce7e76d49a69ff083429fb20db17555"
+    },
+    {
+      "attempt": "core-v3",
+      "outcome": "malformed_inventory_refused",
+      "sourceSHA256": "cf3431088cea1e901c5adce9e5ad479e6cea39f5d2177f073509c574eb0a88e1",
+      "sourceFiles": 1717,
+      "unchanged": true,
+      "note": "No test execution. SwiftPM lost an8192-byte UTF-8 output chunk; strict parser refused the spliced JSON. The separate repaired verification owner is in main8cc2b7ff.",
+      "commandsSHA256": "77cc76a664af38918d653e88f553afcd667b17706523c39a0e16954a92d1f838"
+    }
+  ],
+  "retention": "All accepted authored versions are retained indefinitely. Only proven unowned data and derived caches may be cleaned.",
+  "remaining": [
+    "GUI-504 remains In Progress: typed transitive roots and actual active/staging leases must prove cleanup safety. Immutable Undo events are GUI-486; the staging proof extends the existing GUI-494 dependency.",
+    "No cleanup, live migration, installed-pair update or physical-device acceptance was performed in this slice. Full104 acceptance remains open."
+  ],
+  "physicalAcceptance": false,
+  "full104Acceptance": false,
+  "curatedArtifacts": [
+    {
+      "path": "core/artifacts.json",
+      "bytes": 1037,
+      "sha256": "bb1f131b7ff030c30d35d18c3f5ce5a0e1b3a0895e912fda611b7fc0ba5deac6"
+    },
+    {
+      "path": "sdk/artifacts.json",
+      "bytes": 866,
+      "sha256": "45532412e5841ee09beb4ed22d99126630e82cdfeae79712f68d7deaf949f81e"
+    }
+  ]
+}

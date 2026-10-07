@@ -44,7 +44,7 @@ public final class NotebookReadSession {
       guard identity == nil || identity == next else {
         throw NotebookStorageError.invalidTransaction("database file identity changed")
       }
-      let admitted = try store.prepareDatabase(reusing: connection)
+      let admitted = try store.prepareDatabase(reusing: connection, requiringCurrentFormat: true)
       connection = admitted; identity = next
       return try store.readTransaction(using: admitted, cancellation: cancellation, operation)
     } catch { connection = nil; throw error }

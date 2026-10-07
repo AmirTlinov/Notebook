@@ -2541,7 +2541,8 @@
               "actionSnapshots",
               "runtime",
               "codeFragment",
-              "codeFragments"
+              "codeFragments",
+              "storageUsage"
             ]
           },
           "scope": {
@@ -3044,7 +3045,7 @@
           }
         }
       },
-      "returns": "documentProgram with document id, instanceID and programPath reads the pure executable sourceBasis, initialState and saved state/stateVersion without executing or staging code. Use that exact sourceBasis with setDocumentProgramState. pageInkActions with a page id returns a metadata directory (default 32, max 64) without sample/raster bodies; coverage.next continues UUID order, while sequence retains authored contact order. baseline reports an existing raster source, not editable strokes or OCR. pageInkAction with page id + elementID (stroke UUID) reads exactly one bounded measured source or null; both provide the same-snapshot page content/ink basis. Active pen/eraser source records are not final visible pixels: use pageMap/pageImage/regions for appearance. itemLifecycle with an item id returns its complete stored extent without loading page/document bodies, plus frozen workspace, actual parent and lifecycle basis. bodyRecordCount counts page/document/state records only, not a total deletion cost or mutation authority. Unseen source, ink, state, membership or child-board causal changes invalidate that extent; ordinary itemHeader does not provide it. selection returns known/unknown session identity, generation, physical surface and typed choice from the existing UI owner; its basis has no owners and grants no authority. Snapshot<T> selected by query.kind. data is one object or collection, never values[0]. basis contains exact owner versions from the SAME native snapshot, not mutation permissions. coverage.complete is explicit; next can be passed with the same kind to read. Stale continuation fails, without a hidden full rescan.",
+      "returns": "storageUsage reports bounded metadata from the current SQLite read cut: unique blobs, current records, all retained history, pending incoming indexes and up to 64 known outgoing peers. Categories deduplicate internally and can overlap. DB/WAL/SHM lengths are physical samples with a separate sampleStatus; coverage.complete is false for changed/incomplete samples or a truncated peer list. reachability is partial: unclassifiedBlobs are not proven orphans. This read never creates, migrates, cleans, checkpoints or vacuums storage. Its basis has no content owners and grants no write authority. documentProgram with document id, instanceID and programPath reads the pure executable sourceBasis, initialState and saved state/stateVersion without executing or staging code. Use that exact sourceBasis with setDocumentProgramState. pageInkActions with a page id returns a metadata directory (default 32, max 64) without sample/raster bodies; coverage.next continues UUID order, while sequence retains authored contact order. baseline reports an existing raster source, not editable strokes or OCR. pageInkAction with page id + elementID (stroke UUID) reads exactly one bounded measured source or null; both provide the same-snapshot page content/ink basis. Active pen/eraser source records are not final visible pixels: use pageMap/pageImage/regions for appearance. itemLifecycle with an item id returns its complete stored extent without loading page/document bodies, plus frozen workspace, actual parent and lifecycle basis. bodyRecordCount counts page/document/state records only, not a total deletion cost or mutation authority. Unseen source, ink, state, membership or child-board causal changes invalidate that extent; ordinary itemHeader does not provide it. selection returns known/unknown session identity, generation, physical surface and typed choice from the existing UI owner; its basis has no owners and grants no authority. Snapshot<T> selected by query.kind. data is one object or collection, never values[0]. basis contains exact owner versions from the SAME native snapshot, not mutation permissions. coverage.complete is explicit; next can be passed with the same kind to read. Stale continuation fails, without a hidden full rescan.",
       "example": "const s=await nb.read({kind:'pageElement',id:args.pageID,elementID:args.elementID}); await emit(s.data);",
       "output": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -4677,6 +4678,214 @@
                 "items": {
                   "$ref": "#/$defs/__schema85"
                 }
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "cut": {
+                    "type": "object",
+                    "properties": {
+                      "workspaceID": {
+                        "$ref": "#/$defs/__schema7"
+                      },
+                      "snapshotID": {
+                        "$ref": "#/$defs/__schema7"
+                      },
+                      "readRevision": {
+                        "$ref": "#/$defs/__schema86"
+                      },
+                      "changeSequence": {
+                        "$ref": "#/$defs/__schema86"
+                      },
+                      "journalGeneration": {
+                        "$ref": "#/$defs/__schema7"
+                      }
+                    },
+                    "required": [
+                      "workspaceID",
+                      "snapshotID",
+                      "readRevision",
+                      "changeSequence"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "logicalStatus": {
+                    "type": "string",
+                    "const": "snapshot"
+                  },
+                  "blobs": {
+                    "$ref": "#/$defs/__schema87"
+                  },
+                  "currentRecords": {
+                    "type": "object",
+                    "properties": {
+                      "recordCount": {
+                        "$ref": "#/$defs/__schema86"
+                      },
+                      "payload": {
+                        "$ref": "#/$defs/__schema87"
+                      }
+                    },
+                    "required": [
+                      "recordCount",
+                      "payload"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "retainedHistory": {
+                    "type": "object",
+                    "properties": {
+                      "changeCount": {
+                        "$ref": "#/$defs/__schema86"
+                      },
+                      "changeRecordCount": {
+                        "$ref": "#/$defs/__schema86"
+                      },
+                      "manifestCount": {
+                        "$ref": "#/$defs/__schema86"
+                      },
+                      "manifestRecordCount": {
+                        "$ref": "#/$defs/__schema86"
+                      },
+                      "changeManifestBytes": {
+                        "$ref": "#/$defs/__schema86"
+                      },
+                      "payload": {
+                        "$ref": "#/$defs/__schema87"
+                      }
+                    },
+                    "required": [
+                      "changeCount",
+                      "changeRecordCount",
+                      "manifestCount",
+                      "manifestRecordCount",
+                      "changeManifestBytes",
+                      "payload"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "incoming": {
+                    "type": "object",
+                    "properties": {
+                      "pendingPartCount": {
+                        "$ref": "#/$defs/__schema86"
+                      },
+                      "pendingOrderNodeCount": {
+                        "$ref": "#/$defs/__schema86"
+                      },
+                      "presentPayload": {
+                        "$ref": "#/$defs/__schema87"
+                      },
+                      "missingBlobCount": {
+                        "$ref": "#/$defs/__schema86"
+                      }
+                    },
+                    "required": [
+                      "pendingPartCount",
+                      "pendingOrderNodeCount",
+                      "presentPayload",
+                      "missingBlobCount"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "outgoing": {
+                    "type": "object",
+                    "properties": {
+                      "knownPeerCount": {
+                        "$ref": "#/$defs/__schema86"
+                      },
+                      "peers": {
+                        "maxItems": 64,
+                        "type": "array",
+                        "items": {
+                          "$ref": "#/$defs/__schema88"
+                        }
+                      },
+                      "truncated": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "knownPeerCount",
+                      "peers",
+                      "truncated"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "indexedReferences": {
+                    "$ref": "#/$defs/__schema87"
+                  },
+                  "unclassifiedBlobs": {
+                    "$ref": "#/$defs/__schema87"
+                  },
+                  "reachability": {
+                    "type": "string",
+                    "const": "partial"
+                  },
+                  "physical": {
+                    "type": "object",
+                    "properties": {
+                      "database": {
+                        "$ref": "#/$defs/__schema89"
+                      },
+                      "wal": {
+                        "$ref": "#/$defs/__schema89"
+                      },
+                      "shm": {
+                        "$ref": "#/$defs/__schema89"
+                      },
+                      "pageSize": {
+                        "$ref": "#/$defs/__schema86"
+                      },
+                      "pageCount": {
+                        "$ref": "#/$defs/__schema86"
+                      },
+                      "freelistPages": {
+                        "$ref": "#/$defs/__schema86"
+                      },
+                      "startedAt": {
+                        "$ref": "#/$defs/__schema6"
+                      },
+                      "finishedAt": {
+                        "$ref": "#/$defs/__schema6"
+                      },
+                      "sampleStatus": {
+                        "type": "string",
+                        "enum": [
+                          "sampled",
+                          "changed",
+                          "incomplete"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "database",
+                      "wal",
+                      "shm",
+                      "pageSize",
+                      "pageCount",
+                      "freelistPages",
+                      "startedAt",
+                      "finishedAt",
+                      "sampleStatus"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "cut",
+                  "logicalStatus",
+                  "blobs",
+                  "currentRecords",
+                  "retainedHistory",
+                  "incoming",
+                  "outgoing",
+                  "indexedReferences",
+                  "unclassifiedBlobs",
+                  "reachability",
+                  "physical"
+                ],
+                "additionalProperties": false
               }
             ]
           },
@@ -7621,6 +7830,76 @@
               "stamp"
             ],
             "additionalProperties": {}
+          },
+          "__schema86": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "__schema87": {
+            "type": "object",
+            "properties": {
+              "count": {
+                "$ref": "#/$defs/__schema86"
+              },
+              "bytes": {
+                "$ref": "#/$defs/__schema86"
+              }
+            },
+            "required": [
+              "count",
+              "bytes"
+            ],
+            "additionalProperties": false
+          },
+          "__schema88": {
+            "type": "object",
+            "properties": {
+              "peerID": {
+                "$ref": "#/$defs/__schema7"
+              },
+              "retired": {
+                "type": "boolean"
+              },
+              "acknowledgedSequence": {
+                "$ref": "#/$defs/__schema86"
+              },
+              "pendingChangeCount": {
+                "$ref": "#/$defs/__schema86"
+              },
+              "pendingManifestBytes": {
+                "$ref": "#/$defs/__schema86"
+              }
+            },
+            "required": [
+              "peerID",
+              "retired",
+              "acknowledgedSequence",
+              "pendingChangeCount",
+              "pendingManifestBytes"
+            ],
+            "additionalProperties": false
+          },
+          "__schema89": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "unchanged",
+                  "changed",
+                  "missing",
+                  "unavailable"
+                ]
+              },
+              "bytes": {
+                "$ref": "#/$defs/__schema86"
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "additionalProperties": false
           }
         }
       }
@@ -7696,7 +7975,8 @@
                   "actionSnapshots",
                   "runtime",
                   "codeFragment",
-                  "codeFragments"
+                  "codeFragments",
+                  "storageUsage"
                 ]
               },
               "scope": {
@@ -9834,6 +10114,214 @@
                   "items": {
                     "$ref": "#/$defs/__schema85"
                   }
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "cut": {
+                      "type": "object",
+                      "properties": {
+                        "workspaceID": {
+                          "$ref": "#/$defs/__schema7"
+                        },
+                        "snapshotID": {
+                          "$ref": "#/$defs/__schema7"
+                        },
+                        "readRevision": {
+                          "$ref": "#/$defs/__schema86"
+                        },
+                        "changeSequence": {
+                          "$ref": "#/$defs/__schema86"
+                        },
+                        "journalGeneration": {
+                          "$ref": "#/$defs/__schema7"
+                        }
+                      },
+                      "required": [
+                        "workspaceID",
+                        "snapshotID",
+                        "readRevision",
+                        "changeSequence"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "logicalStatus": {
+                      "type": "string",
+                      "const": "snapshot"
+                    },
+                    "blobs": {
+                      "$ref": "#/$defs/__schema87"
+                    },
+                    "currentRecords": {
+                      "type": "object",
+                      "properties": {
+                        "recordCount": {
+                          "$ref": "#/$defs/__schema86"
+                        },
+                        "payload": {
+                          "$ref": "#/$defs/__schema87"
+                        }
+                      },
+                      "required": [
+                        "recordCount",
+                        "payload"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "retainedHistory": {
+                      "type": "object",
+                      "properties": {
+                        "changeCount": {
+                          "$ref": "#/$defs/__schema86"
+                        },
+                        "changeRecordCount": {
+                          "$ref": "#/$defs/__schema86"
+                        },
+                        "manifestCount": {
+                          "$ref": "#/$defs/__schema86"
+                        },
+                        "manifestRecordCount": {
+                          "$ref": "#/$defs/__schema86"
+                        },
+                        "changeManifestBytes": {
+                          "$ref": "#/$defs/__schema86"
+                        },
+                        "payload": {
+                          "$ref": "#/$defs/__schema87"
+                        }
+                      },
+                      "required": [
+                        "changeCount",
+                        "changeRecordCount",
+                        "manifestCount",
+                        "manifestRecordCount",
+                        "changeManifestBytes",
+                        "payload"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "incoming": {
+                      "type": "object",
+                      "properties": {
+                        "pendingPartCount": {
+                          "$ref": "#/$defs/__schema86"
+                        },
+                        "pendingOrderNodeCount": {
+                          "$ref": "#/$defs/__schema86"
+                        },
+                        "presentPayload": {
+                          "$ref": "#/$defs/__schema87"
+                        },
+                        "missingBlobCount": {
+                          "$ref": "#/$defs/__schema86"
+                        }
+                      },
+                      "required": [
+                        "pendingPartCount",
+                        "pendingOrderNodeCount",
+                        "presentPayload",
+                        "missingBlobCount"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "outgoing": {
+                      "type": "object",
+                      "properties": {
+                        "knownPeerCount": {
+                          "$ref": "#/$defs/__schema86"
+                        },
+                        "peers": {
+                          "maxItems": 64,
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/$defs/__schema88"
+                          }
+                        },
+                        "truncated": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "knownPeerCount",
+                        "peers",
+                        "truncated"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "indexedReferences": {
+                      "$ref": "#/$defs/__schema87"
+                    },
+                    "unclassifiedBlobs": {
+                      "$ref": "#/$defs/__schema87"
+                    },
+                    "reachability": {
+                      "type": "string",
+                      "const": "partial"
+                    },
+                    "physical": {
+                      "type": "object",
+                      "properties": {
+                        "database": {
+                          "$ref": "#/$defs/__schema89"
+                        },
+                        "wal": {
+                          "$ref": "#/$defs/__schema89"
+                        },
+                        "shm": {
+                          "$ref": "#/$defs/__schema89"
+                        },
+                        "pageSize": {
+                          "$ref": "#/$defs/__schema86"
+                        },
+                        "pageCount": {
+                          "$ref": "#/$defs/__schema86"
+                        },
+                        "freelistPages": {
+                          "$ref": "#/$defs/__schema86"
+                        },
+                        "startedAt": {
+                          "$ref": "#/$defs/__schema6"
+                        },
+                        "finishedAt": {
+                          "$ref": "#/$defs/__schema6"
+                        },
+                        "sampleStatus": {
+                          "type": "string",
+                          "enum": [
+                            "sampled",
+                            "changed",
+                            "incomplete"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "database",
+                        "wal",
+                        "shm",
+                        "pageSize",
+                        "pageCount",
+                        "freelistPages",
+                        "startedAt",
+                        "finishedAt",
+                        "sampleStatus"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "cut",
+                    "logicalStatus",
+                    "blobs",
+                    "currentRecords",
+                    "retainedHistory",
+                    "incoming",
+                    "outgoing",
+                    "indexedReferences",
+                    "unclassifiedBlobs",
+                    "reachability",
+                    "physical"
+                  ],
+                  "additionalProperties": false
                 }
               ]
             }
@@ -9859,7 +10347,7 @@
             "additionalProperties": false
           },
           "coverage": {
-            "$ref": "#/$defs/__schema86"
+            "$ref": "#/$defs/__schema90"
           },
           "cursor": {
             "$ref": "#/$defs/__schema0"
@@ -9867,7 +10355,7 @@
           "coverages": {
             "type": "array",
             "items": {
-              "$ref": "#/$defs/__schema86"
+              "$ref": "#/$defs/__schema90"
             }
           }
         },
@@ -12776,6 +13264,76 @@
             "additionalProperties": {}
           },
           "__schema86": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "__schema87": {
+            "type": "object",
+            "properties": {
+              "count": {
+                "$ref": "#/$defs/__schema86"
+              },
+              "bytes": {
+                "$ref": "#/$defs/__schema86"
+              }
+            },
+            "required": [
+              "count",
+              "bytes"
+            ],
+            "additionalProperties": false
+          },
+          "__schema88": {
+            "type": "object",
+            "properties": {
+              "peerID": {
+                "$ref": "#/$defs/__schema7"
+              },
+              "retired": {
+                "type": "boolean"
+              },
+              "acknowledgedSequence": {
+                "$ref": "#/$defs/__schema86"
+              },
+              "pendingChangeCount": {
+                "$ref": "#/$defs/__schema86"
+              },
+              "pendingManifestBytes": {
+                "$ref": "#/$defs/__schema86"
+              }
+            },
+            "required": [
+              "peerID",
+              "retired",
+              "acknowledgedSequence",
+              "pendingChangeCount",
+              "pendingManifestBytes"
+            ],
+            "additionalProperties": false
+          },
+          "__schema89": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "unchanged",
+                  "changed",
+                  "missing",
+                  "unavailable"
+                ]
+              },
+              "bytes": {
+                "$ref": "#/$defs/__schema86"
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "additionalProperties": false
+          },
+          "__schema90": {
             "type": "object",
             "properties": {
               "complete": {
@@ -50599,6 +51157,295 @@
           "type": "string"
         },
         "__schema2": {
+          "type": "number"
+        }
+      }
+    },
+    "storageUsage": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "cut": {
+          "type": "object",
+          "properties": {
+            "workspaceID": {
+              "$ref": "#/$defs/__schema0"
+            },
+            "snapshotID": {
+              "$ref": "#/$defs/__schema0"
+            },
+            "readRevision": {
+              "$ref": "#/$defs/__schema1"
+            },
+            "changeSequence": {
+              "$ref": "#/$defs/__schema1"
+            },
+            "journalGeneration": {
+              "$ref": "#/$defs/__schema0"
+            }
+          },
+          "required": [
+            "workspaceID",
+            "snapshotID",
+            "readRevision",
+            "changeSequence"
+          ],
+          "additionalProperties": false
+        },
+        "logicalStatus": {
+          "type": "string",
+          "const": "snapshot"
+        },
+        "blobs": {
+          "$ref": "#/$defs/__schema2"
+        },
+        "currentRecords": {
+          "type": "object",
+          "properties": {
+            "recordCount": {
+              "$ref": "#/$defs/__schema1"
+            },
+            "payload": {
+              "$ref": "#/$defs/__schema2"
+            }
+          },
+          "required": [
+            "recordCount",
+            "payload"
+          ],
+          "additionalProperties": false
+        },
+        "retainedHistory": {
+          "type": "object",
+          "properties": {
+            "changeCount": {
+              "$ref": "#/$defs/__schema1"
+            },
+            "changeRecordCount": {
+              "$ref": "#/$defs/__schema1"
+            },
+            "manifestCount": {
+              "$ref": "#/$defs/__schema1"
+            },
+            "manifestRecordCount": {
+              "$ref": "#/$defs/__schema1"
+            },
+            "changeManifestBytes": {
+              "$ref": "#/$defs/__schema1"
+            },
+            "payload": {
+              "$ref": "#/$defs/__schema2"
+            }
+          },
+          "required": [
+            "changeCount",
+            "changeRecordCount",
+            "manifestCount",
+            "manifestRecordCount",
+            "changeManifestBytes",
+            "payload"
+          ],
+          "additionalProperties": false
+        },
+        "incoming": {
+          "type": "object",
+          "properties": {
+            "pendingPartCount": {
+              "$ref": "#/$defs/__schema1"
+            },
+            "pendingOrderNodeCount": {
+              "$ref": "#/$defs/__schema1"
+            },
+            "presentPayload": {
+              "$ref": "#/$defs/__schema2"
+            },
+            "missingBlobCount": {
+              "$ref": "#/$defs/__schema1"
+            }
+          },
+          "required": [
+            "pendingPartCount",
+            "pendingOrderNodeCount",
+            "presentPayload",
+            "missingBlobCount"
+          ],
+          "additionalProperties": false
+        },
+        "outgoing": {
+          "type": "object",
+          "properties": {
+            "knownPeerCount": {
+              "$ref": "#/$defs/__schema1"
+            },
+            "peers": {
+              "maxItems": 64,
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/__schema3"
+              }
+            },
+            "truncated": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "knownPeerCount",
+            "peers",
+            "truncated"
+          ],
+          "additionalProperties": false
+        },
+        "indexedReferences": {
+          "$ref": "#/$defs/__schema2"
+        },
+        "unclassifiedBlobs": {
+          "$ref": "#/$defs/__schema2"
+        },
+        "reachability": {
+          "type": "string",
+          "const": "partial"
+        },
+        "physical": {
+          "type": "object",
+          "properties": {
+            "database": {
+              "$ref": "#/$defs/__schema4"
+            },
+            "wal": {
+              "$ref": "#/$defs/__schema4"
+            },
+            "shm": {
+              "$ref": "#/$defs/__schema4"
+            },
+            "pageSize": {
+              "$ref": "#/$defs/__schema1"
+            },
+            "pageCount": {
+              "$ref": "#/$defs/__schema1"
+            },
+            "freelistPages": {
+              "$ref": "#/$defs/__schema1"
+            },
+            "startedAt": {
+              "$ref": "#/$defs/__schema5"
+            },
+            "finishedAt": {
+              "$ref": "#/$defs/__schema5"
+            },
+            "sampleStatus": {
+              "type": "string",
+              "enum": [
+                "sampled",
+                "changed",
+                "incomplete"
+              ]
+            }
+          },
+          "required": [
+            "database",
+            "wal",
+            "shm",
+            "pageSize",
+            "pageCount",
+            "freelistPages",
+            "startedAt",
+            "finishedAt",
+            "sampleStatus"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "cut",
+        "logicalStatus",
+        "blobs",
+        "currentRecords",
+        "retainedHistory",
+        "incoming",
+        "outgoing",
+        "indexedReferences",
+        "unclassifiedBlobs",
+        "reachability",
+        "physical"
+      ],
+      "additionalProperties": false,
+      "$defs": {
+        "__schema0": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        },
+        "__schema1": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "__schema2": {
+          "type": "object",
+          "properties": {
+            "count": {
+              "$ref": "#/$defs/__schema1"
+            },
+            "bytes": {
+              "$ref": "#/$defs/__schema1"
+            }
+          },
+          "required": [
+            "count",
+            "bytes"
+          ],
+          "additionalProperties": false
+        },
+        "__schema3": {
+          "type": "object",
+          "properties": {
+            "peerID": {
+              "$ref": "#/$defs/__schema0"
+            },
+            "retired": {
+              "type": "boolean"
+            },
+            "acknowledgedSequence": {
+              "$ref": "#/$defs/__schema1"
+            },
+            "pendingChangeCount": {
+              "$ref": "#/$defs/__schema1"
+            },
+            "pendingManifestBytes": {
+              "$ref": "#/$defs/__schema1"
+            }
+          },
+          "required": [
+            "peerID",
+            "retired",
+            "acknowledgedSequence",
+            "pendingChangeCount",
+            "pendingManifestBytes"
+          ],
+          "additionalProperties": false
+        },
+        "__schema4": {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": [
+                "unchanged",
+                "changed",
+                "missing",
+                "unavailable"
+              ]
+            },
+            "bytes": {
+              "$ref": "#/$defs/__schema1"
+            }
+          },
+          "required": [
+            "status"
+          ],
+          "additionalProperties": false
+        },
+        "__schema5": {
           "type": "number"
         }
       }

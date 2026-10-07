@@ -1,0 +1,85 @@
+[
+  {
+    "argv": [
+      "/Users/amir/.codex/worktrees/notebook-remediation-integration/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a/node",
+      "--version"
+    ],
+    "cwd": "/Users/amir/.codex/worktrees/notebook-storage-diagnostics/Notebook",
+    "environment": {
+      "PATH": "/Users/amir/.codex/worktrees/notebook-remediation-integration/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/Users/amir/.volta/bin:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:/Users/amir/.codex/tmp/arg0/codex-arg0c05irJ:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:/Users/amir/.bun/bin:/Users/amir/.local/bin:/Users/amir/.local/state/fnm_multishells/55055_1791379735593/bin:/Users/amir/.cargo/bin:/Users/amir/Library/Python/3.9/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/Users/amir/.lmstudio/bin:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Applications/ChatGPT.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS"
+    },
+    "exitCode": 0,
+    "label": "node-before"
+  },
+  {
+    "argv": [
+      "npm",
+      "run",
+      "check"
+    ],
+    "cwd": "/Users/amir/.codex/worktrees/notebook-storage-diagnostics/Notebook/MCP",
+    "environment": {
+      "PATH": "/Users/amir/.codex/worktrees/notebook-remediation-integration/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/Users/amir/.volta/bin:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:/Users/amir/.codex/tmp/arg0/codex-arg0c05irJ:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:/Users/amir/.bun/bin:/Users/amir/.local/bin:/Users/amir/.local/state/fnm_multishells/55055_1791379735593/bin:/Users/amir/.cargo/bin:/Users/amir/Library/Python/3.9/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/Users/amir/.lmstudio/bin:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Applications/ChatGPT.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS"
+    },
+    "exitCode": 0,
+    "label": "mcp-check"
+  },
+  {
+    "argv": [
+      "swift",
+      "build",
+      "--product",
+      "notebook-ipc-test-host"
+    ],
+    "cwd": "/Users/amir/.codex/worktrees/notebook-storage-diagnostics/Notebook",
+    "environment": {
+      "PATH": "/Users/amir/.codex/worktrees/notebook-remediation-integration/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/Users/amir/.volta/bin:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:/Users/amir/.codex/tmp/arg0/codex-arg0c05irJ:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:/Users/amir/.bun/bin:/Users/amir/.local/bin:/Users/amir/.local/state/fnm_multishells/55055_1791379735593/bin:/Users/amir/.cargo/bin:/Users/amir/Library/Python/3.9/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/Users/amir/.lmstudio/bin:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Applications/ChatGPT.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS"
+    },
+    "exitCode": 0,
+    "label": "ipc-host"
+  },
+  {
+    "argv": [
+      "swift",
+      "build",
+      "--show-bin-path"
+    ],
+    "cwd": "/Users/amir/.codex/worktrees/notebook-storage-diagnostics/Notebook",
+    "environment": {
+      "PATH": "/Users/amir/.codex/worktrees/notebook-remediation-integration/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/Users/amir/.volta/bin:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:/Users/amir/.codex/tmp/arg0/codex-arg0c05irJ:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:/Users/amir/.bun/bin:/Users/amir/.local/bin:/Users/amir/.local/state/fnm_multishells/55055_1791379735593/bin:/Users/amir/.cargo/bin:/Users/amir/Library/Python/3.9/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/Users/amir/.lmstudio/bin:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Applications/ChatGPT.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS"
+    },
+    "exitCode": 0,
+    "label": "ipc-binpath"
+  },
+  {
+    "argv": [
+      "/usr/bin/env",
+      "NOTEBOOK_IPC_TEST_HOST=/Users/amir/.codex/worktrees/notebook-storage-diagnostics/Notebook/.build/out/Products/Debug/notebook-ipc-test-host",
+      "/Users/amir/.codex/worktrees/notebook-remediation-integration/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a/node",
+      "--import",
+      "tsx",
+      "--test",
+      "--test-reporter=/Users/amir/.codex/worktrees/notebook-storage-diagnostics/Notebook/Applications/notebook_node_reporter.mjs",
+      "/Users/amir/.codex/worktrees/notebook-storage-diagnostics/Notebook/MCP/test/sdk-types.test.ts",
+      "/Users/amir/.codex/worktrees/notebook-storage-diagnostics/Notebook/MCP/test/sdk-snapshot.test.ts"
+    ],
+    "cwd": "/Users/amir/.codex/worktrees/notebook-storage-diagnostics/Notebook/MCP",
+    "environment": {
+      "PATH": "/Users/amir/.codex/worktrees/notebook-remediation-integration/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/Users/amir/.volta/bin:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:/Users/amir/.codex/tmp/arg0/codex-arg0c05irJ:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:/Users/amir/.bun/bin:/Users/amir/.local/bin:/Users/amir/.local/state/fnm_multishells/55055_1791379735593/bin:/Users/amir/.cargo/bin:/Users/amir/Library/Python/3.9/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/Users/amir/.lmstudio/bin:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Applications/ChatGPT.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS"
+    },
+    "exitCode": 0,
+    "label": "sdk-reads"
+  },
+  {
+    "argv": [
+      "/Users/amir/.codex/worktrees/notebook-remediation-integration/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a/node",
+      "--version"
+    ],
+    "cwd": "/Users/amir/.codex/worktrees/notebook-storage-diagnostics/Notebook",
+    "environment": {
+      "PATH": "/Users/amir/.codex/worktrees/notebook-remediation-integration/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/Users/amir/.volta/bin:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:/Users/amir/.codex/tmp/arg0/codex-arg0c05irJ:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:/Users/amir/.bun/bin:/Users/amir/.local/bin:/Users/amir/.local/state/fnm_multishells/55055_1791379735593/bin:/Users/amir/.cargo/bin:/Users/amir/Library/Python/3.9/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/Users/amir/.lmstudio/bin:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Applications/ChatGPT.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS"
+    },
+    "exitCode": 0,
+    "label": "node-after"
+  }
+]

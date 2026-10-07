@@ -1,0 +1,60 @@
+{
+  "baseCommit": "8cc2b7ff48dd133996861f5a777675ab631fc2df",
+  "changedFiles": [
+    "MCP/src/sdk-contracts.ts",
+    "MCP/src/sdk-results.ts",
+    "MCP/test/sdk-snapshot.test.ts",
+    "MCP/test/sdk-types.test.ts",
+    "Sources/NotebookCore/NotebookCommandDispatcher.swift",
+    "Sources/NotebookCore/NotebookReadSession.swift",
+    "Sources/NotebookCore/NotebookReadSnapshot.swift",
+    "Sources/NotebookCore/NotebookSQLite.swift",
+    "Sources/NotebookCore/NotebookStorageUsage.swift",
+    "Sources/NotebookScriptHost/Resources/notebook-sdk.d.ts",
+    "Sources/NotebookScriptHost/Resources/sdk-reference.json",
+    "Tests/NotebookCoreTests/NotebookStorageUsageTests.swift",
+    "Tests/NotebookScriptHostTests/NotebookSDKV2ReadTests.swift",
+    "docs/audit-evidence/2026-10-08/storage-diagnostics/sdk/artifacts.json",
+    "docs/audit-evidence/2026-10-08/storage-diagnostics/sdk/commands.json",
+    "docs/audit-evidence/2026-10-08/storage-diagnostics/sdk/completed.json",
+    "docs/audit-evidence/2026-10-08/storage-diagnostics/sdk/mcp-check.stdout.log",
+    "docs/audit-evidence/2026-10-08/storage-diagnostics/sdk/node-before.stdout.log",
+    "docs/audit-evidence/2026-10-08/storage-diagnostics/sdk/sdk-execution.json",
+    "docs/audit-evidence/2026-10-08/storage-diagnostics/sdk/sdk-inventory.json",
+    "docs/audit-evidence/2026-10-08/storage-diagnostics/sdk/sdk-reads.stdout.log",
+    "docs/notebook-javascript-api.md",
+    "docs/reliability-transition.md"
+  ],
+  "checks": {
+    "commands": [],
+    "core": [
+      "NotebookCoreTests.NotebookAcceptedWriteTests/acceptedNoOpWithANestedReadRevisionOwnerAndWitnessFlushKeepsEveryCursor",
+      "NotebookCoreTests.NotebookAcceptedWriteTests/anUnreadableWitnessRetainsTheOriginalOutputAndNeverReexecutesItsBody",
+      "NotebookCoreTests.NotebookAcceptedWriteTests/coldPageRetryReturnsItsOriginalReceiptWithoutOverwritingAPeerAfterUnknownCommit",
+      "NotebookCoreTests.NotebookCloudDeliveryTests/idlePreparationNeverTouchesSpoolStorageAndLaterWorkStillResumes",
+      "NotebookCoreTests.NotebookCloudDeliveryTests/unfinishedExportSurvivesRestartAndNeverAcknowledgesItsPartialCut",
+      "NotebookCoreTests.NotebookReadSessionTests/cancellationStopsTheNextReadEnvelopeButNeverAnAcceptedCommand",
+      "NotebookCoreTests.NotebookReadSessionTests/readBudgetsAndDecodedContentEndWithTheirSnapshot",
+      "NotebookCoreTests.NotebookReadSessionTests/repeatedReadsReuseTheHandleAndObserveNewCommits",
+      "NotebookCoreTests.NotebookSQLiteTests/admissionConnectionOwnsTheTransactionWithoutCachingAdmissionAcrossReads",
+      "NotebookCoreTests.NotebookStorageUsageTests",
+      "NotebookScriptHostTests.NotebookSDKV2ReadTests"
+    ],
+    "ipad": [],
+    "mac": []
+  },
+  "format": 2,
+  "manualSelection": true,
+  "optimized": false,
+  "profiles": [],
+  "selectionMode": "explicit-only",
+  "sourceRoot": "/Users/amir/.codex/worktrees/notebook-storage-diagnostics/Notebook",
+  "unclassified": [
+    "Sources/NotebookCore/NotebookCommandDispatcher.swift",
+    "Sources/NotebookCore/NotebookReadSession.swift",
+    "Sources/NotebookCore/NotebookReadSnapshot.swift",
+    "Sources/NotebookCore/NotebookSQLite.swift",
+    "Sources/NotebookCore/NotebookStorageUsage.swift",
+    "Tests/NotebookCoreTests/NotebookStorageUsageTests.swift"
+  ]
+}

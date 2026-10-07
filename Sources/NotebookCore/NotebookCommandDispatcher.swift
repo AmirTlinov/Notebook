@@ -91,7 +91,7 @@ public struct NotebookReadQuery: Codable, Sendable {
     case observation, workspaceHeader, itemHeaders, itemHeader, itemLifecycle, workingSet, sceneWindow, scenePaintOrder
     case page, pageHeader, pageElement, pageInkActions, pageInkAction, documentHeader, document, documentState, documentFile, documentFileBytes, documentDirectory, documentStructure, documentProgram, boardItem, boardElement, boardContentRevision, ownerBoard, notebookPages, notebookDirectory, notebookPosition, spatialInk, presence
     case attentionEvidence, contexts, contextEntries, actions, currentViewReceipt, pageVisionReceipt, targetRenderReceipt
-    case renderRequests, delivery, actionSnapshots, runtime, selection, codeFragment, codeFragments
+    case renderRequests, delivery, actionSnapshots, runtime, selection, codeFragment, codeFragments, storageUsage
   }
   public var kind: Kind
   public var scope: NotebookObservationScope?
@@ -143,7 +143,9 @@ public struct NotebookCommandDispatcher: Sendable {
       if request.changesStore {
         return try store.commandTransaction(readAllowance: .agentCommand) { try execute(request) }
       }
-      return try store.readTransaction { snapshot in
+      let requiresCurrentFormat = request.command == .read
+        && request.queries?.contains(where: { $0.kind == .storageUsage }) == true
+      return try store.readTransaction(requiringCurrentFormat: requiresCurrentFormat) { snapshot in
         try snapshot.currentSQL!.limitReads(.agentCommand)
         return try NotebookCommandDispatcher(store: snapshot, nativeActor: nativeActor).execute(request)
       }
@@ -345,6 +347,7 @@ public struct NotebookCommandDispatcher: Sendable {
 
   private func read(_ query: NotebookReadQuery) throws -> JSONValue {
     switch query.kind {
+    case .storageUsage: return try .encode(store.storageUsage())
     case .workspaceHeader: return try .encode(store.workspaceHeader())
     case .itemHeaders: return try .encode(store.readItemHeaders(after: query.after, limit: query.limit ?? 128))
     case .itemHeader: return try .encode(store.readItemHeader(required(query.id)))
