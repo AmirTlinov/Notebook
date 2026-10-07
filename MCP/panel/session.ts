@@ -205,7 +205,15 @@ export class NotebookSession {
         this.synchronizing=false;if(!this.failedWrite)this.onError("",null);this.onStatus("Подключено");return this.snapshot;
       }
       if(!isSnapshot(value)||!sameAddress(request,value))throw new Error("Notebook вернул другую поверхность.");
-      if(!(await this.onPrepareSnapshot(value,request.appearance))||this.stale(request,generation))return;
+      const prepared=await this.onPrepareSnapshot(value,request.appearance);
+      if(this.stale(request,generation))return;
+      if(!prepared){
+        this.boundsDirty=this.needsPresentation();
+        if(this.presented&&!this.boundsDirty&&!this.synchronizing&&!this.failedWrite){
+          this.onError("",null);this.onStatus("Подключено");
+        }
+        return;
+      }
       if(!this.failedWrite)this.onError("",null);this.accept(value,request.appearance);
       // Camera motion does not invalidate world-placed pixels. Keep the current
       // camera and coalesce the latest projection after accepting useful coverage.
