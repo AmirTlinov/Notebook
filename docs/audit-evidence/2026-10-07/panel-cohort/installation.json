@@ -204,10 +204,14 @@
     "inference": "The process was created in the launch-request second. Most of the approximately eight-second gap is after process creation and before the first native marker. The exact pre-marker stage remains unidentified; the native signature and store phases follow that marker."
   },
   "chatConnection": {
-    "status": "runtime_update_required",
+    "status": "ready",
+    "observedAt": "2026-10-07T22:25:51Z",
     "activeBuild": "260",
-    "connectedBuild": "259",
-    "freshPanel": "awaiting human reconnection and disclosure"
+    "connectedBuild": "260",
+    "previousConnectedBuild": "259",
+    "scope": "Admitted public pageHeader read and installed260 opener; old hidden tabs still belong to259",
+    "freshPanel": "awaiting disclosure of the new inline Notebook card",
+    "evidence": "chat-connection.json"
   },
   "physicalAcceptance": false
 }

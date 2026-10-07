@@ -1,0 +1,46 @@
+{
+  "format": 1,
+  "observedAt": "2026-10-07T22:25:51Z",
+  "installedPair": 260,
+  "publicRead": {
+    "tool": "notebook_context",
+    "method": "read",
+    "kind": "pageHeader",
+    "status": "ready",
+    "target": {
+      "id": "C74869CD-CE04-4AC2-A12E-66B00996B8E6",
+      "kind": "page"
+    },
+    "cursor": "67187",
+    "coverage": {
+      "complete": true
+    }
+  },
+  "opener": {
+    "tool": "notebook_open",
+    "target": {
+      "kind": "page",
+      "id": "C74869CD-CE04-4AC2-A12E-66B00996B8E6"
+    },
+    "uiCohort": "05806ff3fb147a6b06fd00085c4254873207473f8d536b711734579aa46d98a0",
+    "cohortMatchesInstalled260": true
+  },
+  "hostReadback": {
+    "observedAt": "2026-10-07T22:26:46Z",
+    "registeredTabs": [
+      "5",
+      "6"
+    ],
+    "status": "runtime_update_required",
+    "oldPluginBuild": 259,
+    "activeBuild": 260,
+    "viewport": {
+      "width": 0,
+      "height": 0
+    },
+    "identity": null
+  },
+  "scope": "Admitted public read and installed opener; old hidden tabs are not fresh mounted UI evidence",
+  "freshPanel": "awaiting disclosure of the new inline Notebook card",
+  "physicalAcceptance": false
+}
