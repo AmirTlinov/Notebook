@@ -308,12 +308,14 @@ GUI-196, GUI-197, GUI-183 и длительная GUI-250 остаются от�
 
 ## Открытые измерения
 
-- **Pencil/eraser, ≤ 20 мс по контракту.** Реальный trace 247: 5830 batches, без
-  потерянных событий/сэмплов и ошибок записи; handler p95 ≤ 0,25 мс, actual→OS
-  pen/eraser p95 **57,82/57,42 мс**, 139 unresolved lift batches. GPU занимает
-  около 1 мс; нужна связь выбранной UI-фазы, CA commit и OS receipt этого кадра.
-  Новая диагностика прошла ревью, scheduling сохранён. Накладные расходы trace
-  не откалиброваны. [Реальный Pencil и доставка 247](audit-evidence/2026-10-05/surface-consolidation/delivery-247.json).
+- **Pencil/eraser, ≤ 20 мс по контракту.** Настоящий Pencil в установленной 253:
+  6880 input batches, без потерь событий/сэмплов и ошибок записи; actual→OS
+  pen/eraser p95 **57,39/57,43 мс**, 118 unresolved lift batches. GPU execution
+  p95 **0,51/13,62 мс**; стоимость ластика растёт внутри длинного контакта.
+  Все 1723 кадра с UI-данными идут в normal-фазе без low-latency/immediate
+  presentation. Проверяются участие текущего UIKit update и повторная отрисовка
+  области ластика. Накладные расходы trace не откалиброваны; бюджет не принят.
+  [Фазы, OS receipts и точный baseline](audit-evidence/2026-10-07/product-quality-baseline/pencil-253.json).
 - **Undo обложки, 100 мс.** Первый 252 native-прогон: **114,956 мс** и неверное первое
   изображение. После ремонта изображения два диагностических прохода дали
   **90,566 / 95,681 мс** до CA commit, inverse SQL **31,7–31,9 мс**. Функционального
