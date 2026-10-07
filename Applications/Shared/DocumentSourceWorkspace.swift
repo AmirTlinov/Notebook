@@ -365,10 +365,11 @@ struct DocumentSourceWorkspace<Paper: View>: View {
         Button("Новый файл…") { filePath = ""; fileOperation = .create }
         Button("Переименовать…") { filePath = session?.path ?? document.files.first { $0.id == resourceID }?.path ?? document.entrypoint; fileOperation = .rename }
       } label: {
-        Label(session?.path ?? document.files.first { $0.id == resourceID }?.path ?? document.entrypoint, systemImage: "doc.text")
-          .lineLimit(1).truncationMode(.middle).frame(width: 140, alignment: .leading)
+        Label("Файлы документа", systemImage: "doc.text")
+          .labelStyle(.iconOnly).frame(width: 44, height: 44)
+          .contentShape(Rectangle())
       }.accessibilityIdentifier("document-source-menu")
-    }.padding(6).frame(height: 44).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+    }.padding(.horizontal, 6).frame(height: 44).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
     .accessibilityElement(children: .contain).accessibilityIdentifier("document-source-header")
     .sheet(item: $fileOperation) { operation in
       VStack(alignment: .leading, spacing: 16) {

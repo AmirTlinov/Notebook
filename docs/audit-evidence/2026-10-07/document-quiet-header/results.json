@@ -1,0 +1,131 @@
+{
+  "date": "2026-10-07",
+  "baseCommit": "87a10b5af446de793e1fce9a239ecb859b4571c6",
+  "sourceSHA256": "5d0378402d63f6d0d76dc92a2eaf33c1bd0ba57a78fe6e06e1003cedc0ef424c",
+  "sourceBeforeEqualsAfter": true,
+  "files": {
+    "Applications/Shared/DocumentSourceWorkspace.swift": "ef2c5389d2d3c289e4eaee465e1d20a86abbe065878af8c2432ef73b7450ae2b",
+    "Applications/UITests/NotebookInteractionActions.swift": "ba2f5a71e099f46b47587072114f0af3319ee76bb3da04b96fad3ae4540d6e10",
+    "Applications/UITests/NotebookPrintSourceUITests.swift": "90a4f7347960aaf3fe0edc487f0e55fcabb00d8d74a4671bbf61cc88c965703c"
+  },
+  "command": "./verify.sh --only --optimized --test NotebookUITests/NotebookPrintSourceUITests/testDocumentModesStayReachableAcrossPaperEditorAndRotationWithoutOverlap --evidence-dir .build/document-quiet-header-20261007-v1",
+  "summary": {
+    "devicesAndConfigurations": [
+      {
+        "device": {
+          "architecture": "arm64e",
+          "deviceId": "00008103-001E059934D9001E",
+          "deviceName": "iPad (Елизавета)",
+          "modelName": "iPad Pro (11-inch) (3rd generation)",
+          "osBuildNumber": "24A435",
+          "osVersion": "27.0",
+          "platform": "iOS"
+        },
+        "expectedFailures": 0,
+        "failedTests": 0,
+        "passedTests": 1,
+        "skippedTests": 0,
+        "testPlanConfiguration": {
+          "configurationId": "1",
+          "configurationName": "Test Scheme Action"
+        }
+      }
+    ],
+    "environmentDescription": "Notebook · Built with macOS 27.0.1",
+    "expectedFailures": 0,
+    "failedTests": 0,
+    "finishTime": 1791380372.308,
+    "passedTests": 1,
+    "result": "Passed",
+    "runtimeWarnings": [],
+    "skippedTests": 0,
+    "startTime": 1791380313.841,
+    "statistics": [],
+    "testFailures": [],
+    "title": "Test - Notebook",
+    "topInsights": [],
+    "totalTestCount": 1
+  },
+  "compilerWarningDiagnostics": 18,
+  "scope": [
+    "Opened document header uses an accessible icon-only file menu with a 44 by 44 point target; current filename is absent from the header.",
+    "Physical iPad A4 geometry remains portrait at device portrait and landscape orientations.",
+    "Paper, code and beside modes are reachable and their controls do not overlap."
+  ],
+  "geometry": {
+    "portrait": "paper=(-0.0030888890157143574, 7.242691666487303, 834.1233549786086, 1179.5413636367225), window=(0.0, 0.0, 834.0, 1194.0), header=(18.0, 18.0, 210.0, 44.0), orientation=1",
+    "landscape": "paper=(302.1494138189075, -0.0029718850487938653, 589.7883936757369, 834.0250899115895), window=(0.0, 0.0, 1194.0, 834.0), header=(18.0, 18.0, 282.0, 44.0), orientation=3"
+  },
+  "attachments": [
+    {
+      "attachments": [
+        {
+          "configurationName": "Test Scheme Action",
+          "deviceId": "00008103-001E059934D9001E",
+          "deviceName": "iPad (Елизавета)",
+          "exportedFileName": "81D4EBFA-A8EB-4D4C-84EF-F751B7BD09EC.png",
+          "isAssociatedWithFailure": false,
+          "suggestedHumanReadableName": "Document modes 3_0_EF4853A8-84DA-4F45-9D80-46538829117B.png",
+          "timestamp": 1791380365.667
+        },
+        {
+          "configurationName": "Test Scheme Action",
+          "deviceId": "00008103-001E059934D9001E",
+          "deviceName": "iPad (Елизавета)",
+          "exportedFileName": "BF878A4D-7A0C-4A0F-AF30-0FED61585754.png",
+          "isAssociatedWithFailure": false,
+          "suggestedHumanReadableName": "A4 paper and compact header 3_0_2A8EADBF-1C2E-4B92-A7D0-4FEB28B59257.png",
+          "timestamp": 1791380351.864
+        },
+        {
+          "configurationName": "Test Scheme Action",
+          "deviceId": "00008103-001E059934D9001E",
+          "deviceName": "iPad (Елизавета)",
+          "exportedFileName": "3588D356-3BFF-4FCB-98EE-872D3ADE2C50.txt",
+          "isAssociatedWithFailure": false,
+          "suggestedHumanReadableName": "A4 paper geometry 3_0_EA3A9875-259F-4738-A69C-59B5D52D2D7C.txt",
+          "timestamp": 1791380351.717
+        },
+        {
+          "configurationName": "Test Scheme Action",
+          "deviceId": "00008103-001E059934D9001E",
+          "deviceName": "iPad (Елизавета)",
+          "exportedFileName": "FD9CAB7D-9B28-4DC5-B60F-F43FA6EA6154.png",
+          "isAssociatedWithFailure": false,
+          "suggestedHumanReadableName": "Document modes 1_0_43837316-1B0C-42C4-A880-7FE1F4521B35.png",
+          "timestamp": 1791380339.495
+        },
+        {
+          "configurationName": "Test Scheme Action",
+          "deviceId": "00008103-001E059934D9001E",
+          "deviceName": "iPad (Елизавета)",
+          "exportedFileName": "5B50898E-25D3-430B-9F66-8C8606FA0C20.png",
+          "isAssociatedWithFailure": false,
+          "suggestedHumanReadableName": "A4 paper and compact header 1_0_E043BB1F-34C4-41D4-8265-930FCCA5AB8A.png",
+          "timestamp": 1791380327.645
+        },
+        {
+          "configurationName": "Test Scheme Action",
+          "deviceId": "00008103-001E059934D9001E",
+          "deviceName": "iPad (Елизавета)",
+          "exportedFileName": "B762DB16-9424-4CF4-93BD-8204DC86B8AE.txt",
+          "isAssociatedWithFailure": false,
+          "suggestedHumanReadableName": "A4 paper geometry 1_0_E9137734-1C70-4E62-9C0E-B7E969CDCAB3.txt",
+          "timestamp": 1791380327.526
+        }
+      ],
+      "testIdentifier": "NotebookPrintSourceUITests/testDocumentModesStayReachableAcrossPaperEditorAndRotationWithoutOverlap()",
+      "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookUITests/NotebookPrintSourceUITests/testDocumentModesStayReachableAcrossPaperEditorAndRotationWithoutOverlap"
+    }
+  ],
+  "screenshotsReviewed": [
+    "5B50898E-25D3-430B-9F66-8C8606FA0C20.png",
+    "BF878A4D-7A0C-4A0F-AF30-0FED61585754.png"
+  ],
+  "evidenceDirectory": ".build/document-quiet-header-20261007-v1",
+  "limitations": [
+    "Production pair257 is still installed; this correction ran under the isolated native-test identity and awaits the next signed pair.",
+    "The earlier fit fixture explicitly authored landscape paper at 900 by 600 bp. This check uses the ordinary A4 fixture; it does not change source paper size or lock device rotation.",
+    "Single affected UI journey; no product-wide performance acceptance."
+  ]
+}
