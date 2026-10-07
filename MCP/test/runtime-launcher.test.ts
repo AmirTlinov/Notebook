@@ -5,7 +5,7 @@ import {Client, InMemoryTransport} from '@modelcontextprotocol/client';
 import {createServer, type Socket} from 'node:net';
 import {chmod, cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile} from 'node:fs/promises';
 import {dirname, join} from 'node:path';
-import {ensureRuntime, runtimeBootstrap} from '../src/runtime-launcher.js';
+import {ensureRuntime, runtimeBootstrap, type RuntimeStartupEvent} from '../src/runtime-launcher.js';
 import {createServer as createNotebookServer} from '../src/server.js';
 import {BridgeError} from '../src/bridge.js';
 
@@ -86,10 +86,48 @@ test('an incompatible or unsafe owner cannot trigger a second runtime',async t=>
 
 test('startup timeout is bounded and launches at most once per client',async t=>{
   const host=await owner(t,()=>({result:status}));
-  let launches=0;
+  let launches=0;const events:RuntimeStartupEvent[]=[];
   await assert.rejects(ensureRuntime('/plugin/NotebookRuntime.app',host.socket,status.build,
-    {launch:async()=>{launches++;},timeoutMilliseconds:150}),/has not opened its IPC channel/);
+    {launch:async()=>{launches++;},timeoutMilliseconds:150,trace:event=>events.push(event)}),(error:Error)=>{
+    assert.match(error.message,/has not opened its IPC channel.*Last attempt: ipc_unavailable/);
+    assert(error.cause instanceof BridgeError);assert.equal(error.cause.detail.code,'ipc_unavailable');return true;
+  });
   assert.equal(launches,1);
+  assert.deepEqual(events.map(value=>value.phase),['startup.begin','launch.begin','launch.end','startup.failed']);
+  assert(events.at(-1)!.attempts>=1);assert.equal(events.at(-1)!.lastErrorCode,'ipc_unavailable');
+});
+
+test('startup summary counts retries without logging successful polls or private reply fields',async t=>{
+  let polls=0;const events:RuntimeStartupEvent[]=[];
+  const secret='private-reply-do-not-log';
+  const host=await owner(t,()=>++polls<3
+    ?{error:{code:'owner_unavailable',message:'Runtime is draining accepted work.',privateReply:secret}}
+    :{result:{...status,state:'opening',privateReply:secret}});
+  await host.start();
+  const result=await ensureRuntime('/private/plugin/runtime/NotebookRuntime.app',host.socket,status.build,
+    {launch:async()=>assert.fail('An existing owner remains admitted'),trace:event=>events.push(event)});
+  assert.equal(result.state,'opening','Trace preserves the existing opening-owner admission contract');
+  assert.deepEqual(events.map(value=>value.phase),['startup.begin','startup.done']);
+  assert.equal(events[1]!.attempts,3);assert.equal(events[1]!.lastErrorCode,'owner_unavailable');
+  assert.equal(events[1]!.runtimePID,status.pid);assert.equal(events[1]!.runtimeState,'opening');
+  assert(Number.isFinite(Date.parse(events[0]!.startedAt)));assert.equal(events[1]!.startedAt,events[0]!.startedAt);
+  assert(events[1]!.elapsedMilliseconds>=events[0]!.elapsedMilliseconds);
+  const serialized=JSON.stringify(events);
+  for(const privateValue of [secret,host.socket,'/private/plugin'])assert(!serialized.includes(privateValue));
+});
+
+test('timeout retains the last owner refusal without tracing its message or private context',async t=>{
+  const detail={code:'owner_unavailable',message:'Runtime is draining accepted work.',privateReply:'private-owner-context'};
+  const host=await owner(t,()=>({error:detail})),events:RuntimeStartupEvent[]=[];
+  await host.start();
+  await assert.rejects(ensureRuntime('/plugin/NotebookRuntime.app',host.socket,status.build,
+    {timeoutMilliseconds:150,launch:async()=>assert.fail('No second owner'),trace:event=>events.push(event)}),(error:Error)=>{
+    assert.match(error.message,/Last attempt: owner_unavailable: Runtime is draining accepted work/);
+    assert(error.cause instanceof BridgeError);assert.deepEqual(error.cause.detail,detail);return true;
+  });
+  assert.deepEqual(events.map(value=>value.phase),['startup.begin','startup.failed']);
+  assert.equal(events[1]!.lastErrorCode,detail.code);
+  assert(!JSON.stringify(events).includes(detail.privateReply));assert(!JSON.stringify(events).includes(detail.message));
 });
 
 test('a live MCP connection recovers its crashed runtime before an addressed retry without replaying uncertain writes',async t=>{

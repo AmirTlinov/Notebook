@@ -15,6 +15,17 @@ export type RuntimeStatus = {
   build: string;
 };
 
+export type RuntimeStartupEvent = {
+  phase:"startup.begin"|"launch.begin"|"launch.end"|"startup.done"|"startup.failed";
+  startedAt:string;
+  elapsedMilliseconds:number;
+  attempts:number;
+  launched:boolean;
+  lastErrorCode?:string;
+  runtimePID?:number;
+  runtimeState?:RuntimeStatus["state"];
+};
+
 /** LaunchServices preserves the signed app's CloudKit and keychain identity. */
 export function launchRuntime(app: string): Promise<void> {
   return new Promise((fulfill, reject) => {
@@ -31,10 +42,20 @@ export function launchRuntime(app: string): Promise<void> {
 export async function ensureRuntime(app: string, socket: string, expectedBuild: string, options: {
   launch?: (app: string) => Promise<void>;
   timeoutMilliseconds?: number;
+  trace?: (event:RuntimeStartupEvent) => void;
 } = {}): Promise<RuntimeStatus> {
-  const deadline = performance.now() + (options.timeoutMilliseconds ?? 10_000);
+  const began = performance.now(), deadline = began + (options.timeoutMilliseconds ?? 10_000);
+  const startedAt=new Date().toISOString();
   let launched = false;
+  let attempts = 0, lastError:BridgeError|undefined;
+  const trace=(phase:RuntimeStartupEvent["phase"],status?:RuntimeStatus)=>{
+    try { options.trace?.({phase,startedAt,elapsedMilliseconds:performance.now()-began,attempts,launched,
+      ...(lastError?{lastErrorCode:String(lastError.detail.code)}:{}),
+      ...(status?{runtimePID:status.pid,runtimeState:status.state}:{})}); } catch { /* Diagnostics never own admission. */ }
+  };
+  trace("startup.begin");
   do {
+    attempts++;
     try {
       const status = await runBridge<RuntimeStatus>(socket, { command: "runtimeStatus" },
         { deadline: Math.min(deadline, performance.now() + 750) });
@@ -50,26 +71,37 @@ export async function ensureRuntime(app: string, socket: string, expectedBuild: 
           + "Complete the runtime update before reconnecting the plugin."});
       }
       if (!status.ready) throw new BridgeError({code:"owner_unavailable",message:"Notebook runtime is draining accepted work."});
+      trace("startup.done",status);
       return status;
     } catch (error) {
+      lastError=error instanceof BridgeError?error:undefined;
       if (error instanceof BridgeError
-        && ["ipc_unauthorized", "runtime_update_required"].includes(String(error.detail.code))) throw error;
+        && ["ipc_unauthorized", "runtime_update_required"].includes(String(error.detail.code))) {
+        trace("startup.failed");throw error;
+      }
       if (!(error instanceof BridgeError)
         || !["ipc_unavailable", "ipc_timeout", "owner_unavailable"].includes(String(error.detail.code))) {
+        trace("startup.failed");
         throw new Error("The active Notebook owner does not support this plugin runtime. "
           + "Finish the Notebook runtime transition before reconnecting the plugin. "
           + (error instanceof Error ? error.message : String(error)), { cause: error });
       }
       if (!launched && error.detail.code === "ipc_unavailable") {
         launched = true;
-        await (options.launch ?? launchRuntime)(app);
+        trace("launch.begin");
+        try { await (options.launch ?? launchRuntime)(app); }
+        catch(error) { trace("startup.failed");throw error; }
+        trace("launch.end");
       }
     }
     const remaining = deadline - performance.now();
     if (remaining > 0) await new Promise(fulfill => setTimeout(fulfill, Math.min(100, remaining)));
   } while (performance.now() < deadline);
+  trace("startup.failed");
   throw new Error("The bundled Notebook runtime has not opened its IPC channel. "
-    + "Reconnect the plugin after resolving its startup error.");
+    + "Reconnect the plugin after resolving its startup error."
+    + (lastError?` Last attempt: ${String(lastError.detail.code)}: ${lastError.message.slice(0,512).replace(/[\r\n]/g," ")}`:""),
+    {cause:lastError});
 }
 
 /** Bootstrap requests share one admission attempt. A later user retry starts
@@ -98,7 +130,12 @@ async function main() {
     {timeout:2_000,maxBuffer:1024});
   const build = stdout.trim();
   if (!build) throw new Error("The bundled Notebook runtime has no build identity.");
-  const bootstrapRuntime=runtimeBootstrap(app,socket,build);
+  let tracingStartup=true;
+  const bootstrapRuntime=runtimeBootstrap(app,socket,build,{trace:event=>{
+    if(!tracingStartup)return;
+    console.error(JSON.stringify({kind:"notebook-runtime-startup",launcherPID:process.pid,...event}));
+    if(event.phase==="startup.done"||event.phase==="startup.failed")tracingStartup=false;
+  }});
   await bootstrapRuntime();
   // The launcher already runs in the bundled Node. Keep one stdio transport
   // and its normal signal/EOF lifetime; closing it does not stop the app owner.

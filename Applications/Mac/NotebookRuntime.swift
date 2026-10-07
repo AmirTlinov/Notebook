@@ -6,6 +6,7 @@ import OSLog
 @main @MainActor
 enum NotebookRuntime {
   static func main() {
+    NotebookRuntimeIdentity.recordStartup("process.entry")
     #if DEBUG
       // XCTest supplies explicit isolated owners and never starts this model.
       // Release and signed acceptance processes always validate the full seal.
@@ -43,6 +44,7 @@ final class NotebookRuntimeLifecycle: NSObject, NSApplicationDelegate {
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     guard !isRunningTests else { return }
+    NotebookRuntimeIdentity.recordStartup("launch.delegate")
     // OS termination joins the same saved boundary as a requested quit.
     // Closing an MCP connection or a panel never invokes this path.
     for number in [SIGTERM, SIGINT] {

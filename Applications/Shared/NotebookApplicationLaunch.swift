@@ -47,6 +47,7 @@ final class NotebookApplicationLaunch {
     private var runtimeIsStopping = false
     private var runtimeNeedsRecovery = false
     private var isBootstrapping = false
+    @ObservationIgnored private var recordedStartupStatus = false
     @ObservationIgnored private var operationWaiters: [CheckedContinuation<Void, Never>] = []
   #endif
 
@@ -175,7 +176,12 @@ final class NotebookApplicationLaunch {
         throw CollaborationError("runtime_owner_required", "Запрос требует действующего владельца Notebook runtime.")
       }
       switch command.command {
-      case .runtimeStatus: return try .encode(runtimeStatus())
+      case .runtimeStatus:
+        let first = !recordedStartupStatus
+        recordedStartupStatus = true
+        if first { NotebookRuntimeIdentity.recordStartup("runtime_status.begin") }
+        defer { if first { NotebookRuntimeIdentity.recordStartup("runtime_status.end") } }
+        return try .encode(runtimeStatus())
       case .runtimeWorkspace:
         guard let request = command.runtimeWorkspace else {
           throw CollaborationError("invalid_runtime_workspace", "Нужно действие пространства.")
@@ -384,6 +390,7 @@ final class NotebookApplicationLaunch {
     #if os(macOS)
       existingRuntimeSocketURL = nil
       do {
+        NotebookRuntimeIdentity.recordStartup("socket.claim.begin")
         let lease = try NotebookIPCProcessLease(socketURL: runtimeSocketURL)
         let server = NotebookIPCServer(socketURL: runtimeSocketURL) { [weak self] command in
           guard let self else { throw CollaborationError("owner_unavailable", "Notebook завершает работу.") }
@@ -392,6 +399,7 @@ final class NotebookApplicationLaunch {
         try server.start()
         workspaceWriters.bindAcceptedWitnessLease(lease)
         defaultCommandServer = server; runtimeLease = lease
+        NotebookRuntimeIdentity.recordStartup("socket.bound")
       } catch {
         if (error as? CollaborationError)?.code == "ipc_owner_running" { existingRuntimeSocketURL = runtimeSocketURL }
         throw error
