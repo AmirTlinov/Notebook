@@ -163,6 +163,10 @@ after repeated foreign moves, while captured roots and painter cursors remain
 stable. Cancellation restores selected sources against the current plan,
 preserving unrelated suppression even when its prepared geometry is empty.
 
+Full captured-value traversal uses a repeatable `Sequence` with an exact capacity
+hint. `map` and array construction visit each action once through the existing
+iterator; addressed lookup stays logarithmic.
+
 An offcrop ordered body retains its source and clip metadata; its first visible
 preparation stages mutable material renderers from the captured inputs.
 Rectangle clips submit six inline display nodes. Polygon clips admit aligned

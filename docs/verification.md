@@ -429,11 +429,20 @@ GUI-196, GUI-197, GUI-183 и длительная GUI-250 остаются от�
   cold reopen→select→node+connector move; соседний WebKit живой. V2 ожидал
   ручку whole group для отдельных elements, v3 тащил невыбранный узел до
   требуемого pickup hold; исправлены только эти два ожидания сценария.
-  Production установка согласованной пары ещё в работе.
+  Production259 (app0.3.189/plugin0.2.11) установлена; build/source hash chain
+  и включение исправлений проверены, код опубликован в `main`.
   [Baseline, фазы и все запросы](audit-evidence/2026-10-07/selection-pose/baseline.json).
   [Адресный кандидат](audit-evidence/2026-10-07/selection-pose/addressed-index.json).
   [Lazy clips, polygon и все запросы](audit-evidence/2026-10-07/selection-pose/lazy-clips.json).
   [Меню и полный page gesture](audit-evidence/2026-10-07/selection-pose/menu-gesture.json).
+  GUI-528: captured values переведены на линейный `Sequence`, rank API удалён.
+  **3 Core + 1 native PASS на физическом iPad**, 0 skip/runtime warnings;
+  исходники неизменны. При 100k подготовка **1389,84 мс** (ранее 1390,06),
+  initial install **481,56 мс**,
+  p95 **64,71 мс**, footprint **614,01 MB**. Ускорение подготовки не измерено;
+  нужен профиль её затрат. Все 120 запросов и exact OS receipts сохранены,
+  initial/final pixels корректны. GUI-528 пока вне installed259.
+  [Линейный обход, фазы и все запросы](audit-evidence/2026-10-07/selection-pose/linear-values.json).
 - **Pencil/eraser, ≤ 20 мс по контракту.** Настоящий Pencil в установленной 253:
   6880 input batches, без потерь событий/сэмплов и ошибок записи; actual→OS
   pen/eraser p95 **57,39/57,43 мс**, 118 unresolved lift batches. GPU execution

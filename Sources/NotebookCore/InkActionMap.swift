@@ -135,26 +135,18 @@ public struct InkActionMap<Key: Comparable & Sendable, Value: Sendable>: Sendabl
   }
   public var values: Values { .init(root: root) }
 
-  /// Full iteration retains a search path. Rank lookup is logarithmic and is
-  /// provided for ordinary collection clients outside the addressed pose path.
-  public struct Values: Collection, Sendable {
-    public typealias Index = Int
+  /// Each traversal walks the captured root once, retaining only its search path.
+  public struct Values: Sequence, Sendable {
     public typealias Element = Value
     private let root: InkActionMapNode<Key, Value>?
     fileprivate init(root: InkActionMapNode<Key, Value>?) { self.root = root }
-    public var startIndex: Int { 0 }
-    public var endIndex: Int { root?.count ?? 0 }
-    public var count: Int { endIndex }
-    public func index(after index: Int) -> Int { index + 1 }
-    public subscript(index: Int) -> Value {
-      precondition(index >= 0 && index < endIndex)
-      var node = root!, rank = index
-      while true {
-        let leftCount = node.left?.count ?? 0
-        if rank < leftCount { node = node.left! }
-        else if rank == leftCount { return node.value }
-        else { rank -= leftCount + 1; node = node.right! }
-      }
+    public var count: Int { root?.count ?? 0 }
+    public var underestimatedCount: Int { count }
+    public var isEmpty: Bool { root == nil }
+    public var first: Value? {
+      var node = root
+      while let left = node?.left { node = left }
+      return node?.value
     }
     public struct Iterator: IteratorProtocol {
       private var base: InkActionSequence<Key, Value>.Iterator
