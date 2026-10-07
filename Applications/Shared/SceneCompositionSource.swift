@@ -906,7 +906,6 @@ actor SceneCompositionSource {
     var retained: [SceneCompositionTileKey] = []
     for tile in tiles {
       try Task.checkCancellation()
-      if tile.range.layer == .ink { retained.append(tile); continue }
       // Board painting also reaches covers whose shadows cross the tile edge.
       // One output pixel conservatively includes projection rounding at edges.
       let padding = (tile.plane.coverID == nil ? WorkspaceCoverRaster.shadowPadding : 0)
@@ -929,10 +928,37 @@ actor SceneCompositionSource {
         read = Read(entries: entries, exhausted: cursor == nil)
         reads[probe] = read
       }
-      if !read.exhausted || read.entries.contains(where: tile.range.contains) { retained.append(tile) }
+      if tile.range.layer == .ink {
+        // A moved claimed contact paints at its element's current placement,
+        // independently of the raw contact's old indexed bounds. Any element
+        // or an unfinished paint query conservatively keeps this ink plane.
+        if try !read.exhausted || read.entries.contains(where: { if case .element = $0.id { true } else { false } })
+          || inkMayPaint(on: tile.plane.coverID.map(SurfaceID.cover) ?? .board(tile.plane.boardID), in: bounds) {
+          retained.append(tile)
+        }
+      } else if !read.exhausted || read.entries.contains(where: tile.range.contains) { retained.append(tile) }
     }
     try validate()
     return retained
+  }
+
+  /// Empty ink uses the same addressed spatial index and final-cut witness as
+  /// its painter. The occupancy proof never decodes measured sample bodies.
+  private func inkMayPaint(on surface: SurfaceID, in bounds: WorkspaceSpatialBounds) throws -> Bool {
+    switch origin {
+    case .sql(let store): return try checked(store) { store in
+      let records = try store.readSpatialInkWindowRecords(coverage: [surface: bounds])
+      try retainInkWitness(records)
+      return !records.hashes.isEmpty
+    }
+    case .values(_, _, let journal):
+      do {
+        return try !journal.regionCapture(on: surface, in: bounds, elements: [], excluding: [], maximumCount: 1).contacts.isEmpty
+      } catch let error as CollaborationError where error.code == "selection_limit" {
+        // A bounded contact probe overflow establishes occupancy, not absence.
+        return true
+      }
+    }
   }
 
   func vectorRuns(_ owners: [SceneCompositionLiveOwner]) throws -> [SceneCompositionVectorRun] {

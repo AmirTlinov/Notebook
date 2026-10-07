@@ -72,7 +72,7 @@
     "status": "installed",
     "details": "installation.json",
     "comparison": "installed-comparison.json",
-    "trueCodexPanel": "pending reconnect from build255 and card expansion",
+    "trueCodexPanel": "Connected at 11:25 UTC; selection and zoom reproduced blur and lost card hits. See ../panel-occupancy/observed-256.json; full UI acceptance remains open.",
     "fullAcceptance": "open GUI-190"
   },
   "diagnosticLimit": "profiler.json"

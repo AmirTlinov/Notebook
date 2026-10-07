@@ -1,0 +1,89 @@
+{
+  "date": "2026-10-07",
+  "scope": "Empty ink occupancy, card geometry and hit order across raster budget changes. Candidate tests are separate from installed UI acceptance.",
+  "sourceSHA256": "b6f75eba9754353e76f30b922b9cc13ddeeb4d2615840bafff9407a78fbf9f92",
+  "files": {
+    "Applications/Shared/SceneCompositionSource.swift": "aad13ac202eddbb7e65eb68a4a1119a0e60729ea5c5e9fda48e09ee3814413e0",
+    "Applications/Mac/NotebookPanelPreviewWriter.swift": "630e211512f1131b84c0b92310d8735fb76c35b85845dd8fb0910ee031bfbe56",
+    "Applications/MacTests/NotebookPanelOccupancyTests.swift": "100e2e89d514eb0120739a7f7a2df15c7d2ef40ca4dce7e90078899538e4b213",
+    "Applications/MacTests/NotebookPanelMaterialTests.swift": "fa47a4db494b3aa17916b48c4845d8618bc57be30af1fa76df259bd9e8d76aa3",
+    "MCP/panel/surface.ts": "b3028f2f854cf23b9f4be561dbde965ae7d3cfabb9116a4cf8f2d904ed751339",
+    "MCP/panel/panel.ts": "28333080fe680378f40a456af1c7bd787f2eaaff7ca66edc2fc4db2711b55697",
+    "MCP/test/panel.test.ts": "057214e4853b75fa493dd061f8603540e9ec531952e3e57544ba6a3f80526447"
+  },
+  "native": {
+    "command": "./verify.sh --only --optimized --test NotebookMacTests/NotebookPanelOccupancyTests --test NotebookMacTests/NotebookPanelMaterialTests/testBudgetDemotedCoverCellsNeverAllocateIndependentMaterialPixels --test NotebookMacTests/NotebookPanelDensityTests/testMagnifiedNativeCoverKeepsScreenDensityAndReusesLocalCells --evidence-dir .build/runtime-257-occupancy",
+    "receipt": ".build/runtime-257-occupancy/verification.json",
+    "receiptSHA256": "98b348a4de326f91bced9140749931610771d6834f74ed485bf6d0e669c8b882",
+    "passed": 6,
+    "failed": 0,
+    "skipped": 0,
+    "runtimeWarnings": [],
+    "executed": [
+      "NotebookMacTests/NotebookPanelDensityTests/testMagnifiedNativeCoverKeepsScreenDensityAndReusesLocalCells",
+      "NotebookMacTests/NotebookPanelMaterialTests/testBudgetDemotedCoverCellsNeverAllocateIndependentMaterialPixels",
+      "NotebookMacTests/NotebookPanelOccupancyTests/testEmptyInkWitnessRejectsNewPaintAndClaimedContactKeepsItsMovedCell",
+      "NotebookMacTests/NotebookPanelOccupancyTests/testHundredThousandDistantContactsAndElementsDoNotAllocateEmptyInkCells",
+      "NotebookMacTests/NotebookPanelOccupancyTests/testNonseparatedStackCardsKeepNativeGeometryAndPainterOrder",
+      "NotebookMacTests/NotebookPanelOccupancyTests/testOverviewKeepsNineCoversAtRequestedDensityThroughZoomAndReturn"
+    ],
+    "occupancy": {
+      "distantContacts": 100000,
+      "distantElements": 100000,
+      "probes": 16,
+      "retained": 1,
+      "querySeconds": 0.000135417,
+      "timingScope": "One indexed source query sequence after fixture construction; not UI latency or total test time."
+    },
+    "overview": [
+      {
+        "scale": 0.104,
+        "cards": 9,
+        "layers": 11,
+        "decodedPixels": 5071012,
+        "requestMS": 297.32025
+      },
+      {
+        "scale": 0.17971199999999998,
+        "cards": 9,
+        "layers": 11,
+        "decodedPixels": 7665190,
+        "requestMS": 411.527291
+      },
+      {
+        "scale": 0.104,
+        "cards": 9,
+        "layers": 11,
+        "decodedPixels": 5071012,
+        "requestMS": 83.802208
+      }
+    ],
+    "overviewTimingScope": "Full fixture.send wall time, including native preparation; isolated test fixture, not installed Codex."
+  },
+  "frontend": {
+    "panelTests": {
+      "passed": 44,
+      "failed": 0,
+      "skipped": 0,
+      "log": ".build/panel-occupancy-20261007/panel-tests.log"
+    },
+    "strictTypeScript": "passed"
+  },
+  "review": {
+    "reviewer": "Independent subagent pair254_review",
+    "result": "No findings",
+    "scope": "Final native and frontend patch; no device runs by reviewer."
+  },
+  "remaining": [
+    "Actual frontend257 waits for refreshed Codex MCP connection; old chat still requires256 at12:19UTC. Zoom response remains around0.5s; page latency remains open.",
+    "Page navigation, input/IME, document adapters and complete physical performance acceptance remain open."
+  ],
+  "installed": {
+    "build": 257,
+    "version": "0.3.187",
+    "plugin": "0.2.9",
+    "status": "installed",
+    "installation": "installation.json",
+    "comparison": "installed-comparison.json"
+  }
+}

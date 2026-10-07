@@ -25,13 +25,16 @@ function materialFixture(t:TestContext) {
   const display={devicePixelRatio:1},dimensions={width:800,height:600};
   class NodePort {
     children:NodePort[]=[];attributes=new Map<string,string>();style={};clientWidth=800;clientHeight=600;
+    parentNode:NodePort|null=null;
     ownerDocument={defaultView:display};
     setAttribute(key:string,value:string){this.attributes.set(key,value);}
     removeAttribute(key:string){this.attributes.delete(key);}
     append(...nodes:NodePort[]){this.children.push(...nodes);}
-    insertBefore(node:NodePort,before:NodePort|null){this.children.splice(before?this.children.indexOf(before):this.children.length,0,node);}
+    insertBefore(node:NodePort,before:NodePort|null){if(node===before)return;node.remove();this.children.splice(before?this.children.indexOf(before):this.children.length,0,node);node.parentNode=this;}
+    remove(){if(this.parentNode){const siblings=this.parentNode.children;siblings.splice(siblings.indexOf(this),1);this.parentNode=null;}}
     replaceChildren(...nodes:NodePort[]){this.children=nodes;}
     get firstChild():NodePort|null{return this.children[0]??null;}
+    get nextSibling():NodePort|null{const siblings=this.parentNode?.children;return siblings?.[siblings.indexOf(this)+1]??null;}
   }
   const priorDocument=Object.getOwnPropertyDescriptor(globalThis,'document'),priorImage=Object.getOwnPropertyDescriptor(globalThis,'Image');
   Object.defineProperty(globalThis,'document',{configurable:true,value:{activeElement:null,
@@ -39,7 +42,8 @@ function materialFixture(t:TestContext) {
   Object.defineProperty(globalThis,'Image',{configurable:true,value:class {
     naturalWidth=dimensions.width;naturalHeight=dimensions.height;src='';async decode(){}
   }});
-  const surface=new Surface(new NodePort() as unknown as SVGSVGElement,new NodePort() as unknown as SVGGElement,new NodePort() as unknown as SVGGElement);
+  const svg=new NodePort();
+  const surface=new Surface(svg as unknown as SVGSVGElement,new NodePort() as unknown as SVGGElement,new NodePort() as unknown as SVGGElement);
   surface.setCamera({x:0,y:0,scale:1});
   t.after(()=>{surface.dispose();for(const [key,prior] of [['document',priorDocument],['Image',priorImage]] as const){
     if(prior)Object.defineProperty(globalThis,key,prior);else Reflect.deleteProperty(globalThis,key);
@@ -57,8 +61,30 @@ function materialFixture(t:TestContext) {
     const view:PanelView={viewport:{x:800,y:600},pixelScale,camera:value.appearance!.camera};
     return surface.prepare(value,view);
   };
-  return {surface,display,snapshot,prepare};
+  return {surface,display,snapshot,prepare,hits:()=>svg.children[0]!.children};
 }
+
+test('cover selection keeps native painter order when pixels merge into tiles',async t=>{
+  const {surface,snapshot,prepare,hits}=materialFixture(t);
+  const frame={x:40,y:50,width:300,height:400};
+  let retained:ReturnType<typeof hits>|undefined;
+  for(const separated of ['front','rear',null]){
+    const value=snapshot(1);
+    value.cards=['rear','front'].map(id=>({item:{id,kind:'notebook',title:id},center:value.worldOrigin!,
+      worldOrigin:value.worldOrigin!,frame,editable:id===separated,source:{id,placements:[]}}));
+    if(separated)value.appearance!.layers[0]!.itemID=separated;
+    assert.equal(await prepare(value),true);surface.render(value);
+    assert.deepEqual(hits().map(hit=>hit.attributes.get('data-card-id')),['rear','front'],
+      'The upper card remains the last SVG hit regardless of separate pixels');
+    if(retained)assert.deepEqual(hits(),retained,'Changing raster admission keeps the same focusable nodes');
+    retained=[...hits()];
+    assert.deepEqual(surface.selectionFrame({kind:'item',id:'front'}),frame);
+    surface.select({kind:'item',id:'front'});
+    assert.equal(hits()[1]!.attributes.get('aria-pressed'),'true');
+    assert.equal(surface.hasItemSubject('front'),separated==='front',
+      'Hit geometry alone does not grant independent movement');
+  }
+});
 
 test('same-source late coarse material cannot replace sharper pixels at the current zoom',async t=>{
   const {surface,snapshot,prepare}=materialFixture(t),sharp=snapshot(1),coarse=snapshot(.5,1600,1200);

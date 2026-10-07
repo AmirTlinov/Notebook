@@ -63,7 +63,11 @@ including address limits, memory growth and refusal without partial writes.
 Bulk migration waits for this gate and the physical iPad scenario in
 [GUI-475](https://linear.app/main-cluster/issue/GUI-475).
 This first slice extends the existing panel. Native raster coverage and polling
-remain until their C2 replacements. The runtime is now packaged inside the plugin;
+remain until their C2 replacements. Card geometry and painter order come from
+the native scene independently of raster separation. Empty ink cells are omitted
+only after an addressed occupancy proof; empty SQL reads remain in the final
+pixel witness, while uncertain or claimed content retains its paint cell.
+The runtime is now packaged inside the plugin;
 `NotebookRuntimeLifecycle` owns its process, while `NotebookApplicationLaunch`
 owns admission, the workspace catalog and persistence recovery. The panel opens,
 creates and selects spaces through `runtimeStatus` / `runtimeWorkspace`; those

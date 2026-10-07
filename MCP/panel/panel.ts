@@ -370,7 +370,7 @@ async function openCard(id:string){
   const card=session.snapshot?.cards.find(c=>c.item.id===id);if(!card)return;
   const target:PanelTarget|undefined=card.item.kind==="board"?{kind:"board",id}:
     card.item.kind==="notebook"&&typeof card.item.firstPageID==="string"?{kind:"page",id:card.item.firstPageID}:undefined;
-  if(!target){session.onError("Этот документ пока открывается в приложении Notebook. Агент может работать с ним через инструменты плагина.",null);return;}
+  if(!target){session.onError("Просмотр этого документа в панели пока недоступен.",null);return;}
   const previous={target:session.address().target,camera:{...worldCamera,center:{...worldCamera.center}},selection:selected};
   if(await session.openSurface(target))path.push(previous);buttons();
 }

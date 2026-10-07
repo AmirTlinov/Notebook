@@ -108,8 +108,13 @@ final class NotebookPanelMaterialTests: XCTestCase {
     let result = try await renderer.renderPanel(presence: .init(boardID: target.id, mode: .board,
       camera: projection.camera, viewport: projection.viewport), projection: projection,
       editableIDs: [], movableItemIDs: Set(ids), knownAssets: [])
-    XCTAssertTrue(result.layers.allSatisfy { $0.itemID == nil }, "The crowded cohort rejoins every optional cover before quality fallback")
-    XCTAssertTrue(result.diagnostics.contains { $0.kind == "quality_limit" })
+    XCTAssertLessThan(Set(result.layers.compactMap(\.itemID)).count, ids.count,
+      "The crowded cohort still demotes bodies before preparing any pixels")
+    XCTAssertFalse(result.diagnostics.contains { $0.kind == "quality_limit" }, "Empty ink cannot consume the cover budget")
+    for layer in result.layers where layer.repeatSize == nil {
+      XCTAssertGreaterThanOrEqual(min(Double(layer.pixelWidth) / layer.frame.width,
+        Double(layer.pixelHeight) / layer.frame.height) + 0.000001, projection.camera.scale * projection.pixelScale)
+    }
     XCTAssertEqual(resources.rasterCount, Set(result.layers.map(\.assetID)).count,
       "No independent cover cells may be prepared and then thrown away")
     XCTAssertEqual(resources.reservedBytes, 0)

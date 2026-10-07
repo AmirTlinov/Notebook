@@ -1,0 +1,202 @@
+{
+  "date": "2026-10-07",
+  "installed": {
+    "pair": 256,
+    "app": "0.3.186",
+    "plugin": "0.2.8"
+  },
+  "scope": "Actual Codex panel observations followed by read-only installed MCP reproduction; no UI latency metric",
+  "actualPanel": {
+    "connectedAtUTC": "11:25",
+    "observations": [
+      {
+        "timeUTC": "11:26",
+        "boardCards": 9,
+        "zoomPercent": 10
+      },
+      {
+        "timeUTC": "11:28",
+        "cardSelection": "pressed after click"
+      },
+      {
+        "timeUTC": "11:30",
+        "action": "three zoom-in clicks",
+        "zoomPercent": 18
+      },
+      {
+        "timeUTC": "11:37",
+        "qualityLimitMessage": true,
+        "cardHits": 0,
+        "visibleCovers": "blurred"
+      },
+      {
+        "timeUTC": "11:39",
+        "action": "three zoom-out clicks",
+        "zoomPercent": 10,
+        "qualityLimitMessage": true,
+        "cardHits": 0
+      }
+    ],
+    "screenshot": {
+      "path": "/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/.build/panel-debug-20261007/panel256-board-18percent.jpg",
+      "sha256": "ddba0f14cb1ae85c7dedb9f92eab0fce18d5ce794123a402086aa8dede1a6a8a",
+      "publication": "Private local capture; not committed"
+    },
+    "limitations": [
+      "Targeted page opening produced a new opening card; mounted board was not redirected.",
+      "Repeated DOM/evaluate timeouts are automation failures, not product timing evidence.",
+      "Page navigation and full input/IME acceptance remain open."
+    ]
+  },
+  "reproduction": {
+    "route": "Installed256 read-only board fit, x1.728 zoom and return; viewport1247x1201,DPR2 chosen from screenshot size, camera1558,1940 at.104 estimated from visible834pt covers, not exact browser metrics; no host latency claim",
+    "timestamp": "2026-10-07T11:43:14.283Z",
+    "readOnly": true,
+    "samples": [
+      {
+        "label": "initial-approx-ui",
+        "request": {
+          "viewport": {
+            "x": 1759,
+            "y": 1713
+          },
+          "pixelScale": 2,
+          "camera": {
+            "center": {
+              "tileX": 0,
+              "tileY": 0,
+              "localX": 1558,
+              "localY": 1940
+            },
+            "scale": 0.104
+          }
+        },
+        "responseMS": 108.59670900000003,
+        "sourceRevision": "a844db156e47c371d10309c0cb7978131f2ff67049a1c4c921a79822347ecda6",
+        "cards": 9,
+        "cardFrames": 0,
+        "layers": 6,
+        "decodedPixels": 20979089,
+        "pngCharacters": 572644,
+        "coverage": {
+          "anchor": {
+            "tileX": -2,
+            "tileY": -2,
+            "localY": 3325.984251968504,
+            "localX": 3325.984251968504
+          },
+          "level": 6,
+          "pixelDensity": 0.07696969696969697,
+          "region": {
+            "height": 26607.87401574803,
+            "width": 26607.874015748035,
+            "y": 0,
+            "x": 0
+          }
+        },
+        "diagnostics": [
+          {
+            "kind": "quality_limit",
+            "message": "Нативное представление достигло предела деталей этой области."
+          }
+        ]
+      },
+      {
+        "label": "zoom-three-approx-ui",
+        "request": {
+          "viewport": {
+            "x": 1759,
+            "y": 1713
+          },
+          "pixelScale": 2,
+          "camera": {
+            "center": {
+              "tileX": 0,
+              "tileY": 0,
+              "localX": 1558,
+              "localY": 1940
+            },
+            "scale": 0.17971199999999996
+          }
+        },
+        "responseMS": 467.575792,
+        "sourceRevision": "a844db156e47c371d10309c0cb7978131f2ff67049a1c4c921a79822347ecda6",
+        "cards": 9,
+        "cardFrames": 0,
+        "layers": 6,
+        "decodedPixels": 20977145,
+        "pngCharacters": 801488,
+        "coverage": {
+          "pixelDensity": 0.15393939393939393,
+          "region": {
+            "height": 13303.937007874016,
+            "y": 0,
+            "x": 0,
+            "width": 13303.937007874014
+          },
+          "anchor": {
+            "tileX": -1,
+            "localY": 1662.9921259842522,
+            "tileY": -1,
+            "localX": 1662.992125984252
+          },
+          "level": 5
+        },
+        "diagnostics": [
+          {
+            "kind": "quality_limit",
+            "message": "Нативное представление достигло предела деталей этой области."
+          }
+        ]
+      },
+      {
+        "label": "back-approx-ui",
+        "request": {
+          "viewport": {
+            "x": 1759,
+            "y": 1713
+          },
+          "pixelScale": 2,
+          "camera": {
+            "center": {
+              "tileX": 0,
+              "tileY": 0,
+              "localX": 1558,
+              "localY": 1940
+            },
+            "scale": 0.104
+          }
+        },
+        "responseMS": 433.165708,
+        "sourceRevision": "a844db156e47c371d10309c0cb7978131f2ff67049a1c4c921a79822347ecda6",
+        "cards": 9,
+        "cardFrames": 0,
+        "layers": 6,
+        "decodedPixels": 20979089,
+        "pngCharacters": 572644,
+        "coverage": {
+          "level": 6,
+          "region": {
+            "x": 0,
+            "y": 0,
+            "width": 26607.874015748035,
+            "height": 26607.87401574803
+          },
+          "anchor": {
+            "tileX": -2,
+            "localY": 3325.984251968504,
+            "localX": 3325.984251968504,
+            "tileY": -2
+          },
+          "pixelDensity": 0.07696969696969697
+        },
+        "diagnostics": [
+          {
+            "kind": "quality_limit",
+            "message": "Нативное представление достигло предела деталей этой области."
+          }
+        ]
+      }
+    ]
+  }
+}

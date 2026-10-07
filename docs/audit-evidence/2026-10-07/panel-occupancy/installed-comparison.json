@@ -1,0 +1,495 @@
+{
+  "date": "2026-10-07",
+  "scope": "Installed256 read-only board fit, x1.728 zoom and return; viewport1247x1201,DPR2 chosen from screenshot size, camera1558,1940 at.104 estimated from visible834pt covers, not exact browser metrics; no host latency claim",
+  "comparison": "Identical requested camera/viewport and source revision; output quality changed intentionally. Single read-only passes; no UI latency, p95 or cold-start equivalence claim.",
+  "series": {
+    "256Warm": {
+      "at": "2026-10-07T11:43:14.283Z",
+      "samples": [
+        {
+          "label": "initial-approx-ui",
+          "request": {
+            "viewport": {
+              "x": 1759,
+              "y": 1713
+            },
+            "pixelScale": 2,
+            "camera": {
+              "center": {
+                "tileX": 0,
+                "tileY": 0,
+                "localX": 1558,
+                "localY": 1940
+              },
+              "scale": 0.104
+            }
+          },
+          "responseMS": 108.59670900000003,
+          "sourceRevision": "a844db156e47c371d10309c0cb7978131f2ff67049a1c4c921a79822347ecda6",
+          "cards": 9,
+          "cardFrames": 0,
+          "layers": 6,
+          "decodedPixels": 20979089,
+          "pngCharacters": 572644,
+          "bytes": 583110,
+          "coverage": {
+            "anchor": {
+              "tileX": -2,
+              "tileY": -2,
+              "localY": 3325.984251968504,
+              "localX": 3325.984251968504
+            },
+            "level": 6,
+            "pixelDensity": 0.07696969696969697,
+            "region": {
+              "height": 26607.87401574803,
+              "width": 26607.874015748035,
+              "y": 0,
+              "x": 0
+            }
+          },
+          "diagnostics": [
+            {
+              "kind": "quality_limit",
+              "message": "Нативное представление достигло предела деталей этой области."
+            }
+          ]
+        },
+        {
+          "label": "zoom-three-approx-ui",
+          "request": {
+            "viewport": {
+              "x": 1759,
+              "y": 1713
+            },
+            "pixelScale": 2,
+            "camera": {
+              "center": {
+                "tileX": 0,
+                "tileY": 0,
+                "localX": 1558,
+                "localY": 1940
+              },
+              "scale": 0.17971199999999996
+            }
+          },
+          "responseMS": 467.575792,
+          "sourceRevision": "a844db156e47c371d10309c0cb7978131f2ff67049a1c4c921a79822347ecda6",
+          "cards": 9,
+          "cardFrames": 0,
+          "layers": 6,
+          "decodedPixels": 20977145,
+          "pngCharacters": 801488,
+          "bytes": 811984,
+          "coverage": {
+            "pixelDensity": 0.15393939393939393,
+            "region": {
+              "height": 13303.937007874016,
+              "y": 0,
+              "x": 0,
+              "width": 13303.937007874014
+            },
+            "anchor": {
+              "tileX": -1,
+              "localY": 1662.9921259842522,
+              "tileY": -1,
+              "localX": 1662.992125984252
+            },
+            "level": 5
+          },
+          "diagnostics": [
+            {
+              "kind": "quality_limit",
+              "message": "Нативное представление достигло предела деталей этой области."
+            }
+          ]
+        },
+        {
+          "label": "back-approx-ui",
+          "request": {
+            "viewport": {
+              "x": 1759,
+              "y": 1713
+            },
+            "pixelScale": 2,
+            "camera": {
+              "center": {
+                "tileX": 0,
+                "tileY": 0,
+                "localX": 1558,
+                "localY": 1940
+              },
+              "scale": 0.104
+            }
+          },
+          "responseMS": 433.165708,
+          "sourceRevision": "a844db156e47c371d10309c0cb7978131f2ff67049a1c4c921a79822347ecda6",
+          "cards": 9,
+          "cardFrames": 0,
+          "layers": 6,
+          "decodedPixels": 20979089,
+          "pngCharacters": 572644,
+          "bytes": 583110,
+          "coverage": {
+            "level": 6,
+            "region": {
+              "x": 0,
+              "y": 0,
+              "width": 26607.874015748035,
+              "height": 26607.87401574803
+            },
+            "anchor": {
+              "tileX": -2,
+              "localY": 3325.984251968504,
+              "localX": 3325.984251968504,
+              "tileY": -2
+            },
+            "pixelDensity": 0.07696969696969697
+          },
+          "diagnostics": [
+            {
+              "kind": "quality_limit",
+              "message": "Нативное представление достигло предела деталей этой области."
+            }
+          ]
+        }
+      ]
+    },
+    "257First": {
+      "at": "2026-10-07T12:19:00.610Z",
+      "samples": [
+        {
+          "label": "initial-approx-ui",
+          "request": {
+            "viewport": {
+              "x": 1759,
+              "y": 1713
+            },
+            "pixelScale": 2,
+            "camera": {
+              "center": {
+                "tileX": 0,
+                "tileY": 0,
+                "localX": 1558,
+                "localY": 1940
+              },
+              "scale": 0.104
+            }
+          },
+          "responseMS": 611.7358750000003,
+          "sourceRevision": "a844db156e47c371d10309c0cb7978131f2ff67049a1c4c921a79822347ecda6",
+          "cards": 9,
+          "cardFrames": 9,
+          "layers": 14,
+          "decodedPixels": 17653924,
+          "pngCharacters": 1209284,
+          "bytes": 1225927,
+          "coverage": {
+            "pixelDensity": 0.2503486750348675,
+            "level": 4,
+            "region": {
+              "y": 0,
+              "width": 26607.874015748035,
+              "x": 0,
+              "height": 26607.87401574803
+            },
+            "anchor": {
+              "localX": 3325.984251968504,
+              "localY": 3325.984251968504,
+              "tileY": -2,
+              "tileX": -2
+            }
+          },
+          "diagnostics": []
+        },
+        {
+          "label": "zoom-three-approx-ui",
+          "request": {
+            "viewport": {
+              "x": 1759,
+              "y": 1713
+            },
+            "pixelScale": 2,
+            "camera": {
+              "center": {
+                "tileX": 0,
+                "tileY": 0,
+                "localX": 1558,
+                "localY": 1940
+              },
+              "scale": 0.17971199999999996
+            }
+          },
+          "responseMS": 531.8783750000002,
+          "sourceRevision": "a844db156e47c371d10309c0cb7978131f2ff67049a1c4c921a79822347ecda6",
+          "cards": 9,
+          "cardFrames": 9,
+          "layers": 13,
+          "decodedPixels": 16053798,
+          "pngCharacters": 4004756,
+          "bytes": 4020945,
+          "coverage": {
+            "region": {
+              "height": 13303.937007874016,
+              "width": 13303.937007874014,
+              "y": 0,
+              "x": 0
+            },
+            "level": 3,
+            "pixelDensity": 0.5,
+            "anchor": {
+              "tileY": -1,
+              "tileX": -1,
+              "localY": 1662.9921259842522,
+              "localX": 1662.992125984252
+            }
+          },
+          "diagnostics": []
+        },
+        {
+          "label": "back-approx-ui",
+          "request": {
+            "viewport": {
+              "x": 1759,
+              "y": 1713
+            },
+            "pixelScale": 2,
+            "camera": {
+              "center": {
+                "tileX": 0,
+                "tileY": 0,
+                "localX": 1558,
+                "localY": 1940
+              },
+              "scale": 0.104
+            }
+          },
+          "responseMS": 578.1330830000006,
+          "sourceRevision": "a844db156e47c371d10309c0cb7978131f2ff67049a1c4c921a79822347ecda6",
+          "cards": 9,
+          "cardFrames": 9,
+          "layers": 14,
+          "decodedPixels": 17653924,
+          "pngCharacters": 1209284,
+          "bytes": 1225927,
+          "coverage": {
+            "level": 4,
+            "pixelDensity": 0.2503486750348675,
+            "region": {
+              "width": 26607.874015748035,
+              "x": 0,
+              "height": 26607.87401574803,
+              "y": 0
+            },
+            "anchor": {
+              "localX": 3325.984251968504,
+              "tileX": -2,
+              "localY": 3325.984251968504,
+              "tileY": -2
+            }
+          },
+          "diagnostics": []
+        }
+      ]
+    },
+    "257Warm": {
+      "at": "2026-10-07T12:19:45.223Z",
+      "samples": [
+        {
+          "label": "initial-approx-ui",
+          "request": {
+            "viewport": {
+              "x": 1759,
+              "y": 1713
+            },
+            "pixelScale": 2,
+            "camera": {
+              "center": {
+                "tileX": 0,
+                "tileY": 0,
+                "localX": 1558,
+                "localY": 1940
+              },
+              "scale": 0.104
+            }
+          },
+          "responseMS": 67.481875,
+          "sourceRevision": "a844db156e47c371d10309c0cb7978131f2ff67049a1c4c921a79822347ecda6",
+          "cards": 9,
+          "cardFrames": 9,
+          "layers": 14,
+          "decodedPixels": 17653924,
+          "pngCharacters": 1209284,
+          "bytes": 1225927,
+          "coverage": {
+            "region": {
+              "x": 0,
+              "height": 26607.87401574803,
+              "y": 0,
+              "width": 26607.874015748035
+            },
+            "anchor": {
+              "tileY": -2,
+              "tileX": -2,
+              "localY": 3325.984251968504,
+              "localX": 3325.984251968504
+            },
+            "pixelDensity": 0.2503486750348675,
+            "level": 4
+          },
+          "diagnostics": []
+        },
+        {
+          "label": "zoom-three-approx-ui",
+          "request": {
+            "viewport": {
+              "x": 1759,
+              "y": 1713
+            },
+            "pixelScale": 2,
+            "camera": {
+              "center": {
+                "tileX": 0,
+                "tileY": 0,
+                "localX": 1558,
+                "localY": 1940
+              },
+              "scale": 0.17971199999999996
+            }
+          },
+          "responseMS": 540.281959,
+          "sourceRevision": "a844db156e47c371d10309c0cb7978131f2ff67049a1c4c921a79822347ecda6",
+          "cards": 9,
+          "cardFrames": 9,
+          "layers": 13,
+          "decodedPixels": 16053798,
+          "pngCharacters": 4004756,
+          "bytes": 4020945,
+          "coverage": {
+            "anchor": {
+              "localX": 1662.992125984252,
+              "localY": 1662.9921259842522,
+              "tileX": -1,
+              "tileY": -1
+            },
+            "region": {
+              "y": 0,
+              "height": 13303.937007874016,
+              "x": 0,
+              "width": 13303.937007874014
+            },
+            "level": 3,
+            "pixelDensity": 0.5
+          },
+          "diagnostics": []
+        },
+        {
+          "label": "back-approx-ui",
+          "request": {
+            "viewport": {
+              "x": 1759,
+              "y": 1713
+            },
+            "pixelScale": 2,
+            "camera": {
+              "center": {
+                "tileX": 0,
+                "tileY": 0,
+                "localX": 1558,
+                "localY": 1940
+              },
+              "scale": 0.104
+            }
+          },
+          "responseMS": 533.031666,
+          "sourceRevision": "a844db156e47c371d10309c0cb7978131f2ff67049a1c4c921a79822347ecda6",
+          "cards": 9,
+          "cardFrames": 9,
+          "layers": 14,
+          "decodedPixels": 17653924,
+          "pngCharacters": 1209284,
+          "bytes": 1225927,
+          "coverage": {
+            "region": {
+              "x": 0,
+              "height": 26607.87401574803,
+              "y": 0,
+              "width": 26607.874015748035
+            },
+            "level": 4,
+            "pixelDensity": 0.2503486750348675,
+            "anchor": {
+              "tileY": -2,
+              "localX": 3325.984251968504,
+              "localY": 3325.984251968504,
+              "tileX": -2
+            }
+          },
+          "diagnostics": []
+        }
+      ]
+    }
+  },
+  "result": "All 9 card frames remain at every scale; quality_limit removed; density increased about3.25x. Warm initial response improved; zoom/return remain around0.5s and are slower than old coarse-image answers.",
+  "chatAt1219UTC": {
+    "code": "runtime_update_required",
+    "chatBuild": 256,
+    "runtimeBuild": 257,
+    "actualFrontend257": "awaiting refreshed connection"
+  },
+  "pageNavigation": {
+    "beforeAt": "2026-10-07T10:49:48.385Z",
+    "afterAt": "2026-10-07T12:21:24.548Z",
+    "samples": [
+      {
+        "pageIndex": 0,
+        "before256MS": 857.6315,
+        "after257MS": 749.492208,
+        "equal": {
+          "pageIndex": true,
+          "sourceRevision": true,
+          "camera": true,
+          "coverage": true,
+          "bytes": true
+        }
+      },
+      {
+        "pageIndex": 1,
+        "before256MS": 617.933708,
+        "after257MS": 648.5594170000002,
+        "equal": {
+          "pageIndex": true,
+          "sourceRevision": true,
+          "camera": true,
+          "coverage": true,
+          "bytes": true
+        }
+      },
+      {
+        "pageIndex": 2,
+        "before256MS": 120.69516700000008,
+        "after257MS": 116.57099999999991,
+        "equal": {
+          "pageIndex": true,
+          "sourceRevision": true,
+          "camera": true,
+          "coverage": true,
+          "bytes": true
+        }
+      },
+      {
+        "pageIndex": 1,
+        "before256MS": 394.8819590000003,
+        "after257MS": 379.21633299999985,
+        "equal": {
+          "pageIndex": true,
+          "sourceRevision": true,
+          "camera": true,
+          "coverage": true,
+          "bytes": true
+        }
+      }
+    ],
+    "scope": "Installed MCP read-only presentation timing; not host input-to-pixel latency"
+  }
+}

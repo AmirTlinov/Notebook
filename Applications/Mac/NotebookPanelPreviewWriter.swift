@@ -48,6 +48,27 @@ extension CurrentViewPreviewWriter {
         editableIDs: ids, movableItemIDs: movable, knownAssets: knownAssets)
       layers = result.layers; coverage = result.coverage; diagnostics = result.diagnostics; materialBounds = result.bounds
     }
+    let preparedSnapshot = try await model.performStoreCommand { store in
+      try store.readTransaction { _ in
+        guard try store.storedWorkspaceID() == projection.workspaceID,
+          try store.referenceRevision(target: target) == cut.sourceRevision else { throw NotebookStorageError.transactionConflict }
+        return try store.readPanel(.init(workspaceID: projection.workspaceID, target: target,
+          bounds: target.kind == .board ? .init(anchor: materialBounds.origin,
+            region: .init(x: 0, y: 0, width: materialBounds.width, height: materialBounds.height)) : nil,
+          includeFitBounds: cut.includeFitBounds), actor: actor)
+      }
+    }
+    var cardItems: [RenderedWorkspaceItem] = []
+    if target.kind == .board {
+      let presence = SessionPresence(boardID: target.id, mode: .board, camera: projection.camera, viewport: projection.viewport)
+      for card in preparedSnapshot["cards"]?.arrayValues ?? [] {
+        guard let id = card["item"]?["id"]?.stringValue.flatMap(UUID.init(uuidString:)),
+          let item = try await source.item(id, presence: presence) else { throw NotebookStorageError.transactionConflict }
+        cardItems.append(item)
+      }
+      cardItems.sort { WorkspaceSceneProjection.isPaintedBelow($0, $1, in: presence) }
+    }
+    let projectedItems = cardItems
     let dependencies = try await source.pixelDependencies()
     try Task.checkCancellation()
     guard model.permitsPanelPreparation else { throw CancellationError() }
@@ -57,25 +78,26 @@ extension CurrentViewPreviewWriter {
         guard try store.storedWorkspaceID() == projection.workspaceID,
           try store.referenceRevision(target: target) == cut.sourceRevision,
           try dependencies?.isCurrent(store) != false else { throw NotebookStorageError.transactionConflict }
-        var snapshot = try store.readPanel(.init(workspaceID: projection.workspaceID, target: target,
-          bounds: target.kind == .board ? .init(anchor: materialBounds.origin,
-            region: .init(x: 0, y: 0, width: materialBounds.width, height: materialBounds.height)) : nil,
-          includeFitBounds: cut.includeFitBounds), actor: actor)
+        var snapshot = preparedSnapshot
         let editable = Set(layers.compactMap(\.elementID)), movable = Set(layers.compactMap(\.itemID))
         snapshot = snapshot.setting("elements", .array((snapshot["elements"]?.arrayValues ?? []).map { entry in
           entry.setting("editable", .bool(entry["source"]?["id"]?.stringValue.map(editable.contains) == true))
         }))
-        snapshot = snapshot.setting("cards", .array((snapshot["cards"]?.arrayValues ?? []).map { card in
-          guard let id = card["item"]?["id"]?.stringValue.flatMap(UUID.init(uuidString:)) else { return card }
-          let layer = layers.first { $0.itemID == id }
-          var value = card.setting("editable", .bool(movable.contains(id)))
-          if let layer, let frame = layer.subjectFrame {
-            value = value.setting("frame", try? .encode(frame)).setting("worldOrigin", try? .encode(layer.worldOrigin))
-              .setting("center", try? .encode(layer.worldOrigin))
-            value = value.setting("geometry", .object(["width": .number(frame.width), "height": .number(frame.height)]))
-          }
-          return value
-        }))
+        let cards = snapshot["cards"]?.arrayValues ?? []
+        let cardsByID = Dictionary(uniqueKeysWithValues: try cards.map { card -> (UUID, JSONValue) in
+          guard let id = card["item"]?["id"]?.stringValue.flatMap(UUID.init(uuidString:)) else { throw NotebookStorageError.transactionConflict }
+          return (id, card)
+        })
+        let projectedCards = try projectedItems.compactMap { item -> JSONValue? in
+          guard let card = cardsByID[item.id] else { return nil }
+          let frame = PageRect(x: -item.geometry.width / 2, y: -item.geometry.height / 2,
+            width: item.geometry.width, height: item.geometry.height)
+          return try card.setting("editable", .bool(movable.contains(item.id)))
+            .setting("frame", .encode(frame)).setting("worldOrigin", .encode(item.center)).setting("center", .encode(item.center))
+            .setting("geometry", .object(["width": .number(frame.width), "height": .number(frame.height)]))
+        }
+        guard projectedCards.count == cards.count else { throw NotebookStorageError.transactionConflict }
+        snapshot = snapshot.setting("cards", .array(projectedCards))
         if target.kind == .page { snapshot = snapshot.setting("worldOrigin", try .encode(WorldPoint.zero)) }
         let appearance = JSONValue.object(["status": .string("ready"), "requestID": try .encode(cut.id),
           "sourceRevision": .string(cut.sourceRevision), "cursor": snapshot["cursor"] ?? .string(String(header.cursor)),

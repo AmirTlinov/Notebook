@@ -176,11 +176,13 @@ export class Surface {
         }
         fragment.append(group);
       }
-      for(const card of snapshot.cards){
+      // Native geometry supplies every card in painter order, including covers
+      // merged into a tile. Pixel separation cannot change selection priority.
+      for(const [index,card] of snapshot.cards.entries()){
         if(!card.frame||!validFrame(card.frame))continue;
         const selection:PanelSelection={kind:'item',id:card.item.id},id=key(selection),offset=delta(card.worldOrigin??origin,origin);
         const frame={...card.frame,x:card.frame.x+offset.x,y:card.frame.y+offset.y};frames.set(id,frame);
-        hits.set(id,{selection,frame,label:card.item.title||'Без названия',editable:card.editable===true&&!!card.source&&groups.has(id),order:orders.get(id)??cardOrder});
+        hits.set(id,{selection,frame,label:card.item.title||'Без названия',editable:card.editable===true&&!!card.source&&groups.has(id),order:cardOrder+index});
       }
       for(const element of snapshot.elements){
         if((element.appearance as {state?:string}|undefined)?.state==='erased'||element.source.graphic?.visible===false)continue;

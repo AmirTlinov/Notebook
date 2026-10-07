@@ -120,7 +120,7 @@
     "cdhash": "71aedee943a56f4150c9275102343eb1824ee45b"
   },
   "runtimePeerMatchesBuildSignature": true,
-  "workspaceReadback": "Installed 0.2.8 MCP read the original workspace and three page targets on 2026-10-07T10:49Z. Current chat still expected build255 at 10:48Z; true panel verification remains pending.",
+  "workspaceReadback": "Installed 0.2.8 MCP read the original workspace and three page targets on 2026-10-07T10:49Z. The chat connection recovered at 11:25Z; actual panel observations are recorded in ../panel-occupancy/observed-256.json.",
   "iPadLaunch": "Production256 launched at 2026-10-07T10:48Z; no physical gesture acceptance from this installation.",
   "firstAttempt": {
     "status": "incomplete",
