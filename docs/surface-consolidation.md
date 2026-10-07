@@ -77,3 +77,13 @@ The runtime is now packaged inside the plugin;
 owns admission, the workspace catalog and persistence recovery. The panel opens,
 creates and selects spaces through `runtimeStatus` / `runtimeWorkspace`; those
 bootstrap commands never fall through to a store command dispatcher.
+
+## Panel identity and updates
+
+One sealed `panel-bundle.json` contains the compiled panel, embedded WASM,
+plugin version and content-derived cohort. The opener publishes its versioned
+resource URI; the signed sidecar and plugin package verify the same artifact.
+All private panel commands check that cohort before runtime admission. A stale
+card explains that a fresh Notebook panel is required and stops background work.
+Already dispatched writes retain their original result and action identity;
+an uncertain write remains pending until the persistence owner resolves it.

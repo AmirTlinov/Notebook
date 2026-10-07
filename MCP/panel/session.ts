@@ -1,4 +1,5 @@
 import { App } from "@modelcontextprotocol/ext-apps";
+import type {PanelIdentity} from "../panel-bundle.mjs";
 import type { SceneBounds } from "../src/spatial.js";
 import { isPanelCheckpoint, type PanelCheckpoint, type PanelChanges, type PanelSnapshot, type PanelAddress,
   type PanelMutation, type PanelSelection, type PanelTarget, type PanelView } from "./model.js";
@@ -36,7 +37,39 @@ function sameAddress(a:PanelAddress,b:PanelAddress):boolean {
 
 /** The bridge carries snapshots and completed gestures. Native Notebook owns all saved state. */
 export class NotebookSession {
-  readonly app=new App({name:"Notebook",version:"1.0.0"},{availableDisplayModes:["fullscreen"]});
+  readonly app:App;
+  private readonly uiCohort:string;
+  private cohortError:PanelError|undefined;
+  private get cohortInvalid(){return this.cohortError!==undefined;}
+  constructor(identity:PanelIdentity){
+    this.uiCohort=identity.cohort;
+    this.app=new App({name:"Notebook",version:identity.version},{availableDisplayModes:["fullscreen"]});
+  }
+  private revokeCohort(error:PanelError){
+    if(this.cohortInvalid)return;
+    this.cohortError=error;this.presented=false;++this.generation;
+    this.cancelChanges();
+    if(!this.cancelNavigation())void this.onCancelSnapshotPreparation();
+    clearTimeout(this.openingTimer);this.openingTimer=undefined;
+    clearTimeout(this.refreshTimer);this.refreshTimer=undefined;
+    this.forcedRefreshQueued=false;this.viewportRefreshQueued=false;
+    clearTimeout(this.contextTimer);this.contextTimer=undefined;this.contextDirty=false;
+    this.onStateChange();this.report(error,null);
+  }
+  private async callServerTool(input:Parameters<App["callServerTool"]>[0],options?:Parameters<App["callServerTool"]>[1],retainDispatchedOutcome=false){
+    if(this.cohortError)throw this.cohortError;
+    const result=await this.app.callServerTool({...input,arguments:{...input.arguments,uiCohort:this.uiCohort}},options);
+    // A retired view cannot consume late reads, but a dispatched write still
+    // owns its authentic receipt or uncertain outcome.
+    if(this.cohortError&&!retainDispatchedOutcome)throw this.cohortError;
+    if(result.isError){
+      try{body(result as ToolResult);}catch(error){
+        if(error instanceof PanelError&&["panel_update_required","runtime_update_required"].includes(error.code))this.revokeCohort(error);
+        throw error;
+      }
+    }
+    return result;
+  }
   snapshot:PanelSnapshot|undefined;
   private working=false;
   get busy(){return this.working;}
@@ -102,16 +135,19 @@ export class NotebookSession {
   private viewportRefreshQueued=false;
   private refreshTimer:ReturnType<typeof setTimeout>|undefined;
   get hasAppearance(){return this.presented;}
-  private pending:{name:string;arguments:Record<string,unknown>;resolve:()=>void;reject:(error:unknown)=>void}|undefined;
+  private pending:{name:string;arguments:Record<string,unknown>;uncertain:boolean;resolve:()=>void;reject:(error:unknown)=>void}|undefined;
 
   async connect() {
     this.app.ontoolresult=result=>{
       // The host hands this view its immutable opening request. Later calls cannot
       // redirect a mounted view or an in-progress human gesture.
-      if(this.closed||this.initialClaimed)return;
+      if(this.closed||this.cohortInvalid||this.initialClaimed)return;
       try {
         const value=body(result as ToolResult);
         if(!value.open||typeof value.open!=="object"||Array.isArray(value.open))throw new Error("Notebook не передал запрос открытия панели.");
+        if(value.uiCohort!==this.uiCohort){const error=new PanelError("panel_update_required",
+          "Эта карточка относится к другой версии Notebook. Откройте новую панель через @Notebook в этом чате.");
+          this.revokeCohort(error);throw error;}
         this.initialClaimed=true;this.openingRequest=structuredClone(value.open) as OpenRequest;
         void this.connectSurface();
       }
@@ -143,7 +179,7 @@ export class NotebookSession {
   }
   /** Recovery has one bounded backoff, charged only to failed delivery or dirty pixels. */
   private retryChanges(){
-    if(this.closed||this.hidden||this.changesRetryTimer!==undefined||!this.presented||!this.snapshot?.checkpoint)return;
+    if(this.closed||this.cohortInvalid||this.hidden||this.changesRetryTimer!==undefined||!this.presented||!this.snapshot?.checkpoint)return;
     const address=this.address(),epoch=this.snapshot.checkpoint.epoch;
     this.changesRetryTimer=setTimeout(()=>{
       this.changesRetryTimer=undefined;
@@ -154,7 +190,7 @@ export class NotebookSession {
     this.changesRetryDelay=Math.min(4000,this.changesRetryDelay*2);
   }
   private watchChanges(){
-    if(!this.connected||this.closed||this.hidden||!this.presented||this.changesDirty
+    if(!this.connected||this.closed||this.cohortInvalid||this.hidden||!this.presented||this.changesDirty
       ||this.changesWait||this.changesRetryTimer!==undefined||this.workspaceChanging||this.navigation||!this.snapshot?.checkpoint)return;
     const waiting={controller:new AbortController(),address:this.address(),checkpoint:{...this.snapshot.checkpoint}};
     this.changesWait=waiting;void this.readChanges(waiting);
@@ -163,7 +199,7 @@ export class NotebookSession {
     const current=()=>!this.closed&&!this.hidden&&!waiting.controller.signal.aborted&&this.changesWait===waiting
       &&sameAddress(waiting.address,this.address());
     try{
-      const value=body(await this.app.callServerTool({name:"notebook_panel_changes",
+      const value=body(await this.callServerTool({name:"notebook_panel_changes",
         arguments:{...waiting.address,checkpoint:waiting.checkpoint}},
       {signal:waiting.controller.signal,timeout:35_000}) as ToolResult);
       if(!current())return;
@@ -195,7 +231,7 @@ export class NotebookSession {
       if(current()){
         this.changesWait=undefined;
         this.changesFailed=true;
-        if(!this.pending&&!this.failedWrite&&!this.busy)this.report(error,async()=>{await this.refresh(true);});
+        if(!this.pending&&!this.failedWrite&&!this.busy)this.report(error,this.cohortInvalid?null:async()=>{await this.refresh(true);});
         this.retryChanges();
       }
     }finally{
@@ -207,13 +243,13 @@ export class NotebookSession {
     }
   }
   private async connectSurface(){
-    if(this.closed||this.busy||!this.openingRequest)return;
+    if(this.closed||this.cohortInvalid||this.busy||!this.openingRequest)return;
     clearTimeout(this.openingTimer);this.openingTimer=undefined;
     const request=this.openingRequest;
     this.busy=true;this.onError("",null);this.onStatus("Открываем Notebook…");
     let again=false,runtime:RuntimeStatus|undefined;
     try{
-      const value=body(await this.app.callServerTool({name:"notebook_panel_connect",arguments:request}) as ToolResult);
+      const value=body(await this.callServerTool({name:"notebook_panel_connect",arguments:request}) as ToolResult);
       if(this.closed||this.openingRequest!==request)return;
       if(isSnapshot(value)){
         this.openingRequest=undefined;this.snapshot=value;this.onStatus("Подготовка поверхности…");
@@ -241,7 +277,7 @@ export class NotebookSession {
     const {workspaceID,target,socketKey}=this.snapshot;return {workspaceID,target,socketKey};
   }
   async workspace(request:WorkspaceRequest):Promise<WorkspaceResult|undefined>{
-    if(this.closed||this.busy||(this.pending&&request.action!=="list"&&request.action!=="retry"))return;
+    if(this.closed||this.cohortInvalid||this.busy||(this.pending&&request.action!=="list"&&request.action!=="retry"))return;
     this.workspaceChanging=request.action==="select"||request.action==="create";
     if(this.workspaceChanging)this.cancelChanges();
     this.busy=true;this.onStatus("Открытие пространства…");
@@ -250,7 +286,7 @@ export class NotebookSession {
       ...(!recovering&&this.openingRequest?{open:this.openingRequest}:{})};
     let repaired=false;
     try{
-      const value=body(await this.app.callServerTool({name:"notebook_panel_workspace",arguments:command}) as ToolResult) as WorkspaceResult;
+      const value=body(await this.callServerTool({name:"notebook_panel_workspace",arguments:command}) as ToolResult) as WorkspaceResult;
       if(this.closed)return;
       if(value.snapshot&&isSnapshot(value.snapshot)){
         if(value.snapshot.workspaceID.toLowerCase()!==value.status.workspaceID?.toLowerCase()||value.snapshot.socketKey!==value.status.socketKey){
@@ -287,7 +323,7 @@ export class NotebookSession {
     }
   }
   viewportChanged(){
-    if(this.closed)return;
+    if(this.closed||this.cohortInvalid)return;
     this.boundsDirty=this.needsPresentation();++this.viewRevision;this.queueContext();
     if(this.boundsDirty){if(!this.viewportRefreshQueued)this.queueRefresh();}
     else {clearTimeout(this.refreshTimer);this.refreshTimer=undefined;this.viewportRefreshQueued=false;}
@@ -306,18 +342,18 @@ export class NotebookSession {
     return navigation.finished;
   }
   private queueRefresh(){
-    if(this.closed||this.refreshTimer!==undefined)return;
+    if(this.closed||this.cohortInvalid||this.refreshTimer!==undefined)return;
     this.refreshTimer=setTimeout(()=>{this.refreshTimer=undefined;this.viewportRefreshQueued=true;this.drainRefresh();},80);
   }
   private drainRefresh(){
-    if(this.closed||this.hidden)return;
+    if(this.closed||this.cohortInvalid||this.hidden)return;
     if(!this.boundsDirty){clearTimeout(this.refreshTimer);this.refreshTimer=undefined;this.viewportRefreshQueued=false;}
     if(this.reading||this.suspended||this.busy||this.pending)return;
     if(this.changesDirty&&this.changesRetryTimer!==undefined&&!this.viewportRefreshQueued)return;
     if(this.forcedRefreshQueued||this.viewportRefreshQueued)void this.refresh(this.forcedRefreshQueued);
   }
   async openSurface(target:PanelTarget,camera?:PanelView["camera"]){
-    if(this.busy||this.pending||this.closed)return false;
+    if(this.busy||this.pending||this.closed||this.cohortInvalid)return false;
     this.cancelChanges();
     let finish!:()=>void;
     const navigation={controller:new AbortController(),finished:new Promise<void>(resolve=>{finish=resolve;})};
@@ -328,7 +364,7 @@ export class NotebookSession {
     this.busy=true;this.failedWrite=false;this.onError("",null);this.onStatus("Открытие…");
     try {
       const request={...this.address(),target,appearance:this.view(true,camera),knownAssets:this.knownAssets()};
-      const result=await this.app.callServerTool({name:"notebook_panel_presentation",arguments:request},
+      const result=await this.callServerTool({name:"notebook_panel_presentation",arguments:request},
         {signal:navigation.controller.signal}) as ToolResult;
       if(!current())return false;
       const value=body(result);
@@ -365,7 +401,7 @@ export class NotebookSession {
     return generation===this.generation&&revision===this.viewRevision?snapshot?.fitBounds:undefined;
   }
   async refresh(force=false,includeFitBounds=false):Promise<PanelSnapshot|undefined> {
-    if(this.closed||!this.snapshot)return;
+    if(this.closed||this.cohortInvalid||!this.snapshot)return;
     if(this.reading||this.suspended||this.busy||this.pending){this.forcedRefreshQueued ||= force;return;}
     clearTimeout(this.refreshTimer);this.refreshTimer=undefined;
     force ||= this.forcedRefreshQueued||this.changesDirty;
@@ -376,7 +412,7 @@ export class NotebookSession {
       knownCursor:this.snapshot.cursor,knownRequestID:this.snapshot.appearance?.requestID}: {})};
     try {
       if(force||this.boundsDirty||!this.presented)this.onStatus("Подготовка поверхности…");
-      const value=body(await this.app.callServerTool({name:"notebook_panel_presentation",arguments:request}) as ToolResult);
+      const value=body(await this.callServerTool({name:"notebook_panel_presentation",arguments:request}) as ToolResult);
       if(this.stale(request,generation))return;
       if(!this.presented&&viewRevision!==this.viewRevision)return;
       if(value.unchanged){
@@ -434,9 +470,10 @@ export class NotebookSession {
   }
   private async mutate(name:string,args:Record<string,unknown>) {
     if(this.closed)throw new Error("Панель закрыта.");
+    if(this.cohortError)throw this.cohortError;
     if(!this.mutationReady)throw new Error("Дождитесь сохранения текущей правки.");
     ++this.generation;this.failedWrite=false;this.onError("",null);
-    const completion=new Promise<void>((resolve,reject)=>{this.pending={name,arguments:args,resolve,reject};});
+    const completion=new Promise<void>((resolve,reject)=>{this.pending={name,arguments:args,uncertain:false,resolve,reject};});
     void this.sendPending();return completion;
   }
   private async sendPending() {
@@ -444,14 +481,18 @@ export class NotebookSession {
     this.busy=true;this.onStatus("Сохранение…");
     const pending=this.pending;
     try {
-      const result=await this.app.callServerTool({name:pending.name,arguments:pending.arguments}) as ToolResult;
+      const result=await this.callServerTool({name:pending.name,arguments:pending.arguments},undefined,true) as ToolResult;
       if(this.closed||this.pending!==pending)return;
       body(result);
-      this.pending=undefined;this.synchronizing=true;this.onError("",null);pending.resolve();
+      this.pending=undefined;this.synchronizing=!this.cohortInvalid;
+      if(!this.cohortInvalid)this.onError("",null);
+      pending.resolve();
     }catch(error) {
       if(this.closed||this.pending!==pending)return;
       const canRetry=retryable(error);
-      if(!canRetry){this.pending=undefined;this.failedWrite=true;pending.reject(error);}
+      if(canRetry&&(!(error instanceof PanelError)||!["runtime_starting","runtime_startup_failed"].includes(error.code)))pending.uncertain=true;
+      // Refusing a later send cannot settle an earlier unknown write.
+      if(!canRetry&&!pending.uncertain){this.pending=undefined;this.failedWrite=true;pending.reject(error);}
       this.report(error,canRetry?()=>this.retryPending():null);
     }finally {
       this.busy=false;
@@ -510,6 +551,11 @@ export class NotebookSession {
   private report(error:unknown,retry:(()=>Promise<void>)|null) {
     if(this.closed)return;
     this.onStatus("Проверьте связь");
-    this.onError(error instanceof Error?error.message:String(error),retry);
+    let message=error instanceof Error?error.message:String(error);
+    if(this.cohortError){
+      message=error===this.cohortError?this.cohortError.message:`${this.cohortError.message}\n${message}`;
+      retry=null;
+    }
+    this.onError(message,retry);
   }
 }

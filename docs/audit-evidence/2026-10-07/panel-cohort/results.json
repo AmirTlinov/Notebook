@@ -1,0 +1,110 @@
+{
+  "format": 1,
+  "release": {
+    "build": "260",
+    "application": "0.3.190",
+    "plugin": "0.2.12",
+    "installation": "pending"
+  },
+  "source": {
+    "sha256": "d2e7a9f57d58bde0a0884ff73b265fd0ab2928bd752ccf6b356949cb5b19c222",
+    "fileCount": 1714,
+    "beforeEqualsAfter": true,
+    "base": "ff8852b517df739a2181b2704800c6b100aa53be"
+  },
+  "verification": {
+    "status": "passed",
+    "route": "./verify.sh:selected",
+    "scope": "registry-contracts",
+    "physicalAcceptance": false,
+    "evidenceDirectory": ".build/panel-cohort-260-final-v7",
+    "receiptSHA256": "1e2b0fde72aa6d4c38af433167bf17af4e40f2eac96344cc16d226bec10c1334",
+    "coreIPC": {
+      "passed": 31,
+      "failed": 0,
+      "skipped": 0
+    },
+    "mcp": {
+      "tests": 332,
+      "failed": 0,
+      "passed": 332,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0,
+      "topLevel": 284,
+      "suites": 0
+    },
+    "releasePython": {
+      "passed": 158
+    },
+    "verificationPython": {
+      "passed": 120
+    },
+    "toolchain": {
+      "node": "v24.21.0",
+      "npm": "11.18.0",
+      "python": "Python 3.14.6",
+      "swift": "Apple Swift version 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1)\nTarget: arm64-apple-macosx27.0.0"
+    }
+  },
+  "changes": [
+    "One sealed panel artifact binds compiled UI, WASM, plugin version and private tool cohort.",
+    "Mismatched panel/runtime connections stop observation and preserve already-dispatched action outcomes.",
+    "Canonical IPC endpoint is published exclusively after private bind, permissions and listen; inode cleanup preserves another owner.",
+    "Existing release and verification owners use the checked, pinned Node stage for their child commands."
+  ],
+  "priorAttempts": [
+    {
+      "attempt": "mcp-v1",
+      "node": "24.8.0",
+      "passed": 321,
+      "failed": 6,
+      "cause": "Four generated fixture metadata changes, one panel fixture path, one outdated heavy-owner limit."
+    },
+    {
+      "attempt": "mcp-v2",
+      "node": "24.8.0",
+      "passed": 328,
+      "failed": 0,
+      "scope": "Earlier panel sources."
+    },
+    {
+      "attempt": "final-v3",
+      "node": "24.8.0",
+      "mcpPassed": 332,
+      "cause": "Release identity stub missing recordStartup."
+    },
+    {
+      "attempt": "final-v4",
+      "node": "24.8.0",
+      "mcpPassed": 319,
+      "cause": "program-bridge test child SIGSEGV; own crash report shows V8 GC stack."
+    },
+    {
+      "attempt": "final-v5",
+      "node": "24.21.0",
+      "mcpPassed": 332,
+      "releasePassed": 158,
+      "verificationPassed": 119,
+      "verificationFailed": 1,
+      "cause": "Existing browser-runner fixture had not accounted for Codex runtime preparation."
+    },
+    {
+      "attempt": "final-v6",
+      "node": "24.21.0",
+      "mcpPassed": 331,
+      "mcpFailed": 1,
+      "cause": "Cold concurrent clients observed public socket before chmod600; strict admission returned ipc_unauthorized."
+    }
+  ],
+  "review": {
+    "panelAndBuildOwners": "independent read-only PASS",
+    "ipcPublication": "independent read-only PASS; source freeze 2026-10-07T20:37:00Z"
+  },
+  "open": [
+    "Fresh installed Codex panel gestures, zoom pixels and UI latency.",
+    "Physical 20ms input contract, system frame/CPU/GPU/memory traces, ten repetitions and 30-minute joint session.",
+    "Viewport SceneDelta and remaining C2-C5 consolidation."
+  ],
+  "ipcCrashBeforePublication": "May leave an unreachable private 0600 sibling in the 0700 directory; canonical address stays absent and the next launch chooses another name."
+}

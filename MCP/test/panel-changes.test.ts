@@ -1,3 +1,4 @@
+import {panelIdentity,withCohort} from './panel-fixture.js';
 import assert from 'node:assert/strict';
 import test,{type TestContext} from 'node:test';
 import {randomUUID} from 'node:crypto';
@@ -21,8 +22,8 @@ async function fixture(t:TestContext){
   const prior=Object.getOwnPropertyDescriptor(globalThis,'document');
   const document=new EventTarget() as EventTarget&{hidden:boolean};document.hidden=false;
   Object.defineProperty(globalThis,'document',{configurable:true,value:document});
-  const session=new NotebookSession(),errors:string[]=[];
-  let disposed=false,retry:(()=>Promise<void>)|null=null;
+  const session=new NotebookSession(panelIdentity),errors:string[]=[];
+  let disposed=false,lastError='',retry:(()=>Promise<void>)|null=null;
   const calls:{name:string;arguments:Value;signal:AbortSignal|undefined;timeout:number|undefined;
     resolve:(reply:ToolReply)=>void;reject:(error:Error)=>void}[]=[];
   session.app.connect=async()=>{};session.app.updateModelContext=async()=>({});
@@ -34,7 +35,7 @@ async function fixture(t:TestContext){
       resolve:reply=>{options?.signal?.removeEventListener('abort',abort);resolve(reply);},reject});
   });
   session.needsPresentation=()=>false;
-  session.onError=(message,action)=>{assert.equal(disposed,false);retry=action;if(message)errors.push(message);};
+  session.onError=(message,action)=>{assert.equal(disposed,false);lastError=message;retry=action;if(message)errors.push(message);};
   session.onSnapshot=()=>{assert.equal(disposed,false);};
   session.onClose=()=>{disposed=true;};
   const close=()=>session.app.onteardown!({},{} as never);
@@ -46,7 +47,7 @@ async function fixture(t:TestContext){
   const changes=(waiting:ReturnType<typeof waits>[number],value:Partial<Value>={})=>{
     waiting.resolve({content:[],structuredContent:{...address,checkpoint:waiting.arguments.checkpoint,changed:false,...value}});
   };
-  return {session,calls,waits,presentations,changes,document,errors,close,retry:()=>retry};
+  return {session,calls,waits,presentations,changes,document,errors,close,retry:()=>retry,error:()=>lastError};
 }
 
 test('an idle addressed wait rearms without pixels and does not delay a human command',async t=>{
@@ -62,7 +63,7 @@ test('an idle addressed wait rearms without pixels and does not delay a human co
   const edit:PanelMutation={...address,actionID:randomUUID(),summary:'Edit during observation',sources:[{id:'text'}],
     operations:[{kind:'updateElement',target:address.target,id:'text',values:{source:'new'}}]};
   const saved=session.save(edit),command=calls.find(call=>call.name==='notebook_panel_edit')!;
-  assert.deepEqual(command.arguments,edit);assert.equal(waits()[1]!.signal?.aborted,false);
+  assert.deepEqual(command.arguments,withCohort(edit));assert.equal(waits()[1]!.signal?.aborted,false);
   command.resolve({content:[],structuredContent:{status:'saved',actionID:edit.actionID}});await saved;
   assert.equal(presentations().length,2);
   presentations()[1]!.resolve({content:[],structuredContent:snapshot('6')});await flush();
@@ -156,6 +157,85 @@ test('dirty delivery preserves an uncertain action until its exact retry and acc
   writes[1]!.resolve({content:[],structuredContent:{status:'saved',actionID:edit.actionID}});await saved;
   presentations()[1]!.resolve({content:[],structuredContent:snapshot('2')});await flush();
   assert.equal(session.hasPending,false);assert.equal(session.mutationReady,true);assert.equal(waits().length,2);
+});
+
+test('retiring a cohort preserves a dispatched write outcome and the terminal reopening state',async t=>{
+  for(const outcome of ['saved','ipc_timeout'] as const)await t.test(outcome,async t=>{
+    t.mock.timers.enable({apis:['setTimeout']});
+    const {session,calls,waits,presentations,retry,error,close}=await fixture(t),accepted=session.snapshot;
+    let cancellations=0,preparations=0,finishPreparation:((ready:boolean)=>void)|undefined;
+    session.onPrepareSnapshot=async()=>{preparations++;return new Promise<boolean>(resolve=>{finishPreparation=resolve;});};
+    session.onCancelSnapshotPreparation=async()=>{cancellations++;finishPreparation?.(false);};
+    const reading=session.refresh(true),lateRead=presentations()[1]!;
+    if(outcome==='saved'){
+      lateRead.resolve({content:[],structuredContent:snapshot('2')});await flush();
+      assert.equal(preparations,1,'An ordinary refresh holds an unaccepted candidate');
+    }
+    const edit:PanelMutation={...address,actionID:randomUUID(),summary:'Write crossing cohort retirement',sources:[{id:'text'}],
+      operations:[{kind:'updateElement',target:address.target,id:'text',values:{source:'new'}}]};
+    let settlement='pending';
+    const saved=session.save(edit),completed=saved.then(()=>{settlement='saved';},()=>{settlement='rejected';});
+    const write=calls.find(call=>call.name==='notebook_panel_edit')!;
+    assert.deepEqual(write.arguments,withCohort(edit));
+    waits()[0]!.resolve({content:[],isError:true,structuredContent:{status:'error',code:'panel_update_required',
+      message:'Откройте новую панель через @Notebook в этом чате.'}});
+    await flush();assert.equal(session.hasAppearance,false);assert.equal(session.hasPending,true);
+    assert.equal(cancellations,1,'Retirement also revokes preparation without navigation');
+    assert.equal(retry(),null);assert.match(error(),/@Notebook/);assert.equal(settlement,'pending');
+    if(outcome==='ipc_timeout')lateRead.resolve({content:[],structuredContent:snapshot('2')});
+    await reading;assert.equal(preparations,outcome==='saved'?1:0);
+    assert.equal(session.snapshot,accepted,'A retired read cannot replace the accepted scene');
+    write.resolve(outcome==='saved'?{content:[],structuredContent:{status:'saved',actionID:edit.actionID}}:
+      {content:[],isError:true,structuredContent:{status:'error',code:'ipc_timeout',message:'Unknown accepted result'}});
+    await flush();assert.equal(settlement,outcome==='saved'?'saved':'pending');
+    assert.equal(session.hasPending,outcome!=='saved');assert.equal(session.mutationReady,false);
+    assert.equal(retry(),null);assert.match(error(),/@Notebook/);
+    if(outcome==='ipc_timeout')assert.match(error(),/Unknown accepted result/);
+    await assert.rejects(session.save({...edit,actionID:randomUUID()}),/@Notebook/);
+    t.mock.timers.tick(40_000);await flush();
+    assert.equal(calls.length,4,'Retirement performs no refresh, recovery, replay or new write');
+    assert.equal(calls.filter(call=>call.name==='notebook_panel_edit').length,1);
+    assert.equal(retry(),null);assert.match(error(),/@Notebook/);
+    await close();await completed;
+  });
+  for(const code of ['panel_update_required','runtime_update_required'] as const)
+  for(const refusal of ['first edit','workspace','repeated edit'] as const)await t.test(`${code} at ${refusal} retires the view and preserves the original outcome`,async t=>{
+    const {session,calls,retry,error,close}=await fixture(t);
+    const edit:PanelMutation={...address,actionID:randomUUID(),summary:'Uncertain write before cohort recovery',sources:[{id:'text'}],
+      operations:[{kind:'updateElement',target:address.target,id:'text',values:{source:'new'}}]};
+    let settlement='pending';
+    const completed=session.save(edit).then(()=>{settlement='saved';},()=>{settlement='rejected';});
+    const write=calls.find(call=>call.name==='notebook_panel_edit')!;
+    const message=code==='panel_update_required'?'Откройте новую панель через @Notebook в этом чате.':
+      'Installed runtime build 260 differs from required 259.';
+    const denied={content:[],isError:true,structuredContent:{status:'error',code,message}};
+    if(refusal==='first edit')write.resolve(denied);
+    else{
+      write.resolve({content:[],isError:true,structuredContent:{status:'error',code:'ipc_timeout',message:'Unknown accepted result'}});
+      await flush();const retryWrite=retry();assert.ok(retryWrite);
+      const recovery=retryWrite(),request=calls.find(call=>call.name==='notebook_panel_workspace')!;
+      if(refusal==='workspace')request.resolve(denied);
+      else{
+        request.resolve({content:[],structuredContent:{status:{kind:'notebookRuntime',ready:true,pid:2,state:'ready',
+          workspaceID:address.workspaceID,socketKey:address.socketKey},workspaces:[],snapshot:snapshot()}});
+        await recovery;
+        const repeated=calls.filter(call=>call.name==='notebook_panel_edit')[1]!;
+        assert.deepEqual(repeated.arguments,write.arguments,'An explicit retry preserves the unknown action ID and sources');
+        repeated.resolve(denied);
+      }
+      await flush();
+      await recovery;
+      await retryWrite();
+    }
+    await flush();
+    assert.equal(session.hasPending,refusal!=='first edit');assert.equal(settlement,refusal==='first edit'?'rejected':'pending');
+    assert.equal(session.hasAppearance,false);assert.equal(retry(),null);assert.equal(error(),message,'The original version-refusal diagnostic is retained');
+    await assert.rejects(session.save({...edit,actionID:randomUUID()}),{message});
+    assert.equal(calls.length,refusal==='first edit'?3:refusal==='workspace'?4:5,'A retired cohort cannot recover or replay');
+    assert.equal(calls.filter(call=>call.name==='notebook_panel_edit').length,refusal==='repeated edit'?2:1);
+    assert.deepEqual(write.arguments,withCohort(edit));
+    await close();await completed;
+  });
 });
 
 test('an older ready cohort retains invalidation and retries without rolling the scene back',async t=>{

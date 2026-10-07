@@ -6,6 +6,9 @@ import { operationSchema, targetSchema, documentPathSchema, documentResourceSche
 import { worldPointSchema } from "./spatial.js";
 import { registerNotebookPanel } from "./panel-tools.js";
 import { runtimeAdmission, toolBudgetMilliseconds } from "./runtime-admission.js";
+import {readPanelBundle, type PanelBundle} from "../panel-bundle.mjs";
+
+declare const NOTEBOOK_PANEL_BUNDLE_FILE:string;
 
 const {version} = JSON.parse(await readFile(new URL("../package.json",import.meta.url),"utf8")) as {version:string};
 const operationDiagnostic=z.object({index:z.number().int().min(0).max(511),
@@ -65,14 +68,16 @@ async function response(operation:(deadline:number)=>Promise<{value:Value;images
 
 /** Transport and formatting only. Every read, program, effect and image is
  * owned by the installed Mac coordinator; no JS eval or store exists here. */
-export function createServer(socketPath=defaultSocketPath(),options:{panelHtml?:string;bootstrapRuntime?:()=>Promise<Value>}={}):McpServer {
+export function createServer(socketPath=defaultSocketPath(),options:{panelBundle?:PanelBundle;bootstrapRuntime?:()=>Promise<Value>}={}):McpServer {
   const server=new McpServer({name:"notebook",version});
   const admit=runtimeAdmission(options.bootstrapRuntime);
   const admittedResponse=(operation:Parameters<typeof response>[0],pending?:PendingRun)=>response(async deadline=>{
     await admit(deadline);
     return operation(deadline);
   },pending);
-  registerNotebookPanel(server,socketPath,options.panelHtml,admit);
+  const panel=options.panelBundle??readPanelBundle(new URL(typeof NOTEBOOK_PANEL_BUNDLE_FILE!=="undefined"
+    ? NOTEBOOK_PANEL_BUNDLE_FILE : "../../.build/notebook-panel.json",import.meta.url));
+  registerNotebookPanel(server,socketPath,panel,admit);
   server.registerTool("notebook_import_program",{
     title:"Stage an immutable program package from local Mac files",
     description:"Trusted Mac file import, outside QuickJS. Prepare a descriptor with the installed program-package.mjs tooling; pass its SHA-256 packageHash and absolute manifestPath. Returns staging/ready/error/cancelled and byte progress; poll status with the same hash. Cancel stops before the next bounded part; retry reuses accepted SHA blobs. A ready import only stages bytes; it does not publish or show a scene. No source bytes or Base64 belong in tool arguments. Files are never exposed to the browser, and this operation cannot select a Notebook store.",

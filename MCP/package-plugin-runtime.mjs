@@ -4,6 +4,7 @@ import { constants } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {readPanelBundle} from './panel-bundle.mjs';
 
 function run(command, args) {
   const result = spawnSync(command, args, { encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 });
@@ -31,10 +32,11 @@ export async function inspectRuntimeBundle(app) {
     access(join(tools, 'index.mjs'), constants.R_OK),
   ]);
   const entry = await readFile(join(tools, 'index.mjs'), 'utf8');
+  const panel = readPanelBundle(join(app,'Contents/Resources/NotebookTools/panel-bundle.json'));
   assert(entry.includes('notebook_open') && entry.includes('notebook_panel_presentation')
-    && entry.includes('ui://notebook/workspace.html'), 'Runtime does not contain the Notebook panel.');
+    && entry.includes('panel-bundle.json'), 'Runtime does not contain the Notebook panel.');
   run('/usr/bin/codesign', ['--verify', '--strict', '--deep', app]);
-  return { app, bundleID: info.CFBundleIdentifier, version: info.CFBundleVersion, panelReady: true };
+  return { app, bundleID: info.CFBundleIdentifier, version: info.CFBundleVersion, panelReady: true, panelVersion:panel.version, panelCohort:panel.cohort };
 }
 
 /** Copies the already signed product; the package never re-signs or edits it. */
@@ -44,7 +46,8 @@ export async function packageRuntime(app, pluginRoot, { inspect = inspectRuntime
   const root = await realpath(pluginRoot), source = await realpath(app);
   const output = join(root, 'runtime');
   assert(!source.startsWith(output + sep) && source !== output, 'Package from a build product, not the current plugin runtime.');
-  await inspect(app);
+  const original=await inspect(app);
+  assert.equal(original.panelVersion,manifest.version,'Panel and plugin must belong to one immutable release.');
   const stage = await mkdtemp(join(root, '.runtime-stage-'));
   const prepared = join(stage, 'runtime'), bundled = join(prepared, 'NotebookRuntime.app');
   const retired = join(stage, 'retired');
@@ -54,6 +57,9 @@ export async function packageRuntime(app, pluginRoot, { inspect = inspectRuntime
     if (copy) await copy(source, bundled);
     else run('/usr/bin/ditto', [source, bundled]);
     const result = await inspect(bundled);
+    assert.equal(result.panelVersion,manifest.version,'Copied panel belongs to another plugin release.');
+    assert.equal(result.panelCohort,original.panelCohort,'Copy replaced the verified panel cohort.');
+    assert.equal(result.version,original.version,'Copy replaced the verified runtime build.');
     try {
       const current = await lstat(output);
       assert(current.isDirectory() && !current.isSymbolicLink(), 'Plugin runtime output must be an ordinary directory.');

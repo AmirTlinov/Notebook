@@ -204,6 +204,12 @@ one full payload SHA pass, without downloading, extracting or copying. This adds
 hashing cost compared with the old marker-only reuse; it is not a startup speed
 claim. The preparer is a build prerequisite, not a live-runtime startup path.
 
+Selected checks that use Node and signed pair builds prepare that stage once
+before probing tools. The recorded command environment puts its exact directory
+first on PATH; explicit Node probes and plugin packaging use `<stage>/node`.
+Receipts bind both version probes and the scoped PATH to the checked source pin.
+Pure Python selections retain their existing prerequisites.
+
 Admission holds every parent directory by descriptor, opens leaf files relative
 to those parents without following links, and rejects hardlinked payload files.
 Root/name bindings and all file/directory fingerprints must remain unchanged

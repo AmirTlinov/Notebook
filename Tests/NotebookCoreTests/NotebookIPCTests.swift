@@ -33,6 +33,63 @@ struct NotebookIPCTests {
     }
   }
 
+  @Test(arguments: [false, true])
+  func canonicalSocketAppearsOnlyAfterPrivateBindingIsProtectedAndListening(_ abortPublication: Bool) async throws {
+    let endpoint = try IPCEndpoint(); defer { endpoint.remove() }
+    let server = NotebookIPCServer(socketURL: endpoint.socket) { _ in .string("ready") }
+    defer { server.stop() }
+    var stagedIdentity: SocketIO.Identity?, stagedURL: URL?
+    do {
+      try server.start(afterAddressCheck: nil, beforeAddressPublication: { binding in
+        var absent = stat()
+        #expect(lstat(endpoint.socket.path, &absent) < 0 && errno == ENOENT)
+        try SocketIO.validateSocket(binding)
+        stagedIdentity = try SocketIO.Identity(binding); stagedURL = binding
+        let probe = try SocketIO.makeSocket(); defer { close(probe) }
+        try SocketIO.connect(probe, url: binding)
+        try SocketIO.authenticate(probe)
+        if abortPublication { throw CollaborationError("test_publication_abort", "Controlled publication failure") }
+      })
+      #expect(!abortPublication)
+    } catch let error as CollaborationError {
+      #expect(abortPublication)
+      #expect(error.code == "test_publication_abort")
+    }
+    let staging = try #require(stagedURL)
+    #expect(!FileManager.default.fileExists(atPath: staging.path))
+    if abortPublication {
+      #expect(!FileManager.default.fileExists(atPath: endpoint.socket.path))
+    } else {
+      #expect(stagedIdentity?.matchesSocket(at: endpoint.socket) == true)
+      let response = try await blockingIPC { try NotebookIPCClient(socketURL: endpoint.socket).send(.init(command: .read)) }
+      #expect(response == .string("ready"))
+    }
+    try await drainIPC(server)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: endpoint.directory.path).isEmpty)
+  }
+
+  @Test func maximumLengthCanonicalSocketKeepsABoundedPrivateBinding() async throws {
+    let endpoint = try IPCEndpoint(); defer { endpoint.remove() }
+    let maximumPath = MemoryLayout.size(ofValue: sockaddr_un().sun_path) - 1
+    let count = maximumPath - endpoint.directory.path.utf8.count - 3
+    try #require(count > 0)
+    let directory = endpoint.directory.appendingPathComponent(String(repeating: "x", count: count), isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+    let socket = directory.appendingPathComponent("s")
+    #expect(socket.path.utf8.count == maximumPath)
+    let server = NotebookIPCServer(socketURL: socket) { _ in .string("bounded") }
+    defer { server.stop() }
+    try server.start(afterAddressCheck: nil, beforeAddressPublication: { binding in
+      #expect(binding.path.utf8.count <= maximumPath)
+      #expect(binding.lastPathComponent.utf8.count == 1)
+      try SocketIO.validateSocket(binding)
+    })
+    let response = try await blockingIPC { try NotebookIPCClient(socketURL: socket).send(.init(command: .read)) }
+    #expect(response == .string("bounded"))
+    try await drainIPC(server)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: directory.path).isEmpty)
+  }
+
   @Test func aSecondServerCannotReplaceTheCurrentWriterSocket() async throws {
     let endpoint = try IPCEndpoint(); defer { endpoint.remove() }
     let server = NotebookIPCServer(socketURL: endpoint.socket) { _ in .string("first") }
@@ -49,7 +106,7 @@ struct NotebookIPCTests {
     let loser = NotebookIPCServer(socketURL: endpoint.socket) { _ in .string("loser") }
     defer { loser.stop(); winner.stop() }
     // Both launches observed an empty address. The second completes its real
-    // Unix bind before the first resumes; its EADDRINUSE cleanup owns no inode.
+    // publication before the first resumes; exclusive rename preserves the winner.
     #expect(throws: CollaborationError.self) {
       try loser.start(afterAddressCheck: { try winner.start() })
     }
@@ -57,6 +114,7 @@ struct NotebookIPCTests {
     let response = try await blockingIPC { try NotebookIPCClient(socketURL: endpoint.socket).send(.init(command: .read)) }
     #expect(response == .string("winner"))
     try await drainIPC(winner)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: endpoint.directory.path).isEmpty)
   }
 
   @Test func stoppingARetiredServerDoesNotUnlinkTheReplacementSocket() async throws {

@@ -19,11 +19,16 @@ test("sidecar bundle initializes and exposes shared content tools without node_m
       assert.equal(initialized.result.serverInfo.name,"notebook");
       child.stdin.write(JSON.stringify({jsonrpc:"2.0",method:"notifications/initialized"})+"\n");
       child.stdin.write(JSON.stringify({jsonrpc:"2.0",id:2,method:"tools/list"})+"\n");
-      const names = JSON.parse((await iterator.next()).value!).result.tools.map((tool:{name:string})=>tool.name);
+      const tools = JSON.parse((await iterator.next()).value!).result.tools as {name:string;_meta?:{ui?:{resourceUri?:string}}}[];
+      const names = tools.map(tool=>tool.name);
       assert.deepEqual(names.sort(),["notebook_context","notebook_execute","notebook_import_document","notebook_import_document_resource","notebook_import_program","notebook_open","notebook_panel_changes","notebook_panel_connect","notebook_panel_edit","notebook_panel_presentation","notebook_panel_undo","notebook_panel_workspace"]);
-      child.stdin.write(JSON.stringify({jsonrpc:"2.0",id:3,method:"resources/read",params:{uri:"ui://notebook/workspace.html"}})+"\n");
+      const uri=tools.find(tool=>tool.name==='notebook_open')?._meta?.ui?.resourceUri;
+      assert.ok(uri);assert.match(uri,/^ui:\/\/notebook\/[a-f0-9]{64}\/workspace\.html$/);
+      child.stdin.write(JSON.stringify({jsonrpc:"2.0",id:3,method:"resources/read",params:{uri}})+"\n");
       const panel=JSON.parse((await iterator.next()).value!).result.contents[0];
       assert.equal(panel.mimeType,"text/html;profile=mcp-app");
+      assert.equal(panel.uri,uri);
+      assert.ok(panel.text.includes('notebook-panel-identity'));
       assert.equal(panel.text.includes("NOTEBOOK_SCRIPT"),false);
       const module=panel.text.match(/<script type="module">([\s\S]*?)<\/script>/)?.[1];
       assert.ok(module,"Bundled panel must contain its executable module");

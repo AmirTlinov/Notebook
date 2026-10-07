@@ -59,7 +59,7 @@ test('trusted import tool forwards only its typed local capability, outside Quic
   const {createServer:createSocketServer}=await import('node:net');
   const {chmod}=await import('node:fs/promises');
   const {Client,InMemoryTransport}=await import('@modelcontextprotocol/client');
-  const {createServer}=await import('../src/server.js');
+  const {createServer}=await import('./panel-fixture.js');
   const root=await mkdtemp(join(tmpdir(),'notebook-import-ipc-')),path=join(root,'bridge.sock'),requests:any[]=[];
   const native=createSocketServer(socket=>{
     let bytes=Buffer.alloc(0);

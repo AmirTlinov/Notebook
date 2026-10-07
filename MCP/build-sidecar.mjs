@@ -6,8 +6,10 @@ import { buildPanel } from './build-panel.mjs';
 const root = dirname(fileURLToPath(import.meta.url));
 const output = resolve(process.argv[2]);
 await mkdir(resolve(output, 'dist'), { recursive: true });
+const panel=await buildPanel();
+await writeFile(resolve(output,'panel-bundle.json'),JSON.stringify(panel));
 await build({ entryPoints: {index:resolve(root, 'src/index.ts'),'launch-runtime':resolve(root,'src/runtime-launcher.ts')}, bundle: true, platform: 'node', target: 'node22', format: 'esm',
-  define:{NOTEBOOK_PANEL_HTML:JSON.stringify(await buildPanel())},
+  define:{NOTEBOOK_PANEL_BUNDLE_FILE:JSON.stringify('../panel-bundle.json')},
   outdir: resolve(output, 'dist'), outExtension:{'.js':'.mjs'}, banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" } });
 const pkg = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8'));
 await writeFile(resolve(output, 'package.json'), JSON.stringify({name: pkg.name, version: pkg.version, type: 'module'}));

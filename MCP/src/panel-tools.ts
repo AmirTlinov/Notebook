@@ -2,17 +2,18 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { registerAppResource, registerAppTool, RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/server";
 import * as z from "zod/v4";
 import { dirname, join } from "node:path";
-import { readFile } from "node:fs/promises";
 import { BridgeError, defaultSocketPath, runBridge } from "./bridge.js";
 import { appendInkStrokeSchema, inkStrokePointSchema, operationSchema } from "./actions.js";
 import { sceneBoundsSchema, worldPointSchema } from "./spatial.js";
 import { toolBudgetMilliseconds, type RuntimeAdmission } from "./runtime-admission.js";
+import {verifyPanelBundle, type PanelBundle} from "../panel-bundle.mjs";
 
-declare const NOTEBOOK_PANEL_HTML: string;
-export const panelResourceURI = "ui://notebook/workspace.html";
 export const panelObservationToolMilliseconds=35_000;
 export const panelTargetSchema = z.object({kind:z.enum(["board","page"]),id:z.uuid()}).strict();
 const panelOpenSchema=z.object({target:panelTargetSchema.optional(),bounds:sceneBoundsSchema.optional()}).strict();
+// Missing cohorts reach the same explicit refusal as an older cached UI.
+const appCohortFields={uiCohort:z.string().max(64).optional()};
+const panelConnectSchema=panelOpenSchema.extend(appCohortFields).strict();
 export const panelAddressSchema = z.object({
   workspaceID:z.uuid(),target:panelTargetSchema,socketKey:z.string().regex(/^[a-f0-9]{24}$/),
 }).strict();
@@ -39,6 +40,7 @@ const panelOperationSchema=z.discriminatedUnion('kind',[
   })}),...operationSchema.options.filter(schema=>schema.shape.kind.value!=='appendInkStroke'),
 ]);
 export const panelEditSchema=panelAddressSchema.extend({
+  ...appCohortFields,
   actionID:z.uuid(),summary:z.string().min(1).max(1000),
   operations:z.array(panelOperationSchema).min(1).max(32),sources:z.array(panelSourceSchema).max(64),
 }).strict().refine(edit=>edit.operations.some(op=>op.kind==='appendInkStroke')
@@ -66,18 +68,20 @@ async function result(operation:()=>Promise<Value>,appearance=false) {
   }
 }
 
-export function registerNotebookPanel(server:McpServer,socketPath:string,html?:string,admit?:RuntimeAdmission) {
+export function registerNotebookPanel(server:McpServer,socketPath:string,bundle:PanelBundle,admit?:RuntimeAdmission) {
+  const panel=verifyPanelBundle(bundle),panelResourceURI=panel.resourceURI;
   const appMetadata={ui:{resourceUri:panelResourceURI,visibility:["app"]}};
-  const native=(operation:(runtime:Value|undefined,deadline:number)=>Promise<Value>,appearance=false,
+  const native=(uiCohort:string|undefined,operation:(runtime:Value|undefined,deadline:number)=>Promise<Value>,appearance=false,
     budgetMilliseconds=toolBudgetMilliseconds)=>result(async()=>{
     const started=performance.now(),deadline=started+budgetMilliseconds;
+    if(uiCohort!==panel.cohort)throw new BridgeError({code:"panel_update_required",
+      message:"Эта панель относится к другой версии Notebook. Откройте новую панель через @Notebook в этом чате."});
     const runtime=await admit?.(Math.min(deadline,started+toolBudgetMilliseconds));
     return operation(runtime,deadline);
   },appearance);
   registerAppResource(server,"Notebook workspace",panelResourceURI,{},async()=>({contents:[{
     uri:panelResourceURI,mimeType:RESOURCE_MIME_TYPE,
-    text:html??(typeof NOTEBOOK_PANEL_HTML!=="undefined"?NOTEBOOK_PANEL_HTML
-      :await readFile(new URL("../../.build/notebook-panel.html",import.meta.url),"utf8")),
+    text:panel.html,
     _meta:{ui:{csp:{connectDomains:[],resourceDomains:["blob:"]},prefersBorder:false},
       "openai/ui":{availableDisplayModes:["fullscreen"],preferredDisplayMode:"fullscreen"}},
   }]}));
@@ -87,13 +91,13 @@ export function registerNotebookPanel(server:McpServer,socketPath:string,html?:s
     inputSchema:panelOpenSchema,
     annotations:{readOnlyHint:true,destructiveHint:false,openWorldHint:false},
     _meta:{ui:{resourceUri:panelResourceURI},"openai/ui":{entrypoints:[{type:"thread"},{type:"global"}]}},
-  },input=>result(async()=>({open:input})));
+  },input=>result(async()=>({open:input,uiCohort:panel.cohort})));
   registerAppTool(server,"notebook_panel_connect",{
     title:"Connect this Notebook panel",
     description:"Admit the installed runtime and read this panel's original board/page request. Retry the same request while Notebook opens; no content edit or workspace selection is performed.",
-    inputSchema:panelOpenSchema,
+    inputSchema:panelConnectSchema,
     annotations:{readOnlyHint:true,destructiveHint:false,openWorldHint:false},_meta:appMetadata,
-  },(input,ctx)=>native(async(admitted,deadline)=>{
+  },({uiCohort,...input},ctx)=>native(uiCohort,async(admitted,deadline)=>{
     const runtime=admitted??await runBridge<Value>(socketPath,{command:"runtimeStatus"},{deadline,signal:ctx.mcpReq.signal});
     if(runtime.state!=="ready")return {runtime};
     return readRuntimePanel(runtime,input,socketPath,deadline,ctx.mcpReq.signal);
@@ -101,9 +105,9 @@ export function registerNotebookPanel(server:McpServer,socketPath:string,html?:s
   registerAppTool(server,"notebook_panel_workspace",{
     title:"Choose a Notebook workspace",
     description:"Read, select, create or rename the personal workspace through the plugin runtime. Accepted edits retain their original workspace owner.",
-    inputSchema:z.object({action:z.enum(["list","create","select","rename","retry"]),id:z.uuid().optional(),name:z.string().trim().min(1).max(200).optional(),open:panelOpenSchema.optional()}).strict(),
+    inputSchema:z.object({...appCohortFields,action:z.enum(["list","create","select","rename","retry"]),id:z.uuid().optional(),name:z.string().trim().min(1).max(200).optional(),open:panelOpenSchema.optional()}).strict(),
     annotations:{readOnlyHint:false,destructiveHint:false,openWorldHint:false},_meta:appMetadata,
-  },({open,...request},ctx)=>native(async(_runtime,deadline)=>{
+  },({uiCohort,open,...request},ctx)=>native(uiCohort,async(_runtime,deadline)=>{
     const value=await runBridge<Value>(socketPath,{command:"runtimeWorkspace",runtimeWorkspace:request},{deadline,signal:ctx.mcpReq.signal});
     if(["create","select","retry"].includes(request.action)&&(value.status as Value)?.state==="ready"&&!value.error){
       value.snapshot=await readRuntimePanel(value.status as Value,open??{},socketPath,deadline,ctx.mcpReq.signal);
@@ -113,31 +117,31 @@ export function registerNotebookPanel(server:McpServer,socketPath:string,html?:s
   registerAppTool(server,"notebook_panel_presentation",{
     title:"Prepare this Notebook view",
     description:"Read native world tiles and captured source geometry for this panel. Reuse immutable assets already held by the panel; Notebook preserves ink, physical covers and painter order without changing any device camera.",
-    inputSchema:panelAddressSchema.extend({appearance:panelViewSchema,knownCursor:z.string().optional(),knownRequestID:z.uuid().optional(),
+    inputSchema:panelAddressSchema.extend({...appCohortFields,appearance:panelViewSchema,knownCursor:z.string().optional(),knownRequestID:z.uuid().optional(),
       knownAssets:z.array(z.uuid()).max(96).optional(),includeFitBounds:z.boolean().optional()}).strict(),
     annotations:{readOnlyHint:true,destructiveHint:false,openWorldHint:false},_meta:appMetadata,
-  },({socketKey,...request},ctx)=>native((_runtime,deadline)=>runBridge<Value>(panelSocket({...request,socketKey},socketPath),
+  },({socketKey,uiCohort,...request},ctx)=>native(uiCohort,(_runtime,deadline)=>runBridge<Value>(panelSocket({...request,socketKey},socketPath),
     {command:"panelPresentation",panelPresentation:request},{deadline,signal:ctx.mcpReq.signal}),true));
   registerAppTool(server,"notebook_panel_changes",{
     title:"Wait for changes to this Notebook view",
     description:"Wait up to 25 seconds for an addressed change to the accepted presentation. The runtime validates the checkpoint and visible dependencies; an unchanged reply rearms the wait without preparing pixels. Closing this observation preserves accepted edits.",
-    inputSchema:panelAddressSchema.extend({checkpoint:panelCheckpointSchema}).strict(),
+    inputSchema:panelAddressSchema.extend({...appCohortFields,checkpoint:panelCheckpointSchema}).strict(),
     annotations:{readOnlyHint:true,destructiveHint:false,openWorldHint:false},_meta:appMetadata,
-  },({socketKey,...request},ctx)=>native((_runtime,deadline)=>runBridge<Value>(panelSocket({...request,socketKey},socketPath),
+  },({socketKey,uiCohort,...request},ctx)=>native(uiCohort,(_runtime,deadline)=>runBridge<Value>(panelSocket({...request,socketKey},socketPath),
     {command:"panelChanges",panelChanges:request},{deadline,signal:ctx.mcpReq.signal}),false,panelObservationToolMilliseconds));
   registerAppTool(server,"notebook_panel_edit",{
     title:"Save a human Notebook edit",
     description:"Apply the completed human gesture through Notebook native commands. A pen contact carries one appendInkStroke and sources:[]; element and card edits carry their exact captured sources. Reuse actionID and identical payload after an uncertain response. The native owner chooses authorship and validates the addressed surface.",
     inputSchema:panelEditSchema,
     annotations:{readOnlyHint:false,destructiveHint:true,openWorldHint:false,idempotentHint:true},_meta:appMetadata,
-  },({socketKey,...request},ctx)=>native((_runtime,deadline)=>runBridge<Value>(panelSocket({...request,socketKey},socketPath),
+  },({socketKey,uiCohort,...request},ctx)=>native(uiCohort,(_runtime,deadline)=>runBridge<Value>(panelSocket({...request,socketKey},socketPath),
     {command:"panelEdit",panelEdit:request},{deadline,signal:ctx.mcpReq.signal})));
   registerAppTool(server,"notebook_panel_undo",{
     title:"Undo a human Notebook contribution",
     description:"Undo the admitted native history head while preserving subsequent contributions from other authors.",
-    inputSchema:panelAddressSchema.extend({actionID:z.uuid()}).strict(),
+    inputSchema:panelAddressSchema.extend({...appCohortFields,actionID:z.uuid()}).strict(),
     annotations:{readOnlyHint:false,destructiveHint:true,openWorldHint:false,idempotentHint:true},_meta:appMetadata,
-  },({socketKey,...request},ctx)=>native((_runtime,deadline)=>runBridge<Value>(panelSocket({...request,socketKey},socketPath),
+  },({socketKey,uiCohort,...request},ctx)=>native(uiCohort,(_runtime,deadline)=>runBridge<Value>(panelSocket({...request,socketKey},socketPath),
     {command:"panelUndo",panelUndo:request},{deadline,signal:ctx.mcpReq.signal})));
 }
 

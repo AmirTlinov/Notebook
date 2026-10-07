@@ -4,7 +4,7 @@ import {chmod,mkdtemp,rm} from 'node:fs/promises';
 import {createServer,type Socket} from 'node:net';
 import {join} from 'node:path';
 import {Client,InMemoryTransport} from '@modelcontextprotocol/client';
-import {createServer as createNotebookServer} from '../src/server.js';
+import {createServer as createNotebookServer,panelBundle} from './panel-fixture.js';
 import {BridgeError,runBridge} from '../src/bridge.js';
 
 type Value=Record<string,unknown>;
@@ -78,11 +78,11 @@ test('caller abort and shared deadline retire only their actual socket',async t=
 
 test('MCP sender cancellation reaches the existing native panel request without replay',async t=>{
   const native=await endpoint();t.after(()=>native.close());
-  const server=createNotebookServer(native.socketPath,{panelHtml:'<html>isolated panel</html>'});
+  const server=createNotebookServer(native.socketPath,{panelBundle});
   const client=new Client({name:'abort-probe',version:'1'}),[caller,owner]=InMemoryTransport.createLinkedPair();
   await server.connect(owner);await client.connect(caller);t.after(async()=>{await client.close();await server.close()});
   const controller=new AbortController();
-  const result=client.callTool({name:'notebook_panel_presentation',arguments:{
+  const result=client.callTool({name:'notebook_panel_presentation',arguments:{uiCohort:panelBundle.cohort,
     workspaceID:'00000000-0000-4000-8000-000000000001',target:{kind:'board',id:'00000000-0000-4000-8000-000000000002'},
     socketKey:'0123456789abcdef01234567',appearance:{viewport:{x:800,y:600},pixelScale:1}}},{signal:controller.signal});
   // The public panel owns an admitted endpoint. This fixture names the actual

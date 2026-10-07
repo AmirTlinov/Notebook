@@ -128,7 +128,7 @@ public final class NotebookIPCServer: @unchecked Sendable {
     try start(afterAddressCheck: nil)
   }
 
-  func start(afterAddressCheck: (() throws -> Void)?) throws {
+  func start(afterAddressCheck: (() throws -> Void)?, beforeAddressPublication: ((URL) throws -> Void)? = nil) throws {
     try lock.withLock {
       guard listener < 0, !stopped else { throw CollaborationError("ipc_lifecycle", "Этот сервер уже запущен или завершён.") }
       try SocketIO.validateDirectory(socketURL.deletingLastPathComponent(), create: true)
@@ -136,17 +136,30 @@ public final class NotebookIPCServer: @unchecked Sendable {
       try afterAddressCheck?()
       let fd = try SocketIO.makeSocket()
       var boundIdentity: SocketIO.Identity?
+      var privateURL: URL?
       do {
-        try SocketIO.bind(fd, url: socketURL)
-        boundIdentity = try SocketIO.Identity(socketURL)
+        let binding = try SocketIO.bindPrivate(fd, beside: socketURL)
+        privateURL = binding
+        boundIdentity = try SocketIO.Identity(binding)
         let backlog = NotebookIPC.maximumConnections + NotebookIPC.maximumWaitingConnections + NotebookIPC.maximumUnclassifiedConnections
-        guard chmod(socketURL.path, 0o600) == 0, listen(fd, Int32(backlog)) == 0 else {
+        guard chmod(binding.path, 0o600) == 0, listen(fd, Int32(backlog)) == 0 else {
           throw SocketIO.failure("Не удалось защитить локальный сокет.")
+        }
+        try beforeAddressPublication?(binding)
+        guard boundIdentity?.matchesSocket(at: binding) == true else {
+          throw SocketIO.failure("Владелец подготовленного IPC адреса изменился.")
+        }
+        try SocketIO.validateSocket(binding)
+        // A strict client sees either absence or this protected, listening inode.
+        // Exclusive publication cannot replace an owner which won the address check.
+        guard renamex_np(binding.path, socketURL.path, UInt32(RENAME_EXCL)) == 0 else {
+          if errno == EEXIST { throw SocketIO.ownerRunning() }
+          throw SocketIO.failure("Не удалось опубликовать локальный IPC адрес.")
         }
         listener = fd; socketIdentity = boundIdentity
       } catch {
         close(fd)
-        boundIdentity?.removeSocket(at: socketURL)
+        if let privateURL { boundIdentity?.removeSocket(at: privateURL) }
         throw error
       }
       accepting = true
@@ -452,10 +465,13 @@ enum SocketIO {
       }
       device = info.st_dev; inode = info.st_ino
     }
-    func removeSocket(at url: URL) {
+    func matchesSocket(at url: URL) -> Bool {
       var info = stat()
-      guard lstat(url.path, &info) == 0, info.st_mode & S_IFMT == S_IFSOCK,
-        info.st_uid == geteuid(), info.st_dev == device, info.st_ino == inode else { return }
+      return lstat(url.path, &info) == 0 && info.st_mode & S_IFMT == S_IFSOCK
+        && info.st_uid == geteuid() && info.st_dev == device && info.st_ino == inode
+    }
+    func removeSocket(at url: URL) {
+      guard matchesSocket(at: url) else { return }
       _ = unlink(url.path)
     }
   }
@@ -552,6 +568,28 @@ enum SocketIO {
       if errno == EADDRINUSE { throw ownerRunning() }
       throw failure("Не удалось занять локальный IPC адрес.")
     }
+  }
+  static func bindPrivate(_ fd: Int32, beside url: URL) throws -> URL {
+    _ = try address(url)
+    let directory = url.deletingLastPathComponent()
+    let available = MemoryLayout.size(ofValue: sockaddr_un().sun_path) - 1 - directory.path.utf8.count - 1
+    guard available > 0 else { throw failure("Адрес IPC слишком длинный.") }
+    // A near-limit canonical path may leave only one or two filename bytes.
+    // Keep the private binding in the same directory without extending sun_path.
+    let names: [String]
+    if available <= 2 {
+      names = Array("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-").shuffled()
+        .map { (available == 2 ? "." : "") + String($0) }
+    } else {
+      names = (0..<32).map { _ in "." + String(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(min(32, available - 1))) }
+    }
+    for name in names {
+      let binding = directory.appendingPathComponent(name)
+      if binding.path == url.path { continue }
+      do { try bind(fd, url: binding); return binding }
+      catch let error as CollaborationError where error.code == "ipc_owner_running" { continue }
+    }
+    throw failure("Не удалось подготовить закрытый IPC адрес.")
   }
   static func readFrame(fd: Int32) throws -> Data {
     let prefix = try readExactly(4, fd: fd)

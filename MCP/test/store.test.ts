@@ -82,12 +82,12 @@ test("reads one bounded board window, selected metadata, ink and presence",async
   });
 });
 
-test("read batches refuse more than four physical pages and unbounded scene limits",async()=>{
+test("read batches enforce four pages, eight heavy owners and bounded scene limits",async()=>{
   await withStore(async(store)=>{
     await assert.rejects(store.command({command:"read",queries:Array.from({length:5},()=>({kind:"page",id:randomUUID()}))}),error=>error instanceof BridgeError && error.detail.code==="resource_limit");
     const presence=await store.readPresence();
     await assert.rejects(store.readSceneWindow(rootBoardID,visibleBounds(presence),100_000));
-    await assert.rejects(store.command({command:"read",queries:Array.from({length:5},()=>({kind:"documentFile",id:randomUUID(),fileID:"body"}))}),
+    await assert.rejects(store.command({command:"read",queries:Array.from({length:9},()=>({kind:"documentFile",id:randomUUID(),fileID:"body"}))}),
       error=>error instanceof BridgeError && error.detail.code==="resource_limit");
   });
 });

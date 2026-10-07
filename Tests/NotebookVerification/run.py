@@ -4,6 +4,7 @@ import contextlib
 import copy
 import io
 import json
+import os
 import plistlib
 from pathlib import Path
 import subprocess
@@ -50,6 +51,13 @@ def native_inventory_fixture(label, argv):
 
 
 class FullPrerequisiteTests(unittest.TestCase):
+    def test_release_declares_node_runtime_while_verification_command_stays_python_only(self):
+        checks = {"core": [], "mac": [], "ipad": [], "commands": ["verification"]}
+        plan = {"profiles": [], "checks": checks}
+        self.assertNotIn("codex", verify.prerequisites(plan))
+        checks["commands"] = ["release"]
+        self.assertIn("codex", verify.prerequisites(plan))
+
     def test_full_and_compiler_routes_use_the_same_runtime_prerequisite(self):
         broad = verify.full_plan(ROOT)
         selected = verify.make_plan(ROOT, profiles=["compiler"], only=True)
@@ -136,7 +144,9 @@ class NativeIPadUIArtifactTests(unittest.TestCase):
             evidence = self.root / ("selected-" + str(install_fails) + "-" + str(cleanup_fails))
             with patch.object(release, "release_commands", return_value=command), \
                  patch.object(release, "source_inputs", return_value={"source": "fixture"}), \
-                 patch.object(release, "read_toolchain", return_value={}), \
+                 patch.object(release, "read_toolchain", return_value={"node": "fixture"}), \
+                 patch.object(release, "prepare_codex_runtime", return_value=self.root / ("0" * 64)), \
+                 patch.object(verify, "prepared_codex", return_value={"versions": {"node": "fixture"}}), \
                  patch.object(release, "prepare_typesetter_runtime", return_value=self.root), \
                  patch.object(verify, "install_native_ipad_ui_artifacts", side_effect=install), \
                  self.assertRaises(release.ReleaseError):
@@ -176,16 +186,21 @@ class CodexReceiptTests(unittest.TestCase):
                      "checks": {"core": [], "mac": [], "ipad": [], "commands": ["load-fixture"]}}
         execution = {"format": 1, "planned": ["load-fixture"], "executed": ["load-fixture"], "skipped": [], "failed": []}
         self.commands = [
-            {"label": "load-fixture", "argv": [str(self.root / "Applications/test-load-fixture.sh")], "cwd": str(self.root), "exitCode": 0},
             {"label": "codex-resources", "argv": [sys.executable, "-B", str(self.root / "Applications/prepare_notebook_codex.py"),
-                "--prepare", "--stage-root", str(self.root / ".build/notebook-codex-runtimes")], "cwd": str(self.root), "exitCode": 0}]
+                "--prepare", "--stage-root", str(self.root / ".build/notebook-codex-runtimes")], "cwd": str(self.root), "exitCode": 0},
+            {"label": "toolchain-node", "argv": [str(self.stage / "node"), "--version"], "cwd": None, "exitCode": 0},
+            {"label": "load-fixture", "argv": [str(self.root / "Applications/test-load-fixture.sh")], "cwd": str(self.root), "exitCode": 0},
+            {"label": "toolchain-after-node", "argv": [str(self.stage / "node"), "--version"], "cwd": None, "exitCode": 0}]
+        for entry in self.commands[1:]:
+            entry["environment"] = {"PATH": str(self.stage) + os.pathsep + os.environ.get("PATH", "")}
         for name, value in {"selection.json": self.plan, "commands.json": self.commands,
                 "completed.json": {"format": 2, "checks": {"load-fixture": execution}},
                 "load-fixture-inventory.json": {"format": 1, "tests": ["load-fixture"]},
                 "load-fixture-execution.json": execution,
                 "codex-resources.stdout.log": codex_fixture.report(self.stage, self.runtime),
                 "source-before.json": release.source_inputs(self.root),
-                "toolchain.json": {"python": "fixture"}, "toolchain-after.json": {"python": "fixture"}}.items():
+                "toolchain.json": {"python": "fixture", "node": self.runtime["node"]},
+                "toolchain-after.json": {"python": "fixture", "node": self.runtime["node"]}}.items():
             release.write_json(self.evidence / name, value)
         required = patch.object(verify, "prerequisites", return_value={"codex"})
         required.start(); self.addCleanup(required.stop)
@@ -214,7 +229,7 @@ class CodexReceiptTests(unittest.TestCase):
         with self.assertRaisesRegex(release.ReleaseError, "another native build stage"):
             verify.validate_prerequisites(self.plan, self.evidence, self.commands)
         self.plan["codexRuntimeStage"] = str(self.stage)
-        self.commands[-1]["argv"][-3:] = ["--stage", str(self.root / ".build/notebook-codex-runtime")]
+        self.commands[0]["argv"][-3:] = ["--stage", str(self.root / ".build/notebook-codex-runtime")]
         with self.assertRaisesRegex(release.ReleaseError, "codex-resources"):
             verify.validate_prerequisites(self.plan, self.evidence, self.commands)
 
@@ -607,7 +622,9 @@ class SelectionTests(unittest.TestCase):
                             "mac": [], "commands": []}}
         with patch.object(release, "release_commands", return_value=command), \
              patch.object(release, "source_inputs", return_value={"source": "fixture"}), \
-             patch.object(release, "read_toolchain", return_value={"toolchain": "fixture"}), \
+             patch.object(release, "read_toolchain", return_value={"toolchain": "fixture", "node": "fixture"}), \
+             patch.object(release, "prepare_codex_runtime", return_value=self.root / ("0" * 64)), \
+             patch.object(verify, "prepared_codex", return_value={"versions": {"node": "fixture"}}), \
              self.assertRaises(RunnerReached):
             verify.run_selected(self.root, plan, self.root / "physical-native")
         args = next(args for label, args in calls if label == "ipad")
@@ -747,6 +764,26 @@ class SelectionTests(unittest.TestCase):
         for path in ("Sources/Fixture.swift", "MCP/fixture.ts", "docs/fixture.md"):
             self.change(path, "source inventory fixture\n")
         self.change("Applications/notebook_node_reporter.mjs", (ROOT / "Applications/notebook_node_reporter.mjs").read_text())
+        # Fabricate runtime admission, while executing the real pinned Node for
+        # every version probe and contract process below.
+        node = release.shutil.which("node")
+        self.assertIsNotNone(node)
+        node_bytes = Path(node).read_bytes()
+        self.codex_files["node"] = (node_bytes, 0o755)
+        entry = next(entry for entry in self.codex_runtime["entries"] if entry["path"] == "node")
+        entry.update(bytes=len(node_bytes), sha256=release.digest(node_bytes))
+        lock = self.root / "Applications/NotebookCodexRuntime.lock.json"
+        value = release.read_json(lock)
+        value["architectures"][self.codex_runtime["architecture"]]["entries"] = self.codex_runtime["entries"]
+        release.write_json(lock, value)
+        self.codex_stage = self.root / ".build/notebook-codex-runtimes" / release.notebook_codex.identity(self.codex_runtime)["manifestSHA256"]
+        codex_fixture.stage(self.codex_stage, self.codex_runtime, self.codex_files)
+        recorder = release.release_commands
+        def runner(argv, **options):
+            if argv[2:4] == [str(self.root / "Applications/prepare_notebook_codex.py"), "--prepare"]:
+                options["stdout"].write(json.dumps(codex_fixture.report(self.codex_stage, self.codex_runtime)).encode())
+                return subprocess.CompletedProcess(argv, 0)
+            return subprocess.run(argv, **options)
         paths = ["Tests/NotebookDocumentAcceptance/test_link_activation.mjs",
                  "Tests/NotebookDocumentAcceptance/test_page_phase_observation.mjs"]
         plan = {"unclassified": [], "manualSelection": True,
@@ -757,7 +794,7 @@ class SelectionTests(unittest.TestCase):
                     self.change(path, "import test from 'node:test';import assert from 'node:assert/strict';"
                                 + f"test('required-contract-{index}',()=>assert.equal({str(path != failed).lower()},true));")
                 evidence = self.root / ".build" / ("browser-" + str(failed is not None) + (Path(failed).stem if failed else "passed"))
-                with patch.object(verify, "selected_toolchain", return_value={"fixture": "command routing only"}):
+                with patch.object(release, "release_commands", side_effect=lambda evidence, **options: recorder(evidence, runner, **options)):
                     if failed is None:
                         receipt = verify.run_selected(self.root, plan, evidence)
                         self.assertEqual(receipt["status"], "passed")
@@ -768,10 +805,15 @@ class SelectionTests(unittest.TestCase):
                         self.assertFalse((evidence / "completed.json").exists())
                         self.assertFalse((evidence / "verification.json").exists())
                 commands = json.loads((evidence / "commands.json").read_text())
-                self.assertEqual(len(commands), 1, "No application, package install, or native runner is part of these CPU contracts")
-                self.assertEqual(commands[0]["label"], "document-browser")
-                self.assertEqual(commands[0]["argv"], verify.document_browser_arguments(self.root))
-                self.assertEqual(commands[0]["exitCode"] == 0, failed is None)
+                expected = ["codex-resources", "toolchain-python", "toolchain-node", "document-browser"]
+                if failed is None:
+                    expected.extend(("toolchain-after-python", "toolchain-after-node"))
+                self.assertEqual([entry["label"] for entry in commands], expected)
+                browser = next(entry for entry in commands if entry["label"] == "document-browser")
+                self.assertEqual(browser["argv"], verify.document_browser_arguments(self.root))
+                self.assertEqual(browser["exitCode"] == 0, failed is None)
+                self.assertTrue(browser["environment"]["PATH"].startswith(str(self.codex_stage) + os.pathsep))
+                self.assertEqual(release.read_json(evidence / "toolchain.json")["node"], self.codex_runtime["node"])
                 output = (evidence / "document-browser.stdout.log").read_text()
                 for index in range(len(paths)): self.assertIn("required-contract-" + str(index), output)
                 if failed is None:
@@ -783,14 +825,14 @@ class SelectionTests(unittest.TestCase):
                     # substituted script by keeping only the command label.
                     for omitted in paths:
                         narrowed = copy.deepcopy(commands)
-                        narrowed[0]["argv"].remove(str(self.root / omitted))
+                        next(entry for entry in narrowed if entry["label"] == "document-browser")["argv"].remove(str(self.root / omitted))
                         release.write_json(evidence / "commands.json", narrowed)
                         changed = {**receipt, "artifacts": release.verification_artifacts(evidence, full=False)}
                         with self.assertRaisesRegex(release.ReleaseError, "другой набор"):
                             verify.validate_selected(self.root, evidence, changed)
                     release.write_json(evidence / "commands.json", commands)
                     substituted = copy.deepcopy(commands)
-                    substituted[0]["cwd"] = str(self.root / "different-source")
+                    next(entry for entry in substituted if entry["label"] == "document-browser")["cwd"] = str(self.root / "different-source")
                     release.write_json(evidence / "commands.json", substituted)
                     changed = {**receipt, "artifacts": release.verification_artifacts(evidence, full=False)}
                     with self.assertRaisesRegex(release.ReleaseError, "другой набор"):
@@ -934,7 +976,9 @@ class SelectionTests(unittest.TestCase):
                     if label == "ipc-binpath": return str(self.root / ".build/debug").encode(), b""
                     if label == "codex-resources":
                         if not self.codex_stage.exists(): codex_fixture.stage(self.codex_stage, self.codex_runtime, self.codex_files)
-                        return json.dumps(codex_fixture.report(self.codex_stage, self.codex_runtime)).encode(), b""
+                        report = codex_fixture.report(self.codex_stage, self.codex_runtime)
+                        release.write_json(evidence / "codex-resources.stdout.log", report)
+                        return json.dumps(report).encode(), b""
                     return b"", None
                 plan = {"checks": {"core": [], "ipad": [], "mac": ["NotebookMacTests/DocumentRenderSessionTests"],
                                     "commands": commands}}
@@ -942,7 +986,7 @@ class SelectionTests(unittest.TestCase):
                 self.assertFalse((self.root / "MCP/node_modules").exists())
                 with patch.object(release, "release_commands", return_value=command), \
                      patch.object(release, "source_inputs", return_value={"source": "fixture"}), \
-                     patch.object(release, "read_toolchain", return_value={"toolchain": "fixture"}), \
+                     patch.object(release, "read_toolchain", return_value={"toolchain": "fixture", "node": self.codex_runtime["node"]}), \
                      patch.object(release, "prepare_typesetter_runtime", return_value=self.root / "typesetter") as typesetter, \
                      patch.object(release, "prepare_typescript_runtime", return_value=self.root / "typescript"), \
                      patch.object(verify, "portable_arguments", return_value=(["node", "--test"], self.root, [])), \
@@ -1140,24 +1184,36 @@ class SelectionTests(unittest.TestCase):
             self.change("Tests/" + name + "/run.py", "import unittest\nclass Fixture(unittest.TestCase):\n def test_case(self): pass\n")
         evidence = self.root / ".build/selected"; evidence.mkdir(parents=True)
         plan = verify.make_plan(self.root, profiles=["verification"], only=True)
+        if not self.codex_stage.exists():
+            codex_fixture.stage(self.codex_stage, self.codex_runtime, self.codex_files)
+        plan["codexRuntimeStage"] = str(self.codex_stage)
+        release.write_json(evidence / "codex-resources.stdout.log", codex_fixture.report(self.codex_stage, self.codex_runtime))
         source = release.source_inputs(self.root)
         completed = {}
-        commands = []
+        environment = {"PATH": str(self.codex_stage) + os.pathsep + os.environ.get("PATH", "")}
+        commands = [{"label": "codex-resources", "argv": [sys.executable, "-B", str(self.root / "Applications/prepare_notebook_codex.py"),
+                    "--prepare", "--stage-root", str(self.root / ".build/notebook-codex-runtimes")], "cwd": str(self.root), "exitCode": 0},
+                    {"label": "toolchain-node", "argv": [str(self.codex_stage / "node"), "--version"],
+                     "cwd": None, "exitCode": 0, "environment": environment}]
         for name in plan["checks"]["commands"]:
             argv, cwd, scripts = verify.portable_arguments(self.root, evidence, name)
-            commands.append({"label": name, "argv": argv, "cwd": str(cwd), "exitCode": 0})
+            commands.append({"label": name, "argv": argv, "cwd": str(cwd), "exitCode": 0, "environment": environment})
             identity = {"script": str(scripts[0]), "sha256": release.file_digest(scripts[0])}
             inventory = {"format": 1, **identity, "tests": ["notebook_checked_tests.Fixture.test_case"]}
             execution = {"format": 1, **identity, "tests": {"notebook_checked_tests.Fixture.test_case": "passed"}, "completed": True, "successful": True}
             release.write_json(evidence / (name + "-inventory.json"), inventory)
             release.write_json(evidence / (name + "-execution.json"), execution)
             completed[name] = reports.python_execution(inventory, execution, scripts[0])
+        commands.append({"label": "toolchain-after-node", "argv": [str(self.codex_stage / "node"), "--version"],
+                         "cwd": None, "exitCode": 0, "environment": environment})
+        toolchain = {"fixture": "not a native proof", "node": self.codex_runtime["node"]}
         for name, value in [("selection.json", plan), ("completed.json", {"format": 2, "checks": completed}), ("source-before.json", source),
-                            ("source-after.json", source), ("toolchain.json", {"fixture": "not a native proof"}), ("toolchain-after.json", {"fixture": "not a native proof"}),
+                            ("source-after.json", source), ("toolchain.json", toolchain), ("toolchain-after.json", toolchain),
                             ("commands.json", commands)]:
             release.write_json(evidence / name, value)
         receipt = {"format": 2, "route": "./verify.sh:selected", "scope": "registry-contracts",
                    "physicalAcceptance": False, "status": "passed", "source": source,
+                   "codexRuntime": release.notebook_codex.identity(self.codex_runtime),
                    "artifacts": release.verification_artifacts(evidence, full=False)}
         release.write_json(evidence / "verification.json", receipt)
         return evidence, receipt

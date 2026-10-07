@@ -4,6 +4,7 @@ import Foundation
 // separately with the production identity and a signed, data-free bundle.
 enum NotebookRuntimeIdentity {
   static let admission: Result<Void, NSError> = .success(())
+  static func recordStartup(_ stage: String) {}
 }
 
 // The real NotebookRuntime entry point and AppKit lifecycle are compiled with

@@ -111,7 +111,8 @@ function snapshot(id:string,view:PanelView,knownAssets:string[]=[]):PanelSnapsho
     ...(id===b?{navigation:{parentBoard:{kind:'board',id:a}}}:{})};
 }
 App.prototype.connect=async function(){
-  app=this;this.ontoolresult?.({content:[],structuredContent:{open:{target:{kind:'board',id:a}}}});
+  const identity=JSON.parse(document.getElementById('notebook-panel-identity')!.textContent!);
+  app=this;this.ontoolresult?.({content:[],structuredContent:{open:{target:{kind:'board',id:a}},uiCohort:identity.cohort}});
 };
 App.prototype.updateModelContext=async()=>({});
 App.prototype.callServerTool=async function(input,options){

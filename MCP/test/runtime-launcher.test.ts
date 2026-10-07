@@ -3,13 +3,18 @@ import {test, type TestContext} from 'node:test';
 import {randomUUID} from 'node:crypto';
 import {Client, InMemoryTransport} from '@modelcontextprotocol/client';
 import {createServer, type Socket} from 'node:net';
-import {chmod, cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile} from 'node:fs/promises';
+import {chmod, cp, link, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, unlink, writeFile} from 'node:fs/promises';
 import {dirname, join} from 'node:path';
 import {ensureRuntime, runtimeBootstrap, type RuntimeStartupEvent} from '../src/runtime-launcher.js';
-import {createServer as createNotebookServer} from '../src/server.js';
+import {createServer as createNotebookServer} from './panel-fixture.js';
 import {BridgeError} from '../src/bridge.js';
-import {panelResourceURI} from '../src/panel-tools.js';
+import {panelBundle,withCohort} from './panel-fixture.js';
+const panelResourceURI=panelBundle.resourceURI;
 import {runtimeAdmission} from '../src/runtime-admission.js';
+
+function callTool(client:Client,...[input,...rest]:Parameters<Client['callTool']>){
+  return client.callTool(input.name.startsWith('notebook_panel_')?{...input,arguments:withCohort(input.arguments??{})}:input,...rest);
+}
 
 const status={kind:'notebookRuntime',ready:true,pid:1234,state:'workspaceRequired',protocolVersion:1,build:'248'};
 
@@ -34,15 +39,31 @@ async function owner(t:TestContext, reply:(request:Record<string,unknown>)=>Reco
     });
   });
   let starting:Promise<void>|undefined;
+  let identity:{dev:number;ino:number}|undefined;
+  const removeOwned=async(path:string,owned:NonNullable<typeof identity>)=>{
+    const entry=await lstat(path).catch(error=>{if(error.code==='ENOENT')return null;throw error;});
+    if(entry?.isSocket()&&entry.dev===owned.dev&&entry.ino===owned.ino)await unlink(path);
+  };
   const start=()=>starting ??= (async()=>{
-    await new Promise<void>((resolve,reject)=>{
-      server.once('error',reject);server.listen(socket,resolve);
-    });
-    await chmod(socket,0o600);
+    const binding=join(root,`.${randomUUID()}`);
+    let prepared:typeof identity=undefined;
+    try{
+      await new Promise<void>((resolve,reject)=>{
+        server.once('error',reject);server.listen(binding,resolve);
+      });
+      await chmod(binding,0o600);prepared=await lstat(binding);
+      // link publishes the listening inode exclusively; a competing endpoint
+      // is preserved. The strict client never sees its pre-chmod binding.
+      await link(binding,socket);identity=prepared;
+    }catch(error){
+      if(server.listening)await new Promise<void>(resolve=>server.close(()=>resolve()));
+      throw error;
+    }finally{if(prepared)await removeOwned(binding,prepared);}
   })();
   const stop=async()=>{
     for(const connection of connections) connection.destroy();
     if(server.listening) await new Promise<void>(resolve=>server.close(()=>resolve()));
+    if(identity)await removeOwned(socket,identity);identity=undefined;
     starting=undefined;
   };
   t.after(async()=>{
@@ -170,7 +191,7 @@ test('a live MCP connection recovers its crashed runtime before an addressed ret
     launch:async()=>{launches++;await Promise.all([runtime.start(),content.start()]);},
   });
   await bootstrapRuntime();
-  const server=createNotebookServer(runtime.socket,{panelHtml:'<html></html>',bootstrapRuntime:async()=>{
+  const server=createNotebookServer(runtime.socket,{panelBundle,bootstrapRuntime:async()=>{
     try{return await bootstrapRuntime();}
     catch(error){
       assert(error instanceof BridgeError);
@@ -183,25 +204,25 @@ test('a live MCP connection recovers its crashed runtime before an addressed ret
   const [clientTransport,serverTransport]=InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);await client.connect(clientTransport);
   t.after(async()=>{await client.close();await server.close();});
-  const unknown=await client.callTool({name:'notebook_panel_edit',arguments:edit});
+  const unknown=await callTool(client,{name:'notebook_panel_edit',arguments:edit});
   assert.equal(unknown.isError,true);
   assert.deepEqual(writes,[domainEdit],'A missing response does not replay an already sent edit');
   assert.equal(launches,0);
   await Promise.all([runtime.stop(),content.stop()]);
   uncertain=false;
   const recovered=await Promise.all([
-    client.callTool({name:'notebook_panel_connect',arguments:{}}),
-    client.callTool({name:'notebook_panel_workspace',arguments:{action:'retry',id:workspaceID}}),
+    callTool(client,{name:'notebook_panel_connect',arguments:{}}),
+    callTool(client,{name:'notebook_panel_workspace',arguments:{action:'retry',id:workspaceID}}),
   ]);
   assert(recovered.every(result=>result.isError!==true));
   assert.equal(launches,1,'Concurrent bootstrap reads share one launch admission');
   assert.equal(requests.length,1,'The addressed workspace command is dispatched exactly once');
   assert.deepEqual(writes,[domainEdit],'Bootstrap recovery cannot replay the uncertain mutation');
-  const retried=await client.callTool({name:'notebook_panel_edit',arguments:edit});
+  const retried=await callTool(client,{name:'notebook_panel_edit',arguments:edit});
   assert.notEqual(retried.isError,true);
   assert.deepEqual(writes,[domainEdit,domainEdit],'The caller retries its unchanged action ID and captured sources explicitly');
   build='incompatible';
-  const incompatible=await client.callTool({name:'notebook_panel_workspace',arguments:{action:'retry',id:workspaceID}});
+  const incompatible=await callTool(client,{name:'notebook_panel_workspace',arguments:{action:'retry',id:workspaceID}});
   assert.equal(incompatible.isError,true);
   assert.equal((incompatible.structuredContent as Record<string,unknown>)?.code,'runtime_update_required');
   assert.equal(requests.length,1,'Version refusal happens before the addressed command');
@@ -221,20 +242,20 @@ test('one pending bootstrap leaves MCP handshake, discovery and the static openi
     launch:async()=>{launches++;launched();await held;await runtime.start();},
   });
   const background=bootstrapRuntime();await started;
-  const server=createNotebookServer(runtime.socket,{panelHtml:'<html>Opening Notebook</html>',bootstrapRuntime});
+  const server=createNotebookServer(runtime.socket,{panelBundle,bootstrapRuntime});
   const client=new Client({name:'early-handshake',version:'1'});
   const [clientTransport,serverTransport]=InMemoryTransport.createLinkedPair();
   t.after(async()=>{release();await background;await client.close();await server.close();});
   await server.connect(serverTransport);await client.connect(clientTransport);
   const request={target:{kind:'page',id:randomUUID()},bounds:{anchor:{tileX:0,tileY:0,localX:20,localY:30},region:{x:0,y:0,width:300,height:400}}};
   const [listed,resource,opened]=await Promise.all([client.listTools(),client.readResource({uri:panelResourceURI}),
-    client.callTool({name:'notebook_open',arguments:request})]);
+    callTool(client,{name:'notebook_open',arguments:request})]);
   assert(listed.tools.some(tool=>tool.name==='notebook_panel_connect'));
   assert.equal(resource.contents.length,1);
-  assert.deepEqual(opened.structuredContent,{open:request});
+  assert.deepEqual(opened.structuredContent,{open:request,uiCohort:panelBundle.cohort});
   assert.deepEqual(commands,[]);
-  const reads=Promise.all([client.callTool({name:'notebook_context',arguments:{method:'help'}}),
-    client.callTool({name:'notebook_panel_connect',arguments:request})]);
+  const reads=Promise.all([callTool(client,{name:'notebook_context',arguments:{method:'help'}}),
+    callTool(client,{name:'notebook_panel_connect',arguments:request})]);
   await new Promise<void>(resolve=>setImmediate(resolve));
   assert.deepEqual(commands,[],'No domain read is sent while bootstrap is pending');
   assert.equal(launches,1);
@@ -258,13 +279,13 @@ test('an agent deadline expires before admission without a late write, and the s
     launch:async()=>{launched();await held;await runtime.start();},
   });
   const background=bootstrapRuntime();await started;
-  const server=createNotebookServer(runtime.socket,{panelHtml:'<html></html>',bootstrapRuntime});
+  const server=createNotebookServer(runtime.socket,{panelBundle,bootstrapRuntime});
   const client=new Client({name:'admission-deadline',version:'1'});
   const [clientTransport,serverTransport]=InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);await client.connect(clientTransport);
   t.after(async()=>{release();await background;await client.close();await server.close();});
   const call={name:'notebook_execute',arguments:{op:'start',run_id:runID,api_version:2,code:'return 1;',wait_ms:0}};
-  const began=performance.now(),expired=await client.callTool(call);
+  const began=performance.now(),expired=await callTool(client,call);
   assert.equal(expired.isError,true);
   assert.equal((expired.structuredContent as Record<string,unknown>).code,'runtime_starting');
   assert.equal((expired.structuredContent as Record<string,unknown>).run_id,runID);
@@ -272,7 +293,7 @@ test('an agent deadline expires before admission without a late write, and the s
   assert.deepEqual(writes,[]);
   release();await background;await new Promise<void>(resolve=>setImmediate(resolve));
   assert.deepEqual(writes,[],'Late admission cannot dispatch the expired call');
-  const retried=await client.callTool(call);
+  const retried=await callTool(client,call);
   assert.notEqual(retried.isError,true);
   assert.equal(writes.length,1,'Only the explicit retry sends the unchanged run');
 });
@@ -283,7 +304,7 @@ test('every native tool refuses a mismatched owner before dispatch while the ope
   const commands:Record<string,unknown>[]=[];
   const runtime=await owner(t,request=>{commands.push(request);return {result:{}};});await runtime.start();
   let admissions=0;
-  const server=createNotebookServer(runtime.socket,{panelHtml:'<html></html>',bootstrapRuntime:async()=>{
+  const server=createNotebookServer(runtime.socket,{panelBundle,bootstrapRuntime:async()=>{
     admissions++;
     throw Object.assign(new Error('Different runtime build'),{detail:{code:'runtime_update_required',message:'Different runtime build'}});
   }});
@@ -305,13 +326,13 @@ test('every native tool refuses a mismatched owner before dispatch while the ope
     {name:'notebook_panel_undo',arguments:{...address,actionID:randomUUID()}},
   ];
   for(const call of calls){
-    const result=await client.callTool(call);
+    const result=await callTool(client,call);
     assert.equal(result.isError,true,call.name);
     assert.equal((result.structuredContent as Record<string,unknown>).code,'runtime_update_required',call.name);
   }
   assert.equal(admissions,calls.length);assert.deepEqual(commands,[]);
-  const opened=await client.callTool({name:'notebook_open',arguments:{}});
-  assert.deepEqual(opened.structuredContent,{open:{}});
+  const opened=await callTool(client,{name:'notebook_open',arguments:{}});
+  assert.deepEqual(opened.structuredContent,{open:{},uiCohort:panelBundle.cohort});
   assert.equal(admissions,calls.length,'The static card does not require or fabricate native admission');
 });
 
@@ -332,17 +353,17 @@ test('a real rejected bootstrap stays recoverable before and after a caller stop
     const background=bootstrapRuntime().catch(()=>undefined);
     if(stoppedWaiting)await assert.rejects(runtimeAdmission(bootstrapRuntime)(performance.now()+20),
       (error:BridgeError)=>error.detail.code==='runtime_starting');
-    const server=createNotebookServer(runtime.socket,{panelHtml:'<html></html>',bootstrapRuntime});
+    const server=createNotebookServer(runtime.socket,{panelBundle,bootstrapRuntime});
     const client=new Client({name:'startup-retry',version:'1'});
     const [clientTransport,serverTransport]=InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);await client.connect(clientTransport);
     t.after(async()=>{await background;await client.close();await server.close();});
-    const failed=await client.callTool({name:'notebook_panel_connect',arguments:request});
+    const failed=await callTool(client,{name:'notebook_panel_connect',arguments:request});
     assert.equal(failed.isError,true);
     assert.equal((failed.structuredContent as Record<string,unknown>).code,'runtime_startup_failed');
     assert.deepEqual(reads,[]);
     await background;mayStart=true;
-    const recovered=await client.callTool({name:'notebook_panel_connect',arguments:request});
+    const recovered=await callTool(client,{name:'notebook_panel_connect',arguments:request});
     assert.notEqual(recovered.isError,true);
     assert.deepEqual(reads,[{command:'panelRead',panelRead:{...request,workspaceID}}]);
   });
@@ -354,18 +375,23 @@ test('runtime staging preserves the previous package until the copied product va
   t.after(()=>rm(root,{recursive:true,force:true}));
   const plugin=join(root,'plugin'), source=join(root,'signed/NotebookRuntime.app');
   await mkdir(plugin,{recursive:true});
-  await writeFile(join(plugin,'plugin.json'),JSON.stringify({name:'notebook'}));
+  await writeFile(join(plugin,'plugin.json'),JSON.stringify({name:'notebook',version:panelBundle.version}));
   await mkdir(source,{recursive:true});await writeFile(join(source,'sealed'),'new sealed resource');
   const previous=join(plugin,'runtime/NotebookRuntime.app');
   await mkdir(previous,{recursive:true});await writeFile(join(previous,'sealed'),'previous sealed resource');
   const copy=(from:string,to:string)=>cp(from,to,{recursive:true,verbatimSymlinks:true});
   const inspect=async(app:string)=>{
     assert.equal(await readFile(join(app,'sealed'),'utf8'),'new sealed resource');
-    return {app,panelReady:true};
+    return {app,panelReady:true,panelVersion:panelBundle.version,panelCohort:panelBundle.cohort,version:'260'};
   };
   await assert.rejects(packageRuntime(source,plugin,{copy,inspect:async(app:string)=>{
     if(app!==source) throw new Error('copied signature failed');return inspect(app);
   }}),/copied signature failed/);
+  assert.equal(await readFile(join(previous,'sealed'),'utf8'),'previous sealed resource');
+  await assert.rejects(packageRuntime(source,plugin,{copy,inspect:async(app:string)=>{
+    const result=await inspect(app);
+    return app===source?result:{...result,panelCohort:(result.panelCohort[0]==='0'?'1':'0')+result.panelCohort.slice(1)};
+  }}),/Copy replaced the verified panel cohort/);
   assert.equal(await readFile(join(previous,'sealed'),'utf8'),'previous sealed resource');
   const result=await packageRuntime(source,plugin,{copy,inspect});
   assert.equal(result.app,previous);

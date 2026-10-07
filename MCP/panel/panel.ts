@@ -4,6 +4,7 @@ import { admitPanelCamera, panelCoordinateScale, panelProjection, transformPanel
 import { SwiftSurface, type SurfaceCamera } from "./swift-surface.js";
 import { InkInput } from "./ink-input.js";
 import { WorkspacePicker } from "./workspaces.js";
+import type {PanelIdentity} from "../panel-bundle.mjs";
 import { capturedSource, type Camera, type Frame, type PanelElement, type PanelMutation, type PanelOperation, type PanelCard, type PanelSelection, type Point, type PanelTarget, type PanelView } from "./model.js";
 
 const el=<T extends HTMLElement>(id:string)=>document.getElementById(id) as T;
@@ -33,7 +34,12 @@ const geometryReady=SwiftSurface.compressed(NOTEBOOK_SURFACE_WASM).then(value=>{
   document.querySelectorAll<HTMLButtonElement>("button").forEach(button=>button.disabled=true);
   return false;
 });
-const session=new NotebookSession();
+const identity=JSON.parse(el<HTMLScriptElement>("notebook-panel-identity").textContent??"null") as PanelIdentity|null;
+if(!identity||typeof identity.version!=="string"||typeof identity.cohort!=="string"
+  ||!/^\d{1,9}\.\d{1,9}\.\d{1,9}$/.test(identity.version)||!/^[a-f0-9]{64}$/.test(identity.cohort)){
+  throw new Error("Notebook не передал идентичность этой панели.");
+}
+const session=new NotebookSession(identity);
 // Host registration starts immediately; content reads wait for a usable local
 // surface. A failed compilation leaves the same read gate parked.
 session.suspended=true;

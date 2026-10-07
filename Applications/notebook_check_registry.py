@@ -766,7 +766,7 @@ CHECKS = (
         parser='python-unittest',
         command=('Tests/NotebookRelease/run.py',),
         profiles=('acceptance-bootstrap', 'verification'),
-        prerequisites=(),
+        prerequisites=('codex',),
     ),
     portable(
         'load-fixture',

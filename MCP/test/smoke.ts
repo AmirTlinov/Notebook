@@ -3,7 +3,7 @@ import {mkdtemp,rm} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {Client,InMemoryTransport} from "@modelcontextprotocol/client";
-import {createServer} from "../src/server.js";
+import {createServer} from "./panel-fixture.js";
 import {runBridge} from "../src/bridge.js";
 import {writeFixture,fixtureSocket,stopFixture} from "./fixture.js";
 

@@ -1,3 +1,4 @@
+import {panelIdentity} from './panel-fixture.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {randomUUID} from 'node:crypto';
@@ -40,7 +41,7 @@ async function fixture(){
       camera:{center:{tileX:0,tileY:0,localX:400,localY:300},scale:1},viewport:{x:800,y:600},layers:[]}};
   const calls:{name:string;arguments:Record<string,unknown>}[]=[];
   const writes:{resolve:(value:Awaited<ReturnType<NotebookSession['app']['callServerTool']>>)=>void}[]=[];
-  const session=new NotebookSession();session.snapshot=snapshot;
+  const session=new NotebookSession(panelIdentity);session.snapshot=snapshot;
   session.app.updateModelContext=async()=>({});
   session.app.callServerTool=async request=>{
     calls.push({name:request.name,arguments:request.arguments!});

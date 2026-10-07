@@ -1,6 +1,7 @@
 """Exercise the real router/parser with bounded, explicitly fabricated runners."""
 import copy
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -14,6 +15,8 @@ sys.path.insert(0, str(ROOT / "Applications"))
 import notebook_check_reports as reports
 import notebook_release as release
 import notebook_verification as verify
+sys.path.insert(0, str(ROOT / "Tests/NotebookRelease"))
+import codex_fixture
 
 
 class RegistryReportTests(unittest.TestCase):
@@ -33,6 +36,8 @@ class RegistryReportTests(unittest.TestCase):
                           self.function("OtherSuite", "unrelated")]
         self.execution_override = None
         self.calls = []
+        self.codex_runtime, _, self.codex_files = codex_fixture.source(self.root)
+        self.codex_stage = self.root / ".build/notebook-codex-runtimes" / release.notebook_codex.identity(self.codex_runtime)["manifestSHA256"]
 
     def function(self, suite, name, product="NotebookCoreTests"):
         return {"version": "6.4.0", "kind": "test", "payload": {"kind": "function", "name": name + "()",
@@ -49,10 +54,18 @@ class RegistryReportTests(unittest.TestCase):
                 *(self.event(kind, function["payload"]["id"]) for function in functions for kind in ("testStarted", "testEnded")),
                 self.event("runEnded")]
 
-    def fake_runner(self, argv, cwd, stdout, stderr, timeout):
+    def fake_runner(self, argv, cwd, stdout, stderr, timeout, env=None):
         self.calls.append(list(argv))
+        if argv[0] == str(self.codex_stage / "node") or argv[:2] == ["npm", "ci"]:
+            self.assertIsNotNone(env)
+            self.assertTrue(env["PATH"].startswith(str(self.codex_stage) + os.pathsep))
         if "--version" in argv:
-            stdout.write(b"fabricated fixed toolchain version\n")
+            value = self.codex_runtime["node"] if Path(argv[0]).name == "node" else "fabricated fixed toolchain version"
+            stdout.write((value + "\n").encode())
+        elif any(value.endswith("prepare_notebook_codex.py") for value in argv):
+            if not self.codex_stage.exists():
+                codex_fixture.stage(self.codex_stage, self.codex_runtime, self.codex_files)
+            stdout.write(json.dumps(codex_fixture.report(self.codex_stage, self.codex_runtime)).encode())
         elif any(value.endswith("prepare_notebook_typescript.py") for value in argv):
             stdout.write(json.dumps({"status": "ready", "stage": str(self.root / ".build/notebook-typescript-runtime/stages/pinned")}).encode())
         elif "--event-stream-output-path" in argv:
@@ -76,9 +89,9 @@ class RegistryReportTests(unittest.TestCase):
         recorder = release.release_commands
         # This runner fabricates command results, including tool versions. Its
         # available commands belong to the same fixture, not the host's PATH.
-        available = {sys.executable, "swift", "node", "npm"}
+        available = {sys.executable, "swift", "node", "npm", str(self.codex_stage / "node")}
         with patch.object(verify.shutil, "which", side_effect=lambda executable: executable if executable in available else None), \
-             patch.object(release, "release_commands", side_effect=lambda evidence: recorder(evidence, self.fake_runner)):
+             patch.object(release, "release_commands", side_effect=lambda evidence, **options: recorder(evidence, self.fake_runner, **options)):
             return verify.run_selected(self.root, self.plan, self.evidence)
 
     def test_fabricated_runner_discovery_is_independent_of_and_restores_the_host(self):
@@ -101,6 +114,23 @@ class RegistryReportTests(unittest.TestCase):
         self.assertEqual([label for label, _, _ in calls], ["toolchain-python"])
         self.assertFalse(any("swift" in argv for _, argv, _ in calls))
 
+    def test_full_and_selected_toolchain_share_stdout_version_and_keep_diagnostic_stderr(self):
+        self.evidence.mkdir(parents=True)
+        diagnostic = b"swift-driver version:1.168.6\n"
+        def runner(argv, cwd, stdout, stderr, timeout):
+            stdout.write(b"fabricated fixed toolchain version\n")
+            if "swift" in argv:
+                stderr.write(diagnostic)
+            return subprocess.CompletedProcess(argv, 0)
+        command = release.release_commands(self.evidence, runner)
+        with patch.object(verify.shutil, "which", side_effect=lambda executable: executable):
+            full = release.read_toolchain(command, prefix="full-")
+            selected = verify.selected_toolchain(command, self.plan, prefix="selected-")
+        self.assertEqual(full["swift"], "fabricated fixed toolchain version")
+        self.assertEqual(selected, {name: full[name] for name in selected})
+        for prefix in ("full-", "selected-"):
+            self.assertEqual((self.evidence / (prefix + "swift.stderr.log")).read_bytes(), diagnostic)
+
     def changed_receipt(self, receipt):
         return {**receipt, "artifacts": release.verification_artifacts(self.evidence, full=False)}
 
@@ -112,6 +142,27 @@ class RegistryReportTests(unittest.TestCase):
         self.assertEqual(core["executed"], expected)
         self.assertEqual(verify.validate_selected(self.root, self.evidence, receipt), receipt)
         self.assertFalse(any("xcodebuild" in argv or "xcrun" in argv for argv in self.calls))
+        self.assertFalse(any("prepare_notebook_codex.py" in value for argv in self.calls for value in argv))
+        self.assertTrue(all("environment" not in entry for entry in verify.read_commands(self.evidence)))
+
+    def test_pinned_node_binds_selected_toolchain_children_and_recorded_environment(self):
+        self.plan["profiles"] = ["compiler"]
+        original_path = os.environ.get("PATH")
+        receipt = self.run_route()
+        commands = verify.read_commands(self.evidence)
+        expected_path = str(self.codex_stage) + os.pathsep + (original_path or "")
+        node = next(entry for entry in commands if entry["label"] == "toolchain-node")
+        self.assertEqual(node["argv"], [str(self.codex_stage / "node"), "--version"])
+        self.assertEqual(node["environment"], {"PATH": expected_path})
+        self.assertEqual(release.read_json(self.evidence / "toolchain.json")["node"], self.codex_runtime["node"])
+        self.assertEqual(sum(entry["label"] == "codex-resources" for entry in commands), 1)
+        self.assertEqual(receipt["codexRuntime"], release.notebook_codex.identity(self.codex_runtime))
+        self.assertEqual(os.environ.get("PATH"), original_path)
+        dependency = next(entry for entry in commands if entry["label"] == "mcp-dependencies")
+        dependency["environment"]["PATH"] = "/foreign/node:" + (original_path or "")
+        release.write_json(self.evidence / "commands.json", commands)
+        with self.assertRaisesRegex(release.ReleaseError, "PATH подготовленного Node"):
+            verify.validate_selected(self.root, self.evidence, self.changed_receipt(receipt))
 
     def test_missing_or_renamed_selector_refuses_before_execution(self):
         self.plan["checks"]["core"] = ["MissingSuite", "WantedSuite"]
@@ -215,7 +266,7 @@ class RegistryReportTests(unittest.TestCase):
         recorder = release.release_commands
         with patch.object(verify, "selected_toolchain", return_value={"fixture": "bounded lock-state preflight"}), \
              patch.object(release, "validate_device", return_value={}), \
-             patch.object(release, "release_commands", side_effect=lambda evidence: recorder(evidence, runner)), \
+             patch.object(release, "release_commands", side_effect=lambda evidence, **options: recorder(evidence, runner, **options)), \
              self.assertRaisesRegex(release.ReleaseError, "требует ввода кода"):
             verify.run_selected(self.root, self.plan, self.evidence)
         self.assertEqual(len(self.calls), 2)
@@ -238,7 +289,7 @@ class RegistryReportTests(unittest.TestCase):
             with self.subTest(phase=phase):
                 self.calls = []
                 self.evidence = self.root / (".build/locked-" + phase)
-                def runner(argv, cwd, stdout, stderr, timeout):
+                def runner(argv, cwd, stdout, stderr, timeout, env=None):
                     self.calls.append(list(argv))
                     if "lockState" in argv or "details" in argv:
                         destination = Path(argv[argv.index("--json-output") + 1])
@@ -247,13 +298,17 @@ class RegistryReportTests(unittest.TestCase):
                                   "unlockedSinceBoot": True} if lock else {}
                         release.write_json(destination, {"info": {"outcome": "success", "commandType":
                             "devicectl.device.info." + ("lockState" if lock else "details")}, "result": result})
+                    elif any(value.endswith("prepare_notebook_codex.py") for value in argv):
+                        if not self.codex_stage.exists():
+                            codex_fixture.stage(self.codex_stage, self.codex_runtime, self.codex_files)
+                        stdout.write(json.dumps(codex_fixture.report(self.codex_stage, self.codex_runtime)).encode())
                     elif "-enumerate-tests" in argv:
                         destination = Path(argv[argv.index("-test-enumeration-output-path") + 1])
                         release.write_json(destination, {"tests": ["NotebookTests/Contract/testAction"]})
                     return subprocess.CompletedProcess(argv, 0)
-                with patch.object(verify, "selected_toolchain", return_value={"fixture": "autolock after preparation"}), \
+                with patch.object(verify, "selected_toolchain", return_value={"fixture": "autolock after preparation", "node": self.codex_runtime["node"]}), \
                      patch.object(release, "validate_device", return_value={}), \
-                     patch.object(release, "release_commands", side_effect=lambda evidence: recorder(evidence, runner)), \
+                     patch.object(release, "release_commands", side_effect=lambda evidence, **options: recorder(evidence, runner, **options)), \
                      self.assertRaisesRegex(release.ReleaseError, "требует ввода кода"):
                     verify.run_selected(self.root, self.plan, self.evidence)
                 self.assertTrue(any("build-for-testing" in argv for argv in self.calls))

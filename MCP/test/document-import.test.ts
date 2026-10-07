@@ -6,7 +6,7 @@ import {join} from 'node:path';
 import {createHash,randomUUID} from 'node:crypto';
 import {createServer as createSocketServer} from 'node:net';
 import {Client,InMemoryTransport} from '@modelcontextprotocol/client';
-import {createServer} from '../src/server.js';
+import {createServer} from './panel-fixture.js';
 // @ts-expect-error Executable file transport is plain JavaScript.
 import {documentImportRequest,submitDocument,documentResourceRequest,submitDocumentResource} from '../skills/notebook/scripts/file-import.mjs';
 // @ts-expect-error Executable local preparation is plain JavaScript.

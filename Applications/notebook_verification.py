@@ -272,28 +272,30 @@ def prerequisites(plan):
             components = selector.replace(".", "/").split("/")
             if any(value in components or value == selector for value in check.selectors):
                 required.update(check.prerequisites)
+    if checks["mac"] or checks["ipad"] or "darwin" in required or required & {"mcp-dependencies", "recognition-dependencies"} or any(
+            COMMANDS[name].parser == "node-events" for name in checks["commands"]):
+        required.add("codex")
     return required
 
 
 def selected_toolchain(command, plan, prefix="toolchain-"):
     checks = plan["checks"]
-    if checks["mac"] or checks["ipad"] or "darwin" in prerequisites(plan):
-        return release.read_toolchain(command, prefix=prefix)
+    required = prerequisites(plan)
+    codex_stage = prepared_codex_stage(plan) if "codex" in required else None
+    if checks["mac"] or checks["ipad"] or "darwin" in required:
+        return release.read_toolchain(command, prefix=prefix, codex_stage=codex_stage)
     executables = {"python": [sys.executable, "--version"]}
     if checks["core"] or prerequisites(plan) & {"ipc-host", "typescript"} or any(
             COMMANDS[name].parser in ("exit-contract", "json-contract") for name in checks["commands"]):
         executables["swift"] = ["swift", "--version"]
-    if any(COMMANDS[name].parser == "node-events" for name in checks["commands"]) or "mcp-dependencies" in prerequisites(plan):
-        executables["node"] = ["node", "--version"]
+    if codex_stage:
+        executables["node"] = [str(codex_stage / "node"), "--version"]
     if prerequisites(plan) & {"mcp-dependencies", "recognition-dependencies"}:
         executables["npm"] = ["npm", "--version"]
     result = {}
     for name, argv in executables.items():
         release.require(shutil.which(argv[0]) is not None, "Не найден prerequisite: " + argv[0])
-        output = command(prefix + name, argv, read_output=True)
-        value = b"\n".join(output).decode().strip()
-        release.require(bool(value), "Инструмент не назвал версию: " + name)
-        result[name] = value
+        result[name] = release.read_tool_version(command, name, argv, prefix=prefix)
     return result
 
 
@@ -548,8 +550,13 @@ def validate_prerequisites(plan, evidence, commands):
     if "typescript" in required:
         prepared_typescript(evidence, origin)
     if "codex" in required:
-        release.require(str(prepared_codex_stage(plan)) == prepared_codex(evidence, origin)["stage"],
+        report = prepared_codex(evidence, origin)
+        release.require(str(prepared_codex_stage(plan)) == report["stage"],
                         "Codex prerequisite names another native build stage.")
+        release.validate_node_commands(commands, prepared_codex_stage(plan))
+        for name in ("toolchain.json", "toolchain-after.json"):
+            release.require(release.read_json(evidence / name).get("node") == report["versions"]["node"],
+                            "Node toolchain отличается от подготовленного source pin.")
     for platform, sdk in (("mac", "macosx"), ("ipad", "iphoneos")):
         if plan["checks"][platform]:
             check_command(commands, "typesetter-resources-" + sdk,
@@ -793,10 +800,9 @@ def run_selected(root, plan, evidence):
     before = release.source_inputs(root)
     release.write_json(evidence / "source-before.json", before)
     release.write_json(evidence / "selection.json", plan)
-    command = release.release_commands(evidence)
-    toolchain = selected_toolchain(command, plan)
-    release.write_json(evidence / "toolchain.json", toolchain)
     required = prerequisites(plan)
+    environment = {}
+    command = release.release_commands(evidence, environment=environment)
     if "physical-ipad" in required:
         device = evidence / "physical-ipad.json"
         command("physical-ipad", ["xcrun", "devicectl", "device", "info", "details", "--device", release.DEVICE,
@@ -804,6 +810,14 @@ def run_selected(root, plan, evidence):
         release.validate_device(release.successful_json(device, "devicectl.device.info.details"))
     if "unlocked-ipad" in required:
         check_ipad_lock(root, evidence, command)
+    if "codex" in required:
+        plan["codexRuntimeStage"] = str(release.prepare_codex_runtime(root, command, environment=environment))
+        release.write_json(evidence / "selection.json", plan)
+    toolchain = selected_toolchain(command, plan)
+    if "codex" in required:
+        release.require(toolchain.get("node") == prepared_codex(evidence, root)["versions"]["node"],
+                        "Node toolchain отличается от подготовленного source pin.")
+    release.write_json(evidence / "toolchain.json", toolchain)
     for prerequisite, argv in (("darwin", ["xcrun", "--sdk", "macosx", "--show-sdk-build-version"]),
                                ("icon-renderer", ["rsvg-convert", "--version"])):
         if prerequisite in required:
@@ -871,8 +885,6 @@ def run_selected(root, plan, evidence):
         plan["typesetterRuntime"] = str(typesetter)
         release.write_json(evidence / "selection.json", plan)
         if platform == "mac":
-            plan["codexRuntimeStage"] = str(release.prepare_codex_runtime(root, command))
-            release.write_json(evidence / "selection.json", plan)
             release.prepare_surface_stage(root, command)
         try:
             command(platform + "-build-for-testing", native_arguments(root, evidence, plan, platform,

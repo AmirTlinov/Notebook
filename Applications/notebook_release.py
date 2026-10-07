@@ -258,7 +258,7 @@ def validate_signature(display, entitlements, profile):
 
 
 
-def release_commands(evidence, runner=None):
+def release_commands(evidence, runner=None, *, environment=None):
     command_runner = runner or subprocess.run
     log = evidence / "commands.json"
     commands = json.loads(log.read_bytes()) if log.exists() else []
@@ -267,13 +267,19 @@ def release_commands(evidence, runner=None):
     def command(label, arguments, cwd=None, timeout=60, read_output=False, pipe_stdout=False, pass_fds=()):
         require(not any(entry.get("label") == label for entry in commands), "Команда с этой меткой уже записана: " + label)
         entry = {"label": label, "argv": [str(value) for value in arguments], "cwd": str(cwd) if cwd else None}
+        overrides = dict(environment or {})
+        require(not overrides or set(overrides) == {"PATH"} and isinstance(overrides["PATH"], str),
+                "Recorder допускает только scoped PATH runtime.")
+        if overrides:
+            entry["environment"] = overrides
         if pipe_stdout:
             entry["stdoutMode"] = "pipe"
         commands.append(entry)
         write_json(evidence / "commands.json", commands)
         with (evidence / (label + ".stdout.log")).open("wb") as out, (evidence / (label + ".stderr.log")).open("wb") as err:
             result = command_runner(entry["argv"], cwd=cwd, stdout=subprocess.PIPE if pipe_stdout else out,
-                                    stderr=err, timeout=timeout, **({"pass_fds": pass_fds} if pass_fds else {}))
+                                    stderr=err, timeout=timeout, **({"pass_fds": pass_fds} if pass_fds else {}),
+                                    **({"env": {**os.environ, **overrides}} if overrides else {}))
             if pipe_stdout:
                 require(isinstance(result.stdout, bytes) and len(result.stdout) <= 64 * 1024 * 1024,
                         "Машинный поток runner отсутствует или превысил бюджет.")
@@ -383,7 +389,14 @@ def verification_artifacts(evidence, *, full=True):
 
 
 
-def read_toolchain(command, prefix="toolchain-"):
+def read_tool_version(command, name, argv, prefix="toolchain-"):
+    """Read the stdout version; the command recorder retains stderr diagnostics."""
+    value = command(prefix + name, argv, read_output=True)[0].decode().strip()
+    require(value, "Инструмент не назвал свою версию: " + name)
+    return value
+
+
+def read_toolchain(command, prefix="toolchain-", codex_stage=None):
     commands = {
         "python": [sys.executable, "--version"],
         "xcode": ["/usr/bin/xcrun", "xcodebuild", "-version"],
@@ -392,16 +405,10 @@ def read_toolchain(command, prefix="toolchain-"):
         "macosSDK": ["/usr/bin/xcrun", "--sdk", "macosx", "--show-sdk-build-version"],
     }
     for name in ("xcodegen", "node", "npm"):
-        executable = shutil.which(name)
+        executable = str(Path(codex_stage) / "node") if name == "node" and codex_stage else shutil.which(name)
         require(executable is not None, "Не найден инструмент: " + name)
         commands[name] = [executable, "--version"]
-    result = {}
-    for name, argv in commands.items():
-        output = command(prefix + name, argv, read_output=True)
-        value = output[0].decode().strip()
-        require(value, "Инструмент не назвал свою версию: " + name)
-        result[name] = value
-    return result
+    return {name: read_tool_version(command, name, argv, prefix=prefix) for name, argv in commands.items()}
 
 
 def finish_verification(source, evidence):
@@ -451,13 +458,32 @@ def validate_codex_report(report, source, stage_root=None):
         raise ReleaseError("Codex runtime contract failed: " + str(error)) from error
 
 
-def prepare_codex_runtime(source, command, stage_root=None):
+def prepare_codex_runtime(source, command, stage_root=None, *, environment=None):
     root = Path(stage_root or Path(source) / ".build/notebook-codex-runtimes").resolve()
     output = command("codex-resources", [sys.executable, "-B", Path(source) / "Applications/prepare_notebook_codex.py",
         "--prepare", "--stage-root", root], cwd=source, timeout=1800, read_output=True)[0]
     report = json.loads(output)
     validate_codex_report(report, source, root)
-    return Path(report["stage"])
+    stage = Path(report["stage"])
+    if environment is not None:
+        environment["PATH"] = str(stage) + os.pathsep + os.environ.get("PATH", "")
+    return stage
+
+
+def validate_node_commands(commands, stage):
+    preparation = next((index for index, entry in enumerate(commands) if entry["label"] == "codex-resources"), None)
+    require(preparation is not None and preparation + 1 < len(commands), "Нет подготовки Node перед исполнением.")
+    scoped = commands[preparation + 1:]
+    environment = scoped[0].get("environment", {})
+    path = environment.get("PATH") if isinstance(environment, dict) else None
+    require(isinstance(environment, dict) and set(environment) == {"PATH"}
+            and isinstance(path, str) and path.startswith(str(stage) + os.pathsep)
+            and all(entry.get("environment") == environment for entry in scoped),
+            "Команды не использовали единый PATH подготовленного Node runtime.")
+    for label in ("toolchain-node", "toolchain-after-node"):
+        entry = next((entry for entry in scoped if entry["label"] == label), None)
+        require(entry is not None and entry["argv"] == [str(Path(stage) / "node"), "--version"],
+                "Node toolchain не измерял точный подготовленный executable.")
 
 
 def prepare_surface_stage(source, command):
@@ -510,9 +536,8 @@ def restrict_test_script_services(app, source, command, *, bundle_identifier, si
     command("test-host-seal-verify", ["/usr/bin/codesign", "--verify", "--deep", "--strict", app])
 
 
-def build_mac(snapshot, evidence, command, typesetter_runtime, codex_stage_root, surface_stage):
+def build_mac(snapshot, evidence, command, typesetter_runtime, codex_runtime, surface_stage):
     typescript_runtime = prepare_typescript_runtime(snapshot, command)
-    codex_runtime = prepare_codex_runtime(snapshot, command, stage_root=codex_stage_root)
     entitlements = evidence / "mac.entitlements"
     entitlements.write_bytes(plistlib.dumps({"com.apple.security.get-task-allow": True, **cloud_entitlements(mac=True)}))
     command("build-mac", ["/usr/bin/xcrun", "xcodebuild", "-project",
@@ -689,13 +714,17 @@ def build_verified_pair(source, verification, evidence, runner=None):
     proof = checked_verification(source, verification)
     before = proof["source"]
     evidence.mkdir(parents=True, mode=0o700)
-    command = release_commands(evidence, runner)
+    environment = {}
+    command = release_commands(evidence, runner, environment=environment)
     receipt = {"format": 1, "status": "building", "installationAttempted": False,
                "verificationRoute": proof["route"],
                "verificationSHA256": file_digest(verification / "verification.json"), "sourceSHA256": before["sha256"]}
     write_json(evidence / "build.json", receipt)
     try:
-        toolchain = read_toolchain(command)
+        codex_runtime = prepare_codex_runtime(source, command, environment=environment)
+        toolchain = read_toolchain(command, codex_stage=codex_runtime)
+        require(toolchain["node"] == read_json(evidence / "codex-resources.stdout.log")["versions"]["node"],
+                "Node toolchain отличается от подготовленного source pin.")
         verified_tools = read_json(verification / "toolchain.json")
         require(all(toolchain.get(name) == value for name, value in verified_tools.items()),
                 "Инструменты сборки отличаются от verify.sh.")
@@ -715,13 +744,13 @@ def build_verified_pair(source, verification, evidence, runner=None):
         ipad = build_ipad(snapshot, evidence, command, runtime)
         ipad_info, ipad_signature, ipad_uuids, ipad_manifest = inspect_ipad(ipad, device, evidence, command)
         surface_stage = prepare_surface_stage(source, command)
-        mac = build_mac(snapshot, evidence, command, runtime, source / ".build/notebook-codex-runtimes", surface_stage)
+        mac = build_mac(snapshot, evidence, command, runtime, codex_runtime, surface_stage)
         mac_info, mac_signature, mac_uuids, mac_manifest = inspect_mac(mac, command, snapshot)
         require("codexRuntime" not in proof or proof["codexRuntime"] == mac_signature["codexRuntime"],
                 "Codex runtime differs from the verified prerequisite.")
         plugin = evidence / "plugin"
         shutil.copytree(snapshot / "MCP/plugin", plugin)
-        command("package-plugin", [shutil.which("node"), snapshot / "MCP/package-plugin-runtime.mjs",
+        command("package-plugin", [codex_runtime / "node", snapshot / "MCP/package-plugin-runtime.mjs",
             mac, plugin / "notebook"], cwd=snapshot, timeout=600)
         mac = plugin / "notebook/runtime/NotebookRuntime.app"
         require(all(ipad_info[key] == mac_info[key] for key in ("CFBundleVersion", "CFBundleShortVersionString")),
@@ -730,8 +759,9 @@ def build_verified_pair(source, verification, evidence, runner=None):
         require(checked_verification(source, verification) == proof, "Полная проверка изменилась при сборке.")
         require(app_manifest(ipad) == ipad_manifest and app_manifest(mac) == mac_manifest,
                 "Подписанная пара изменилась после проверки.")
-        require(read_toolchain(command, prefix="toolchain-after-") == toolchain,
+        require(read_toolchain(command, prefix="toolchain-after-", codex_stage=codex_runtime) == toolchain,
                 "Инструменты изменились во время сборки пары.")
+        validate_node_commands(json.loads((evidence / "commands.json").read_bytes()), codex_runtime)
         write_json(evidence / "source-after.json", source_inputs(snapshot))
         apps = {}
         for role, app, signature, uuids, manifest in (("iPad", ipad, ipad_signature, ipad_uuids, ipad_manifest),

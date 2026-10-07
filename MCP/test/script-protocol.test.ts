@@ -6,7 +6,8 @@ import {tmpdir} from "node:os";
 import {join} from "node:path";
 import test from "node:test";
 import {Client,InMemoryTransport} from "@modelcontextprotocol/client";
-import {createServer,executionOutput} from "../src/server.js";
+import {executionOutput} from "../src/server.js";
+import {createServer} from "./panel-fixture.js";
 import {sdkReference,sdkInputs} from "../src/sdk-contracts.js";
 import {operationSchema} from "../src/actions.js";
 

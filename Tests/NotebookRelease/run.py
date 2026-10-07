@@ -34,6 +34,7 @@ from test_runtime_lifecycle import RuntimeLifecycleTests
 
 TOOLCHAIN = {name: "fixture " + name + " version" for name in
              ("python", "xcode", "swift", "iphoneosSDK", "macosSDK", "xcodegen", "node", "npm")}
+TOOLCHAIN["node"] = "v24.21.0"
 
 
 class PairCLI(FakeCLI):
@@ -81,10 +82,15 @@ class PairCLI(FakeCLI):
         self.mutate_mac = False
         self.toolchain = dict(TOOLCHAIN)
 
-    def __call__(self, argv, cwd=None, stdout=None, stderr=None, timeout=None):
+    def __call__(self, argv, cwd=None, stdout=None, stderr=None, timeout=None, env=None):
         label = Path(stdout.name).name.removesuffix(".stdout.log")
+        stage = self.source / ".build/notebook-codex-runtimes" / release.notebook_codex.identity(self.codex_runtime)["manifestSHA256"]
+        if label.startswith("toolchain-") or label in ("dependencies", "surface-resources", "package-plugin"):
+            assert env is not None and env["PATH"].startswith(str(stage) + os.pathsep)
         output, error, exit_code = b"", b"", 0
         if label.startswith("toolchain-"):
+            if label in ("toolchain-node", "toolchain-after-node"):
+                assert argv == [str(stage / "node"), "--version"]
             output = self.toolchain[label.removeprefix("toolchain-").removeprefix("after-")].encode()
         elif label == "dependencies":
             assert argv[1:] == ["ci", "--ignore-scripts"]
@@ -165,7 +171,7 @@ class PairCLI(FakeCLI):
         elif label == "package-plugin":
             snapshot = Path(cwd)
             plugin = snapshot.parent / "plugin/notebook"
-            assert argv == ["/fixture/node", str(snapshot / "MCP/package-plugin-runtime.mjs"),
+            assert argv == [str(stage / "node"), str(snapshot / "MCP/package-plugin-runtime.mjs"),
                             str(self.mac), str(plugin)]
             assert json.loads((plugin / "plugin.json").read_text())["name"] == "notebook"
             if self.package_fail:

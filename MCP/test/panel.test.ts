@@ -1,3 +1,4 @@
+import {panelBundle,panelIdentity,withCohort} from './panel-fixture.js';
 import assert from 'node:assert/strict';
 import test, {type TestContext} from 'node:test';
 import {randomUUID} from 'node:crypto';
@@ -7,15 +8,16 @@ import {join} from 'node:path';
 import {Client, InMemoryTransport} from '@modelcontextprotocol/client';
 import {McpServer} from '@modelcontextprotocol/server';
 import {RESOURCE_MIME_TYPE} from '@modelcontextprotocol/ext-apps/server';
-import {panelObservationToolMilliseconds,panelResourceURI, registerNotebookPanel} from '../src/panel-tools.js';
+import {panelObservationToolMilliseconds, registerNotebookPanel} from '../src/panel-tools.js';
 import type {RuntimeAdmission} from '../src/runtime-admission.js';
 import {NotebookSession} from '../panel/session.js';
 import {Surface} from '../panel/surface.js';
 import type {PanelMutation, PanelSnapshot, PanelView} from '../panel/model.js';
+import {sealPanelBundle} from '../panel-bundle.mjs';
 
 type Value = Record<string, unknown>;
 type Reply = {result: Value} | {error: Value};
-const html = '<!doctype html><html><body>Notebook panel fixture</body></html>';
+const html=panelBundle.html,panelResourceURI=panelBundle.resourceURI;
 const socketKey = '0123456789abcdef01234567';
 const workspaceID = randomUUID();
 const target = {kind: 'board', id: randomUUID()};
@@ -143,7 +145,7 @@ test('coarser material still admits fresh source identity and visible coverage g
 test('session coalesces viewport demand against accepted pixels without delaying required reads', async t => {
   for (const scenario of ['covered', 'needed', 'forced', 'fit'] as const) await t.test(scenario, async t => {
     t.mock.timers.enable({apis: ['setTimeout']});
-    const session = new NotebookSession();
+    const session = new NotebookSession(panelIdentity);
     let density = 0, wanted = 1;
     const calls: {arguments: Value; resolve: (value: Awaited<ReturnType<typeof session.app.callServerTool>>) => void}[] = [];
     const contexts: Value[] = [];
@@ -203,7 +205,7 @@ function sessionSnapshot(cursor = '1'): PanelSnapshot {
 }
 
 async function controlledSession() {
-  const session = new NotebookSession(), events: string[] = [];
+  const session = new NotebookSession(panelIdentity), events: string[] = [];
   const calls: {name: string; arguments: Value;
     signal: AbortSignal | undefined;
     resolve: (value: Awaited<ReturnType<typeof session.app.callServerTool>>) => void}[] = [];
@@ -469,7 +471,7 @@ for(const code of ['ipc_timeout','operation_failed','runtime_starting','runtime_
   const retryWrite = retry();assert.ok(retryWrite);
   const retried = retryWrite();
   assert.equal(calls[2]!.name,'notebook_panel_workspace');
-  assert.deepEqual(calls[2]!.arguments,{action:'retry',id:mutation.workspaceID});
+  assert.deepEqual(calls[2]!.arguments,withCohort({action:'retry',id:mutation.workspaceID}));
   calls[2]!.resolve({content:[],structuredContent:{status:{kind:'notebookRuntime',ready:true,pid:1,state:'ready',workspaceID,socketKey},workspaces:[],snapshot:sessionSnapshot()}});
   await retried;
   assert.equal(calls[3]!.name, calls[1]!.name);
@@ -498,13 +500,13 @@ test('workspace recovery preserves an uncertain action and its panel address', a
   calls[2]!.resolve({content:[],structuredContent:{status,workspaces:[]}});await listing;
   assert.equal(await session.workspace({action:'select',id:randomUUID()}),undefined);
   const recovery=session.workspace({action:'retry'});
-  assert.deepEqual(calls[3]!.arguments,{action:'retry',id:original.workspaceID});
+  assert.deepEqual(calls[3]!.arguments,withCohort({action:'retry',id:original.workspaceID}));
   const ownerFocus={...sessionSnapshot(),target:{kind:'page',id:randomUUID()}};
   calls[3]!.resolve({content:[],structuredContent:{status:{...status,state:'ready'},workspaces:[],snapshot:ownerFocus}});
   await recovery;
   assert.deepEqual(session.address(),original,'Recovery retains this panel’s page instead of adopting the runtime focus');
   assert.equal(calls[4]!.name,'notebook_panel_edit');
-  assert.deepEqual(calls[4]!.arguments,mutation,'Retry keeps the exact accepted action and captured sources');
+  assert.deepEqual(calls[4]!.arguments,withCohort(mutation),'Retry keeps the exact accepted action and captured sources');
   calls[4]!.resolve({content:[],structuredContent:{status:'saved',actionID:mutation.actionID}});await saved;
   assert.deepEqual(calls[5]!.arguments.target,original.target);
   calls[5]!.resolve({content:[],structuredContent:sessionSnapshot('2')});
@@ -515,7 +517,7 @@ test('workspace recovery preserves an uncertain action and its panel address', a
 
 test('session closed during handshake suppresses the late connection failure', async t => {
   t.mock.timers.enable({apis: ['setTimeout', 'setInterval']});
-  const session = new NotebookSession();
+  const session = new NotebookSession(panelIdentity);
   let rejectConnect!: (error: Error) => void, closes = 0;
   session.app.connect = () => new Promise((_resolve, reject) => {rejectConnect = reject;});
   session.onClose = () => {closes++;};
@@ -529,7 +531,7 @@ test('session closed during handshake suppresses the late connection failure', a
 });
 
 async function openingSession(){
-  const session=new NotebookSession();
+  const session=new NotebookSession(panelIdentity);
   const calls:{name:string;arguments:Value;resolve:(value:Awaited<ReturnType<typeof session.app.callServerTool>>)=>void}[]=[];
   const events:string[]=[],runtimes:unknown[]=[];
   let disposed=false,retry:(()=>Promise<void>)|null=null;
@@ -552,17 +554,17 @@ test('initial connect keeps exact target and bounds through startup and native o
   const {session,calls,runtimes,close}=await openingSession();
   const request={target:{kind:'page' as const,id:randomUUID()},bounds:{anchor:origin,region:{x:-20,y:30,width:400,height:300}}};
   const snapshot={...sessionSnapshot(),target:request.target};
-  session.app.ontoolresult!({content:[],structuredContent:{open:request}});
-  assert.equal(calls[0]!.name,'notebook_panel_connect');assert.deepEqual(calls[0]!.arguments,request);
+  session.app.ontoolresult!({content:[],structuredContent:{open:request,uiCohort:panelIdentity.cohort}});
+  assert.equal(calls[0]!.name,'notebook_panel_connect');assert.deepEqual(calls[0]!.arguments,withCohort(request));
   calls[0]!.resolve({content:[],isError:true,structuredContent:{status:'error',code:'runtime_starting',message:'Starting'}});
   await new Promise<void>(resolve=>setImmediate(resolve));
   t.mock.timers.tick(250);
-  assert.equal(calls[1]!.name,'notebook_panel_connect');assert.deepEqual(calls[1]!.arguments,request);
+  assert.equal(calls[1]!.name,'notebook_panel_connect');assert.deepEqual(calls[1]!.arguments,withCohort(request));
   calls[1]!.resolve({content:[],structuredContent:{runtime:{kind:'notebookRuntime',ready:true,pid:42,state:'opening'}}});
   await new Promise<void>(resolve=>setImmediate(resolve));
-  session.app.ontoolresult!({content:[],structuredContent:{open:{target:{kind:'board',id:randomUUID()}}}});
+  session.app.ontoolresult!({content:[],structuredContent:{open:{target:{kind:'board',id:randomUUID()}},uiCohort:panelIdentity.cohort}});
   t.mock.timers.tick(250);
-  assert.equal(calls[2]!.name,'notebook_panel_connect');assert.deepEqual(calls[2]!.arguments,request);
+  assert.equal(calls[2]!.name,'notebook_panel_connect');assert.deepEqual(calls[2]!.arguments,withCohort(request));
   assert.deepEqual(runtimes,[],'An opening workspace does not go through workspace retry or selection');
   const initialRead={...snapshot};delete initialRead.appearance;delete initialRead.checkpoint;
   calls[2]!.resolve({content:[],structuredContent:initialRead});
@@ -571,7 +573,7 @@ test('initial connect keeps exact target and bounds through startup and native o
   calls[3]!.resolve({content:[],structuredContent:snapshot});
   await new Promise<void>(resolve=>setImmediate(resolve));
   assert.equal(session.hasAppearance,true);assert.deepEqual(session.snapshot?.target,request.target);
-  session.app.ontoolresult!({content:[],structuredContent:{open:{}}});
+  session.app.ontoolresult!({content:[],structuredContent:{open:{},uiCohort:panelIdentity.cohort}});
   assert.equal(calls.length,4,'A second host result cannot redirect the mounted panel');
   await close();
 });
@@ -580,7 +582,7 @@ for(const afterWait of [false,true])test(`startup failure ${afterWait?'after':'b
   t.mock.timers.enable({apis:['setTimeout','setInterval']});
   const {session,calls,retry,close}=await openingSession();
   const request={target:{kind:'page' as const,id:randomUUID()},bounds:{anchor:origin,region:{x:10,y:20,width:500,height:600}}};
-  session.app.ontoolresult!({content:[],structuredContent:{open:request}});
+  session.app.ontoolresult!({content:[],structuredContent:{open:request,uiCohort:panelIdentity.cohort}});
   if(afterWait){
     calls[0]!.resolve({content:[],isError:true,structuredContent:{status:'error',code:'runtime_starting',message:'Still starting'}});
     await new Promise<void>(resolve=>setImmediate(resolve));t.mock.timers.tick(250);
@@ -590,7 +592,7 @@ for(const afterWait of [false,true])test(`startup failure ${afterWait?'after':'b
   const count=calls.length;t.mock.timers.tick(1000);
   assert.equal(calls.length,count,'A failed startup waits for an explicit retry');
   const action=retry();assert.ok(action);const retried=action();
-  assert.deepEqual(calls.at(-1)!.arguments,request);assert.equal(calls.at(-1)!.name,'notebook_panel_connect');
+  assert.deepEqual(calls.at(-1)!.arguments,withCohort(request));assert.equal(calls.at(-1)!.name,'notebook_panel_connect');
   calls.at(-1)!.resolve({content:[],structuredContent:{...sessionSnapshot(),target:request.target}});
   await retried;assert.deepEqual(session.snapshot?.target,request.target);
   await close();
@@ -600,7 +602,7 @@ test('closing during startup cancels queued reads and ignores late native admiss
   for(const stage of ['waiting','in-flight'] as const)await t.test(stage,async t=>{
     t.mock.timers.enable({apis:['setTimeout','setInterval']});
     const {session,calls,events,close}=await openingSession();
-    session.app.ontoolresult!({content:[],structuredContent:{open:{}}});
+    session.app.ontoolresult!({content:[],structuredContent:{open:{},uiCohort:panelIdentity.cohort}});
     if(stage==='waiting'){
       calls[0]!.resolve({content:[],isError:true,structuredContent:{status:'error',code:'runtime_starting',message:'Starting'}});
       await new Promise<void>(resolve=>setImmediate(resolve));
@@ -614,12 +616,12 @@ test('closing during startup cancels queued reads and ignores late native admiss
 
 async function connectedPanel(socketPath: string,admit?:RuntimeAdmission) {
   const server = new McpServer({name: 'panel-contract', version: '1'});
-  registerNotebookPanel(server, socketPath, html,admit);
+  registerNotebookPanel(server, socketPath, panelBundle,admit);
   const client = new Client({name: 'panel-contract', version: '1'});
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   await client.connect(clientTransport);
-  return {client, close: async () => {await client.close(); await server.close();}};
+  return {client,callTool:(...[input,...rest]:Parameters<Client["callTool"]>)=>client.callTool({...input,arguments:withCohort(input.arguments??{})},...rest), close: async () => {await client.close(); await server.close();}};
 }
 
 /** Separate default and pinned endpoints make accidental routing to the current window observable. */
@@ -696,6 +698,48 @@ test('Notebook exposes one HTML app resource, a model opener and app-only gestur
   } finally {await panel.close();}
 });
 
+test('cached UI cannot send app commands through another admitted MCP cohort',async()=>{
+  let admissions=0;
+  const panel=await connectedPanel('/tmp/unused-cohort-panel.sock',async()=>{admissions++;return {state:'opening'};});
+  const old=sealPanelBundle('<html><head></head><body>Older panel</body></html>','0.0.0');
+  const calls=[
+    {name:'notebook_panel_connect',arguments:{}},
+    {name:'notebook_panel_workspace',arguments:{action:'create',id:randomUUID(),name:'Stale workspace'}},
+    {name:'notebook_panel_presentation',arguments:{...address,appearance:{viewport:{x:800,y:600},pixelScale:1}}},
+    {name:'notebook_panel_changes',arguments:{...address,checkpoint:checkpoint('1')}},
+    {name:'notebook_panel_edit',arguments:{...address,actionID:randomUUID(),summary:'Cached edit',
+      operations:[{kind:'updateElement',target,id:'text',values:{source:'Wrong UI'}}],sources:[{id:'text'}]}},
+    {name:'notebook_panel_undo',arguments:{...address,actionID:randomUUID()}},
+  ];
+  try{
+    for(const uiCohort of [undefined,old.cohort])for(const call of calls){
+      const refused=await panel.client.callTool({...call,arguments:{...call.arguments,...(uiCohort?{uiCohort}:{})}});
+      assert.equal(refused.isError,true,call.name);
+      assert.equal((refused.structuredContent as Value).code,'panel_update_required',call.name);
+    }
+    assert.equal(admissions,0,'Cached and absent cohorts never reach native admission or IPC');
+    await assert.rejects(panel.client.readResource({uri:'ui://notebook/workspace.html'}));
+    const opened=await panel.client.callTool({name:'notebook_open',arguments:{}});
+    assert.deepEqual(opened.structuredContent,{open:{},uiCohort:panelBundle.cohort});
+    assert.equal(admissions,0,'Opening the immutable card remains independent from native startup');
+    const connected=await panel.callTool({name:'notebook_panel_connect',arguments:{}});
+    assert.notEqual(connected.isError,true);assert.equal(admissions,1);
+  }finally{await panel.close();}
+});
+
+test('a mounted panel retires a changed MCP cohort without replaying a gesture',async t=>{
+  t.mock.timers.enable({apis:['setTimeout','setInterval']});
+  const {session,calls,close,mutation,retry}=await controlledSession();
+  try{
+    const saving=session.save(mutation),rejected=assert.rejects(saving,/new panel|новую панель/);
+    assert.equal(calls[1]!.arguments.uiCohort,panelIdentity.cohort);
+    calls[1]!.resolve({content:[],isError:true,structuredContent:{status:'error',code:'panel_update_required',message:'Open a new panel'}});
+    await rejected;t.mock.timers.tick(60_000);await new Promise<void>(resolve=>setImmediate(resolve));
+    assert.equal(session.mutationReady,false);assert.equal(session.hasAppearance,false);assert.equal(retry(),null);
+    assert.equal(calls.length,2,'Cohort refusal retires reads and never retries the accepted action');
+  }finally{await close();}
+});
+
 test('native presentation stays pinned, bounds pixels and avoids duplicating PNG bytes in text', async () => {
   const heldAsset=randomUUID(),newAsset=randomUUID();
   const appearance={status:'ready',requestID:randomUUID(),sourceRevision:'native-cut',
@@ -707,7 +751,7 @@ test('native presentation stays pinned, bounds pixels and avoids duplicating PNG
   const value={...address,cursor:'43',elements:[],cards:[],appearance};
   const panel=await nativeFixture(()=>({result:value}));
   try {
-    const result=await panel.client.callTool({name:'notebook_panel_presentation',arguments:{...address,appearance:view,...known}});
+    const result=await panel.callTool({name:'notebook_panel_presentation',arguments:{...address,appearance:view,...known}});
     assert.notEqual(result.isError,true);
     assert.deepEqual(result.structuredContent,value);
     const text=(result.content[0] as {text:string}).text;
@@ -715,10 +759,10 @@ test('native presentation stays pinned, bounds pixels and avoids duplicating PNG
     assert.deepEqual(JSON.parse(text),{workspaceID,target,cursor:'43',status:'ready'});
     assert.deepEqual(panel.requests,[{endpoint:'pinned',request:{command:'panelPresentation',
       panelPresentation:{workspaceID,target,appearance:view,...known}}}]);
-    const oversized=await panel.client.callTool({name:'notebook_panel_presentation',arguments:{...address,
+    const oversized=await panel.callTool({name:'notebook_panel_presentation',arguments:{...address,
       appearance:{viewport:{x:2048,y:2048},pixelScale:3}}});
     assert.equal(oversized.isError,true);
-    const excessiveAssets=await panel.client.callTool({name:'notebook_panel_presentation',arguments:{...address,
+    const excessiveAssets=await panel.callTool({name:'notebook_panel_presentation',arguments:{...address,
       appearance:view,knownAssets:Array.from({length:97},()=>randomUUID())}});
     assert.equal(excessiveAssets.isError,true);
     assert.equal(panel.requests.length,1,'Over-budget projection does not enter native preparation');
@@ -730,13 +774,13 @@ test('panel change observation keeps its accepted endpoint and validates both ch
   const value={...address,checkpoint:{...accepted,readCursor:'43'},changed:false};
   const panel=await nativeFixture(()=>({result:value}));
   try{
-    const observed=await panel.client.callTool({name:'notebook_panel_changes',arguments:{...address,checkpoint:accepted}});
+    const observed=await panel.callTool({name:'notebook_panel_changes',arguments:{...address,checkpoint:accepted}});
     assert.notEqual(observed.isError,true);assert.deepEqual(observed.structuredContent,value);
     assert.deepEqual(panel.requests,[{endpoint:'pinned',request:{command:'panelChanges',panelChanges:{workspaceID,target,checkpoint:accepted}}}]);
     for(const malformed of [{...accepted,id:'arbitrary'},{...accepted,readCursor:'-1'},
       {...accepted,changeCursor:'not-a-cursor'},{...accepted,changeCursor:'9223372036854775808'},
       {...accepted,changeCursor:'0'.repeat(1000)}]){
-      const refused=await panel.client.callTool({name:'notebook_panel_changes',arguments:{...address,checkpoint:malformed}});
+      const refused=await panel.callTool({name:'notebook_panel_changes',arguments:{...address,checkpoint:malformed}});
       assert.equal(refused.isError,true);
     }
     assert.equal(panel.requests.length,1,'Invalid observations never reach the admitted owner');
@@ -760,7 +804,7 @@ test('observation has one 35-second tool budget while admission and ordinary too
     });
     try{
       let settled=false;
-      const result=panel.client.callTool(scenario==='ordinary-deadline'
+      const result=panel.callTool(scenario==='ordinary-deadline'
         ? {name:'notebook_panel_presentation',arguments:{...address,appearance:{viewport:{x:800,y:600},pixelScale:1}}}
         : {name:'notebook_panel_changes',arguments:{...address,checkpoint:accepted}},
       {timeout:45_000}).then(value=>{settled=true;return value;});
@@ -796,7 +840,7 @@ test('MCP cancellation closes only the addressed observation bridge without repl
   });
   try{
     const controller=new AbortController();
-    const result=panel.client.callTool({name:'notebook_panel_changes',arguments:{...address,checkpoint:accepted}},
+    const result=panel.callTool({name:'notebook_panel_changes',arguments:{...address,checkpoint:accepted}},
       {signal:controller.signal,timeout:45_000});
     const refused=assert.rejects(result),socket=await requested.promise;
     controller.abort();await refused;
@@ -829,7 +873,7 @@ test('panel gestures keep the admitted endpoint and exact native sources', async
     return {result: undone};
   });
   try {
-    const opened = await panel.client.callTool({name: 'notebook_panel_connect', arguments: {}});
+    const opened = await panel.callTool({name: 'notebook_panel_connect', arguments: {}});
     assert.notEqual(opened.isError, true);
     assert.deepEqual(opened.structuredContent, readValue);
     assert.deepEqual(JSON.parse((opened.content[0] as {text:string}).text),{workspaceID,target,cursor,status:'ready'},
@@ -841,10 +885,10 @@ test('panel gestures keep the admitted endpoint and exact native sources', async
       operations: [{kind: 'updateElement', target, id: source.id,
         values: {frame: {...source.frame, x: 60}, worldOrigin: origin}}],
       sources: [{id: source.id, spatial: source}, {id: 'new-text'}]};
-    const edited = await panel.client.callTool({name: 'notebook_panel_edit', arguments: {...edit, socketKey}});
+    const edited = await panel.callTool({name: 'notebook_panel_edit', arguments: {...edit, socketKey}});
     assert.deepEqual(edited.structuredContent, saved);
     assert.deepEqual(panel.requests.at(-1), {endpoint: 'pinned', request: {command: 'panelEdit', panelEdit: edit}});
-    const retried = await panel.client.callTool({name: 'notebook_panel_edit', arguments: {...edit, socketKey}});
+    const retried = await panel.callTool({name: 'notebook_panel_edit', arguments: {...edit, socketKey}});
     assert.deepEqual(retried.structuredContent, saved);
     assert.deepEqual(panel.requests.at(-1), panel.requests.at(-2), 'An uncertain response can reuse the same action and sources');
 
@@ -856,13 +900,13 @@ test('panel gestures keep the admitted endpoint and exact native sources', async
     const move={workspaceID,target,actionID:randomUUID(),summary:'Move cover',
       operations:[{kind:'moveItem',target,id:itemID,values:{center:{...origin,localX:origin.localX+80}}}],
       sources:[{id:itemID,placements}]};
-    const moved=await panel.client.callTool({name:'notebook_panel_edit',arguments:{...move,socketKey}});
+    const moved=await panel.callTool({name:'notebook_panel_edit',arguments:{...move,socketKey}});
     assert.notEqual(moved.isError,true);
     assert.deepEqual(panel.requests.at(-1),{endpoint:'pinned',request:{command:'panelEdit',panelEdit:move}},
       'The whole captured stack frontier reaches the native placement owner without rewriting');
 
     const undo = {workspaceID, target, actionID};
-    const result = await panel.client.callTool({name: 'notebook_panel_undo', arguments: {...undo, socketKey}});
+    const result = await panel.callTool({name: 'notebook_panel_undo', arguments: {...undo, socketKey}});
     assert.deepEqual(result.structuredContent, undone);
     assert.deepEqual(panel.requests.at(-1), {endpoint: 'pinned', request: {command: 'panelUndo', panelUndo: undo}});
     assert.equal(panel.requests.filter(request => request.endpoint === 'default').length, 1);
@@ -878,11 +922,11 @@ test('panel rejects caller routing/authorship fields and preserves the native co
     sources: [{id: 'text-1', spatial: {id: 'text-1', source: 'Captured text', state: null}}]};
   try {
     for (const input of [{...edit, socketKey: '../outside'}, {...edit, actor: randomUUID()}, {...edit, human: true}]) {
-      const refused = await panel.client.callTool({name: 'notebook_panel_edit', arguments: input});
+      const refused = await panel.callTool({name: 'notebook_panel_edit', arguments: input});
       assert.equal(refused.isError, true);
     }
     assert.equal(panel.requests.length, 0, 'Invalid input never reaches a native owner');
-    const result = await panel.client.callTool({name: 'notebook_panel_edit', arguments: edit});
+    const result = await panel.callTool({name: 'notebook_panel_edit', arguments: edit});
     assert.equal(result.isError, true);
     assert.deepEqual(result.structuredContent, {...conflict, status: 'error'});
     assert.deepEqual(JSON.parse((result.content[0] as {text: string}).text), result.structuredContent);
@@ -906,11 +950,11 @@ test('workspace bootstrap opens in the same panel without a content owner or des
     assert.equal(request.command,'panelRead');assert.deepEqual(request.panelRead,{...open,workspaceID});return {result:snapshot};
   });
   try{
-    const opened=await panel.client.callTool({name:'notebook_panel_connect',arguments:open});
+    const opened=await panel.callTool({name:'notebook_panel_connect',arguments:open});
     assert.notEqual(opened.isError,true);
     assert.deepEqual(opened.structuredContent,{runtime:status()});
     assert.equal(panel.requests.length,1);
-    const created=await panel.client.callTool({name:'notebook_panel_workspace',arguments:{action:'create',id,name:'Личное пространство',open}});
+    const created=await panel.callTool({name:'notebook_panel_workspace',arguments:{action:'create',id,name:'Личное пространство',open}});
     assert.deepEqual((created.structuredContent as Value).snapshot,snapshot);
     assert.equal(panel.requests.length,3);
   }finally{await panel.close();}
