@@ -1,0 +1,204 @@
+{
+  "format": 1,
+  "build": "260",
+  "application": "0.3.190",
+  "plugin": "0.2.12",
+  "sourceSHA256": "d2e7a9f57d58bde0a0884ff73b265fd0ab2928bd752ccf6b356949cb5b19c222",
+  "status": "installed",
+  "step": "complete",
+  "receipts": {
+    "buildSHA256": "ac5b46ff47e689904bf25b855887c6c2dfd0be06d77bd23e3285626f6382c6bc",
+    "installationSHA256": "e8b3c6766c18344cf7994d01d28204bc5ac08c9f6d49a0bb47ee84f03a0f30d4"
+  },
+  "preserved": {
+    "identity": true,
+    "sqliteMetadata": true,
+    "catalogRawSHA256": true,
+    "catalogRawBytes": true
+  },
+  "catalogRawSHA256": "b768a022f53ed3ca8f8cf254a578504970380c22c223ebd32d63e131bbe920d7",
+  "previousRuntimeShutdown": [
+    {
+      "cdhash": "cb3488cc4e70104238618489b6b557ec9accd7b0",
+      "executable": "/Users/amir/.codex/plugins/cache/notebook-local/notebook/0.2.11/runtime/NotebookRuntime.app/Contents/MacOS/NotebookRuntime",
+      "pid": 88768,
+      "uid": 501
+    }
+  ],
+  "runtimeAfterClientClose": {
+    "pid": 75677,
+    "uid": 501,
+    "cdhash": "a51e8d0d0a9468f3a275aef405b191dc05cf50ed",
+    "strictDeepSignature": true,
+    "alive": true
+  },
+  "standaloneApplicationPresent": false,
+  "installedMCP": {
+    "at": "2026-10-07T21:22:34.520Z",
+    "plugin": "0.2.12",
+    "scope": "Read-only installed admitted MCP, immutable panel identity, terminal stale cohort refusal and independent observation. No actual host UI or input-to-pixel acceptance.",
+    "samples": [
+      {
+        "label": "opener",
+        "ms": 3.84375,
+        "error": false,
+        "bytes": 390
+      },
+      {
+        "label": "missing-cohort",
+        "ms": 1.7622089999999844,
+        "error": true,
+        "code": "panel_update_required",
+        "bytes": 533
+      },
+      {
+        "label": "wrong-cohort",
+        "ms": 0.7360410000000002,
+        "error": true,
+        "code": "panel_update_required",
+        "bytes": 533
+      },
+      {
+        "label": "connect",
+        "ms": 540.742125,
+        "error": false,
+        "bytes": 41204
+      },
+      {
+        "label": "presentation",
+        "ms": 492.94383300000004,
+        "error": false,
+        "bytes": 1060059,
+        "appearance": "ready"
+      },
+      {
+        "label": "withdrawn-observation",
+        "ms": 152.16308299999992,
+        "cancelled": true
+      },
+      {
+        "label": "metadata-during-wait",
+        "ms": 4.704875000000129,
+        "error": false,
+        "bytes": 1320
+      },
+      {
+        "label": "idle-observation",
+        "ms": 25172.685583,
+        "error": false,
+        "changed": false,
+        "bytes": 752
+      },
+      {
+        "label": "metadata-after-wait",
+        "ms": 3.727374999998574,
+        "error": false,
+        "bytes": 1320
+      }
+    ],
+    "panel": {
+      "cohort": "05806ff3fb147a6b06fd00085c4254873207473f8d536b711734579aa46d98a0",
+      "resourceURI": "ui://notebook/05806ff3fb147a6b06fd00085c4254873207473f8d536b711734579aa46d98a0/workspace.html",
+      "htmlBytes": 3144929,
+      "htmlSHA256": "f3429d70fb16e5d8ad656fd1928bdaf4b6651e7250902d7c729c5fec416b9529"
+    },
+    "workspaceID": "54349F3B-9E0A-4DEA-B990-40CAE04EF45E",
+    "sourceRevision": "d6e78c4c3c487b4f7678c278fb99d8593214b4e833297902934b37f3ae51b565",
+    "withdrawnMessage": "AbortError: This operation was aborted",
+    "status": "passed",
+    "stderr": "Notebook MCP listens on stdio\n{\"kind\":\"notebook-runtime-startup\",\"launcherPID\":82438,\"phase\":\"startup.begin\",\"startedAt\":\"2026-10-07T21:22:34.688Z\",\"elapsedMilliseconds\":2.8686250000000086,\"attempts\":0,\"launched\":false}\n{\"kind\":\"notebook-runtime-startup\",\"launcherPID\":82438,\"phase\":\"startup.done\",\"startedAt\":\"2026-10-07T21:22:34.688Z\",\"elapsedMilliseconds\":65.62283400000001,\"attempts\":1,\"launched\":false,\"runtimePID\":75677,\"runtimeState\":\"ready\"}\n"
+  },
+  "initialColdAttempt": {
+    "at": "2026-10-07T21:21:02.174Z",
+    "plugin": "0.2.12",
+    "scope": "Read-only installed admitted MCP, immutable panel identity, terminal stale cohort refusal and independent observation. No actual host UI or input-to-pixel acceptance.",
+    "samples": [
+      {
+        "label": "opener",
+        "ms": 3.2662920000000213,
+        "error": false,
+        "bytes": 390
+      },
+      {
+        "label": "missing-cohort",
+        "ms": 0.9490839999999707,
+        "error": true,
+        "code": "panel_update_required",
+        "bytes": 533
+      },
+      {
+        "label": "wrong-cohort",
+        "ms": 0.4335829999999987,
+        "error": true,
+        "code": "panel_update_required",
+        "bytes": 533
+      },
+      {
+        "label": "connect",
+        "ms": 3900.6177499999994,
+        "error": true,
+        "code": "runtime_starting",
+        "bytes": 567
+      }
+    ],
+    "panel": {
+      "cohort": "05806ff3fb147a6b06fd00085c4254873207473f8d536b711734579aa46d98a0",
+      "resourceURI": "ui://notebook/05806ff3fb147a6b06fd00085c4254873207473f8d536b711734579aa46d98a0/workspace.html",
+      "htmlBytes": 3144929,
+      "htmlSHA256": "f3429d70fb16e5d8ad656fd1928bdaf4b6651e7250902d7c729c5fec416b9529"
+    },
+    "status": "failed",
+    "error": "Notebook запускается. Подключение к Codex остаётся открытым; дождитесь запуска или повторите подключение.",
+    "stderr": "Notebook MCP listens on stdio\n{\"kind\":\"notebook-runtime-startup\",\"launcherPID\":75674,\"phase\":\"startup.begin\",\"startedAt\":\"2026-10-07T21:21:02.254Z\",\"elapsedMilliseconds\":0.749875000000003,\"attempts\":0,\"launched\":false}\n{\"kind\":\"notebook-runtime-startup\",\"launcherPID\":75674,\"phase\":\"launch.begin\",\"startedAt\":\"2026-10-07T21:21:02.254Z\",\"elapsedMilliseconds\":1.994792000000004,\"attempts\":1,\"launched\":true,\"lastErrorCode\":\"ipc_unavailable\"}\n{\"kind\":\"notebook-runtime-startup\",\"launcherPID\":75674,\"phase\":\"launch.end\",\"startedAt\":\"2026-10-07T21:21:02.254Z\",\"elapsedMilliseconds\":113.966583,\"attempts\":1,\"launched\":true,\"lastErrorCode\":\"ipc_unavailable\"}\n"
+  },
+  "startupStages": [
+    {
+      "timestamp": "2026-10-08 00:21:10.513472+0300",
+      "message": "startup stage=process.entry elapsed_ms=0.000 pid=75677"
+    },
+    {
+      "timestamp": "2026-10-08 00:21:10.530277+0300",
+      "message": "startup stage=signature.dynamic.begin elapsed_ms=17.903 pid=75677"
+    },
+    {
+      "timestamp": "2026-10-08 00:21:10.533075+0300",
+      "message": "startup stage=signature.dynamic.end elapsed_ms=20.689 pid=75677 status=0"
+    },
+    {
+      "timestamp": "2026-10-08 00:21:10.533085+0300",
+      "message": "startup stage=signature.static.begin elapsed_ms=20.714 pid=75677"
+    },
+    {
+      "timestamp": "2026-10-08 00:21:11.157362+0300",
+      "message": "startup stage=signature.static.end elapsed_ms=644.986 pid=75677 status=0"
+    },
+    {
+      "timestamp": "2026-10-08 00:21:11.388297+0300",
+      "message": "startup stage=launch.delegate elapsed_ms=875.921 pid=75677"
+    },
+    {
+      "timestamp": "2026-10-08 00:21:11.390022+0300",
+      "message": "startup stage=socket.claim.begin elapsed_ms=877.649 pid=75677"
+    },
+    {
+      "timestamp": "2026-10-08 00:21:11.390927+0300",
+      "message": "startup stage=socket.bound elapsed_ms=878.555 pid=75677"
+    },
+    {
+      "timestamp": "2026-10-08 00:22:34.750181+0300",
+      "message": "startup stage=runtime_status.begin elapsed_ms=84237.804 pid=75677"
+    },
+    {
+      "timestamp": "2026-10-08 00:22:34.750643+0300",
+      "message": "startup stage=runtime_status.end elapsed_ms=84238.271 pid=75677"
+    }
+  ],
+  "startupScope": "One cold post-install launch. Launch begin precedes process.entry by about8.26s; native socket bound878.555ms after entry. First client ended at its3.9s opening budget. Next client joined the ready owner. Not a measured cold-ready distribution or OS display timing.",
+  "chatConnection": {
+    "status": "runtime_update_required",
+    "activeBuild": "260",
+    "connectedBuild": "259",
+    "freshPanel": "awaiting human reconnection and disclosure"
+  },
+  "physicalAcceptance": false
+}

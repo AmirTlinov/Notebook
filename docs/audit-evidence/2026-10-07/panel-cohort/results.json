@@ -4,7 +4,7 @@
     "build": "260",
     "application": "0.3.190",
     "plugin": "0.2.12",
-    "installation": "pending"
+    "installation": "installed/complete"
   },
   "source": {
     "sha256": "d2e7a9f57d58bde0a0884ff73b265fd0ab2928bd752ccf6b356949cb5b19c222",
