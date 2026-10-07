@@ -570,6 +570,7 @@
         }
         try store.saveWorkspaceBundle(index: index, page: page,
           board: store.loadOrCreateBoard(workspace: index, actor: actor))
+        _ = try store.loadOrCreateSpatialInk(actor: actor)
         if ProcessInfo.processInfo.arguments.contains(pageTurnContentArgument) {
           try store.savePresence(.init(boardID: index.rootBoardID, mode: .page,
             camera: .init(center: .zero, scale: WorkspaceItemGeometry.notebook.fitScale(viewport: .init(x: size.width, y: size.height))),

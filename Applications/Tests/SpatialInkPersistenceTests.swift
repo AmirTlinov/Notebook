@@ -89,14 +89,22 @@ final class SpatialInkPersistenceTests: XCTestCase {
     XCTAssertTrue(ready, model.persistenceFailure ?? "")
     let blocker = try NotebookSQLWriteBlocker(store: model.store)
     defer { try? blocker.release() }
-    let cover = try XCTUnwrap(model.createNotebook(at: .init(x: 1_000, y: 0)))
+    let before = model.presence
+    let creation = try XCTUnwrap(model.beginItemCreation(kind: .notebook(NotebookAppModel.defaultPageSize),
+      at: .init(x: 1_000, y: 0)))
+    XCTAssertEqual(model.presence, before, "An accepted birth publishes no provisional owner before its commit")
+    try blocker.release()
+    let coverResult = await model.finishItemCreation(creation)
+    let cover = try XCTUnwrap(coverResult)
+    let inkBlocker = try NotebookSQLWriteBlocker(store: model.store)
+    defer { try? inkBlocker.release() }
     let first = try XCTUnwrap(model.appendSpatialInk(tool: .pen, color: .black,
       spans: [span(.board(boardID)), span(.cover(cover))]))
     model.undoLastSurfaceAction()
     let second = try XCTUnwrap(model.appendSpatialInk(tool: .pen, color: .black, spans: [span(.board(boardID), x: 30)]))
     XCTAssertEqual(model.spatialInk?.actions.map(\.id), [first.id, second.id])
     XCTAssertEqual(model.spatialInk?.actions.map(\.isActive), [false, true])
-    try blocker.release()
+    try inkBlocker.release()
     let saved = await model.finishPendingPersistence()
     XCTAssertTrue(saved, model.persistenceFailure ?? "")
     XCTAssertNotNil(try model.store.readItemHeader(cover))

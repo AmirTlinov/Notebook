@@ -1,4 +1,4 @@
-import NotebookCore
+@testable import NotebookCore
 import XCTest
 @testable import Notebook
 
@@ -405,6 +405,10 @@ final class NotebookDocumentStatePersistenceTests: XCTestCase {
   func testCapturedValueSurvivesDocumentLeavingTheLoadedScene() async throws {
     let (model, documentID) = try await makeModel()
     let document = try XCTUnwrap(model.documents[documentID])
+    let notebookResult = await model.createNotebook(at: .init(x: 30_000, y: 30_000))
+    let notebook = try XCTUnwrap(notebookResult)
+    model.selectItem(documentID)
+    let ready = await model.finishPendingPersistence(); XCTAssertTrue(ready)
     let lock = try NotebookSQLWriteBlocker(store: model.store)
     defer { try? lock.release() }
     let commit = Task { @MainActor in
@@ -412,7 +416,6 @@ final class NotebookDocumentStatePersistenceTests: XCTestCase {
     }
     try await waitForOptimisticValue(model, documentID: documentID, blockID: "a", value: .number(17))
     let acceptedState = try XCTUnwrap(model.documentStates[documentID])
-    let notebook = try XCTUnwrap(model.createNotebook(at: .init(x: 30_000, y: 30_000)))
     model.selectItem(notebook)
     try lock.release()
     let receipt = try await commit.value
@@ -422,6 +425,120 @@ final class NotebookDocumentStatePersistenceTests: XCTestCase {
     await model.reloadExternalChanges()?.value
     XCTAssertEqual(try model.store.loadDocumentState(documentID), acceptedState)
     XCTAssertEqual(model.presence?.selectedItemID, notebook)
+  }
+
+  @MainActor
+  func testEveryDocumentStateReceiptWaitsForActualCommitAndRetainsItsResultThroughRetry() async throws {
+    enum Lost: Error { case storage }
+    for detached in [false, true] {
+      for checkpoint in [false, true] {
+        for point in [NotebookStorageFault.beforeCommit, .afterCommit] {
+          var marker: URL?, writer: NotebookPersistenceQueue?
+          let (model, id) = try await makeModel(captureQueue: { writer = $0 }, storeFactory: { root in
+            let path = root.appendingPathComponent("state-retry"); marker = path
+            return NotebookStore(root: root) { if $0 == point, FileManager.default.fileExists(atPath: path.path) { throw Lost.storage } }
+          })
+          let queue = try XCTUnwrap(writer), path = try XCTUnwrap(marker)
+          let program = try DocumentProgramSource(document: XCTUnwrap(model.documents[id]), instanceID: "a", path: "programs/a")
+          if detached {
+            model.selectItem(try XCTUnwrap(model.workspace?.items.first { $0.kind == .notebook }?.id))
+            _ = await model.finishPendingPersistence(); await model.reloadExternalChanges()?.value
+            XCTAssertNil(model.documentStates[id])
+          }
+          let blocked = expectation(description: "Accepted state waits for its outer COMMIT")
+          let prior = queue.onFailureChange
+          queue.onFailureChange = { failure in prior?(failure); if failure != nil { blocked.fulfill() } }
+          try Data().write(to: path)
+          defer { try? FileManager.default.removeItem(at: path); model.retryPendingPersistence() }
+          var completions = 0
+          let request = Task { @MainActor in
+            let result = try await (checkpoint
+              ? model.checkpointDocumentState(documentID: id, blockID: "a", value: .number(73), program: program, stateVersion: nil)
+              : model.commitDocumentState(documentID: id, program: program, value: .number(73)))
+            completions += 1
+            return result
+          }
+          await fulfillment(of: [blocked], timeout: 3)
+          queue.onFailureChange = prior
+          XCTAssertEqual(completions, 0); XCTAssertGreaterThan(queue.reservedWriteBytes, 0)
+          let healthy = NotebookStore(root: model.store.root)
+          if point == .afterCommit {
+            XCTAssertEqual(try healthy.loadDocumentState(id).value(for: "a"), .number(73))
+            _ = try healthy.commitDocumentState(documentID: id, programID: "b", programPath: "programs/b", value: .number(91),
+              sourceBasis: DocumentProgramSource(document: healthy.loadDocument(id), instanceID: "b", path: "programs/b").sourceBasis, actor: UUID())
+          } else { XCTAssertNil(try healthy.loadDocumentState(id).records.first { $0.id == "a" }) }
+          try FileManager.default.removeItem(at: path); model.retryPendingPersistence()
+          let receipt = try await request.value
+          let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
+          XCTAssertEqual(completions, 1); XCTAssertNotNil(receipt); XCTAssertEqual(queue.reservedWriteBytes, 0)
+          XCTAssertEqual(try healthy.loadDocumentState(id).records.first { $0.id == "a" }?.valueVersion, receipt)
+          if point == .afterCommit { XCTAssertEqual(try healthy.loadDocumentState(id).value(for: "b"), .number(91)) }
+          let closed = await model.shutdown(); XCTAssertTrue(closed)
+        }
+      }
+    }
+  }
+
+  @MainActor
+  func testDefinitiveDocumentStateRefusalReleasesItsWaiterAndAllowsTheSameValueRetry() async throws {
+    for checkpoint in [false, true] {
+      var marker: URL?, writer: NotebookPersistenceQueue?
+      let (model, id) = try await makeModel(captureQueue: { writer = $0 }, storeFactory: { root in
+        let path = root.appendingPathComponent("state-refusal"); marker = path
+        return NotebookStore(root: root) {
+          if $0 == .beforeCommit, FileManager.default.fileExists(atPath: path.path) {
+            throw CollaborationError("resource_limit", "Definitive state refusal")
+          }
+        }
+      })
+      let queue = try XCTUnwrap(writer), path = try XCTUnwrap(marker)
+      let program = try DocumentProgramSource(document: XCTUnwrap(model.documents[id]), instanceID: "a", path: "programs/a")
+      try Data().write(to: path)
+      defer { try? FileManager.default.removeItem(at: path) }
+      do {
+        if checkpoint { _ = try await model.checkpointDocumentState(documentID: id, blockID: "a", value: .number(73), program: program, stateVersion: nil) }
+        else { _ = try await model.commitDocumentState(documentID: id, program: program, value: .number(73)) }
+        XCTFail("Rollback-attested refusal must finish the result channel with its error")
+      } catch { XCTAssertEqual((error as? CollaborationError)?.code, "resource_limit") }
+      XCTAssertNil(queue.failure); XCTAssertEqual(queue.reservedWriteBytes, 0)
+      try FileManager.default.removeItem(at: path)
+      let retry = try await (checkpoint
+        ? model.checkpointDocumentState(documentID: id, blockID: "a", value: .number(73), program: program, stateVersion: nil)
+        : model.commitDocumentState(documentID: id, program: program, value: .number(73)))
+      XCTAssertNotNil(retry)
+      let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
+      XCTAssertEqual(try model.store.loadDocumentState(id).value(for: "a"), .number(73))
+      let closed = await model.shutdown(); XCTAssertTrue(closed)
+    }
+  }
+
+  @MainActor
+  func testDocumentStateCapacityRefusesBeforeJournalMutationAndNoopAcknowledgementDoesNotWakeMaterial() async throws {
+    var writer: NotebookPersistenceQueue?
+    let (model, id) = try await makeModel(captureQueue: { writer = $0 })
+    let queue = try XCTUnwrap(writer), before = try XCTUnwrap(model.documentStates[id])
+    let program = try DocumentProgramSource(document: XCTUnwrap(model.documents[id]), instanceID: "a", path: "programs/a")
+    var held: [NotebookPersistenceAdmission.Reservation] = []
+    for _ in 0..<512 { held.append(try XCTUnwrap(queue.reserveWrite(.zero))) }
+    for checkpoint in [false, true] {
+      do {
+        if checkpoint { _ = try await model.checkpointDocumentState(documentID: id, blockID: "a", value: .number(73), program: program, stateVersion: nil) }
+        else { _ = try await model.commitDocumentState(documentID: id, program: program, value: .number(73)) }
+        XCTFail("Capacity cannot create an optimistic state outside its accepted reservation")
+      } catch { XCTAssertEqual((error as? CollaborationError)?.code, "resource_limit") }
+      XCTAssertEqual(model.documentStates[id], before); XCTAssertEqual(queue.pendingCount, 0)
+    }
+    for reservation in held { queue.releaseWriteReservation(reservation) }
+    let original = try await model.checkpointDocumentState(documentID: id, blockID: "a", value: .object([:]), program: program, stateVersion: nil)
+    _ = await model.finishPendingPersistence()
+    let cursor = try model.store.currentChangeCursor(), prior = queue.onCommit
+    var wakes = 0
+    queue.onCommit = { owner in prior?(owner); if owner == .documentState(id) { wakes += 1 } }
+    let noop = try await model.checkpointDocumentState(documentID: id, blockID: "a", value: .object([:]), program: program, stateVersion: original)
+    _ = await model.finishPendingPersistence()
+    XCTAssertEqual(noop, original); XCTAssertEqual(wakes, 0)
+    XCTAssertEqual(try model.store.currentChangeCursor(), cursor)
+    let closed = await model.shutdown(); XCTAssertTrue(closed)
   }
 
   @MainActor
@@ -445,14 +562,16 @@ final class NotebookDocumentStatePersistenceTests: XCTestCase {
   }
 
   @MainActor
-  private func makeModel(captureQueue: ((NotebookPersistenceQueue) -> Void)? = nil) async throws -> (NotebookAppModel, UUID) {
+  private func makeModel(captureQueue: ((NotebookPersistenceQueue) -> Void)? = nil,
+    storeFactory: ((URL) -> NotebookStore)? = nil) async throws -> (NotebookAppModel, UUID) {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    let store = NotebookStore(root: root), queue = NotebookPersistenceQueue(store: store)
+    let store = storeFactory?(root) ?? NotebookStore(root: root), queue = NotebookPersistenceQueue(store: store)
     let model = NotebookAppModel(store: store, startsNearbySync: false, persistenceQueue: queue)
     captureQueue?(queue)
     retainNotebookUntilTeardown(model, removing: root)
     await model.start(pageSize: NotebookAppModel.defaultPageSize)
-    let id = try XCTUnwrap(model.createDocument(at: .zero))
+    let idResult = await model.createDocument(at: .zero)
+    let id = try XCTUnwrap(idResult)
     let created = await model.finishPendingPersistence()
     XCTAssertTrue(created, model.persistenceFailure ?? "")
     var document = try model.store.loadDocument(id)

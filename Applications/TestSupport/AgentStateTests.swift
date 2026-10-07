@@ -18,7 +18,8 @@ final class AgentStateTests: XCTestCase {
     let initialSaved = await model.finishPendingPersistence(); XCTAssertTrue(initialSaved)
     await model.reloadExternalChanges()?.value
     let retained = try XCTUnwrap(model.boardHierarchy?.board(boardA)?.elements.first { $0.id == elementID })
-    let boardB = try XCTUnwrap(model.createBoard(at: .init(x: 2000, y: 0)))
+    let boardBResult = await model.createBoard(at: .init(x: 2000, y: 0))
+    let boardB = try XCTUnwrap(boardBResult)
     model.updatePresence(.init(boardID: boardB, mode: .board, camera: .init(),
       viewport: .init(x: 1194, y: 834)), settled: true)
     // The editor's debounce or onDisappear can finish after camera ownership changes.
@@ -43,7 +44,8 @@ final class AgentStateTests: XCTestCase {
     retainNotebookUntilTeardown(model, removing: root)
     await model.start(pageSize: PageSize(width: 834, height: 1194))
     let boardA = try XCTUnwrap(model.presence?.boardID)
-    let boardB = try XCTUnwrap(model.createBoard(at: .init(x: 2000, y: 0)))
+    let boardBResult = await model.createBoard(at: .init(x: 2000, y: 0))
+    let boardB = try XCTUnwrap(boardBResult)
     let creationSaved = await model.finishPendingPersistence()
     XCTAssertTrue(creationSaved, model.persistenceFailure ?? "")
     var hierarchy = try model.store.loadBoard(items: model.store.loadIndex().items)
@@ -97,7 +99,8 @@ final class AgentStateTests: XCTestCase {
     page.replaceElements([element], actor: model.actorID)
     try model.store.savePage(page); await model.reloadExternalChanges()?.value
     let basis = try XCTUnwrap(model.pages[page.id]?.programStateBasis(element.id))
-    let other = try XCTUnwrap(model.createNotebook(at: .init(x: 30_000, y: 30_000)))
+    let otherResult = await model.createNotebook(at: .init(x: 30_000, y: 30_000))
+    let other = try XCTUnwrap(otherResult)
     model.selectItem(other)
     _ = await model.finishPendingPersistence(); await model.reloadExternalChanges()?.value
     XCTAssertNil(model.pages[page.id], "The retiring page must really leave the loaded scene")
@@ -222,9 +225,8 @@ final class AgentStateTests: XCTestCase {
     let model = NotebookAppModel(store: store, startsNearbySync: false)
     retainNotebookUntilTeardown(model, removing: root)
     await model.start(pageSize: PageSize(width: 834, height: 1_194))
-    let documentID = try XCTUnwrap(
-      model.createDocument(at: .zero)
-    )
+    let documentIDResult = await model.createDocument(at: .zero)
+    let documentID = try XCTUnwrap(documentIDResult)
 
     let creationSaved = await model.finishPendingPersistence()
     XCTAssertTrue(creationSaved, model.persistenceFailure ?? "")
@@ -337,9 +339,8 @@ final class AgentStateTests: XCTestCase {
     let model = NotebookAppModel(store: store, startsNearbySync: false)
     retainNotebookUntilTeardown(model, removing: root)
     await model.start(pageSize: PageSize(width: 834, height: 1_194))
-    let documentID = try XCTUnwrap(
-      model.createDocument(at: .zero)
-    )
+    let documentIDResult = await model.createDocument(at: .zero)
+    let documentID = try XCTUnwrap(documentIDResult)
     await model.finishPendingPersistence()
     let peer = NotebookStore(root: root.appendingPathComponent("peer")), peerID = UUID()
     try NotebookPeerFixture.copy(from: store, to: peer, peerID: model.actorID)

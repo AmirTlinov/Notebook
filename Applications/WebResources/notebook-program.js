@@ -4,69 +4,128 @@
 function createNotebookProgram({state = null, onCommit = () => {}, report = () => {},
   paint = () => Promise.resolve(), stateTransport = null, timeoutMS = 4000, readyTimeoutMS = 8000} = {}) {
   const version = 'NotebookProgram/1';
-  const utf8Length = text => {
-    let bytes=0;
-    for(let i=0;i<text.length;i++) {
-      const c=text.charCodeAt(i);
-      if(c<128)bytes++;else if(c<2048)bytes+=2;
-      else if(c>=0xd800&&c<=0xdbff&&text.charCodeAt(i+1)>=0xdc00&&text.charCodeAt(i+1)<=0xdfff){bytes+=4;i++;}
-      else bytes+=3;
-    }
-    return bytes;
-  };
-  const serialize = value => {
-    let nodes = 0;
-    const json = JSON.stringify(value, (_, v) => {
-      nodes++;
-      return v && typeof v === 'object' && !Array.isArray(v)
-        ? Object.fromEntries(Object.keys(v).sort().map(key => [key, v[key]])) : v;
-    });
-    if (typeof json !== 'string') throw new Error('program_state_not_json');
-    return {json,nodes,bytes:utf8Length(json)};
-  };
-  const copy = value => JSON.parse(JSON.stringify(value));
-  // Measure plain JSON without first allocating its potentially huge string.
-  // Authored JavaScript already owns the input object; native credit covers the
-  // additional immutable transfer copy. Actual serialization is checked again.
-  const measure = input => {
-    let units = 0, nodes = 0, extraBytes = 0; const ancestors = new Set();
-    const string = text => {
-      units += 2;
-      for(let i=0;i<text.length;i++) {
-        const c=text.charCodeAt(i);
-        if(c<32)units += [8,9,10,12,13].includes(c)?2:6;
-        else if(c===34||c===92)units+=2;
-        else if(c>=0xd800&&c<=0xdbff) {
-          const next=text.charCodeAt(i+1);
-          if(next>=0xdc00&&next<=0xdfff){units+=2;extraBytes+=2;i++;}else units+=6;
-        } else { units += c>=0xdc00&&c<=0xdfff?6:1;
-          if(c>=128&&!(c>=0xdc00&&c<=0xdfff))extraBytes+=c<2048?1:2;
-        }
-      }
+  // One descriptor-based JSON contract owns both measurement and serialization.
+  // Reflection can run an author Proxy trap; its heap is not bridge allocation.
+  // Every bridge token is charged before copying, even when that trap changes a
+  // descriptor between the measurement and serialization passes.
+  const canonical = (input, {write = false, limit = Number.MAX_SAFE_INTEGER, check = () => {}} = {}) => {
+    let units = 0, nodes = 0, bytes = 0;
+    const ancestors = new Set(), chunks = write ? [] : null;
+    const charge = (nextUnits = 0, nextBytes = nextUnits, nextNodes = 0) => {
+      check(); units += nextUnits; bytes += nextBytes; nodes += nextNodes;
+      const cost = bytes*8 + nodes*64;
+      if(!Number.isSafeInteger(cost))throw new Error('program_state_credit_invalid');
+      if(cost>limit)throw Object.assign(new Error('program_state_admission_changed'), {requiredCost:cost});
     };
+    const token = text => { charge(text.length); if(write)chunks.push(text); };
+    const string = text => {
+      let length = 2, encodedBytes = 2;
+      for(let index=0;index<text.length;index++) {
+        const code=text.charCodeAt(index);
+        if(code<32) { const size=(code===8||code===9||code===10||code===12||code===13)?2:6; length+=size; encodedBytes+=size; }
+        else if(code===34||code===92) { length+=2; encodedBytes+=2; }
+        else if(code>=0xd800&&code<=0xdbff) {
+          const next=text.charCodeAt(index+1);
+          if(next>=0xdc00&&next<=0xdfff){length+=2;encodedBytes+=4;index++;}
+          else {length+=6;encodedBytes+=6;}
+        } else if(code>=0xdc00&&code<=0xdfff) {length+=6;encodedBytes+=6;}
+        else {length++;encodedBytes+=code<128?1:code<2048?2:3;}
+      }
+      charge(length,encodedBytes);
+      if(!write)return;
+      // No JSON.stringify dispatch on a borrowed object or Proxy. Escaping also
+      // starts only after the complete string token fits the current credit.
+      let quoted='"', start=0;
+      for(let index=0;index<text.length;index++) {
+        const code=text.charCodeAt(index);let escape=null;
+        if(code===34)escape='\\"';
+        else if(code===92)escape='\\\\';
+        else if(code<32)escape=code===8?'\\b':code===9?'\\t':code===10?'\\n':code===12?'\\f':code===13?'\\r':'\\u'+code.toString(16).padStart(4,'0');
+        else if(code>=0xd800&&code<=0xdbff) {
+          const next=text.charCodeAt(index+1);
+          if(next>=0xdc00&&next<=0xdfff){index++;continue;}
+          escape='\\u'+code.toString(16);
+        } else if(code>=0xdc00&&code<=0xdfff)escape='\\u'+code.toString(16);
+        if(escape!==null){quoted+=text.slice(start,index)+escape;start=index+1;}
+      }
+      chunks.push(quoted+text.slice(start)+'"');
+    };
+    const descriptor = (owner, key) => {
+      const result=Object.getOwnPropertyDescriptor(owner,key);check();return result;
+    };
+    const data = field => {
+      if(!field||!Object.prototype.hasOwnProperty.call(field,'value'))throw new Error('program_state_not_plain_json');
+      return field.value;
+    };
+    const prototype = owner => {const result=Object.getPrototypeOf(owner);check();return result;};
+    const indexKey = key => {const number=Number(key);return Number.isInteger(number)&&number>=0&&number<4294967295&&String(number)===key?number:null;};
+    const keyOrder = (left,right) => {
+      // JSON object order keeps integer indices before sorted string keys.
+      if(typeof left==='symbol')return typeof right==='symbol'?0:1;
+      if(typeof right==='symbol')return -1;
+      const a=indexKey(left),b=indexKey(right);
+      if(a!==null||b!==null)return a===null?1:b===null?-1:a-b;
+      return left<right?-1:left>right?1:0;
+    };
+    const omitted = value => ['undefined','function','symbol'].includes(typeof value);
     const visit = (value, arrayMember = false) => {
-      nodes++;
-      if(value===null){units+=4;return;}
+      charge(0,0,1);
+      if(value===null){token('null');return;}
       if(typeof value==='string'){string(value);return;}
-      if(typeof value==='number'){units+=Number.isFinite(value)?String(value).length:4;return;}
-      if(typeof value==='boolean'){units+=value?4:5;return;}
+      if(typeof value==='number'){token(Number.isFinite(value)?String(value):'null');return;}
+      if(typeof value==='boolean'){token(value?'true':'false');return;}
       if(typeof value!=='object') {
-        if(arrayMember && ['undefined','function','symbol'].includes(typeof value)){units+=4;return;}
+        if(arrayMember&&omitted(value)){token('null');return;}
         throw new Error('program_state_not_json');
       }
       if(ancestors.has(value))throw new Error('program_state_cycle');
-      if(typeof value.toJSON==='function')throw new Error('program_state_not_plain_json');
-      ancestors.add(value);units+=2;let count=0;
-      if(Array.isArray(value))for(const item of value){if(count++)units++;visit(item,true);}
-      else for(const key in value)if(Object.prototype.hasOwnProperty.call(value,key)) {
-        const item=value[key];
-        if(['undefined','function','symbol'].includes(typeof item)){nodes++;continue;}
-        if(count++)units++;string(key);units++;visit(item);
+      for(let owner=value;owner;owner=prototype(owner)) {
+        const field=descriptor(owner,'toJSON');
+        if(!field)continue;
+        if(typeof data(field)==='function')throw new Error('program_state_not_plain_json');
+        break;
+      }
+      ancestors.add(value);let count=0;
+      if(Array.isArray(value)) {
+        const length=data(descriptor(value,'length'));
+        if(!Number.isInteger(length)||length<0||length>4294967295)throw new Error('program_state_not_plain_json');
+        token('[');
+        for(let index=0;index<length;index++) {
+          if(count++)token(',');
+          const field=descriptor(value,String(index));
+          if(field)visit(data(field),true);
+          else {
+            // Sparse JSON arrays use null; inherited values/accessors never run.
+            for(let owner=prototype(value);owner;owner=prototype(owner))
+              if(descriptor(owner,String(index)))throw new Error('program_state_not_plain_json');
+            visit(undefined,true);
+          }
+        }
+        token(']');
+      } else {
+        const keys=Reflect.ownKeys(value);check();keys.sort(keyOrder);token('{');
+        for(const key of keys) {
+          if(typeof key!=='string')continue;
+          const field=descriptor(value,key);
+          if(!field||!field.enumerable)continue;
+          const item=data(field);
+          if(key==='toJSON'&&typeof item==='function')throw new Error('program_state_not_plain_json');
+          if(omitted(item)){charge(0,0,1);continue;}
+          if(count++)token(',');string(key);token(':');visit(item);
+        }
+        token('}');
       }
       ancestors.delete(value);
     };
-    visit(input);return {units,nodes,bytes:units+extraBytes};
+    visit(input);charge();
+    if(!write)return {units,nodes,bytes};
+    const json=chunks.join('');check();
+    if(json.length!==units)throw new Error('program_state_admission_changed');
+    return {json,units,nodes,bytes};
   };
+  const serialize = (value, options = {}) => canonical(value,{...options,write:true});
+  const measure = (value, options = {}) => canonical(value,options);
+  const copy = value => JSON.parse(JSON.stringify(value));
   const initial = serialize(state);
   let value = JSON.parse(initial.json), valueJSON = initial.json, valueNodes = initial.nodes, valueBytes = initial.bytes, checkpointCost = 0, revision = 0n, disposed = false, suspended = false, frozen = false;
   // The public commit is synchronous. Credit has already been reserved by the
@@ -85,7 +144,7 @@ function createNotebookProgram({state = null, onCommit = () => {}, report = () =
   let frozenSnapshotID = null, frozenSnapshotSequence = 0n;
   const checkpointResult = serialized => serialized ? describe(valueJSON, frozenSnapshotID, valueNodes, valueBytes, checkpointCost) : copy(value);
   let hooks = {}, registered = false, generation = 0, operation = null, started = null;
-  let checkpointOperation = null, pauseCompleted = false, phase = 'running', failedStage = null;
+  let checkpointOperation = null, checkpointDraft = null, pauseCompleted = false, phase = 'running', failedStage = null;
   let semantic = null, semanticValue = null, exportFrame = null, exportTimeline = false, exportVectors = false;
   const readiness = [];
   const error = code => new Error(code);
@@ -102,23 +161,61 @@ function createNotebookProgram({state = null, onCommit = () => {}, report = () =
     Promise.resolve().then(work).then(result => finish(resolve, result), reason => finish(reject, reason));
   });
   const announce = reason => report('program_lifecycle_error', String(reason?.message || reason));
+  let creditWaiter = null;
+  const requestCapacity = cost => {
+    const needed=cost-credit;
+    if(needed>creditRequested){creditRequested=needed;stateTransport.requestCredit(needed);}
+  };
+  const waitForCredit = (cost, signal) => {
+    if(!stateTransport||cost<=credit)return Promise.resolve();
+    return new Promise((resolve,reject)=> {
+      const complete=(callback,result)=> {
+        signal.removeEventListener('abort',cancel);
+        if(creditWaiter===waiting)creditWaiter=null;
+        callback(result);
+      };
+      const cancel=()=>complete(reject,error('program_superseded'));
+      const waiting={check:()=>{if(cost<=credit)complete(resolve);}};
+      if(signal.aborted){reject(error('program_superseded'));return;}
+      creditWaiter=waiting;signal.addEventListener('abort',cancel,{once:true});
+      requestCapacity(cost);waiting.check();
+    });
+  };
+  const checkpointIsCurrent = (expected, signal) => {
+    alive();
+    if(expected!==generation||signal.aborted)throw error('program_superseded');
+  };
+
   const commit = next => {
     if (disposed || suspended || !commitsEnabled) return false;
+    const expected=generation, expectedRevision=revision, check=()=> {
+      alive();
+      if(suspended||!commitsEnabled||expected!==generation||expectedRevision!==revision)throw error('program_superseded');
+    };
     if(stateTransport) {
-      const estimate=measure(next), cost=Math.max(estimate.bytes*8+estimate.nodes*64, valueBytes*8+valueNodes*64);
+      let estimate;
+      try { estimate=measure(next,{check}); }
+      catch(reason) {if(['program_superseded','program_disposed'].includes(reason.message))return false;throw reason;}
+      const cost=Math.max(estimate.bytes*8+estimate.nodes*64, valueBytes*8+valueNodes*64);
       if(cost>credit) {
-        const needed=cost-credit;
-        if(needed>creditRequested){creditRequested=needed;stateTransport.requestCredit(needed);}
+        requestCapacity(cost);
         report('program_state_backpressure','State not accepted; retry after notebookcapacity.');return false;
       }
     }
-    const encoded = serialize(next), json = encoded.json;
+    let encoded;
+    try { encoded=serialize(next,{limit:stateTransport?credit:Number.MAX_SAFE_INTEGER,check}); }
+    catch(reason) {
+      if(['program_superseded','program_disposed'].includes(reason.message))return false;
+      if(!stateTransport||!reason.requiredCost)throw reason;
+      requestCapacity(reason.requiredCost);
+      report('program_state_backpressure','State not accepted; retry after notebookcapacity.');return false;
+    }
+    const json=encoded.json;
     if (json === valueJSON) return false;
     const nextRevision = String(revision + 1n);
     const descriptor = stateTransport ? describe(json, nextRevision, encoded.nodes, encoded.bytes, valueBytes*8+valueNodes*64) : null;
     if (descriptor && descriptor.cost > credit) {
-      const needed = descriptor.cost - credit;
-      if (needed > creditRequested) { creditRequested = needed; stateTransport.requestCredit(needed); }
+      requestCapacity(descriptor.cost);
       report('program_state_backpressure', 'State not accepted; retry after notebookcapacity.');
       return false;
     }
@@ -177,7 +274,9 @@ function createNotebookProgram({state = null, onCommit = () => {}, report = () =
     grantStateCredit(bytes) {
       alive();
       if (!Number.isSafeInteger(bytes) || bytes <= 0) throw error('program_state_credit_invalid');
+      if(!Number.isSafeInteger(credit+bytes))throw error('program_state_credit_invalid');
       credit += bytes; creditRequested = 0;
+      creditWaiter?.check();
       dispatchEvent(new CustomEvent('notebookcapacity'));
     },
     readSnapshot({revision, offset = 0}) {
@@ -199,6 +298,7 @@ function createNotebookProgram({state = null, onCommit = () => {}, report = () =
       if (snapshots.keys().next().value !== revision) throw error('program_state_ack_order');
       credit += snapshots.get(revision).descriptor.cost; snapshots.delete(revision);
       acknowledgedRevision=sequence;
+      creditWaiter?.check();
       if (!snapshots.size) { for (const resolve of drainWaiters.splice(0)) resolve(); }
       if (creditRequested) { creditRequested = 0; dispatchEvent(new CustomEvent('notebookcapacity')); }
     },
@@ -283,31 +383,58 @@ function createNotebookProgram({state = null, onCommit = () => {}, report = () =
       const expected = generation, request = new AbortController(); operation = request;
       const pending = (async () => {
       try {
-        await drained();
-        const next = await bounded(async () => {
-          if (!pauseCompleted) {
-            phase = 'pausing';
-            await hooks.pause?.({signal:request.signal});
-            if (request.signal.aborted) throw error('program_superseded');
-            pauseCompleted = true;
+        await bounded(drained, request.signal, 'program_checkpoint');
+        if(!checkpointDraft) {
+          const next = await bounded(async () => {
+            if (!pauseCompleted) {
+              phase = 'pausing';
+              await hooks.pause?.({signal:request.signal});
+              checkpointIsCurrent(expected,request.signal);
+              pauseCompleted = true;
+            }
+            phase = 'checkpointing';
+            checkpointIsCurrent(expected,request.signal);
+            return hooks.checkpoint ? await hooks.checkpoint({signal:request.signal}) : value;
+          }, request.signal, 'program_checkpoint');
+          checkpointIsCurrent(expected,request.signal);
+          // This is the completed author's result, not an immutable bridge
+          // copy. Backpressure and Retry keep it without invoking the hook again.
+          checkpointDraft={value:next};
+        }
+        phase='checkpointing';
+        let encoded, accepted, measuredCost;
+        while(true) {
+          checkpointIsCurrent(expected,request.signal);
+          // Remeasure after every grant: the borrowed result may have changed
+          // while native admission waited. No getter/toJSON runs in this scan.
+          const estimate=measure(checkpointDraft.value,{check:()=>checkpointIsCurrent(expected,request.signal)});
+          measuredCost=Math.max(valueBytes*8+valueNodes*64,estimate.bytes*8+estimate.nodes*64);
+          if(!Number.isSafeInteger(measuredCost))throw error('program_state_credit_invalid');
+          if(stateTransport&&measuredCost>credit) {
+            await bounded(()=>waitForCredit(measuredCost,request.signal),request.signal,'program_checkpoint_credit');
+            continue;
           }
-          phase = 'checkpointing';
-          if (request.signal.aborted) throw error('program_superseded');
-          return hooks.checkpoint ? await hooks.checkpoint({signal:request.signal}) : copy(value);
-        }, request.signal, 'program_checkpoint');
-        alive();
-        if (expected !== generation) throw error('program_superseded');
-        const encoded = serialize(next), accepted = JSON.parse(encoded.json);
-        // JSON conversion can reenter the owner through authored toJSON/getters.
-        // Only the still-current lifecycle may commit the resulting freeze.
-        alive();
-        if (request.signal.aborted || expected !== generation) throw error('program_superseded');
+          checkpointIsCurrent(expected,request.signal);
+          try {
+            encoded=serialize(checkpointDraft.value,{limit:stateTransport?credit:measuredCost,
+              check:()=>checkpointIsCurrent(expected,request.signal)});
+          } catch(reason) {
+            if(!stateTransport||!reason.requiredCost)throw reason;
+            await bounded(()=>waitForCredit(reason.requiredCost,request.signal),request.signal,'program_checkpoint_credit');
+            continue;
+          }
+          checkpointIsCurrent(expected,request.signal);
+          accepted=JSON.parse(encoded.json);
+          checkpointIsCurrent(expected,request.signal);
+          break;
+        }
         // Do not wait for rAF here: WebKit may already have parked this
         // viewport. The author has finished its model/DOM update; the existing
         // native snapshot owner establishes the pixel boundary afterwards.
         // No optimistic commit: the native checkpoint owner must admit this
         // value and confirm the existing writer before disposing the surface.
         checkpointCost = Math.max(valueBytes*8+valueNodes*64, encoded.bytes*8+encoded.nodes*64);
+        checkpointDraft=null;
         frozenSnapshotID = 'frozen:' + String(++frozenSnapshotSequence);
         value = accepted; valueJSON = encoded.json; valueNodes = encoded.nodes; valueBytes = encoded.bytes; frozen = true; phase = 'frozen'; failedStage = null; semanticValue = null;
         if (semantic && hooks.pause && hooks.checkpoint) {
@@ -332,10 +459,10 @@ function createNotebookProgram({state = null, onCommit = () => {}, report = () =
       return pending;
     },
     async resume() {
-      alive(); abort(); semanticValue = null;
+      alive(); abort(); semanticValue = null; checkpointDraft = null; creditRequested = 0;
       if (!suspended) return true;
       const expected = generation, request = new AbortController(); operation = request;
-      phase = 'resuming';
+      phase = 'resuming'; pauseCompleted = false;
       try {
         await bounded(() => hooks.resume?.({signal:request.signal}), request.signal, 'program_resume');
         alive();
@@ -346,7 +473,7 @@ function createNotebookProgram({state = null, onCommit = () => {}, report = () =
     },
     dispose() {
       if (disposed) return Promise.resolve();
-      disposed = true; suspended = true; phase = 'disposed'; semanticValue = null; semantic = null; exportFrame = null; abort();
+      disposed = true; suspended = true; phase = 'disposed'; checkpointDraft = null; creditRequested = 0; semanticValue = null; semantic = null; exportFrame = null; abort();
       // Invoke synchronously before a native owner removes the browsing context.
       let result;
       try { result = hooks.dispose?.(); } catch (reason) { announce(reason); return Promise.reject(reason); }

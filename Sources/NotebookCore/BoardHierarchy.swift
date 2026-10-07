@@ -176,7 +176,8 @@ public struct BoardHierarchy: Codable, Equatable, Sendable {
     _ boardID: UUID,
     in parentBoardID: UUID,
     near center: WorldPoint,
-    actor: UUID
+    actor: UUID,
+    minimumZIndex: Int = 0
   ) -> Bool {
     guard boardID != rootBoardID,
       board(boardID) == nil,
@@ -184,7 +185,7 @@ public struct BoardHierarchy: Codable, Equatable, Sendable {
       let next = stamp.advanced(by: actor)
     else { return false }
     var parent = boards[parentIndex].board
-    guard parent.addItem(boardID, near: center, actor: actor) else {
+    guard parent.addItem(boardID, near: center, actor: actor, minimumZIndex: minimumZIndex) else {
       return false
     }
     boards[parentIndex].replace(with: parent)
@@ -203,10 +204,11 @@ public struct BoardHierarchy: Codable, Equatable, Sendable {
     _ itemID: UUID,
     to boardID: UUID,
     near center: WorldPoint,
-    actor: UUID
+    actor: UUID,
+    minimumZIndex: Int = 0
   ) -> Bool {
     mutateBoard(boardID, actor: actor) {
-      $0.addItem(itemID, near: center, actor: actor)
+      $0.addItem(itemID, near: center, actor: actor, minimumZIndex: minimumZIndex)
     }
   }
 

@@ -1,0 +1,17 @@
+{
+  "executed": [
+    "NotebookCoreTests.NotebookNativeItemCreationTests/allThreeKindsKeepTheirActualOwnersPresenceAndColdUndoRedoIdentity()/NotebookNativeItemCreationTests.swift:26:4",
+    "NotebookCoreTests.NotebookNativeItemCreationTests/unknownCommitKeepsItsExactBirthResultAfterAnIndependentPeerMove()/NotebookNativeItemCreationTests.swift:127:4"
+  ],
+  "executions": {
+    "NotebookCoreTests.NotebookNativeItemCreationTests/allThreeKindsKeepTheirActualOwnersPresenceAndColdUndoRedoIdentity()/NotebookNativeItemCreationTests.swift:26:4": 1,
+    "NotebookCoreTests.NotebookNativeItemCreationTests/unknownCommitKeepsItsExactBirthResultAfterAnIndependentPeerMove()/NotebookNativeItemCreationTests.swift:127:4": 1
+  },
+  "failed": [],
+  "format": 1,
+  "planned": [
+    "NotebookCoreTests.NotebookNativeItemCreationTests/allThreeKindsKeepTheirActualOwnersPresenceAndColdUndoRedoIdentity()/NotebookNativeItemCreationTests.swift:26:4",
+    "NotebookCoreTests.NotebookNativeItemCreationTests/unknownCommitKeepsItsExactBirthResultAfterAnIndependentPeerMove()/NotebookNativeItemCreationTests.swift:127:4"
+  ],
+  "skipped": []
+}

@@ -13,7 +13,8 @@ final class PresenceOwnershipTests: XCTestCase {
     retainNotebookUntilTeardown(model, removing: root)
     let viewport = SpatialPoint(x: 1_366, y: 1_024)
     await model.start(pageSize: PageSize(width: viewport.x, height: viewport.y))
-    let boardID = try XCTUnwrap(model.createBoard(at: .zero))
+    let boardIDResult = await model.createBoard(at: .zero)
+    let boardID = try XCTUnwrap(boardIDResult)
     model.enterBoard(boardID)
     var inspected = SessionPresence(
       boardID: boardID,
@@ -325,9 +326,8 @@ final class PresenceOwnershipTests: XCTestCase {
     let size = PageSize(width: 834, height: 1_194)
     await model.start(pageSize: size)
     let originalID = try XCTUnwrap(model.workspace?.selectedItemID)
-    let createdID = try XCTUnwrap(
-      model.createNotebook(at: WorldPoint(x: 1_200, y: 0))
-    )
+    let createdIDResult = await model.createNotebook(at: WorldPoint(x: 1_200, y: 0))
+    let createdID = try XCTUnwrap(createdIDResult)
     let creationSaved = await model.finishPendingPersistence()
     XCTAssertTrue(creationSaved, model.persistenceFailure ?? "")
     XCTAssertEqual(try store.loadIndex().selectedItemID, createdID)

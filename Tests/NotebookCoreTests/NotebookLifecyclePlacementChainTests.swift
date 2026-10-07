@@ -108,6 +108,9 @@ struct NotebookLifecyclePlacementChainTests {
       let rawReceipts = try receiptHashes(f.store)
       try f.store.commandTransaction(advancesReadRevision: false) {
         try f.store.currentSQL!.run("DELETE FROM action_field_restorations WHERE field LIKE 'placement:%'")
+        for name in ["search_recipe_insert", "search_recipe_update", "search_recipe_delete"] {
+          try f.store.currentSQL!.run("DROP TRIGGER IF EXISTS " + name)
+        }
         try f.store.currentSQL!.run("PRAGMA user_version=10")
       }
       reopened = NotebookStore(root: f.store.root)

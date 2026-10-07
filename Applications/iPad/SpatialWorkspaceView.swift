@@ -1503,31 +1503,36 @@ struct SpatialWorkspaceView: View {
   ) {
     let offset = Double(model.workspace?.items.count ?? 0) * 28
     guard let center = requestedCenter ?? presence.camera.center.addressOffset(x: offset, y: offset) else { return }
-    model.cancelRequestedNavigation()
-    referencePageResolution.cancel()
-    let itemID: UUID?
+    let creation: Task<UUID?, Never>?
     switch kind {
     case .notebook:
-      itemID = model.createNotebook(at: center)
+      creation = model.beginItemCreation(kind: .notebook(model.notebookPageSize), at: center)
     case .document:
-      itemID = model.createDocument(at: center, template: template)
+      creation = model.beginItemCreation(kind: .document(template), at: center)
     case .board:
-      itemID = model.createBoard(at: center)
+      creation = model.beginItemCreation(kind: .board, at: center)
     }
-    guard let itemID else { return }
-    model.endSurfaceEditing()
-    let target = SessionPresence(
-      boardID: presence.boardID,
-      mode: .cover,
-      camera: SpatialCamera(
-        center: center,
-        scale: model.itemGeometry(itemID).coverScale(viewport: viewport)
-      ),
-      viewport: viewport,
-      focusedItemID: itemID,
-      openProgress: 0
-    )
-    animateSettlement(to: target, duration: 0.42)
+    guard let creation else { return }
+    referencePageResolution.cancel()
+    let navigation = model.navigationGeneration
+    Task {
+      guard let itemID = await model.prepareItemCreationPresentation(creation, navigation: navigation), model.shutdownPhase == .running,
+        model.navigationGeneration == navigation, model.presence?.boardID == presence.boardID,
+        !model.isItemBeingDeleted(itemID), model.workspace?.item(id: itemID) != nil else { return }
+      model.endSurfaceEditing()
+      let target = SessionPresence(
+        boardID: presence.boardID,
+        mode: .cover,
+        camera: SpatialCamera(
+          center: center,
+          scale: model.itemGeometry(itemID).coverScale(viewport: viewport)
+        ),
+        viewport: viewport,
+        focusedItemID: itemID,
+        openProgress: 0
+      )
+      animateSettlement(to: target, duration: 0.42)
+    }
   }
 
   private func openMode(for itemID: UUID) -> WorkspaceSemanticMode {

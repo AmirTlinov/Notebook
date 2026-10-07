@@ -49,7 +49,8 @@ final class SnapshotLeaseBindingTests: XCTestCase {
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
     retainNotebookUntilTeardown(model, removing: root)
     await model.start(pageSize: NotebookAppModel.defaultPageSize)
-    let id = try XCTUnwrap(model.createDocument(at: .zero))
+    let idResult = await model.createDocument(at: .zero)
+    let id = try XCTUnwrap(idResult)
     let created = await model.finishPendingPersistence()
     XCTAssertTrue(created, model.persistenceFailure ?? "")
     // Closed covers deliberately do not retain the document body. Admit the

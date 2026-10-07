@@ -1,0 +1,7 @@
+{
+  "format": 2,
+  "sha256": "ae46009dcfebab93740a383e021b68e701ae753a2ebec9981bd70d6914931905",
+  "inputCount": 1678,
+  "fullManifestSHA256": "3ca3ad7387fe417f995e4a332365a6af2a3679bcf3ae90c78bd206098a06e713",
+  "retainedFullManifest": ".build/retained-preintegration-evidence/item-creation/integrated-core-source.json"
+}

@@ -13,9 +13,8 @@ final class DocumentPageSelectionTests: XCTestCase {
     )
     retainNotebookUntilTeardown(model, removing: root)
     await model.start(pageSize: NotebookAppModel.defaultPageSize)
-    let documentID = try XCTUnwrap(
-      model.createDocument(at: .zero)
-    )
+    let documentIDResult = await model.createDocument(at: .zero)
+    let documentID = try XCTUnwrap(documentIDResult)
     let initial = try XCTUnwrap(model.presence)
     model.updatePresence(
       SessionPresence(
@@ -73,9 +72,8 @@ final class DocumentPageSelectionTests: XCTestCase {
     )
     retainNotebookUntilTeardown(model, removing: root)
     await model.start(pageSize: NotebookAppModel.defaultPageSize)
-    let documentID = try XCTUnwrap(
-      model.createDocument(at: .zero)
-    )
+    let documentIDResult = await model.createDocument(at: .zero)
+    let documentID = try XCTUnwrap(documentIDResult)
     let initial = try XCTUnwrap(model.presence)
     model.updatePresence(
       SessionPresence(

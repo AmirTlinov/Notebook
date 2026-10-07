@@ -277,6 +277,29 @@ extension NotebookStore {
     rows += try storedFragments(address: "board.json#", descendants: false)
     try currentSQL!.admitNativeFragmentCodec(rows, copies: 2)
     var files = ["workspace.json": try JSONValue.encode(workspace), "board.json": try NotebookRecordCodec.decode(rows, root: "board.json#")]
+    // An addressed removed item still has an existence owner. Undo/Redo must
+    // retain that exact tombstone, even though the live catalogue omits it.
+    let representedItems = Set(items.map(\.id))
+    let tombstones = try causalFragments(parent: "workspace.json#", collection: "collaboration/fields",
+      memberPrefixes: [], includeKeys: itemIDs.subtracting(representedItems).map { "items/" + $0.uuidString.lowercased() + "/exists" })
+    try currentSQL!.admitNativeFragmentCodec(tombstones, copies: 2)
+    for row in tombstones {
+      files["workspace.json"] = files["workspace.json"]!.setting(at:
+        [.field("collaboration"), .field("fields"), .field(row.member)][...], to: row.value)
+    }
+    // Removal retires the notebook's membership, while its immutable order
+    // witness survives. Restoring a captured birth needs that same register
+    // as its publication baseline, including its bounded vector spine.
+    for operation in receiptOperations ?? [] where operation.kind == .createNotebook {
+      guard let id = operation.id.flatMap(UUID.init(uuidString:)), !representedItems.contains(id) else { continue }
+      let order = try readPageOrder(id)
+      var workspace = files["workspace.json"]!
+      workspace = try workspace.setting("pageOrders", workspace["pageOrders"]!.setting(id.uuidString.lowercased(), .encode(order)))
+      for (hash, node) in try NotebookPageOrderVector.rightSpine(order.visibleRoot, read: { try readPageOrderNode($0) }) {
+        workspace = try workspace.setting("pageOrderNodes", workspace["pageOrderNodes"]!.setting(hash, .encode(node)))
+      }
+      files["workspace.json"] = workspace
+    }
     for id in codeIDs { files[codeFragmentFile(id)] = try storedValue(codeFragmentFile(id)) }
     // Retired PAGE rows are a replication baseline, not a public command
     // target. Undo first restores permitted owners; a preserved deletion must
@@ -401,7 +424,31 @@ extension NotebookStore {
     }
     try currentSQL!.admitNativeFragmentCodec(inkRows, copies: 2)
     files["spatial-ink.json"] = try NotebookRecordCodec.decode(inkRows, root: "spatial-ink.json#")
+    // Birth needs the board's indexed order frontier, not any neighbouring
+    // item's body or causal register. The projected tree supplies subsequent
+    // births in this action; this scalar supplies every unaddressed sibling.
+    var creationZIndexes: [UUID: Int] = [:]
+    for id in Set((receipt == nil ? action.operations : []).filter {
+      [.createNotebook, .createDocument, .createBoard].contains($0.kind)
+    }.map(\.target.id)) {
+      let value = try currentSQL!.rows("SELECT z_index FROM spatial_entries INDEXED BY spatial_item_order WHERE board_id=? AND kind='item' ORDER BY z_index DESC,owner_id LIMIT 1",
+        [.text(id.uuidString.lowercased())]).first?[0]
+      let frontier: Int
+      switch value {
+      case .real(let number):
+        guard number < Double(Int.max) else { throw CollaborationError("resource_limit", "На доске достигнут предел порядка предметов.") }
+        guard number >= 0, let exact = Int(exactly: number) else { throw NotebookStorageError.corruptRecord("item order frontier") }
+        frontier = exact
+      case .integer(let number):
+        guard number < Int.max else { throw CollaborationError("resource_limit", "На доске достигнут предел порядка предметов.") }
+        guard number >= 0, let exact = Int(exactly: number) else { throw NotebookStorageError.corruptRecord("item order frontier") }
+        frontier = exact
+      case nil: frontier = 0
+      default: throw NotebookStorageError.corruptRecord("item order frontier")
+      }
+      creationZIndexes[id] = frontier
+    }
     return CollaborationWorkspace(files: files, projectedPageIDs: projectedPageIDs,
-      pageGraphicSources: pageGraphicSources, pageInkFrontiers: pageInkFrontiers)
+      pageGraphicSources: pageGraphicSources, pageInkFrontiers: pageInkFrontiers, creationZIndexes: creationZIndexes)
   }
 }

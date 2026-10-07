@@ -1,0 +1,7 @@
+{
+  "format": 2,
+  "sha256": "275da65efe53952f5f2da23f316c5841ebb0a4feaffd25426d219c777e958da4",
+  "inputCount": 1676,
+  "fullManifestSHA256": "dbd8fbcd6027a4720a97b229b9eb920c7c1949f0e5a5c83b1e12f7c4496c9843",
+  "retainedFullManifest": ".build/retained-preintegration-evidence/item-creation/native-child-v3-source.json"
+}

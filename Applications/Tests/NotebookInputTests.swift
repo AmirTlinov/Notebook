@@ -915,7 +915,8 @@ final class NotebookInputTests: XCTestCase {
     retainNotebookUntilTeardown(model, removing: root)
     await model.start(pageSize: NotebookAppModel.defaultPageSize)
     let parent = try XCTUnwrap(model.workspace?.rootBoardID)
-    let child = try XCTUnwrap(model.createBoard(at: .zero))
+    let childResult = await model.createBoard(at: .zero)
+    let child = try XCTUnwrap(childResult)
     let viewport = BoardPortalProjection.viewport
     model.updatePresence(.init(boardID: parent, mode: .board,
       camera: .init(scale: 0.3), viewport: viewport), settled: false)

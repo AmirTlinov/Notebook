@@ -20,7 +20,8 @@ final class DocumentSaveTransitionTests: XCTestCase {
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
     retainNotebookUntilTeardown(model, removing: root)
     await model.start(pageSize: NotebookAppModel.defaultPageSize)
-    let id = try XCTUnwrap(model.createDocument(at: .zero))
+    let idResult = await model.createDocument(at: .zero)
+    let id = try XCTUnwrap(idResult)
     await model.finishPendingPersistence()
     do {
       try await model.performStoreCommand(publishesChanges: true) { store in

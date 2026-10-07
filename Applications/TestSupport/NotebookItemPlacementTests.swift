@@ -11,8 +11,10 @@ final class NotebookItemPlacementTests: XCTestCase {
     let store = NotebookStore(root: root), queue = NotebookPersistenceQueue(store: store)
     let model = try await makeModel(root: root, store: store, queue: queue)
     let boardID = try XCTUnwrap(model.presence?.boardID), a = try XCTUnwrap(model.workspace?.selectedItemID)
-    let b = try XCTUnwrap(model.createNotebook(at: .init(x: 1500, y: 0)))
+    let bResult = await model.createNotebook(at: .init(x: 1500, y: 0))
+    let b = try XCTUnwrap(bResult)
     await save(model)
+    let initialHistory = try store.nativeHistory(domain: .board(boardID), actor: model.actorID)
     let before = try XCTUnwrap(model.boardHierarchy?.board(boardID))
     let lock = try NotebookSQLWriteBlocker(store: model.store)
     defer { try? lock.release() }
@@ -32,7 +34,7 @@ final class NotebookItemPlacementTests: XCTestCase {
     try lock.release()
     await save(model)
     XCTAssertEqual(queue.reservedWriteBytes, 0)
-    XCTAssertEqual(try model.store.nativeHistory(domain: .board(boardID), actor: model.actorID), [.command(first.id)])
+    XCTAssertEqual(try model.store.nativeHistory(domain: .board(boardID), actor: model.actorID), initialHistory + [.command(first.id)])
     XCTAssertEqual(model.board?.placement(of: a)?.center, WorldPoint(x: 300, y: 100))
     XCTAssertNil(model.board?.stack(containing: a))
     let stopped = await model.shutdown(); XCTAssertTrue(stopped)
@@ -46,7 +48,7 @@ final class NotebookItemPlacementTests: XCTestCase {
     cold.redoLastSurfaceAction(); await save(cold)
     cold.redoLastSurfaceAction(); await save(cold)
     XCTAssertEqual(cold.board?.stack(containing: a)?.itemIDs, stack.itemIDs)
-    XCTAssertEqual(try cold.store.nativeHistory(domain: .board(boardID), actor: cold.actorID).count, 2,
+    XCTAssertEqual(try cold.store.nativeHistory(domain: .board(boardID), actor: cold.actorID).count, initialHistory.count + 2,
       "Move plus stack is one action, not two independently undoable writes")
   }
 
@@ -54,8 +56,10 @@ final class NotebookItemPlacementTests: XCTestCase {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let model = try await makeModel(root: root)
     let boardID = try XCTUnwrap(model.presence?.boardID), a = try XCTUnwrap(model.workspace?.selectedItemID)
-    let b = try XCTUnwrap(model.createNotebook(at: .init(x: 1500, y: 0)))
+    let bResult = await model.createNotebook(at: .init(x: 1500, y: 0))
+    let b = try XCTUnwrap(bResult)
     await save(model)
+    let initialHistory = try model.store.nativeHistory(domain: .board(boardID), actor: model.actorID)
     let contact = try XCTUnwrap(model.itemMoveSource(a, boardID: boardID))
     let peerCenter = WorldPoint(x: -400, y: 200)
     let peer = try NotebookNativeCommand([.init(kind: .moveItem, target: .init(kind: .board, id: boardID),
@@ -68,7 +72,7 @@ final class NotebookItemPlacementTests: XCTestCase {
     XCTAssertEqual(model.board?.placement(of: a)?.center, peerCenter)
     XCTAssertEqual(try model.store.readBoardItem(a)?.board.placements.first { $0.id == a }, peer.sources.first)
     XCTAssertEqual(model.board?.placement(of: b)?.center, WorldPoint(x: 1800, y: 100))
-    XCTAssertEqual(try model.store.nativeHistory(domain: .board(boardID), actor: model.actorID), [.command(next.id)])
+    XCTAssertEqual(try model.store.nativeHistory(domain: .board(boardID), actor: model.actorID), initialHistory + [.command(next.id)])
     XCTAssertTrue(model.itemPlacementCommands.isEmpty)
   }
 

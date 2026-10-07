@@ -2111,42 +2111,8 @@ final class NotebookAppModel {
   }
 
   @discardableResult
-  func createNotebook(at center: WorldPoint) -> UUID? {
-    guard loadState == .ready, permitsExternalWork, persistence.permitsNewWorkspaceMutation,
-      center.isValid, var workspace, var board = boardHierarchy, let presence else {
-      return nil
-    }
-    let beforeWorkspace = workspace, beforeBoard = board
-    guard let created = workspace.createNotebook(
-      title: "",
-      actor: actorID,
-      pageSize: notebookPageSize
-    ), board.addItem(
-      created.item.id,
-      to: presence.boardID,
-      near: center,
-      actor: actorID
-    )
-    else { return nil }
-
-    enqueueStoreWrite(reload: true) { [workspace, board] store in
-      _ = try store.saveWorkspaceEdits(before: beforeWorkspace, after: workspace,
-        boardBefore: beforeBoard, boardAfter: board, pages: [created.page])
-    }
-
-    self.workspace = workspace
-    updateSessionSelection(from: workspace)
-    boardHierarchy = board
-    pages[created.page.id] = created.page
-    if let root = notebookPageRoot(created.item.id) {
-      pageAddresses[.init(itemID: created.item.id, index: 0, root: root)] = created.page.id
-      retainPreparedPages(near: .init(itemID: created.item.id, index: 0, root: root), selectedPageID: created.page.id)
-    }
-
-
-
-    showCue("Новая тетрадь")
-    return created.item.id
+  func createNotebook(at center: WorldPoint) async -> UUID? {
+    await finishItemCreation(beginItemCreation(kind: .notebook(notebookPageSize), at: center))
   }
 
   /// File picker, Files/Finder and MCP converge on the same import owner.
@@ -2183,67 +2149,91 @@ final class NotebookAppModel {
   func createDocument(
     at center: WorldPoint,
     template: DocumentTemplate = .article
-  ) -> UUID? {
-    guard center.isValid, let beforeWorkspace = workspace, let beforeBoard = boardHierarchy, let presence else { return nil }
-    var workspace = beforeWorkspace, board = beforeBoard
-    guard let item = workspace.createDocument(title: "", actor: actorID),
-      board.addItem(
-        item.id,
-        to: presence.boardID,
-        near: center,
-        actor: actorID
-      )
-    else { return nil }
-
-    let document = DocumentDocument(
-      id: item.id,
-      actor: actorID,
-      entrypoint: template.entrypoint, files: template.files
-    )
-    let state = DocumentStateJournal(id: item.id, actor: actorID)
-    enqueueStoreWrite(reload: true) { [workspace, board] store in
-      _ = try store.saveWorkspaceEdits(before: beforeWorkspace, after: workspace,
-        boardBefore: beforeBoard, boardAfter: board, documents: [document], states: [state])
-    }
-
-    self.workspace = workspace
-    boardHierarchy = board
-    documents[item.id] = document
-    updateSessionSelection(from: workspace)
-    documentStates[item.id] = state
-
-
-
-
-    showCue("Новый документ")
-    return item.id
+  ) async -> UUID? {
+    await finishItemCreation(beginItemCreation(kind: .document(template), at: center))
   }
 
   @discardableResult
-  func createBoard(at center: WorldPoint) -> UUID? {
-    guard center.isValid, let beforeWorkspace = workspace, let beforeBoard = boardHierarchy, let presence else { return nil }
-    var workspace = beforeWorkspace, hierarchy = beforeBoard
-    guard let item = workspace.createBoard(title: "", actor: actorID),
-      hierarchy.createBoard(
-        item.id,
-        in: presence.boardID,
-        near: center,
-        actor: actorID
-      )
-    else { return nil }
+  func createBoard(at center: WorldPoint) async -> UUID? {
+    await finishItemCreation(beginItemCreation(kind: .board, at: center))
+  }
 
-    enqueueStoreWrite(reload: true) { [workspace, hierarchy] store in
-      _ = try store.saveWorkspaceEdits(before: beforeWorkspace, after: workspace,
-        boardBefore: beforeBoard, boardAfter: hierarchy)
+  /// Admission is synchronous, before IDs, body material, JSON or worker
+  /// tasks. The accepted FIFO owns both its exact command and finite finish.
+  func beginItemCreation(kind: NotebookNativeItemCreation.Kind, at center: WorldPoint) -> Task<UUID?, Never>? {
+    guard center.isValid, loadState == .ready, permitsExternalWork,
+      let workspaceID = admittedWorkspaceID, let presence, !isItemBeingDeleted(presence.boardID) else { return nil }
+    let budget = NotebookNativeItemCreation.cost(for: kind)
+    let cost = NotebookPersistenceAdmission.Cost(payloadBytes: budget.payloadBytes, completionBytes: budget.completionBytes)
+    guard let reservation = persistence.reserveWrite(cost) else {
+      showCue("Сохранение заполнено. Повторите создание после сохранения предыдущих действий."); return nil
     }
+    var transferred = false
+    defer { if !transferred { persistence.releaseWriteReservation(reservation) } }
+    do {
+      let plan = try NotebookNativeItemCreation(kind: kind, workspaceID: workspaceID,
+        boardID: presence.boardID, center: center, actor: actorID)
+      cancelRequestedNavigation()
+      let command = plan.command()
+      let publication = presencePublication, navigation = navigationGeneration
+      let preparation = Task<NotebookPersistenceQueue.PreparedCommand<NotebookNativeCommand<NotebookNativeItemCreation.Source>.Output>, Error> {
+        NotebookPersistenceQueue.PreparedCommand(cost: cost, operation: { try command.apply(to: $0) })
+      }
+      let saved: Task<NotebookNativeCommand<NotebookNativeItemCreation.Source>.Output, Error>
+      do { saved = try persistence.enqueuePreparedCommand(reservation: reservation, preparation, publishesChanges: true) }
+      catch { preparation.cancel(); throw error }
+      transferred = true
+      let completion = Task { [self] in
+        defer { pendingCollaborationCommands[plan.actionID] = nil }
+        do {
+          let output = try await saved.value
+          guard !isClosing, admittedWorkspaceID == workspaceID else { return true }
+          for domain in output.receipt.action.nativeHistoryDomains {
+            pencilUndoHistory.recordCommand(domain: domain, actionID: output.receipt.id)
+          }
+          if let source = output.sources.first, source.selectedPresence != nil,
+            navigationGeneration == navigation,
+            presencePublication == publication,
+            let current = self.presence, current.boardID == source.boardID {
+            self.presence = current.selecting(itemID: source.itemID, pageID: source.firstPageID)
+          }
+          readAdmission.changed(.init(kind: .board, id: plan.boardID))
+          readAdmission.changed(.init(kind: .cover, id: plan.itemID))
+          collaborationReadEpoch &+= 1; collaborationContentEpoch &+= 1
+          // Joining publication here could wait behind a dependent Undo. The
+          // result waiter may separately join this bounded scene preparation.
+          if reloadExternalChanges() == nil { externalReloadPending = true }
+          switch kind {
+          case .notebook: showCue("Новая тетрадь")
+          case .document: showCue("Новый документ")
+          case .board: showCue("Новая доска")
+          }
+          return true
+        } catch { showCue(error.localizedDescription); return false }
+      }
+      pendingCollaborationCommands[plan.actionID] = completion
+      return Task { await completion.value ? plan.itemID : nil }
+    } catch { showCue(error.localizedDescription); return nil }
+  }
 
-    self.workspace = workspace
-    boardHierarchy = hierarchy
-    updateSessionSelection(from: workspace)
+  func finishItemCreation(_ creation: Task<UUID?, Never>?) async -> UUID? {
+    guard let creation, let id = await creation.value else { return nil }
+    await reloadExternalChanges()?.value
+    return id
+  }
 
-
-    showCue("Новая доска")
-    return item.id
+  /// The menu contact owns its dismissal. A committed birth waits for that
+  /// release and one scene publication before its current intent may focus it.
+  func prepareItemCreationPresentation(_ creation: Task<UUID?, Never>, navigation: UInt64) async -> UUID? {
+    let workspaceID = admittedWorkspaceID
+    guard let id = await creation.value, !isClosing, navigationGeneration == navigation,
+      admittedWorkspaceID == workspaceID else { return nil }
+    guard await inputGate.waitUntilIdle(), !isClosing, navigationGeneration == navigation,
+      admittedWorkspaceID == workspaceID else { return nil }
+    await reloadExternalChanges()?.value
+    guard !isClosing, navigationGeneration == navigation, admittedWorkspaceID == workspaceID,
+      !isItemBeingDeleted(id), workspace?.item(id: id) != nil else { return nil }
+    return id
   }
 
   func selectItem(_ itemID: UUID) {
@@ -4878,6 +4868,37 @@ final class NotebookAppModel {
     await persistence.finishAcceptedProgramWrites()
   }
 
+  /// Completion belongs to the accepted FIFO, after its outer COMMIT. The
+  /// exact result and its waiter survive storage failure without another resume.
+  private func enqueueDocumentStateWrite<Value: Sendable>(documentID: UUID,
+    reservation: NotebookPersistenceAdmission.Reservation, cost: NotebookPersistenceAdmission.Cost?,
+    source: NotebookDocumentStateWriteAdmission.Source,
+    _ operation: @escaping @Sendable (NotebookStore) throws -> Value) async throws -> Value {
+    do {
+      if let cost {
+        return try await withCheckedThrowingContinuation { continuation in
+          do {
+            try persistence.enqueueCommand(owner: .documentState(documentID), reservation: reservation, cost: cost, { store in
+              try store.withDocumentStateWriteAllowance(.init(executionBytes: cost.completionBytes)) { try operation(store) }
+            }) { continuation.resume(with: $0) }
+          } catch { continuation.resume(throwing: error) }
+        }
+      }
+      // The scalar source and optimistic clock were captured synchronously.
+      // This existing FIFO slot owns preparation before later input can arrive.
+      let preparation = Task.detached(priority: .userInitiated) {
+        let measured = try source.measuredCost()
+        return NotebookPersistenceQueue.PreparedCommand(cost: measured, operation: { store in
+          try store.withDocumentStateWriteAllowance(.init(executionBytes: measured.completionBytes)) { try operation(store) }
+        })
+      }
+      let saved: Task<Value, Error>
+      do { saved = try persistence.enqueuePreparedCommand(reservation: reservation, preparation, publishesChanges: true) }
+      catch { preparation.cancel(); throw error }
+      return try await saved.value
+    } catch { reloadExternalChanges(); throw error }
+  }
+
   @discardableResult
   func commitDocumentState(documentID: UUID, program: DocumentProgramSource, value: JSONValue) async throws -> ContentFieldVersion? {
     guard value.isValid else { throw NotebookStorageError.invalidTransaction("document state value") }
@@ -4889,42 +4910,40 @@ final class NotebookAppModel {
       try Task.checkCancellation()
     }
     guard loadState == .ready, !isStopped, !isItemBeingDeleted(documentID) else { return nil }
+    // Refuse a sealed workspace before reserving or advancing its journal.
+    try persistence.requireMutationAdmission()
+    let programID = program.id, path = program.path, basis = program.sourceBasis, actor = actorID
+    let source = NotebookDocumentStateWriteAdmission.Source(value: value,
+      previous: documentStates[documentID]?.records.first { $0.id == programID },
+      journalCapacity: documentStates[documentID]?.records.capacity, programID: programID, path: path, basis: basis)
+    guard (source.journalCapacity ?? 0) <= NotebookDocumentStateWriteAllowance.maximumExecutionBytes
+      / MemoryLayout<DocumentStateRecord>.stride / 2 else { throw NotebookDocumentStateWriteAdmission.refusal() }
+    let cost = try source.inlineCost()
+    guard let reservation = persistence.reserveWrite(cost ?? NotebookDocumentStateWriteAdmission.preparationMaximum) else {
+      throw NotebookDocumentStateWriteAdmission.refusal()
+    }
+    defer { persistence.releaseWriteReservation(reservation) }
     readAdmission.changed(.init(kind: .document, id: documentID))
     if documents[documentID] == nil || documentStates[documentID] == nil {
-      // A retiring heap keeps its admitted value and writer position even after
-      // the document leaves the working set. Eviction does not revoke source.
-      let actor = actorID
-      return await withCheckedContinuation { continuation in
-        persistence.enqueue(owner: .documentState(documentID)) { store in
-          let accepted = try store.commitDocumentState(documentID: documentID, programID: program.id,
-            programPath: program.path, value: value, sourceBasis: program.sourceBasis, actor: actor)
-          continuation.resume(returning: accepted?.record.value == value ? accepted?.record.valueVersion : nil)
-          return accepted != nil
-        }
+      let accepted = try await enqueueDocumentStateWrite(documentID: documentID, reservation: reservation, cost: cost, source: source) { store in
+        try store.commitDocumentState(documentID: documentID, programID: programID,
+          programPath: path, value: value, sourceBasis: basis, actor: actor)
       }
+      return accepted?.record.value == value ? accepted?.record.valueVersion : nil
     }
     guard let document = documents[documentID],
-      (try? DocumentProgramSource(document: document, instanceID: program.id, path: program.path).sourceBasis) == program.sourceBasis,
+      (try? DocumentProgramSource(document: document, instanceID: programID, path: path).sourceBasis) == basis,
       var journal = documentStates[documentID] else { return nil }
-    if journal.commit(instanceID: program.id, value: value, actor: actorID) {
-      documentStates[documentID] = journal
-    }
-    guard let record = journal.records.first(where: { $0.id == program.id && $0.value == value }) else { return nil }
+    if journal.commit(instanceID: programID, value: value, actor: actor) { documentStates[documentID] = journal }
+    guard let record = journal.records.first(where: { $0.id == programID && $0.value == value }) else { return nil }
     let command = NotebookDocumentStateCommand(documentID: documentID, record: record,
-      journalStamp: journal.stamp, programPath: program.path, expectedSourceBasis: program.sourceBasis)
-    // Display is immediate; the executor adopts only its value's durable receipt.
-    // A concurrent winner cannot authorize this heap's next checkpoint.
-    return await withCheckedContinuation { continuation in
-      persistence.enqueue(owner: .documentState(documentID)) { store in
-        let result = try store.commitDocumentState(command)
-        let version: ContentFieldVersion?
-        if case .committed(let accepted) = result, accepted.record.value == value {
-          version = accepted.record.valueVersion
-        } else { version = nil }
-        continuation.resume(returning: version)
-        return result != command.expectedResult
-      }
+      journalStamp: journal.stamp, programPath: path, expectedSourceBasis: basis)
+    let result = try await enqueueDocumentStateWrite(documentID: documentID, reservation: reservation, cost: cost, source: source) { store in
+      try store.commitDocumentState(command)
     }
+    if result != command.expectedResult { reloadExternalChanges() }
+    if case .committed(let accepted) = result, accepted.record.value == value { return accepted.record.valueVersion }
+    return nil
   }
 
   /// A checkpoint always reaches the durable file-basis CAS. Closing an editor
@@ -4933,37 +4952,43 @@ final class NotebookAppModel {
     program: DocumentProgramSource, stateVersion: ContentFieldVersion?) async throws -> ContentFieldVersion? {
     guard value.isValid, program.id == blockID else { throw NotebookStorageError.invalidTransaction("document checkpoint value") }
     guard bootstrapAdmission.wasAccepted, !isStopped, !isItemBeingDeleted(documentID) else { return nil }
+    // Closing drains checkpoints; a workspace seal rejects new preparation.
+    try persistence.requireMutationAdmission()
+    let programID = program.id, path = program.path, basis = program.sourceBasis, actor = actorID
     if let document = documents[documentID],
-      (try? DocumentProgramSource(document: document, instanceID: program.id, path: program.path).sourceBasis) != program.sourceBasis { return nil }
+      (try? DocumentProgramSource(document: document, instanceID: programID, path: path).sourceBasis) != basis { return nil }
     let observesLocalState = documentStates[documentID] != nil
+    let source = NotebookDocumentStateWriteAdmission.Source(value: value,
+      previous: documentStates[documentID]?.records.first { $0.id == blockID },
+      journalCapacity: documentStates[documentID]?.records.capacity, programID: programID, path: path, basis: basis)
+    guard (source.journalCapacity ?? 0) <= NotebookDocumentStateWriteAllowance.maximumExecutionBytes
+      / MemoryLayout<DocumentStateRecord>.stride / 2 else { throw NotebookDocumentStateWriteAdmission.refusal() }
+    let cost = try source.inlineCost()
+    guard let reservation = persistence.reserveWrite(cost ?? NotebookDocumentStateWriteAdmission.preparationMaximum) else {
+      throw NotebookDocumentStateWriteAdmission.refusal()
+    }
+    defer { persistence.releaseWriteReservation(reservation) }
     let command: NotebookDocumentStateCommand?
     if var journal = documentStates[documentID] {
       guard journal.records.first(where: { $0.id == blockID })?.valueVersion == stateVersion else { return nil }
-      _ = journal.commit(instanceID: blockID, value: value, actor: actorID)
+      _ = journal.commit(instanceID: blockID, value: value, actor: actor)
       guard let record = journal.records.first(where: { $0.id == blockID }), record.value == value else {
         throw NotebookStorageError.invalidTransaction("document checkpoint admission")
       }
       command = .init(documentID: documentID, record: record, journalStamp: journal.stamp,
-        programPath: program.path, expectedSourceBasis: program.sourceBasis, stateCondition: .matching(stateVersion))
+        programPath: path, expectedSourceBasis: basis, stateCondition: .matching(stateVersion))
     } else { command = nil }
-    let actor = actorID
-    // Keep the admitted frozen snapshot in the existing writer FIFO through a
-    // disk retry. Publish its exact addressed receipt, never the whole scene.
-    let accepted: NotebookDocumentStatePublication? = await withCheckedContinuation { continuation in
-      persistence.enqueue(owner: .documentState(documentID)) { store in
-        let publication: NotebookDocumentStatePublication?
-        let reload: Bool
-        if let command {
-          let result = try store.commitDocumentState(command)
-          if case .committed(let value) = result { publication = value } else { publication = nil }
-          reload = result != command.expectedResult
-        } else {
-          publication = try store.checkpointDocumentState(documentID: documentID, programID: program.id,
-            programPath: program.path, value: value, sourceBasis: program.sourceBasis, stateVersion: stateVersion, actor: actor)
-          reload = publication != nil
-        }
-        continuation.resume(returning: publication)
-        return reload
+    let accepted: NotebookDocumentStatePublication?
+    if let command {
+      let result = try await enqueueDocumentStateWrite(documentID: documentID, reservation: reservation, cost: cost, source: source) { store in
+        try store.commitDocumentState(command)
+      }
+      if result != command.expectedResult { reloadExternalChanges() }
+      if case .committed(let value) = result { accepted = value } else { accepted = nil }
+    } else {
+      accepted = try await enqueueDocumentStateWrite(documentID: documentID, reservation: reservation, cost: cost, source: source) { store in
+        try store.checkpointDocumentState(documentID: documentID, programID: programID,
+          programPath: path, value: value, sourceBasis: basis, stateVersion: stateVersion, actor: actor)
       }
     }
     try Task.checkCancellation()

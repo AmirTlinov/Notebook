@@ -143,7 +143,8 @@ final class NotebookAgentQuestionTests: XCTestCase {
       let chat = try XCTUnwrap(model.chat)
       chat.select(.init(id: UUID().uuidString, title: "Исходник", cwd: "/tmp"))
       chat.expanded = false
-      let id = try XCTUnwrap(model.createDocument(at: .zero))
+      let idResult = await model.createDocument(at: .zero)
+      let id = try XCTUnwrap(idResult)
       await model.finishPendingPersistence()
       let document = try model.store.loadDocument(id)
       let file = try XCTUnwrap(document.files.first { $0.path == document.entrypoint })

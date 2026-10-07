@@ -246,7 +246,8 @@ import XCTest
       let notebook = try XCTUnwrap(original.selectedItemID)
       // A visible closed board legitimately contributes its portal header.
       // Keep this unrelated board outside coverage and outside the selection.
-      let child = try XCTUnwrap(model.createBoard(at: .init(x: 100_000, y: 100_000)))
+      let childResult = await model.createBoard(at: .init(x: 100_000, y: 100_000))
+      let child = try XCTUnwrap(childResult)
       await model.finishPendingPersistence()
       let root = try XCTUnwrap(model.presence?.boardID)
       let before = try model.store.readTransaction { store in

@@ -9,6 +9,10 @@ public struct ContentFieldVersion: Codable, Equatable, Sendable {
   public let observed: [String: UInt64]
   private var heads: [ContentFieldHead]?
 
+  /// Scalar preparation may inspect the frontier shape without visiting any
+  /// retained losing values; their allocation is measured by its owned worker.
+  public var hasRetainedAlternatives: Bool { heads != nil }
+
   /// Concurrent authored alternatives remain owned even when another value is
   /// displayed. Admission must include their bodies without exposing or copying
   /// the private causal frontier.

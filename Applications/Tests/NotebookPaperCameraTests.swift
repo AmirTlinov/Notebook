@@ -291,7 +291,8 @@ final class NotebookPaperCameraTests: XCTestCase {
     phase("model-start-begin")
     await model.start(pageSize: NotebookAppModel.defaultPageSize)
     phase("model-start-end")
-    let item = try XCTUnwrap(document ? model.createDocument(at: .zero) : model.workspace?.selectedItemID)
+    let itemResult = document ? await model.createDocument(at: .zero) : model.workspace?.selectedItemID
+    let item = try XCTUnwrap(itemResult)
     phase("save-begin")
     let saved = await model.finishPendingPersistence()
     phase("save-end")

@@ -115,7 +115,8 @@ final class WorkspaceCameraRenderingTests: XCTestCase {
     var inkOwners: [UUID] = []
     for index in 0..<8 {
       let center = WorldPoint(x: Double(index % 4) * 1100, y: Double(index / 4) * 1500)
-      let id = try XCTUnwrap(model.createNotebook(at: center))
+      let idResult = await model.createNotebook(at: center)
+      let id = try XCTUnwrap(idResult)
       inkOwners.append(id)
       for stroke in 0..<4 {
         let samples = (0..<120).map { point in

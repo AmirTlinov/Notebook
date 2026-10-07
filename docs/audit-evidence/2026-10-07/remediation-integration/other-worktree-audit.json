@@ -1,0 +1,163 @@
+{
+  "format": 1,
+  "recordedAtUTC": "2026-10-07T15:03:22.875659+00:00",
+  "scope": "Read-only bounded git show/cherry/product-owner review against fixed main; no runner, source edit or cherry-pick. Only this ignored findings file written.",
+  "main": {
+    "commit": "f80d1982069682fbc5d5ad7b844f53c0488cde8e",
+    "tree": "ca528ab0eff1089abda3cfd8d0016e4854356859"
+  },
+  "conclusion": "No ready product mechanism from the named old heads is missing from main. Do not restore obsolete owner implementations. Whole-contact merge-only proposals remain unaccepted WIP; PQ pose baseline/harness is a separate missing non-production artifact.",
+  "missingReadyProductFixes": [],
+  "heads": [
+    {
+      "head": "24f7236346dacef3e13307be39358a13330e3168",
+      "classification": "product patch equivalent; present and extended",
+      "cherryFullCommit": "+ (historical docs alter full patch identity)",
+      "mainEquivalent": "6a35b693c65d3eacd85383767b6078dc2d9a6a14",
+      "productPatchID": "1e9fe4d75e9c1553e8f8d18d537f8fbc16c1be4b",
+      "patchScope": "All changed Sources/Applications/Tests paths including regressions; identical stable patch ID for both commits",
+      "currentOwners": [
+        "Sources/NotebookCore/Collaboration.swift:179 redoGates/redoOf",
+        "Sources/NotebookCore/CollaborationStore.swift:331 redoNativeAction exact inverse gates",
+        "Sources/NotebookCore/NotebookNativeHistory.swift:37 durable redo directory; :168 addressed predecessor lineage",
+        "Applications/Shared/NotebookAppModel.swift:6184 native redo route"
+      ],
+      "retainedMechanisms": [
+        "Mixed ink/command durable per-actor/per-surface Undo/Redo",
+        "Ink keeps saved identity; graphic redo creates new causal action",
+        "Exact inverse version rejects peer same-valued ABA; cold reopen persistence",
+        "Subsequent addressed redo lineage extends original mechanism"
+      ],
+      "recommendation": "No product cherry-pick; current owner and regressions already carry the fix"
+    },
+    {
+      "head": "8605a3f4fa02b03f99287fa6a5106fa548c54e97",
+      "classification": "unaccepted merge-only WIP; inherited product changes already present",
+      "mergeParents": [
+        "3127ac7fc26d55dfe792dd8170942e8519f6d6f0",
+        "027932684607007022636fbd37a07ea833ba58d4"
+      ],
+      "bothParentsAlreadyInMain": true,
+      "cherryFullCommit": "empty because unique tip is merge",
+      "sourceReceipt": "docs/audit-evidence/2026-09-27/pending-selection-integration.json at8605a3f4",
+      "sourceStatus": "BLOCKED_FOR_MAIN",
+      "missingMergeOnlyProposals": [
+        "PageSurfaceReadiness.shownInk +hasInstalledContent retains old same-source input while repainting",
+        "Pencil same-source cached ordered-plan echo skips a new raw decode"
+      ],
+      "alreadyReplaced": [
+        "Pencil pageID/stamp source guard replaced by PageInkSource.identity in current owner",
+        "Current publishReadiness waits for decodeTask ==nil and orderedTask ==nil",
+        "Whole-contact and shared pipeline product foundations from both parents already in main"
+      ],
+      "unresolvedAtOriginalFreeze": [
+        "First mixed selection move sometimes over100ms observation ceiling",
+        "Cancel of second move sometimes shows raw material and peer/controls at different poses; cause not established"
+      ],
+      "currentOwners": [
+        "Applications/Shared/PagePresentation.swift:13 current readiness receipt",
+        "Applications/iPad/PencilCanvasView.swift:267 orderedSourceIdentity/source.identity",
+        "Applications/iPad/PencilCanvasView.swift:240 decode/ordered task readiness"
+      ],
+      "recommendation": "Do not merge/cherry-pick this old integration. Its absent fast paths are unfinished proposals, not a ready lost product fix"
+    },
+    {
+      "head": "02c98d2887cf84fb2a57a23606014377b3ce426d",
+      "classification": "8-commit integration checkpoint superseded by current owners; documentation historical",
+      "commits": [
+        {
+          "commit": "03cf87621f6dde57322699ce644c97e2ef5f9872",
+          "classification": "product patch equivalent",
+          "mainEquivalent": "4d5ec9fc9188a5be7262eb638220609afa547777",
+          "productPatchID": "22af0c592b5846378adfbb37cdf53dc0e85129eb",
+          "currentOwner": "Sources/NotebookCore/WorkspaceItemGeometry.swift:37 readingCamera clamps scale and offset; Applications/Shared/NotebookAppModel.swift:7004 applies it to open document"
+        },
+        {
+          "commit": "f9b7c99c082c1a736290e41b715ed468d45cd989",
+          "classification": "behavior retained by current document-reading owner",
+          "currentOwner": "Applications/Shared/DocumentReadingSession.swift:78 openingCamera",
+          "evidence": "Saved centerOffset and fitScale*saved.zoomRatio pass through geometry.readingCamera at86-87; provisional camera intent is likewise bounded at89-91",
+          "recommendation": "No old NotebookAppModel restoration method needed"
+        },
+        {
+          "commit": "f35ac6e1416ad7aa4453573a97c290d012f0ffd7",
+          "classification": "recipes transferred, then evolved to file-backed LaTeX/offline program packages",
+          "documentedEquivalent": "ebdfab8b0b1e762025671fe409653168668fc1bb",
+          "equivalentAncestor": true,
+          "currentOwners": [
+            "MCP/skills/notebook/scripts/recipes.mjs",
+            "MCP/skills/notebook/references/recipes.md",
+            "MCP/skills/notebook/references/documents.md"
+          ],
+          "currentEvolution": [
+            "624ad6e84dd298bd583bb60dcdde390009257e73 file-backed LaTeX/notex",
+            "1ef7f53439d89e225753f6525dc298ad2b53dbd1 complete program assets"
+          ],
+          "obsoletePaths": "Four old assets/documents/*.md templates deliberately removed; current document recipe owns ordinary LaTeX files"
+        },
+        {
+          "commits": [
+            "552f9ab5",
+            "ce1b8064",
+            "02c98d28"
+          ],
+          "classification": "historical physical/checkpoint evidence; no production mechanism"
+        },
+        {
+          "commits": [
+            "a557e72a",
+            "0fd069e9"
+          ],
+          "classification": "old merge reconciliation; camera and recipe mechanisms retained by the above current owners"
+        }
+      ],
+      "recommendation": "Keep current owners; do not reinstate old Markdown document/editor or camera owner"
+    },
+    {
+      "head": "48b3581358ccfcbd7d75cd086a65d5272d45afd7",
+      "classification": "historical installed build172 documentation only",
+      "productionDiff": false,
+      "recommendation": "No product code to preserve; history remains in git"
+    },
+    {
+      "head": "41aaec4839f73b67d2ad362b1d4b832b22c35cf4",
+      "classification": "patch-equivalent in main",
+      "cherryFullCommit": "-",
+      "currentPaths": [
+        "docs/relational-geometry-contract.md",
+        "docs/relational-geometry-delivery.md"
+      ],
+      "productionDiff": false,
+      "recommendation": "No action"
+    },
+    {
+      "head": "072b0ebcbac83244f28e605de5c7e92bd04f4602",
+      "classification": "patch-equivalent in main",
+      "cherryFullCommit": "-",
+      "mainEquivalent": "8959a13db531503408ec40fa7b66387a376cfb09",
+      "productionFix": "Icon-only document file menu with44x44pt target",
+      "recommendation": "Already included"
+    },
+    {
+      "head": "e515dda40f6182aa2545f3e6debdc9cefac8a193",
+      "classification": "missing test/baseline only; no product repair",
+      "cherryFullCommit": "+",
+      "productionDiff": false,
+      "testAbsentFromMain": true,
+      "artifactPaths": [
+        "Applications/Tests/NotebookSelectionPoseLatencyTests.swift",
+        "docs/audit-evidence/2026-10-07/selection-pose/baseline.json",
+        "docs/audit-evidence/2026-10-07/selection-pose/baseline-1.csv",
+        "docs/audit-evidence/2026-10-07/selection-pose/baseline-100000.csv"
+      ],
+      "receiptScope": "Physical optimized pose replay at1/100000 foreign bodies; production selection explicitly unchanged, performance repair still in work",
+      "recommendation": "This harness/evidence may be retained as its separate accepted measurement slice if owner wants; it is not an omitted ready production fix"
+    }
+  ],
+  "verification": "Static source and patch identity review only; no new functional or physical acceptance claimed",
+  "integrationPreserved": {
+    "head": "f80d1982069682fbc5d5ad7b844f53c0488cde8e",
+    "indexSHA256": "4d0587b446fb7989d09d00717da3672c4dd965106db13d2933eaf8aadcd2ad76",
+    "afterEqualsBefore": true
+  }
+}

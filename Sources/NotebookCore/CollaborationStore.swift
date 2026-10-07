@@ -112,8 +112,9 @@ extension NotebookStore {
   public func applyNativeAction(_ action: CollaborationAction, actor: UUID, requestFingerprint: String? = nil,
     programResources: NotebookProgramTransfer.Prepared? = nil) throws -> CollaborationReceipt {
     guard action.operations.allSatisfy({ [.insertElement, .updateElement, .removeElement,
-      .appendInkStroke, .convertInkToElement, .reorderElements, .moveItem, .stackItems, .deleteItem].contains($0.kind) }) else {
-      throw invalid("Нативная правка содержит штрихи, элементы, расположение или удаление предметов.")
+      .appendInkStroke, .convertInkToElement, .reorderElements, .moveItem, .stackItems, .deleteItem,
+      .createNotebook, .createDocument, .createBoard].contains($0.kind) }) else {
+      throw invalid("Нативная правка содержит штрихи, элементы и предметы.")
     }
     return try applyCollaborationActionImmediately(action, actor: actor, requestFingerprint: requestFingerprint,
       human: true, nativeInputOwner: actor, programResources: programResources)
@@ -354,7 +355,8 @@ extension NotebookStore {
       guard inverse.lifecycleChanges?.isEmpty ?? true, !original.changes.isEmpty,
         original.action.operations.allSatisfy({ [.insertElement,.updateElement,.removeElement,
           .convertInkToElement,.reorderElements,.moveItem,.stackItems,
-          .putDocumentFile,.patchDocumentFile,.renameDocumentFile,.removeDocumentFile].contains($0.kind) }) else {
+          .putDocumentFile,.patchDocumentFile,.renameDocumentFile,.removeDocumentFile,
+          .createNotebook,.createDocument,.createBoard].contains($0.kind) }) else {
         throw CollaborationError("revision_conflict","Этот ход нельзя безопасно повторить после отмены.")
       }
       let expected=try original.action.expected.map {
@@ -377,7 +379,18 @@ extension NotebookStore {
       var after=before
       var repeatedPredecessors: [(repeated: CollaborationReceipt, original: CollaborationReceipt)]?
       for change in original.changes {
+        // The directory has no authored order. Its captured new board member
+        // is restored below; canonical row publication places that member.
+        if change.file == "board.json", change.path == [.field("boards"), .order],
+          original.action.operations.contains(where: { $0.kind == .createBoard }) { continue }
         let current=before.files[change.file]?.value(at:change.path[...])
+        if try admitsNativeItemCreationRootRedo(change, receipt: original, projection: before) {
+          if change.path.isEmpty { after.files[change.file] = change.after }
+          else if let file = after.files[change.file] {
+            after.files[change.file] = file.setting(at: change.path[...], to: change.after)
+          } else { throw CollaborationError("revision_conflict", "Владелец материала больше не существует.") }
+          continue
+        }
         guard let gate=inverse.redoGates?.first(where: {
           $0.file == change.file && $0.path == change.path
         }), let version = collaborationFieldVersion(file:before.files[change.file],path:change.path) else {
@@ -394,16 +407,13 @@ extension NotebookStore {
             throw CollaborationError("revision_conflict","Причинный владелец изменился после отмены.")
           }
         }
-        guard collaborationComparable(current,file:change.file,path:change.path)
-          == collaborationComparable(change.before,file:change.file,path:change.path) else {
-          throw CollaborationError("revision_conflict","Материал изменился после отмены.")
-        }
         if let address = placementAddress(change.file, change.path) {
           // The complete register owns placement. An unchanged winner cannot
           // hide a losing concurrent head; replay authors a new intent rather
           // than reinstalling the old register and erasing its observations.
           guard let placement = try current?.decode(WorkspacePlacement.self),
-            placement.heads.count == 1, placement.winner.version == version else {
+            placement.heads.count == 1, placement.winner.version == version,
+            placement.pose == (try change.before?.decode(WorkspacePlacement.self).pose) else {
             throw CollaborationError("revision_conflict", "Расположение изменилось после отмены.")
           }
           var tree = try after.hierarchy
@@ -413,6 +423,10 @@ extension NotebookStore {
           }
           after.files["board.json"] = try .encode(tree)
           continue
+        }
+        guard collaborationComparable(current,file:change.file,path:change.path)
+          == collaborationComparable(change.before,file:change.file,path:change.path) else {
+          throw CollaborationError("revision_conflict","Материал изменился после отмены.")
         }
         if change.path.isEmpty { after.files[change.file]=change.after }
         else if let file=after.files[change.file] {
@@ -811,10 +825,12 @@ struct CollaborationWorkspace {
   let projectedPageIDs: Set<UUID>
   var pageGraphicSources: [UUID: [PageInkAction]] = [:]
   var pageInkFrontiers: [UUID: UInt64] = [:]
+  var creationZIndexes: [UUID: Int] = [:]
   init(files: [String: JSONValue], projectedPageIDs: Set<UUID> = [], pageGraphicSources: [UUID: [PageInkAction]] = [:],
-    pageInkFrontiers: [UUID: UInt64] = [:]) {
+    pageInkFrontiers: [UUID: UInt64] = [:], creationZIndexes: [UUID: Int] = [:]) {
     self.files = files; self.projectedPageIDs = projectedPageIDs; self.pageGraphicSources = pageGraphicSources
     self.pageInkFrontiers = pageInkFrontiers
+    self.creationZIndexes = creationZIndexes
   }
   var ink: SpatialInkJournal { get throws { try files["spatial-ink.json"]!.decode(SpatialInkJournal.self) } }
 
@@ -1121,13 +1137,16 @@ struct CollaborationWorkspace {
     var index = try workspace
     var tree = try hierarchy
     let title = op.values["title"]?.string ?? ""
+    let minimumZIndex = creationZIndexes[op.target.id] ?? 0
     switch op.kind {
     case .createNotebook:
       guard let pageID = op.values["pageID"]?.string.flatMap(UUID.init(uuidString:)),
         let created = index.createNotebook(title: title, actor: actor,
-          pageSize: PageSize(width: 834, height: 1194), itemID: id, pageID: pageID) else { throw invalid("Нужны свободные ID тетради и первого листа.") }
+          pageSize: try op.values["pageSize"]?.decode(PageSize.self) ?? PageSize(width: 834, height: 1194),
+          itemID: id, pageID: pageID) else { throw invalid("Нужны свободные ID тетради и первого листа.") }
       files[pageFile(pageID)] = try .encode(created.page)
-      guard try tree.addItem(id, to: op.target.id, near: center.decode(WorldPoint.self), actor: actor) else { throw missing(op.target) }
+      guard try tree.addItem(id, to: op.target.id, near: center.decode(WorldPoint.self), actor: actor,
+        minimumZIndex: minimumZIndex) else { throw missing(op.target) }
     case .createDocument:
       guard Set(op.values.keys).isSubset(of: ["title", "center", "template", "entrypoint", "files", "state"]),
         op.values["template"] == nil || op.values["template"]?.string.flatMap(DocumentTemplate.init(rawValue:)) != nil else {
@@ -1145,10 +1164,12 @@ struct CollaborationWorkspace {
       let state = try op.values["state"]?.decode(DocumentStateJournal.self) ?? DocumentStateJournal(id: id, actor: actor)
       guard state.id == id, state.isValid else { throw invalid("Начальное состояние принадлежит новому документу.") }
       files[stateFile(id)] = try .encode(state)
-      guard try tree.addItem(id, to: op.target.id, near: center.decode(WorldPoint.self), actor: actor) else { throw missing(op.target) }
+      guard try tree.addItem(id, to: op.target.id, near: center.decode(WorldPoint.self), actor: actor,
+        minimumZIndex: minimumZIndex) else { throw missing(op.target) }
     case .createBoard:
       guard index.createBoard(title: title, actor: actor, boardID: id) != nil,
-        try tree.createBoard(id, in: op.target.id, near: center.decode(WorldPoint.self), actor: actor) else { throw invalid("Нужен свободный ID дочерней доски.") }
+        try tree.createBoard(id, in: op.target.id, near: center.decode(WorldPoint.self), actor: actor,
+          minimumZIndex: minimumZIndex) else { throw invalid("Нужен свободный ID дочерней доски.") }
     default: break
     }
     // Creation changes the catalogue; the human's camera and selection retain

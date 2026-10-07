@@ -8,11 +8,13 @@ public final class NotebookNativeCommand<Source: Sendable>: @unchecked Sendable 
   private let lock = NSLock()
   private var prepared: Output?
   private let allowance: NotebookNativeWriteAllowance?
+  private let workspaceID: UUID?
   private let operation: (NotebookStore, (Output) -> Void) throws -> Output
 
-  init(allowance: NotebookNativeWriteAllowance? = nil,
+  init(allowance: NotebookNativeWriteAllowance? = nil, workspaceID: UUID? = nil,
     operation: @escaping (NotebookStore, (Output) -> Void) throws -> Output) {
     self.allowance = allowance
+    self.workspaceID = workspaceID
     self.operation = operation
   }
 
@@ -25,6 +27,7 @@ public final class NotebookNativeCommand<Source: Sendable>: @unchecked Sendable 
   }
 
   private func applyRetained(to store: NotebookStore) throws -> Output {
+    if let workspaceID, try store.storedWorkspaceID() != workspaceID { throw NotebookStoreError.workspaceChanged }
     if let prepared {
       // Absence proves rollback. An unreadable receipt keeps the same command
       // pending; current material is never evidence of its own earlier commit.

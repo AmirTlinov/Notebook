@@ -456,7 +456,8 @@ final class PortalPassageTests: XCTestCase {
     await model.start(pageSize: NotebookAppModel.defaultPageSize)
     let distantID = try XCTUnwrap(model.workspace?.selectedItemID)
     model.moveItem(distantID, to: .init(x: -30_000, y: -30_000))
-    let childID = try XCTUnwrap(model.createBoard(at: .zero))
+    let childIDResult = await model.createBoard(at: .zero)
+    let childID = try XCTUnwrap(childIDResult)
     await model.finishPendingPersistence()
     var hierarchy = try model.store.loadBoard(items: model.store.loadIndex().items)
     let elements = (0..<elementCount).map { index in

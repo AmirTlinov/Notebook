@@ -1,0 +1,19 @@
+{
+  "command": [
+    "MCP/node_modules/.bin/tsx",
+    "--test",
+    "MCP/test/program-bridge.test.ts"
+  ],
+  "exitCode": 0,
+  "durationSeconds": 1.0300296659697779,
+  "counts": {
+    "tests": 48,
+    "pass": 48,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0,
+    "todo": 0
+  },
+  "scope": "actual integration inputs, newly executed",
+  "sourceFreeze": "3b060eebfab15c3b12281f8523e959c9b37dad431620826ae06c9cdc6b05b64c"
+}

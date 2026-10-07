@@ -11,7 +11,10 @@ final class NotebookDocumentSourcePersistenceTests: XCTestCase {
     await model.start(pageSize: NotebookAppModel.defaultPageSize)
     let notebook = try XCTUnwrap(model.workspace?.selectedItemID)
     var ids: [UUID] = []
-    for _ in 0..<10 { ids.append(try XCTUnwrap(model.createDocument(at: .zero))) }
+    for _ in 0..<10 {
+      let createdDocumentResult = await model.createDocument(at: .zero)
+      ids.append(try XCTUnwrap(createdDocumentResult))
+    }
     model.selectItem(notebook)
     let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
     await model.reloadExternalChanges()?.value
@@ -134,7 +137,8 @@ final class NotebookDocumentSourcePersistenceTests: XCTestCase {
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
     retainNotebookUntilTeardown(model, removing: root)
     await model.start(pageSize: NotebookAppModel.defaultPageSize)
-    let id = try XCTUnwrap(model.createDocument(at: .zero))
+    let idResult = await model.createDocument(at: .zero)
+    let id = try XCTUnwrap(idResult)
     let created = await model.finishPendingPersistence()
     XCTAssertTrue(created, model.persistenceFailure ?? "")
     var document = try model.store.loadDocument(id)

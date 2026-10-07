@@ -51,6 +51,12 @@ final class NotebookPersistenceQueue {
     let succeeded: Bool
     var changed = true
     var rejection: CollaborationError? = nil
+    var delivery: (@Sendable () -> Void)? = nil
+  }
+
+  private struct CommandResult<Value: Sendable>: Sendable {
+    let value: Value
+    let changed: Bool
   }
 
   private struct Write {
@@ -135,7 +141,7 @@ final class NotebookPersistenceQueue {
     guard workspaceSelectionSeal == seal else { return }
     workspaceSelectionSeal = nil
   }
-  private func requireMutationAdmission() throws {
+  func requireMutationAdmission() throws {
     guard permitsNewWorkspaceMutation else {
       throw CollaborationError("workspace_selection_pending", "Выбор пространства ещё сохраняется. Текущее действие осталось в прежнем пространстве.")
     }
@@ -419,22 +425,25 @@ final class NotebookPersistenceQueue {
       completion(.failure(CollaborationError("workspace_selection_pending", "Выбор пространства ещё сохраняется."))); return
     }
     if !writesStore, let failure { completion(.failure(Failure(message: failure))); return }
-    let accepted: NotebookAcceptedWrite<Value>? = writesStore
-      ? NotebookAcceptedWrite(witnesses: acceptedWitnesses, operation) : nil
+    let accepted: NotebookAcceptedWrite<CommandResult<Value>>? = writesStore
+      ? NotebookAcceptedWrite(witnesses: acceptedWitnesses) { store in
+        let value = try operation(store)
+        return .init(value: value, changed: try store.transactionHasContentChanges())
+      } : nil
     let execute: @Sendable (NotebookStore) async throws -> Outcome = { store in
       do {
-        let value: Value
-        if let accepted { value = try accepted.apply(to: store) }
-        else { value = try operation(store) }
-        completion(.success(value))
-        return Outcome(merged: false, succeeded: true)
+        let result: CommandResult<Value>
+        if let accepted { result = try accepted.apply(to: store) }
+        else { result = .init(value: try operation(store), changed: false) }
+        return Outcome(merged: false, succeeded: true, changed: result.changed,
+          delivery: { completion(.success(result.value)) })
       } catch {
         // A read observer can fail without changing the accepted writer. A
         // mutation owns its exact closure and waiter until its outcome is known.
         let refusal = Self.definitiveRejection(error)
         guard !writesStore || refusal != nil else { throw error }
-        completion(.failure(refusal ?? error))
-        return Outcome(merged: false, succeeded: false, changed: false)
+        return Outcome(merged: false, succeeded: false, changed: false,
+          delivery: { completion(.failure(refusal ?? error)) })
       }
     }
     let onBlocked: (@Sendable (String) -> Void)?
@@ -481,24 +490,28 @@ final class NotebookPersistenceQueue {
     // This worker caches one typed accepted instance, including its exact
     // output. Retry never rebuilds it from the completed preparation task.
     let accepted = Task {
-      NotebookAcceptedWrite(witnesses: witnesses, try await prepare())
+      let operation = try await prepare()
+      return NotebookAcceptedWrite<CommandResult<Value>>(witnesses: witnesses) { store in
+        let value = try operation(store)
+        return .init(value: value, changed: try store.transactionHasContentChanges())
+      }
     }
     acceptedMutationGeneration &+= 1
     pending.append(Write(owner:nil, admissionCharge: admissionCharge, operation:{ store in
-      let command: NotebookAcceptedWrite<Value>
+      let command: NotebookAcceptedWrite<CommandResult<Value>>
       do { command=try await accepted.value }
       catch {
-        channel.resolve(.failure(error))
-        return .init(merged:false,succeeded:false)
+        return .init(merged:false,succeeded:false,changed:false,
+          delivery:{ channel.resolve(.failure(error)) })
       }
       do {
         let value=try command.apply(to: store)
-        channel.resolve(.success(value))
-        return .init(merged:false,succeeded:true)
+        return .init(merged:false,succeeded:true,changed:value.changed,
+          delivery:{ channel.resolve(.success(value.value)) })
       } catch {
         guard let rejection = Self.definitiveRejection(error) else { throw error }
-        channel.resolve(.failure(rejection))
-        return .init(merged:false,succeeded:false)
+        return .init(merged:false,succeeded:false,changed:false,
+          delivery:{ channel.resolve(.failure(rejection)) })
       }
       // All other execution failures reach the existing failed-write owner.
       // Do not finish the channel or let a dependent accepted edit overtake it.
@@ -621,6 +634,9 @@ final class NotebookPersistenceQueue {
         if let rejection = outcome.rejection { next.onRejected?(rejection) }
         if outcome.merged { onContentMerged?() }
         if next.notifiesCommit && outcome.succeeded && outcome.changed { onCommit?(next.owner) }
+        // A known result belongs to the caller after its FIFO slot and charge
+        // have retired. Retry is then admitted against the released capacity.
+        outcome.delivery?()
         next.onCompleted?()
       case .failure(let error):
         failure = error.localizedDescription

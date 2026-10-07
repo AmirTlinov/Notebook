@@ -171,7 +171,8 @@ final class WorkspaceSceneIndexTests: XCTestCase {
     model.updatePresence(closed,settled:true)
     var folders:[UUID]=[]
     for index in 0..<6 {
-      folders.append(try XCTUnwrap(model.createBoard(at:.init(x:Double(index-3)*300,y:0))))
+      let createdBoardResult = await model.createBoard(at:.init(x:Double(index-3)*300,y:0))
+      folders.append(try XCTUnwrap(createdBoardResult))
     }
     let saved=await model.finishPendingPersistence();XCTAssertTrue(saved)
     let snapshot=try NotebookSceneState.read(store:model.store,presence:closed,viewport:viewport)
@@ -395,7 +396,8 @@ final class WorkspaceSceneIndexTests: XCTestCase {
   @MainActor
   func testCameraDocumentSourceAndInteractiveStateKeepPreparedGeometryGeneration() async throws {
     let model = await makeModel()
-    let documentID = try XCTUnwrap(model.createDocument(at: .zero))
+    let documentIDResult = await model.createDocument(at: .zero)
+    let documentID = try XCTUnwrap(documentIDResult)
     await model.finishPendingPersistence()
     var document = try model.store.loadDocument(documentID)
     XCTAssertTrue(document.replaceContent(files: DocumentTestFiles.document(contents: [.tex(id: "body", source: "Initial body"),
@@ -449,7 +451,8 @@ final class WorkspaceSceneIndexTests: XCTestCase {
   func testModelPublishesMovedAndDeletedSourceToItsExplicitBoardAfterNavigation() async throws {
     let model = await makeModel()
     let boardA = try XCTUnwrap(model.presence?.boardID)
-    let boardB = try XCTUnwrap(model.createBoard(at: .init(x: 40_000, y: 40_000)))
+    let boardBResult = await model.createBoard(at: .init(x: 40_000, y: 40_000))
+    let boardB = try XCTUnwrap(boardBResult)
     let creationSaved = await model.finishPendingPersistence()
     XCTAssertTrue(creationSaved, model.persistenceFailure ?? "")
     var hierarchy = try model.store.loadBoard(items: model.store.loadIndex().items)
@@ -502,7 +505,8 @@ final class WorkspaceSceneIndexTests: XCTestCase {
   func testNotebookPageSequenceDoesNotWaitForSpatialPreparation() async throws {
     let model = await makeModel()
     let precedingID = try XCTUnwrap(model.workspace?.selectedItemID)
-    let itemID = try XCTUnwrap(model.createNotebook(at: .zero))
+    let itemIDResult = await model.createNotebook(at: .zero)
+    let itemID = try XCTUnwrap(itemIDResult)
     await model.finishPendingPersistence()
     try await waitForIndex(model)
     let before = try XCTUnwrap(model.sceneIndex)
@@ -574,11 +578,13 @@ final class WorkspaceSceneIndexTests: XCTestCase {
       let saved = await model.finishPendingPersistence()
       XCTAssertTrue(saved, "\(phase): \(model.persistenceFailure ?? "unsuccessful source publication")")
     }
-    let childID = try XCTUnwrap(model.createBoard(at: .zero))
+    let childIDResult = await model.createBoard(at: .zero)
+    let childID = try XCTUnwrap(childIDResult)
     await assertSaved("Create parent portal")
     try await waitForIndex(model)
     XCTAssertTrue(model.enterBoard(childID))
-    let itemID = try XCTUnwrap(model.createNotebook(at: .zero))
+    let itemIDResult = await model.createNotebook(at: .zero)
+    let itemID = try XCTUnwrap(itemIDResult)
     await assertSaved("Create notebook in child")
     try await waitForIndex(model)
     let oldPortal = try XCTUnwrap(model.scenePortalCamera(boardID: childID))

@@ -1,0 +1,93 @@
+{
+  "base": "40bd01c85c6639ebede61104abb5d649b02772a4",
+  "status": "common_main_integration_pass",
+  "core_child": {
+    "functions": 37,
+    "executions": 58,
+    "failed": 0
+  },
+  "native_build_refusals": [
+    {
+      "run": 1,
+      "source_sha256": "1b993138ec90c63a8ef3e19f1926d445ce58c2be92d424039c2891ff489066d1",
+      "outcome": "build_failed_before_test_execution",
+      "errors": [
+        "/Users/amir/.codex/worktrees/notebook-item-admission/Notebook/Applications/Shared/NotebookAppModel.swift:2108:85: error: cannot convert value of type 'Task<NotebookPersistenceQueue.PreparedCommand<(receipt: CollaborationReceipt, sources: [NotebookNativeItemCreation.Source])>, Never>' to expected argument type 'Task<NotebookPersistenceQueue.PreparedCommand<(receipt: CollaborationReceipt, sources: [NotebookNativeItemCreation.Source])>, any Error>'"
+      ]
+    },
+    {
+      "run": 2,
+      "source_sha256": "20ae90c37e21299ea4d487d920334bf4beb86896d35b149b6bf1ded0d8fe4535",
+      "outcome": "build_failed_before_test_execution",
+      "errors": [
+        "/Users/amir/.codex/worktrees/notebook-item-admission/Notebook/Applications/TestSupport/NotebookItemCreationTests.swift:160:74: error: 'activeHistoryDomain' is inaccessible due to 'private' protection level",
+        "/Users/amir/.codex/worktrees/notebook-item-admission/Notebook/Applications/TestSupport/NotebookItemCreationTests.swift:165:27: error: 'activeHistoryDomain' is inaccessible due to 'private' protection level"
+      ]
+    }
+  ],
+  "native_child_v3": {
+    "passed": 5,
+    "failed": 1,
+    "skipped": 0,
+    "source_sha256": "275da65efe53952f5f2da23f316c5841ebb0a4feaffd25426d219c777e958da4",
+    "failed_test": "testLostCommitKeepsTheSamePendingBirthAcrossAPeerMoveAndUserRetry",
+    "cause": "global_cursor_fixture_assertion_rejected_legitimate_iOS_action_arrival_ACK",
+    "repair": "only exact birth and peer ACK addresses permitted; complete bounded journal cut, original birth receipt/history and peer pose unchanged; exact ACK revisions/version/deviceID"
+  },
+  "integrated_core_v1": {
+    "actual_functions_passed": 2,
+    "completion": "rejected_source_drift",
+    "changed_during_run": [
+      "Applications/TestSupport/NotebookItemCreationTests.swift"
+    ]
+  },
+  "integrated_core_v2": {
+    "functions": 2,
+    "failed": 0,
+    "skipped": 0,
+    "source_sha256": "ae46009dcfebab93740a383e021b68e701ae753a2ebec9981bd70d6914931905",
+    "source_before_equals_after": true
+  },
+  "pending": [
+    "transfer onto common main preserving two new document camera fixtures",
+    "integrated final selected checks",
+    "signed pair release",
+    "full joint acceptance"
+  ],
+  "integrated_native_v1": {
+    "outcome": "build_failed_before_test_execution",
+    "cause": "new catalog fixture awaited createNotebook inside XCTAssertNil autoclosure",
+    "repair": "await bound to local value before assertion"
+  },
+  "integrated_native_v2": {
+    "passed": 2,
+    "failed": 1,
+    "skipped": 0,
+    "source_sha256": "b72fc58f6aceb914eade4a4a16cbb02a13093ed906309db9abf459580ff27884",
+    "source_before_equals_after": true,
+    "passed_tests": [
+      "testLostCommitKeepsTheSamePendingBirthAcrossAPeerMoveAndUserRetry",
+      "testTwoRapidBirthsWaitForMenuLiftAndOnlyTheLatestMayPresentItsCover"
+    ],
+    "failed_test": "testCreatesAndEntersBoardsAtTwoNestedLevels",
+    "assertion": "DrawingResponsivenessTests.swift:3812: no new workspace-item AX within 3 seconds after create tap",
+    "observed_video": "frame-07.png: persistence-failure corrupt_record: spatial-ink.json",
+    "cause": "default SpatialTransition UI fixture saves workspace/page/board without required spatial-ink root; initializeWorkspace skips creating it once workspace exists; accepted action projection correctly rejects the missing root",
+    "evidence_dir": ".build/nb12-item-creation-integrated-native-20261007-v2",
+    "next_repair": "common NotebookDrawingFixture.makeModel setup: call existing loadOrCreateSpatialInk(actor:) after saveWorkspaceBundle; preserve existing conditional journal; rerun only physical two-level creation UI",
+    "repair_applied": false
+  },
+  "integrated_ui_v3": {
+    "passed": 1,
+    "failed": 0,
+    "skipped": 0,
+    "runtime_warnings": 0,
+    "source_sha256": "dc2f8d0609ce79e2be8e9a37b3b26b2577e717a8a4ced67f8266bff3e825dc90",
+    "inputs": 1678,
+    "source_before_equals_after": true,
+    "selector": "NotebookUITests/DrawingResponsivenessTests/testCreatesAndEntersBoardsAtTwoNestedLevels",
+    "repair": "common fixture initialization creates the required journal through existing loadOrCreateSpatialInk; production codec and UI oracle unchanged",
+    "isolated_native_test_cleanup": "complete"
+  },
+  "commonMainIntegration": "../remediation-integration/birth-checkpoint-results.json"
+}

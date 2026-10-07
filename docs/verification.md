@@ -77,18 +77,22 @@ native owner/credit/writer не менялись. Независимое рев�
 diff повторены; отдельные 64 варианта повторного входа и credit/ACK probes PASS.
 [Контрпримеры и точный scope](audit-evidence/2026-10-06/checkpoint-generation-nb13/results.json).
 
-## Локальный интеграционный срез
+## Общий main
 
-В отдельном checkout сведены Root `46ad9e89` и main `6898e843`, затем включены
-только `8959a13d` и `cc270679`; merge ещё не зафиксирован. Schema 29 вводит локальную search recipe, wire 44 и
-manifest 26 сохранены. Прежние доказательства относятся к указанным в них
-исходникам; перенос в этот срез требует адресной повторной проверки.
+`f80d1982` объединил 13 готовых Root-коммитов с main; адресные Core/iPad/Mac
+проверки приняты. Schema 29 вводит локальную search recipe, wire 44 и manifest 26
+сохранены. [Интеграционные результаты](audit-evidence/2026-10-07/remediation-integration/results.json).
 
-До этих двух delta-коммитов: **20 Swift-функций / 23 исполнения и 68 Node-случаев
-PASS**, strict MCP TypeScript PASS, inventory `43084f89…`. Новый page-content cut
-сохранён через `readCommandCut`; forwarding и обновлённый кандидат ещё не проверены.
-Проверки остановлены по лимиту задачи. Точный source freeze, прежние отказы и pending
-сохранены в `.build/remediation-integration/summary.json` выделенного checkout.
+Поверх этой базы объединены создание предметов и NB13 checkpoint:
+**2 Core-функции, 48 Node, 19 iPad native + 1 физический жест и 1 Mac PASS**.
+Отказ записи доставляется после освобождения FIFO slot/credit; неопределённый
+COMMIT сохраняет исходные результат и резерв до Retry. Source `7e7960cb…`/1700
+входов неизменен через native-проверки; Core и JS относятся к указанным byte scopes.
+Две ошибки компиляции тестов и исходный runtime FAIL сохранены в
+[точном результате](audit-evidence/2026-10-07/remediation-integration/birth-checkpoint-results.json).
+Старые рабочие каталоги [проверены на потерянные исправления](audit-evidence/2026-10-07/remediation-integration/other-worktree-audit.json).
+Установленная пара остаётся 258/0.2.10; новый cohort 259+/0.2.11+ и полная
+приёмка всех 104 позиций остаются в работе.
 
 | Владелец Root | Точное доказательство |
 |---|---|

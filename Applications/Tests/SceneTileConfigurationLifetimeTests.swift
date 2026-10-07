@@ -25,7 +25,8 @@ final class SceneTileConfigurationLifetimeTests: XCTestCase {
       camera: .init(scale: 0.6), viewport: .init(x: 834, y: 1194))
     var documentID: UUID?
     if openDocument {
-      let id = try XCTUnwrap(model.createDocument(at: .zero))
+      let idResult = await model.createDocument(at: .zero)
+      let id = try XCTUnwrap(idResult)
       let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
       let center = try XCTUnwrap(model.board?.focusedCenter(of: id))
       presence = .init(boardID: boardID, mode: .document,

@@ -101,12 +101,13 @@ UTF-8, узлов и обоих значений причинного merge; bri
 от приостановленных таймеров WebKit. Retry продолжает незаконченный этап, сохраняя
 окна, heap, допуск и подтверждённый writer receipt; ACK не списывает кредит дважды,
 таймаут не отменяет уже начатую SQL-запись. Checkpoint failure не снимает heap заново.
-Авторский JSON `toJSON`/getter может синхронно повторно войти в lifecycle.
-Поэтому существующий JS owner повторно проверяет disposed, cancellation и generation
-после сериализации, непосредственно перед freeze commit. Отменённая попытка не
-заменяет accepted state и не возвращает frozen descriptor; новая попытка и исходная
-ошибка сериализации сохраняют свои исходы. Это не решает NB13 admission-before-copy:
-полный двухфазный протокол должен использовать существующий native owner.
+Checkpoint сохраняет один завершённый результат автора, измеряет его до
+неизменяемой JSON-копии и повторяет измерение после каждого credit grant. Retry
+использует тот же результат. Измерение и сериализация читают plain JSON через
+data descriptors; getters и `toJSON` отклоняются без вызова. Proxy trap проверяет
+текущий lifecycle перед копированием токена; commit также проверяет revision,
+чтобы повторный вход не расходовал прежний кредит. Отменённая попытка сохраняет
+accepted state и не публикует frozen descriptor.
 
 Frozen descriptor хранит отдельный commit ID вместо повторно используемого имени.
 Retry и неуспешный resume возвращают тот же ID; успешный resume и export
@@ -114,12 +115,19 @@ Retry и неуспешный resume возвращают тот же ID; усп
 замороженные окна для незавершённого durable drain. Позднее окно не может читать уже другой freeze. Native
 Snapshot.revision и существующий iframe adapter передают этот непрозрачный адрес
 без изменений. Числовой FIFO/ACK и публичный авторский lifecycle API сохранены.
-Это самостоятельное исправление ABA; lifetime после native/iframe timeout и
-producer admission-before-copy остаются отдельными незакрытыми проверками.
 
 `CheckpointPreparation` владеет ожиданием памяти и прочитанными окнами снимка.
 Отзыв источника отменяет очередь допуска до нового чтения; уже начатый ответ
 WebKit удерживает свои байты до завершения. Принятая запись независимо дренируется writer.
+
+Document state резервирует retained body и finish credit в существующем writer
+ledger до изменения журнала. Большие значения измеряет принятый FIFO worker.
+Typed receipt и фактический content effect принадлежат outer COMMIT; unknown
+outcome и Retry удерживают один результат и резерв до окончательного исхода.
+NoOp возвращает receipt без пробуждения material. `commitDocumentState` после
+bootstrap await и `checkpointDocumentState` до подготовки проверяют общий
+workspace seal, сохраняя журнал и read fence при отказе. `shutdown.closing`
+продолжает принятые program checkpoints; принятый writer повторно seal не проверяет.
 
 Внутренний `readDocumentProgramState` использует предварительно допущенные байты
 в одном SQLite-снимке. Публичное `documentProgram` сохраняет отдельный 4 MiB лимит.

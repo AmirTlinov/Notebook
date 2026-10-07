@@ -219,7 +219,9 @@ extension NotebookStore {
         // Observation alone cannot establish identity: one authored dot may
         // not carry two poses. The native merge validates that shared frontier
         // before proving dominance, including intermediate writes in an action.
-        guard prior.pose != nil, owned,
+        // A lifecycle restoration must recover a visible item. An ordinary
+        // inverse may return to a causal tombstone, as Undo of a repeated birth.
+        guard (target == nil || prior.pose != nil), owned,
           try deleted.merging(prior) == deleted, try written.merging(undoBefore) == written, written != prior,
           written.heads.count == 1, written.heads[0].version.human,
           written.pose == prior.pose else {

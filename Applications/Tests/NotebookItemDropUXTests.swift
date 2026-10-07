@@ -14,7 +14,8 @@ final class NotebookItemDropUXTests: XCTestCase {
     await model.start(pageSize: NotebookAppModel.defaultPageSize)
     let board = try XCTUnwrap(model.presence?.boardID), a = try XCTUnwrap(model.workspace?.selectedItemID)
     let aCenter = WorldPoint(x: -900, y: 0), bCenter = WorldPoint(x: 900, y: 0)
-    let b = try XCTUnwrap(model.createNotebook(at: bCenter)), local = CGPoint(x: 417, y: 800)
+    let bResult = await model.createNotebook(at: bCenter)
+    let b = try XCTUnwrap(bResult), local = CGPoint(x: 417, y: 800)
     XCTAssertNotNil(model.moveItem(a, to: aCenter))
     for (id, color) in [(a, SpatialInkColor(red: 0, green: 0.15, blue: 1)), (b, .init(red: 1, green: 0, blue: 0))] {
       XCTAssertNotNil(model.appendSpatialInk(tool: .pen, color: color, spans: [.init(surface: .cover(id), samples: [
@@ -104,7 +105,8 @@ final class NotebookItemDropUXTests: XCTestCase {
     await model.start(pageSize: NotebookAppModel.defaultPageSize)
     let board = try XCTUnwrap(model.presence?.boardID), a = try XCTUnwrap(model.workspace?.selectedItemID)
     let aCenter = WorldPoint(x: -900, y: 0), bCenter = WorldPoint(x: 900, y: 0)
-    let b = try XCTUnwrap(model.createNotebook(at: bCenter))
+    let bResult = await model.createNotebook(at: bCenter)
+    let b = try XCTUnwrap(bResult)
     XCTAssertNotNil(model.moveItem(a, to: aCenter))
     let local = CGPoint(x: 417, y: 800)
     for (id, color) in [(a, SpatialInkColor(red: 0, green: 0.15, blue: 1)),

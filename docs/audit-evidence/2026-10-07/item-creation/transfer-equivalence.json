@@ -1,0 +1,306 @@
+{
+  "root_head": "46ad9e89c1caa76381de99e8b103cdb168001795",
+  "child_base": "40bd01c8",
+  "paths": [
+    {
+      "path": "Applications/MacTests/AddressedTargetRenderTests.swift",
+      "root_sha256": "73a9ea07eab2137b0556c5cb88585bbdd21a02088f13373886845f52e2e83d46",
+      "child_sha256": "73a9ea07eab2137b0556c5cb88585bbdd21a02088f13373886845f52e2e83d46",
+      "same": true
+    },
+    {
+      "path": "Applications/MacTests/DocumentProgramSourceTests.swift",
+      "root_sha256": "366b1371b5d85a2829e5af0c6bb8e30ca18184c8316e58a7db2d2cbffc055405",
+      "child_sha256": "366b1371b5d85a2829e5af0c6bb8e30ca18184c8316e58a7db2d2cbffc055405",
+      "same": true
+    },
+    {
+      "path": "Applications/MacTests/MacModelLifecycleTests.swift",
+      "root_sha256": "90412a9496394b14ebc963a88ccd543acd65f00010392498443859342b6dc16d",
+      "child_sha256": "90412a9496394b14ebc963a88ccd543acd65f00010392498443859342b6dc16d",
+      "same": true
+    },
+    {
+      "path": "Applications/MacTests/PortalRenderingTests.swift",
+      "root_sha256": "9a550fa3ec3ad58d26c41e2b911b79d689f4de37d7166ab92cfed6513ada7a39",
+      "child_sha256": "9a550fa3ec3ad58d26c41e2b911b79d689f4de37d7166ab92cfed6513ada7a39",
+      "same": true
+    },
+    {
+      "path": "Applications/MacTests/SnapshotLeaseBindingTests.swift",
+      "root_sha256": "0208eda6061b764bb2bbc6661ef88ab056232b7eea382e17c32b27e3b735ff87",
+      "child_sha256": "0208eda6061b764bb2bbc6661ef88ab056232b7eea382e17c32b27e3b735ff87",
+      "same": true
+    },
+    {
+      "path": "Applications/Shared/NotebookAppModel.swift",
+      "root_sha256": "b034d998522129319bca7fe2a8e2c777061df6c7a4d7e5d4ef8ef218925978bd",
+      "child_sha256": "a60e15464ca0d4faa86e8eb0f05dc4a8ef487949628c23c7c4f516d7687b5bc1",
+      "same": false
+    },
+    {
+      "path": "Applications/TestSupport/AgentStateTests.swift",
+      "root_sha256": "af202fefb0d61d69e141d023be2b35a0cfe8a3cb77a80b1103c47612a4509cf2",
+      "child_sha256": "af202fefb0d61d69e141d023be2b35a0cfe8a3cb77a80b1103c47612a4509cf2",
+      "same": true
+    },
+    {
+      "path": "Applications/TestSupport/DocumentNativeSourceSessionTests.swift",
+      "root_sha256": "74dea60f950d2b4a8e500eba1b74c8e86c4aaf216f0c1d77c5deb38cac3ab94f",
+      "child_sha256": "74dea60f950d2b4a8e500eba1b74c8e86c4aaf216f0c1d77c5deb38cac3ab94f",
+      "same": true
+    },
+    {
+      "path": "Applications/TestSupport/NotebookAccountWorkspaceTests.swift",
+      "root_sha256": "735920f8f360cd91dbe6a2c6628dd4336ee29786da7fa56cb37cb2946f3180a9",
+      "child_sha256": "2b8f162c3ebde563a8890932a0e5c572f03dbc8e4495130952de704b7ad06181",
+      "same": false
+    },
+    {
+      "path": "Applications/TestSupport/NotebookArchiveLaunchTests.swift",
+      "root_sha256": "fd5440b713ee728866988f2f5005e04a500defda751016a2488e0e1854ac952d",
+      "child_sha256": "6628a57744dbe6dd3413e7186ce7bac712f653c9374102cf0a53cda6898f8365",
+      "same": false
+    },
+    {
+      "path": "Applications/TestSupport/NotebookItemDeletionTests.swift",
+      "root_sha256": "a5192d76039bd94bde465c3ed016fd5e491c592f556ecf19c4fb66dc16a031d2",
+      "child_sha256": "a5192d76039bd94bde465c3ed016fd5e491c592f556ecf19c4fb66dc16a031d2",
+      "same": true
+    },
+    {
+      "path": "Applications/TestSupport/NotebookItemPlacementTests.swift",
+      "root_sha256": "f6494d33e0a5cd4387c3beaa38b7ed13ea1497ade1a869835d28976dd4accea1",
+      "child_sha256": "f6494d33e0a5cd4387c3beaa38b7ed13ea1497ade1a869835d28976dd4accea1",
+      "same": true
+    },
+    {
+      "path": "Applications/TestSupport/NotebookLiveScenePublicationTests.swift",
+      "root_sha256": "5ab8c094db090d1444255078b576990ad3c0d7f30d5e2abcf766e463e712b8ec",
+      "child_sha256": "5ab8c094db090d1444255078b576990ad3c0d7f30d5e2abcf766e463e712b8ec",
+      "same": true
+    },
+    {
+      "path": "Applications/Tests/AgentTableRenderingTests.swift",
+      "root_sha256": "6fc9c48f17f351225e768380d5216625903ef2d7a172be7c9b7a88be06bc1263",
+      "child_sha256": "6fc9c48f17f351225e768380d5216625903ef2d7a172be7c9b7a88be06bc1263",
+      "same": true
+    },
+    {
+      "path": "Applications/Tests/DocumentEditorDisplayReceiptTests.swift",
+      "root_sha256": "941f499c2d19e15641f7486be82985386ca6de2788ec1c2e061cf7151ae46e4c",
+      "child_sha256": "941f499c2d19e15641f7486be82985386ca6de2788ec1c2e061cf7151ae46e4c",
+      "same": true
+    },
+    {
+      "path": "Applications/Tests/DocumentPageSelectionTests.swift",
+      "root_sha256": "79096189e9aa81ac91ce0bc5cef3f9569bdd550389a8c11b81dcb9b9cb17c18a",
+      "child_sha256": "79096189e9aa81ac91ce0bc5cef3f9569bdd550389a8c11b81dcb9b9cb17c18a",
+      "same": true
+    },
+    {
+      "path": "Applications/Tests/DocumentSaveTransitionTests.swift",
+      "root_sha256": "14b71eaa6f1b0a21812cb8ecc510f2205e61b325fc85b710f88c1752952c5ca8",
+      "child_sha256": "14b71eaa6f1b0a21812cb8ecc510f2205e61b325fc85b710f88c1752952c5ca8",
+      "same": true
+    },
+    {
+      "path": "Applications/Tests/NotebookAgentQuestionTests.swift",
+      "root_sha256": "b4796eb2b82816b70c241afa47d1d446e25bf0217adb4becc91a579bffce746e",
+      "child_sha256": "b4796eb2b82816b70c241afa47d1d446e25bf0217adb4becc91a579bffce746e",
+      "same": true
+    },
+    {
+      "path": "Applications/Tests/NotebookDocumentReadingTests.swift",
+      "root_sha256": "c6ef6de5a799c977e1e19ee0b08fecbd3ecc718d4c726e387bb07d47a8ce48ad",
+      "child_sha256": "c6ef6de5a799c977e1e19ee0b08fecbd3ecc718d4c726e387bb07d47a8ce48ad",
+      "same": true
+    },
+    {
+      "path": "Applications/Tests/NotebookDocumentSourcePersistenceTests.swift",
+      "root_sha256": "2b59cca35b19027bc0f9f1388bf6d65fcbc8adca1def7de7a620d994edc93c07",
+      "child_sha256": "2b59cca35b19027bc0f9f1388bf6d65fcbc8adca1def7de7a620d994edc93c07",
+      "same": true
+    },
+    {
+      "path": "Applications/Tests/NotebookDocumentStatePersistenceTests.swift",
+      "root_sha256": "fd5d2c6c674929a975fd97a5e16744ecd5875a80fe5cbdcde7dc9ae11f5bc833",
+      "child_sha256": "fd5d2c6c674929a975fd97a5e16744ecd5875a80fe5cbdcde7dc9ae11f5bc833",
+      "same": true
+    },
+    {
+      "path": "Applications/Tests/NotebookElementManipulationTests.swift",
+      "root_sha256": "c4c58bbbda92d1429fa33bccd249531f56fc9f1829883d8866008b93574bef37",
+      "child_sha256": "c4c58bbbda92d1429fa33bccd249531f56fc9f1829883d8866008b93574bef37",
+      "same": true
+    },
+    {
+      "path": "Applications/Tests/NotebookGraphicSceneTests.swift",
+      "root_sha256": "18d3de2cd3da7f6d2435e76b035fdb199a709bbcd62e3ee12735362b709d9ed3",
+      "child_sha256": "18d3de2cd3da7f6d2435e76b035fdb199a709bbcd62e3ee12735362b709d9ed3",
+      "same": true
+    },
+    {
+      "path": "Applications/Tests/NotebookInputTests.swift",
+      "root_sha256": "759c11c6ab676ffe92852b901ab6ac43178a174226dd37119e7de1f44cf34c4d",
+      "child_sha256": "759c11c6ab676ffe92852b901ab6ac43178a174226dd37119e7de1f44cf34c4d",
+      "same": true
+    },
+    {
+      "path": "Applications/Tests/NotebookItemDropUXTests.swift",
+      "root_sha256": "6c6c1b04a3175f94a251808e0a1353fb73bf3c87634d5250b4df5f196c900c60",
+      "child_sha256": "6c6c1b04a3175f94a251808e0a1353fb73bf3c87634d5250b4df5f196c900c60",
+      "same": true
+    },
+    {
+      "path": "Applications/Tests/NotebookPageLifecycleUXTests.swift",
+      "root_sha256": "af70a4cdc00a3aebda7e6ef87621e1b01c0f5ac0e1863c284c59b9ec88d37f7f",
+      "child_sha256": "af70a4cdc00a3aebda7e6ef87621e1b01c0f5ac0e1863c284c59b9ec88d37f7f",
+      "same": true
+    },
+    {
+      "path": "Applications/Tests/NotebookPaperCameraTests.swift",
+      "root_sha256": "c4fb77acba8c15fa5d05a396dc871906d939c978d744ed0a3c59e6e5b8738bf2",
+      "child_sha256": "c4fb77acba8c15fa5d05a396dc871906d939c978d744ed0a3c59e6e5b8738bf2",
+      "same": true
+    },
+    {
+      "path": "Applications/Tests/NotebookPersistenceTests.swift",
+      "root_sha256": "4181402339f41988203dafc7a90a4173b9225a625c79969f476d65126b2fdbeb",
+      "child_sha256": "4181402339f41988203dafc7a90a4173b9225a625c79969f476d65126b2fdbeb",
+      "same": true
+    },
+    {
+      "path": "Applications/Tests/NotebookTopBarTests.swift",
+      "root_sha256": "20841085f88e6a9103187e6fa8f0208c91c5335d6cb1e450a0ba5ec5d52b56b2",
+      "child_sha256": "20841085f88e6a9103187e6fa8f0208c91c5335d6cb1e450a0ba5ec5d52b56b2",
+      "same": true
+    },
+    {
+      "path": "Applications/Tests/PortalPassageTests.swift",
+      "root_sha256": "0807523761e05530e8fdfd1b9903f3a08c94854ccc79c0aecb98bedabbf5519d",
+      "child_sha256": "0807523761e05530e8fdfd1b9903f3a08c94854ccc79c0aecb98bedabbf5519d",
+      "same": true
+    },
+    {
+      "path": "Applications/Tests/PresenceOwnershipTests.swift",
+      "root_sha256": "917c36412f7c28dede48e0daabdd0ec2f0019f9575d2045bcd388dad571d5af7",
+      "child_sha256": "917c36412f7c28dede48e0daabdd0ec2f0019f9575d2045bcd388dad571d5af7",
+      "same": true
+    },
+    {
+      "path": "Applications/Tests/SceneItemOwnerRetirementTests.swift",
+      "root_sha256": "a700c1c503d876ba1cc8cd8b466357d01f49081c1a510f30b2ed730c1c22a75e",
+      "child_sha256": "a700c1c503d876ba1cc8cd8b466357d01f49081c1a510f30b2ed730c1c22a75e",
+      "same": true
+    },
+    {
+      "path": "Applications/Tests/SceneTileConfigurationLifetimeTests.swift",
+      "root_sha256": "7556a5d1adcc246a4fe824d324181021e52018e5019384d78c631c2fafe2c842",
+      "child_sha256": "7556a5d1adcc246a4fe824d324181021e52018e5019384d78c631c2fafe2c842",
+      "same": true
+    },
+    {
+      "path": "Applications/Tests/SharedAttentionTests.swift",
+      "root_sha256": "73f22223b7ddd8fe677682e01f605950a5a70650fbb181a53649b86512ead2a4",
+      "child_sha256": "73f22223b7ddd8fe677682e01f605950a5a70650fbb181a53649b86512ead2a4",
+      "same": true
+    },
+    {
+      "path": "Applications/Tests/SpatialInkPersistenceTests.swift",
+      "root_sha256": "37aa68ecf4ebcb21b04b29782acfca804fbd1b23ae76a07218756d8ec7a595e7",
+      "child_sha256": "37aa68ecf4ebcb21b04b29782acfca804fbd1b23ae76a07218756d8ec7a595e7",
+      "same": true
+    },
+    {
+      "path": "Applications/Tests/WorkspaceCameraRenderingTests.swift",
+      "root_sha256": "a28581777c16f4b01db0ec6dd2f9f0fa559b448922ae89f1a229de632ade0fd8",
+      "child_sha256": "a28581777c16f4b01db0ec6dd2f9f0fa559b448922ae89f1a229de632ade0fd8",
+      "same": true
+    },
+    {
+      "path": "Applications/Tests/WorkspaceSceneIndexTests.swift",
+      "root_sha256": "8ed10da6d193823f188e0ac0ba025df0964456eccd10ad57bf1d2831b0a3486f",
+      "child_sha256": "8ed10da6d193823f188e0ac0ba025df0964456eccd10ad57bf1d2831b0a3486f",
+      "same": true
+    },
+    {
+      "path": "Applications/Tests/ZoomOutCoverageTests.swift",
+      "root_sha256": "d9fa159181e6d23bd14a20ce8ab5e7fe0dd25aaedf7e4f2e5379e29cf734520e",
+      "child_sha256": "d9fa159181e6d23bd14a20ce8ab5e7fe0dd25aaedf7e4f2e5379e29cf734520e",
+      "same": true
+    },
+    {
+      "path": "Applications/iPad/SpatialWorkspaceView.swift",
+      "root_sha256": "d339dd79af56f52352e3501571d8318313014aaf843a62dacfd3771f21d3de7f",
+      "child_sha256": "d339dd79af56f52352e3501571d8318313014aaf843a62dacfd3771f21d3de7f",
+      "same": true
+    },
+    {
+      "path": "Sources/NotebookCore/BoardHierarchy.swift",
+      "root_sha256": "6a23ba4ab1168e937883f64a20bf09ac8ec7f33bfbd5ad6acc6ef3111064f140",
+      "child_sha256": "6a23ba4ab1168e937883f64a20bf09ac8ec7f33bfbd5ad6acc6ef3111064f140",
+      "same": true
+    },
+    {
+      "path": "Sources/NotebookCore/CollaborationStore.swift",
+      "root_sha256": "a6bfc49e286db9ed33f451f83f6f212fb80366f5bbb3e20f4d311cc778c96603",
+      "child_sha256": "a6bfc49e286db9ed33f451f83f6f212fb80366f5bbb3e20f4d311cc778c96603",
+      "same": true
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookActionProjection.swift",
+      "root_sha256": "bb1ebe4d5c84aca8391f8e760ad36d89b04e979f33a0bde3af6ba4ee887750e0",
+      "child_sha256": "bb1ebe4d5c84aca8391f8e760ad36d89b04e979f33a0bde3af6ba4ee887750e0",
+      "same": true
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookFieldRestoration.swift",
+      "root_sha256": "9002bd74252a704e6d9cec78e87c3e55a912bae041c7aff05dab4ce7010140d1",
+      "child_sha256": "9002bd74252a704e6d9cec78e87c3e55a912bae041c7aff05dab4ce7010140d1",
+      "same": true
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookNativeCommand.swift",
+      "root_sha256": "aca57d0af3077828fb3428d6f327cb56fb1e5d56816400e87b17cbc1d0c98d93",
+      "child_sha256": "aca57d0af3077828fb3428d6f327cb56fb1e5d56816400e87b17cbc1d0c98d93",
+      "same": true
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookNativeHistory.swift",
+      "root_sha256": "b04d25545f9356cb6cb3a53171c68a759c170ed8db0837d5bd25edae7034cc6f",
+      "child_sha256": "b04d25545f9356cb6cb3a53171c68a759c170ed8db0837d5bd25edae7034cc6f",
+      "same": true
+    },
+    {
+      "path": "Sources/NotebookCore/SpatialWorkspace.swift",
+      "root_sha256": "be8b61a4e4a97502feb054fe1aa6ff6cb964a70435953249b53c443620d62ac4",
+      "child_sha256": "be8b61a4e4a97502feb054fe1aa6ff6cb964a70435953249b53c443620d62ac4",
+      "same": true
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookLifecyclePlacementChainTests.swift",
+      "root_sha256": "e09d7b7ac005eea6f1f14cd86521578cf722661df1c19e75ef2f5625748b8791",
+      "child_sha256": "e09d7b7ac005eea6f1f14cd86521578cf722661df1c19e75ef2f5625748b8791",
+      "same": true
+    },
+    {
+      "path": "Applications/TestSupport/NotebookItemCreationTests.swift",
+      "root_sha256": "4be6f5eaaf102efd1dd21044a4729c915abaa5752f6695f202130394357c0502",
+      "child_sha256": "4be6f5eaaf102efd1dd21044a4729c915abaa5752f6695f202130394357c0502",
+      "same": true
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookNativeItemCreation.swift",
+      "root_sha256": "1a8e2441ffa61f0f1ad7fadcd6f2a022acddc773d2ef6d32d2bc7b14e13df051",
+      "child_sha256": "1a8e2441ffa61f0f1ad7fadcd6f2a022acddc773d2ef6d32d2bc7b14e13df051",
+      "same": true
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookNativeItemCreationTests.swift",
+      "root_sha256": "b60d3e81cec919deb7e07d97ecdb773b9727342d1852f9e8d5d8dcb4fa125095",
+      "child_sha256": "b60d3e81cec919deb7e07d97ecdb773b9727342d1852f9e8d5d8dcb4fa125095",
+      "same": true
+    }
+  ]
+}

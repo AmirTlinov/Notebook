@@ -1,0 +1,71 @@
+{
+  "baseCommit": "f80d1982069682fbc5d5ad7b844f53c0488cde8e",
+  "status": "focused_integration_pass",
+  "sourceSHA256": "7e7960cb5630cb054c8a54b2c316f1ff2d0260bd6d1a6d61033bef3c9752e3b4",
+  "inputCount": 1700,
+  "sourceBeforeEqualsAfter": true,
+  "core": {
+    "executedFunctions": 2,
+    "failed": 0,
+    "skipped": 0,
+    "sourceSHA256": "acc0142bd5c1f632809cd0f2daf10815be01022b3f817db6ab49c3034d802adc",
+    "laterChangedInputs": [
+      "Applications/Shared/NotebookPersistenceQueue.swift",
+      "Applications/TestSupport/NotebookWorkspaceLibraryTests.swift",
+      "Applications/Tests/NotebookDocumentStatePersistenceTests.swift",
+      "Applications/Tests/NotebookPersistenceQueueTests.swift"
+    ],
+    "scope": "Actual Core execution passed. Core-only wrapper refused a complete receipt because the named UI fixture scenario was deferred; Native-v4 executes that scenario. SwiftPM product inputs unchanged."
+  },
+  "browser": {
+    "executed": 48,
+    "failed": 0,
+    "sourceScopeUnchanged": true,
+    "files": [
+      "Applications/WebResources/notebook-program.js",
+      "MCP/test/program-bridge.test.ts"
+    ]
+  },
+  "native": {
+    "ipadUnitPassed": 19,
+    "physicalGesturePassed": 1,
+    "macPassed": 1,
+    "failed": 0,
+    "skipped": 0,
+    "runtimeWarnings": 0,
+    "wrapperExitCode": 0,
+    "receiptStatus": "passed"
+  },
+  "repairs": [
+    {
+      "attempt": "native-v1",
+      "scope": "test only",
+      "failure": "Missing testable NotebookCore import for storageFault API",
+      "testExecutions": 0
+    },
+    {
+      "attempt": "native-v2",
+      "scope": "test only",
+      "failure": "Duplicate local bytes variable in expanded catalog regression",
+      "testExecutions": 0
+    },
+    {
+      "attempt": "native-v3",
+      "scope": "Queue owner",
+      "passed": 18,
+      "failed": 1,
+      "failure": "Accepted refusal delivered before slot retirement; reservedWriteBytes was1066184",
+      "repair": "Known typed/prepared outcomes deliver after removeFirst/releaseAdmission and existing notifications. Unknown COMMIT retains the exact accepted result and charge."
+    }
+  ],
+  "reviews": [
+    "NB13/birth crossing files match full three-way merge",
+    "Post-retirement delivery keeps exact value/changed, unknown COMMIT and one delivery",
+    "Old worktree audit found no missing ready product fixes"
+  ],
+  "remaining": [
+    "New installed cohort259+/plugin0.2.11+ is owned by release thread",
+    "Installed production acceptance and whole104 remediation remain open"
+  ],
+  "evidenceDirectory": ".build/remediation-integration/final-birth-checkpoint/native-v4"
+}

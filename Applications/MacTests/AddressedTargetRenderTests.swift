@@ -123,7 +123,8 @@ final class AddressedTargetRenderTests: XCTestCase {
       try FileManager.default.removeItem(at: root)
     }
     await author.start(pageSize: NotebookAppModel.defaultPageSize)
-    let portal = try XCTUnwrap(author.createBoard(at: .zero))
+    let portalResult = await author.createBoard(at: .zero)
+    let portal = try XCTUnwrap(portalResult)
     let authorStopped = await author.shutdown()
     XCTAssertTrue(authorStopped, "The restored renderer cannot run beside the preceding writer")
     guard authorStopped else { return }

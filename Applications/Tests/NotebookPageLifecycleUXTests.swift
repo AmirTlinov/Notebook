@@ -354,7 +354,8 @@ import XCTest
   func testCanonicalRetirementEndsTheMountedHumanCameraWithoutRestoringItsTarget() async throws {
     let model = try await modelWithPages(1)
     let notebook = try XCTUnwrap(model.workspace?.selectedItemID)
-    _ = try XCTUnwrap(model.createNotebook(at: .init(x: 10_000, y: 10_000)))
+    let createdNotebookResult = await model.createNotebook(at: .init(x: 10_000, y: 10_000))
+    _ = try XCTUnwrap(createdNotebookResult)
     model.selectItem(notebook)
     let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
     let scene = try await mount(model)

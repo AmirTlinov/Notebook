@@ -208,7 +208,8 @@ final class NotebookLiveScenePublicationTests: XCTestCase {
   func testCurrentStackFanNeverWaitsForUnadmittedPeersOrWholeAreaProof() async throws {
     let fixture = try await fixture(), model = fixture.model, cohort = fixture.cohort
     let presence = fixture.presence, item = try XCTUnwrap(model.workspace?.selectedItemID)
-    let peer = try XCTUnwrap(model.createNotebook(at: .init(x: -1_000, y: 120)))
+    let peerResult = await model.createNotebook(at: .init(x: -1_000, y: 120))
+    let peer = try XCTUnwrap(peerResult)
     XCTAssertNotNil(model.moveItem(item, to: .init(x: -1_000, y: 120), onto: peer))
     let stack = try XCTUnwrap(model.board?.stack(containing: item))
     let expected = try XCTUnwrap(WorkspaceItemStackPresentation.focusedCenter(of:item,in:stack))

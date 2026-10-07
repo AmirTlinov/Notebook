@@ -204,6 +204,21 @@ import XCTest
   func testHeldCatalogPublicationSealsNewSourceWorkAndUnknownRetryRetainsBothModels() async throws {
     let base = FileManager.default.temporaryDirectory.appendingPathComponent("catalog-launch-" + UUID().uuidString)
     let root = base.appendingPathComponent("Notebook"), fault = WorkspaceCatalogFault()
+    // The source clock belongs to the initial automatic cut, before admission
+    // closes. A rejected later contact must not advance its optimistic journal.
+    let seed = NotebookStore(root: root), actor = UUID(), pageSize = NotebookAppModel.defaultPageSize
+    _ = try seed.initializeWorkspace(actor: actor, pageSize: pageSize)
+    var index = try seed.loadIndex(), board = try seed.loadBoard(items: index.items)
+    let item = try XCTUnwrap(index.createDocument(title: "Sealed program", actor: actor))
+    XCTAssertTrue(board.addItem(item.id, to: index.rootBoardID, near: .zero, actor: actor))
+    let document = DocumentTestFiles.document(id: item.id, actor: actor, contents: [
+      .program(id: "program", html: "<output>Accepted state</output>", initialState: .number(1))])
+    var journal = DocumentStateJournal(id: item.id, actor: actor)
+    XCTAssertTrue(journal.commit(instanceID: "program", value: .number(1), actor: actor))
+    try seed.saveDocumentWorkspaceBundle(index: index, document: document, state: journal, board: board)
+    try seed.savePresence(.init(boardID: index.rootBoardID, mode: .document, camera: .init(),
+      viewport: .init(x: pageSize.width, y: pageSize.height), focusedItemID: item.id,
+      openProgress: 1, documentPageIndex: 0, selectedItemID: item.id))
     let library = NotebookWorkspaceLibrary(originalRoot: root, fault: fault.check)
     var owners: [(model: NotebookAppModel, writer: NotebookPersistenceQueue)] = []
     let launch = NotebookApplicationLaunch(root: root, libraryOwner: library) { store, _ in
@@ -224,6 +239,10 @@ import XCTest
     await source.start(pageSize: NotebookAppModel.defaultPageSize)
     await source.finishStartup()
     let sourceID = try XCTUnwrap(source.admittedWorkspaceID)
+    let state = try XCTUnwrap(source.documentStates[item.id])
+    let version = try XCTUnwrap(state.records.first { $0.id == "program" }?.valueVersion)
+    let program = try DocumentProgramSource(document: XCTUnwrap(source.documents[item.id]),
+      instanceID: "program", path: "programs/program")
     _ = try await library.selectFixture(sourceID, name: "Source")
     let id = UUID(), destination = try await library.prepare(id)
     _ = try NotebookStore(root: destination).initializeWorkspace(actor: UUID(), pageSize: NotebookAppModel.defaultPageSize)
@@ -241,9 +260,33 @@ import XCTest
     let sourceWriter = try XCTUnwrap(owners.first?.writer)
     let generation = sourceWriter.acceptedMutationGeneration, input = source.inputGate.acceptedContactGeneration
     let sourceWorkspace = source.workspace, sourceHierarchy = source.boardHierarchy
+    let pending = sourceWriter.pendingCount, reservedBytes = sourceWriter.reservedWriteBytes
+    let operations = sourceWriter.admittedOperationCount, waiters = sourceWriter.observedLifecycleTaskCount
+    let read = source.readAdmission.begin(), target = CollaborationTarget(kind: .document, id: item.id)
+    defer { source.readAdmission.end(read) }
+    for checkpoint in [false, true] {
+      do {
+        if checkpoint {
+          _ = try await source.checkpointDocumentState(documentID: item.id, blockID: "program", value: .number(2),
+            program: program, stateVersion: version)
+        } else {
+          _ = try await source.commitDocumentState(documentID: item.id, program: program, value: .number(2))
+        }
+        XCTFail("Document state entered the sealed source")
+      } catch { XCTAssertEqual((error as? CollaborationError)?.code, "workspace_selection_pending") }
+      XCTAssertEqual(source.documentStates[item.id], state)
+      XCTAssertEqual(source.documentStates[item.id]?.records.first { $0.id == "program" }?.valueVersion, version)
+      XCTAssertTrue(source.readAdmission.permits(read, targets: [target]))
+      XCTAssertEqual(sourceWriter.acceptedMutationGeneration, generation)
+      XCTAssertEqual(sourceWriter.pendingCount, pending)
+    XCTAssertEqual(sourceWriter.reservedWriteBytes, reservedBytes)
+      XCTAssertEqual(sourceWriter.admittedOperationCount, operations)
+      XCTAssertEqual(sourceWriter.observedLifecycleTaskCount, waiters)
+    }
     source.inputGate.notifyAcceptedContact()
     XCTAssertEqual(source.inputGate.acceptedContactGeneration, input)
-    XCTAssertNil(source.createNotebook(at: .zero))
+    let refusedCreation = await source.createNotebook(at: .zero)
+    XCTAssertNil(refusedCreation)
     XCTAssertEqual(source.workspace, sourceWorkspace)
     XCTAssertEqual(source.boardHierarchy, sourceHierarchy)
     do { _ = try await source.importDocumentFile(base.appendingPathComponent("unread.notex")); XCTFail("Import entered the sealed source") }

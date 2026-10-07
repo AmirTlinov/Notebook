@@ -10,6 +10,7 @@ final class NotebookItemDeletionTests: XCTestCase {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let model = try await makeModel(root: root)
     let id = try XCTUnwrap(model.workspace?.selectedItemID), board = try XCTUnwrap(model.presence?.boardID)
+    let initialHistory = try model.store.nativeHistory(domain: .board(board), actor: model.actorID)
     let initial = try XCTUnwrap(model.board?.placement(of: id)?.center)
     let lock = try NotebookSQLWriteBlocker(store: model.store)
     defer { try? lock.release() }
@@ -22,7 +23,7 @@ final class NotebookItemDeletionTests: XCTestCase {
     await save(model)
     XCTAssertNotNil(model.workspace?.item(id: id))
     XCTAssertEqual(model.board?.placement(of: id)?.center, WorldPoint(x: 730, y: 40))
-    XCTAssertEqual(try model.store.nativeHistory(domain: .board(board), actor: model.actorID), [.command(move.id)])
+    XCTAssertEqual(try model.store.nativeHistory(domain: .board(board), actor: model.actorID), initialHistory + [.command(move.id)])
     model.undoLastSurfaceAction(); await save(model)
     XCTAssertEqual(model.board?.placement(of: id)?.center, initial)
     let closed = await model.shutdown(); XCTAssertTrue(closed)
@@ -47,6 +48,7 @@ final class NotebookItemDeletionTests: XCTestCase {
       }
       let model = try await makeModel(root: root, store: store)
       let id = try XCTUnwrap(model.workspace?.selectedItemID), board = try XCTUnwrap(model.presence?.boardID)
+      let initialHistory = try store.nativeHistory(domain: .board(board), actor: model.actorID)
       try Data().write(to: blocked)
       defer { try? FileManager.default.removeItem(at: blocked); model.retryPendingPersistence() }
       let deletion = Task { await model.deleteItem(id) }
@@ -60,11 +62,11 @@ final class NotebookItemDeletionTests: XCTestCase {
       await save(model)
       XCTAssertNotNil(model.workspace?.item(id: id))
       XCTAssertFalse(model.isItemBeingDeleted(id))
-      XCTAssertTrue(try store.nativeHistory(domain: .board(board), actor: model.actorID).isEmpty)
+      XCTAssertEqual(try store.nativeHistory(domain: .board(board), actor: model.actorID), initialHistory)
       XCTAssertEqual(try store.nativeRedoHistory(domain: .board(board), actor: model.actorID).count, 1)
       model.redoLastSurfaceAction(); await save(model)
       XCTAssertNil(model.workspace?.item(id: id))
-      XCTAssertEqual(try store.nativeHistory(domain: .board(board), actor: model.actorID).count, 1)
+      XCTAssertEqual(try store.nativeHistory(domain: .board(board), actor: model.actorID).count, initialHistory.count + 1)
     }
   }
 
@@ -72,6 +74,7 @@ final class NotebookItemDeletionTests: XCTestCase {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let model = try await makeModel(root: root)
     let id = try XCTUnwrap(model.workspace?.selectedItemID), board = try XCTUnwrap(model.presence?.boardID)
+    let initialHistory = try model.store.nativeHistory(domain: .board(board), actor: model.actorID)
     let source = try XCTUnwrap(model.itemMoveSource(id, boardID: board))
     _ = try NotebookNativeCommand([.init(kind: .moveItem, target: .init(kind: .board, id: board),
       id: id.uuidString, values: ["center": .encode(WorldPoint(x: -320, y: 0))])], summary: "Peer move",
@@ -79,7 +82,7 @@ final class NotebookItemDeletionTests: XCTestCase {
     let deleted = await model.deleteItem(id)
     XCTAssertFalse(deleted); await save(model)
     XCTAssertNotNil(model.workspace?.item(id: id))
-    XCTAssertTrue(try model.store.nativeHistory(domain: .board(board), actor: model.actorID).isEmpty)
+    XCTAssertEqual(try model.store.nativeHistory(domain: .board(board), actor: model.actorID), initialHistory)
     XCTAssertFalse(model.isItemBeingDeleted(id))
     XCTAssertNotNil(model.moveItem(id, to: .init(x: 450, y: 0)))
     await save(model)
@@ -92,7 +95,10 @@ final class NotebookItemDeletionTests: XCTestCase {
     await model.start(pageSize: NotebookAppModel.defaultPageSize)
     let board = try XCTUnwrap(model.presence?.boardID)
     model.updatePresence(.init(boardID: board, mode: .board, camera: .init(), viewport: .init(x: 1194, y: 834)), settled: true)
-    if createNeighbor { XCTAssertNotNil(model.createNotebook(at: .init(x: 1500, y: 0))) }
+    if createNeighbor {
+      let createdNotebookResult = await model.createNotebook(at: .init(x: 1500, y: 0))
+      XCTAssertNotNil(createdNotebookResult)
+    }
     await save(model)
     return model
   }

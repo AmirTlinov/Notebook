@@ -290,6 +290,34 @@ final class NotebookPersistenceQueueTests: XCTestCase {
   }
 
   @MainActor
+  func testTypedAndPreparedNoopResultsDoNotPublishAndUnknownCommitKeepsTheOriginalEffect() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let healthy = NotebookStore(root: root)
+    _ = try healthy.initializeWorkspace(actor: UUID(), pageSize: .init(width: 834, height: 1194))
+    let blocked = root.appendingPathComponent("noop-reply")
+    let store = NotebookStore(root: root) {
+      if $0 == .afterCommit, FileManager.default.fileExists(atPath: blocked.path) { throw StorageUnavailable.unavailable }
+    }
+    let queue = NotebookPersistenceQueue(store: store), probe = CompletionProbe<Int>()
+    var wakes = 0
+    queue.onCommit = { _ in wakes += 1 }
+    try Data().write(to: blocked)
+    queue.enqueueCommand(publishesChanges: true, { _ in 17 }, completion: probe.record)
+    let failed = await queue.flush(); XCTAssertFalse(failed); XCTAssertTrue(probe.values.isEmpty)
+    try FileManager.default.removeItem(at: blocked); queue.retry()
+    let restored = await queue.flush(); XCTAssertTrue(restored)
+    XCTAssertEqual(try probe.values[0].get(), 17); XCTAssertEqual(wakes, 0)
+    let cost = NotebookPersistenceAdmission.Cost(payloadBytes: 128, completionBytes: 1024)
+    let reservation = try XCTUnwrap(queue.reserveWrite(cost))
+    let prepared = try queue.enqueuePreparedCommand(reservation: reservation,
+      Task { NotebookPersistenceQueue.PreparedCommand(cost: cost, operation: { _ in 23 }) }, publishesChanges: true)
+    let saved = await queue.flush(); XCTAssertTrue(saved)
+    let result = try await prepared.value
+    XCTAssertEqual(result, 23); XCTAssertEqual(wakes, 0); XCTAssertEqual(queue.reservedWriteBytes, 0)
+  }
+
+  @MainActor
   func testTypedCompletionAndItsCreditStayPendingUntilTheOuterCommitOutcomeIsKnown() async throws {
     let root=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at:root) }
@@ -365,9 +393,10 @@ final class NotebookPersistenceQueueTests: XCTestCase {
     let cursor=try peer.currentChangeCursor()
     try Data().write(to:ready)
     queue.retry()
+    let exact=try await accepted.value
+    XCTAssertEqual(queue.reservedWriteBytes,0,"The accepted result follows retirement of its finish credit")
     let saved=await queue.flush()
     XCTAssertTrue(saved)
-    let exact=try await accepted.value
     XCTAssertEqual(exact,1)
     XCTAssertEqual(try peer.storedValue("prepared-state.json")?["state"],.number(2))
     XCTAssertEqual(try peer.currentChangeCursor(),cursor)

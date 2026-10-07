@@ -568,9 +568,12 @@ public struct BoardDocument: Codable, Equatable, Sendable {
   }
 
   @discardableResult
-  public mutating func addItem(_ itemID: UUID, near center: WorldPoint, actor: UUID) -> Bool {
-    guard center.isValid, !itemIDs.contains(itemID) else { return false }
-    return author([itemID: .init(center: center, zIndex: highestZIndex + 1)], actor: actor)
+  public mutating func addItem(_ itemID: UUID, near center: WorldPoint, actor: UUID,
+    minimumZIndex: Int = 0) -> Bool {
+    guard center.isValid, minimumZIndex >= 0, !itemIDs.contains(itemID),
+      let pose = WorkspacePlacementDrop.movingPose(to: center,
+        highestZIndex: max(highestZIndex, minimumZIndex)) else { return false }
+    return author([itemID: pose], actor: actor)
   }
 
   @discardableResult

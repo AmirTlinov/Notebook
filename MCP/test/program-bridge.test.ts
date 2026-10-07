@@ -13,8 +13,39 @@ function fixture(options: Record<string, unknown> = {}) {
     onCommit:(...value: unknown[]) => commits.push(value),
     report:(...value: unknown[]) => diagnostics.push(value), ...options});
   const json = (value: unknown) => JSON.parse(JSON.stringify(value));
-  return {program, api:program.api, commits, diagnostics, events, json};
+  return {program, api:program.api, commits, diagnostics, events, json, context};
 }
+
+function trackJSON(context: any) {
+  runInContext(`globalThis.jsonCalls={stringify:0,parse:0,join:0,largestJoin:0};
+    const originalStringify=JSON.stringify,originalParse=JSON.parse,originalJoin=Array.prototype.join;
+    Array.prototype.join=function(...args){if(args[0]===''){jsonCalls.join++;jsonCalls.largestJoin=Math.max(jsonCalls.largestJoin,this.reduce((size,text)=>size+text.length,0));}return originalJoin.apply(this,args);};
+    JSON.stringify=(...args)=>{jsonCalls.stringify++;return originalStringify(...args)};
+    JSON.parse=(...args)=>{jsonCalls.parse++;return originalParse(...args)};`, context);
+  return context.jsonCalls;
+}
+
+test('checkpoint waits for scene credit before immutable JSON and retry keeps the one finished author result', async () => {
+  const requests: number[] = [];
+  const f = fixture({timeoutMS:1000,stateTransport:{credit:0,enabled:false,onSnapshot:()=>{},
+    requestCredit:(bytes:number)=>requests.push(bytes)}});
+  const calls = trackJSON(f.context); let pauses = 0, checkpoints = 0;
+  const completed = {phase:.75};
+  f.api.lifecycle({pause:()=>{pauses++;},checkpoint:()=>{checkpoints++;return completed;}});
+  const first = f.program.checkpoint({serialized:true});
+  const superseded = assert.rejects(first, /program_superseded/); superseded.catch(()=>{});
+  await new Promise(resolve=>setTimeout(resolve,0));
+  assert.equal(requests.length,1); assert.equal(calls.stringify,0); assert.equal(calls.parse,0);
+  const retry = f.program.checkpoint({retry:true,serialized:true});
+  await superseded; await new Promise(resolve=>setTimeout(resolve,0));
+  assert.equal(pauses,1); assert.equal(checkpoints,1);
+  assert.equal(calls.stringify,0); assert.equal(calls.parse,0);
+  f.program.grantStateCredit(requests[0]);
+  const frozen = await retry;
+  assert.match(frozen.revision,/^frozen:[1-9][0-9]*$/); assert.equal(calls.stringify,0); assert.equal(calls.parse,1);
+  assert.deepEqual(JSON.parse(f.program.readSnapshot({revision:frozen.revision})),completed);
+  assert.equal(f.api.commit({phase:9}),false,'Frozen or snapshot-only author commits remain disabled');
+});
 
 test('one API owns canonical commits, copied JSON state and revision-guarded external state', async () => {
   const {program,api,commits,events,json} = fixture();
@@ -409,98 +440,265 @@ test('a lost ACK reply retries idempotently without double credit or removing th
   await program.drainCommits();assert.equal(descriptors.length,3);
 });
 
-test('reentrant author serialization cannot freeze after cancellation, resume or disposal', async () => {
-  for (const serialized of [false, true]) for (const mechanism of ['toJSON', 'getter']) {
-    for (const operation of ['cancelLifecycle', 'resume', 'dispose']) {
-      const {program, api, commits} = fixture();
-      const previous = await program.checkpoint({serialized:true});
-      assert.equal(JSON.parse(program.readSnapshot({revision:previous.revision})).phase, 0);
-      await program.resume();
-      assert.throws(() => program.readSnapshot({revision:previous.revision}), /program_state_snapshot_missing/);
-      let interrupted: unknown;
-      const interrupt = () => { interrupted = program[operation](); return {phase:99}; };
-      const candidate = mechanism === 'toJSON' ? {toJSON:interrupt} :
-        Object.defineProperty({}, 'phase', {enumerable:true, get:() => interrupt().phase});
-      api.lifecycle({checkpoint:() => candidate});
-      await assert.rejects(program.checkpoint({serialized}),
-        operation === 'dispose' ? /program_disposed/ : /program_superseded/,
-        `${mechanism} ${operation} must revoke the old freeze`);
-      await interrupted;
-      assert.equal(api.state.phase, 0, `${mechanism} ${operation} retains the accepted state`);
-      assert.equal(program.revision, '0');
-      assert.equal(commits.length, 0);
-      assert.throws(() => program.readSnapshot({revision:previous.revision}), /program_state_snapshot_missing/);
-      assert.equal(program.lifecycleState.phase, operation === 'cancelLifecycle' ? 'failed' : operation === 'dispose' ? 'disposed' : 'running');
+test('plain JSON rejects getters, inherited toJSON and inherited array entries before any copy or credit', async () => {
+  for(const kind of ['getter','toJSON','array']) {
+    let invoked=0;
+    const requests:number[]=[];
+    const f=fixture({stateTransport:{credit:0,onSnapshot:()=>{},requestCredit:(bytes:number)=>requests.push(bytes)}});
+    const calls=trackJSON(f.context);
+    const prototype=Object.defineProperty({},kind==='array'?'0':'toJSON',{get(){invoked++;return ()=>({large:'x'.repeat(100000)})}});
+    const value=kind==='getter'?Object.defineProperty({},'large',{enumerable:true,get(){invoked++;return 'x'.repeat(100000)}})
+      :kind==='array'?Object.setPrototypeOf(Array(1),prototype):Object.create(prototype);
+    f.api.lifecycle({checkpoint:()=>value});
+    await assert.rejects(f.program.checkpoint({serialized:true}),/program_state_not_plain_json/);
+    assert.equal(invoked,0);assert.equal(calls.stringify,0);assert.equal(calls.parse,0);assert.equal(requests.length,0);
+  }
+});
+
+test('a retained author result is remeasured after grant and grows without a second author checkpoint',async()=>{
+  const requests:number[]=[],value={text:'small'};
+  const f=fixture({timeoutMS:1000,stateTransport:{credit:0,onSnapshot:()=>{},requestCredit:(bytes:number)=>requests.push(bytes)}});
+  const calls=trackJSON(f.context);let checkpoints=0;
+  f.api.lifecycle({checkpoint:()=>{checkpoints++;return value;}});
+  const pending=f.program.checkpoint({serialized:true});
+  await new Promise(resolve=>setTimeout(resolve,0));
+  assert.equal(requests.length,1);value.text='😀'.repeat(5000);
+  f.program.grantStateCredit(requests[0]);
+  await new Promise(resolve=>setTimeout(resolve,0));
+  assert.equal(requests.length,2);assert.equal(checkpoints,1);assert.equal(calls.stringify,0);assert.equal(calls.parse,0);
+  f.program.grantStateCredit(requests[1]);
+  const frozen=await pending;assert.equal(checkpoints,1);assert.equal(calls.stringify,0);assert.equal(calls.parse,1);
+  assert.deepEqual(JSON.parse(f.program.readSnapshot({revision:frozen.revision})),value);
+});
+
+test('credit timeout retains the completed author result for one exact retry',async()=>{
+  const requests:number[]=[];
+  const f=fixture({timeoutMS:10,stateTransport:{credit:0,onSnapshot:()=>{},requestCredit:(bytes:number)=>requests.push(bytes)}});
+  const calls=trackJSON(f.context);let pauses=0,checkpoints=0;
+  f.api.lifecycle({pause:()=>{pauses++;},checkpoint:()=>({phase:++checkpoints})});
+  await assert.rejects(f.program.checkpoint({serialized:true}),/program_checkpoint_credit_timeout/);
+  assert.equal(calls.stringify,0);assert.equal(calls.parse,0);
+  const retry=f.program.checkpoint({retry:true,serialized:true});
+  f.program.grantStateCredit(requests[0]);await retry;
+  assert.equal(pauses,1);assert.equal(checkpoints,1);assert.equal(calls.stringify,0);assert.equal(calls.parse,1);
+});
+
+test('dispose and resume revoke a credit waiter before a late grant can freeze its result',async()=>{
+  for(const action of ['dispose','resume']) {
+    const requests:number[]=[];
+    const f=fixture({timeoutMS:1000,stateTransport:{credit:0,onSnapshot:()=>{},requestCredit:(bytes:number)=>requests.push(bytes)}});
+    const calls=trackJSON(f.context);let checkpoints=0;
+    f.api.lifecycle({checkpoint:()=>({phase:++checkpoints})});
+    const pending=f.program.checkpoint({serialized:true});const cancelled=assert.rejects(pending,/program_superseded/);
+    await new Promise(resolve=>setTimeout(resolve,0));await f.program[action]();await cancelled;
+    if(action==='dispose')assert.throws(()=>f.program.grantStateCredit(requests[0]),/program_disposed/);
+    else f.program.grantStateCredit(requests[0]);
+    await new Promise(resolve=>setTimeout(resolve,0));
+    assert.equal(calls.stringify,0);assert.equal(calls.parse,0);assert.equal(f.program.lifecycleState.phase,action==='dispose'?'disposed':'running');
+    if(action==='resume') {
+      await f.program.checkpoint({serialized:true});assert.equal(checkpoints,2,'A resumed author begins a new checkpoint cut');
     }
   }
 });
 
-test('a reentrant checkpoint retry owns the new generation without the old result or failure overwriting it', async () => {
-  const {program, api, commits} = fixture();
-  let calls = 0, pauses = 0, replacement: Promise<unknown> | undefined;
-  api.lifecycle({pause:() => { pauses++; }, checkpoint:() => ++calls === 1 ? {
-    toJSON() { replacement = program.checkpoint({retry:true,serialized:true}); return {phase:99}; }
-  } : {phase:.75}});
-  await assert.rejects(program.checkpoint({serialized:true}), /program_superseded/);
-  assert.ok(replacement);
-  const descriptor: any = await replacement;
-  assert.equal(JSON.parse(program.readSnapshot({revision:descriptor.revision})).phase, .75);
-  assert.equal(api.state.phase, .75);
-  assert.equal(program.lifecycleState.phase, 'frozen');
-  assert.equal(calls, 2); assert.equal(pauses, 1); assert.equal(commits.length, 0);
-});
-
-test('serialization errors remain the original failure and a retry can freeze normally', async () => {
-  const {program, api} = fixture();
-  const failure = new Error('author serialization failed'); let calls = 0;
-  api.lifecycle({checkpoint:() => ++calls === 1 ? {toJSON() { throw failure; }} : {phase:.5}});
-  await assert.rejects(program.checkpoint({serialized:true}), reason => reason === failure);
-  assert.equal(api.state.phase, 0);
-  assert.equal(program.lifecycleState.phase, 'failed');
-  assert.equal(program.lifecycleState.failedStage, 'checkpointing');
-  const descriptor = await program.checkpoint({retry:true,serialized:true});
-  assert.equal(JSON.parse(program.readSnapshot({revision:descriptor.revision})).phase, .5);
-});
-
-test('reentrant cancellation preserves accepted snapshot acknowledgement and grants no extra credit', async () => {
-  const snapshots: any[] = [], requests: number[] = [];
-  const {program, api, events} = fixture({stateTransport:{credit:512,
-    onSnapshot:(snapshot:unknown) => snapshots.push(snapshot), requestCredit:(bytes:number) => requests.push(bytes)}});
-  assert.equal(api.commit({phase:1}), true);
-  program.acknowledgeSnapshot('1');
-  const capacity = events.filter(event => event.type === 'notebookcapacity').length;
-  let aborts = 0;
-  api.lifecycle({checkpoint:({signal}: {signal: AbortSignal}) => {
-    signal.addEventListener('abort', () => { aborts++; });
-    return {toJSON() { program.cancelLifecycle(); return {phase:99}; }};
-  }});
-  await assert.rejects(program.checkpoint({serialized:true}), /program_superseded/);
-  assert.equal(api.state.phase, 1); assert.equal(program.revision, '1');
-  assert.equal(aborts, 1, 'Revocation and failure cleanup abort the old request once');
-  assert.equal(snapshots.length, 1); assert.deepEqual(requests, []);
-  await program.resume();
-  assert.equal(api.commit({phase:2}), true);
-  program.acknowledgeSnapshot('2'); program.acknowledgeSnapshot('2');
-  assert.equal(events.filter(event => event.type === 'notebookcapacity').length, capacity);
-  assert.deepEqual(snapshots.map(snapshot => snapshot.revision), ['1','2']);
-});
-
-
-test('an original serialization error is preserved even when its callback supersedes the lifecycle', async () => {
-  for (const operation of ['cancelLifecycle', 'resume', 'dispose']) {
-    const {program, api} = fixture(); const failure = new Error('original author error');
-    const previous = await program.checkpoint({serialized:true});
-    assert.equal(JSON.parse(program.readSnapshot({revision:previous.revision})).phase, 0);
-    await program.resume();
-    assert.throws(() => program.readSnapshot({revision:previous.revision}), /program_state_snapshot_missing/);
-    let interrupted: unknown;
-    api.lifecycle({checkpoint:() => ({toJSON() { interrupted = program[operation](); throw failure; }})});
-    await assert.rejects(program.checkpoint({serialized:true}), reason => reason === failure);
-    await interrupted;
-    assert.equal(api.state.phase, 0);
-    assert.throws(() => program.readSnapshot({revision:previous.revision}), /program_state_snapshot_missing/);
-    assert.equal(program.lifecycleState.phase, operation === 'cancelLifecycle' ? 'failed' : operation === 'dispose' ? 'disposed' : 'running');
+test('Proxy get cannot replace a descriptor-owned checkpoint value or invoke a large serialization',async()=>{
+  for(const credit of [0,4096]) {
+    const large='x'.repeat(16*1024*1024),requests:number[]=[];
+    const f=fixture({timeoutMS:1000,stateTransport:{credit,enabled:false,onSnapshot:()=>{},requestCredit:(bytes:number)=>requests.push(bytes)}});
+    const calls=trackJSON(f.context);let gets=0,checkpoints=0;
+    const completed=new Proxy({payload:0},{get(target,key,receiver){
+      if(key==='payload'){gets++;return large;}return Reflect.get(target,key,receiver);
+    }});
+    f.api.lifecycle({checkpoint:()=>{checkpoints++;return completed;}});
+    const pending=f.program.checkpoint({serialized:true});
+    await new Promise(resolve=>setTimeout(resolve,0));
+    if(!credit) {
+      assert.equal(requests.length,1);assert.equal(calls.join,0);assert.equal(calls.stringify,0);assert.equal(calls.parse,0);
+      f.program.grantStateCredit(requests[0]);
+    }
+    const frozen=await pending;
+    assert.equal(gets,0);assert.equal(checkpoints,1);assert.equal(calls.stringify,0);
+    assert.equal(calls.join,1);assert.ok(calls.largestJoin<4096);assert.ok(frozen.cost<4096);
+    assert.deepEqual(JSON.parse(f.program.readSnapshot({revision:frozen.revision})),{payload:0});
   }
+});
+
+test('changing Proxy descriptors, array entries and ownKeys acquire full credit before any large JSON copy',async()=>{
+  for(const shape of ['object','array','keys']) {
+    const large='x'.repeat(16*1024*1024),requests:number[]=[];
+    const f=fixture({timeoutMS:1000,stateTransport:{credit:4096,enabled:false,onSnapshot:()=>{},requestCredit:(bytes:number)=>requests.push(bytes)}});
+    const calls=trackJSON(f.context);let reads=0,checkpoints=0,pauses=0;
+    const completed=new Proxy(shape==='array'?[0]:{payload:0},{
+      ownKeys(target){return shape==='keys'&&++reads%2===0?[large]:Reflect.ownKeys(target);},
+      getOwnPropertyDescriptor(target,key){
+        if(shape==='keys')return key===large?{enumerable:true,configurable:true,writable:true,value:0}:Reflect.getOwnPropertyDescriptor(target,key);
+        const field=Reflect.getOwnPropertyDescriptor(target,key);
+        if(key===(shape==='array'?'0':'payload'))return {...field,value:++reads%2===0?large:0};
+        return field;
+      }
+    });
+    f.api.lifecycle({pause:()=>{pauses++;},checkpoint:()=>{checkpoints++;return completed;}});
+    const pending=f.program.checkpoint({serialized:true});
+    await new Promise(resolve=>setTimeout(resolve,0));
+    assert.equal(requests.length,1);assert.ok(requests[0]>large.length*8-4096);
+    assert.equal(calls.stringify,0);assert.equal(calls.parse,0);assert.equal(calls.join,0,'No immutable JSON join before the changed descriptor fits credit');
+    assert.equal(f.program.lifecycleState.phase,'checkpointing');
+    f.program.grantStateCredit(requests[0]+1024);
+    const frozen=await pending;
+    assert.equal(checkpoints,1);assert.equal(pauses,1);assert.equal(calls.stringify,0);assert.equal(calls.parse,1);assert.equal(calls.join,1);
+    assert.ok(frozen.cost<=4096+requests[0]+1024);assert.ok(calls.largestJoin>=large.length);
+    const expected=shape==='keys'?{[large]:0}:shape==='array'?[large]:{payload:large};
+    let json='',offset=0;
+    while(offset<frozen.units){const chunk=f.program.readSnapshot({revision:frozen.revision,offset});json+=chunk;offset+=chunk.length;}
+    assert.deepEqual(JSON.parse(json),expected);
+  }
+});
+
+test('descriptor trap lifecycle reentry is rejected before JSON join, parse or publication',async()=>{
+  for(const operation of ['checkpoint','commit']) {
+    const f=fixture({stateTransport:{credit:65536,onSnapshot:()=>{},requestCredit:()=>{}}});
+    const previous=operation==='checkpoint'?await f.program.checkpoint({serialized:true}):null;
+    if(previous){assert.equal(JSON.parse(f.program.readSnapshot({revision:previous.revision})).phase,0);await f.program.resume();}
+    const calls=trackJSON(f.context);let reads=0;
+    const completed=new Proxy({phase:1},{getOwnPropertyDescriptor(target,key){
+      if(key==='phase'&&++reads===2)void f.program.resume();return Reflect.getOwnPropertyDescriptor(target,key);
+    }});
+    if(operation==='checkpoint') {
+      f.api.lifecycle({checkpoint:()=>completed});
+      await assert.rejects(f.program.checkpoint({serialized:true}),/superseded/);
+      assert.throws(()=>f.program.readSnapshot({revision:previous.revision}),/snapshot_missing/);
+    } else {
+      assert.equal(f.api.commit(completed),false);
+      assert.throws(()=>f.program.readSnapshot({revision:'1'}),/snapshot_missing/);
+    }
+    assert.equal(calls.stringify,0);assert.equal(calls.join,0);assert.equal(calls.parse,0);
+  }
+});
+
+test('an accepted reentrant commit revokes the outer JSON cut before it copies against spent credit',()=>{
+  const snapshots:any[]=[],requests:number[]=[],inner={inner:'y'.repeat(200)};
+  const f=fixture({stateTransport:{credit:4096,onSnapshot:(value:any)=>snapshots.push(value),requestCredit:(bytes:number)=>requests.push(bytes)}});
+  const calls=trackJSON(f.context);let reads=0,innerAccepted=false;
+  const outer=new Proxy({payload:0},{getOwnPropertyDescriptor(target,key){
+    const field=Reflect.getOwnPropertyDescriptor(target,key);
+    if(key==='payload'&&++reads===2) {
+      innerAccepted=f.api.commit(inner);
+      return {...field,value:'x'.repeat(450)};
+    }
+    return field;
+  }});
+  assert.equal(f.api.commit(outer),false);assert.equal(innerAccepted,true);
+  assert.equal(reads,2);assert.equal(f.program.revision,'1');assert.equal(snapshots.length,1);
+  assert.equal(snapshots[0].cost,1824);
+  assert.equal(calls.stringify,0);assert.equal(calls.parse,1);
+  assert.equal(calls.join,1,'Only the accepted inner revision may allocate immutable JSON');
+  assert.equal(calls.largestJoin,212,'The outer 464-unit JSON must never be joined after credit falls to 2272');
+  assert.deepEqual(requests,[]);
+  assert.deepEqual(JSON.parse(f.program.readSnapshot({revision:'1'})),inner);
+  assert.throws(()=>f.program.readSnapshot({revision:'2'}),/snapshot_missing/);
+});
+
+test('descriptor JSON preserves canonical key order, node charges and exact Unicode escaping',async()=>{
+  const value={'10':10,'2':2,z:[null,undefined,()=>{},Symbol(),NaN,Infinity,-Infinity,-0,'\uD800','\uDC00','😀','\n','\u0000','é','中'],
+    a:{b:true,['__proto__']:'data'},omitted:undefined};
+  let nodes=0;
+  const expected=JSON.stringify(value,(_,item)=>{nodes++;return item&&typeof item==='object'&&!Array.isArray(item)
+    ?Object.fromEntries(Object.keys(item).sort().map(key=>[key,item[key]])):item;});
+  const f=fixture({stateTransport:{credit:65536,onSnapshot:()=>{},requestCredit:()=>{}}});
+  const calls=trackJSON(f.context);f.api.lifecycle({checkpoint:()=>value});
+  const frozen=await f.program.checkpoint({serialized:true});
+  assert.equal(f.program.readSnapshot({revision:frozen.revision}),expected);
+  assert.equal(frozen.units,expected.length);assert.equal(frozen.cost,Buffer.byteLength(expected)*8+nodes*64);
+  assert.equal(calls.stringify,0);assert.equal(calls.parse,1);assert.equal(calls.join,1);
+});
+
+const nativeBridgeSource=readFileSync(new URL('../../Applications/Shared/NotebookProgramBridge.swift',import.meta.url),'utf8');
+function nativeCreditScript() {
+  const method=nativeBridgeSource.slice(nativeBridgeSource.indexOf('static func grantStateCredit'));
+  const start=method.indexOf('"""')+3;
+  return method.slice(start,method.indexOf('"""',start));
+}
+
+test('actual spatial and block-runtime adapters transport checkpoint credit while explicit commits are disabled',async()=>{
+  for(const surface of ['spatial','block']) {
+    const messages:any[]=[],context=createContext({setTimeout,clearTimeout,AbortController,CustomEvent,
+      dispatchEvent:()=>{},webkit:{messageHandlers:{notebook:{postMessage:(m:any)=>messages.push(m)}}}});
+    context.window=context;runInContext(source,context);
+    const swift=readFileSync(new URL(surface==='spatial'?'../../Applications/Shared/AgentWebElementView.swift':'../../Applications/Shared/DocumentBlockRuntime.swift',import.meta.url),'utf8');
+    const controller=surface==='spatial'?'notebookProgram':'documentProgram';
+    const start=swift.indexOf(`window.${controller}=createNotebookProgram({state:`);
+    const end=swift.indexOf(`window.notebook=${controller}.api;`,start);
+    assert.ok(start>=0&&end>start);
+    const factory=swift.slice(start,end).replaceAll('\\(stateJSON)','null').replaceAll('\\(stateCredit)','0').replaceAll('\\(commitsEnabled)','false')
+      .replaceAll('\\(initialStateEncoding!.htmlJSON)','null').replaceAll('\\(stateTransfer?.initialCredit ?? 0)','0');
+    runInContext(`const notebookLoadToken='current';window.notebookDiagnostic=()=>{};
+      const painted=()=>Promise.resolve();const post=(kind,extra)=>webkit.messageHandlers.notebook.postMessage({kind,...extra});${factory}`,context);
+    const owner=context[controller];owner.setCommitEnabled(false);
+    const calls=trackJSON(context);let checkpoints=0;
+    owner.api.lifecycle({checkpoint:()=>({phase:++checkpoints})});
+    assert.equal(owner.api.commit({phase:99}),false);assert.equal(messages.length,0);
+    const pending=owner.checkpoint({serialized:true});await new Promise(resolve=>setTimeout(resolve,0));
+    const credit=messages.find(m=>m.kind==='stateCredit');assert.ok(credit);assert.equal(calls.stringify,0);assert.equal(calls.parse,0);
+    context.controller=controller;context.bytes=credit.bytes;context.expectedToken=surface==='spatial'?'old':'';
+    if(surface==='spatial') {
+      assert.equal(runInContext(`(()=>{${nativeCreditScript()}})()`,context),false);
+      assert.equal(calls.stringify,0);context.expectedToken='current';
+    }
+    assert.equal(runInContext(`(()=>{${nativeCreditScript()}})()`,context),true);
+    const frozen=await pending;assert.equal(checkpoints,1);assert.equal(calls.stringify,0);assert.equal(calls.parse,1);
+    assert.equal(owner.api.commit({phase:99}),false);
+  }
+});
+
+test('actual document iframe and shell forward credit through the token-bound request channel while paused',async()=>{
+  const messages:any[]=[],shellListeners=new Map<string,Function>(),childListeners=new Map<string,Function>();
+  const shell=createContext({setTimeout,clearTimeout,crypto,addEventListener:(name:string,fn:Function)=>shellListeners.set(name,fn),
+    webkit:{messageHandlers:{notebook:{postMessage:(m:any)=>messages.push(m)}}}});shell.window=shell;
+  const child=createContext({setTimeout,clearTimeout,AbortController,CustomEvent,queueMicrotask,dispatchEvent:()=>{},
+    addEventListener:(name:string,fn:Function)=>childListeners.set(name,fn),document:{activeElement:null}});child.window=child;child.parent=shell;
+  shell.postMessage=(message:any)=>shellListeners.get('message')?.({source:child,data:message});
+  child.postMessage=(message:any)=>{void childListeners.get('message')?.({source:shell,data:message});};
+  const runtime={token:'current',transportReady:false,isStarted:true,visible:false,frame:{contentWindow:child}};
+  shell.interactiveFrames=new Map([['block',runtime]]);shell.payload={documentID:'document',runtimeID:'native'};
+  const html=readFileSync(new URL('../../Applications/WebResources/document-shell.html',import.meta.url),'utf8');
+  const bridgeStart=html.indexOf('      const bridge = (message) => {');const bridgeEnd=html.indexOf('      // Native paper',bridgeStart);
+  const requestsStart=html.indexOf('      const programRequest = '),requestsEnd=html.indexOf('      const positionInteractiveFrames',requestsStart);
+  const listenerStart=html.indexOf("      addEventListener('message', event => {"),listenerEnd=html.indexOf("      addEventListener('dragstart'",listenerStart);
+  runInContext(`const diagnostic=()=>{};const refreshSourcePresentation=()=>{};${html.slice(bridgeStart,bridgeEnd)}
+    ${html.slice(requestsStart,requestsEnd)}${html.slice(listenerStart,listenerEnd)}
+    globalThis.requestProgram=transferProgramState;`,shell);
+  runInContext(source,child);
+  const installer=readFileSync(new URL('../../Applications/WebResources/document-program.js',import.meta.url),'utf8');runInContext(installer,child);
+  child.capture=(options:any)=>{const owner=child.createNotebookProgram(options);child.owner=owner;return owner;};
+  runInContext(`installNotebookDocumentProgram({blockID:'block',token:'current',state:null,stateCredit:0,requiresReady:false},capture);`,child);
+  const owner=child.owner;owner.setCommitEnabled(false);const calls=trackJSON(child);let checkpoints=0;
+  child.notebook.lifecycle({checkpoint:()=>({phase:++checkpoints})});
+  const pending=shell.requestProgram('block','current','notebook-suspend',null);
+  await new Promise(resolve=>setTimeout(resolve,0));
+  const credit=messages.find(m=>m.kind==='stateCredit');assert.ok(credit);assert.equal(credit.blockToken,'current');
+  assert.equal(calls.stringify,0);assert.equal(calls.parse,0);
+  assert.throws(()=>shell.requestProgram('block','old','notebook-state-credit',credit.bytes),/program_superseded/);
+  await shell.requestProgram('block','current','notebook-state-credit',credit.bytes);
+  const descriptor=await pending;
+  assert.match(descriptor.revision,/^frozen:[1-9][0-9]*$/);assert.equal(checkpoints,1);assert.equal(calls.stringify,0);assert.equal(calls.parse,1);
+  assert.deepEqual(JSON.parse(await shell.requestProgram('block','current','notebook-snapshot',{revision:descriptor.revision,offset:0})),{phase:1});
+  assert.equal(owner.api.commit({phase:99}),false);
+});
+
+test('native credit admission is source-bound and independent from ordinary commit enablement in all three adapters',()=>{
+  const spatial=readFileSync(new URL('../../Applications/Shared/AgentWebElementView.swift',import.meta.url),'utf8');
+  const block=readFileSync(new URL('../../Applications/Shared/DocumentBlockRuntime.swift',import.meta.url),'utf8');
+  const paper=readFileSync(new URL('../../Applications/Shared/DocumentWebView.swift',import.meta.url),'utf8');
+  const clauses=[
+    spatial.slice(spatial.indexOf('} else if object["kind"] as? String == "stateCredit"'),spatial.indexOf('} else if object["kind"] as? String == "state",')),
+    block.slice(block.indexOf('    case "stateCredit":'),block.indexOf('    case "state":',block.indexOf('    case "stateCredit":'))),
+    paper.slice(paper.indexOf('    case "stateCredit":'),paper.indexOf('    case "state":',paper.indexOf('    case "stateCredit":')))
+  ];
+  for(const clause of clauses) {
+    assert.match(clause,/requestCredit\(bytes\)/);assert.doesNotMatch(clause,/snapshotOnly|allowsStateCommits|requestedInput|ownsProgramState|programsVisible/);
+  }
+  assert.match(clauses[0],/expectedToken: token/);assert.match(clauses[2],/token == blockTokens\[blockID\]/);
+  assert.match(clauses[2],/operation: "notebook-state-credit"/);
 });
 
 test('frozen read addresses are immutable, retryable and cannot alias a resumed checkpoint', async () => {
@@ -537,7 +735,7 @@ test('the unchanged document adapter round-trips frozen identities and rejects a
     window:{},document:{activeElement:null},dispatchEvent:()=>{},
     addEventListener:(name: string, handler: (event: any) => Promise<void>) => handlers.set(name,handler)});
   runInContext(source + adapter + `
-    installNotebookDocumentProgram({blockID:'program',token:'token',state:{phase:0},requiresReady:false},createNotebookProgram);
+    installNotebookDocumentProgram({blockID:'program',token:'token',state:{phase:0},requiresReady:false,stateCredit:65536},createNotebookProgram);
   `,context);
   let phase = 1, checkpoints = 0, failResume = false, sequence = 0;
   context.window.notebook.lifecycle({checkpoint:() => { checkpoints++; return {phase}; },resume:() => {
@@ -592,14 +790,12 @@ test('cancelled checkpoint serialization keeps its previous address revoked thro
   const previous = await program.checkpoint({serialized:true});
   assert.equal(JSON.parse(program.readSnapshot({revision:previous.revision})).phase, 0);
   await program.resume();
-  let cancel = true, checkpoints = 0;
-  api.lifecycle({checkpoint:() => {
-    checkpoints++;
-    return {toJSON() {
-      if (cancel) { program.cancelLifecycle(); return {phase:99}; }
-      return {phase:2};
-    }};
+  let cancel = true, checkpoints = 0, reads = 0;
+  const completed=new Proxy({phase:2},{getOwnPropertyDescriptor(target,key){
+    if(key==='phase'&&++reads===2&&cancel)program.cancelLifecycle();
+    return Reflect.getOwnPropertyDescriptor(target,key);
   }});
+  api.lifecycle({checkpoint:() => { checkpoints++;return completed; }});
   await assert.rejects(program.checkpoint({serialized:true}), /program_superseded/);
   assert.equal(api.state.phase, 0);
   assert.throws(() => program.readSnapshot({revision:previous.revision}), /program_state_snapshot_missing/);
@@ -609,5 +805,19 @@ test('cancelled checkpoint serialization keeps its previous address revoked thro
   assert.equal(JSON.parse(program.readSnapshot({revision:recovered.revision})).phase, 2);
   assert.throws(() => program.readSnapshot({revision:previous.revision}), /program_state_snapshot_missing/);
   assert.deepEqual(json(await program.checkpoint({retry:true,serialized:true})), json(recovered));
-  assert.equal(checkpoints, 2, 'Recovery freezes once and a repeated retry preserves its descriptor');
+  assert.equal(checkpoints, 1, 'Retry keeps the one completed author result and its recovered descriptor');
+});
+
+test('isolated export revokes the current frozen address and cannot alias a later checkpoint',async()=>{
+  const {program,api}=fixture();let phase=1;
+  api.lifecycle({checkpoint:()=>({phase})});api.exportFrame(()=>'<svg/>');
+  const before=await program.checkpoint({serialized:true});
+  assert.equal(JSON.parse(program.readSnapshot({revision:before.revision})).phase,1);
+  assert.equal(await program.exportFrame({format:'svg',state:{phase}}),'<svg/>');
+  assert.throws(()=>program.readSnapshot({revision:before.revision}),/program_state_snapshot_missing/);
+  await program.resume();phase=2;
+  const after=await program.checkpoint({serialized:true});
+  assert.notEqual(after.revision,before.revision);
+  assert.throws(()=>program.readSnapshot({revision:before.revision}),/program_state_snapshot_missing/);
+  assert.equal(JSON.parse(program.readSnapshot({revision:after.revision})).phase,2);
 });

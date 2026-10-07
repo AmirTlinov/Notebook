@@ -41,7 +41,8 @@ final class ZoomOutCoverageTests: XCTestCase {
     await model.start(pageSize: NotebookAppModel.defaultPageSize)
     if nested {
       let parent = try XCTUnwrap(model.presence?.boardID)
-      let child = try XCTUnwrap(model.createBoard(at: .zero))
+      let childResult = await model.createBoard(at: .zero)
+      let child = try XCTUnwrap(childResult)
       func ink(_ surface: SurfaceID) {
         _ = model.appendSpatialInk(tool: .pen, color: .black, spans: [.init(surface: surface,
           samples: [0.0, 100.0].map { .init(point: .init(x: $0, y: $0), worldPoint: .init(x: $0, y: $0),
@@ -50,14 +51,15 @@ final class ZoomOutCoverageTests: XCTestCase {
       ink(.board(parent))
       model.updatePresence(.init(boardID: child, mode: .board, camera: .init(),
         viewport: .init(x: 834, y: 1194)), settled: true)
-      _ = model.createNotebook(at: .zero)
+      _ = await model.createNotebook(at: .zero)
       ink(.board(child))
       let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
       await model.reloadExternalChanges()?.value
     }
     let first = try XCTUnwrap(model.workspace?.selectedItemID)
     model.moveItem(first, to: .zero)
-    let distant = try XCTUnwrap(model.createNotebook(at: .init(x: 2400, y: 0)))
+    let distantResult = await model.createNotebook(at: .init(x: 2400, y: 0))
+    let distant = try XCTUnwrap(distantResult)
     model.selectItem(first)
     let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
     let boardID = try XCTUnwrap(model.presence?.boardID)

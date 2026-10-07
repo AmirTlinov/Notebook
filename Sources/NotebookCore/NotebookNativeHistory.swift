@@ -4,10 +4,23 @@ extension CollaborationAction {
   /// An item disappears from its cover domain; its inverse remains reachable
   /// on the surviving parent board. Material edits keep their surface owner.
   public var nativeHistoryDomains: Set<PencilUndoHistory.Domain> {
-    Set(operations.map { operation in
-      if operation.kind == .deleteItem, let parent = operation.target.boardID { return .board(parent) }
-      return .init(operation.target)
-    })
+    var domains = Set<PencilUndoHistory.Domain>()
+    for operation in operations {
+      if operation.kind == .deleteItem, let parent = operation.target.boardID { domains.insert(.board(parent)) }
+      else { domains.insert(.init(operation.target)) }
+      // A native birth remains undoable after the user focuses its new cover,
+      // enters its board or opens its first page/document. All entries name
+      // the same action; the surviving parent owns Redo after its removal.
+      if [.createNotebook, .createDocument, .createBoard].contains(operation.kind),
+        let id = operation.id.flatMap(UUID.init(uuidString:)) {
+        domains.insert(.cover(id))
+        if operation.kind == .createBoard { domains.insert(.board(id)) }
+        if operation.kind == .createDocument { domains.insert(.document(id)) }
+        if operation.kind == .createNotebook,
+          let page = operation.values["pageID"]?.string.flatMap(UUID.init(uuidString:)) { domains.insert(.page(page)) }
+      }
+    }
+    return domains
   }
 }
 

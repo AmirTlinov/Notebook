@@ -1,0 +1,43 @@
+{
+  "base": "40bd01c85c6639ebede61104abb5d649b02772a4",
+  "core_production_unchanged_after_final_gate": true,
+  "current_source_unchanged": true,
+  "initial_final_gate": {
+    "functions": 37,
+    "executions": 58,
+    "issues": 1,
+    "log": "core-final.log",
+    "source_sha256": "a4a3f138dcd7b151e499fe825d8e945c46a163590f227ed3d11cbb2095e3a104"
+  },
+  "repaired_fixture_gate": {
+    "functions": 3,
+    "executions": 9,
+    "issues": 0,
+    "log": "core-migration-fixture.log",
+    "source_sha256": "14aad85d372a4f2f266f5e1fefbabd1307e3281879208a3d097ff7d06f0a8773"
+  },
+  "combined": {
+    "functions": 37,
+    "executions": 58,
+    "issues": 0
+  },
+  "birth": {
+    "kinds": 3,
+    "cold_undo_redo_cycles_per_kind": 2,
+    "peer_parent_preserved": true,
+    "peer_adoption_preserved": true,
+    "unknown_commit_exact_result": true,
+    "copied_receipt_workspace_guard": true,
+    "neighbours": 100000,
+    "frontier_vm_steps": 16,
+    "creation_plus_readback_seconds": 0.033594291,
+    "upper_body_bytes": 4194304,
+    "upper_body_unchanged": true,
+    "board_completion_credit_bytes": 3670016
+  },
+  "native": {
+    "status": "pending_physical_ipad",
+    "suite": "NotebookTests/NotebookItemCreationTests",
+    "functions": 6
+  }
+}
