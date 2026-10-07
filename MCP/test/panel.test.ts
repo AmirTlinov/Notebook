@@ -148,6 +148,29 @@ test('session teardown releases readers and ignores late read and write completi
   });
 });
 
+test('navigation publishes ready controls immediately after the new surface is accepted',async t=>{
+  t.mock.timers.enable({apis:['setTimeout','setInterval']});
+  const {session,calls,close}=await controlledSession();
+  session.needsPresentation=()=>false;
+  const availability:boolean[]=[];
+  session.onStateChange=()=>availability.push(session.mutationReady);
+  const destination={kind:'board' as const,id:randomUUID()};
+  const opening=session.openSurface(destination);
+  assert.equal(availability.at(-1),false);
+  calls[1]!.resolve({content:[],structuredContent:{...sessionSnapshot('2'),target:destination}});
+  assert.equal(await opening,true);
+  assert.equal(availability.at(-1),true,'Controls must update without waiting for the next polling tick');
+  assert.equal(calls.length,2);
+  const next=session.openSurface(sessionSnapshot().target);
+  assert.equal(calls.length,3,'An immediately repeated navigation can start');
+  calls[2]!.resolve({content:[],structuredContent:sessionSnapshot('3')});
+  assert.equal(await next,true);
+  await close();
+  const count=availability.length;
+  session.busy=true;session.busy=false;
+  assert.equal(availability.length,count,'Disposed controls receive no activity notifications');
+});
+
 test('a confirmed pen contact replaces an in-flight old scene before the next polling tick', async t => {
   t.mock.timers.enable({apis: ['setTimeout', 'setInterval']});
   const {session, calls, close} = await controlledSession();
