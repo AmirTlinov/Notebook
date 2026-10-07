@@ -384,8 +384,24 @@ GUI-196, GUI-197, GUI-183 и длительная GUI-250 остаются от�
   показаны 39/4 точные позы, вытесненные запросы сохранены. Pixel/receipt проверки
   **1 PASS**, без skip/runtime warnings, исходники неизменны. Подготовка отдельно
   **47/5976 мс**, footprint при 100k **776,54 MB** при учтённых **22,81 MB**.
-  Production selection ещё не изменён; адресный путь и учёт памяти в работе.
+  Кандидат с адресными immutable plan/geometry/index roots: **15 Core PASS,
+  4 native iPad PASS**, p95 **63,52/66,51 мс**, backlog при 100k **1,28 мс**
+  вместо **196,41 мс**. Тот же harness и все 120 запросов; конечные pixels
+  проверены. Подготовка 100k остаётся **6317 мс**, footprint **761,10 MB**.
+  После lazy materials/inline rectangle clips (GUI-525): **7 native PASS**,
+  p95 **63,15/64,56 мс**, подготовка 100k **1390 мс**, footprint **611,70 MB**,
+  учтено **8,41 MB**. Polygon offcrop→new cut→cancel проверен четырьмя exact
+  OS receipts и pixels; исходники неизменны. Это одиночные замеры, SQL/model
+  сборка чужих тел вне replay. More исправлен через control intent (GUI-527);
+  UI v4 **1 PASS**, без skip/runtime warnings: select/move/align/duplicate/delete,
+  cold reopen→select→node+connector move; соседний WebKit живой. V2 ожидал
+  ручку whole group для отдельных elements, v3 тащил невыбранный узел до
+  требуемого pickup hold; исправлены только эти два ожидания сценария.
+  Production установка согласованной пары ещё в работе.
   [Baseline, фазы и все запросы](audit-evidence/2026-10-07/selection-pose/baseline.json).
+  [Адресный кандидат](audit-evidence/2026-10-07/selection-pose/addressed-index.json).
+  [Lazy clips, polygon и все запросы](audit-evidence/2026-10-07/selection-pose/lazy-clips.json).
+  [Меню и полный page gesture](audit-evidence/2026-10-07/selection-pose/menu-gesture.json).
 - **Pencil/eraser, ≤ 20 мс по контракту.** Настоящий Pencil в установленной 253:
   6880 input batches, без потерь событий/сэмплов и ошибок записи; actual→OS
   pen/eraser p95 **57,39/57,43 мс**, 118 unresolved lift batches. GPU execution

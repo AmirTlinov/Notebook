@@ -193,7 +193,7 @@ final class NotebookContextMenus: NSObject, UIPopoverPresentationControllerDeleg
   func use(_ gate: NotebookInputGate) {
     guard self.gate !== gate else { return }
     self.gate?.unregisterControlRegion(source:controlSource); self.gate = gate
-    gate.registerControlRegion(source:controlSource) { [weak self] point, _ in
+    gate.registerControlRegion(source:controlSource,intent:.continuesSceneIntent) { [weak self] point, _ in
       guard let self, view.window != nil else { return false }
       // The dismissal contact belongs to UIKit, never to the paper underneath.
       if blocksCanvasInput { return true }

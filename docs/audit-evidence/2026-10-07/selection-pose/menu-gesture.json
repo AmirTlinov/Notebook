@@ -1,0 +1,93 @@
+{
+  "date": "2026-10-07",
+  "baseCommit": "e515dda40f6182aa2545f3e6debdc9cefac8a193",
+  "sourceSHA256": "40d12b81dce91c9a4ffe00b5b94c0cb760bc1bf5df426780afd17460b78d9194",
+  "sourceBeforeEqualsAfter": true,
+  "files": {
+    "Applications/Shared/NotebookInputGate.swift": "b30606f322df22280eb63d9c7b06c11e1384e4d7ab183098f76a2e3150dd99d4",
+    "Applications/iPad/NotebookContextMenus.swift": "72cb751eed700b9fe041551c38c306ea6ee7ca15a117a1177c575a5ceedd0a30",
+    "Applications/iPad/WorkspaceGestureLayer.swift": "76d043a28401dab686570c5cb64a8b0807b76f74294cb1848b8385de614fd43f",
+    "Applications/Tests/AgentSceneFingerRoutingTests.swift": "03ca2073cee442df4a0c00fef89a4fdb0e917521192757d400bb48b5e27b6bfb",
+    "Applications/UITests/NotebookGraphicSelectionUITests.swift": "39028c8443398336442267a565bc44a0335520da284ab2f5e91e5394abca7a8b"
+  },
+  "device": {
+    "architecture": "arm64e",
+    "deviceId": "00008103-001E059934D9001E",
+    "deviceName": "iPad (Елизавета)",
+    "modelName": "iPad Pro (11-inch) (3rd generation)",
+    "osBuildNumber": "24A435",
+    "osVersion": "27.0",
+    "platform": "iOS"
+  },
+  "checks": {
+    "passedTests": 1,
+    "failedTests": 0,
+    "skippedTests": 0,
+    "runtimeWarnings": []
+  },
+  "test": "NotebookUITests/NotebookGraphicSelectionUITests/testSelectMoveAlignDuplicateAndRestoreOnPage",
+  "testDurationSeconds": 55.095682978630066,
+  "evidenceDirectory": ".build/selection-menu-candidate-20261007-v4",
+  "verificationSHA256": "52520fe91f0e5c18d7648ae70697050f5eb9301e7fb55c7ac89f5f9cb4aab670",
+  "cleanup": {
+    "ipad-native-test-cleanup-after": 0,
+    "ipad-ui-runner-cleanup-after": 0
+  },
+  "pixels": [
+    {
+      "name": "selection-restored-binding-true",
+      "file": "FB97F0B1-6665-4A56-9105-1DCA49AB6436.png",
+      "sha256": "2386c20dfee0afaf35197516671fd1fd4e1938b734ad90f7f0a3fbcb912a3651",
+      "reviewed": true
+    },
+    {
+      "name": "selection-copied-true",
+      "file": "750BEFD5-1889-4BEC-A103-18D48D0DA44C.png",
+      "sha256": "9b3b79213daf171e76fdb6cefc3e8363b38ff8355f26f8c9389989266e79e307",
+      "reviewed": true
+    },
+    {
+      "name": "selection-moved-true",
+      "file": "5760EBFF-6791-43AF-8ADC-EF9480BA98CD.png",
+      "sha256": "d36250db2de7ccd48d22e08de9982e8e3c0bc08eff74fd8147f48838acaabd73",
+      "reviewed": true
+    }
+  ],
+  "nativeRegression": {
+    "test": "NotebookTests/AgentSceneFingerRoutingTests/testWindowObserverRetiresControlAndPopupContactsBeforeTheNextPickup",
+    "result": "Passed",
+    "evidenceDirectory": ".build/selection-pose-and-clip-candidate-20261007-v2",
+    "sourceSHA256": "753d6f91c138dd1d9751e65e65825ad2137f8c24f4f5dcb12876747029c646ab",
+    "scope": "Default grip starts scene intent; inline More continues it; captured native contact survives control removal until terminal. Native production and lifecycle test sources match the final UI candidate."
+  },
+  "scenario": [
+    "Live neighboring WebKit interaction and stable runtime through select, movement and alignment.",
+    "Long press → More → select multiple, selected-body drag, align, duplicate and delete.",
+    "Cold reopen clears transient selection; tap restored node, wait Selected, drag 45×30, assert both node and bound connector move."
+  ],
+  "previousAttempts": [
+    {
+      "version": "v1",
+      "result": "Failed before movement",
+      "cause": "Inline More wrongly started a new scene intent and dismissed its menu."
+    },
+    {
+      "version": "v2",
+      "result": "Failed at legacy group grip assertion",
+      "cause": "Multiple separate elements expose Selected state and body manipulation; move-element-group belongs to whole group."
+    },
+    {
+      "version": "v3",
+      "result": "Failed at cold-reopen bound connector assertion",
+      "cause": "Press 0.01 drag on a fresh unselected node cancels before its required pickup hold. Duplicate and delete passed."
+    }
+  ],
+  "scope": [
+    "Single optimized physical iPad page scenario; native lifecycle regression has a separate source-frozen receipt.",
+    "UI-only corrections use actual selection state and select the restored node before moving; production input contract and gesture timeouts preserved."
+  ],
+  "remaining": [
+    "Coordinated main integration and production pair installation remain pending.",
+    "No compositor FPS, repeated full acceptance or physical Pencil latency measurement in this UI scenario."
+  ]
+}

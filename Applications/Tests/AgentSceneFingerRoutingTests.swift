@@ -19,20 +19,33 @@ final class AgentSceneFingerRoutingTests: XCTestCase {
     host.view.addSubview(popup)
     let region=UUID()
     gate.registerControlRegion(source:region) { point,_ in grip.bounds.contains(grip.convert(point,from:window)) }
+    let menus=NotebookContextMenus(),menuSource=UUID(),selection=UUID()
+    paper.view.addSubview(menus.view);menus.view.frame=paper.view.bounds;menus.use(gate)
+    menus.registerSelectionActions(source:menuSource,selection:selection,anchor:.init(x:500,y:420,width:120,height:100),
+      in:paper.view,primary:[],secondary:[UIAction(title:"Выбрать несколько") { _ in }],destructive:[],enabled:true)
+    menus.requestSelectionMenu(selection,at:.init(x:560,y:470));menus.view.layoutIfNeeded()
+    let surface=try XCTUnwrap(menus.view.subviews.first { $0.accessibilityIdentifier == "notebook-context-menu" })
+    let commands=try XCTUnwrap(surface.subviews.compactMap { $0 as? UIStackView }.first)
+    let more=try XCTUnwrap(commands.arrangedSubviews.compactMap { $0 as? UIButton }.first {
+      $0.accessibilityIdentifier == "selection-more-actions"
+    })
     let owner=WorkspaceGestureLayer.Coordinator(defersHorizontalMotionToPageTurn:false,isEnabled:true,inputGate:gate,
       onCamera:{ _ in XCTFail("Native controls retain their gestures") },onUndo:{},onRedo:{})
     owner.install(on:window,inside:paper.view)
     defer {
-      owner.uninstall();gate.unregisterControlRegion(source:region)
+      owner.uninstall();menus.uninstall();gate.unregisterControlRegion(source:region)
       window.isHidden=true;window.rootViewController=nil;previous?.makeKey()
     }
     let observer=try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? NotebookContactObserver }.first)
     let camera=try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? TwoFingerPaperGestureRecognizer }.first)
-    for (control,cancelled) in [(grip,false),(popup,true)] {
+    for (control,cancelled) in [(grip,false),(popup,true),(more,true)] {
       let point=control.convert(CGPoint(x:control.bounds.midX,y:control.bounds.midY),to:window)
       let finger=SVGInputTouch(window:window,view:control,point:point),event=UIEvent()
-      if control === grip { XCTAssertFalse(gate.permitsSceneContact(at:point,kind:.finger)) }
-      else { XCTAssertFalse(sceneReceives(finger,inside:paper.view)) }
+      if control === popup { XCTAssertFalse(sceneReceives(finger,inside:paper.view)) }
+      else {
+        XCTAssertTrue(sceneReceives(finger,inside:paper.view))
+        XCTAssertFalse(gate.permitsSceneContact(at:point,kind:.finger))
+      }
       // A grip resolves its own input owner before the independent window
       // observer receives the same physical contact. Only that observer ends it.
       XCTAssertEqual(NotebookSceneFingerRouting.owner(of:finger,gate:gate),.nativeInput(ObjectIdentifier(control)))
@@ -44,8 +57,17 @@ final class AgentSceneFingerRoutingTests: XCTestCase {
         observer.touchesBegan([finger],with:event)
         XCTAssertEqual(gate.admittedFingerContactCount,1)
         XCTAssertEqual(gate.acceptedContactGeneration,generation+(control === grip ? 1 : 0),
-          "A native scene control advances context; a presented control continues its existing intent")
-        XCTAssertTrue(gate.isActive,"Both controls still own their physical contact barrier")
+          "A native scene control advances context; popup and inline menu controls continue their existing intent")
+        XCTAssertTrue(gate.isActive,"Every native control still owns its physical contact barrier")
+        if control === more {
+          XCTAssertTrue(menus.hasPresentedMenu)
+          menus.hide(source:menuSource)
+          XCTAssertNil(more.window)
+          XCTAssertEqual(NotebookSceneFingerRouting.owner(of:finger,gate:gate),.nativeInput(ObjectIdentifier(more)),
+            "Detaching the menu retains this contact's original owner through physical cancellation")
+          XCTAssertEqual(gate.admittedFingerContactCount,1)
+          XCTAssertEqual(gate.acceptedContactGeneration,generation)
+        }
         if cancelled { observer.touchesCancelled([finger],with:event) }
         else { observer.touchesEnded([finger],with:event) }
       }

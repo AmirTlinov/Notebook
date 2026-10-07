@@ -194,7 +194,12 @@ final class NotebookInputGate {
     }
     if fingerContactOwners.isEmpty { fingerSequenceHadMultipleContacts = false }
   }
-  private var controlRegions: [UUID: @MainActor (CGPoint, ContactKind) -> Bool] = [:]
+  enum ControlContactIntent: Equatable { case startsSceneIntent, continuesSceneIntent }
+  private struct ControlRegion {
+    let intent: ControlContactIntent
+    let contains: @MainActor (CGPoint, ContactKind) -> Bool
+  }
+  private var controlRegions: [UUID: ControlRegion] = [:]
   private var pageFinishers: [UUID: NotebookInputFinisher] = [:]
   private var currentPageSource: UUID?
   private var activePencilSources: Set<UUID> = []
@@ -233,14 +238,23 @@ final class NotebookInputGate {
   /// Native control bounds are evaluated when a contact starts. A card can
   /// move with the keyboard without changing the scene camera or taking a
   /// contact which already belongs to Pencil outside it.
-  func registerControlRegion(source: UUID, contains: @escaping @MainActor (CGPoint, ContactKind) -> Bool) {
-    controlRegions[source] = contains
+  func registerControlRegion(source: UUID, intent: ControlContactIntent = .startsSceneIntent,
+    contains: @escaping @MainActor (CGPoint, ContactKind) -> Bool) {
+    controlRegions[source] = .init(intent: intent, contains: contains)
   }
 
   func unregisterControlRegion(source: UUID) { controlRegions[source] = nil }
 
   func permitsSceneContact(at windowPoint: CGPoint, kind: ContactKind, excludingControl source: UUID? = nil) -> Bool {
-    permitsNewContact && !controlRegions.contains { $0.key != source && $0.value(windowPoint, kind) }
+    permitsNewContact && !controlRegions.contains { $0.key != source && $0.value.contains(windowPoint, kind) }
+  }
+
+  /// Grips and scene controls start a new intent; a menu continues the intent
+  /// captured when it opened. Both retain their existing routing exclusion.
+  func permitsSceneIntent(at windowPoint: CGPoint, kind: ContactKind) -> Bool {
+    permitsNewContact && !controlRegions.values.contains {
+      $0.intent == .continuesSceneIntent && $0.contains(windowPoint, kind)
+    }
   }
 
   func beginContact(source: UUID) {

@@ -448,9 +448,12 @@ final class NotebookContactObserver: UIGestureRecognizer {
       NotebookInteractionDiagnostics.contact(touch, phase: "began")
     }
     // The window still owns every contact's physical lifetime. Only a new
-    // contact on the workspace advances its intent: touching an already
-    // presented menu or its sheet must not invalidate that menu before lift.
-    if let sceneView, fingers.contains(where: { sceneReceives($0, inside: sceneView) }) {
+    // scene contact, including native grips, advances its intent. A menu's
+    // registered region continues its captured intent through down and lift.
+    if let sceneView, fingers.contains(where: {
+      sceneReceives($0, inside: sceneView)
+        && gate.permitsSceneIntent(at: $0.location(in: sceneView.window), kind: .finger)
+    }) {
       gate.notifyAcceptedContact()
     }
     if gate.hasPencilContact { restSceneContacts() }

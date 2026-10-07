@@ -51,7 +51,8 @@ import XCTest
     let runtime = neighbour.staticTexts.matching(NSPredicate(format:"label BEGINSWITH 'Runtime '")).firstMatch.label
     notebookContextAction("Выбрать несколько",on:a,in:app)
     b.tap()
-    XCTAssertTrue(app.otherElements["move-element-group"].waitForExistence(timeout:3))
+    let selected = XCTNSPredicateExpectation(predicate:NSPredicate { _,_ in a.isSelected && b.isSelected },object:nil)
+    XCTAssertEqual(XCTWaiter.wait(for:[selected],timeout:3),.completed)
     XCTAssertFalse(app.buttons["finish-graphic-selection"].exists)
     link.tap()
     notebookContextAction("Не добавлять касанием",on:a,in:app)
@@ -79,11 +80,18 @@ import XCTest
     app.terminate(); app.launchArguments.append("--notebook-reopen-fixture"); app.launch()
     XCTAssertTrue(app.images["Узел +"].waitForExistence(timeout:10)); XCTAssertTrue(app.images["Узел −"].exists); XCTAssertTrue(app.images["1:2"].exists)
     XCTAssertEqual(app.images.matching(identifier:"Узел +").count,1)
-    // An internal copied binding follows the copied node after cold restore.
-    let copy = app.images["Узел −"], before = app.images["1:2"].frame
-    let p = copy.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5))
+    // The surviving binding follows its selected node after cold restore.
+    let restored = app.images["Узел −"]
+    restored.tap()
+    let restoredSelection = XCTNSPredicateExpectation(predicate:NSPredicate { _,_ in restored.isSelected },object:nil)
+    XCTAssertEqual(XCTWaiter.wait(for:[restoredSelection],timeout:3),.completed)
+    let beforeNode = restored.frame, before = app.images["1:2"].frame
+    let p = restored.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5))
     p.press(forDuration:0.01,thenDragTo:p.withOffset(.init(dx:45,dy:30)),withVelocity:.slow,thenHoldForDuration:0)
-    let bound = XCTNSPredicateExpectation(predicate:NSPredicate { _,_ in app.images["1:2"].frame != before },object:nil)
+    let bound = XCTNSPredicateExpectation(predicate:NSPredicate { _,_ in
+      restored.frame.midX > beforeNode.midX+30 && restored.frame.midY > beforeNode.midY+20
+        && app.images["1:2"].frame != before
+    },object:nil)
     XCTAssertEqual(XCTWaiter.wait(for:[bound],timeout:5),.completed)
     proof(app,"selection-restored-binding-\(onPage)")
   }
