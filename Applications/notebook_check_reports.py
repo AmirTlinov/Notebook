@@ -28,11 +28,23 @@ def rows(path):
     return object_rows(lines(path), path)
 
 
-def swift_stdout(path):
-    # SwiftPM lists human-readable IDs beside the machine stream. Product
-    # writers share stdout as a pipe: opening it cannot truncate an earlier
-    # product's records. The raw stream stays in the receipt, including prose.
-    return object_rows([line for line in lines(path) if line.startswith("{")], path)
+def swift_test_products(description, root):
+    """SwiftPM describes the actual test targets used by its per-target products."""
+    release.require(isinstance(description, dict) and description.get("path") == str(root.resolve())
+                    and isinstance(description.get("targets"), list) and description["targets"],
+                    "Malformed Swift package description or another source.")
+    targets, products = set(), []
+    for target in description["targets"]:
+        release.require(isinstance(target, dict) and isinstance(target.get("name"), str)
+                        and target["name"] and target["name"] not in targets
+                        and isinstance(target.get("type"), str), "Malformed/duplicate Swift package target.")
+        targets.add(target["name"])
+        if target["type"] == "test":
+            release.require(re.fullmatch(r"[A-Za-z0-9_]+", target["name"])
+                            and target.get("c99name") == target["name"], "Unsupported Swift test product name.")
+            products.append(target["name"])
+    release.require(products, "Пустой Swift test product inventory.")
+    return sorted(products)
 
 
 def resolve(selectors, inventory, *, core=False):
@@ -153,10 +165,12 @@ def native_execution(tree, selectors, inventory=None):
     return {"format": 1, "planned": expected, "executed": sorted(outcomes), "skipped": [], "failed": []}
 
 
-def swift_inventory(records, root):
+def swift_inventory(records, root, product=None):
     release.require(isinstance(records, list) and records and all(isinstance(record, dict) for record in records),
                     "Malformed Swift Testing records")
-    tests = {}
+    release.require(product is None or isinstance(product, str) and re.fullmatch(r"[A-Za-z0-9_]+", product),
+                    "Неверный Swift test product.")
+    tests, seen = {}, set()
     for record in records:
         release.require(record.get("version") == "6.4.0", "Неизвестная версия Swift Testing report.")
         payload = record.get("payload")
@@ -168,12 +182,16 @@ def swift_inventory(records, root):
         release.require(payload.get("kind") in ("suite", "function"), "Malformed Swift Testing test kind")
         identity = payload.get("id")
         location = payload.get("sourceLocation")
-        release.require(isinstance(identity, str) and identity and identity not in tests
+        release.require(isinstance(identity, str) and identity and identity not in seen
                         and isinstance(payload.get("name"), str) and payload["name"]
                         and isinstance(location, dict) and isinstance(location.get("fileID"), str)
                         and location["fileID"] and type(location.get("line")) is int and location["line"] > 0
                         and type(location.get("column")) is int and location["column"] > 0,
                         "Malformed/duplicate Swift Testing ID")
+        seen.add(identity)
+        release.require(product is None or identity.startswith(product + ".")
+                        and location["fileID"].startswith(product + "/"),
+                        "Swift Testing report содержит другой test product.")
         source = location.get("filePath")
         release.require(isinstance(source, str) and Path(source).resolve().is_relative_to(root.resolve()),
                         "Swift Testing inventory compiled from another source.")
@@ -185,8 +203,8 @@ def swift_inventory(records, root):
     return tests
 
 
-def swift_execution(records, expected, root):
-    discovered = swift_inventory(records, root)
+def swift_execution(records, expected, root, product=None):
+    discovered = swift_inventory(records, root, product)
     suites = {record["payload"].get("id") for record in records
               if record.get("kind") == "test" and record["payload"].get("kind") == "suite"}
     started, ended, skipped, failed = set(), set(), set(), set()

@@ -35,6 +35,9 @@ class RegistryReportTests(unittest.TestCase):
         self.functions = [self.function("WantedSuite", "first"), self.function("WantedSuite", "second"),
                           self.function("OtherSuite", "unrelated")]
         self.execution_override = None
+        self.inventory_suffix = ""
+        self.inventory_override = None
+        self.package_override = None
         self.calls = []
         self.codex_runtime, _, self.codex_files = codex_fixture.source(self.root)
         self.codex_stage = self.root / ".build/notebook-codex-runtimes" / release.notebook_codex.identity(self.codex_runtime)["manifestSHA256"]
@@ -68,21 +71,28 @@ class RegistryReportTests(unittest.TestCase):
             stdout.write(json.dumps(codex_fixture.report(self.codex_stage, self.codex_runtime)).encode())
         elif any(value.endswith("prepare_notebook_typescript.py") for value in argv):
             stdout.write(json.dumps({"status": "ready", "stage": str(self.root / ".build/notebook-typescript-runtime/stages/pinned")}).encode())
+        elif argv[:4] == ["swift", "package", "describe", "--type"]:
+            products = sorted({function["payload"]["id"].split(".", 1)[0] for function in self.functions})
+            description = self.package_override if self.package_override is not None else {
+                "path": str(self.root), "targets": [{"name": product, "c99name": product, "type": "test"} for product in products]}
+            stdout.write(json.dumps(description).encode())
         elif "--event-stream-output-path" in argv:
-            product = None if "list" in argv else argv[argv.index("--test-product") + 1]
-            selected = self.functions if product is None else [function for function in self.functions
-                         if function["payload"]["id"].startswith(product + ".")
-                         and re.fullmatch(argv[argv.index("--filter") + 1], function["payload"]["id"])]
-            values = self.functions if product is None else (self.execution_override if self.execution_override is not None else self.execution(selected))
+            product = argv[argv.index("--test-product") + 1]
+            available = [function for function in self.functions if function["payload"]["id"].startswith(product + ".")]
+            selected = available if "list" in argv else [function for function in available
+                         if re.fullmatch(argv[argv.index("--filter") + 1], function["payload"]["id"])]
+            values = (self.inventory_override if self.inventory_override is not None else available) if "list" in argv else (
+                self.execution_override if self.execution_override is not None else self.execution(selected))
             stream = "\n".join(json.dumps(value) for value in values) + "\n"
             destination = argv[argv.index("--event-stream-output-path") + 1]
+            self.assertNotEqual(destination, "/dev/stdout")
+            self.assertNotEqual(stdout, subprocess.PIPE)
             if "list" in argv:
-                self.assertEqual(destination, "/dev/stdout")
-                self.assertEqual(stdout, subprocess.PIPE)
-                return subprocess.CompletedProcess(argv, 0, stdout=(stream + "Test run with 99 tests passed\n").encode())
+                stream += self.inventory_suffix
             Path(destination).write_text(stream)
-            # An aggregate success line must not substitute for those events.
-            stdout.write(b"Test run with 99 tests passed\n")
+            # SwiftPM stdout is diagnostic text. Neither broken JSON nor an
+            # aggregate success line can replace the product-owned event file.
+            stdout.write(b'{"kind":"test","payload":{"id":"spliced\nTest run with 99 tests passed\n')
         return subprocess.CompletedProcess(argv, 0)
 
     def run_route(self):
@@ -180,16 +190,75 @@ class RegistryReportTests(unittest.TestCase):
         self.assertEqual(sum(core["executions"].values()), 3)
         commands = verify.read_commands(self.evidence)
         self.assertEqual([entry["label"] for entry in commands if "--test-product" in entry["argv"]],
-                         ["core-NotebookCodexTests", "core-NotebookCoreTests"])
+                         ["core-inventory-NotebookCodexTests", "core-inventory-NotebookCoreTests",
+                          "core-NotebookCodexTests", "core-NotebookCoreTests"])
         for product in ("NotebookCodexTests", "NotebookCoreTests"):
+            self.assertTrue((self.evidence / ("core-" + product + "-inventory.jsonl")).is_file())
             self.assertTrue((self.evidence / ("core-" + product + "-events.jsonl")).is_file())
         self.assertEqual(verify.validate_selected(self.root, self.evidence, receipt), receipt)
 
-    def test_truncated_machine_stdout_refuses_even_beside_valid_inventory(self):
-        path = self.root / "machine.stdout.log"
-        path.write_text("human readable ID\n" + json.dumps(self.functions[0]) + '\n{"kind":')
+    def test_qualified_selection_inventories_only_its_actual_product(self):
+        self.functions.append(self.function("WantedSuite", "third", "NotebookCodexTests"))
+        self.plan["checks"]["core"] = ["NotebookCoreTests.WantedSuite"]
+        receipt = self.run_route()
+        self.assertEqual([argv[argv.index("--test-product") + 1] for argv in self.calls if "list" in argv], ["NotebookCoreTests"])
+        self.assertFalse((self.evidence / "core-NotebookCodexTests-inventory.jsonl").exists())
+        self.assertEqual(verify.validate_selected(self.root, self.evidence, receipt), receipt)
+
+    def test_unqualified_suite_resolves_against_every_actual_product(self):
+        self.functions.append(self.function("WantedSuite", "third", "NotebookCodexTests"))
+        self.run_route()
+        self.assertEqual(len(release.read_json(self.evidence / "completed.json")["checks"]["core"]["executed"]), 3)
+        self.assertEqual([argv[argv.index("--test-product") + 1] for argv in self.calls if "list" in argv],
+                         ["NotebookCodexTests", "NotebookCoreTests"])
+
+    def test_full_selection_keeps_every_actual_product_and_function(self):
+        self.functions.append(self.function("OtherSuite", "third", "NotebookCodexTests"))
+        self.plan["checks"]["core"] = ["*"]
+        self.run_route()
+        expected = sorted(function["payload"]["id"] for function in self.functions)
+        core = release.read_json(self.evidence / "completed.json")["checks"]["core"]
+        self.assertEqual(core["planned"], expected)
+        self.assertEqual(core["executed"], expected)
+
+    def test_absent_qualified_product_refuses_before_any_inventory_runner(self):
+        self.plan["checks"]["core"] = ["NoSuchTests.WantedSuite"]
+        with self.assertRaisesRegex(release.ReleaseError, "absent Swift test product"):
+            self.run_route()
+        self.assertFalse(any("--event-stream-output-path" in argv for argv in self.calls))
+
+    def test_truncated_machine_file_refuses_even_beside_complete_records(self):
+        self.inventory_suffix = '{"kind":"test","payload":{"id":"truncated'
         with self.assertRaisesRegex(release.ReleaseError, "Malformed report"):
-            reports.swift_stdout(path)
+            self.run_route()
+        self.assertFalse(any("--filter" in argv for argv in self.calls))
+        self.assertFalse((self.evidence / "verification.json").exists())
+
+    def test_inventory_from_another_product_refuses_before_execution(self):
+        self.inventory_override = [self.function("WantedSuite", "first", "NotebookCodexTests")]
+        with self.assertRaisesRegex(release.ReleaseError, "другой test product"):
+            self.run_route()
+        self.assertFalse(any("--filter" in argv for argv in self.calls))
+
+    def test_package_description_binds_products_to_the_exact_source(self):
+        valid = {"path": str(self.root), "targets": [{"name": "NotebookCoreTests", "c99name": "NotebookCoreTests", "type": "test"}]}
+        for description in ({**valid, "path": "/another-source"}, {**valid, "targets": valid["targets"] * 2},
+                            {**valid, "targets": []}, {**valid, "targets": [{**valid["targets"][0], "type": "library"}]}):
+            with self.subTest(description=description), self.assertRaises(release.ReleaseError):
+                reports.swift_test_products(description, self.root)
+
+    def test_inventory_product_argv_and_unique_output_path_are_receipt_bound(self):
+        receipt = self.run_route()
+        original = verify.read_commands(self.evidence)
+        for argument, replacement in (("--test-product", "NotebookCodexTests"),
+                                      ("--event-stream-output-path", "/dev/stdout")):
+            with self.subTest(argument=argument):
+                commands = copy.deepcopy(original)
+                argv = next(command for command in commands if command["label"] == "core-inventory-NotebookCoreTests")["argv"]
+                argv[argv.index(argument) + 1] = replacement
+                release.write_json(self.evidence / "commands.json", commands)
+                with self.assertRaisesRegex(release.ReleaseError, "argv или источник"):
+                    verify.validate_selected(self.root, self.evidence, self.changed_receipt(receipt))
 
     def test_parameterized_execution_requires_balanced_nonempty_case_events(self):
         function = copy.deepcopy(self.functions[0])

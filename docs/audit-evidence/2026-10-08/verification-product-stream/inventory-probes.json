@@ -1,0 +1,118 @@
+{
+  "commands": [
+    {
+      "argv": [
+        "swift",
+        "test",
+        "list",
+        "--skip-build",
+        "--disable-xctest",
+        "--test-product",
+        "NotebookCoreTests",
+        "--event-stream-output-path",
+        "/tmp/notebook-inventory-stream-20261008-2241/core-inventory.jsonl",
+        "--event-stream-version",
+        "6.4"
+      ],
+      "cwd": "/Users/amir/.codex/worktrees/notebook-storage-diagnostics/Notebook",
+      "elapsedSeconds": 0.821505708,
+      "eventFile": {
+        "bytes": 938679,
+        "path": "/tmp/notebook-inventory-stream-20261008-2241/core-inventory.jsonl",
+        "sha256": "e5371d9393db68e285d0ca7ca5785ffc2ca206c028f6a56ec9a4544f08705580"
+      },
+      "exitCode": 0,
+      "functions": 1443,
+      "malformedRecords": 0,
+      "product": "NotebookCoreTests",
+      "productBindingValidated": true,
+      "records": 1643,
+      "stderr": {
+        "bytes": 0,
+        "path": "/tmp/notebook-inventory-stream-20261008-2241/stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "stdout": {
+        "bytes": 143765,
+        "path": "/tmp/notebook-inventory-stream-20261008-2241/stdout.log",
+        "sha256": "eb411b42c420e8371df47af2408417352f917804653a0f6dda1af2443f33a253"
+      },
+      "suites": 200,
+      "testExecutions": 0
+    },
+    {
+      "argv": [
+        "swift",
+        "test",
+        "list",
+        "--skip-build",
+        "--disable-xctest",
+        "--test-product",
+        "NotebookScriptHostTests",
+        "--event-stream-output-path",
+        "/tmp/notebook-inventory-stream-20261008-2241/script-host-inventory.jsonl",
+        "--event-stream-version",
+        "6.4"
+      ],
+      "cwd": "/Users/amir/.codex/worktrees/notebook-storage-diagnostics/Notebook",
+      "elapsedSeconds": 0.599699584,
+      "eventFile": {
+        "bytes": 30895,
+        "path": "/tmp/notebook-inventory-stream-20261008-2241/script-host-inventory.jsonl",
+        "sha256": "c51656b41ea8afcab507dd7b157950e75ed93034055ca12185b4d9f4a54cb87b"
+      },
+      "exitCode": 0,
+      "functions": 42,
+      "malformedRecords": 0,
+      "product": "NotebookScriptHostTests",
+      "productBindingValidated": true,
+      "records": 54,
+      "stderr": {
+        "bytes": 0,
+        "path": "/tmp/notebook-inventory-stream-20261008-2241/script-host-stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "stdout": {
+        "bytes": 4891,
+        "path": "/tmp/notebook-inventory-stream-20261008-2241/script-host-stdout.log",
+        "sha256": "b55cca1a98663d856ff7ec45c7306561439c5dfb690130f92c143cf7ff3d2240"
+      },
+      "suites": 12,
+      "testExecutions": 0
+    }
+  ],
+  "format": 1,
+  "packageDescription": {
+    "argv": [
+      "swift",
+      "package",
+      "describe",
+      "--type",
+      "json"
+    ],
+    "cwd": "/Users/amir/.codex/worktrees/notebook-storage-diagnostics/Notebook",
+    "exitCode": 0,
+    "stderr": {
+      "bytes": 0,
+      "path": "/tmp/notebook-inventory-stream-20261008-2241/package-stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "stdout": {
+      "bytes": 36021,
+      "path": "/tmp/notebook-inventory-stream-20261008-2241/package.json",
+      "sha256": "a01cdaafe1cae6cbec82ef718fa2f885ff7d5c716ad50236603917a655e7b899"
+    },
+    "testProducts": [
+      "NotebookArchiveTransferTests",
+      "NotebookCodexTests",
+      "NotebookCoreTests",
+      "NotebookScriptHostTests",
+      "NotebookScriptWorkerTests"
+    ]
+  },
+  "scope": "Serial discovery from already compiled products; no Swift test function execution or rebuild.",
+  "selectedProducts": [
+    "NotebookCoreTests",
+    "NotebookScriptHostTests"
+  ]
+}

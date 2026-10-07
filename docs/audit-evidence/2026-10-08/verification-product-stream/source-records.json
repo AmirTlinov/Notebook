@@ -1,0 +1,40 @@
+{
+  "baseCommit": "0c93d02f0810b264998e8a1be3aa98fc2dedf9af",
+  "changedFileSetSHA256": "71683eb50c5c5f7dfab682869fa3bdcdc9be3e53f9b965463606948b50dc5691",
+  "changedFiles": [
+    {
+      "bytes": 66059,
+      "path": "Applications/notebook_verification.py",
+      "sha256": "daaba4a594184d2c83936883b667f7f1c0e5756419e770f1d84af67ba28912bd"
+    },
+    {
+      "bytes": 18431,
+      "path": "Applications/notebook_check_reports.py",
+      "sha256": "8277990b40a84ec194cd7a4363989dd5547614e3812f0f77e122924c7c4ce812"
+    },
+    {
+      "bytes": 30450,
+      "path": "Tests/NotebookVerification/test_registry.py",
+      "sha256": "d04a79e8116a85203f354b43bdfb21538191fd37bfe26e1a6a59f929b24bcba7"
+    }
+  ],
+  "format": 1,
+  "inventoryProbeSource": {
+    "existingReceiptAfter": {
+      "bytes": 326965,
+      "path": "/Users/amir/.codex/worktrees/notebook-storage-diagnostics/Notebook/.build/nb11-storage-20261008-sdk-v1/source-after.json",
+      "sha256": "c630365dc6c11c7c8b5fc531601222179393a7326426debfec2ae9b56454140b"
+    },
+    "existingReceiptBefore": {
+      "bytes": 326965,
+      "path": "/Users/amir/.codex/worktrees/notebook-storage-diagnostics/Notebook/.build/nb11-storage-20261008-sdk-v1/source-before.json",
+      "sha256": "c630365dc6c11c7c8b5fc531601222179393a7326426debfec2ae9b56454140b"
+    },
+    "existingReceiptBeforeEqualsAfter": true,
+    "fileCount": 1717,
+    "root": "/Users/amir/.codex/worktrees/notebook-storage-diagnostics/Notebook",
+    "scope": "Existing compiled NB11 source snapshot; owner kept the source frozen during the inventory probes. Probes have no standalone full-source before/after capture.",
+    "sourceSHA256": "cf3431088cea1e901c5adce9e5ad479e6cea39f5d2177f073509c574eb0a88e1"
+  },
+  "repairRoot": "/Users/amir/.codex/worktrees/notebook-verification-stream/Notebook"
+}

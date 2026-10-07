@@ -329,12 +329,12 @@ def portable_arguments(root, evidence, name):
 
 def core_arguments(evidence, expected=None, typescript=None, product=None):
     argv = list(next(check.command for check in CHECKS if check.platform == "core"))
+    release.require(isinstance(product, str) and re.fullmatch(r"[A-Za-z0-9_]+", product), "Неверный Swift test product.")
     if expected is None:
-        argv.extend(("list", "--disable-xctest"))
-        report = "/dev/stdout"
+        argv.extend(("list", "--disable-xctest", "--test-product", product))
+        report = str(evidence / ("core-" + product + "-inventory.jsonl"))
     else:
-        release.require(isinstance(product, str) and re.fullmatch(r"[A-Za-z0-9_]+", product)
-                        and all(identity.startswith(product + ".") for identity in expected), "Неверный Swift test product.")
+        release.require(expected and all(identity.startswith(product + ".") for identity in expected), "Неверный Swift test product.")
         argv.extend(("--disable-xctest", "--skip-build", "--test-product", product,
                      "--filter", "^(?:" + "|".join(re.escape(identity) for identity in expected) + ")$"))
         report = str(evidence / ("core-" + product + "-events.jsonl"))
@@ -352,11 +352,42 @@ def check_command(commands, label, argv, cwd):
     return entry
 
 
-def core_inventory_stream(evidence):
-    records = reports.swift_stdout(evidence / "core-inventory.stdout.log")
-    destination = evidence / "core-inventory.jsonl"
-    destination.write_text("".join(json.dumps(record, sort_keys=True) + "\n" for record in records))
-    return records
+def core_inventory_products(selectors, available):
+    selected = set()
+    for selector in selectors:
+        head = selector.split("/", 1)[0]
+        if head in available:
+            selected.add(head)
+        elif "." in head:
+            product = head.split(".", 1)[0]
+            release.require(product in available, "Selector names an absent Swift test product: " + product)
+            selected.add(product)
+        else:
+            # A bare suite or '*' can live in any actual test target. Resolve
+            # against each product's complete machine inventory, never stdout.
+            selected.update(available)
+    release.require(selected, "Не выбраны Swift test products.")
+    return sorted(selected)
+
+
+def core_inventory(evidence, selectors, origin, command=None, typescript=None):
+    package_argv = ["swift", "package", "describe", "--type", "json"]
+    if command:
+        command("core-package", package_argv, cwd=origin, timeout=600)
+    available = reports.swift_test_products(release.read_json(evidence / "core-package.stdout.log"), origin)
+    products = core_inventory_products(selectors, available)
+    inventory = {}
+    for product in products:
+        if command:
+            command("core-inventory-" + product, core_arguments(evidence, typescript=typescript, product=product),
+                    cwd=origin, timeout=600)
+        # SwiftPM's stdout/stderr transport converts arbitrary byte chunks to
+        # UTF-8 strings and can drop a chunk split inside a scalar. Each product
+        # owns a separate regular event file, outside that lossy text transport.
+        records = reports.rows(evidence / ("core-" + product + "-inventory.jsonl"))
+        release.require(all(record.get("kind") == "test" for record in records), "Swift inventory contains execution events.")
+        inventory.update(reports.swift_inventory(records, origin, product))
+    return inventory, products
 
 
 def core_products(expected):
@@ -371,7 +402,7 @@ def core_products(expected):
 def core_execution(evidence, expected, origin):
     executions = {}
     for product, identities in core_products(expected).items():
-        report = reports.swift_execution(reports.rows(evidence / ("core-" + product + "-events.jsonl")), identities, origin)
+        report = reports.swift_execution(reports.rows(evidence / ("core-" + product + "-events.jsonl")), identities, origin, product)
         executions.update(report["executions"])
     return {"format": 1, "planned": sorted(expected), "executed": sorted(executions),
             "executions": executions, "skipped": [], "failed": []}
@@ -604,12 +635,14 @@ def validate_check_evidence(source, plan, evidence, commands):
     actual = {}
     typescript = prepared_typescript(evidence, origin) if "typescript" in prerequisites(plan) else None
     if checks["core"]:
-        inventory_records = reports.swift_stdout(evidence / "core-inventory.stdout.log")
-        release.require(inventory_records == reports.rows(evidence / "core-inventory.jsonl"), "Swift inventory stream изменился.")
-        inventory = reports.swift_inventory(inventory_records, origin)
+        inventory, products = core_inventory(evidence, checks["core"], origin)
         expected = reports.resolve(checks["core"], list(inventory), core=True)
-        release.require(check_command(commands, "core-inventory", core_arguments(evidence, typescript=typescript), origin).get("stdoutMode") == "pipe",
-                        "Swift inventory product writers не использовали общий PIPE.")
+        check_command(commands, "core-package", ["swift", "package", "describe", "--type", "json"], origin)
+        release.require([entry["label"] for entry in commands if entry["label"].startswith("core-inventory-")]
+                        == ["core-inventory-" + product for product in products], "Swift inventory product commands differ from selection.")
+        for product in products:
+            check_command(commands, "core-inventory-" + product,
+                          core_arguments(evidence, typescript=typescript, product=product), origin)
         for product, identities in core_products(expected).items():
             check_command(commands, "core-" + product, core_arguments(evidence, identities, typescript, product), origin)
         actual["core"] = core_execution(evidence, expected, origin)
@@ -838,8 +871,7 @@ def run_selected(root, plan, evidence):
         release.require(binpath.is_absolute() and binpath.is_relative_to(root / ".build"), "Неверный IPC host prerequisite.")
         ipc_host = binpath / "notebook-ipc-test-host"
     if checks["core"]:
-        command("core-inventory", core_arguments(evidence, typescript=typescript), cwd=root, timeout=600, pipe_stdout=True)
-        inventory = reports.swift_inventory(core_inventory_stream(evidence), root)
+        inventory, _ = core_inventory(evidence, checks["core"], root, command, typescript)
         expected = reports.resolve(checks["core"], list(inventory), core=True)
         for product, identities in core_products(expected).items():
             command("core-" + product, core_arguments(evidence, identities, typescript, product), cwd=root, timeout=600)

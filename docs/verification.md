@@ -5,6 +5,14 @@
 Самостоятельного Mac-приложения нет. Изолированные native-проверки используют
 отдельную test-идентичность; каждый результат относится к своим исходникам.
 
+**8 октября, Swift inventory:** machine reports пишутся в отдельный файл каждого
+выбранного test product; доступные продукты берутся из SwiftPM description.
+Прежний stdout потерял UTF-8 chunk 8192 байта и склеил две Core JSON-строки.
+**31 Python PASS**; реальные inventory probes — Core **1643 записи / 1443 функции**,
+ScriptHost **54 / 42**, оба exit0, без malformed records. Это discovery из готовой
+сборки source `cf343108…`/1717; Swift test execution и Native в этот scope не входят.
+[Причина, точные команды и hashes](audit-evidence/2026-10-08/verification-product-stream/results.json).
+
 GUI-388: подготовка отдельных тел страницы ограничена фактическим окном;
 видимые объекты получают лимит16 раньше prefetch. Coarsen сохраняет границы окна,
 budget clipping пересчитывает допуск до подготовки пикселей, painter order сохранён.

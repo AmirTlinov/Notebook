@@ -1,0 +1,79 @@
+{
+  "artifacts": [
+    {
+      "bytes": 1817,
+      "path": "source-records.json",
+      "sha256": "6307936a0b050b4c138675e4580bcc350d93fbaf9549546a877e84e09f9a9a55"
+    },
+    {
+      "bytes": 3785,
+      "path": "inventory-probes.json",
+      "sha256": "5ae328066d55d765105a84a72317c980598b41452d0e15a0a0330d5f34695585"
+    },
+    {
+      "bytes": 3973,
+      "path": "python-checks.json",
+      "sha256": "31ffe011ca403d7b2550c9c3dfd32bce85cacb1f9fa29d4544e663c719ae6863"
+    },
+    {
+      "bytes": 145,
+      "path": "toolchain.json",
+      "sha256": "1942ce3eca3124cc54845493d9dafe4bee970e0569479a40724102bc9fdcdfab"
+    }
+  ],
+  "baseCommit": "0c93d02f0810b264998e8a1be3aa98fc2dedf9af",
+  "binaryArtifactsRetained": false,
+  "boundaries": {
+    "NativeChecksExecuted": 0,
+    "SwiftFunctionsExecuted": 0,
+    "fullAcceptance": false,
+    "inventoryOnly": true,
+    "publicNB11SelectedExecution": "pending integration; the earlier malformed inventory never certified a selected PASS"
+  },
+  "branch": "codex/verification-product-stream",
+  "cause": {
+    "malformedLine": 1940,
+    "malformedLineBytes": 280,
+    "observed": "The third Swift inventory stdout lost exactly 8192 bytes and spliced two Core JSON rows; 14 complete records were missing.",
+    "priorAttempts": [
+      {
+        "attempt": "core-v2",
+        "malformedJSONRecords": 0,
+        "stdout": {
+          "bytes": 1201826,
+          "path": "/Users/amir/.codex/worktrees/notebook-storage-diagnostics/Notebook/.build/nb11-storage-20261008-core-v2/core-inventory.stdout.log",
+          "sha256": "ff780b1c11aadb25d60b89a2332f5f4dc921d9c1041b211dcc3c1d2ceb83d306"
+        },
+        "validJSONRecords": 1827
+      },
+      {
+        "attempt": "core-v3",
+        "malformedJSONRecords": 1,
+        "stdout": {
+          "bytes": 1193634,
+          "path": "/Users/amir/.codex/worktrees/notebook-storage-diagnostics/Notebook/.build/nb11-storage-20261008-core-v3/core-inventory.stdout.log",
+          "sha256": "714407745c7bae2fbbba369f9ea49c5393eaa62230867644eefff834fd69f276"
+        },
+        "validJSONRecords": 1813
+      }
+    ],
+    "transport": "SwiftPM decodes individual stdout/stderr byte chunks through failable UTF-8 String conversion and drops a chunk split inside a scalar.",
+    "upstreamSource": "https://github.com/swiftlang/swift-package-manager/blob/main/Sources/Commands/SwiftTestCommand.swift"
+  },
+  "change": "SwiftPM package description owns available products. Qualified selectors narrow discovery; bare suites and wildcard discover all actual products serially. Each product owns a unique regular inventory file, outside lossy stdout. Receipt validation binds product IDs/fileID, schema, source, argv and complete selected execution; malformed reports still refuse.",
+  "date": "2026-10-08",
+  "format": 1,
+  "rawInventoriesRetained": false,
+  "status": "focused_checks_passed",
+  "validation": {
+    "inventoryProbes": "inventory-probes.json",
+    "passed": 31,
+    "probeFunctions": {
+      "NotebookCoreTests": 1443,
+      "NotebookScriptHostTests": 42
+    },
+    "pythonChecks": "python-checks.json",
+    "sourceRecords": "source-records.json",
+    "toolchain": "toolchain.json"
+  }
+}
