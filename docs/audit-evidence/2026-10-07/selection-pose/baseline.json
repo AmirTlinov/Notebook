@@ -1,0 +1,198 @@
+{
+  "date": "2026-10-07",
+  "baseCommit": "072b0ebcbac83244f28e605de5c7e92bd04f4602",
+  "sourceSHA256": "08ddfebfecf623bb3a9596b5e54bcd615ae607b0997438ad76c98f2c3f9270a4",
+  "sourceBeforeEqualsAfter": true,
+  "files": {
+    "Applications/Shared/InkCanvasView.swift": "08d048923cb96dbdbb0dc89ce9c6141dd3f53f6c9b5767519a94da25e27a429f",
+    "Applications/Shared/InkOrderedGeometry.swift": "a28c8de98922f7283fa4e1cee3274efa4ad4b96aacc41043cf6d39546b496e8d",
+    "Applications/Shared/NotebookOrderedInkPlan.swift": "2064505d4368986ef4885f19f11c102f8ef7e50c8bd13ad6d88f28ecc18651c1",
+    "Applications/Shared/NotebookSelectionPresentation.swift": "45e9419db59d53b3f0a28e18f1801d99c2b8eb68e8f2b446563753631e675779",
+    "Applications/Tests/NotebookSelectionPoseLatencyTests.swift": "d4e6fc9dcdb5fe55c62031ee9b8436454ef7122392d98be5994f29fcad33b321",
+    "Sources/NotebookCore/InkActionMap.swift": "10588f40c3380fd00c80cbc09cf116bd893627ba41192ec98f48575ea27d0458",
+    "Sources/NotebookCore/WorkspaceSpatialIndex.swift": "7d45f597c5b5988dba41b7a4e82ef04971426f47569cd2ed20281feb68b9f1e9"
+  },
+  "command": "./verify.sh --only --optimized --test NotebookTests/NotebookSelectionPoseLatencyTests/testInstalledSelectionPoseLatencyAtOneAnd100000ForeignBodies --evidence-dir .build/selection-pose-baseline-20261007-v2",
+  "device": {
+    "architecture": "arm64",
+    "deviceId": "00008103-001E059934D9001E",
+    "deviceName": "iPad (Елизавета)",
+    "modelName": "iPad Pro (11-inch) (3rd generation)",
+    "osBuildNumber": "24A435",
+    "osVersion": "27.0",
+    "platform": "iOS"
+  },
+  "checks": {
+    "passed": 1,
+    "failed": 0,
+    "skipped": 0,
+    "runtimeWarnings": [],
+    "incrementalCompilerWarnings": 0
+  },
+  "nativeCropPoints": [
+    400,
+    400
+  ],
+  "drawablePixels": [
+    800,
+    800
+  ],
+  "cases": [
+    {
+      "foreignBodies": 1,
+      "orderedBodies": 3,
+      "counts": {
+        "fixed120Hz": 120,
+        "exactInstalled": 39,
+        "exactPresented": 39,
+        "superseded": 81,
+        "unmatchedReceipts": 0,
+        "unexpectedInstalledFrames": 0
+      },
+      "latencyMS": {
+        "scheduledToDeliveryMS": {
+          "n": 120,
+          "p50": 1.1667083017528057,
+          "p95": 1.2924583279527724,
+          "p99": 2.3950416361913085,
+          "max": 4.166666651144624
+        },
+        "deliveryToReturnMS": {
+          "n": 120,
+          "p50": 0.1579166273586452,
+          "p95": 0.2210000529885292,
+          "p99": 0.23570831399410963,
+          "max": 0.23595831589773297
+        },
+        "scheduledToExactOSMS": {
+          "n": 39,
+          "p50": 45.105625002179295,
+          "p95": 61.54570827493444,
+          "p99": 61.55929161468521,
+          "max": 61.55929161468521
+        },
+        "scheduledToNextAdvancingPoseOSMS": {
+          "n": 120,
+          "p50": 57.41445830790326,
+          "p95": 78.22595827747136,
+          "p99": 86.5457082982175,
+          "max": 86.55929163796827
+        }
+      },
+      "preparationMS": {
+        "setupMS": 0.7040000054985285,
+        "prepareMS": 47.0072083408013,
+        "initialInstallMS": 37.58945834124461
+      },
+      "memoryBytes": {
+        "footprintBefore": 34489136,
+        "footprintPrepared": 35095344,
+        "preparationPeak": 35095344,
+        "accountedBytes": 8406128,
+        "limitBytes": 268435456
+      },
+      "thermal": "nominal",
+      "lowPower": false,
+      "sampleCSV": "baseline-1.csv",
+      "sampleSHA256": "a3cdf8701b77ce527da19ec599bda3b3a28efebd2c7ed10220f5fbe6b1c7a249",
+      "pixels": [
+        {
+          "kind": "initial",
+          "file": "3258917B-79C4-4946-833E-7302D2CE833A.png",
+          "sha256": "ae98bb2bf2346da4acc9b013ec7fa11f70f61c4a3f8c2bfc0d16c94aa0f061fc"
+        },
+        {
+          "kind": "final",
+          "file": "A032EBB7-2D82-4DD8-AAD2-E03EC8E37855.png",
+          "sha256": "edd5f5e070681f019869f02a1bca8406fe0d9c1dffb3a25ba9b54c1c1c512565"
+        }
+      ]
+    },
+    {
+      "foreignBodies": 100000,
+      "orderedBodies": 100002,
+      "counts": {
+        "fixed120Hz": 120,
+        "exactInstalled": 4,
+        "exactPresented": 4,
+        "superseded": 116,
+        "unmatchedReceipts": 0,
+        "unexpectedInstalledFrames": 0
+      },
+      "latencyMS": {
+        "scheduledToDeliveryMS": {
+          "n": 120,
+          "p50": 96.60862502641976,
+          "p95": 196.40704162884504,
+          "p99": 221.34841670049354,
+          "max": 229.61662500165403
+        },
+        "deliveryToReturnMS": {
+          "n": 120,
+          "p50": 0.016375037375837564,
+          "p95": 0.029958318918943405,
+          "p99": 0.06450002547353506,
+          "max": 0.06508332444354892
+        },
+        "scheduledToExactOSMS": {
+          "n": 4,
+          "p50": 241.57562502659857,
+          "p95": 362.68679169006646,
+          "p99": 362.68679169006646,
+          "max": 362.68679169006646
+        },
+        "scheduledToNextAdvancingPoseOSMS": {
+          "n": 120,
+          "p50": 437.6867916435003,
+          "p95": 608.2422916661017,
+          "p99": 649.9089583521709,
+          "max": 658.2422916544601
+        }
+      },
+      "preparationMS": {
+        "setupMS": 354.2682499974035,
+        "prepareMS": 5976.052041631192,
+        "initialInstallMS": 139.64112504618242
+      },
+      "memoryBytes": {
+        "footprintBefore": 43303752,
+        "footprintPrepared": 776537456,
+        "preparationPeak": 776537456,
+        "accountedBytes": 22805984,
+        "limitBytes": 268435456
+      },
+      "thermal": "nominal",
+      "lowPower": false,
+      "sampleCSV": "baseline-100000.csv",
+      "sampleSHA256": "0233514d6fa1c919259acad993d122d7ae60ba804e7ad7cb8f0a8597830827ca",
+      "pixels": [
+        {
+          "kind": "initial",
+          "file": "11145D31-32C5-4A5F-8DAF-2D6C7C523BCC.png",
+          "sha256": "ae98bb2bf2346da4acc9b013ec7fa11f70f61c4a3f8c2bfc0d16c94aa0f061fc"
+        },
+        {
+          "kind": "final",
+          "file": "F2DC88F2-0CB5-4DD1-A0BD-7AC50117B16A.png",
+          "sha256": "edd5f5e070681f019869f02a1bca8406fe0d9c1dffb3a25ba9b54c1c1c512565"
+        }
+      ]
+    }
+  ],
+  "scope": [
+    "Ordinary selection model/presentation owner with native mounted InkCanvasView and matching Metal OS receipts.",
+    "Fixed 120 Hz demands keep delivery backlog and superseded requests; final exact pose and visible unchanged neighbor checked.",
+    "Foreign source assembly and clip preparation precede motion with the default 256 MiB scene resource budget."
+  ],
+  "evidenceDirectory": ".build/selection-pose-baseline-20261007-v2",
+  "screenshotsReviewed": [
+    "11145D31-32C5-4A5F-8DAF-2D6C7C523BCC.png",
+    "F2DC88F2-0CB5-4DD1-A0BD-7AC50117B16A.png"
+  ],
+  "remaining": [
+    "Production selection unchanged; baseline records severe content-dependent latency.",
+    "Single native replay per workload; no compositor FPS or physical Pencil measurement.",
+    "Foreign bodies do not pass through SQL/model assembly. Actual process footprint greatly exceeds accounted bytes; precise backing allocation split remains unmeasured.",
+    "V1 ended in a harness private-setter compile error; v2 uses public selectElements and completes both workloads."
+  ]
+}

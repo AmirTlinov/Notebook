@@ -378,6 +378,14 @@ GUI-196, GUI-197, GUI-183 и длительная GUI-250 остаются от�
 
 ## Открытые измерения
 
+- **Перемещение выделенного тела, GUI-524.** Физический optimized replay: 120
+  запросов позы, один moving body с неизменным видимым соседом. При 1/100000
+  чужих тел вне crop scheduled→next advancing pose OS p95 **78,23/608,24 мс**;
+  показаны 39/4 точные позы, вытесненные запросы сохранены. Pixel/receipt проверки
+  **1 PASS**, без skip/runtime warnings, исходники неизменны. Подготовка отдельно
+  **47/5976 мс**, footprint при 100k **776,54 MB** при учтённых **22,81 MB**.
+  Production selection ещё не изменён; адресный путь и учёт памяти в работе.
+  [Baseline, фазы и все запросы](audit-evidence/2026-10-07/selection-pose/baseline.json).
 - **Pencil/eraser, ≤ 20 мс по контракту.** Настоящий Pencil в установленной 253:
   6880 input batches, без потерь событий/сэмплов и ошибок записи; actual→OS
   pen/eraser p95 **57,39/57,43 мс**, 118 unresolved lift batches. GPU execution
