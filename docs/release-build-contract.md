@@ -242,12 +242,17 @@ python3 -B Applications/notebook_release.py install-pair \
   --evidence-dir /absolute/new-installation-directory
 ```
 
-Before installation, finish the serving runtime through ordinary quit and wait
-for its process to exit. On the first plugin transition, unregister the former
-Notebook login item. The installer refuses a live owner, downgrades and changed
-signed bytes. It publishes the complete verified plugin, installs it, checks its actual cached payload,
-then updates iPad in place and reads back the installed identity. Unknown outcomes
-remain `incomplete`; it never restores data or retries an uncertain installation.
+The installer completes device, signature and storage preflight before requesting
+the installed runtime's saved quit. It admits only bundle paths resolved from the
+current publication and Codex cache, matching the IPC peer's kernel audit token,
+running path and CDHash. Token-bound SIGTERM cannot target a reused PID. The same
+writer-lease FD stays held through publication, plugin installation and cached
+payload validation. Up to three verified relaunches may be retired; unsaved work,
+an unknown owner or a 30-second drain timeout refuses publication without force.
+On the first plugin transition, unregister the former Notebook login item.
+Downgrades and changed signed bytes refuse installation. The installer then
+updates iPad in place and reads back its identity. Unknown outcomes remain
+`incomplete`; it never restores data or retries an uncertain installation.
 
 The iPad preservation check uses its bundle domain. It compares the bounded
 workspace catalog bytes and IDs before preparation, immediately before the iPad

@@ -1,6 +1,7 @@
 """Build input, signature and evidence contracts shared by Notebook release commands."""
 import argparse
 import contextlib
+import ctypes
 import datetime
 import errno
 import fcntl
@@ -11,11 +12,13 @@ from pathlib import Path
 import plistlib
 import re
 import shutil
+import signal
 import socket
 import subprocess
 import sys
 import stat
 import tempfile
+import time
 import prepare_notebook_typesetter as notebook_typesetter
 import prepare_notebook_typescript as notebook_typescript
 import prepare_notebook_codex as notebook_codex
@@ -789,9 +792,97 @@ def plugin_publication_lease(root):
         os.close(descriptor)
 
 
+def installed_runtime_identities(command, apps):
+    """Admit only the installed bundle paths already resolved by pair preflight."""
+    result = {}
+    for app in sorted(set(path.resolve() for path in apps)):
+        info_path = app / "Contents/Info.plist"
+        if not info_path.exists():
+            continue
+        info = plistlib.loads(info_path.read_bytes())
+        if info.get("CFBundleExecutable") != "NotebookRuntime":
+            continue
+        require(info.get("CFBundleIdentifier") == MAC_BUNDLE and info.get("NotebookPluginRuntime") is True
+                and info.get("LSUIElement") is True, "Установленный runtime не имеет идентичности Notebook plugin.")
+        label = "installed-runtime-" + str(len(result))
+        requirement = '=anchor apple generic and identifier "' + MAC_BUNDLE + '" and certificate leaf[subject.OU] = "' + TEAM + '"'
+        command(label + "-verify", ["/usr/bin/codesign", "--verify", "--deep", "--strict", "-R", requirement, app])
+        display = command(label + "-identity", ["/usr/bin/codesign", "--display", "--verbose=4", app], read_output=True)
+        identity = signature_identity(b"\n".join(display).decode(), MAC_BUNDLE)
+        result[str(app / "Contents/MacOS/NotebookRuntime")] = identity["cdhash"]
+    return result
+
+
+class RuntimeAuditToken(ctypes.Structure):
+    _fields_ = [("val", ctypes.c_uint32 * 8)]
+
+
+def runtime_peer(endpoint):
+    """The socket supplies the kernel's process identity, including PID version."""
+    with socket.socket(socket.AF_UNIX) as probe:
+        probe.settimeout(0.5)
+        try:
+            probe.connect(str(endpoint))
+        except OSError as error:
+            require(error.errno in (errno.ENOENT, errno.ECONNREFUSED), "Не удалось проверить владельца Notebook IPC.")
+            return None
+        # sys/un.h: SOL_LOCAL / LOCAL_PEERTOKEN. No domain request or store read.
+        token = probe.getsockopt(0, 0x006, ctypes.sizeof(RuntimeAuditToken))
+        require(len(token) == ctypes.sizeof(RuntimeAuditToken), "IPC не подтвердил audit identity владельца.")
+        return token
+
+
+def runtime_process_identity(raw_token):
+    """Read the running path and CDHash against the same PID-version token."""
+    token = RuntimeAuditToken.from_buffer_copy(raw_token)
+    bsm = ctypes.CDLL("/usr/lib/libbsm.dylib")
+    for name in ("audit_token_to_pid", "audit_token_to_euid"):
+        function = getattr(bsm, name)
+        function.argtypes = [RuntimeAuditToken]
+        function.restype = ctypes.c_uint32
+    pid, uid = bsm.audit_token_to_pid(token), bsm.audit_token_to_euid(token)
+    require(pid > 0 and uid == os.geteuid(), "IPC принадлежит неизвестному владельцу или другому пользователю.")
+    proc = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+    proc.proc_pidpath_audittoken.argtypes = [ctypes.POINTER(RuntimeAuditToken), ctypes.c_void_p, ctypes.c_uint32]
+    proc.proc_pidpath_audittoken.restype = ctypes.c_int
+    path = ctypes.create_string_buffer(4096)
+    if proc.proc_pidpath_audittoken(ctypes.byref(token), path, len(path)) <= 0:
+        if ctypes.get_errno() == errno.ESRCH:
+            return None
+        raise ReleaseError("Не удалось проверить путь действующего Notebook IPC peer.")
+    system = ctypes.CDLL(None, use_errno=True)
+    system.csops_audittoken.argtypes = [ctypes.c_int, ctypes.c_uint32, ctypes.c_void_p, ctypes.c_size_t,
+                                      ctypes.POINTER(RuntimeAuditToken)]
+    system.csops_audittoken.restype = ctypes.c_int
+    cdhash = ctypes.create_string_buffer(20)
+    if system.csops_audittoken(pid, 5, cdhash, len(cdhash), ctypes.byref(token)) != 0:  # CS_OPS_CDHASH
+        if ctypes.get_errno() == errno.ESRCH:
+            return None
+        raise ReleaseError("Не удалось проверить подпись действующего Notebook IPC peer.")
+    return {"pid": pid, "uid": uid, "executable": os.fsdecode(path.value), "cdhash": cdhash.raw.hex()}
+
+
+def request_runtime_termination(raw_token, approved):
+    identity = runtime_process_identity(raw_token)
+    if identity is None:
+        return None
+    require(approved.get(identity["executable"]) == identity["cdhash"],
+            "Неизвестный владелец Notebook IPC: путь или подпись не совпали с установленным runtime.")
+    token = RuntimeAuditToken.from_buffer_copy(raw_token)
+    proc = ctypes.CDLL("/usr/lib/libproc.dylib")
+    proc.proc_signal_with_audittoken.argtypes = [ctypes.POINTER(RuntimeAuditToken), ctypes.c_int]
+    proc.proc_signal_with_audittoken.restype = ctypes.c_int
+    # libproc returns errno directly. The kernel compares PID version when
+    # signalling, so an exited peer's reused PID cannot receive this request.
+    status = proc.proc_signal_with_audittoken(ctypes.byref(token), signal.SIGTERM)
+    require(status in (0, errno.ESRCH), "Не удалось запросить штатное завершение Notebook runtime.")
+    return identity if status == 0 else None
+
+
 @contextlib.contextmanager
-def stopped_runtime(command, root=None):
-    """Share the production writer lease while replacing only plugin binaries."""
+def stopped_runtime(command, approved=None, root=None, *, wait_seconds=30):
+    """Gracefully retire an admitted owner and hold its existing writer lease."""
+    approved = approved or {}
     root = root or Path("/tmp") / ("notebook-" + str(os.geteuid()))
     root.mkdir(mode=0o700, exist_ok=True)
     info = root.lstat()
@@ -805,23 +896,41 @@ def stopped_runtime(command, root=None):
         require(stat.S_ISREG(info.st_mode) and info.st_uid == os.geteuid() and stat.S_IMODE(info.st_mode) == 0o600
                 and info.st_nlink == 1 and (info.st_dev, info.st_ino) == (current.st_dev, current.st_ino),
                 "Файл владельца runtime должен принадлежать пользователю с правами 0600.")
-        try:
-            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as error:
-            raise ReleaseError("Notebook runtime ещё работает; завершите его обычным способом до установки.") from error
-        with socket.socket(socket.AF_UNIX) as probe:
-            probe.settimeout(0.5)
-            try:
-                probe.connect(str(endpoint))
-            except OSError as error:
-                require(error.errno in (errno.ENOENT, errno.ECONNREFUSED), "Не удалось проверить владельца Notebook IPC.")
-            else:
-                raise ReleaseError("Notebook обслуживает рабочее пространство; завершите его обычным способом до установки.")
         processes = command("owners-before-install", ["/bin/ps", "-axo", "pid=,comm="], read_output=True)[0].decode()
         legacy = {str(path / "Contents/MacOS/Notebook") for path in (CANONICAL_MAC, Path("/Applications/Notebook.app"))}
         require(not any(line.strip().split(None, 1)[-1] in legacy for line in processes.splitlines() if line.strip()),
                 "Настольный Notebook ещё завершает работу; дождитесь выхода процесса.")
-        yield
+        deadline = time.monotonic() + wait_seconds
+        requested, shutdown = set(), []
+        while True:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                held = False
+            else:
+                held = True
+            peer = runtime_peer(endpoint)
+            if held:
+                require(peer is None, "Notebook обслуживает рабочее пространство без подтверждённого writer lease.")
+                current = lease.lstat()
+                require(stat.S_ISREG(current.st_mode) and current.st_uid == os.geteuid()
+                        and stat.S_IMODE(current.st_mode) == 0o600 and current.st_nlink == 1
+                        and (current.st_dev, current.st_ino) == (info.st_dev, info.st_ino),
+                        "Файл writer lease изменился во время завершения runtime; публикация не начата.")
+                yield shutdown
+                return
+            require(peer is not None or bool(requested), "Неизвестный владелец Notebook writer lease; приложение не остановлено.")
+            if peer is not None and peer not in requested:
+                require(len(requested) < 3, "Notebook runtime повторно запускается; публикация не начата.")
+                identity = request_runtime_termination(peer, approved)
+                requested.add(peer)
+                if identity is not None:
+                    shutdown.append(identity)
+                # Acquire this same FD immediately after requesting saved quit.
+                continue
+            require(time.monotonic() < deadline,
+                    "Notebook runtime не завершил сохранение; владелец оставлен активным, публикация не начата.")
+            time.sleep(0.05)
     finally:
         os.close(descriptor)
 
@@ -1022,7 +1131,10 @@ def install_verified_pair(source, build, evidence, runner=None):
                         "Установленный runtime новее этой пары или имеет другую идентичность; downgrade запрещён.")
         receipt.update({"ipadBefore": before, "ipadWorkspaceBefore": workspace_before,
                         "canonicalBefore": canonical, "marketplace": str(stable)})
-        with stopped_runtime(command):
+        approved = installed_runtime_identities(command, current_apps)
+        receipt["step"] = "stop-runtime"; write_json(evidence / "installation.json", receipt)
+        with stopped_runtime(command, approved) as shutdown:
+            receipt["runtimeShutdown"] = shutdown
             receipt.update({"status": "incomplete", "installationAttempted": True, "step": "publish-plugin"})
             write_json(evidence / "installation.json", receipt)
             publication = json.loads(plugin_command("publish-plugin", ["publish", plugin], read_output=True, timeout=600)[0])
@@ -1031,20 +1143,20 @@ def install_verified_pair(source, build, evidence, runner=None):
             require(app_manifest(Path(publication["plugin"]) / "runtime/NotebookRuntime.app") == read_json(build / "mac-manifest.json"),
                     "Подписанный runtime изменился при переносе в marketplace.")
             receipt["publication"] = publication
-        # Releasing the lease allows Codex's new connection to start its owner.
-        receipt["step"] = "install-plugin"; write_json(evidence / "installation.json", receipt)
-        plugin_command("install-plugin", ["install"], cwd=snapshot, timeout=120)
-        connected = json.loads(command("installed-plugin", [codex, "mcp", "get", "notebook", "--json"], read_output=True)[0])
-        transport = connected.get("transport", {})
-        executable = Path(transport.get("command", ""))
-        suffix = ("Contents", "Resources", "CodexRuntime", "node")
-        require(connected.get("enabled") is True and transport.get("type") == "stdio" and executable.is_absolute()
-                and executable.parts[-4:] == suffix, "Codex не подключил bundled Notebook runtime.")
-        cached = executable.parents[3]
-        require(transport.get("args") == [str(cached / "Contents/Resources/NotebookTools/dist/launch-runtime.mjs")],
-                "Codex подключил неверные аргументы запуска Notebook runtime.")
-        require(app_manifest(cached) == read_json(build / "mac-manifest.json"),
-                "Нарушена целостность подписанного runtime в кеше Codex: состав или содержимое файлов не совпадает с проверенной сборкой.")
+            receipt["step"] = "install-plugin"; write_json(evidence / "installation.json", receipt)
+            plugin_command("install-plugin", ["install"], cwd=snapshot, timeout=120)
+            connected = json.loads(command("installed-plugin", [codex, "mcp", "get", "notebook", "--json"], read_output=True)[0])
+            transport = connected.get("transport", {})
+            executable = Path(transport.get("command", ""))
+            suffix = ("Contents", "Resources", "CodexRuntime", "node")
+            require(connected.get("enabled") is True and transport.get("type") == "stdio" and executable.is_absolute()
+                    and executable.parts[-4:] == suffix, "Codex не подключил bundled Notebook runtime.")
+            cached = executable.parents[3]
+            require(transport.get("args") == [str(cached / "Contents/Resources/NotebookTools/dist/launch-runtime.mjs")],
+                    "Codex подключил неверные аргументы запуска Notebook runtime.")
+            require(app_manifest(cached) == read_json(build / "mac-manifest.json"),
+                    "Нарушена целостность подписанного runtime в кеше Codex: состав или содержимое файлов не совпадает с проверенной сборкой.")
+        # Only release after Codex's actual cached payload has been admitted.
         preinstall = device_apps("ipad-preinstall", BUNDLE)
         fields = ("bundleIdentifier", "bundleVersion", "version", "url")
         require([{key: info.get(key) for key in fields} for info in preinstall]
