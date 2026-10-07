@@ -1,0 +1,50 @@
+{
+  "artifacts": [
+    {
+      "bytes": 3267,
+      "path": "browser-commands.json",
+      "sha256": "7c69920ccf5939a76181e8913209fc1d3386b977162ded091a717a654884a836"
+    },
+    {
+      "bytes": 4216,
+      "path": "core-execution.json",
+      "sha256": "ea66ee4710b6e71100f0751a4ac0d2952e9e926090428416eb752ed1288b5c98"
+    },
+    {
+      "bytes": 2633,
+      "path": "core.stdout.log",
+      "sha256": "52a5b1993005280ede34ef26fdf5da43b67e1e9e51b12266daf92d89437c3083"
+    },
+    {
+      "bytes": 2086,
+      "path": "mac-execution.json",
+      "sha256": "79fe8c62cfcaba937be2659329943cd369bb887261a34a005e4684538c565c58"
+    },
+    {
+      "bytes": 1767,
+      "path": "mac-timings.json",
+      "sha256": "315e2d7aff114d63d35c720b71d6aa7deb10d7c7c0ee20d16c73be2d7e1b24ce"
+    },
+    {
+      "bytes": 3235,
+      "path": "results.json",
+      "sha256": "045e9e7041cd01bd97d346bf3eb32d896ff974daee445ad0641341d507011b8a"
+    },
+    {
+      "bytes": 1737,
+      "path": "source-records.json",
+      "sha256": "5d284086e4a7addac20f34122d5d57c615542b3f381c4d32519daa0966345e62"
+    },
+    {
+      "bytes": 2126,
+      "path": "surface.stdout.log",
+      "sha256": "ed0dd525070b172fca292539f3bee7bb0672a70c1dc5f5d3ec197d5ddf00c664"
+    },
+    {
+      "bytes": 427,
+      "path": "toolchains.json",
+      "sha256": "1aed22690ba4d5831cb2ea30129cc803acb3867dbe52b7eb4da8ec5a12d1c624"
+    }
+  ],
+  "format": 1
+}

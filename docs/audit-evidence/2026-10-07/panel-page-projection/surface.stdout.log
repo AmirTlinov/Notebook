@@ -1,0 +1,77 @@
+TAP version 13
+# Subtest: cover selection keeps native painter order when pixels merge into tiles
+ok 1 - cover selection keeps native painter order when pixels merge into tiles
+  ---
+  duration_ms: 2.389666
+  type: 'test'
+  ...
+# Subtest: camera selection work stays bounded with 100000 native hits
+ok 2 - camera selection work stays bounded with 100000 native hits
+  ---
+  duration_ms: 171.938375
+  type: 'test'
+  ...
+# Subtest: selection source and focus follow the accepted cohort through preview, reuse and deletion
+ok 3 - selection source and focus follow the accepted cohort through preview, reuse and deletion
+  ---
+  duration_ms: 0.974917
+  type: 'test'
+  ...
+# Subtest: same-source late coarse material cannot replace sharper pixels at the current zoom
+ok 4 - same-source late coarse material cannot replace sharper pixels at the current zoom
+  ---
+  duration_ms: 0.23375
+  type: 'test'
+  ...
+# Subtest: zoom-out admits lower excess density using the current display scale
+ok 5 - zoom-out admits lower excess density using the current display scale
+  ---
+  duration_ms: 0.18975
+  type: 'test'
+  ...
+# Subtest: an inadequate prior admits the current native pixel budget reply and ends demand
+ok 6 - an inadequate prior admits the current native pixel budget reply and ends demand
+  ---
+  duration_ms: 0.186875
+  type: 'test'
+  ...
+# Subtest: coarser material still admits fresh source identity and visible coverage gains
+    # Subtest: revision
+    ok 1 - revision
+      ---
+      duration_ms: 0.145416
+      type: 'test'
+      ...
+    # Subtest: workspace
+    ok 2 - workspace
+      ---
+      duration_ms: 0.122416
+      type: 'test'
+      ...
+    # Subtest: endpoint
+    ok 3 - endpoint
+      ---
+      duration_ms: 0.104708
+      type: 'test'
+      ...
+    # Subtest: coverage
+    ok 4 - coverage
+      ---
+      duration_ms: 0.125375
+      type: 'test'
+      ...
+    1..4
+ok 7 - coarser material still admits fresh source identity and visible coverage gains
+  ---
+  duration_ms: 0.70625
+  type: 'test'
+  ...
+1..7
+# tests 11
+# suites 0
+# pass 11
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 390.253208

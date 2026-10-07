@@ -239,8 +239,11 @@ extension NotebookStore {
       if target.kind == .board { try requireLiveBoard(target.id) }
       else { _ = try readContentHeader(target: target) }
       try pageContent?.validate(in: self, workspaceID: workspaceID, target: target)
+      let suppliedBounds = try request.bounds?.validated()
       let cursor = String(try currentReadCursor())
-      if request.knownCursor == cursor && request.includeFitBounds != true {
+      // A content cursor alone does not prove the same page window after a pan.
+      if request.knownCursor == cursor && request.includeFitBounds != true
+        && (target.kind != .page || suppliedBounds == nil) {
         return .object(["workspaceID": try .encode(workspaceID), "target": try .encode(target),
           "cursor": .string(cursor), "unchanged": .bool(true)])
       }
@@ -250,11 +253,11 @@ extension NotebookStore {
       if target.kind == .page {
         let page = try pageContent?.page ?? loadPage(target.id)
         size = try .encode(page.size)
-        if let pageContent { elements = pageContent.elements; rawInkPresent = pageContent.rawInkPresent }
-        else { (elements, rawInkPresent) = try NotebookPanelPageContent.projection(page) }
+        worldOrigin = try .encode(WorldPoint.zero)
+        (elements, rawInkPresent) = try NotebookPanelPageContent.projection(page, bounds: suppliedBounds)
       } else {
         let bounds: WorkspaceSpatialBounds
-        if let supplied = request.bounds { bounds = try supplied.validated() }
+        if let suppliedBounds { bounds = suppliedBounds }
         else {
           let width = max(1, (presence?.viewport.x ?? 1100) / max(0.01, presence?.camera.scale ?? 1))
           let height = max(1, (presence?.viewport.y ?? 780) / max(0.01, presence?.camera.scale ?? 1))

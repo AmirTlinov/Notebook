@@ -30,8 +30,13 @@ final class NotebookPanelPageAdmissionTests: XCTestCase {
       let subjects = Set(layers.compactMap { $0["elementID"]?.stringValue })
       let expected = prefetched ? Set(farIDs.prefix(15)).union([visibleID]) : [visibleID]
       XCTAssertEqual(subjects, expected, "The quota is applied after geometry and gives the current viewport its first grant")
-      XCTAssertEqual(snapshot["elements"]?.arrayValues.map { $0["source"] }, content.elements.map { $0["source"] },
-        "Admission never filters authored hit/source data")
+      let projected = try content.projection(in: .init(anchor: geometry.coverage.tiles[0].origin,
+        region: .init(x: 0, y: 0, width: geometry.window.width, height: geometry.window.height))).elements
+      let sourceIDs = try XCTUnwrap(snapshot["elements"]?.arrayValues).compactMap { $0["source"]?["id"]?.stringValue }
+      XCTAssertEqual(sourceIDs, (prefetched ? farIDs : []) + [visibleID, topID],
+        "Disclosure preserves passive-band hit sources and whole prefetched neighbors, while excluding distant sources")
+      XCTAssertEqual(snapshot["elements"]?.arrayValues.map { $0["source"] }, projected.map { $0["source"] })
+      XCTAssertTrue(subjects.isSubset(of: Set(sourceIDs)), "Every prepared body retains its JSON hit/source")
       XCTAssertEqual(snapshot["elements"]?.arrayValues.first { $0["source"]?["id"] == .string(visibleID) }?["editable"], .bool(true))
       let body = try XCTUnwrap(layers.first { $0["elementID"] == .string(visibleID) })
       XCTAssertEqual(try XCTUnwrap(body["subjectFrame"]).decode(PageRect.self), visibleFrame)
@@ -58,6 +63,49 @@ final class NotebookPanelPageAdmissionTests: XCTestCase {
       let reused = try XCTUnwrap(warm.snapshot["appearance"]?["layers"]?.arrayValues.first { $0["elementID"] == .string(visibleID) })
       XCTAssertEqual(reused["assetID"], body["assetID"]); XCTAssertNil(reused["pngBase64"])
     }
+  }
+
+  @MainActor
+  func testPageWindowDisclosesOverflowTextAndNewlyExposedBodies() async throws {
+    let (fixture, header, target) = try await fixture()
+    let projection = NotebookPanelRenderProjection(workspaceID: header.workspaceID,
+      camera: .init(center: .init(x: 417, y: 597), scale: 4), viewport: .init(x: 200, y: 150), pixelScale: 1)
+    let geometry = try geometry(projection)
+    let textFrame = PageRect(x: geometry.viewport.midX - 30, y: geometry.window.minY - 20, width: 100, height: 10)
+    let text = Array(repeating: "Body", count: 8).joined(separator: "\n")
+    XCTAssertGreaterThan(textFrame.y, 0)
+    XCTAssertTrue(geometry.window.intersection(.init(x: textFrame.x, y: textFrame.y,
+      width: textFrame.width, height: textFrame.height)).isEmpty)
+    let nextFrame = PageRect(x: 690, y: 900, width: 24, height: 24)
+    try await fixture.apply([
+      .init(kind: .insertElement, target: target, id: "overflow", values: ["kind": .string("nativeText"),
+        "source": .string(text), "frame": try .encode(textFrame)]),
+      try graphic("newly-exposed", frame: nextFrame, color: .black, target: target)])
+    let cut = try await cut(fixture, target: target, projection: projection)
+    let content = try await fixture.model.readCommandCut { try $0.capturePanelPageContent(cut) }
+    let presentation = try XCTUnwrap(content.page.graphicGraph().elementPresentation("overflow"))
+    XCTAssertFalse(geometry.viewport.intersection(presentation.bounds).isEmpty)
+    let prepared = try await CurrentViewPreviewWriter.panelMaterial(cut, model: fixture.model, knownAssets: [])
+    defer { prepared.leafRasterCollector.close() }
+    let snapshot = prepared.snapshot, entries = try XCTUnwrap(snapshot["elements"]?.arrayValues)
+    XCTAssertEqual(entries.compactMap { $0["source"]?["id"]?.stringValue }, ["overflow"])
+    XCTAssertEqual(entries.first?["source"], try .encode(XCTUnwrap(content.page.element(id: "overflow"))))
+    let body = try XCTUnwrap(snapshot["appearance"]?["layers"]?.arrayValues.first { $0["elementID"] == .string("overflow") })
+    XCTAssertEqual(try XCTUnwrap(body["subjectFrame"]).decode(PageRect.self), presentation.frame,
+      "The real prepared TextKit body retains its full hit frame and authored source across the window boundary")
+    XCTAssertGreaterThan(try XCTUnwrap(body["pixelHeight"]).decode(Int.self), 0)
+    XCTAssertNotNil(body["pngBase64"]?.stringValue)
+    XCTAssertEqual(snapshot["worldOrigin"], try .encode(WorldPoint.zero))
+    XCTAssertEqual(try XCTUnwrap(snapshot["size"]).decode(PageSize.self), content.page.size)
+    let nextProjection = NotebookPanelRenderProjection(workspaceID: header.workspaceID,
+      camera: .init(center: .init(x: 702, y: 912), scale: 4), viewport: projection.viewport, pixelScale: 1)
+    let nextCut = try await self.cut(fixture, target: target, projection: nextProjection)
+    XCTAssertEqual(nextCut.sourceRevision, cut.sourceRevision)
+    let next = try await CurrentViewPreviewWriter.panelMaterial(nextCut, model: fixture.model, knownAssets: [])
+    defer { next.leafRasterCollector.close() }
+    XCTAssertEqual(next.snapshot["elements"]?.arrayValues.compactMap { $0["source"]?["id"]?.stringValue }, ["newly-exposed"])
+    XCTAssertEqual(next.snapshot["elements"]?.arrayValues.first?["source"]?["frame"], try .encode(nextFrame))
+    XCTAssertEqual(Set(next.snapshot["appearance"]?["layers"]?.arrayValues.compactMap { $0["elementID"]?.stringValue } ?? []), ["newly-exposed"])
   }
 
   @MainActor
@@ -111,7 +159,9 @@ final class NotebookPanelPageAdmissionTests: XCTestCase {
     let frames = Dictionary(uniqueKeysWithValues: content.page.elements.compactMap { element -> (String, CGRect)? in
       graph.resolve(element.id).layout.map { (element.id, CGRect(x: $0.frame.x, y: $0.frame.y, width: $0.frame.width, height: $0.frame.height)) }
     })
-    let initialSubjects = CurrentViewPreviewWriter.pagePanelSubjects(content.elements, frames: frames,
+    let projected = try content.projection(in: .init(anchor: geometry.coverage.tiles[0].origin,
+      region: .init(x: 0, y: 0, width: geometry.window.width, height: geometry.window.height))).elements
+    let initialSubjects = CurrentViewPreviewWriter.pagePanelSubjects(projected, frames: frames,
       physical: .init(x: 0, y: 0, width: 834, height: 1194), materialWindow: geometry.window,
       viewport: geometry.viewport, density: density)
     XCTAssertEqual(initialSubjects.count, 16); XCTAssertNotNil(initialSubjects["visible-17"])
@@ -126,7 +176,14 @@ final class NotebookPanelPageAdmissionTests: XCTestCase {
     XCTAssertEqual(try XCTUnwrap(bounds["region"]).decode(PageRect.self),
       .init(x: 0, y: 0, width: geometry.viewport.width, height: geometry.viewport.height), "The actual budget narrows the initial overscan once")
     XCTAssertEqual(Set(layers.compactMap { $0["elementID"]?.stringValue }), ["visible-17"])
-    XCTAssertEqual(snapshot["elements"]?.arrayValues.map { $0["source"] }, content.elements.map { $0["source"] })
+    let finalSources = try XCTUnwrap(snapshot["elements"]?.arrayValues)
+    XCTAssertEqual(finalSources.compactMap { $0["source"]?["id"]?.stringValue },
+      (0..<16).map { "passive-\($0)" } + ["visible-17", "passive-top"],
+      "The final projection follows the clipped window, retaining whole painter-band sources without excluded prefetch hits")
+    let clipped = try content.projection(in: .init(anchor: projection.worldOrigin,
+      region: .init(x: 0, y: 0, width: geometry.viewport.width, height: geometry.viewport.height))).elements
+    XCTAssertEqual(finalSources.map { $0["source"] }, clipped.map { $0["source"] })
+    XCTAssertEqual(finalSources.last?["source"]?["frame"], try .encode(fullPage), "Whole sources are never clipped to their raster region")
     var pixels = 0
     for layer in layers {
       let frame = try XCTUnwrap(layer["frame"]).decode(PageRect.self)

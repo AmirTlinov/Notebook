@@ -1,0 +1,93 @@
+{
+  "browser": {
+    "casesIncludingSubtests": 11,
+    "failures": 0,
+    "ports": "real Surface with bounded DOM and image-decode ports",
+    "rawEvidence": ".build/panel-page-projection-browser-20261008-v2",
+    "selectedTopLevelTests": 7,
+    "skips": 0,
+    "totalTestMilliseconds": 390.253208,
+    "typeScriptExitCode": 0
+  },
+  "earlierAttempts": [
+    {
+      "attempt": "native-v1",
+      "result": "refused before execution: CLI requires target/suite selector"
+    },
+    {
+      "attempt": "native-v2",
+      "result": "refused before execution: evidence directory must be new"
+    },
+    {
+      "attempt": "native-v3",
+      "result": "one mixed fixture failed before geometry because tx=9 is invalid production transform; eight functions passed; only transform/frame corrected, assertions retained"
+    },
+    {
+      "attempt": "browser-v1",
+      "result": "recorder function name rejected before test execution"
+    }
+  ],
+  "format": 1,
+  "hundredThousandPageSources": {
+    "capturePageLoads": 1,
+    "debugSeconds": {
+      "firstProjection": 1.387667583,
+      "fullRead": 10.848748334000001,
+      "retainedCutReuse": 0.13844175,
+      "typedCapture": 9.235412542
+    },
+    "encodedReplyBytes": 4129,
+    "meaning": "actual source read and bounded JSON; timings include full typed source and graph preparation, not local input",
+    "projectedWholeSources": 4,
+    "readAddressedElementStatements": 0,
+    "readErasureStatements": 0,
+    "readSQLStatements": 59,
+    "reusePageLoads": 0,
+    "typedSources": 100000
+  },
+  "independentReview": {
+    "latestAt": "2026-10-07T23:14:34Z",
+    "owner": "density",
+    "scope": "eight files, normalized transform fixture and window ownership documentation",
+    "status": "passed"
+  },
+  "native": {
+    "coreCases": 10,
+    "coreFunctions": 9,
+    "failures": 0,
+    "macCases": 8,
+    "rawEvidence": ".build/panel-page-projection-20261008-v4",
+    "route": "./verify.sh:selected",
+    "skips": 0,
+    "testSeconds": {
+      "coreSuite": 61.313,
+      "mac": 9.33341097831726
+    }
+  },
+  "recordedAt": "2026-10-07T23:15:00Z",
+  "remaining": [
+    "Full typed source capture and visibility preparation remain linear and slow on 100000 objects.",
+    "Graphic label admission remains conservative in the existing visibility owner.",
+    "Controller camera still recalculates controls; the following isolated slice removes that work.",
+    "Installed pair remains 260; actual Codex gestures and physical iPad acceptance are pending.",
+    "Full SceneDelta, WebGPU quality, system frames/CPU/GPU/memory and the 30-minute joint scenario remain open."
+  ],
+  "scope": "bounded page disclosure and Surface selection",
+  "source": {
+    "beforeEqualsAfterEqualsFinal": true,
+    "fileCount": 1717,
+    "sha256": "4040e777466132da8762ab81f4ee1d88b8c6f7016ea93b7e36901df51cc1cf76"
+  },
+  "status": "passed",
+  "surfaceHundredThousandHits": {
+    "cameraArrayElementReads": 0,
+    "meaning": "structural work bound in the real Surface through DOM ports, not browser frame or GPU latency",
+    "pressedWrites": {
+      "changeSelection": 2,
+      "clearSelection": 1,
+      "selectedCamera": 1,
+      "unselectedCamera": 0
+    },
+    "wholeFixtureMilliseconds": 171.938375
+  }
+}

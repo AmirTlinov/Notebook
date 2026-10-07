@@ -5,6 +5,17 @@
 Самостоятельного Mac-приложения нет. Изолированные native-проверки используют
 отдельную test-идентичность; каждый результат относится к своим исходникам.
 
+GUI-388: JSON страницы кодирует фактическое окно native-подготовки; полный typed
+cut и source/ink fence сохранены. Surface берёт выбор из принятого hit descriptor.
+**9 Core functions / 10 cases + 8 Mac + 11 Node cases и TypeScript PASS**, без
+failures/skips; source `4040e777…`/1717 до/после совпадает, ревью принято.
+В actual100000-source read — четыре whole sources и **4129 байт** ответа.
+Debug capture9,235с, first projection1,388с, reuse138мс: полная загрузка страницы
+остаётся причиной медленного открытия. 100000-hit camera не читает массив elements
+и меняет максимум old/new pressed hit; controller controls проверяются следующим
+срезом. Плагин260 ещё содержит прежний код; живые жесты/показ и physical acceptance
+открыты. [Scope, замеры и исправленные отказы](audit-evidence/2026-10-07/panel-page-projection/results.json).
+
 **8 октября, GUI-504:** `storageUsage` читает bounded metadata одного committed
 SQLite snapshot; readonly admission отвергает missing/old format до изменения БД.
 Тела blobs не читаются; история сохранена, physical DB/WAL/SHM — отдельные samples.

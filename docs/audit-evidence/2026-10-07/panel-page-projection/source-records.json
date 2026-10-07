@@ -1,0 +1,49 @@
+{
+  "baseCommit": "286e46ec25b8359aa2b1c66ee6a8ff911010e644",
+  "changedBuildInputs": [
+    {
+      "executable": false,
+      "path": "Applications/Mac/NotebookPanelPreviewWriter.swift",
+      "sha256": "3283c3f12f7c806adef8de4d11c6243d1f129645b36ac37add51aa27cf2e9a70"
+    },
+    {
+      "executable": false,
+      "path": "Applications/MacTests/NotebookPanelPageAdmissionTests.swift",
+      "sha256": "5f578d80511e343b58ffdc25f1c9bfc6cb9ea0dd3aedf9f215b64612c5aa8d3c"
+    },
+    {
+      "executable": false,
+      "path": "Applications/MacTests/NotebookPanelPageContentTests.swift",
+      "sha256": "9c7d76b8662f67190f4caa15a14c2af35e40b1b56152d6793402f393db7dd7e0"
+    },
+    {
+      "executable": false,
+      "path": "MCP/panel/surface.ts",
+      "sha256": "7c58ea225777d7b6cc20fcff1c169a23140a6921009eb00a8092cf539e23145f"
+    },
+    {
+      "executable": false,
+      "path": "MCP/test/panel.test.ts",
+      "sha256": "dc9908a684a5f31639903ff2d2db1ecfc50d54c7601782936c8e476d8d466369"
+    },
+    {
+      "executable": false,
+      "path": "Sources/NotebookCore/NotebookPanel.swift",
+      "sha256": "a8d8408396b859391d6b5b12915adeeb7938bd2f62090bf4e8d371346f402081"
+    },
+    {
+      "executable": false,
+      "path": "Sources/NotebookCore/NotebookPanelPageContent.swift",
+      "sha256": "0a34e8c6dc62f91d5ef2037e0222efbe583852dfd5def55c36cf6d964ac517d0"
+    },
+    {
+      "executable": false,
+      "path": "Tests/NotebookCoreTests/NotebookPanelPageReadTests.swift",
+      "sha256": "38a90b92ab9e8e8b19ac1adb23b1c97cd55ec889d33da9016e4677234a525b48"
+    }
+  ],
+  "fileCount": 1717,
+  "format": 1,
+  "sha256": "4040e777466132da8762ab81f4ee1d88b8c6f7016ea93b7e36901df51cc1cf76",
+  "sourceBeforeEqualsAfterEqualsFinal": true
+}

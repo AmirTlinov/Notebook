@@ -1,0 +1,30 @@
+◇ Test run started.
+↳ Testing Library Version: 2084
+↳ Target Platform: arm64e-apple-macos14.0
+◇ Suite "Panel page material reads" started.
+◇ Test mixedPageMatchesAddressedGeometryAndAppearance() started.
+PANEL_PAGE_MIXED elements=12 SQL=59 addressed=0 erasures=0 elapsed=0.078696333 seconds bytes=118492
+✔ Test mixedPageMatchesAddressedGeometryAndAppearance() passed after 0.849 seconds.
+◇ Test contentReuseRefreshesNavigationPresenceHistoryAndCursorAfterAwait() started.
+✔ Test contentReuseRefreshesNavigationPresenceHistoryAndCursorAfterAwait() passed after 0.079 seconds.
+◇ Test boundedPageProjectionKeepsNativeBodiesConnectionsAndWholeSources() started.
+✔ Test boundedPageProjectionKeepsNativeBodiesConnectionsAndWholeSources() passed after 0.088 seconds.
+◇ Test boundedPageReadValidatesBeforeUnchangedAndKeepsTiledAnchors() started.
+✔ Test boundedPageReadValidatesBeforeUnchangedAndKeepsTiledAnchors() passed after 0.032 seconds.
+◇ Test panelMetadataIgnoresNavigationReadClocksButRetainsAddressedChanges() started.
+✔ Test panelMetadataIgnoresNavigationReadClocksButRetainsAddressedChanges() passed after 0.099 seconds.
+◇ Test retainedContentRejectsChangedSourceTargetAndWorkspace() started.
+✔ Test retainedContentRejectsChangedSourceTargetAndWorkspace() passed after 0.069 seconds.
+◇ Test retainedContentRejectsLiveInkChangeBeforePersistence() started.
+✔ Test retainedContentRejectsLiveInkChangeBeforePersistence() passed after 0.033 seconds.
+◇ Test hundredThousandPageElementsUseOneSourceRead() started.
+PANEL_PAGE_SCALE source_elements=100000 projected_elements=4 SQL=59 addressed=0 erasures=0 elapsed=10.848748334000001 seconds bytes=4129
+PANEL_PAGE_CUT_SCALE source_elements=100000 capture=9.235412542 seconds projection=1.387667583 seconds reuse=0.13844175 seconds capture_page_loads=1 reuse_page_loads=0
+PANEL_METADATA_SCALE elements=100000 SQL=50 empty_SQL=50 elapsed=0.002759917 seconds page_loads=0
+✔ Test hundredThousandPageElementsUseOneSourceRead() passed after 59.482 seconds.
+◇ Test groupDepthUsesNativePendingProjectionWithoutDiscardingSource(depth:) started.
+◇ Test case passing 1 argument depth → 63 to groupDepthUsesNativePendingProjectionWithoutDiscardingSource(depth:) started.
+◇ Test case passing 1 argument depth → 64 to groupDepthUsesNativePendingProjectionWithoutDiscardingSource(depth:) started.
+✔ Test groupDepthUsesNativePendingProjectionWithoutDiscardingSource(depth:) with 2 test cases passed after 0.577 seconds.
+✔ Suite "Panel page material reads" passed after 61.313 seconds.
+✔ Test run with 9 tests in 1 suite passed after 61.313 seconds.

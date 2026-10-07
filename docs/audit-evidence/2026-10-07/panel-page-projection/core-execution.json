@@ -1,0 +1,38 @@
+{
+  "executed": [
+    "NotebookCoreTests.NotebookPanelPageReadTests/boundedPageProjectionKeepsNativeBodiesConnectionsAndWholeSources()/NotebookPanelPageReadTests.swift:179:4",
+    "NotebookCoreTests.NotebookPanelPageReadTests/boundedPageReadValidatesBeforeUnchangedAndKeepsTiledAnchors()/NotebookPanelPageReadTests.swift:266:4",
+    "NotebookCoreTests.NotebookPanelPageReadTests/contentReuseRefreshesNavigationPresenceHistoryAndCursorAfterAwait()/NotebookPanelPageReadTests.swift:139:4",
+    "NotebookCoreTests.NotebookPanelPageReadTests/groupDepthUsesNativePendingProjectionWithoutDiscardingSource(depth:)/NotebookPanelPageReadTests.swift:450:4",
+    "NotebookCoreTests.NotebookPanelPageReadTests/hundredThousandPageElementsUseOneSourceRead()/NotebookPanelPageReadTests.swift:383:4",
+    "NotebookCoreTests.NotebookPanelPageReadTests/mixedPageMatchesAddressedGeometryAndAppearance()/NotebookPanelPageReadTests.swift:45:4",
+    "NotebookCoreTests.NotebookPanelPageReadTests/panelMetadataIgnoresNavigationReadClocksButRetainsAddressedChanges()/NotebookPanelPageReadTests.swift:283:4",
+    "NotebookCoreTests.NotebookPanelPageReadTests/retainedContentRejectsChangedSourceTargetAndWorkspace()/NotebookPanelPageReadTests.swift:331:4",
+    "NotebookCoreTests.NotebookPanelPageReadTests/retainedContentRejectsLiveInkChangeBeforePersistence()/NotebookPanelPageReadTests.swift:362:4"
+  ],
+  "executions": {
+    "NotebookCoreTests.NotebookPanelPageReadTests/boundedPageProjectionKeepsNativeBodiesConnectionsAndWholeSources()/NotebookPanelPageReadTests.swift:179:4": 1,
+    "NotebookCoreTests.NotebookPanelPageReadTests/boundedPageReadValidatesBeforeUnchangedAndKeepsTiledAnchors()/NotebookPanelPageReadTests.swift:266:4": 1,
+    "NotebookCoreTests.NotebookPanelPageReadTests/contentReuseRefreshesNavigationPresenceHistoryAndCursorAfterAwait()/NotebookPanelPageReadTests.swift:139:4": 1,
+    "NotebookCoreTests.NotebookPanelPageReadTests/groupDepthUsesNativePendingProjectionWithoutDiscardingSource(depth:)/NotebookPanelPageReadTests.swift:450:4": 2,
+    "NotebookCoreTests.NotebookPanelPageReadTests/hundredThousandPageElementsUseOneSourceRead()/NotebookPanelPageReadTests.swift:383:4": 1,
+    "NotebookCoreTests.NotebookPanelPageReadTests/mixedPageMatchesAddressedGeometryAndAppearance()/NotebookPanelPageReadTests.swift:45:4": 1,
+    "NotebookCoreTests.NotebookPanelPageReadTests/panelMetadataIgnoresNavigationReadClocksButRetainsAddressedChanges()/NotebookPanelPageReadTests.swift:283:4": 1,
+    "NotebookCoreTests.NotebookPanelPageReadTests/retainedContentRejectsChangedSourceTargetAndWorkspace()/NotebookPanelPageReadTests.swift:331:4": 1,
+    "NotebookCoreTests.NotebookPanelPageReadTests/retainedContentRejectsLiveInkChangeBeforePersistence()/NotebookPanelPageReadTests.swift:362:4": 1
+  },
+  "failed": [],
+  "format": 1,
+  "planned": [
+    "NotebookCoreTests.NotebookPanelPageReadTests/boundedPageProjectionKeepsNativeBodiesConnectionsAndWholeSources()/NotebookPanelPageReadTests.swift:179:4",
+    "NotebookCoreTests.NotebookPanelPageReadTests/boundedPageReadValidatesBeforeUnchangedAndKeepsTiledAnchors()/NotebookPanelPageReadTests.swift:266:4",
+    "NotebookCoreTests.NotebookPanelPageReadTests/contentReuseRefreshesNavigationPresenceHistoryAndCursorAfterAwait()/NotebookPanelPageReadTests.swift:139:4",
+    "NotebookCoreTests.NotebookPanelPageReadTests/groupDepthUsesNativePendingProjectionWithoutDiscardingSource(depth:)/NotebookPanelPageReadTests.swift:450:4",
+    "NotebookCoreTests.NotebookPanelPageReadTests/hundredThousandPageElementsUseOneSourceRead()/NotebookPanelPageReadTests.swift:383:4",
+    "NotebookCoreTests.NotebookPanelPageReadTests/mixedPageMatchesAddressedGeometryAndAppearance()/NotebookPanelPageReadTests.swift:45:4",
+    "NotebookCoreTests.NotebookPanelPageReadTests/panelMetadataIgnoresNavigationReadClocksButRetainsAddressedChanges()/NotebookPanelPageReadTests.swift:283:4",
+    "NotebookCoreTests.NotebookPanelPageReadTests/retainedContentRejectsChangedSourceTargetAndWorkspace()/NotebookPanelPageReadTests.swift:331:4",
+    "NotebookCoreTests.NotebookPanelPageReadTests/retainedContentRejectsLiveInkChangeBeforePersistence()/NotebookPanelPageReadTests.swift:362:4"
+  ],
+  "skipped": []
+}

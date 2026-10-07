@@ -51,7 +51,7 @@ extension CurrentViewPreviewWriter {
     let layers: [NotebookPanelRasterLayer], coverage: CompositionTileCoverage, diagnostics: [RenderDiagnostic]
     let materialBounds: WorkspaceSpatialBounds
     if let page {
-      (layers, coverage, diagnostics, materialBounds) = try await pagePanelMaterials(page.page, projectedElements: page.elements, projection: projection,
+      (layers, coverage, diagnostics, materialBounds) = try await pagePanelMaterials(page, projection: projection,
         knownAssets: knownAssets, sourceRevision: cut.sourceRevision, model: model, leafRasterCollector: collector)
     } else {
       let candidates = Array((capturedSnapshot?["elements"]?.arrayValues ?? []).filter(NotebookPanelEditableSubject.allows)
@@ -103,6 +103,8 @@ extension CurrentViewPreviewWriter {
       var snapshot: JSONValue
       if let page {
         snapshot = try reader.readPanel(.init(workspaceID: projection.workspaceID, target: target,
+          bounds: .init(anchor: materialBounds.origin,
+            region: .init(x: 0, y: 0, width: materialBounds.width, height: materialBounds.height)),
           includeFitBounds: cut.includeFitBounds), actor: actor, reusing: page)
       } else if let preparedSnapshot { snapshot = try metadata.updating(preparedSnapshot) }
       else { throw NotebookStorageError.transactionConflict }
@@ -153,11 +155,11 @@ extension CurrentViewPreviewWriter {
   /// Finite pages use the same world grid and native paper/ordered ink owners.
   /// Their body pixels are stable across a pan just like board materials.
   @MainActor
-  private static func pagePanelMaterials(_ page: PageDocument, projectedElements: [JSONValue], projection: NotebookPanelRenderProjection,
+  private static func pagePanelMaterials(_ content: NotebookPanelPageContent, projection: NotebookPanelRenderProjection,
     knownAssets: Set<UUID>, sourceRevision: String, model: NotebookAppModel,
     leafRasterCollector: SceneLeafRasterWitnessCollector)
     async throws -> ([NotebookPanelRasterLayer], CompositionTileCoverage, [RenderDiagnostic], WorkspaceSpatialBounds) {
-    let resources = SceneRenderResources.shared, graph = page.graphicGraph()
+    let page = content.page, resources = SceneRenderResources.shared, graph = page.graphicGraph()
     let requested = WorkspaceSpatialBounds(origin: projection.worldOrigin,
       width: projection.viewport.x / projection.camera.scale, height: projection.viewport.y / projection.camera.scale)
     var coverage = try CompositionTileCoverage(bounds: requested,
@@ -207,7 +209,11 @@ extension CurrentViewPreviewWriter {
       return frame.map { (element.id, CGRect(x: $0.x, y: $0.y, width: $0.width, height: $0.height)) }
     })
     let inkOwnedIDs = Set(elements.compactMap { $0.graphic?.sourceInkContactID == nil ? nil : $0.id })
-    var subjects = pagePanelSubjects(projectedElements, frames: elementFrames, physical: physical,
+    func projectedElements(in bounds: WorkspaceSpatialBounds) throws -> [JSONValue] {
+      try content.projection(in: .init(anchor: bounds.origin,
+        region: .init(x: 0, y: 0, width: bounds.width, height: bounds.height))).elements
+    }
+    var subjects = pagePanelSubjects(try projectedElements(in: admitted), frames: elementFrames, physical: physical,
       materialWindow: materialWindow, viewport: viewport, density: density, inkOwnedIDs: inkOwnedIDs)
     func visibleIDs(in frame: CGRect) -> Set<String> {
       Set(elementFrames.compactMap { $0.value.intersects(frame) ? $0.key : nil })
@@ -290,7 +296,7 @@ extension CurrentViewPreviewWriter {
       // Coarsening changes the grid inside one admitted overscan window. Only
       // this budget transition narrows that window and rebuilds admission.
       admitted = requested; materialWindow = viewport
-      subjects = pagePanelSubjects(projectedElements, frames: elementFrames, physical: physical,
+      subjects = pagePanelSubjects(try projectedElements(in: admitted), frames: elementFrames, physical: physical,
         materialWindow: materialWindow, viewport: viewport, density: density, inkOwnedIDs: inkOwnedIDs)
       runs = painterRuns(); try fitCompositionCoverage()
       tileDensity = requestedDensity; tiles = regions(density: tileDensity)

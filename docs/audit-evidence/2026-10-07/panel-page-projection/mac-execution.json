@@ -1,0 +1,25 @@
+{
+  "executed": [
+    "NotebookMacTests/NotebookPanelPageAdmissionTests/testClippedPageBudgetPreservesVisibleSubjectPainterBandsAndRequestedDensity",
+    "NotebookMacTests/NotebookPanelPageAdmissionTests/testHundredThousandDistantPageSubjectsUseTheSameBoundedAdmission",
+    "NotebookMacTests/NotebookPanelPageAdmissionTests/testPageSkipsDistantBodiesAndPrioritizesVisibleSeventeenthOverPrefetch",
+    "NotebookMacTests/NotebookPanelPageAdmissionTests/testPageWindowDisclosesOverflowTextAndNewlyExposedBodies",
+    "NotebookMacTests/NotebookPanelPageAdmissionTests/testPrefetchBoundaryKeepsWholeBodiesAndExistingSemanticExclusions",
+    "NotebookMacTests/NotebookPanelPageContentTests/testPagePublicationRefreshesPresenceAndMembershipChangedDuringNativePreparation",
+    "NotebookMacTests/NotebookPanelPageContentTests/testPagePublicationRejectsSourceChangedDuringNativePreparation",
+    "NotebookMacTests/NotebookPanelPresentationTests/testNotebookCardFirstPageOpensNativePixelsAndNavigationWithoutMovingPresence"
+  ],
+  "failed": [],
+  "format": 1,
+  "planned": [
+    "NotebookMacTests/NotebookPanelPageAdmissionTests/testClippedPageBudgetPreservesVisibleSubjectPainterBandsAndRequestedDensity",
+    "NotebookMacTests/NotebookPanelPageAdmissionTests/testHundredThousandDistantPageSubjectsUseTheSameBoundedAdmission",
+    "NotebookMacTests/NotebookPanelPageAdmissionTests/testPageSkipsDistantBodiesAndPrioritizesVisibleSeventeenthOverPrefetch",
+    "NotebookMacTests/NotebookPanelPageAdmissionTests/testPageWindowDisclosesOverflowTextAndNewlyExposedBodies",
+    "NotebookMacTests/NotebookPanelPageAdmissionTests/testPrefetchBoundaryKeepsWholeBodiesAndExistingSemanticExclusions",
+    "NotebookMacTests/NotebookPanelPageContentTests/testPagePublicationRefreshesPresenceAndMembershipChangedDuringNativePreparation",
+    "NotebookMacTests/NotebookPanelPageContentTests/testPagePublicationRejectsSourceChangedDuringNativePreparation",
+    "NotebookMacTests/NotebookPanelPresentationTests/testNotebookCardFirstPageOpensNativePixelsAndNavigationWithoutMovingPresence"
+  ],
+  "skipped": []
+}

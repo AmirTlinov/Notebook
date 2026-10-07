@@ -27,19 +27,23 @@ final class NotebookPanelPageContentTests: XCTestCase {
     try await fixture.apply([
       .init(kind: .insertElement, target: target, id: "caption", values: ["kind": .string("nativeText"),
         "source": .string("Immutable caption"), "frame": try .encode(PageRect(x: 20, y: 30, width: 200, height: 70))]),
+      .init(kind: .insertElement, target: target, id: "offscreen", values: ["kind": .string("nativeText"),
+        "source": .string("Outside this material window"), "frame": try .encode(PageRect(x: 600, y: 1000, width: 100, height: 50))]),
       .init(kind: .appendInkStroke, target: target, id: UUID().uuidString,
         values: ["width": .number(8), "points": .array([
           .object(["x": .number(80), "y": .number(180)]),
           .object(["x": .number(300), "y": .number(210)])])])])
     let cut = try fixture.store.requestPanelPresentation(.init(target: target,
-      appearance: .init(viewport: .init(x: 600, y: 800), pixelScale: 1)))
+      appearance: .init(viewport: .init(x: 300, y: 200), pixelScale: 1,
+        camera: .init(center: .init(x: 170, y: 100), scale: 2))))
     var appended = workspace
     let append = try XCTUnwrap(appended.appendPage(in: itemID, actor: fixture.model.actorID,
       pageSize: NotebookAppModel.defaultPageSize))
     let nextWorkspace = appended, nextPage = try XCTUnwrap(append.createdPage)
     var changedPage = try fixture.store.loadPage(pageID)
-    let didChange = changedPage.replaceElements([.init(id: "caption", kind: .nativeText,
-      frame: .init(x: 20, y: 30, width: 200, height: 70), source: "Changed during preparation", html: "")],
+    let didChange = changedPage.replaceElements([try XCTUnwrap(changedPage.element(id: "caption")),
+      .init(id: "offscreen", kind: .nativeText, frame: .init(x: 600, y: 1000, width: 100, height: 50),
+        source: "Changed outside the material window", html: "")],
       actor: fixture.model.actorID)
     XCTAssertTrue(didChange)
     let replacement = changedPage
@@ -71,7 +75,7 @@ final class NotebookPanelPageContentTests: XCTestCase {
     XCTAssertNotNil(phases["panel_material_prepared"])
     if changesSource {
       switch result {
-      case .success: XCTFail("A page changed while painting cannot publish the old projection and new basis")
+      case .success: XCTFail("An offscreen source change while painting cannot publish an old content cut and new basis")
       case .failure(let error):
         guard case NotebookStorageError.transactionConflict = error else { throw error }
       }
@@ -80,6 +84,7 @@ final class NotebookPanelPageContentTests: XCTestCase {
     } else {
       let snapshot = try result.get()
       XCTAssertEqual(snapshot["elements"]?.arrayValues.first?["source"]?["source"], .string("Immutable caption"))
+      XCTAssertEqual(snapshot["elements"]?.arrayValues.compactMap { $0["source"]?["id"]?.stringValue }, ["caption"])
       XCTAssertEqual(snapshot["navigation"]?["directory"]?["header"]?["selectedPageID"], try .encode(nextPage.id))
       XCTAssertEqual(snapshot["navigation"]?["directory"]?["header"]?["item"]?["pageCount"], .number(2))
       XCTAssertNotEqual(snapshot["cursor"], .string(String(cut.cursor)))

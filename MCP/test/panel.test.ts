@@ -12,7 +12,7 @@ import {panelObservationToolMilliseconds, registerNotebookPanel} from '../src/pa
 import type {RuntimeAdmission} from '../src/runtime-admission.js';
 import {NotebookSession} from '../panel/session.js';
 import {Surface} from '../panel/surface.js';
-import type {PanelMutation, PanelSnapshot, PanelView} from '../panel/model.js';
+import type {PanelElement, PanelMutation, PanelSnapshot, PanelView} from '../panel/model.js';
 import {sealPanelBundle} from '../panel-bundle.mjs';
 
 type Value = Record<string, unknown>;
@@ -38,27 +38,37 @@ function event<T>(){
 
 function materialFixture(t:TestContext) {
   const display={devicePixelRatio:1},dimensions={width:800,height:600};
+  const pressedWrites={count:0};
   class NodePort {
     children:NodePort[]=[];attributes=new Map<string,string>();style={};clientWidth=800;clientHeight=600;
     parentNode:NodePort|null=null;
+    private following:NodePort|null=null;
     ownerDocument={defaultView:display};
-    setAttribute(key:string,value:string){this.attributes.set(key,value);}
+    setAttribute(key:string,value:string){if(key==='aria-pressed')pressedWrites.count++;this.attributes.set(key,value);}
     removeAttribute(key:string){this.attributes.delete(key);}
     append(...nodes:NodePort[]){this.children.push(...nodes);}
-    insertBefore(node:NodePort,before:NodePort|null){if(node===before)return;node.remove();this.children.splice(before?this.children.indexOf(before):this.children.length,0,node);node.parentNode=this;}
-    remove(){if(this.parentNode){const siblings=this.parentNode.children;siblings.splice(siblings.indexOf(this),1);this.parentNode=null;}}
+    insertBefore(node:NodePort,before:NodePort|null){
+      if(node===before)return;node.remove();const index=before?this.children.indexOf(before):this.children.length;
+      if(index>0)this.children[index-1]!.following=node;
+      node.following=before;this.children.splice(index,0,node);node.parentNode=this;
+    }
+    remove(){if(this.parentNode){const siblings=this.parentNode.children,index=siblings.indexOf(this);
+      if(index>0)siblings[index-1]!.following=this.following;
+      siblings.splice(index,1);this.parentNode=null;this.following=null;}}
     replaceChildren(...nodes:NodePort[]){this.children=nodes;}
     get firstChild():NodePort|null{return this.children[0]??null;}
-    get nextSibling():NodePort|null{const siblings=this.parentNode?.children;return siblings?.[siblings.indexOf(this)+1]??null;}
+    get nextSibling():NodePort|null{return this.following;}
+    get parentElement(){return this.parentNode;}
+    focus(){documentPort.activeElement=this;}
   }
+  const documentPort={activeElement:null as NodePort|null,createElementNS:()=>new NodePort(),createDocumentFragment:()=>new NodePort()};
   const priorDocument=Object.getOwnPropertyDescriptor(globalThis,'document'),priorImage=Object.getOwnPropertyDescriptor(globalThis,'Image');
-  Object.defineProperty(globalThis,'document',{configurable:true,value:{activeElement:null,
-    createElementNS:()=>new NodePort(),createDocumentFragment:()=>new NodePort()}});
+  Object.defineProperty(globalThis,'document',{configurable:true,value:documentPort});
   Object.defineProperty(globalThis,'Image',{configurable:true,value:class {
     naturalWidth=dimensions.width;naturalHeight=dimensions.height;src='';async decode(){}
   }});
-  const svg=new NodePort();
-  const surface=new Surface(svg as unknown as SVGSVGElement,new NodePort() as unknown as SVGGElement,new NodePort() as unknown as SVGGElement);
+  const svg=new NodePort(),host=new NodePort(),material=new NodePort(),selection=new NodePort();host.insertBefore(svg,null);
+  const surface=new Surface(svg as unknown as SVGSVGElement,material as unknown as SVGGElement,selection as unknown as SVGGElement);
   surface.setCamera({x:0,y:0,scale:1});
   t.after(()=>{surface.dispose();for(const [key,prior] of [['document',priorDocument],['Image',priorImage]] as const){
     if(prior)Object.defineProperty(globalThis,key,prior);else Reflect.deleteProperty(globalThis,key);
@@ -76,7 +86,9 @@ function materialFixture(t:TestContext) {
     const view:PanelView={viewport:{x:800,y:600},pixelScale,camera:value.appearance!.camera};
     return surface.prepare(value,view);
   };
-  return {surface,display,snapshot,prepare,hits:()=>svg.children[0]!.children};
+  return {surface,display,snapshot,prepare,pressedWrites,document:documentPort,host,
+    hits:()=>svg.children[0]!.children,material:()=>material.children[0]!.children,
+    selection:()=>selection.children,selectionTransform:()=>selection.attributes.get('transform')};
 }
 
 test('cover selection keeps native painter order when pixels merge into tiles',async t=>{
@@ -99,6 +111,86 @@ test('cover selection keeps native painter order when pixels merge into tiles',a
     assert.equal(surface.hasItemSubject('front'),separated==='front',
       'Hit geometry alone does not grant independent movement');
   }
+});
+
+test('camera selection work stays bounded with 100000 native hits',async t=>{
+  const {surface,snapshot,prepare,hits,selection,pressedWrites}=materialFixture(t),value=snapshot(1);
+  const elements:PanelElement[]=Array.from({length:100000},(_,index)=>({source:{id:String(index),kind:'nativeText',
+    source:'Text',frame:{x:20,y:30,width:80,height:12}}}));
+  let elementReads=0;
+  value.elements=new Proxy(elements,{get(array,property,receiver){
+    if(typeof property==='string'&&/^\d+$/.test(property))elementReads++;
+    return Reflect.get(array,property,receiver);
+  }});
+  const lastID='99999';value.appearance!.layers[0]!.elementID=lastID;
+  value.appearance!.layers[0]!.subjectFrame={x:20,y:30,width:80,height:36};
+  assert.equal(await prepare(value),true);surface.render(value);
+  assert.equal(hits().length,100000);
+  const first=hits()[0]!,last=hits()[99999]!;
+  assert.equal(first.attributes.get('aria-pressed'),'false');assert.equal(last.attributes.get('aria-pressed'),'false');
+  const work=(action:()=>void,writes:number)=>{
+    pressedWrites.count=0;elementReads=0;action();
+    assert.equal(pressedWrites.count,writes,'Only the old/new pressed hits may receive attribute writes');
+    assert.equal(elementReads,0,'Camera/selection must use the accepted hit source rather than scan page elements');
+  };
+  work(()=>surface.setCamera({x:0,y:0,scale:1.2}),0);
+  work(()=>surface.select({kind:'element',id:lastID}),1);
+  assert.equal(last.attributes.get('aria-pressed'),'true');
+  assert.equal(selection().length,2,'The accepted text descriptor supplies its width handle');
+  for(const scale of [1.4,1.6,2])work(()=>surface.setCamera({x:10,y:20,scale}),1);
+  work(()=>surface.select({kind:'element',id:'0'}),2);
+  assert.equal(last.attributes.get('aria-pressed'),'false');assert.equal(first.attributes.get('aria-pressed'),'true');
+  assert.equal(selection().length,1,'A merged, readonly body keeps its selection frame');
+  work(()=>surface.select(null),1);assert.equal(first.attributes.get('aria-pressed'),'false');
+  assert.equal(selection().length,0);
+  work(()=>surface.setCamera({x:30,y:40,scale:2}),0);
+});
+
+test('selection source and focus follow the accepted cohort through preview, reuse and deletion',async t=>{
+  const {surface,snapshot,prepare,hits,material,selection,selectionTransform,document,host}=materialFixture(t);
+  const id='text',chosen={kind:'element' as const,id};
+  const initial=snapshot(1);
+  initial.elements=[{source:{id,kind:'nativeText',source:'Before',frame:{x:20,y:30,width:80,height:12}}}];
+  initial.appearance!.layers[0]!.elementID=id;initial.appearance!.layers[0]!.subjectFrame={x:20,y:30,width:80,height:36};
+  assert.equal(await prepare(initial),true);surface.render(initial);surface.select(chosen);
+  const hit=hits()[0]!;hit.focus();assert.equal(document.activeElement,hit);
+  surface.preview(chosen,5,7);surface.setCamera({x:10,y:20,scale:2});
+  assert.equal(selectionTransform(),'translate(5 7)');
+  const fresh=snapshot(1,800,600,'fresh-source');
+  fresh.elements=[{source:{id,kind:'nativeText',source:'After',frame:{x:100,y:80,width:160,height:70}}}];
+  fresh.appearance!.layers[0]!.elementID=id;fresh.appearance!.layers[0]!.subjectFrame={x:100,y:80,width:160,height:50};
+  assert.equal(await prepare(fresh),true);
+  surface.setCamera({x:30,y:40,scale:2});
+  assert.equal(selection()[0]!.attributes.get('width'),'80','Unpublished source cannot replace the accepted overlay');
+  surface.render(fresh);
+  assert.equal(hits()[0],hit);assert.equal(document.activeElement,hit);
+  assert.equal(hit.attributes.get('aria-pressed'),'true');assert.equal(selectionTransform(),undefined);
+  assert.equal(selection()[0]!.attributes.get('x'),'100');assert.equal(selection()[0]!.attributes.get('width'),'160');
+  assert.equal(selection()[0]!.attributes.get('height'),'70','Fresh text layout comes from the new accepted descriptor');
+  assert.equal(selection()[1]!.attributes.get('cursor'),'ew-resize');
+  const placed=material()[0]!.attributes.get('transform');
+  surface.previewSize(id,200,100);
+  assert.equal(material()[0]!.attributes.get('transform'),placed,'Text width preview remains owned by the text editor');
+  const connector=snapshot(1,800,600,'connector-source');
+  connector.elements=[{source:{id,kind:'graphic',source:'',frame:{x:100,y:80,width:160,height:50},
+    graphic:{representation:'geometry',shape:'connector'}},graphicResolution:{state:'geometry'}}];
+  connector.appearance!.layers[0]!.elementID=id;connector.appearance!.layers[0]!.subjectFrame={x:100,y:80,width:160,height:50};
+  assert.equal(await prepare(connector),true);surface.render(connector);
+  assert.equal(hits()[0],hit);assert.equal(selection().length,1,'A fresh connector source retires the text resize handle');
+  assert.equal(selection()[0]!.attributes.get('stroke-dasharray'),undefined,'The connector remains independently editable');
+  const readonly=snapshot(1,800,600,'readonly-source');readonly.elements=[{...fresh.elements[0]!,editable:false}];
+  readonly.appearance!.layers[0]!.elementID=id;readonly.appearance!.layers[0]!.subjectFrame={x:100,y:80,width:160,height:50};
+  assert.equal(await prepare(readonly),true);surface.render(readonly);
+  assert.equal(hits()[0],hit);assert.equal(hit.attributes.get('aria-pressed'),'true');
+  assert.equal(selection().length,1);assert.equal(selection()[0]!.attributes.get('stroke-dasharray'),'2 1.5');
+  const removed=snapshot(1,800,600,'removed-source');
+  assert.equal(await prepare(removed),true);surface.render(removed);
+  assert.equal(hits().length,0);assert.equal(selection().length,0);assert.equal(document.activeElement,host);
+  const returned=snapshot(1,800,600,'returned-source');returned.elements=fresh.elements;
+  returned.appearance!.layers[0]!.elementID=id;returned.appearance!.layers[0]!.subjectFrame={x:100,y:80,width:160,height:50};
+  assert.equal(await prepare(returned),true);surface.render(returned);
+  assert.notEqual(hits()[0],hit);assert.equal(hits()[0]!.attributes.get('aria-pressed'),'true');
+  assert.equal(selection()[0]!.attributes.get('height'),'70');
 });
 
 test('same-source late coarse material cannot replace sharper pixels at the current zoom',async t=>{

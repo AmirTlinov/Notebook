@@ -1,3 +1,4 @@
+import CoreGraphics
 import CSQLite
 import Foundation
 import Testing
@@ -36,8 +37,9 @@ struct NotebookPanelPageReadTests {
     return (result, trace)
   }
 
-  private func read(_ store: NotebookStore, pageID: UUID, actor: UUID) throws -> (JSONValue, SQLReads) {
-    try measured(store) { try store.readPanel(.init(target: .init(kind: .page, id: pageID)), actor: actor) }
+  private func read(_ store: NotebookStore, pageID: UUID, actor: UUID,
+    bounds: NotebookReadBounds? = nil) throws -> (JSONValue, SQLReads) {
+    try measured(store) { try store.readPanel(.init(target: .init(kind: .page, id: pageID), bounds: bounds), actor: actor) }
   }
 
   @Test func mixedPageMatchesAddressedGeometryAndAppearance() throws {
@@ -124,7 +126,10 @@ struct NotebookPanelPageReadTests {
     let (content, captureTrace) = try self.measured(store) { try store.capturePanelPageContent(presentation) }
     let (reused, reuseTrace) = try self.measured(store) { try store.readPanel(.init(target: target), actor: actor, reusing: content) }
     #expect(content.page == loaded)
-    #expect(content.elements == result["elements"]?.array)
+    #expect(try content.projection().elements == result["elements"]?.array)
+    #expect(try content.projection(in: .init(anchor: .zero,
+      region: .init(x: 0, y: 0, width: loaded.size.width, height: loaded.size.height))).elements == expected,
+      "Bounding the full physical page preserves addressed mixed geometry, measured ink and erasure projection")
     #expect(reused == result, "The same cut supplies both native material and every mixed-element panel projection")
     #expect(captureTrace.pageLoads == 1 && reuseTrace.pageLoads == 0)
     #expect(reuseTrace.elementReads == 0 && reuseTrace.erasureReads == 0)
@@ -169,6 +174,110 @@ struct NotebookPanelPageReadTests {
     #expect(after["basis"] == (try .encode(store.readBasis(targets: [target], includeSource: true))))
     #expect(after["fitBounds"] != .null)
     #expect(trace.pageLoads == 0, "Publication refreshes dynamic fields without loading the painted page again")
+  }
+
+  @Test func boundedPageProjectionKeepsNativeBodiesConnectionsAndWholeSources() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("panel-page-window-\(UUID())")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), actor = UUID(), pageID = UUID(), size = PageSize(width: 1000, height: 1000)
+    _ = try store.initializeWorkspace(actor: actor, pageSize: size, initialPageID: pageID)
+    let target = CollaborationTarget(kind: .page, id: pageID)
+    let area = CGRect(x: 480, y: 480, width: 40, height: 40), strokeID = UUID()
+    func shape(_ id: String, _ frame: PageRect, _ graphic: NotebookGraphic = .init(shape: .rectangle),
+      parent: String? = nil) -> AgentElement {
+      .init(id: id, kind: .graphic, frame: frame, source: "", html: "", graphic: graphic, parentID: parent)
+    }
+    var shifted = NotebookGraphic(shape: .rectangle, style: .init(fill: .black))
+    // Production transforms keep their unit corners inside the authored body.
+    // This admitted subframe paints x=480...500 inside the whole x=450...550.
+    shifted.transform = .init(a: 0.2, b: 0, c: 0, d: 1, tx: 0.3, ty: 0)
+    let elements: [AgentElement] = [
+      .init(id: "group", kind: .group, frame: .init(x: 100, y: 100, width: 100, height: 100), source: "", html: "",
+        basis: .init(size: .init(x: 100, y: 100), transform: .init(a: 0, b: 1, c: -1, d: 0, tx: 1, ty: 0))),
+      shape("escaped", .init(x: 380, y: -310, width: 30, height: 30), parent: "group"),
+      shape("left", .init(x: 80, y: 490, width: 20, height: 20)),
+      shape("right", .init(x: 850, y: 490, width: 20, height: 20)),
+      shape("edge", .init(x: 800, y: 800, width: 50, height: 50), .init(shape: .connector,
+        connection: .init(start: .init(point: .zero, binding: .init(elementID: "left")),
+          end: .init(point: .zero, binding: .init(elementID: "right"))))),
+      .init(id: "overflow", kind: .nativeText, frame: .init(x: 480, y: 430, width: 100, height: 10),
+        source: Array(repeating: "Body", count: 8).joined(separator: "\n"), html: ""),
+      .init(id: "program", kind: .web, frame: .init(x: 470, y: 485, width: 40, height: 20), source: "Counter",
+        html: "<button>Count</button>", state: .number(17)),
+      shape("hidden", .init(x: 490, y: 490, width: 10, height: 10), .init(shape: .rectangle, visible: false)),
+      shape("pending", .init(x: 490, y: 490, width: 10, height: 10), .init(shape: .connector,
+        connection: .init(start: .init(point: .zero, binding: .init(elementID: "missing")), end: .init(point: .init(x: 10, y: 10))))),
+      shape("ink", .init(x: 495, y: 485, width: 10, height: 10), .init(shape: .rectangle, representation: .ink, sourceInkIDs: [strokeID])),
+      shape("shifted", .init(x: 450, y: 490, width: 100, height: 20), shifted),
+      shape("thick", .init(x: 455, y: 490, width: 5, height: 5), .init(shape: .rectangle, style: .init(strokeWidth: 60))),
+      .init(id: "distant", kind: .web, frame: .init(x: 900, y: 900, width: 40, height: 40), source: "Elsewhere",
+        html: String(repeating: "outside ", count: 8192))]
+    var page = try store.loadPage(pageID)
+    let changedElements = page.replaceElements(elements, actor: actor); #expect(changedElements)
+    let drawing = PageInkDrawing(actions: [
+      .init(id: strokeID, tool: .pen, samples: [.init(point: .init(x: 500, y: 490), timeOffset: 0,
+        width: 4, opacity: 1, force: 1, azimuth: 0, altitude: 1)]),
+      .init(tool: .eraser, samples: [.init(point: .init(x: 490, y: 495), timeOffset: 0,
+        width: 400, opacity: 1, force: 1, azimuth: 0, altitude: 1)], sequence: 1,
+        elementTargets: [.init(elementID: "program", frame: elements[6].frame, wholeElement: true)])])
+    let changedDrawing = page.replaceDrawing(try drawing.dataRepresentation(), actor: actor); #expect(changedDrawing)
+    try store.savePage(page)
+    let presentation = try store.requestPanelPresentation(.init(target: target,
+      appearance: .init(viewport: .init(x: 400, y: 400), pixelScale: 1)))
+    let content = try store.capturePanelPageContent(presentation), graph = content.page.graphicGraph()
+    let text = try #require(graph.elementPresentation("overflow"))
+    #expect(!area.intersects(CGRect(x: elements[5].frame.x, y: elements[5].frame.y,
+      width: elements[5].frame.width, height: elements[5].frame.height)))
+    #expect(area.intersects(text.bounds), "Native TextKit overflow, not the authored height, decides body membership")
+    #expect(!area.intersects(CGRect(x: elements[4].frame.x, y: elements[4].frame.y,
+      width: elements[4].frame.width, height: elements[4].frame.height)))
+    let connection = try #require(graph.resolve("edge").layout)
+    #expect(area.intersects(CGRect(x: connection.frame.x, y: connection.frame.y,
+      width: connection.frame.width, height: connection.frame.height)))
+    let anchor = WorldPoint(tileX: -1, tileY: 0, localX: WorldPoint.tileSize - 300, localY: 50)
+    let bounds = NotebookReadBounds(anchor: anchor, region: .init(x: 780, y: 430, width: 40, height: 40))
+    let (result, trace) = try measured(store) { try store.readPanel(.init(target: target, bounds: bounds), actor: actor, reusing: content) }
+    let entries = try #require(result["elements"]).array, ids = entries.compactMap { $0["source"]?["id"]?.string }
+    let expectedIDs = ["group", "escaped", "edge", "overflow", "program", "hidden", "pending", "ink", "shifted", "thick"]
+    #expect(ids == expectedIDs, "Whole sources keep painter order; endpoint resolution remains in the full typed graph")
+    #expect(result["worldOrigin"] == (try .encode(WorldPoint.zero)))
+    #expect(result["size"] == (try .encode(size)))
+    #expect(result["rawInkPresent"] == .bool(true))
+    #expect(entries.first { $0["source"]?["id"] == .string("program") }?["appearance"]?["state"] == .string("erased"))
+    #expect(entries.first { $0["source"]?["id"] == .string("hidden") }?["graphicResolution"]?["state"] == .string("hidden"))
+    #expect(entries.first { $0["source"]?["id"] == .string("pending") }?["graphicResolution"] ==
+      (try graph.resolve("pending").readProjection(includeGeometry: true)))
+    for entry in entries {
+      let id = try #require(entry["source"]?["id"]?.string), source = try #require(elements.first { $0.id == id })
+      #expect(entry["source"] == (try .encode(source)), "Filtering never clips the editable source or program state")
+      if source.graphic != nil { #expect(entry["graphicResolution"] == (try graph.resolve(id).readProjection(includeGeometry: true))) }
+    }
+    #expect(trace.pageLoads == 0 && trace.elementReads == 0 && trace.erasureReads == 0)
+    #expect(content.page.elements == elements)
+    #expect(try JSONEncoder().encode(result).count < 65_536, "The large excluded program is never part of the bounded reply")
+    let next = try store.readPanel(.init(target: target,
+      bounds: .init(anchor: .zero, region: .init(x: 880, y: 880, width: 80, height: 80)),
+      knownCursor: result["cursor"]?.string), actor: actor, reusing: content)
+    #expect(next["unchanged"] == nil && next["cursor"] == result["cursor"])
+    #expect(next["elements"]?.array.compactMap { $0["source"]?["id"]?.string } == ["distant"],
+      "A newly exposed window receives sources even without a content commit")
+  }
+
+  @Test func boundedPageReadValidatesBeforeUnchangedAndKeepsTiledAnchors() throws {
+    let f = try PageWindowFixture(count: 1); defer { f.clean() }
+    let target = CollaborationTarget(kind: .page, id: f.pages[0]), cursor = String(try f.store.currentReadCursor())
+    let invalid = try JSONValue.object(["anchor": try .encode(WorldPoint.zero),
+      "region": .object(["x": .number(0), "y": .number(0), "width": .number(0), "height": .number(10)])]).decode(NotebookReadBounds.self)
+    do {
+      _ = try f.store.readPanel(.init(target: target, bounds: invalid, knownCursor: cursor), actor: f.actor)
+      Issue.record("Invalid bounds cannot bypass admission through an unchanged cursor")
+    } catch let error as CollaborationError { #expect(error.code == "invalid_region") }
+    let distant = try f.store.readPanel(.init(target: target,
+      bounds: .init(anchor: .init(tileX: WorldPoint.maximumTileIndex, tileY: 0, localX: 0, localY: 0),
+        region: .init(x: 0, y: 0, width: 100, height: 100))), actor: f.actor)
+    #expect(distant["elements"]?.array.isEmpty == true)
+    #expect(distant["worldOrigin"] == (try .encode(WorldPoint.zero)))
+    #expect(try f.store.readPanel(.init(target: target, knownCursor: cursor), actor: f.actor)["unchanged"] == .bool(true))
   }
 
   @Test func panelMetadataIgnoresNavigationReadClocksButRetainsAddressedChanges() throws {
@@ -225,6 +334,8 @@ struct NotebookPanelPageReadTests {
     let presentation = try store.requestPanelPresentation(.init(target: target,
       appearance: .init(viewport: .init(x: 834, y: 1194), pixelScale: 1)))
     let content = try store.capturePanelPageContent(presentation)
+    let bounds = NotebookReadBounds(anchor: .zero, region: .init(x: 0, y: 0, width: 150, height: 150))
+    let before = try store.readPanel(.init(target: target, bounds: bounds), actor: actor, reusing: content)
     #expect(throws: NotebookStorageError.transactionConflict) {
       try store.readPanel(.init(target: .init(kind: .page, id: f.pages[1])), actor: actor, reusing: content)
     }
@@ -236,14 +347,16 @@ struct NotebookPanelPageReadTests {
     }
     var changed = content.page
     let didChange = changed.replaceElements([.init(id: "new", kind: .nativeText,
-      frame: .init(x: 10, y: 10, width: 100, height: 80), source: "Changed source", html: "")], actor: actor)
+      frame: .init(x: 600, y: 900, width: 100, height: 80), source: "Changed outside the window", html: "")], actor: actor)
     #expect(didChange)
     let changedPage = changed
     _ = try await Task.detached { try store.savePage(changedPage) }.value
     #expect(throws: NotebookStorageError.transactionConflict) { try store.capturePanelPageContent(presentation) }
     #expect(throws: NotebookStorageError.transactionConflict) {
-      try store.readPanel(.init(target: target), actor: actor, reusing: content)
+      try store.readPanel(.init(target: target, bounds: bounds, knownCursor: String(store.currentReadCursor())), actor: actor, reusing: content)
     }
+    let after = try store.readPanel(.init(target: target, bounds: bounds), actor: actor)
+    #expect(after["elements"] == before["elements"], "Offscreen edits invalidate the whole source fence even when bounded hits stay the same")
   }
 
   @Test func retainedContentRejectsLiveInkChangeBeforePersistence() throws {
@@ -278,12 +391,15 @@ struct NotebookPanelPageReadTests {
         target: .init(kind: .page, id: pageID), actor: actor)
     }
     // Populate the existing sparse causal page format through its fragment
-    // writer. This measures read-all projection, not causal-field admission.
+    // writer. The cut still loads all typed source; visual disclosure encodes
+    // only this material window, not causal-field admission or input latency.
     try store.commandTransaction {
       for index in 0..<count {
+        let frame = index < 3 ? PageRect(x: 20 + Double(index) * 10, y: 20, width: 30, height: 30)
+          : index == count - 1 ? PageRect(x: 60, y: 60, width: 30, height: 30)
+          : PageRect(x: 600 + Double(index % 100), y: 900 + Double(index % 100), width: 30, height: 30)
         let id = "element-\(index)", element = AgentElement(id: id, kind: .graphic,
-          frame: .init(x: Double(index % 700), y: Double(index % 1000), width: 30, height: 30),
-          source: "", html: "", graphic: .init(shape: .rectangle))
+          frame: frame, source: "", html: "", graphic: .init(shape: .rectangle))
         try store.writeFragment(.init(address: file + "#/elements/@" + id, file: file, parent: file + "#",
           collection: "elements", member: id, position: index, value: try .encode(element), collections: []), database: store.currentSQL!)
       }
@@ -299,9 +415,11 @@ struct NotebookPanelPageReadTests {
       "Checking a panel checkpoint must not add SQL work as its page grows")
     #expect(metadata.sourceRevision == (try store.referenceRevision(target: .init(kind: .page, id: pageID))))
     let cursor = try store.currentReadCursor(), start = ContinuousClock.now
-    let (result, trace) = try read(store, pageID: pageID, actor: actor)
+    let bounds = NotebookReadBounds(anchor: .zero, region: .init(x: 0, y: 0, width: 100, height: 100))
+    let (result, trace) = try read(store, pageID: pageID, actor: actor, bounds: bounds)
     let elapsed = start.duration(to: .now), entries = try #require(result["elements"]).array
-    #expect(entries.count == count)
+    #expect(entries.count == 4)
+    #expect(entries.compactMap { $0["source"]?["id"]?.string } == ["element-0", "element-1", "element-2", "element-99999"])
     #expect(entries.first?["source"]?["id"] == .string("element-0"))
     #expect(entries.last?["source"]?["id"] == .string("element-99999"))
     #expect(entries.last?["graphicResolution"]?["state"] == .string("geometry"))
@@ -311,16 +429,21 @@ struct NotebookPanelPageReadTests {
       appearance: .init(viewport: .init(x: 834, y: 1194), pixelScale: 1)))
     let captureStarted = ContinuousClock.now
     let (content, captureTrace) = try measured(store) { try store.capturePanelPageContent(presentation) }
-    let captureElapsed = captureStarted.duration(to: .now), reuseStarted = ContinuousClock.now
-    let (reused, reuseTrace) = try measured(store) { try store.readPanel(.init(target: target), actor: actor, reusing: content) }
+    let captureElapsed = captureStarted.duration(to: .now), projectionStarted = ContinuousClock.now
+    let projected = try content.projection(in: bounds), projectionElapsed = projectionStarted.duration(to: .now)
+    let reuseStarted = ContinuousClock.now
+    let (reused, reuseTrace) = try measured(store) { try store.readPanel(.init(target: target, bounds: bounds), actor: actor, reusing: content) }
     let reuseElapsed = reuseStarted.duration(to: .now)
     #expect(reused == result)
-    #expect(content.elements.count == count)
+    #expect(content.page.elements.count == count, "Bounding disclosure never shrinks the native source cut or its full-page fence")
+    #expect(projected.elements == entries)
     #expect(captureTrace.pageLoads == 1 && reuseTrace.pageLoads == 0)
     #expect(reuseTrace.elementReads == 0 && reuseTrace.erasureReads == 0)
     #expect(try store.currentReadCursor() == cursor)
-    print("PANEL_PAGE_SCALE elements=\(count) SQL=\(trace.statements) addressed=\(trace.elementReads) erasures=\(trace.erasureReads) elapsed=\(elapsed) bytes=\(try JSONEncoder().encode(result).count)")
-    print("PANEL_PAGE_CUT_SCALE elements=\(count) capture=\(captureElapsed) reuse=\(reuseElapsed) capture_page_loads=\(captureTrace.pageLoads) reuse_page_loads=\(reuseTrace.pageLoads)")
+    let bytes = try JSONEncoder().encode(result).count
+    #expect(bytes < 65_536, "The actual 100K-source reply fits the panel's encoded budget with only four exposed whole bodies")
+    print("PANEL_PAGE_SCALE source_elements=\(count) projected_elements=\(entries.count) SQL=\(trace.statements) addressed=\(trace.elementReads) erasures=\(trace.erasureReads) elapsed=\(elapsed) bytes=\(bytes)")
+    print("PANEL_PAGE_CUT_SCALE source_elements=\(count) capture=\(captureElapsed) projection=\(projectionElapsed) reuse=\(reuseElapsed) capture_page_loads=\(captureTrace.pageLoads) reuse_page_loads=\(reuseTrace.pageLoads)")
     print("PANEL_METADATA_SCALE elements=\(count) SQL=\(metadataTrace.statements) empty_SQL=\(emptyMetadataTrace.statements) elapsed=\(metadataElapsed) page_loads=\(metadataTrace.pageLoads)")
   }
 
@@ -354,6 +477,10 @@ struct NotebookPanelPageReadTests {
     #expect(entry["source"] == (try .encode(child)))
     #expect(entry["graphicResolution"] == (try native.readProjection(includeGeometry: true)))
     #expect(!NotebookPanelEditableSubject.allows(entry))
+    let bounded = try store.readPanel(.init(target: target,
+      bounds: .init(anchor: .zero, region: .init(x: 0, y: 0, width: 180, height: 180))), actor: actor)
+    #expect(bounded["elements"]?.array.first { $0["source"]?["id"] == .string(child.id) } == entry,
+      "An admitted pending source remains explicit at the native group-depth boundary")
     #expect(try store.currentReadCursor() == cursor)
   }
 }

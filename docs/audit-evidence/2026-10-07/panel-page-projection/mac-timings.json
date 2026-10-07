@@ -1,0 +1,50 @@
+{
+  "slowest": [
+    {
+      "seconds": 3.3098870515823364,
+      "target": "NotebookMacTests",
+      "test": "NotebookPanelPresentationTests/testNotebookCardFirstPageOpensNativePixelsAndNavigationWithoutMovingPresence()"
+    },
+    {
+      "seconds": 1.457859992980957,
+      "target": "NotebookMacTests",
+      "test": "NotebookPanelPageAdmissionTests/testPageSkipsDistantBodiesAndPrioritizesVisibleSeventeenthOverPrefetch()"
+    },
+    {
+      "seconds": 1.1869819164276123,
+      "target": "NotebookMacTests",
+      "test": "NotebookPanelPageAdmissionTests/testClippedPageBudgetPreservesVisibleSubjectPainterBandsAndRequestedDensity()"
+    },
+    {
+      "seconds": 1.0964750051498413,
+      "target": "NotebookMacTests",
+      "test": "NotebookPanelPageAdmissionTests/testPageWindowDisclosesOverflowTextAndNewlyExposedBodies()"
+    },
+    {
+      "seconds": 1.0894790887832642,
+      "target": "NotebookMacTests",
+      "test": "NotebookPanelPageContentTests/testPagePublicationRejectsSourceChangedDuringNativePreparation()"
+    },
+    {
+      "seconds": 1.0865869522094727,
+      "target": "NotebookMacTests",
+      "test": "NotebookPanelPageContentTests/testPagePublicationRefreshesPresenceAndMembershipChangedDuringNativePreparation()"
+    },
+    {
+      "seconds": 0.10573101043701172,
+      "target": "NotebookMacTests",
+      "test": "NotebookPanelPageAdmissionTests/testHundredThousandDistantPageSubjectsUseTheSameBoundedAdmission()"
+    },
+    {
+      "seconds": 0.0004099607467651367,
+      "target": "NotebookMacTests",
+      "test": "NotebookPanelPageAdmissionTests/testPrefetchBoundaryKeepsWholeBodiesAndExistingSemanticExclusions()"
+    }
+  ],
+  "targets": {
+    "NotebookMacTests": {
+      "seconds": 9.33341097831726,
+      "tests": 8
+    }
+  }
+}

@@ -38,7 +38,7 @@ export function editable(element:PanelElement):boolean {
 }
 
 type Asset={url:string;image:HTMLImageElement;width:number;height:number;released:boolean};
-type Hit={selection:PanelSelection;frame:Frame;label:string;editable:boolean;order:number};
+type Hit={selection:PanelSelection;frame:Frame;label:string;editable:boolean;order:number;element?:PanelElement};
 type Group={node:SVGGElement;origin:Point;frame:Frame};
 type Cohort={snapshot:PanelSnapshot;fragment:DocumentFragment;assets:Map<string,Asset>;
   groups:Map<string,Group[]>;frames:Map<string,Frame>;hits:Map<string,Hit>;
@@ -207,7 +207,7 @@ export class Surface {
         if(!validFrame(frame))continue;frames.set(id,frame);
         const label=(element.source.kind==='nativeText'?element.source.source:String(element.source.graphic?.label??element.source.kind)).trim()
           ||(element.source.kind==='nativeText'?'Текст':'Фигура');
-        hits.set(id,{selection,frame,label,
+        hits.set(id,{selection,frame,label,element,
           editable:groups.has(id)&&editable(element)&&!snapshot.unsupportedElements.some(value=>value.id===selection.id),order:orders.get(id)??-1});
       }
       this.discardPrepared();this.prepared={snapshot,fragment,assets,groups,frames,hits,backdrop,view:{...view,camera:a.camera}};return true;
@@ -228,7 +228,7 @@ export class Surface {
     for(const [id,hit]of this.hits)if(!next.hits.has(id)){if(hit===focused)this.svg.parentElement?.focus();hit.remove();this.hits.delete(id);}
     for(const [id,value]of [...next.hits].sort((a,b)=>a[1].order-b[1].order)){
       let hit=this.hits.get(id);
-      if(!hit){hit=node('rect',{fill:'transparent','pointer-events':'all',tabindex:0,role:'button'});this.hits.set(id,hit);}
+      if(!hit){hit=node('rect',{fill:'transparent','pointer-events':'all',tabindex:0,role:'button','aria-pressed':'false'});this.hits.set(id,hit);}
       const expected:ChildNode|null=previousHit?previousHit.nextSibling:this.hitPlane.firstChild;
       if(expected!==hit)this.hitPlane.insertBefore(hit,expected);previousHit=hit;
       for(const [name,n]of Object.entries(value.frame))hit.setAttribute(name,String(n));
@@ -266,11 +266,13 @@ export class Surface {
     this.select(this.selected);
   }
   select(selection:PanelSelection|null){
+    const prior=this.selected?key(this.selected):null,id=selection?key(selection):null;
+    if(prior&&prior!==id)this.hits.get(prior)?.setAttribute('aria-pressed','false');
+    if(id)this.hits.get(id)?.setAttribute('aria-pressed','true');
     this.selected=selection;this.selection.removeAttribute('transform');this.selection.replaceChildren();
-    for(const [id,hit]of this.hits)hit.setAttribute('aria-pressed',String(!!selection&&id===key(selection)));
-    if(!selection||!this.accepted)return;const id=key(selection),body=this.accepted.frames.get(id);if(!body)return;
-    const element=selection.kind==='element'?this.accepted.snapshot.elements.find(value=>value.source.id===selection.id):undefined;
-    const canEdit=this.accepted.hits.get(id)?.editable===true,text=canEdit&&element?.source.kind==='nativeText';
+    if(!selection||!id||!this.accepted)return;const body=this.accepted.frames.get(id);if(!body)return;
+    const hit=this.accepted.hits.get(id),element=hit?.element;
+    const canEdit=hit?.editable===true,text=canEdit&&element?.source.kind==='nativeText';
     const authored=element?this.authoredFrame(element):body,frame=text?{...authored,height:Math.max(authored.height,body.height)}:body;
     if(this.motion&&key(this.motion.selection)===id)this.selection.setAttribute('transform',`translate(${this.motion.dx} ${this.motion.dy})`);
     this.selection.append(node('rect',{...frame,fill:'none',stroke:'#496d87','stroke-width':1.25/this.camera.scale,
@@ -286,7 +288,7 @@ export class Surface {
     this.selection.setAttribute('transform',`translate(${dx} ${dy})`);
   }
   previewSize(id:string,width:number,height:number){
-    if(this.accepted?.snapshot.elements.find(element=>element.source.id===id)?.source.kind==='nativeText')return;
+    if(this.accepted?.hits.get(`element:${id}`)?.element?.source.kind==='nativeText')return;
     const body=this.accepted?.frames.get(`element:${id}`);if(!body)return;
     for(const group of this.accepted?.groups.get(`element:${id}`)??[])group.node.setAttribute('transform',`translate(${body.x} ${body.y}) scale(${width/body.width} ${height/body.height}) translate(${group.origin.x-body.x} ${group.origin.y-body.y})`);
   }

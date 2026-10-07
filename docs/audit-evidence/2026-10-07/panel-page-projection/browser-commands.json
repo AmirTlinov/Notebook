@@ -1,0 +1,55 @@
+[
+  {
+    "argv": [
+      "/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a/node",
+      "--version"
+    ],
+    "cwd": "/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook",
+    "environment": {
+      "PATH": "/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+    },
+    "exitCode": 0,
+    "label": "node-before"
+  },
+  {
+    "argv": [
+      "/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a/node",
+      "/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/MCP/node_modules/tsx/dist/cli.mjs",
+      "--test",
+      "--test-reporter=tap",
+      "--test-name-pattern=^(cover selection keeps native painter order when pixels merge into tiles|camera selection work stays bounded with 100000 native hits|selection source and focus follow the accepted cohort through preview, reuse and deletion|same-source late coarse material cannot replace sharper pixels at the current zoom|zoom-out admits lower excess density using the current display scale|an inadequate prior admits the current native pixel budget reply and ends demand|coarser material still admits fresh source identity and visible coverage gains)$",
+      "test/panel.test.ts"
+    ],
+    "cwd": "/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/MCP",
+    "environment": {
+      "PATH": "/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+    },
+    "exitCode": 0,
+    "label": "panel-surface"
+  },
+  {
+    "argv": [
+      "/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a/node",
+      "/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/MCP/node_modules/typescript/bin/tsc",
+      "--noEmit"
+    ],
+    "cwd": "/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/MCP",
+    "environment": {
+      "PATH": "/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+    },
+    "exitCode": 0,
+    "label": "typescript"
+  },
+  {
+    "argv": [
+      "/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a/node",
+      "--version"
+    ],
+    "cwd": "/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook",
+    "environment": {
+      "PATH": "/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+    },
+    "exitCode": 0,
+    "label": "node-after"
+  }
+]

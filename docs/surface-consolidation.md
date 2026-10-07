@@ -75,8 +75,14 @@ pixel witness, while uncertain or claimed content retains its paint cell.
 Finite-page independent bodies are admitted by `NotebookPanelPreviewWriter`
 inside the actual preparation window. Visible bodies receive the sixteen-subject
 grant before prefetch. Grid coarsening preserves that window; budget clipping
-rebuilds admission before raster preparation. Excluded bodies retain their native
-painter bands, authored source and hit geometry.
+rebuilds admission before raster preparation. Bodies excluded from the independent
+grant retain their native painter bands and whole authored source inside that
+window. One retained typed page feeds both paint and projection. The final JSON
+uses actual material bounds, with the existing visibility owner resolving fitted
+text, transformed bodies, connectors and addressed ancestors before encoding.
+Its source and live-ink fence still covers the full page; a camera window is
+reprojected even when the content cursor is unchanged. Surface selection reads
+the accepted hit descriptor and updates only the old and new pressed hit.
 The panel controller owns one text-editor completion. Blur, toolbar and shortcuts
 join it; only the latest tool intent applies after a successful save. Primary
 pointer activation defers focus until that completion is owned, preventing a fast
