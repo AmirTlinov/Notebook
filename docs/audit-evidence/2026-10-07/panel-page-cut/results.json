@@ -42,6 +42,11 @@
     "panelResponseLimitExceededByFixture": true
   },
   "independentReview": "PASS; static ownership, WAL publication, equivalence and focused test review",
-  "installedMeasurement": "pending",
+  "installedMeasurement": {
+    "status": "passed",
+    "comparison": "installed-comparison.json",
+    "installation": "installation.json",
+    "hostPanel": "Awaiting chat MCP reconnect: old plugin257 rejects installed runtime258."
+  },
   "physicalAcceptance": false
 }
