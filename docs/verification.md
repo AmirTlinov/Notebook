@@ -418,3 +418,22 @@ GUI-196, GUI-197, GUI-183 и длительная GUI-250 остаются от�
 215–240 — [в прежней ревизии](https://github.com/AmirTlinov/Notebook/blob/1ee54dc9e4444fee3aa9fec4a4a435636d11aa03/docs/verification.md).
 Текущие задачи и зависимости ведутся в Linear; контракт ввода —
 [interaction ownership](interaction-ownership.md).
+
+
+## 2026-10-06: NB13 immutable frozen-window address
+
+Isolated baseline: main `b5e350288443921086d2487b9d3e08a72be6c802`. The existing
+program owner now assigns a stored commit identity to each frozen descriptor.
+Late reads cannot alias a new freeze after resume. Failed resume and idempotent
+checkpoint retry retain the accepted address; numeric FIFO snapshots/ACK remain
+unchanged. The shipped document adapter and all native files are unchanged.
+
+The same 38 program tests fail twice against the baseline producer (36 PASS /
+2 FAIL), including through the actual unchanged iframe adapter. The corrected
+producer passes 38/38; combined program/chat checks pass58/58 and strict TypeScript
+passes. Exact commands, source hashes and limits are in
+[audit evidence](audit-evidence/2026-10-06/checkpoint-snapshot-identity/results.json).
+
+This is independent of the still-unpublished native read-settlement proposal.
+No producer API migration or memory-admission redesign is included. Native
+Swift/WebKit/physical acceptance and installation have not been run here.

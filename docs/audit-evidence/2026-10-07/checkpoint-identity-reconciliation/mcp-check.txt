@@ -1,0 +1,4 @@
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> notebook-mcp@0.3.39 check
+> tsc --noEmit && node build-script-services.mjs --check

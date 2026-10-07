@@ -413,6 +413,10 @@ test('reentrant author serialization cannot freeze after cancellation, resume or
   for (const serialized of [false, true]) for (const mechanism of ['toJSON', 'getter']) {
     for (const operation of ['cancelLifecycle', 'resume', 'dispose']) {
       const {program, api, commits} = fixture();
+      const previous = await program.checkpoint({serialized:true});
+      assert.equal(JSON.parse(program.readSnapshot({revision:previous.revision})).phase, 0);
+      await program.resume();
+      assert.throws(() => program.readSnapshot({revision:previous.revision}), /program_state_snapshot_missing/);
       let interrupted: unknown;
       const interrupt = () => { interrupted = program[operation](); return {phase:99}; };
       const candidate = mechanism === 'toJSON' ? {toJSON:interrupt} :
@@ -425,7 +429,7 @@ test('reentrant author serialization cannot freeze after cancellation, resume or
       assert.equal(api.state.phase, 0, `${mechanism} ${operation} retains the accepted state`);
       assert.equal(program.revision, '0');
       assert.equal(commits.length, 0);
-      assert.throws(() => program.readSnapshot({revision:'frozen'}), /program_state_snapshot_missing/);
+      assert.throws(() => program.readSnapshot({revision:previous.revision}), /program_state_snapshot_missing/);
       assert.equal(program.lifecycleState.phase, operation === 'cancelLifecycle' ? 'failed' : operation === 'dispose' ? 'disposed' : 'running');
     }
   }
@@ -485,12 +489,125 @@ test('reentrant cancellation preserves accepted snapshot acknowledgement and gra
 test('an original serialization error is preserved even when its callback supersedes the lifecycle', async () => {
   for (const operation of ['cancelLifecycle', 'resume', 'dispose']) {
     const {program, api} = fixture(); const failure = new Error('original author error');
+    const previous = await program.checkpoint({serialized:true});
+    assert.equal(JSON.parse(program.readSnapshot({revision:previous.revision})).phase, 0);
+    await program.resume();
+    assert.throws(() => program.readSnapshot({revision:previous.revision}), /program_state_snapshot_missing/);
     let interrupted: unknown;
     api.lifecycle({checkpoint:() => ({toJSON() { interrupted = program[operation](); throw failure; }})});
     await assert.rejects(program.checkpoint({serialized:true}), reason => reason === failure);
     await interrupted;
     assert.equal(api.state.phase, 0);
-    assert.throws(() => program.readSnapshot({revision:'frozen'}), /program_state_snapshot_missing/);
+    assert.throws(() => program.readSnapshot({revision:previous.revision}), /program_state_snapshot_missing/);
     assert.equal(program.lifecycleState.phase, operation === 'cancelLifecycle' ? 'failed' : operation === 'dispose' ? 'disposed' : 'running');
   }
+});
+
+test('frozen read addresses are immutable, retryable and cannot alias a resumed checkpoint', async () => {
+  let phase = 1, reads = 0, rejectResume = false;
+  const {program, api, json} = fixture();
+  api.lifecycle({checkpoint:() => { reads++; return {phase}; }, resume:() => {
+    if (rejectResume) throw new Error('resume refused');
+  }});
+  const first = await program.checkpoint({serialized:true});
+  assert.equal(JSON.parse(program.readSnapshot({revision:first.revision})).phase, 1);
+  assert.deepEqual(json(await program.checkpoint({retry:true,serialized:true})), json(first));
+  rejectResume = true;
+  await assert.rejects(program.resume(), /resume refused/);
+  assert.deepEqual(json(await program.checkpoint({retry:true,serialized:true})), json(first));
+  assert.equal(reads, 1, 'Failed resume preserves the accepted snapshot and its address');
+  rejectResume = false;
+  await program.resume();
+  assert.throws(() => program.readSnapshot({revision:first.revision}), /program_state_snapshot_missing/);
+  phase = 2;
+  const second = await program.checkpoint({serialized:true});
+  assert.notEqual(second.revision, first.revision, 'A stale window must not read the new frozen model');
+  assert.throws(() => program.readSnapshot({revision:first.revision}), /program_state_snapshot_missing/);
+  assert.equal(JSON.parse(program.readSnapshot({revision:second.revision})).phase, 2);
+  await program.dispose();
+  assert.equal(JSON.parse(program.readSnapshot({revision:second.revision})).phase, 2,
+    'Disposing author work must preserve the admitted immutable transport');
+});
+
+test('the unchanged document adapter round-trips frozen identities and rejects an old resumed window', async () => {
+  const adapter = readFileSync(new URL('../../Applications/WebResources/document-program.js', import.meta.url), 'utf8');
+  const handlers = new Map<string, (event: any) => Promise<void>>(), messages: any[] = [];
+  const parent = {postMessage:(message: any) => messages.push(message)};
+  const context = createContext({setTimeout,clearTimeout,AbortController,CustomEvent,queueMicrotask,parent,
+    window:{},document:{activeElement:null},dispatchEvent:()=>{},
+    addEventListener:(name: string, handler: (event: any) => Promise<void>) => handlers.set(name,handler)});
+  runInContext(source + adapter + `
+    installNotebookDocumentProgram({blockID:'program',token:'token',state:{phase:0},requiresReady:false},createNotebookProgram);
+  `,context);
+  let phase = 1, checkpoints = 0, failResume = false, sequence = 0;
+  context.window.notebook.lifecycle({checkpoint:() => { checkpoints++; return {phase}; },resume:() => {
+    if (failResume) throw new Error('resume refused');
+  }});
+  const send = async (channel: string, argument?: unknown) => {
+    const requestID = String(++sequence);
+    await handlers.get('message')!({source:parent,data:{channel,token:'token',requestID,argument}});
+    return messages.findLast(message => message.requestID === requestID);
+  };
+  const first = (await send('notebook-suspend')).state;
+  assert.equal(JSON.parse((await send('notebook-snapshot',{revision:first.revision})).result).phase,1);
+  failResume = true;
+  assert.match((await send('notebook-resume')).message,/resume refused/);
+  assert.equal((await send('notebook-suspend')).state.revision,first.revision);
+  assert.equal(checkpoints,1);
+  failResume = false; await send('notebook-resume'); phase = 2;
+  const second = (await send('notebook-suspend')).state;
+  assert.notEqual(second.revision,first.revision);
+  assert.equal((await send('notebook-snapshot',{revision:first.revision})).channel,'notebook-program-error');
+  assert.equal(JSON.parse((await send('notebook-snapshot',{revision:second.revision})).result).phase,2);
+  await send('notebook-dispose');
+  assert.equal(JSON.parse((await send('notebook-snapshot',{revision:second.revision})).result).phase,2,
+    'The unchanged failed-author adapter must still drain its frozen descriptor');
+});
+
+test('frozen-address revocation leaves accepted numeric FIFO snapshots readable until their idempotent ACK', async () => {
+  const {program,api} = fixture({stateTransport:{credit:65536,onSnapshot:()=>{},requestCredit:()=>{}}});
+  assert.equal(api.commit({phase:1}),true);
+  await program.dispose();
+  assert.equal(JSON.parse(program.readSnapshot({revision:'1'})).phase,1);
+  program.acknowledgeSnapshot('1');program.acknowledgeSnapshot('1');
+  assert.throws(() => program.readSnapshot({revision:'1'}),/program_state_snapshot_missing/);
+});
+
+test('author disposal during a partial frozen pull preserves every remaining window but forbids new lifecycle work', async () => {
+  const text = 'α'.repeat(262140) + '😀tail';
+  const {program,api} = fixture();
+  api.lifecycle({checkpoint:() => ({text})});
+  const descriptor = await program.checkpoint({serialized:true});
+  const first = program.readSnapshot({revision:descriptor.revision,offset:0});
+  assert.ok(first.length < descriptor.units);
+  await program.dispose();
+  const rest = program.readSnapshot({revision:descriptor.revision,offset:first.length});
+  assert.equal(JSON.parse(first + rest).text,text);
+  assert.throws(() => program.checkpoint({serialized:true}),/program_disposed/);
+  await assert.rejects(program.resume(),/program_disposed/);
+});
+
+test('cancelled checkpoint serialization keeps its previous address revoked through recovery', async () => {
+  const {program, api, json} = fixture();
+  const previous = await program.checkpoint({serialized:true});
+  assert.equal(JSON.parse(program.readSnapshot({revision:previous.revision})).phase, 0);
+  await program.resume();
+  let cancel = true, checkpoints = 0;
+  api.lifecycle({checkpoint:() => {
+    checkpoints++;
+    return {toJSON() {
+      if (cancel) { program.cancelLifecycle(); return {phase:99}; }
+      return {phase:2};
+    }};
+  }});
+  await assert.rejects(program.checkpoint({serialized:true}), /program_superseded/);
+  assert.equal(api.state.phase, 0);
+  assert.throws(() => program.readSnapshot({revision:previous.revision}), /program_state_snapshot_missing/);
+  cancel = false;
+  const recovered = await program.checkpoint({retry:true,serialized:true});
+  assert.notEqual(recovered.revision, previous.revision);
+  assert.equal(JSON.parse(program.readSnapshot({revision:recovered.revision})).phase, 2);
+  assert.throws(() => program.readSnapshot({revision:previous.revision}), /program_state_snapshot_missing/);
+  assert.deepEqual(json(await program.checkpoint({retry:true,serialized:true})), json(recovered));
+  assert.equal(checkpoints, 2, 'Recovery freezes once and a repeated retry preserves its descriptor');
 });
