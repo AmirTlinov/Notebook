@@ -1,0 +1,25 @@
+{
+  "baseCommit": "004b1253d345cacbf6663322ceed220f605903bc",
+  "changedFiles": [
+    "Sources/NotebookCore/NotebookFileStore.swift",
+    "Tests/NotebookCoreTests/NotebookProjectFileTests.swift"
+  ],
+  "checks": {
+    "commands": [],
+    "core": [
+      "NotebookCoreTests.NotebookArchitectureDeliveryTests/maximalUploadWritesOnlyTheCurrentChunkAndRetryReadsOnlyItsSlice",
+      "NotebookCoreTests.NotebookProjectFileTests/aNewUploadPreservesOldPartialCompletedAndConflictingDraftsAcrossAuthors",
+      "NotebookCoreTests.NotebookProjectFileTests/agedUnfinishedUploadQuotaRefusesWithoutDeletingOrReplacingBytes",
+      "NotebookCoreTests.NotebookProjectFileTests/chunksAreBoundToAddressAuthorAndDigestAndReplayWithoutAnotherWrite"
+    ],
+    "ipad": [],
+    "mac": []
+  },
+  "format": 2,
+  "manualSelection": true,
+  "optimized": false,
+  "profiles": [],
+  "selectionMode": "explicit-only",
+  "sourceRoot": "/Users/amir/.codex/worktrees/notebook-storage-diagnostics/Notebook",
+  "unclassified": []
+}

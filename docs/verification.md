@@ -16,6 +16,15 @@ Debug capture9,235с, first projection1,388с, reuse138мс: полная заг
 срезом. Плагин260 ещё содержит прежний код; живые жесты/показ и physical acceptance
 открыты. [Scope, замеры и исправленные отказы](audit-evidence/2026-10-07/panel-page-projection/results.json).
 
+**8 октября, file uploads:** начало новой загрузки сохраняет старые prefix и
+полные draft/conflict payloads всех авторов; возраст и terminal job не доказывают
+retirement. Убран TTL DELETE, лимит32 отказывает без удаления данных.
+**4 Core PASS**, 0 failures/skips, source `b349160c…`/1717 до/после одинаков.
+Проверены exact bytes после reopen/resume и максимальный incremental IO:
+5592552 bytes / 114 chunks, прочитаны5592552 bytes / 9267 VM steps.
+[Scope и причина](audit-evidence/2026-10-08/file-upload-preservation/results.json).
+Срез сохраняет format29; installed/physical и полный cleanup остаются открытыми.
+
 **8 октября, GUI-504:** `storageUsage` читает bounded metadata одного committed
 SQLite snapshot; readonly admission отвергает missing/old format до изменения БД.
 Тела blobs не читаются; история сохранена, physical DB/WAL/SHM — отдельные samples.

@@ -74,7 +74,8 @@ extension NotebookStore {
         rowID = row[0].integer!
       } else {
         guard chunk.offset == 0 else { throw NotebookStorageError.invalidTransaction("file upload missing") }
-        try db.run("DELETE FROM file_uploads WHERE touched<? AND id NOT IN (SELECT id FROM chat_jobs WHERE state IN ('saved','attempting','uncertain'))", [.real(Date().addingTimeInterval(-604800).timeIntervalSince1970)])
+        // Age and terminal job state do not retire an unpublished draft or
+        // the original submitted bytes of a conflict.
         guard try db.rows("SELECT COUNT(*) FROM file_uploads WHERE id NOT IN (SELECT id FROM chat_jobs WHERE state='accepted')")[0][0].integer! < 32 else { throw NotebookStorageError.limitExceeded("unfinished file uploads") }
         try db.run("INSERT INTO file_uploads(id,author,digest,total,value,received,touched) VALUES(?,?,?,?,zeroblob(?),0,?)", [.text(chunk.id.uuidString), .text(author.uuidString), .text(chunk.digest), .integer(Int64(chunk.total)), .integer(Int64(chunk.total)), .real(Date().timeIntervalSince1970)])
         rowID = sqlite3_last_insert_rowid(db.handle)

@@ -1,0 +1,12 @@
+{
+  "format": 1,
+  "sourceSHA256": "b349160c70f523bd61d49df60e6347ea4defd306cba56b30a148595e60b42908",
+  "sourceFiles": 1717,
+  "beforeAndAfterEqual": true,
+  "files": {
+    "Sources/NotebookCore/NotebookFileStore.swift": "d0e5fefd0689bbea7e45294fa495d6bff5cf1776f9c55ab13ad7b2f8a09b78ba",
+    "Tests/NotebookCoreTests/NotebookProjectFileTests.swift": "508809614f860fd8882f0cd68941a909dc2736f4a622f9a4e242a7e24b023c0e"
+  },
+  "rawSourceRecordsSHA256": "6e65d24c2c6e0e45035399e7925925a946c2cd8224188e0facb715d21c0736be",
+  "rawVerificationSHA256": "e1ab6b4b93ead160491a19336f7fffc185b9f4b9d2554cca5d8a71aa48a43fb0"
+}

@@ -1,0 +1,17 @@
+◇ Test run started.
+↳ Testing Library Version: 2084
+↳ Target Platform: arm64e-apple-macos14.0
+◇ Suite "Project files retain versions and drafts independently of the board" started.
+◇ Suite "Durable delivery bounded work" started.
+◇ Test agedUnfinishedUploadQuotaRefusesWithoutDeletingOrReplacingBytes() started.
+◇ Test aNewUploadPreservesOldPartialCompletedAndConflictingDraftsAcrossAuthors() started.
+◇ Test maximalUploadWritesOnlyTheCurrentChunkAndRetryReadsOnlyItsSlice() started.
+◇ Test chunksAreBoundToAddressAuthorAndDigestAndReplayWithoutAnotherWrite() started.
+✔ Test chunksAreBoundToAddressAuthorAndDigestAndReplayWithoutAnotherWrite() passed after 0.111 seconds.
+✔ Test aNewUploadPreservesOldPartialCompletedAndConflictingDraftsAcrossAuthors() passed after 0.121 seconds.
+✔ Test agedUnfinishedUploadQuotaRefusesWithoutDeletingOrReplacingBytes() passed after 0.155 seconds.
+✔ Suite "Project files retain versions and drafts independently of the board" passed after 0.155 seconds.
+FILE_UPLOAD payload=5592552 chunks=114 sql_blob_read_bytes=5592552 sql_vm_steps=9267
+✔ Test maximalUploadWritesOnlyTheCurrentChunkAndRetryReadsOnlyItsSlice() passed after 0.254 seconds.
+✔ Suite "Durable delivery bounded work" passed after 0.254 seconds.
+✔ Test run with 4 tests in 2 suites passed after 0.254 seconds.

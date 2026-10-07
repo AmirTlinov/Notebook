@@ -1,0 +1,34 @@
+{
+  "format": 1,
+  "date": "2026-10-08",
+  "issue": "https://linear.app/main-cluster/issue/GUI-504",
+  "baseCommit": "004b1253d345cacbf6663322ceed220f605903bc",
+  "status": "focused_checks_passed",
+  "cause": "Starting a new upload deleted uploads older than seven days across authors. Prefixes, drafts before submission and original conflict text could have no other durable copy; terminal job or a file commit containing current Mac bytes does not prove retirement.",
+  "change": "Remove only age-based DELETE in existing stageFileUpload. Keep finite32 unfinished admission/refusal, current format29 and all request/author/digest/offset/replay rules.",
+  "validation": {
+    "functions": 4,
+    "cases": 4,
+    "failed": 0,
+    "skipped": 0,
+    "sourceSHA256": "b349160c70f523bd61d49df60e6347ea4defd306cba56b30a148595e60b42908",
+    "sourceFiles": 1717,
+    "sourceUnchanged": true,
+    "execution": "core-execution.json",
+    "sourceRecords": "source-records.json",
+    "scenarios": [
+      "old partial/completed/accepted conflict/other-author bytes survive new upload, reopen and resume",
+      "32 old unfinished prefixes refuse a new upload without deleting/replacing bytes or changing cursors",
+      "existing chunk identity and same-request retry",
+      "maximum incremental blob IO:5592552bytes/114chunks,5592552readbytes/9267VMsteps"
+    ]
+  },
+  "retention": "All original authored upload bytes are retained; new admission refuses rather than destroying an older owner. No abort/retirement is inferred from age or terminal job state.",
+  "remaining": "GUI-504 cleanup still needs complete typed staging/active-lease proof and immutable action roots. Legacy touched column stays in current29 until the strict format transition. Installed pair260 and physical/full104 acceptance unchanged.",
+  "physicalAcceptance": false,
+  "full104Acceptance": false,
+  "artifactsManifest": {
+    "path": "artifacts.json",
+    "sha256": "33d0be139c9dfe486535dd05f56b9cfa6348087f2e73cebbf77a940ab4164631"
+  }
+}

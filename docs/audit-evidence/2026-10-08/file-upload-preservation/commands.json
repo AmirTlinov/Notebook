@@ -1,0 +1,86 @@
+[
+  {
+    "argv": [
+      "/opt/homebrew/opt/python@3.14/bin/python3.14",
+      "--version"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "toolchain-python"
+  },
+  {
+    "argv": [
+      "swift",
+      "--version"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "toolchain-swift"
+  },
+  {
+    "argv": [
+      "swift",
+      "package",
+      "describe",
+      "--type",
+      "json"
+    ],
+    "cwd": "/Users/amir/.codex/worktrees/notebook-storage-diagnostics/Notebook",
+    "exitCode": 0,
+    "label": "core-package"
+  },
+  {
+    "argv": [
+      "swift",
+      "test",
+      "list",
+      "--disable-xctest",
+      "--test-product",
+      "NotebookCoreTests",
+      "--event-stream-output-path",
+      "/Users/amir/.codex/worktrees/notebook-storage-diagnostics/Notebook/.build/nb11-file-upload-20261008-core-v1/core-NotebookCoreTests-inventory.jsonl",
+      "--event-stream-version",
+      "6.4"
+    ],
+    "cwd": "/Users/amir/.codex/worktrees/notebook-storage-diagnostics/Notebook",
+    "exitCode": 0,
+    "label": "core-inventory-NotebookCoreTests"
+  },
+  {
+    "argv": [
+      "swift",
+      "test",
+      "--disable-xctest",
+      "--skip-build",
+      "--test-product",
+      "NotebookCoreTests",
+      "--filter",
+      "^(?:NotebookCoreTests\\.NotebookArchitectureDeliveryTests/maximalUploadWritesOnlyTheCurrentChunkAndRetryReadsOnlyItsSlice\\(\\)/NotebookArchitectureDeliveryTests\\.swift:35:4|NotebookCoreTests\\.NotebookProjectFileTests/aNewUploadPreservesOldPartialCompletedAndConflictingDraftsAcrossAuthors\\(\\)/NotebookProjectFileTests\\.swift:53:4|NotebookCoreTests\\.NotebookProjectFileTests/agedUnfinishedUploadQuotaRefusesWithoutDeletingOrReplacingBytes\\(\\)/NotebookProjectFileTests\\.swift:113:4|NotebookCoreTests\\.NotebookProjectFileTests/chunksAreBoundToAddressAuthorAndDigestAndReplayWithoutAnotherWrite\\(\\)/NotebookProjectFileTests\\.swift:32:4)$",
+      "--event-stream-output-path",
+      "/Users/amir/.codex/worktrees/notebook-storage-diagnostics/Notebook/.build/nb11-file-upload-20261008-core-v1/core-NotebookCoreTests-events.jsonl",
+      "--event-stream-version",
+      "6.4"
+    ],
+    "cwd": "/Users/amir/.codex/worktrees/notebook-storage-diagnostics/Notebook",
+    "exitCode": 0,
+    "label": "core-NotebookCoreTests"
+  },
+  {
+    "argv": [
+      "/opt/homebrew/opt/python@3.14/bin/python3.14",
+      "--version"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "toolchain-after-python"
+  },
+  {
+    "argv": [
+      "swift",
+      "--version"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "toolchain-after-swift"
+  }
+]

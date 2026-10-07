@@ -1,0 +1,33 @@
+{
+  "format": 1,
+  "files": {
+    "core-execution.json": {
+      "bytes": 2038,
+      "sha256": "1b04057ed1a9a5d93af44c995d09e52e71b3f971a4cdabf4185b06f049fc659f"
+    },
+    "core-NotebookCoreTests-events.jsonl": {
+      "bytes": 7777,
+      "sha256": "272420781133a80a048a6c496717eea0e906cfeb5d0d792904e997b564c5e188"
+    },
+    "core-NotebookCoreTests.stdout.log": {
+      "bytes": 1339,
+      "sha256": "cb77685d9d354d20f8d1579006829337f8b306e23d7d998726664712e78ac2dd"
+    },
+    "commands.json": {
+      "bytes": 2590,
+      "sha256": "510e1ba9ed416bf709c32211daf928980653acc98698517656f93c5bdac9210e"
+    },
+    "selection.json": {
+      "bytes": 1000,
+      "sha256": "103496f4199a10a4dce27803827f4d200a832c930a4c186ebf2ac546be3d8670"
+    },
+    "toolchain.json": {
+      "bytes": 145,
+      "sha256": "1942ce3eca3124cc54845493d9dafe4bee970e0569479a40724102bc9fdcdfab"
+    },
+    "source-records.json": {
+      "bytes": 616,
+      "sha256": "9408206111f3e4c0aa6c7d70e4f0e784e72ed3eb421d6477bed98e9864848fd1"
+    }
+  }
+}
