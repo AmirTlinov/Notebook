@@ -67,5 +67,13 @@
     "XProtect cost itself is unchanged; MCP transport/card can start during native admission.",
     "ImageIO internal codec scratch is outside the measured application-owned output ledger.",
     "Full acceptance remains GUI-190."
-  ]
+  ],
+  "installed": {
+    "status": "installed",
+    "details": "installation.json",
+    "comparison": "installed-comparison.json",
+    "trueCodexPanel": "pending reconnect from build255 and card expansion",
+    "fullAcceptance": "open GUI-190"
+  },
+  "diagnosticLimit": "profiler.json"
 }

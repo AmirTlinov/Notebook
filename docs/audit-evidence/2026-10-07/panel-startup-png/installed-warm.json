@@ -1,0 +1,171 @@
+{
+  "at": "2026-10-07T10:49:48.385Z",
+  "plugin": "0.2.8",
+  "scope": "Installed MCP read-only presentation timing; not host input-to-pixel latency",
+  "samples": [
+    {
+      "label": "static-opening-card",
+      "ms": 3.2949160000000006,
+      "bytes": 230,
+      "error": false
+    },
+    {
+      "label": "connect-first-page",
+      "ms": 223.161833,
+      "bytes": 41204,
+      "error": false,
+      "cursor": "66189"
+    },
+    {
+      "label": "page-1",
+      "ms": 857.6315,
+      "bytes": 1059910,
+      "error": false,
+      "layers": 29,
+      "encodedChars": 1004976,
+      "cursor": "66189",
+      "pageIndex": 0,
+      "diagnostics": [],
+      "sourceRevision": "d6e78c4c3c487b4f7678c278fb99d8593214b4e833297902934b37f3ae51b565",
+      "camera": {
+        "center": {
+          "tileX": 0,
+          "localX": 417,
+          "localY": 597,
+          "tileY": 0
+        },
+        "scale": 0.6700167504187605
+      },
+      "coverage": {
+        "region": {
+          "width": 1662.9921259842522,
+          "height": 1662.9921259842522,
+          "y": 0,
+          "x": 0
+        },
+        "anchor": {
+          "localY": 6236.220472440945,
+          "tileY": -1,
+          "tileX": -1,
+          "localX": 6236.220472440945
+        },
+        "pixelDensity": 2.463030303030303,
+        "level": 1
+      }
+    },
+    {
+      "label": "page-2",
+      "ms": 617.933708,
+      "bytes": 2472832,
+      "error": false,
+      "layers": 24,
+      "encodedChars": 657128,
+      "cursor": "66190",
+      "pageIndex": 1,
+      "diagnostics": [],
+      "sourceRevision": "76b8aac5c1e5e714e05cdbdb029bbd4e6d515b44fd9f1cb1a9275f30eef4ad3e",
+      "camera": {
+        "center": {
+          "localY": 597,
+          "tileY": 0,
+          "tileX": 0,
+          "localX": 417
+        },
+        "scale": 0.6700167504187605
+      },
+      "coverage": {
+        "region": {
+          "height": 1662.9921259842522,
+          "x": 0,
+          "width": 1662.9921259842522,
+          "y": 0
+        },
+        "anchor": {
+          "localX": 6236.220472440945,
+          "tileX": -1,
+          "localY": 6236.220472440945,
+          "tileY": -1
+        },
+        "level": 1,
+        "pixelDensity": 2.463030303030303
+      }
+    },
+    {
+      "label": "page-3",
+      "ms": 120.69516700000008,
+      "bytes": 340037,
+      "error": false,
+      "layers": 18,
+      "encodedChars": 329928,
+      "cursor": "66190",
+      "pageIndex": 2,
+      "diagnostics": [],
+      "sourceRevision": "02f68040f5035627b3d1f3602ba7bd05ed1d798d0ce6320d33abb56195e5f0bd",
+      "camera": {
+        "center": {
+          "tileX": 0,
+          "localY": 597,
+          "localX": 417,
+          "tileY": 0
+        },
+        "scale": 0.6700167504187605
+      },
+      "coverage": {
+        "anchor": {
+          "tileY": -1,
+          "tileX": -1,
+          "localX": 6236.220472440945,
+          "localY": 6236.220472440945
+        },
+        "region": {
+          "y": 0,
+          "width": 1662.9921259842522,
+          "x": 0,
+          "height": 1662.9921259842522
+        },
+        "pixelDensity": 2.463030303030303,
+        "level": 1
+      }
+    },
+    {
+      "label": "page-2",
+      "ms": 394.8819590000003,
+      "bytes": 2472832,
+      "error": false,
+      "layers": 24,
+      "encodedChars": 657128,
+      "cursor": "66190",
+      "pageIndex": 1,
+      "diagnostics": [],
+      "sourceRevision": "76b8aac5c1e5e714e05cdbdb029bbd4e6d515b44fd9f1cb1a9275f30eef4ad3e",
+      "camera": {
+        "center": {
+          "tileX": 0,
+          "tileY": 0,
+          "localX": 417,
+          "localY": 597
+        },
+        "scale": 0.6700167504187605
+      },
+      "coverage": {
+        "anchor": {
+          "localX": 6236.220472440945,
+          "localY": 6236.220472440945,
+          "tileX": -1,
+          "tileY": -1
+        },
+        "level": 1,
+        "pixelDensity": 2.463030303030303,
+        "region": {
+          "x": 0,
+          "height": 1662.9921259842522,
+          "y": 0,
+          "width": 1662.9921259842522
+        }
+      }
+    }
+  ],
+  "handshakeMS": 121.12212500000001,
+  "status": "passed",
+  "stderr": "Notebook MCP listens on stdio\n{\"kind\":\"notebook-runtime-startup\",\"launcherPID\":38777,\"phase\":\"startup.begin\",\"startedAt\":\"2026-10-07T10:49:48.471Z\",\"elapsedMilliseconds\":0.6459169999999972,\"attempts\":0,\"launched\":false}\n{\"kind\":\"notebook-runtime-startup\",\"launcherPID\":38777,\"phase\":\"startup.done\",\"startedAt\":\"2026-10-07T10:49:48.471Z\",\"elapsedMilliseconds\":34.391791999999995,\"attempts\":1,\"launched\":false,\"runtimePID\":38006,\"runtimeState\":\"ready\"}\n"
+}

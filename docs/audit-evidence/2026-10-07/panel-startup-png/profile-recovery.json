@@ -1,0 +1,60 @@
+{
+  "at": "2026-10-07T11:06:07.254Z",
+  "plugin": "0.2.8",
+  "scope": "Post-profiler liveness check for original page, same admitted runtime; not comparative performance evidence",
+  "samples": [
+    {
+      "label": "static-opening-card",
+      "ms": 2.5625409999999818,
+      "bytes": 230,
+      "error": false
+    },
+    {
+      "label": "connect-first-page",
+      "ms": 419.805167,
+      "bytes": 41204,
+      "error": false,
+      "cursor": "66253"
+    },
+    {
+      "label": "page-1",
+      "ms": 725.4484160000001,
+      "bytes": 1059910,
+      "error": false,
+      "layers": 29,
+      "encodedChars": 1004976,
+      "cursor": "66253",
+      "pageIndex": 0,
+      "diagnostics": [],
+      "sourceRevision": "d6e78c4c3c487b4f7678c278fb99d8593214b4e833297902934b37f3ae51b565",
+      "camera": {
+        "center": {
+          "tileX": 0,
+          "localY": 597,
+          "localX": 417,
+          "tileY": 0
+        },
+        "scale": 0.6700167504187605
+      },
+      "coverage": {
+        "pixelDensity": 2.463030303030303,
+        "level": 1,
+        "anchor": {
+          "localY": 6236.220472440945,
+          "tileY": -1,
+          "localX": 6236.220472440945,
+          "tileX": -1
+        },
+        "region": {
+          "height": 1662.9921259842522,
+          "y": 0,
+          "width": 1662.9921259842522,
+          "x": 0
+        }
+      }
+    }
+  ],
+  "handshakeMS": 91.78775,
+  "status": "passed",
+  "stderr": "Notebook MCP listens on stdio\n{\"kind\":\"notebook-runtime-startup\",\"launcherPID\":43929,\"phase\":\"startup.begin\",\"startedAt\":\"2026-10-07T11:06:07.321Z\",\"elapsedMilliseconds\":0.43266700000000213,\"attempts\":0,\"launched\":false}\n{\"kind\":\"notebook-runtime-startup\",\"launcherPID\":43929,\"phase\":\"startup.done\",\"startedAt\":\"2026-10-07T11:06:07.321Z\",\"elapsedMilliseconds\":24.891374999999996,\"attempts\":1,\"launched\":false,\"runtimePID\":38006,\"runtimeState\":\"ready\"}\n"
+}
