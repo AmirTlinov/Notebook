@@ -1,0 +1,24 @@
+{
+  "at": "2026-10-07T07:05:23.978Z",
+  "plugin": "0.2.5",
+  "scope": "Installed MCP read-only presentation timing; not host input-to-pixel latency",
+  "samples": [
+    {
+      "label": "open",
+      "ms": 66.97691700000001,
+      "bytes": 296604,
+      "error": false,
+      "cursor": "65453"
+    },
+    {
+      "label": "initial-view",
+      "ms": 2.5102919999999926,
+      "bytes": 355,
+      "error": true,
+      "code": "snapshot_pending"
+    }
+  ],
+  "status": "failed",
+  "error": "Представление Notebook ждёт завершения ввода.",
+  "stderr": "Notebook MCP listens on stdio\n"
+}

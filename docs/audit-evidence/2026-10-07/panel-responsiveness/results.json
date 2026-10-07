@@ -1,0 +1,134 @@
+{
+  "date": "2026-10-07",
+  "status": "installed-partially-checked-ux-open",
+  "candidate": {
+    "runtimeBuild": "254",
+    "pluginVersion": "0.2.6"
+  },
+  "sources": {
+    "MCP/panel/session.ts": "c618193e0931ee363a366f0f034e375556587f2f5ae2a727de8c84e178e13195",
+    "MCP/panel/surface.ts": "0a18530a366c860bb530200eff7396b63a8c465013efc7849babd2477d98ef72",
+    "MCP/panel/panel.ts": "7a710e54993302d4e851540a8da6aefadb35735112f276dd778fb136087b0a26",
+    "MCP/panel/index.html": "7ba4261f43daf1970cc2297946b0f4f8bbfbd9dafedd7de17c7d410dc746dbc3",
+    "MCP/panel/styles.css": "06d393d6821fd6e0cbff7744ec5cbd0a43eba29512b3f9f398e6d0875577ba2d",
+    "MCP/test/panel.test.ts": "e2c9541f2ed4d9772b474d274927c0f296496e795f43d5eb201ba4ddf8a0deb3",
+    "MCP/test/panel-input.test.ts": "ee752c8f7aa8dfc80093d901d36b006da1fed9a615b155de5f183efd9b411a4c"
+  },
+  "checks": [
+    {
+      "command": "./node_modules/.bin/tsx --test test/panel.test.ts test/panel-input.test.ts",
+      "cwd": "MCP",
+      "passed": 60,
+      "failed": 0,
+      "skipped": 0,
+      "durationMs": 407.426584,
+      "log": "panel-tests.txt"
+    },
+    {
+      "command": "./node_modules/.bin/tsc --noEmit",
+      "cwd": "MCP",
+      "exitCode": 0,
+      "completedAt": "2026-10-07T07:53:10Z",
+      "receipt": "Agent tool output c6d074; no separate file log"
+    }
+  ],
+  "independentReview": {
+    "result": "no blocking findings",
+    "scope": "final frozen density guard, retained-frame status, ownership and asset lifecycle; read-only"
+  },
+  "visualLayout": {
+    "surface": "Codex in-app browser; exact authored HTML/CSS static preview",
+    "widths": [
+      320,
+      540,
+      900
+    ],
+    "result": "toolbar fits without overlap",
+    "limit": "No controller or installed-host acceptance"
+  },
+  "baseline": [
+    "before-peer-input.json",
+    "before-presentation.json"
+  ],
+  "limits": [
+    "Baseline samples measure installed MCP read duration, not human input-to-pixels.",
+    "Full shared scene and delta subscription migration remains open.",
+    "Physical joint acceptance remains open."
+  ],
+  "nativeFirstRun": {
+    "passed": 11,
+    "failed": 1,
+    "skipped": 0,
+    "runtimeWarnings": 0,
+    "evidence": "native-first-run.json",
+    "failure": "Immediate post-lift gate assertion at NotebookPanelPresentationTests.swift:499; teardown removal EPERM. Held-peer foreground pixels and local-input refusal passed.",
+    "resolution": "The final selected native run passed after fixture lifetime corrections; the original failure remains recorded."
+  },
+  "core": {
+    "passed": 12,
+    "failed": 0,
+    "evidenceDirectory": ".build/runtime-254-panel-verified",
+    "scope": "CausalContentMergeTests on frozen source; the aggregate route failed in the new native fixture."
+  },
+  "sourceSHA256": "0f738dc31d392632fb838f05725f29fbf08c7681b290895a924ffdca42652d7b",
+  "native": {
+    "passed": 12,
+    "failed": 0,
+    "skipped": 0,
+    "runtimeWarnings": 0,
+    "optimized": true,
+    "summary": "mac-summary.json",
+    "execution": "mac-execution.json",
+    "fix": "Wait for the real input gate settlement; disconnect the fixture peer before shutdown drains its queued writes. No product change between native runs."
+  },
+  "build": {
+    "status": "verified-build",
+    "version": "0.3.184",
+    "build": "254",
+    "pluginVersion": "0.2.6",
+    "sourceSHA256": "0f738dc31d392632fb838f05725f29fbf08c7681b290895a924ffdca42652d7b",
+    "verificationSHA256": "da6f443ddd9fcc11ffd702ffe0c82f3caf60b4383bf28957b913ac31795e8215",
+    "signatures": {
+      "iPad": {
+        "identifier": "com.amirtlinov.notebook.preview",
+        "team": "M94V58FCVP",
+        "cdhash": "06ad9dff715a7d1cfe3f800344ae263f09ded05c"
+      },
+      "mac": {
+        "identifier": "com.amirtlinov.notebook.mac",
+        "team": "M94V58FCVP",
+        "cdhash": "830d784c7a12883b8c27cd63fbf6b2591275369a"
+      }
+    }
+  },
+  "installation": "installation.json",
+  "installedHost": {
+    "pluginVersion": "0.2.6",
+    "surface": "Real Codex MCP Apps panel",
+    "observedAt": "2026-10-07T08:21:10Z",
+    "passed": [
+      "New grouped SVG toolbar visibly loaded; no overlap on observed host viewport.",
+      "Hand, pen, select and three consecutive zoom-in clicks updated their selected states and zoom.",
+      "Notes page opened with page controls and 1/5 indicator."
+    ],
+    "failed": [
+      "Repeated next/next/previous navigation exposed persistent Opening state and disabled navigation during each preparation."
+    ],
+    "limits": [
+      "0.352s six-action tool roundtrip is not physical input-to-pixels latency.",
+      "Subsequent MCP Apps DOM inspection timed out twice; final page state was not observed.",
+      "No full Pencil, IME, program or joint-work acceptance in this host check."
+    ]
+  },
+  "installedProbes": {
+    "coldStart": "cold-start-failure.json",
+    "readyBoard": "ready-presentation.json",
+    "pageNavigation": "page-navigation.json",
+    "interpretation": "Read-only installed MCP timing. Ready board viewport/content differed from the baseline, so these samples do not establish a speedup. Page requests used one fixed 900x800 projection at DPR2; responses remained 0.49-1.79s."
+  },
+  "transport": {
+    "authenticatedRoute": "awdl0",
+    "evidenceDirectory": ".build/runtime-install-254-panel",
+    "status": "authenticated; recurrent reconnect/POSIX60 remain open"
+  }
+}

@@ -1,0 +1,82 @@
+{
+  "at": "2026-10-07T07:06:13.445Z",
+  "plugin": "0.2.5",
+  "scope": "Installed MCP read-only presentation timing; not host input-to-pixel latency",
+  "samples": [
+    {
+      "label": "open",
+      "ms": 11.741124999999982,
+      "bytes": 14434,
+      "error": false,
+      "cursor": "65524"
+    },
+    {
+      "label": "initial-view",
+      "ms": 343.8134170000001,
+      "bytes": 1233879,
+      "error": false,
+      "layers": 26,
+      "encodedChars": 1211684,
+      "cursor": "65524"
+    },
+    {
+      "label": "unchanged",
+      "ms": 35.40937500000007,
+      "bytes": 19829,
+      "error": false,
+      "layers": 26,
+      "encodedChars": 0,
+      "cursor": "65524"
+    },
+    {
+      "label": "zoom-1.2",
+      "ms": 261.777959,
+      "bytes": 1854212,
+      "error": false,
+      "layers": 36,
+      "encodedChars": 1827820,
+      "cursor": "65524"
+    }
+  ],
+  "targetKind": "board",
+  "cards": [
+    {
+      "kind": "notebook",
+      "pageCount": 2
+    },
+    {
+      "kind": "notebook",
+      "pageCount": 3
+    },
+    {
+      "kind": "notebook",
+      "pageCount": 5
+    },
+    {
+      "kind": "notebook",
+      "pageCount": 3
+    },
+    {
+      "kind": "notebook",
+      "pageCount": 2
+    },
+    {
+      "kind": "board",
+      "pageCount": 0
+    },
+    {
+      "kind": "board",
+      "pageCount": 0
+    },
+    {
+      "kind": "notebook",
+      "pageCount": 24
+    },
+    {
+      "kind": "notebook",
+      "pageCount": 1
+    }
+  ],
+  "status": "passed",
+  "stderr": "Notebook MCP listens on stdio\n"
+}
