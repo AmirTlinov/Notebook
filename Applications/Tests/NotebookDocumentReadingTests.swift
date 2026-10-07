@@ -4,6 +4,119 @@ import XCTest
 
 @MainActor
 final class NotebookDocumentReadingTests: XCTestCase {
+  func testFirstOpeningResolvesItsFitFromLateMeasuredPaperBeforeMoving() async throws {
+    for paper in [DocumentPaperLayout(widthPoints: 1440, heightPoints: 400),
+      DocumentPaperLayout(widthPoints: 240, heightPoints: 420)] {
+      let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+      let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+      retainNotebookUntilTeardown(model, removing: root)
+      await model.start(pageSize: NotebookAppModel.defaultPageSize)
+      let id = try XCTUnwrap(model.createDocument(at: .zero))
+      let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
+      await model.prepareDocumentOpening(id, pageIndex: 0)?.value
+      let initial = try XCTUnwrap(model.presence), document = try XCTUnwrap(model.documents[id])
+      let center = try XCTUnwrap(model.board?.focusedCenter(of: id))
+      let viewport = SpatialPoint(x: 834, y: 1194)
+      let provisional = SpatialCamera(center: center,
+        scale: WorkspaceItemGeometry.uncompiledDocument.fitScale(viewport: viewport))
+      // The cover has already approached. No PDF measurement exists yet, and
+      // native movement must remain pending on its actual paper owner.
+      model.updatePresence(.init(boardID: initial.boardID, mode: .cover, camera: provisional,
+        viewport: viewport, focusedItemID: id, openProgress: 0), settled: true)
+      await model.prepareDocumentOpening(id, pageIndex: 0)?.value
+      let target = SessionPresence(boardID: initial.boardID, mode: .document, camera: provisional,
+        viewport: viewport, focusedItemID: id, openProgress: 1)
+      let owner = WorkspaceCameraOwner(); owner.attach(model)
+      defer { owner.detach() }
+      owner.settle(to: target, duration: 0.3, bounce: 0, navigationID: nil,
+        portal: nil, handoff: nil, rollback: nil, completion: {})
+      guard case .settling(let pending) = owner.state else { return XCTFail("Opening must await native paper") }
+      XCTAssertFalse(pending.isApproaching)
+      XCTAssertEqual(pending.target.camera, provisional)
+      XCTAssertNil(model.documentReadingPosition(id))
+
+      let measured = try layout(document, target: 1, papers: [paper, paper])
+      model.acceptDocumentReadingLayout(measured, documentID: id)
+      owner.preparationChanged()
+      try await NotebookPersistenceFenceContract.until {
+        abs(pending.target.camera.scale - paper.geometry.fitScale(viewport: viewport)) < 0.0001
+      }
+      XCTAssertFalse(pending.started, "Measurement alone does not establish native paper readiness")
+      XCTAssertEqual(model.documentPaperSizes[id], paper.geometry)
+      assertFittedPaper(pending.target, geometry: paper.geometry, center: center)
+
+      // Apply the camera selected for the physical settlement, then rotate its
+      // viewport through the production presence owner.
+      let resolved = pending.target
+      owner.interrupt(settlesPose: false)
+      model.updatePresence(resolved, settled: true)
+      XCTAssertEqual(try XCTUnwrap(model.documentReadingPosition(id)).zoomRatio, 1, accuracy: 0.0001)
+      let rotated = resolved.adapted(to: .init(x: viewport.y, y: viewport.x), geometry: paper.geometry)
+      model.updatePresence(rotated, settled: true)
+      assertFittedPaper(try XCTUnwrap(model.presence), geometry: paper.geometry, center: center)
+      XCTAssertEqual(try XCTUnwrap(model.documentReadingPosition(id)).zoomRatio, 1, accuracy: 0.0001)
+    }
+  }
+
+  func testPendingReopeningUsesSavedZoomAndANewContactOwnsTheCamera() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let id = try XCTUnwrap(model.createDocument(at: .zero))
+    let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
+    await model.prepareDocumentOpening(id, pageIndex: 0)?.value
+    let initial = try XCTUnwrap(model.presence), document = try XCTUnwrap(model.documents[id])
+    let center = try XCTUnwrap(model.board?.focusedCenter(of: id)), viewport = initial.viewport
+    let paper = DocumentPaperLayout(widthPoints: 900, heightPoints: 600)
+    let measured = try layout(document, target: 1, papers: [paper, paper])
+    let zoomed = SpatialCamera(center: center.offsetBy(x: 25, y: 0),
+      scale: paper.geometry.fitScale(viewport: viewport) * 1.8)
+    let visible = SessionPresence(boardID: initial.boardID, mode: .document, camera: zoomed,
+      viewport: viewport, focusedItemID: id, openProgress: 1)
+    model.beginDocumentCameraInteraction()
+    model.updatePresence(visible, settled: true)
+    model.acceptDocumentReadingLayout(measured, documentID: id)
+    model.updatePresence(visible, settled: true)
+    let reading = try XCTUnwrap(model.documentReadingPosition(id))
+    XCTAssertEqual(reading.zoomRatio, 1.8, accuracy: 0.0001)
+    let fitted = SpatialCamera(center: center, scale: paper.geometry.fitScale(viewport: viewport))
+    model.updatePresence(.init(boardID: initial.boardID, mode: .cover, camera: fitted,
+      viewport: viewport, focusedItemID: id, openProgress: 0), settled: true)
+    await model.prepareDocumentOpening(id, pageIndex: 0)?.value
+    let owner = WorkspaceCameraOwner(); owner.attach(model)
+    defer { owner.detach() }
+    owner.settle(to: visible.replacingCamera(fitted), duration: 0.3, bounce: 0, navigationID: nil,
+      portal: nil, handoff: nil, rollback: nil, completion: {})
+    model.acceptDocumentReadingLayout(measured, documentID: id)
+    owner.preparationChanged()
+    guard case .settling(let pending) = owner.state else { return XCTFail("Opening must await native paper") }
+    try await NotebookPersistenceFenceContract.until { pending.target.camera == zoomed }
+    XCTAssertEqual(pending.target.camera, zoomed)
+    owner.interrupt(settlesPose: false)
+    model.beginDocumentCameraInteraction()
+    let touched = visible.replacingCamera(.init(center: center,
+      scale: paper.geometry.fitScale(viewport: viewport) * 2.2))
+    model.updatePresence(touched, settled: true)
+    model.acceptDocumentReadingLayout(measured, documentID: id)
+    owner.preparationChanged()
+    await Task.yield()
+    XCTAssertTrue(owner.isIdle)
+    XCTAssertEqual(model.presence?.camera, touched.camera,
+      "A late measurement cannot revive a cancelled opening over a new contact")
+  }
+
+  private func assertFittedPaper(_ presence: SessionPresence, geometry: WorkspaceItemGeometry,
+    center: WorldPoint, file: StaticString = #filePath, line: UInt = #line) {
+    let frame = geometry.screenFrame(center: center, camera: presence.camera, viewport: presence.viewport)
+    XCTAssertGreaterThanOrEqual(frame.x, -0.001, file: file, line: line)
+    XCTAssertGreaterThanOrEqual(frame.y, -0.001, file: file, line: line)
+    XCTAssertLessThanOrEqual(frame.x + frame.width, presence.viewport.x + 0.001, file: file, line: line)
+    XCTAssertLessThanOrEqual(frame.y + frame.height, presence.viewport.y + 0.001, file: file, line: line)
+    XCTAssertEqual(max(frame.width / presence.viewport.x, frame.height / presence.viewport.y), 1,
+      accuracy: 0.0001, "The measured page fills its limiting viewport dimension", file: file, line: line)
+  }
+
   func testReflowAndReopeningRequestTheContentAnchorWithoutInventingALanding() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)

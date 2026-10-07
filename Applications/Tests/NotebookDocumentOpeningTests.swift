@@ -87,6 +87,16 @@ final class NotebookDocumentOpeningTests: XCTestCase {
     while !installed(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
     XCTAssertTrue(installed(), "A history reference must install the actual document, not only change the title: \(model.persistenceFailure ?? model.compositionTiles.failure ?? "no failure reported"); document=\(model.documents[destination.id] != nil), indexed=\(model.sceneIndex?.item(id: destination.id) != nil), scenePending=\(model.scenePreparationPending), permits=\(model.permitsScenePreparation), preparing=\(model.compositionTiles.isPreparing), presence=\(String(describing: model.presence))")
     XCTAssertEqual(model.documents[destination.id], destination)
+    let finalPresence = try XCTUnwrap(model.presence)
+    let measuredPaper = try XCTUnwrap(model.documentPaperSizes[destination.id])
+    let finalCenter = try XCTUnwrap(model.boardHierarchy?.focusedCenter(of: destination.id, in: finalPresence.boardID))
+    let paperFrame = measuredPaper.screenFrame(center: finalCenter,
+      camera: finalPresence.camera, viewport: finalPresence.viewport)
+    XCTAssertGreaterThanOrEqual(paperFrame.x, -0.5); XCTAssertGreaterThanOrEqual(paperFrame.y, -0.5)
+    XCTAssertLessThanOrEqual(paperFrame.x + paperFrame.width, finalPresence.viewport.x + 0.5)
+    XCTAssertLessThanOrEqual(paperFrame.y + paperFrame.height, finalPresence.viewport.y + 0.5)
+    XCTAssertEqual(max(paperFrame.width / finalPresence.viewport.x, paperFrame.height / finalPresence.viewport.y),
+      1, accuracy: 0.001, "The installed paper must reach its actual viewport fit")
     if !readyAtRequest {
       XCTAssertNotNil(closedAt, "The closed destination camera must not wait behind canonical paper preparation")
     }

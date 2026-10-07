@@ -3,6 +3,95 @@ import XCTest
 /// Real input and a fresh process read back the same durable program state.
 /// XCTest's remote AX/gesture time is not an application latency measurement.
 @MainActor final class NotebookDocumentLifecycleUITests: XCTestCase {
+  func testColdCoverOpeningFitsCustomPaperAndPreservesReadingZoom() throws {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-document-runtime-fixture",
+      "--notebook-document-fit-fixture"]
+    app.launch()
+    defer { XCUIDevice.shared.orientation = .portrait }
+    rotateNotebook(to: .portrait, in: app)
+    let surface = app.otherElements["page-turn-surface"]
+    let document = app.descendants(matching: .any)
+      .matching(identifier: "workspace-item-7e7a1000-0000-4000-8000-000000000006").firstMatch
+
+    func capture(_ name: String) {
+      let image = XCTAttachment(screenshot: app.screenshot())
+      image.name = name; image.lifetime = .keepAlways; add(image)
+    }
+    func openCover() {
+      XCTAssertTrue(surface.waitForNonExistence(timeout: 10), "The source begins behind a closed cover")
+      XCTAssertTrue(document.waitForExistence(timeout: 10))
+      let visible = document.frame.intersection(app.windows.firstMatch.frame)
+      XCTAssertGreaterThan(visible.width, 80); XCTAssertGreaterThan(visible.height, 80)
+      app.coordinate(withNormalizedOffset: .zero).withOffset(.init(
+        dx: visible.midX - app.frame.minX, dy: visible.midY - app.frame.minY)).doubleTap()
+      XCTAssertTrue(surface.waitForExistence(timeout: 15))
+    }
+    func assertFit(_ name: String) {
+      let tolerance: CGFloat = 2
+      // AX can expose the page before native camera settlement completes.
+      // This bounded state wait does not measure opening latency.
+      let fitted = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+        guard surface.exists else { return false }
+        let paper = surface.frame, window = app.windows.firstMatch.frame
+        return paper.width > 0 && paper.height > 0
+          && abs(paper.width / paper.height - 1.5) <= 0.005
+          && paper.minX >= window.minX - tolerance && paper.minY >= window.minY - tolerance
+          && paper.maxX <= window.maxX + tolerance && paper.maxY <= window.maxY + tolerance
+          && (abs(paper.width - window.width) <= tolerance || abs(paper.height - window.height) <= tolerance)
+          && abs(paper.midX - window.midX) <= tolerance && abs(paper.midY - window.midY) <= tolerance
+      }, object: nil)
+      XCTAssertEqual(XCTWaiter.wait(for: [fitted], timeout: 5), .completed)
+      // This is IPadPageTurnController's physical paper rectangle, inside the
+      // item pose. The authored 3:2 ratio also detects clipped or stretched AX bounds.
+      let paper = surface.frame, window = app.windows.firstMatch.frame
+      XCTAssertEqual(paper.width / paper.height, 1.5, accuracy: 0.005)
+      XCTAssertGreaterThanOrEqual(paper.minX, window.minX - tolerance)
+      XCTAssertGreaterThanOrEqual(paper.minY, window.minY - tolerance)
+      XCTAssertLessThanOrEqual(paper.maxX, window.maxX + tolerance)
+      XCTAssertLessThanOrEqual(paper.maxY, window.maxY + tolerance)
+      XCTAssertTrue(abs(paper.width - window.width) <= tolerance
+        || abs(paper.height - window.height) <= tolerance, "Fitted paper must reach one viewport dimension")
+      XCTAssertEqual(paper.midX, window.midX, accuracy: tolerance)
+      XCTAssertEqual(paper.midY, window.midY, accuracy: tolerance, "Remaining paper margins are centered")
+      capture(name)
+    }
+
+    openCover()
+    assertFit("custom-paper-first-cold-cover-opening")
+    rotateNotebook(to: .landscapeLeft, in: app)
+    assertFit("custom-paper-landscape")
+    rotateNotebook(to: .portrait, in: app)
+    assertFit("custom-paper-portrait-return")
+    for cycle in 1...3 {
+      notebookBack(in: app)
+      openCover()
+      assertFit("custom-paper-immediate-reopen-\(cycle)")
+    }
+
+    // Portrait leaves vertical room for a real zoom even if AX clips the
+    // wider horizontal extent at the window. Reopening must retain that zoom.
+    let fittedHeight = surface.frame.height
+    surface.pinch(withScale: 1.35, velocity: 0.5)
+    let enlarged = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+      surface.frame.height > fittedHeight * 1.1
+    }, object: nil)
+    XCTAssertEqual(XCTWaiter.wait(for: [enlarged], timeout: 5), .completed)
+    let zoomedHeight = surface.frame.height
+    XCTAssertLessThan(zoomedHeight, app.windows.firstMatch.frame.height - 2)
+    capture("custom-paper-zoomed")
+    notebookBack(in: app)
+    openCover()
+    let restoredZoom = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+      surface.exists && abs(surface.frame.height - zoomedHeight) <= 2
+    }, object: nil)
+    XCTAssertEqual(XCTWaiter.wait(for: [restoredZoom], timeout: 5), .completed)
+    XCTAssertEqual(surface.frame.height, zoomedHeight, accuracy: 2, "The reading zoom survives closing and reopening")
+    capture("custom-paper-reopened-at-reading-zoom")
+    XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "persistence-failure").firstMatch.exists)
+  }
+
   func testFirstActionSurvivesImmediatePageChangeCloseAndColdReopen() throws {
     continueAfterFailure = false
     let app = XCUIApplication()

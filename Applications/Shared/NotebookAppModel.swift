@@ -2600,7 +2600,7 @@ final class NotebookAppModel {
     documents[documentID].flatMap { documentReading.layout(for: $0) }
   }
 
-  private func documentGeometry(_ documentID: UUID, page: Int) -> WorkspaceItemGeometry {
+  func documentGeometry(_ documentID: UUID, page: Int) -> WorkspaceItemGeometry {
     readingLayout(documentID)?.paper(on: page).geometry ?? documentPaperSizes[documentID] ?? .uncompiledDocument
   }
 
@@ -2612,14 +2612,35 @@ final class NotebookAppModel {
     documentReading.camera(for: documentID, geometry: documentGeometry(documentID, page: page), center: center, viewport: viewport)
   }
 
+  func documentCameraIntent(for presence: SessionPresence) -> DocumentReadingSession.CameraIntent? {
+    guard presence.mode == .document, let id = presence.focusedItemID else { return nil }
+    return .init(camera: presence.camera, geometry: documentGeometry(id, page: presence.documentPageIndex),
+      viewport: presence.viewport)
+  }
+
+  func resolvedDocumentOpening(_ presence: SessionPresence,
+    cameraIntent: DocumentReadingSession.CameraIntent) -> SessionPresence {
+    guard presence.mode == .document, let id = presence.focusedItemID, let document = documents[id],
+      let center = boardHierarchy?.focusedCenter(of: id, in: presence.boardID),
+      let camera = documentReading.openingCamera(cameraIntent, document: document, page: presence.documentPageIndex,
+        center: center, viewport: presence.viewport) else { return presence }
+    return presence.replacingCamera(camera)
+  }
+
   func beginDocumentCameraInteraction() {
     guard let id = presence?.focusedItemID, documents[id] != nil else { return }
     documentReading.beginContact(id)
   }
 
   func acceptDocumentReadingLayout(_ layout: DocumentPageLayout, documentID: UUID) {
+    let preparingPage: Int?
+    if let opening = documentOpening, opening.request.documentID == documentID,
+      opening.outcome == nil || opening.outcome == .completed {
+      preparingPage = opening.request.pageIndex
+    } else { preparingPage = nil }
     guard let document = documents[documentID],
-      let geometry = documentReading.accept(layout, document: document, presence: presence) else { return }
+      let geometry = documentReading.accept(layout, document: document, presence: presence,
+        preparingPage: preparingPage) else { return }
     if documentPaperSizes[documentID] != geometry {
       documentPaperSizes[documentID] = geometry; scheduleScenePreparation()
     }
