@@ -1,0 +1,51 @@
+{
+  "at": "2026-10-07T17:06:47.599Z",
+  "plugin": "0.2.11",
+  "scope": "Read-only installed admitted MCP waiting/cancellation/concurrent metadata. Not Codex host or input-to-pixel acceptance.",
+  "samples": [
+    {
+      "label": "connect",
+      "ms": 324.58674999999994,
+      "error": false,
+      "bytes": 41204
+    },
+    {
+      "label": "prepare",
+      "ms": 355.969375,
+      "error": false,
+      "bytes": 1060059,
+      "appearance": "ready",
+      "checkpointID": "BE8D23AD-D589-43B4-A208-5FDD0C5D8D75"
+    },
+    {
+      "label": "withdrawn-observation",
+      "ms": 151.42604100000005,
+      "cancelled": true
+    },
+    {
+      "label": "metadata-during-wait",
+      "ms": 6.623166000000083,
+      "error": false,
+      "bytes": 1320
+    },
+    {
+      "label": "idle-observation",
+      "ms": 25419.086542,
+      "error": false,
+      "changed": false,
+      "bytes": 752,
+      "checkpointID": "BE8D23AD-D589-43B4-A208-5FDD0C5D8D75"
+    },
+    {
+      "label": "metadata-after-wait",
+      "ms": 3.826499999999214,
+      "error": false,
+      "bytes": 1320
+    }
+  ],
+  "withdrawnMessage": "AbortError: This operation was aborted",
+  "sourceRevision": "d6e78c4c3c487b4f7678c278fb99d8593214b4e833297902934b37f3ae51b565",
+  "workspaceID": "54349F3B-9E0A-4DEA-B990-40CAE04EF45E",
+  "status": "passed",
+  "stderr": "Notebook MCP listens on stdio\n{\"kind\":\"notebook-runtime-startup\",\"launcherPID\":89824,\"phase\":\"startup.begin\",\"startedAt\":\"2026-10-07T17:06:47.662Z\",\"elapsedMilliseconds\":0.4458750000000009,\"attempts\":0,\"launched\":false}\n{\"kind\":\"notebook-runtime-startup\",\"launcherPID\":89824,\"phase\":\"startup.done\",\"startedAt\":\"2026-10-07T17:06:47.662Z\",\"elapsedMilliseconds\":24.908541,\"attempts\":1,\"launched\":false,\"runtimePID\":88768,\"runtimeState\":\"ready\"}\n"
+}

@@ -1,0 +1,38 @@
+{
+  "status": "installed",
+  "step": "complete",
+  "version": "0.3.189",
+  "build": "259",
+  "pluginVersion": "0.2.11",
+  "sourceSHA256": "484b7178c5667c2aa54ddf5cad36415580cbf2e2dd0f07f0c4184a29b9be7923",
+  "officialReceipt": ".build/runtime-install-259-observation/installation.json",
+  "officialReceiptSHA256": "f5d6f709c8f7e6b2bc13c6463999ac899732988a1f987566e71d22274c4003ff",
+  "runtimeShutdown": [
+    {
+      "cdhash": "404cf3a30107149401db551085d761c03a961bdb",
+      "executable": "/Users/amir/.codex/plugins/cache/notebook-local/notebook/0.2.10/runtime/NotebookRuntime.app/Contents/MacOS/NotebookRuntime",
+      "pid": 50512,
+      "uid": 501
+    }
+  ],
+  "runtimeReadback": {
+    "runtime": [
+      {
+        "pid": 88768,
+        "uid": 501,
+        "executable": "/Users/amir/.codex/plugins/cache/notebook-local/notebook/0.2.11/runtime/NotebookRuntime.app/Contents/MacOS/NotebookRuntime"
+      }
+    ],
+    "CDHash": "cb3488cc4e70104238618489b6b557ec9accd7b0",
+    "probe": "passed",
+    "standaloneMacExists": false
+  },
+  "dataPreservation": {
+    "identityEqual": true,
+    "sqliteMetadataEqual": true,
+    "catalogRawSHA256Before": "b768a022f53ed3ca8f8cf254a578504970380c22c223ebd32d63e131bbe920d7",
+    "catalogRawSHA256After": "b768a022f53ed3ca8f8cf254a578504970380c22c223ebd32d63e131bbe920d7"
+  },
+  "historicalArchivesOpened": false,
+  "forcedTermination": false
+}

@@ -1,0 +1,15 @@
+{
+  "executed": [
+    "NotebookTests/SceneCompositionTests/testCompositionCacheNeverReusesPendingOrSupersededSourcePixels",
+    "NotebookTests/SceneCompositionTests/testWarmStaticWebCompositionKeepsReadinessWithoutRetainingItsOldCohort",
+    "NotebookUITests/NotebookGraphicSelectionUITests/testSelectMoveAlignDuplicateAndRestoreOnPage"
+  ],
+  "failed": [],
+  "format": 1,
+  "planned": [
+    "NotebookTests/SceneCompositionTests/testCompositionCacheNeverReusesPendingOrSupersededSourcePixels",
+    "NotebookTests/SceneCompositionTests/testWarmStaticWebCompositionKeepsReadinessWithoutRetainingItsOldCohort",
+    "NotebookUITests/NotebookGraphicSelectionUITests/testSelectMoveAlignDuplicateAndRestoreOnPage"
+  ],
+  "skipped": []
+}

@@ -1,0 +1,17 @@
+{
+  "executed": [
+    "NotebookCoreTests.NotebookPanelPageReadTests/hundredThousandPageElementsUseOneSourceRead()/NotebookPanelPageReadTests.swift:270:4",
+    "NotebookCoreTests.NotebookPanelPageReadTests/panelMetadataIgnoresNavigationReadClocksButRetainsAddressedChanges()/NotebookPanelPageReadTests.swift:174:4"
+  ],
+  "executions": {
+    "NotebookCoreTests.NotebookPanelPageReadTests/hundredThousandPageElementsUseOneSourceRead()/NotebookPanelPageReadTests.swift:270:4": 1,
+    "NotebookCoreTests.NotebookPanelPageReadTests/panelMetadataIgnoresNavigationReadClocksButRetainsAddressedChanges()/NotebookPanelPageReadTests.swift:174:4": 1
+  },
+  "failed": [],
+  "format": 1,
+  "planned": [
+    "NotebookCoreTests.NotebookPanelPageReadTests/hundredThousandPageElementsUseOneSourceRead()/NotebookPanelPageReadTests.swift:270:4",
+    "NotebookCoreTests.NotebookPanelPageReadTests/panelMetadataIgnoresNavigationReadClocksButRetainsAddressedChanges()/NotebookPanelPageReadTests.swift:174:4"
+  ],
+  "skipped": []
+}

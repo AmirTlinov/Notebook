@@ -1,0 +1,41 @@
+{
+  "executed": [
+    "NotebookMacTests/NotebookPanelMaterialTests/testLocalEditAndTranslationReuseUnchangedPixelsWhileTextAndSizeRefresh",
+    "NotebookMacTests/NotebookPanelMaterialTests/testWarmPanelMaterialKeepsItsActualLeafWitnessAndRefreshesForSameSourcePixels",
+    "NotebookMacTests/NotebookPanelObservationTests/testCancellationAndStopDrainObserversWithoutStoppingTheWorkspaceReader",
+    "NotebookMacTests/NotebookPanelObservationTests/testCommitBeforeWaitRegistrationIsFoundByItsFirstFreshCut",
+    "NotebookMacTests/NotebookPanelObservationTests/testDeadlineDuringAnUnchangedReadDoesNotInventAnInvalidation",
+    "NotebookMacTests/NotebookPanelObservationTests/testDeadlineEndsWithInvalidationWhenAnEventArrivesDuringItsRead",
+    "NotebookMacTests/NotebookPanelObservationTests/testDeletingTheObservedPageInvalidatesSceneWithoutReportingTransportFailure",
+    "NotebookMacTests/NotebookPanelObservationTests/testExpiredWitnessAndRuntimeEpochReturnReset",
+    "NotebookMacTests/NotebookPanelObservationTests/testInstalledCommandOwnerWakesPanelOnlyAfterHumanEditCommits",
+    "NotebookMacTests/NotebookPanelObservationTests/testUnrelatedCommitUsesShortMetadataAndReturnsUnchangedWithoutPainting",
+    "NotebookMacTests/NotebookPanelObservationTests/testWarmPageRegionsDoNotInheritOtherRegionsProgramWitnesses",
+    "NotebookMacTests/NotebookPanelPageContentTests/testPagePublicationRefreshesPresenceAndMembershipChangedDuringNativePreparation",
+    "NotebookMacTests/NotebookPanelPageContentTests/testPagePublicationRejectsSourceChangedDuringNativePreparation",
+    "NotebookMacTests/SceneLeafRasterWitnessTests/testFallbackWaitsForTheExactSourceCropAndRequiredDensity",
+    "NotebookMacTests/SceneLeafRasterWitnessTests/testOnlyNewPixelsOfTheUsedLeafInvalidateAfterCompositionAndEviction",
+    "NotebookMacTests/SceneLeafRasterWitnessTests/testPublicationBeforeBorrowRemainsVisibleAfterEvictionAndJournalOverflowRejects"
+  ],
+  "failed": [],
+  "format": 1,
+  "planned": [
+    "NotebookMacTests/NotebookPanelMaterialTests/testLocalEditAndTranslationReuseUnchangedPixelsWhileTextAndSizeRefresh",
+    "NotebookMacTests/NotebookPanelMaterialTests/testWarmPanelMaterialKeepsItsActualLeafWitnessAndRefreshesForSameSourcePixels",
+    "NotebookMacTests/NotebookPanelObservationTests/testCancellationAndStopDrainObserversWithoutStoppingTheWorkspaceReader",
+    "NotebookMacTests/NotebookPanelObservationTests/testCommitBeforeWaitRegistrationIsFoundByItsFirstFreshCut",
+    "NotebookMacTests/NotebookPanelObservationTests/testDeadlineDuringAnUnchangedReadDoesNotInventAnInvalidation",
+    "NotebookMacTests/NotebookPanelObservationTests/testDeadlineEndsWithInvalidationWhenAnEventArrivesDuringItsRead",
+    "NotebookMacTests/NotebookPanelObservationTests/testDeletingTheObservedPageInvalidatesSceneWithoutReportingTransportFailure",
+    "NotebookMacTests/NotebookPanelObservationTests/testExpiredWitnessAndRuntimeEpochReturnReset",
+    "NotebookMacTests/NotebookPanelObservationTests/testInstalledCommandOwnerWakesPanelOnlyAfterHumanEditCommits",
+    "NotebookMacTests/NotebookPanelObservationTests/testUnrelatedCommitUsesShortMetadataAndReturnsUnchangedWithoutPainting",
+    "NotebookMacTests/NotebookPanelObservationTests/testWarmPageRegionsDoNotInheritOtherRegionsProgramWitnesses",
+    "NotebookMacTests/NotebookPanelPageContentTests/testPagePublicationRefreshesPresenceAndMembershipChangedDuringNativePreparation",
+    "NotebookMacTests/NotebookPanelPageContentTests/testPagePublicationRejectsSourceChangedDuringNativePreparation",
+    "NotebookMacTests/SceneLeafRasterWitnessTests/testFallbackWaitsForTheExactSourceCropAndRequiredDensity",
+    "NotebookMacTests/SceneLeafRasterWitnessTests/testOnlyNewPixelsOfTheUsedLeafInvalidateAfterCompositionAndEviction",
+    "NotebookMacTests/SceneLeafRasterWitnessTests/testPublicationBeforeBorrowRemainsVisibleAfterEvictionAndJournalOverflowRejects"
+  ],
+  "skipped": []
+}

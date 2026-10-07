@@ -1,0 +1,163 @@
+{
+  "date": "2026-10-07",
+  "candidate": {
+    "pair": 259,
+    "application": "0.3.189",
+    "plugin": "0.2.11"
+  },
+  "source": {
+    "sha256": "484b7178c5667c2aa54ddf5cad36415580cbf2e2dd0f07f0c4184a29b9be7923",
+    "fileCount": 1707,
+    "baseCommit": "6f7b263e013cc0373ca18d123b218389728e023e"
+  },
+  "change": {
+    "owner": "MacPreviewPublisher/NotebookPanelObservation; existing WAL read cut and raster pool",
+    "idle": "Replace 1500ms polling with a cancellable 25s addressed observation; unchanged returns no pixel preparation or scene payload.",
+    "commandIsolation": "Separate 16 validated observers, 8 ordinary handlers and 8 undecoded frames; release only after real worker/handler completion.",
+    "sceneIdentity": "Content, basis, navigation and addressed Undo; exclude only the three global navigation readCursor fields.",
+    "pixelIdentity": "Actual immutable leaf source/crop/density witnesses, including warm compositions and missing current pixels.",
+    "frameFence": "Checkpoint published after final WAL metadata validation and awaited pixel preparation."
+  },
+  "verification": {
+    "status": "passed",
+    "route": "explicit selected; Core2 and native Mac16",
+    "receipt": ".build/panel-observation-259-final-v7/verification.json",
+    "coreMethods": 2,
+    "coreCases": 2,
+    "macTests": 16,
+    "failed": 0,
+    "skipped": 0,
+    "runtimeWarnings": 0,
+    "independentReview": "PASS: ownership, cancellation, WAL, leaf witnesses, integration and final navigation-clock correction.",
+    "compilerNotes": "Pre-existing unrelated Swift warnings and Xcode exit-zero/no-output diagnostics retained; runtime warnings are zero."
+  },
+  "priorChecks": {
+    "coreV1": {
+      "methods": 15,
+      "cases": 21,
+      "scope": {
+        "scope": "All SwiftPM source and test inputs; excludes native Applications and MCP",
+        "sourceMatched": true,
+        "fileCount": 820,
+        "sha256": "c5ffc7a5328c1ebd7df6c45058b00f34fe5c5bbe8a9eeabfa6a9d5d46cb11b11",
+        "methods": 15,
+        "cases": 21,
+        "failed": 0,
+        "skipped": 0
+      },
+      "changedSwiftPMInputsSinceV1": [
+        "Sources/NotebookCore/NotebookPanelMetadata.swift",
+        "Tests/NotebookCoreTests/NotebookPanelPageReadTests.swift"
+      ]
+    },
+    "ipadV4": {
+      "passed": 3,
+      "sourceSHA256": "e6c305ca6e23908c8e1c2bc593c54907a0b5e18949db11effaedb8ac2577fc10",
+      "sourceChangesAfterV4": [
+        "Applications/Mac/NotebookPanelObservation.swift",
+        "Applications/MacTests/NotebookPanelObservationTests.swift",
+        "MCP/test/program-bridge.test.ts",
+        "Sources/NotebookCore/NotebookPanelMetadata.swift",
+        "Tests/NotebookCoreTests/NotebookPanelPageReadTests.swift"
+      ],
+      "scope": "Two native composition regressions and physical select/move/align/duplicate/restore gesture. Later changes are the Mac observer/fixture, panel-only metadata comparison/Core fixture and TypeScript test guards; iPad/Shared production and gesture inputs are unchanged.",
+      "cleanupAfterExitCodes": [
+        0,
+        0
+      ]
+    }
+  },
+  "javascript": {
+    "panelTests": 95,
+    "programTypeRepairTests": 3,
+    "typeScript": "passed",
+    "packagedToolInventoryTests": 2,
+    "scriptProtocolInventoryTests": 1,
+    "failed": 0,
+    "skipped": 0,
+    "sourceScopes": {
+      "panel184InputSHA256": "33488b66af305e8498ca9e1bde87625357810db739d2f22bae8d0b9a42fac5d5",
+      "final184InputSHA256": "eb93bd19e18936192a0ff33cd4a3f62ae9e81111d859c9a9592e4f2557603a22",
+      "delta": [
+        "MCP/test/program-bridge.test.ts"
+      ],
+      "unchangedPanelProduction": true
+    },
+    "initialTypeScriptFailure": "Seven pre-existing strict type errors in the accepted program-bridge test; repaired optional credit guards, frozen assertion and exact clause tuple. Production JavaScript unchanged."
+  },
+  "hundredThousandObjects": {
+    "scope": "Isolated SwiftPM Debug content projection, not Codex display latency.",
+    "metadataMilliseconds": 4.901958,
+    "metadataStatements": 50,
+    "emptyMetadataStatements": 50,
+    "metadataPageLoads": 0,
+    "fullReadSeconds": 22.616740875,
+    "captureSeconds": 21.462918208,
+    "finalReuseSeconds": 0.130964625,
+    "capturePageLoads": 1,
+    "finalPageLoads": 0,
+    "responseBytes": 59837152,
+    "fixtureExceedsPanelResponseLimit": true
+  },
+  "failedRuns": {
+    "v1": "Swift6 non-Sendable Notification crossing; extract typed publication/sender before MainActor entry.",
+    "v2": "Warm path carried stale leaf pixels; enforce actual witnesses. Immutable pending fixture previously fabricated readiness.",
+    "v3": "Swift exclusivity trap while deriving witnesses under dictionary mutation; derive before assignment.",
+    "v4": "Timer counted as content event; split expire from wake. Fixed deleted-page lifecycle fixture and coverage-derived raster density.",
+    "v5": "Global navigation readCursor caused false scene invalidation; final semantic identity keeps addressed fields and all wire clocks.",
+    "v6": "CLI rejected dotted target selector before any test; corrected slash syntax, no source changes."
+  },
+  "rawEvidence": {
+    "mac": {
+      "path": ".build/panel-observation-259-final-v7/mac-execution.json",
+      "sha256": "d775cd4d7ca104304e3c9f9af48a85c7df182d00449e881d538a0a024def4b61"
+    },
+    "core": {
+      "path": ".build/panel-observation-259-final-v7/core-execution.json",
+      "sha256": "43a1272c35f38854257a5e2db3a4dc22e514cc3ca3a0920ca7c0f11c171d1712"
+    },
+    "coreV1": {
+      "path": ".build/panel-observation-259-v1/core-execution.json",
+      "sha256": "0093576273dffb1adb27edc14fb40f088ac355230295b11c27d171f6eda18f47"
+    },
+    "ipadV4": {
+      "path": ".build/panel-observation-259-native-v4/ipad-execution.json",
+      "sha256": "e1e39db3df5c9aa1a2ed52ae3f10801e2b334e0de63dc51113580abb520d19e3"
+    },
+    "node95": {
+      "path": ".build/panel-debug-20261007/observation-mcp-final.log",
+      "sha256": "351682a6e92e9bccd67e541278a7b7c6ee9ba183f6468301c7541dfe2a59ef9d"
+    },
+    "programTypes3": {
+      "path": ".build/panel-debug-20261007/observation-program-types.log",
+      "sha256": "da6448120de69831b6366b39fb3b7ee84ae4cebfe811a97af267b6583ff1ad1f"
+    },
+    "tsc": {
+      "path": ".build/panel-debug-20261007/observation-tsc-repaired.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  "build": {
+    "status": "verified-build",
+    "sourceSHA256": "484b7178c5667c2aa54ddf5cad36415580cbf2e2dd0f07f0c4184a29b9be7923",
+    "verificationRoute": "./verify.sh:selected",
+    "receipt": ".build/runtime-pair-259-observation/build.json"
+  },
+  "installation": {
+    "status": "installed",
+    "step": "complete",
+    "result": "installation.json"
+  },
+  "installedObservation": {
+    "status": "passed",
+    "result": "installed-observation.json",
+    "scope": "Read-only installed admitted MCP; cancellation isolation and ordinary reads during 25s idle observer. No Codex pixel latency claim."
+  },
+  "codexHost": {
+    "status": "awaiting reconnect",
+    "tools": "MCP258 rejects installed runtime259; checked17:07UTC",
+    "mountedPanel": "immutable257; fresh259 card not mounted yet",
+    "requestedAction": "Amir was asked once after installation to select @Notebook and send continue."
+  },
+  "physicalAcceptance": false
+}
