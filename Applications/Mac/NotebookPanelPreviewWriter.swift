@@ -11,6 +11,11 @@ extension CurrentViewPreviewWriter {
     let projection = cut.projection, target = cut.target, actor = model.actorID
     try projection.validated()
     guard model.permitsPanelPreparation else { throw CancellationError() }
+    func observe(_ stage: String) {
+      guard target.kind == .page, let observer = NotebookNavigationObservation.onPageMaterialPreparation else { return }
+      observer(stage, cut.id, target.id, nil, nil, ProcessInfo.processInfo.systemUptime)
+    }
+    observe("panel_prepare_started")
     let viewBounds = WorkspaceSpatialBounds(origin: projection.worldOrigin,
       width: projection.viewport.x / projection.camera.scale, height: projection.viewport.y / projection.camera.scale)
     let initialCoverage = try CompositionTileCoverage(bounds: viewBounds,
@@ -22,46 +27,52 @@ extension CurrentViewPreviewWriter {
         let header = try store.workspaceHeader()
         guard header.workspaceID == projection.workspaceID,
           try store.referenceRevision(target: target) == cut.sourceRevision else { throw NotebookStorageError.transactionConflict }
-        let snapshot = try store.readPanel(.init(workspaceID: projection.workspaceID, target: target,
-          bounds: target.kind == .board ? .init(anchor: initialBounds.origin,
-            region: .init(x: 0, y: 0, width: initialBounds.width, height: initialBounds.height)) : nil), actor: actor)
-        return (header, snapshot, target.kind == .page ? try store.loadPage(target.id) : nil)
+        let page = target.kind == .page ? try store.capturePanelPageContent(cut) : nil
+        let snapshot = target.kind == .board ? try store.readPanel(.init(workspaceID: projection.workspaceID, target: target,
+          bounds: .init(anchor: initialBounds.origin,
+            region: .init(x: 0, y: 0, width: initialBounds.width, height: initialBounds.height))), actor: actor) : nil
+        return (header, snapshot, page)
       }
     }
     let (header, capturedSnapshot, page) = captured
+    observe("panel_content_captured")
     let source = SceneCompositionSource(store: model.store, revision: header.cursor,
       workspaceID: projection.workspaceID, recordPixelDependencies: true, documentGeometry: model.documentPaperSizes)
-    let candidates = Array((capturedSnapshot["elements"]?.arrayValues ?? []).filter(NotebookPanelEditableSubject.allows)
+    let candidates = Array((page?.elements ?? capturedSnapshot?["elements"]?.arrayValues ?? []).filter(NotebookPanelEditableSubject.allows)
       .prefix(NotebookPanelRenderProjection.maximumSubjects))
     let ids = Set(candidates.compactMap { $0["source"]?["id"]?.stringValue })
     let layers: [NotebookPanelRasterLayer], coverage: CompositionTileCoverage, diagnostics: [RenderDiagnostic]
     let materialBounds: WorkspaceSpatialBounds
     if let page {
-      (layers, coverage, diagnostics, materialBounds) = try await pagePanelMaterials(page, projection: projection, editableIDs: ids,
+      (layers, coverage, diagnostics, materialBounds) = try await pagePanelMaterials(page.page, projection: projection, editableIDs: ids,
         knownAssets: knownAssets, sourceRevision: cut.sourceRevision, model: model)
     } else {
       let presence = SessionPresence(boardID: target.id, mode: .board, camera: projection.camera, viewport: projection.viewport)
       let renderer = SceneCompositionRenderer(source: source, permitsPreparation: { model.permitsPanelPreparation })
-      let movable = Set((capturedSnapshot["cards"]?.arrayValues ?? []).prefix(NotebookPanelRenderProjection.maximumSubjects)
+      let movable = Set((capturedSnapshot?["cards"]?.arrayValues ?? []).prefix(NotebookPanelRenderProjection.maximumSubjects)
         .compactMap { $0["item"]?["id"]?.stringValue.flatMap(UUID.init(uuidString:)) })
       let result = try await renderer.renderPanel(presence: presence, projection: projection,
         editableIDs: ids, movableItemIDs: movable, knownAssets: knownAssets)
       layers = result.layers; coverage = result.coverage; diagnostics = result.diagnostics; materialBounds = result.bounds
     }
-    let preparedSnapshot = try await model.performStoreCommand { store in
-      try store.readTransaction { _ in
-        guard try store.storedWorkspaceID() == projection.workspaceID,
-          try store.referenceRevision(target: target) == cut.sourceRevision else { throw NotebookStorageError.transactionConflict }
-        return try store.readPanel(.init(workspaceID: projection.workspaceID, target: target,
-          bounds: target.kind == .board ? .init(anchor: materialBounds.origin,
-            region: .init(x: 0, y: 0, width: materialBounds.width, height: materialBounds.height)) : nil,
-          includeFitBounds: cut.includeFitBounds), actor: actor)
+    observe("panel_material_prepared")
+    let preparedSnapshot: JSONValue?
+    if target.kind == .board {
+      preparedSnapshot = try await model.performStoreCommand { store in
+        try store.readTransaction { _ in
+          guard try store.storedWorkspaceID() == projection.workspaceID,
+            try store.referenceRevision(target: target) == cut.sourceRevision else { throw NotebookStorageError.transactionConflict }
+          return try store.readPanel(.init(workspaceID: projection.workspaceID, target: target,
+            bounds: .init(anchor: materialBounds.origin,
+              region: .init(x: 0, y: 0, width: materialBounds.width, height: materialBounds.height)),
+            includeFitBounds: cut.includeFitBounds), actor: actor)
+        }
       }
-    }
+    } else { preparedSnapshot = nil }
     var cardItems: [RenderedWorkspaceItem] = []
     if target.kind == .board {
       let presence = SessionPresence(boardID: target.id, mode: .board, camera: projection.camera, viewport: projection.viewport)
-      for card in preparedSnapshot["cards"]?.arrayValues ?? [] {
+      for card in preparedSnapshot?["cards"]?.arrayValues ?? [] {
         guard let id = card["item"]?["id"]?.stringValue.flatMap(UUID.init(uuidString:)),
           let item = try await source.item(id, presence: presence) else { throw NotebookStorageError.transactionConflict }
         cardItems.append(item)
@@ -72,13 +83,20 @@ extension CurrentViewPreviewWriter {
     let dependencies = try await source.pixelDependencies()
     try Task.checkCancellation()
     guard model.permitsPanelPreparation else { throw CancellationError() }
-    return try await model.performStoreCommand { store in
+    let result = try await model.performStoreCommand { store in
       try store.readTransaction { _ in
         try Task.checkCancellation()
         guard try store.storedWorkspaceID() == projection.workspaceID,
           try store.referenceRevision(target: target) == cut.sourceRevision,
           try dependencies?.isCurrent(store) != false else { throw NotebookStorageError.transactionConflict }
-        var snapshot = preparedSnapshot
+        // Content is immutable; device-local history, membership/selection and
+        // cursor are read after the last await in this publication transaction.
+        var snapshot: JSONValue
+        if let page {
+          snapshot = try store.readPanel(.init(workspaceID: projection.workspaceID, target: target,
+            includeFitBounds: cut.includeFitBounds), actor: actor, reusing: page)
+        } else if let preparedSnapshot { snapshot = preparedSnapshot }
+        else { throw NotebookStorageError.transactionConflict }
         let editable = Set(layers.compactMap(\.elementID)), movable = Set(layers.compactMap(\.itemID))
         snapshot = snapshot.setting("elements", .array((snapshot["elements"]?.arrayValues ?? []).map { entry in
           entry.setting("editable", .bool(entry["source"]?["id"]?.stringValue.map(editable.contains) == true))
@@ -116,6 +134,8 @@ extension CurrentViewPreviewWriter {
         return snapshot
       }
     }
+    observe("panel_published")
+    return result
   }
 
   /// Finite pages use the same world grid and native paper/ordered ink owners.

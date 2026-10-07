@@ -202,7 +202,8 @@ extension NotebookStore {
     }
   }
 
-  public func readPanel(_ request: NotebookPanelReadRequest, actor: UUID) throws -> JSONValue {
+  public func readPanel(_ request: NotebookPanelReadRequest, actor: UUID,
+    reusing pageContent: NotebookPanelPageContent? = nil) throws -> JSONValue {
     try readTransaction { _ in
       let workspaceID = try requirePanelWorkspace(request.workspaceID)
       let presence = try readObservedPresenceIfAvailable()
@@ -210,6 +211,7 @@ extension NotebookStore {
       try requirePanelTarget(target)
       if target.kind == .board { try requireLiveBoard(target.id) }
       else { _ = try readContentHeader(target: target) }
+      try pageContent?.validate(in: self, workspaceID: workspaceID, target: target)
       let cursor = String(try currentReadCursor())
       if request.knownCursor == cursor && request.includeFitBounds != true {
         return .object(["workspaceID": try .encode(workspaceID), "target": try .encode(target),
@@ -219,30 +221,16 @@ extension NotebookStore {
       var navigation: JSONValue = .null
       var truncated = false, rawInkPresent = false
       if target.kind == .page {
-        let page = try loadPage(target.id)
+        let page = try pageContent?.page ?? loadPage(target.id)
         if let itemID = try ownerItemID(ofPage: target.id), let boardID = try ownerBoardID(of: itemID),
           let position = try resolveNotebookPage(target.id, in: itemID) {
           navigation = .object(["parentBoard": try .encode(CollaborationTarget(kind: .board, id: boardID)),
             "itemID": try .encode(itemID), "position": try .encode(position),
             "directory": try .encode(readNotebookPageDirectory(itemID: itemID, from: max(0, position.index - 1), limit: 3))])
         }
-        let ink = try page.inkDrawing()
-        rawInkPresent = ink.baselinePNG?.isEmpty == false || ink.actions.contains { $0.isActive && $0.tool == .pen }
         size = try .encode(page.size)
-        let graph = page.graphicGraph()
-        // The loaded page and ink already belong to this WAL snapshot. Reuse
-        // their projections instead of decoding each addressed source again.
-        let erasures = Dictionary(ink.elementErasures.map { (collaborationIdentity($0.key), $0.value) },
-          uniquingKeysWith: +)
-        for element in page.elements {
-          var value: [String: JSONValue] = ["source": try .encode(element)]
-          let resolution = element.graphic == nil ? nil : graph.resolve(element.id)
-          if let resolution { value["graphicResolution"] = try resolution.readProjection(includeGeometry: true) }
-          let frame = resolution?.layout?.frame ?? element.frame
-          value["appearance"] = NotebookElementAppearance.readProjection(graphic: element.graphic, layout: resolution?.layout,
-            size: .init(width: frame.width, height: frame.height), erasures: erasures[collaborationIdentity(element.id)] ?? [])
-          elements.append(.object(value))
-        }
+        if let pageContent { elements = pageContent.elements; rawInkPresent = pageContent.rawInkPresent }
+        else { (elements, rawInkPresent) = try NotebookPanelPageContent.projection(page) }
       } else {
         let bounds: WorkspaceSpatialBounds
         if let supplied = request.bounds { bounds = try supplied.validated() }

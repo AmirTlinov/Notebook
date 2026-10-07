@@ -1,0 +1,47 @@
+{
+  "date": "2026-10-07",
+  "candidate": { "pair": 258, "application": "0.3.188", "plugin": "0.2.10" },
+  "verification": {
+    "status": "passed",
+    "sourceSHA256": "ca83b52b80fb36b6af08e5299db8d5af0ee065be9260db120e156191e9070511",
+    "route": "explicit selected contracts; optimized native Mac",
+    "receipt": ".build/runtime-258-page-cut/verification.json",
+    "coreMethods": 6,
+    "coreCases": 7,
+    "nativeMacTests": 4,
+    "failed": 0,
+    "skipped": 0,
+    "runtimeWarnings": 0,
+    "newCompilerWarnings": 0,
+    "compilerNotes": "Existing unrelated Swift warnings and Xcode exit-zero/no-output diagnostic also occur in the 257 verification build."
+  },
+  "change": {
+    "owner": "NotebookStore.capturePanelPageContent / readPanel(reusing:)",
+    "contentLoadsPerNativePageAnswer": { "before": 3, "after": 1 },
+    "projection": "The same ephemeral PageDocument and element projection feed the native painter and final panel answer.",
+    "freshPublication": ["navigation", "history", "basis", "cursor"],
+    "fences": ["store", "workspace", "target", "sourceRevision", "liveInkIdentity", "pixelDependencies"]
+  },
+  "checks": [
+    "Mixed graphic/text/group/ink projection and full JSON equality",
+    "Fresh membership, selection, history, cursor and basis after an asynchronous writer turn",
+    "Reject changed saved source, target or workspace",
+    "Reject unsaved live ink root even with current knownCursor",
+    "100000 elements: identical full JSON, one capture page load and no final page load",
+    "Native preparation with concurrent membership or source mutation",
+    "Existing page opening and canonical board material scenarios"
+  ],
+  "hundredThousandElements": {
+    "scope": "Isolated SwiftPM Debug content read, not host input-to-pixel latency",
+    "initialReadSeconds": 19.090359708,
+    "captureSeconds": 19.067775458,
+    "finalReuseSeconds": 0.114907667,
+    "capturePageLoads": 1,
+    "finalPageLoads": 0,
+    "responseBytes": 59837152,
+    "panelResponseLimitExceededByFixture": true
+  },
+  "independentReview": "PASS; static ownership, WAL publication, equivalence and focused test review",
+  "installedMeasurement": "pending",
+  "physicalAcceptance": false
+}
