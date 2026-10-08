@@ -47,6 +47,14 @@ fields and reports later adopted content/dependencies as preserved. Repeated und
 reads the same receipt. See [editable graphics](editable-graphics-contract.md) and
 [spatial commands](agent-spatial-command-contract.md).
 
+`NotebookReceiptPhaseMerge` owns held-envelope, stored and replicated receipt
+selection. The immutable original must agree exactly; a saved original may acquire
+one complete Undo cut. Raw comparison retains unknown fields and signed zero.
+Exact retry and late original keep the saved cut; divergent originals or completed
+Undo cuts reject the transaction before acceptance or ACK. Decode and encoding
+borrow the current allocation allowance. Convergent independent Undo events and
+the fleet format transition remain tracked in [GUI-486](https://linear.app/main-cluster/issue/GUI-486).
+
 ## Reads, attention and navigation
 
 `nb.observe` returns bounded content immediately; visual status separately describes

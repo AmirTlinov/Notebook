@@ -1,0 +1,565 @@
+{
+  "format": 1,
+  "rawSHA256": "58aa2f29494d2c2d160a7894b2757b12ca75978ccb758d0b6649eeb709fefebf",
+  "environmentRecordedSeparately": "toolchain.json and raw command log; PATH omitted in compact copy",
+  "commands": [
+    {
+      "label": "codex-resources",
+      "argv": [
+        "/opt/homebrew/opt/python@3.14/bin/python3.14",
+        "-B",
+        "/Users/amir/Documents/projects/Notebook/Applications/prepare_notebook_codex.py",
+        "--prepare",
+        "--stage-root",
+        "/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes"
+      ],
+      "cwd": "/Users/amir/Documents/projects/Notebook",
+      "exitCode": 0
+    },
+    {
+      "label": "toolchain-python",
+      "argv": [
+        "/opt/homebrew/opt/python@3.14/bin/python3.14",
+        "--version"
+      ],
+      "cwd": null,
+      "exitCode": 0
+    },
+    {
+      "label": "toolchain-xcode",
+      "argv": [
+        "/usr/bin/xcrun",
+        "xcodebuild",
+        "-version"
+      ],
+      "cwd": null,
+      "exitCode": 0
+    },
+    {
+      "label": "toolchain-swift",
+      "argv": [
+        "/usr/bin/xcrun",
+        "swift",
+        "--version"
+      ],
+      "cwd": null,
+      "exitCode": 0
+    },
+    {
+      "label": "toolchain-iphoneosSDK",
+      "argv": [
+        "/usr/bin/xcrun",
+        "--sdk",
+        "iphoneos",
+        "--show-sdk-build-version"
+      ],
+      "cwd": null,
+      "exitCode": 0
+    },
+    {
+      "label": "toolchain-macosSDK",
+      "argv": [
+        "/usr/bin/xcrun",
+        "--sdk",
+        "macosx",
+        "--show-sdk-build-version"
+      ],
+      "cwd": null,
+      "exitCode": 0
+    },
+    {
+      "label": "toolchain-xcodegen",
+      "argv": [
+        "/opt/homebrew/bin/xcodegen",
+        "--version"
+      ],
+      "cwd": null,
+      "exitCode": 0
+    },
+    {
+      "label": "toolchain-node",
+      "argv": [
+        "/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a/node",
+        "--version"
+      ],
+      "cwd": null,
+      "exitCode": 0
+    },
+    {
+      "label": "toolchain-npm",
+      "argv": [
+        "/Users/amir/.volta/bin/npm",
+        "--version"
+      ],
+      "cwd": null,
+      "exitCode": 0
+    },
+    {
+      "label": "mcp-dependencies",
+      "argv": [
+        "npm",
+        "ci",
+        "--ignore-scripts"
+      ],
+      "cwd": "/Users/amir/Documents/projects/Notebook/MCP",
+      "exitCode": 0
+    },
+    {
+      "label": "typescript-resources",
+      "argv": [
+        "/opt/homebrew/opt/python@3.14/bin/python3.14",
+        "-B",
+        "/Users/amir/Documents/projects/Notebook/Applications/prepare_notebook_typescript.py",
+        "--prepare",
+        "--stage-root",
+        "/Users/amir/Documents/projects/Notebook/.build/notebook-typescript-runtime"
+      ],
+      "cwd": "/Users/amir/Documents/projects/Notebook",
+      "exitCode": 0
+    },
+    {
+      "label": "generate-project",
+      "argv": [
+        "xcodegen",
+        "generate",
+        "--spec",
+        "project.yml"
+      ],
+      "cwd": "/Users/amir/Documents/projects/Notebook/Applications",
+      "exitCode": 0
+    },
+    {
+      "label": "typesetter-resources-macosx",
+      "argv": [
+        "/opt/homebrew/opt/python@3.14/bin/python3.14",
+        "-B",
+        "/Users/amir/Documents/projects/Notebook/Applications/prepare_notebook_typesetter.py",
+        "--prepare",
+        "--platform",
+        "macosx",
+        "--stage",
+        "/Users/amir/Documents/projects/Notebook/.build/notebook-typesetter-runtime"
+      ],
+      "cwd": "/Users/amir/Documents/projects/Notebook",
+      "exitCode": 0
+    },
+    {
+      "label": "surface-resources",
+      "argv": [
+        "node",
+        "/Users/amir/Documents/projects/Notebook/MCP/build-surface.mjs",
+        "--stage",
+        "/Users/amir/Documents/projects/Notebook/.build/surface"
+      ],
+      "cwd": "/Users/amir/Documents/projects/Notebook",
+      "exitCode": 0
+    },
+    {
+      "label": "mac-build-for-testing",
+      "argv": [
+        "xcrun",
+        "xcodebuild",
+        "-quiet",
+        "-project",
+        "Notebook.xcodeproj",
+        "-scheme",
+        "NotebookRuntime",
+        "-configuration",
+        "Debug",
+        "-destination",
+        "platform=macOS",
+        "-derivedDataPath",
+        "/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/b12ca6d0c0574691/mac",
+        "-parallel-testing-enabled",
+        "NO",
+        "-collect-test-diagnostics",
+        "never",
+        "build-for-testing",
+        "CODE_SIGN_IDENTITY=Apple Development",
+        "CODE_SIGN_STYLE=Automatic",
+        "CODE_SIGNING_ALLOWED=YES",
+        "DEVELOPMENT_TEAM=M94V58FCVP",
+        "NOTEBOOK_MAC_BUNDLE_SUFFIX=.acceptance",
+        "NOTEBOOK_ACCEPTANCE_ENABLED=YES",
+        "NOTEBOOK_SCRIPT_BUNDLE_SUFFIX=.native-test",
+        "NOTEBOOK_TYPESETTER_RUNTIME=/Users/amir/Documents/projects/Notebook/.build/notebook-typesetter-runtime",
+        "NOTEBOOK_SURFACE_STAGE=/Users/amir/Documents/projects/Notebook/.build/surface",
+        "NOTEBOOK_TYPESCRIPT_RUNTIME=/Users/amir/Documents/projects/Notebook/.build/notebook-typescript-runtime/231c33a13d7119dc7581384612354167749017b02ecf08430fb77605ba657fbe",
+        "NOTEBOOK_CODEX_RUNTIME=/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a",
+        "-only-testing:NotebookMacTests/DocumentTargetSnapshotPreparationTests/testBorrowedProducerRevokesOptionalCaptureButPreservesItsJoinedRequiredReader",
+        "-only-testing:NotebookMacTests/DocumentTargetSnapshotPreparationTests/testCapturePressureKeepsTheSameProducerUntilItsWholeRasterFits",
+        "-only-testing:NotebookMacTests/DocumentTargetSnapshotPreparationTests/testHeadlessPressureWithdrawsOptionalQueueButKeepsRequiredPreparation",
+        "-only-testing:NotebookMacTests/DocumentTargetSnapshotPreparationTests/testMemoryPressureCancelsAutomaticReadButKeepsDurableTargetAndPanelUntilNormalResumes",
+        "-only-testing:NotebookMacTests/DocumentTargetSnapshotPreparationTests/testPressureWithdrawsQueuedOptionalPaperAndKeepsItsPromotedDerivedAdmission",
+        "-only-testing:NotebookMacTests/NotebookItemCreationTests/testColdCoverUndoAndParentRedoReachTheSameCommittedBirthForEveryKind",
+        "-only-testing:NotebookMacTests/NotebookPanelPageAdmissionTests/testClippedPageBudgetPreservesVisibleSubjectPainterBandsAndRequestedDensity",
+        "-only-testing:NotebookMacTests/NotebookPanelPageAdmissionTests/testHeadlessPanelRetainsWarmSourceWithoutAdmittingANativePage",
+        "-only-testing:NotebookMacTests/NotebookPanelPageAdmissionTests/testHundredThousandDistantPageSubjectsUseTheSameBoundedAdmission",
+        "-only-testing:NotebookMacTests/NotebookPanelPageAdmissionTests/testPageSkipsDistantBodiesAndPrioritizesVisibleSeventeenthOverPrefetch",
+        "-only-testing:NotebookMacTests/NotebookPanelPageAdmissionTests/testPageWindowDisclosesOverflowTextAndNewlyExposedBodies",
+        "-only-testing:NotebookMacTests/NotebookPanelPageAdmissionTests/testPanelSourceWindowReclaimsIdleCreditAndRefusesOptionalRetentionWithoutLosingReadyPixels",
+        "-only-testing:NotebookMacTests/NotebookPanelPageAdmissionTests/testPanelSourceWindowSharesExactNativeAliasAndDrainsCancelledOrReplacedBorrow",
+        "-only-testing:NotebookMacTests/NotebookPanelPageAdmissionTests/testPrefetchBoundaryKeepsWholeBodiesAndExistingSemanticExclusions",
+        "-only-testing:NotebookMacTests/NotebookPanelPageAdmissionTests/testPressurePulseDrainsRequiredSourceBorrowWithoutRestoringOptionalRetention",
+        "-only-testing:NotebookMacTests/NotebookPanelPageContentTests",
+        "-only-testing:NotebookMacTests/NotebookPanelPresentationTests/testNotebookCardFirstPageOpensNativePixelsAndNavigationWithoutMovingPresence",
+        "-only-testing:NotebookMacTests/RasterEncodedRepresentationTests/testLayerBorrowTransfersChargeThroughEvictionAndWithOrder"
+      ],
+      "cwd": "/Users/amir/Documents/projects/Notebook/Applications",
+      "exitCode": 0
+    },
+    {
+      "label": "mac-native-signer",
+      "argv": [
+        "/usr/bin/codesign",
+        "--display",
+        "--verbose=4",
+        "/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/b12ca6d0c0574691/mac/Build/Products/Debug/NotebookRuntime.app"
+      ],
+      "cwd": null,
+      "exitCode": 0
+    },
+    {
+      "label": "test-worker-sign-0",
+      "argv": [
+        "/usr/bin/codesign",
+        "--force",
+        "--sign",
+        "Apple Development: FINLEY KIWM Q (Q487Y359U5)",
+        "--timestamp=none",
+        "--identifier",
+        "com.amirtlinov.notebook.typescript-compiler",
+        "--entitlements",
+        "/Users/amir/Documents/projects/Notebook/Sources/NotebookMarkupService/typescript-child.entitlements.plist",
+        "/private/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/b12ca6d0c0574691/mac/Build/Products/Debug/NotebookRuntime.app/Contents/XPCServices/NotebookMarkupService.xpc/Contents/Resources/NotebookTypeScript/notebook-typescript"
+      ],
+      "cwd": null,
+      "exitCode": 0
+    },
+    {
+      "label": "test-worker-rights-0",
+      "argv": [
+        "/usr/bin/codesign",
+        "--display",
+        "--entitlements",
+        ":-",
+        "--xml",
+        "/private/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/b12ca6d0c0574691/mac/Build/Products/Debug/NotebookRuntime.app/Contents/XPCServices/NotebookMarkupService.xpc/Contents/Resources/NotebookTypeScript/notebook-typescript"
+      ],
+      "cwd": null,
+      "exitCode": 0
+    },
+    {
+      "label": "test-worker-sign-1",
+      "argv": [
+        "/usr/bin/codesign",
+        "--force",
+        "--sign",
+        "Apple Development: FINLEY KIWM Q (Q487Y359U5)",
+        "--timestamp=none",
+        "--identifier",
+        "com.amirtlinov.notebook.script-service.native-test",
+        "--entitlements",
+        "/Users/amir/Documents/projects/Notebook/Sources/NotebookScriptService/entitlements.plist",
+        "/private/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/b12ca6d0c0574691/mac/Build/Products/Debug/NotebookRuntime.app/Contents/XPCServices/NotebookScriptService.xpc"
+      ],
+      "cwd": null,
+      "exitCode": 0
+    },
+    {
+      "label": "test-worker-rights-1",
+      "argv": [
+        "/usr/bin/codesign",
+        "--display",
+        "--entitlements",
+        ":-",
+        "--xml",
+        "/private/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/b12ca6d0c0574691/mac/Build/Products/Debug/NotebookRuntime.app/Contents/XPCServices/NotebookScriptService.xpc"
+      ],
+      "cwd": null,
+      "exitCode": 0
+    },
+    {
+      "label": "test-worker-sign-2",
+      "argv": [
+        "/usr/bin/codesign",
+        "--force",
+        "--sign",
+        "Apple Development: FINLEY KIWM Q (Q487Y359U5)",
+        "--timestamp=none",
+        "--identifier",
+        "com.amirtlinov.notebook.markup-service.native-test",
+        "--entitlements",
+        "/Users/amir/Documents/projects/Notebook/Sources/NotebookMarkupService/entitlements.plist",
+        "/private/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/b12ca6d0c0574691/mac/Build/Products/Debug/NotebookRuntime.app/Contents/XPCServices/NotebookMarkupService.xpc"
+      ],
+      "cwd": null,
+      "exitCode": 0
+    },
+    {
+      "label": "test-worker-rights-2",
+      "argv": [
+        "/usr/bin/codesign",
+        "--display",
+        "--entitlements",
+        ":-",
+        "--xml",
+        "/private/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/b12ca6d0c0574691/mac/Build/Products/Debug/NotebookRuntime.app/Contents/XPCServices/NotebookMarkupService.xpc"
+      ],
+      "cwd": null,
+      "exitCode": 0
+    },
+    {
+      "label": "test-host-reseal",
+      "argv": [
+        "/usr/bin/codesign",
+        "--force",
+        "--sign",
+        "Apple Development: FINLEY KIWM Q (Q487Y359U5)",
+        "--timestamp=none",
+        "--preserve-metadata=identifier,entitlements,flags,runtime",
+        "/private/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/b12ca6d0c0574691/mac/Build/Products/Debug/NotebookRuntime.app"
+      ],
+      "cwd": null,
+      "exitCode": 0
+    },
+    {
+      "label": "test-host-seal-verify",
+      "argv": [
+        "/usr/bin/codesign",
+        "--verify",
+        "--deep",
+        "--strict",
+        "/private/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/b12ca6d0c0574691/mac/Build/Products/Debug/NotebookRuntime.app"
+      ],
+      "cwd": null,
+      "exitCode": 0
+    },
+    {
+      "label": "mac-inventory",
+      "argv": [
+        "xcrun",
+        "xcodebuild",
+        "-quiet",
+        "-project",
+        "Notebook.xcodeproj",
+        "-scheme",
+        "NotebookRuntime",
+        "-configuration",
+        "Debug",
+        "-destination",
+        "platform=macOS",
+        "-derivedDataPath",
+        "/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/b12ca6d0c0574691/mac",
+        "-parallel-testing-enabled",
+        "NO",
+        "-collect-test-diagnostics",
+        "never",
+        "test-without-building",
+        "CODE_SIGN_IDENTITY=Apple Development",
+        "CODE_SIGN_STYLE=Automatic",
+        "CODE_SIGNING_ALLOWED=YES",
+        "DEVELOPMENT_TEAM=M94V58FCVP",
+        "NOTEBOOK_MAC_BUNDLE_SUFFIX=.acceptance",
+        "NOTEBOOK_ACCEPTANCE_ENABLED=YES",
+        "NOTEBOOK_SCRIPT_BUNDLE_SUFFIX=.native-test",
+        "NOTEBOOK_TYPESETTER_RUNTIME=/Users/amir/Documents/projects/Notebook/.build/notebook-typesetter-runtime",
+        "NOTEBOOK_SURFACE_STAGE=/Users/amir/Documents/projects/Notebook/.build/surface",
+        "NOTEBOOK_TYPESCRIPT_RUNTIME=/Users/amir/Documents/projects/Notebook/.build/notebook-typescript-runtime/231c33a13d7119dc7581384612354167749017b02ecf08430fb77605ba657fbe",
+        "NOTEBOOK_CODEX_RUNTIME=/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a",
+        "-only-testing:NotebookMacTests/DocumentTargetSnapshotPreparationTests/testBorrowedProducerRevokesOptionalCaptureButPreservesItsJoinedRequiredReader",
+        "-only-testing:NotebookMacTests/DocumentTargetSnapshotPreparationTests/testCapturePressureKeepsTheSameProducerUntilItsWholeRasterFits",
+        "-only-testing:NotebookMacTests/DocumentTargetSnapshotPreparationTests/testHeadlessPressureWithdrawsOptionalQueueButKeepsRequiredPreparation",
+        "-only-testing:NotebookMacTests/DocumentTargetSnapshotPreparationTests/testMemoryPressureCancelsAutomaticReadButKeepsDurableTargetAndPanelUntilNormalResumes",
+        "-only-testing:NotebookMacTests/DocumentTargetSnapshotPreparationTests/testPressureWithdrawsQueuedOptionalPaperAndKeepsItsPromotedDerivedAdmission",
+        "-only-testing:NotebookMacTests/NotebookItemCreationTests/testColdCoverUndoAndParentRedoReachTheSameCommittedBirthForEveryKind",
+        "-only-testing:NotebookMacTests/NotebookPanelPageAdmissionTests/testClippedPageBudgetPreservesVisibleSubjectPainterBandsAndRequestedDensity",
+        "-only-testing:NotebookMacTests/NotebookPanelPageAdmissionTests/testHeadlessPanelRetainsWarmSourceWithoutAdmittingANativePage",
+        "-only-testing:NotebookMacTests/NotebookPanelPageAdmissionTests/testHundredThousandDistantPageSubjectsUseTheSameBoundedAdmission",
+        "-only-testing:NotebookMacTests/NotebookPanelPageAdmissionTests/testPageSkipsDistantBodiesAndPrioritizesVisibleSeventeenthOverPrefetch",
+        "-only-testing:NotebookMacTests/NotebookPanelPageAdmissionTests/testPageWindowDisclosesOverflowTextAndNewlyExposedBodies",
+        "-only-testing:NotebookMacTests/NotebookPanelPageAdmissionTests/testPanelSourceWindowReclaimsIdleCreditAndRefusesOptionalRetentionWithoutLosingReadyPixels",
+        "-only-testing:NotebookMacTests/NotebookPanelPageAdmissionTests/testPanelSourceWindowSharesExactNativeAliasAndDrainsCancelledOrReplacedBorrow",
+        "-only-testing:NotebookMacTests/NotebookPanelPageAdmissionTests/testPrefetchBoundaryKeepsWholeBodiesAndExistingSemanticExclusions",
+        "-only-testing:NotebookMacTests/NotebookPanelPageAdmissionTests/testPressurePulseDrainsRequiredSourceBorrowWithoutRestoringOptionalRetention",
+        "-only-testing:NotebookMacTests/NotebookPanelPageContentTests",
+        "-only-testing:NotebookMacTests/NotebookPanelPresentationTests/testNotebookCardFirstPageOpensNativePixelsAndNavigationWithoutMovingPresence",
+        "-only-testing:NotebookMacTests/RasterEncodedRepresentationTests/testLayerBorrowTransfersChargeThroughEvictionAndWithOrder",
+        "-enumerate-tests",
+        "-test-enumeration-style",
+        "flat",
+        "-test-enumeration-format",
+        "json",
+        "-test-enumeration-output-path",
+        "/Users/amir/Documents/projects/Notebook/.build/common-main-memory-and-receipt-phase-20261008-v4-mac/mac-inventory.json"
+      ],
+      "cwd": "/Users/amir/Documents/projects/Notebook/Applications",
+      "exitCode": 0
+    },
+    {
+      "label": "mac",
+      "argv": [
+        "xcrun",
+        "xcodebuild",
+        "-quiet",
+        "-project",
+        "Notebook.xcodeproj",
+        "-scheme",
+        "NotebookRuntime",
+        "-configuration",
+        "Debug",
+        "-destination",
+        "platform=macOS",
+        "-derivedDataPath",
+        "/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/b12ca6d0c0574691/mac",
+        "-parallel-testing-enabled",
+        "NO",
+        "-collect-test-diagnostics",
+        "never",
+        "test-without-building",
+        "-resultBundlePath",
+        "/Users/amir/Documents/projects/Notebook/.build/common-main-memory-and-receipt-phase-20261008-v4-mac/mac.xcresult",
+        "CODE_SIGN_IDENTITY=Apple Development",
+        "CODE_SIGN_STYLE=Automatic",
+        "CODE_SIGNING_ALLOWED=YES",
+        "DEVELOPMENT_TEAM=M94V58FCVP",
+        "NOTEBOOK_MAC_BUNDLE_SUFFIX=.acceptance",
+        "NOTEBOOK_ACCEPTANCE_ENABLED=YES",
+        "NOTEBOOK_SCRIPT_BUNDLE_SUFFIX=.native-test",
+        "NOTEBOOK_TYPESETTER_RUNTIME=/Users/amir/Documents/projects/Notebook/.build/notebook-typesetter-runtime",
+        "NOTEBOOK_SURFACE_STAGE=/Users/amir/Documents/projects/Notebook/.build/surface",
+        "NOTEBOOK_TYPESCRIPT_RUNTIME=/Users/amir/Documents/projects/Notebook/.build/notebook-typescript-runtime/231c33a13d7119dc7581384612354167749017b02ecf08430fb77605ba657fbe",
+        "NOTEBOOK_CODEX_RUNTIME=/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a",
+        "-only-testing:NotebookMacTests/DocumentTargetSnapshotPreparationTests/testBorrowedProducerRevokesOptionalCaptureButPreservesItsJoinedRequiredReader",
+        "-only-testing:NotebookMacTests/DocumentTargetSnapshotPreparationTests/testCapturePressureKeepsTheSameProducerUntilItsWholeRasterFits",
+        "-only-testing:NotebookMacTests/DocumentTargetSnapshotPreparationTests/testHeadlessPressureWithdrawsOptionalQueueButKeepsRequiredPreparation",
+        "-only-testing:NotebookMacTests/DocumentTargetSnapshotPreparationTests/testMemoryPressureCancelsAutomaticReadButKeepsDurableTargetAndPanelUntilNormalResumes",
+        "-only-testing:NotebookMacTests/DocumentTargetSnapshotPreparationTests/testPressureWithdrawsQueuedOptionalPaperAndKeepsItsPromotedDerivedAdmission",
+        "-only-testing:NotebookMacTests/NotebookItemCreationTests/testColdCoverUndoAndParentRedoReachTheSameCommittedBirthForEveryKind",
+        "-only-testing:NotebookMacTests/NotebookPanelPageAdmissionTests/testClippedPageBudgetPreservesVisibleSubjectPainterBandsAndRequestedDensity",
+        "-only-testing:NotebookMacTests/NotebookPanelPageAdmissionTests/testHeadlessPanelRetainsWarmSourceWithoutAdmittingANativePage",
+        "-only-testing:NotebookMacTests/NotebookPanelPageAdmissionTests/testHundredThousandDistantPageSubjectsUseTheSameBoundedAdmission",
+        "-only-testing:NotebookMacTests/NotebookPanelPageAdmissionTests/testPageSkipsDistantBodiesAndPrioritizesVisibleSeventeenthOverPrefetch",
+        "-only-testing:NotebookMacTests/NotebookPanelPageAdmissionTests/testPageWindowDisclosesOverflowTextAndNewlyExposedBodies",
+        "-only-testing:NotebookMacTests/NotebookPanelPageAdmissionTests/testPanelSourceWindowReclaimsIdleCreditAndRefusesOptionalRetentionWithoutLosingReadyPixels",
+        "-only-testing:NotebookMacTests/NotebookPanelPageAdmissionTests/testPanelSourceWindowSharesExactNativeAliasAndDrainsCancelledOrReplacedBorrow",
+        "-only-testing:NotebookMacTests/NotebookPanelPageAdmissionTests/testPrefetchBoundaryKeepsWholeBodiesAndExistingSemanticExclusions",
+        "-only-testing:NotebookMacTests/NotebookPanelPageAdmissionTests/testPressurePulseDrainsRequiredSourceBorrowWithoutRestoringOptionalRetention",
+        "-only-testing:NotebookMacTests/NotebookPanelPageContentTests/testPagePublicationRefreshesPresenceAndMembershipChangedDuringNativePreparation",
+        "-only-testing:NotebookMacTests/NotebookPanelPageContentTests/testPagePublicationRejectsSourceChangedDuringNativePreparation",
+        "-only-testing:NotebookMacTests/NotebookPanelPresentationTests/testNotebookCardFirstPageOpensNativePixelsAndNavigationWithoutMovingPresence",
+        "-only-testing:NotebookMacTests/RasterEncodedRepresentationTests/testLayerBorrowTransfersChargeThroughEvictionAndWithOrder"
+      ],
+      "cwd": "/Users/amir/Documents/projects/Notebook/Applications",
+      "exitCode": 0
+    },
+    {
+      "label": "mac-summary",
+      "argv": [
+        "xcrun",
+        "xcresulttool",
+        "get",
+        "test-results",
+        "summary",
+        "--path",
+        "/Users/amir/Documents/projects/Notebook/.build/common-main-memory-and-receipt-phase-20261008-v4-mac/mac.xcresult",
+        "--compact"
+      ],
+      "cwd": null,
+      "exitCode": 0
+    },
+    {
+      "label": "mac-tests",
+      "argv": [
+        "xcrun",
+        "xcresulttool",
+        "get",
+        "test-results",
+        "tests",
+        "--path",
+        "/Users/amir/Documents/projects/Notebook/.build/common-main-memory-and-receipt-phase-20261008-v4-mac/mac.xcresult",
+        "--compact"
+      ],
+      "cwd": null,
+      "exitCode": 0
+    },
+    {
+      "label": "toolchain-after-python",
+      "argv": [
+        "/opt/homebrew/opt/python@3.14/bin/python3.14",
+        "--version"
+      ],
+      "cwd": null,
+      "exitCode": 0
+    },
+    {
+      "label": "toolchain-after-xcode",
+      "argv": [
+        "/usr/bin/xcrun",
+        "xcodebuild",
+        "-version"
+      ],
+      "cwd": null,
+      "exitCode": 0
+    },
+    {
+      "label": "toolchain-after-swift",
+      "argv": [
+        "/usr/bin/xcrun",
+        "swift",
+        "--version"
+      ],
+      "cwd": null,
+      "exitCode": 0
+    },
+    {
+      "label": "toolchain-after-iphoneosSDK",
+      "argv": [
+        "/usr/bin/xcrun",
+        "--sdk",
+        "iphoneos",
+        "--show-sdk-build-version"
+      ],
+      "cwd": null,
+      "exitCode": 0
+    },
+    {
+      "label": "toolchain-after-macosSDK",
+      "argv": [
+        "/usr/bin/xcrun",
+        "--sdk",
+        "macosx",
+        "--show-sdk-build-version"
+      ],
+      "cwd": null,
+      "exitCode": 0
+    },
+    {
+      "label": "toolchain-after-xcodegen",
+      "argv": [
+        "/opt/homebrew/bin/xcodegen",
+        "--version"
+      ],
+      "cwd": null,
+      "exitCode": 0
+    },
+    {
+      "label": "toolchain-after-node",
+      "argv": [
+        "/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a/node",
+        "--version"
+      ],
+      "cwd": null,
+      "exitCode": 0
+    },
+    {
+      "label": "toolchain-after-npm",
+      "argv": [
+        "/Users/amir/.volta/bin/npm",
+        "--version"
+      ],
+      "cwd": null,
+      "exitCode": 0
+    }
+  ]
+}

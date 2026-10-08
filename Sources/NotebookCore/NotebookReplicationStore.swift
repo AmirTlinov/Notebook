@@ -252,13 +252,14 @@ extension NotebookStore {
             }
             resolved = try .encode(before?.decode(NotebookCodeFragment.self).merging(fragment) ?? fragment)
           } else if file.hasPrefix("collaboration/actions/") {
-            let receipt = try value.decode(CollaborationReceipt.self)
-            guard receipt.id == receipt.action.id else { throw NotebookStorageError.invalidTransaction("receipt identity") }
-            if let before {
-              let previous = try before.decode(CollaborationReceipt.self)
-              guard previous.hasSameLifecycleIdentity(as: receipt) else { throw NotebookStorageError.transactionConflict }
-              resolved = try .encode(previous.undo == nil ? receipt : previous)
-            } else { resolved = value }
+            guard let id = value["id"]?.string.flatMap(UUID.init(uuidString:)),
+              file == "collaboration/actions/" + id.uuidString.lowercased() + ".json" else {
+              throw NotebookStorageError.invalidTransaction("receipt identity")
+            }
+            do { resolved = try NotebookReceiptPhaseMerge.merging(value, into: before, database: database) }
+            catch let error as CollaborationError where error.code == "action_id_conflict" {
+              throw NotebookStorageError.transactionConflict
+            }
           } else if file.hasPrefix("collaboration/delivery/") {
             let receipt = try value.decode(DeviceActionReceipt.self)
             let previous = try before?.decode(DeviceActionReceipt.self)

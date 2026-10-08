@@ -1,5 +1,6 @@
 import NotebookCore
 import NotebookTypesetter
+import Observation
 import SwiftUI
 import WebKit
 
@@ -44,7 +45,10 @@ final class DocumentSnapshotCache {
 
     #if os(macOS)
     func prepare(document: DocumentDocument, state: DocumentStateJournal, pageIndex: Int,
-      resources: SceneRenderResources = .shared, programStore: NotebookStore? = nil, isolationID: UUID? = nil, pixelWidth: Int? = nil) async throws -> RasterLease {
+      resources: SceneRenderResources = .shared, programStore: NotebookStore? = nil, isolationID: UUID? = nil, pixelWidth: Int? = nil,
+      purpose: @escaping @MainActor () -> ScenePreparationPurpose = { .required }) async throws -> RasterLease {
+      try Task.checkCancellation()
+      guard resources.allowsOptionalPreparation || purpose() == .required else { throw CancellationError() }
       let source = SceneRasterSource.document(id: document.id,
         token: Self.token(document: document, state: state, pageIndex: pageIndex))
       let geometry = DocumentRenderRegistry.shared.geometry(document: document, pageIndex: pageIndex)
@@ -52,21 +56,29 @@ final class DocumentSnapshotCache {
       if isolationID == nil, let lease = resources.retainRaster(for: source, minimumScale: requiredScale) { return lease }
       if isolationID == nil, let producer = DocumentRenderRegistry.shared.rasterProducer(documentID: document.id,
         token: Self.token(document: document, state: state, pageIndex: pageIndex), resources: resources, excluding: UUID()) {
-        return try await producer.retainPreparedSnapshot(pixelWidth: Int(ceil(DocumentRenderRegistry.shared.geometry(document: document, pageIndex: pageIndex).width * requiredScale)), force: true)
+        return try await producer.retainPreparedSnapshot(pixelWidth: Int(ceil(DocumentRenderRegistry.shared.geometry(document: document, pageIndex: pageIndex).width * requiredScale)), force: true,
+          purpose: purpose)
       }
       return try await withPreparedPage(document: document, state: state, pageIndex: pageIndex, resources: resources,
-        programStore: programStore, isolationID: isolationID) { coordinator in
-          try await coordinator.retainPreparedSnapshot(pixelWidth: pixelWidth ?? Int(ceil(geometry.width * requiredScale)), force: true, waitsForRasterAdmission: true)
+        programStore: programStore, isolationID: isolationID, purpose: purpose) { coordinator in
+          try await coordinator.retainPreparedSnapshot(pixelWidth: pixelWidth ?? Int(ceil(geometry.width * requiredScale)), force: true, waitsForRasterAdmission: true,
+            purpose: purpose)
         }
     }
 
     func withPreparedPage<T>(document: DocumentDocument, state: DocumentStateJournal, pageIndex: Int,
       resources: SceneRenderResources, programStore: NotebookStore?, isolationID: UUID?,
-      renderSession: DocumentRenderSession? = nil, operation: (DocumentWebCoordinator) async throws -> T) async throws -> T {
+      renderSession: DocumentRenderSession? = nil,
+      purpose: @escaping @MainActor () -> ScenePreparationPurpose = { .required },
+      operation: (DocumentWebCoordinator) async throws -> T) async throws -> T {
+      try Task.checkCancellation()
+      guard resources.allowsOptionalPreparation || purpose() == .required else { throw CancellationError() }
       let geometry = DocumentRenderRegistry.shared.geometry(document: document, pageIndex: pageIndex)
       let ready = PageTurnReadiness { _ in }
       let coordinator = DocumentWebCoordinator(resources: resources, renderSession: renderSession, printPriority: .export,
         onRenderReady: ready, onPageLayout: { _ in }, onStateChange: { _, _ in nil })
+      let claim = DocumentSnapshotClaim(purpose: purpose)
+      coordinator.headlessClaim = claim
       coordinator.programStore = programStore; coordinator.exportSnapshotID = isolationID
       let host = DocumentWebHost()
       let window = NSWindow(contentRect: .init(x: -20_000, y: -20_000, width: geometry.width, height: geometry.height),
@@ -76,16 +88,20 @@ final class DocumentSnapshotCache {
       coordinator.update(document: document, state: state, selectedPageIndex: pageIndex, capturesSnapshot: false,
         onRenderReady: ready, onPageLayout: { _ in },  onStateChange: { _, _ in nil })
       coordinator.mount(in: host, physicalSize: .init(width: geometry.width, height: geometry.height),
-        isInteractive: false, priority: .background)
+        isInteractive: false, priority: .background, purpose: purpose)
       return try await withTaskCancellationHandler {
         // The accepted request owns this queued producer. Its bounded render
         // and capture deadlines start only after physical WebKit admission.
         try await coordinator.awaitSurfaceAdmission()
         // This one reader returns its exact canonical capture; cache presence
         // and a second automatic capture are not completion notifications.
-        return try await operation(coordinator)
+        try Task.checkCancellation()
+        let value = try await operation(coordinator)
+        try Task.checkCancellation()
+        return value
       } onCancel: {
-        Task { @MainActor in coordinator.invalidate() }
+        claim.cancel()
+        Task { @MainActor in coordinator.cancelHeadlessPreparation() }
       }
     }
     #endif
@@ -330,6 +346,8 @@ final class DocumentWebCoordinator: NSObject,
   private(set) var commonRuntimeReady = false
   var onCommonRuntimeReady: () -> Void = { }
   private var requestedPriority: WebPriority?
+  private var requestedPreparationPurpose: @MainActor () -> ScenePreparationPurpose = { .required }
+  fileprivate var headlessClaim: DocumentSnapshotClaim?
   // Accepted headless snapshots keep export intent while their WebKit surface
   // waits in the background pool. Ordinary mounted pages follow their host.
   private let fixedPrintPriority: NotebookTypesetter.Priority?
@@ -354,6 +372,7 @@ final class DocumentWebCoordinator: NSObject,
   private var frameTask: Task<Void, Never>?
   private var sourcePreparationSubscriber: Task<DocumentPreparedPage, Error>?
   private var sourcePreparationGeneration: UInt64?
+  private var sourcePreparationID: UUID?
   private var focusedProgramID: String?
   private var frameTaskID: UUID?
   private var shellContinuation: CheckedContinuation<Void, Error>?
@@ -416,6 +435,7 @@ final class DocumentWebCoordinator: NSObject,
   private var snapshotTask: Task<Void, Never>?
   private var readerTask: Task<Void, any Error>?
   private var readerTaskID: UUID?
+  private var readerAdmission: DocumentSnapshotAdmission?
   private var readerID: UUID?
   private var readerContinuation: CheckedContinuation<Void, any Error>?
   private var readerDeadline: Task<Void, Never>?
@@ -426,7 +446,7 @@ final class DocumentWebCoordinator: NSObject,
   private var rasterSnapshotAdmissionObserver: NSObjectProtocol?
   private var rasterSnapshotAdmissionContinuation: CheckedContinuation<RasterReservation, Error>?
   var canShareSnapshot: Bool {
-    !externallyHostedPrograms && !isInvalidated && acquisitionError == nil && payload != nil && webView != nil
+    fixedPrintPriority == nil && !externallyHostedPrograms && !isInvalidated && acquisitionError == nil && payload != nil && webView != nil
       && surfaceLease?.isReleased == false
   }
   var resourceOwner: SceneRenderResources { resources }
@@ -454,6 +474,7 @@ final class DocumentWebCoordinator: NSObject,
   }
   private var presentationWaiters: [UUID: PresentationWaiter] = [:]
   var pendingPresentationRequestCount: Int { presentationWaiters.count }
+  var pendingSurfaceRequestID: UUID? { acquisitionTask == nil ? nil : acquisitionID }
 
   /// Wait for this exact request, not a later page that happens to be ready.
   /// Admission and execution keep their existing owners and deadlines; this
@@ -710,8 +731,10 @@ final class DocumentWebCoordinator: NSObject,
   }
   #endif
 
-  func mount(in host: DocumentWebHost, physicalSize: CGSize, isInteractive: Bool, priority: WebPriority) {
-    guard !isInvalidated else { return }
+  func mount(in host: DocumentWebHost, physicalSize: CGSize, isInteractive: Bool, priority: WebPriority,
+    purpose: @escaping @MainActor () -> ScenePreparationPurpose = { .required }) {
+    guard !isInvalidated, headlessClaim?.isCancelled != true else { return }
+    requestedPreparationPurpose = purpose
     // A mounted neighbour may already be waiting for its shared source. Its
     // new current demand reaches that operation even when no host is rebuilt.
     payload?.source.promotePreparation(to: printPriority(for: priority))
@@ -736,6 +759,11 @@ final class DocumentWebCoordinator: NSObject,
       return
     }
     if waitingForCanonicalSnapshot { return }
+    let resumingPreparation = acquisitionError is CancellationError
+    if resumingPreparation {
+      guard resources.allowsOptionalPreparation || requestedPreparationPurpose() == .required else { return }
+      acquisitionError = nil; preparationFailure = nil
+    }
     if let acquisitionError {
       onPreparationFailure(acquisitionError)
       return
@@ -745,7 +773,19 @@ final class DocumentWebCoordinator: NSObject,
       surfaceLease?.updatePriority(priority); requestedPriority = priority
       refreshInputAdmission()
       if !hasCanonicalPixels { beginPreparationDeadline() }
+      if resumingPreparation { prepareAndSendFrame() }
       return
+    }
+    if acquisitionTask != nil {
+      if requestedPriority != priority {
+        requestedPriority = priority
+        if let acquisitionID { resources.updatePendingWebPriority(acquisitionID, priority: priority) }
+      }
+      if resumingPreparation { prepareNativePaper() }
+      return
+    }
+    guard resources.allowsOptionalPreparation || requestedPreparationPurpose() == .required else {
+      requestedPriority = priority; withdrawPreparation(); return
     }
     if let snapshotPixelWidth, acquisitionTask == nil, let payload,
       let producer = DocumentRenderRegistry.shared.rasterProducer(documentID: payload.documentID,
@@ -765,13 +805,12 @@ final class DocumentWebCoordinator: NSObject,
           guard let self, !Task.isCancelled, !isInvalidated, acquisitionID == id else { return }
           acquisitionTask = nil
           if error is DocumentSnapshotWait { waitForCanonicalSnapshot(from: producer, after: attemptedEpoch) }
+          else if error is CancellationError { withdrawPreparation() }
           else { failPreparation(error, scope: .interaction) }
         }
       }
       return
     }
-    guard acquisitionTask == nil || requestedPriority != priority else { return }
-    acquisitionTask?.cancel()
     let id = UUID()
     acquisitionID = id
     requestedPriority = priority
@@ -784,11 +823,14 @@ final class DocumentWebCoordinator: NSObject,
     prepareNativePaper()
     acquisitionTask = Task { [weak self] in
       do {
-        let lease = try await resources.acquireWebSurface(priority: priority, constructsView: true)
-        guard let self, !Task.isCancelled, !isInvalidated, acquisitionID == id, let host = self.host else {
+        guard let priority = self?.requestedPriority, self?.headlessClaim?.isCancelled != true else { return }
+        let lease = try await resources.acquireWebSurface(priority: priority, constructsView: true,
+          purpose: { [weak self] in self?.requestedPreparationPurpose() ?? .optional }, requestID: id)
+        guard let self, !Task.isCancelled, !isInvalidated, headlessClaim?.isCancelled != true, acquisitionID == id, let host = self.host else {
           lease.release(); return
         }
         acquisitionTask = nil
+        lease.updatePriority(requestedPriority ?? priority)
         surfaceLease = lease
         recordPreparation(.admittedAt)
         beginPreparationDeadline()
@@ -797,9 +839,10 @@ final class DocumentWebCoordinator: NSObject,
         host.configure(size: self.physicalSize, interactive: acceptsInput)
         prepareAndSendFrame()
       } catch {
-        guard let self, !isInvalidated, acquisitionID == id else { return }
+        guard let self, !Task.isCancelled, !isInvalidated, acquisitionID == id else { return }
         acquisitionTask = nil
-        failPreparation(error, scope: .interaction)
+        if error is CancellationError { withdrawPreparation() }
+        else { failPreparation(error, scope: .interaction) }
       }
     }
   }
@@ -827,7 +870,8 @@ final class DocumentWebCoordinator: NSObject,
       guard let self, snapshotWaitID == id, generation == expected else { return }
       clearSnapshotWait()
       guard !isInvalidated, let host, let priority = requestedPriority else { return }
-      mount(in: host, physicalSize: physicalSize, isInteractive: requestedInput, priority: priority)
+      mount(in: host, physicalSize: physicalSize, isInteractive: requestedInput, priority: priority,
+        purpose: requestedPreparationPurpose)
     }
     if producer.hasCanonicalPixels || producer.isInvalidated || producer.acquisitionError != nil {
       producer.wakeSnapshotWaiters(unavailable: producer.isInvalidated || producer.acquisitionError != nil)
@@ -877,6 +921,13 @@ final class DocumentWebCoordinator: NSObject,
     if !preservesFallback { host?.removeFallback() }
   }
 
+  /// An exclusive headless caller owns this coordinator, but a physical
+  /// snapshot already submitted must finish its charged readback first.
+  fileprivate func cancelHeadlessPreparation() {
+    guard readerAdmission?.submitted != true else { return }
+    invalidate()
+  }
+
   private func failPreparation(_ error: Error, scope: PreparationFailure) {
     guard !isInvalidated else { return }
     acquisitionError = error; preparationFailure = scope
@@ -900,6 +951,15 @@ final class DocumentWebCoordinator: NSObject,
     onPresentationChange()
   }
 
+  /// A revoked optional queue place has no terminal source failure. Its owner
+  /// resumes this same source on normal pressure or an accepted page demand.
+  private func withdrawPreparation() {
+    acquisitionError = CancellationError(); preparationFailure = nil
+    preparationDeadlineTask?.cancel(); preparationDeadlineTask = nil
+    resolvePresentationWaiters()
+    onPresentationChange()
+  }
+
   func retryPreparation() {
     guard !isInvalidated, host != nil, requestedPriority != nil else { return }
     if preparationFailure == .native, webView != nil,
@@ -918,7 +978,8 @@ final class DocumentWebCoordinator: NSObject,
     let retryNativePreparation = preparationFailure == .native
     acquisitionError = nil; preparationFailure = nil; recoveryAttempts = 0
     if retryNativePreparation, let payload {
-      sourcePreparationSubscriber?.cancel(); sourcePreparationSubscriber = nil; sourcePreparationGeneration = nil
+      sourcePreparationSubscriber?.cancel(); sourcePreparationSubscriber = nil
+      sourcePreparationGeneration = nil; sourcePreparationID = nil
       payload.source.retryPagePreparation(payload.pageIndex)
     }
     host.removeFailure()
@@ -927,7 +988,8 @@ final class DocumentWebCoordinator: NSObject,
     } else {
       onBeforeRuntimeRestart()
       runtimeID = UUID(); payload?.runtimeID = runtimeID
-      mount(in: host, physicalSize: physicalSize, isInteractive: requestedInput, priority: priority)
+      mount(in: host, physicalSize: physicalSize, isInteractive: requestedInput, priority: priority,
+        purpose: requestedPreparationPurpose)
     }
   }
 
@@ -1263,7 +1325,8 @@ final class DocumentWebCoordinator: NSObject,
     recoveryAttempts += 1; acquisitionError = nil; preparationFailure = nil
     runtimeID = UUID(); payload?.runtimeID = runtimeID
     onBeforeRuntimeRestart()
-    mount(in: host, physicalSize: physicalSize, isInteractive: requestedInput, priority: priority)
+    mount(in: host, physicalSize: physicalSize, isInteractive: requestedInput, priority: priority,
+      purpose: requestedPreparationPurpose)
   }
 
   func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: any Error) {
@@ -1311,8 +1374,9 @@ final class DocumentWebCoordinator: NSObject,
     webView = nil
     isReady = false
     if !retainsNativePreparation {
-      sourcePreparationSubscriber?.cancel(); sourcePreparationSubscriber = nil; sourcePreparationGeneration = nil
-    } else if sourcePreparationSubscriber == nil { sourcePreparationGeneration = nil }
+      sourcePreparationSubscriber?.cancel(); sourcePreparationSubscriber = nil
+      sourcePreparationGeneration = nil; sourcePreparationID = nil
+    } else if sourcePreparationSubscriber == nil { sourcePreparationGeneration = nil; sourcePreparationID = nil }
     frameTaskID = nil; frameTask?.cancel(); frameTask = nil
     finishShellWait(throwing: CancellationError())
     finishFrameEvaluation(throwing: CancellationError())
@@ -1328,9 +1392,12 @@ final class DocumentWebCoordinator: NSObject,
   private func cancelSnapshotPreparation() {
     snapshotCaptureID = nil
     snapshotTask?.cancel(); snapshotTask = nil
+    readerAdmission?.retire()
     finishReader(throwing: CancellationError())
     finishRasterSnapshotAdmission(throwing: CancellationError())
-    readerTaskID = nil; readerTask?.cancel(); readerTask = nil
+    // The exact reader clears its own handle after it acknowledges cancellation.
+    // A successor cannot replace a still-draining snapshot job.
+    readerTask?.cancel()
     readerPreparedLease?.release(); readerPreparedLease = nil
   }
 
@@ -1340,7 +1407,8 @@ final class DocumentWebCoordinator: NSObject,
     payload?.source.releasePage(hostID: hostID, in: webView)
     clearSnapshotWait(); wakeSnapshotWaiters(unavailable: true)
     snapshotTask?.cancel()
-    sourcePreparationSubscriber?.cancel(); sourcePreparationSubscriber = nil; sourcePreparationGeneration = nil
+    sourcePreparationSubscriber?.cancel(); sourcePreparationSubscriber = nil
+    sourcePreparationGeneration = nil; sourcePreparationID = nil
     frameTask?.cancel()
     finishShellWait(throwing: CancellationError())
     finishFrameEvaluation(throwing: CancellationError())
@@ -1467,7 +1535,8 @@ final class DocumentWebCoordinator: NSObject,
       || payload?.source !== nextSource || payload?.state !== nextState || paperWidthChanged {
       clearSnapshotWait()
       generation &+= 1
-      sourcePreparationSubscriber?.cancel(); sourcePreparationSubscriber = nil; sourcePreparationGeneration = nil
+      sourcePreparationSubscriber?.cancel(); sourcePreparationSubscriber = nil
+      sourcePreparationGeneration = nil; sourcePreparationID = nil
       cancelSnapshotPreparation()
       snapshotOnlyComplete = false
       acquisitionError = nil; preparationFailure = nil
@@ -1871,17 +1940,19 @@ final class DocumentWebCoordinator: NSObject,
   /// transparent interaction frame. Both jobs borrow the same immutable source
   /// preparation; only this generation may install its physical paper.
   private func prepareNativePaper() {
-    guard !isInvalidated, acquisitionError == nil || retainsNativePreparation, let request = payload, host != nil,
+    guard !isInvalidated, headlessClaim?.isCancelled != true, acquisitionError == nil || retainsNativePreparation, let request = payload, host != nil,
       sourcePreparationGeneration != generation else { return }
+    guard resources.allowsOptionalPreparation || requestedPreparationPurpose() == .required else { return }
     sourcePreparationSubscriber?.cancel()
-    let expected = generation, trace = pagePreparationTrace
-    sourcePreparationGeneration = expected
+    let expected = generation, trace = pagePreparationTrace, preparationID = UUID()
+    sourcePreparationGeneration = expected; sourcePreparationID = preparationID
     sourcePreparationSubscriber = Task { @MainActor [weak self] in
       guard let self else { throw CancellationError() }
       do {
         try Task.checkCancellation()
-        guard !isInvalidated, generation == expected, host != nil,
+        guard !isInvalidated, headlessClaim?.isCancelled != true, generation == expected, sourcePreparationID == preparationID, host != nil,
           payload?.source === request.source else { throw CancellationError() }
+        guard resources.allowsOptionalPreparation || requestedPreparationPurpose() == .required else { throw CancellationError() }
         // Only hidden passive paper has transferred its pixels to a picture.
         // Current paper keeps its last good print through a failed replacement.
         if let retained = printedView.raster,
@@ -1906,8 +1977,9 @@ final class DocumentWebCoordinator: NSObject,
           })
         admissionChanged(false)
         try Task.checkCancellation()
-        guard !isInvalidated, generation == expected, host != nil,
+        guard !isInvalidated, headlessClaim?.isCancelled != true, generation == expected, sourcePreparationID == preparationID, host != nil,
           payload?.source === request.source else { throw CancellationError() }
+        guard resources.allowsOptionalPreparation || requestedPreparationPurpose() == .required else { throw CancellationError() }
         physicalSize = .init(width: prepared.fragment.width, height: prepared.fragment.height)
         host?.configure(size: physicalSize, interactive: acceptsInput)
         let paper: DocumentPaperRaster
@@ -1917,14 +1989,16 @@ final class DocumentWebCoordinator: NSObject,
           paper = installed.rebound(page: prepared.printed, sourceKey: request.source.message.key)
         } else {
           paper = try await DocumentPaperRaster.prepare(page: prepared.printed, sourceKey: request.source.message.key,
-            pixelWidth: paperPreparationPixelWidth, resources: resources, waits: admissionChanged)
+            pixelWidth: paperPreparationPixelWidth, resources: resources,
+            purpose: { [weak self] in self?.requestedPreparationPurpose() ?? .optional }, waits: admissionChanged)
         }
         recordPreparation(.preparedPageReadyAt, trace: trace)
         try Task.checkCancellation()
-        guard !isInvalidated, generation == expected, host != nil,
+        guard !isInvalidated, headlessClaim?.isCancelled != true, generation == expected, sourcePreparationID == preparationID, host != nil,
           payload?.source === request.source else { throw CancellationError() }
         pageCount = request.source.layout?.pageCount ?? pageCount
-        printedView.install(paper, resources: resources)
+        printedView.install(paper, resources: resources,
+          purpose: { [weak self] in self?.requestedPreparationPurpose() ?? .optional })
         host?.installPaper(printedView); paperGeneration = expected
         recordPreparation(.paperInstalledAt, trace: trace)
         refreshInputAdmission()
@@ -1939,9 +2013,12 @@ final class DocumentWebCoordinator: NSObject,
         // A replaced/retired job cannot fail the current source or resume its
         // waiters. Current native failure must also finish readers while an old
         // shell call is still draining.
-        if !Task.isCancelled, !isInvalidated, generation == expected,
+        if !Task.isCancelled, !isInvalidated, generation == expected, sourcePreparationID == preparationID,
           payload?.source === request.source {
-          failPreparation(error, scope: .native)
+          if error is CancellationError {
+            sourcePreparationGeneration = nil; sourcePreparationSubscriber = nil; sourcePreparationID = nil
+            withdrawPreparation()
+          } else { failPreparation(error, scope: .native) }
         }
         throw error
       }
@@ -1973,16 +2050,20 @@ final class DocumentWebCoordinator: NSObject,
         let expected = generation
         let trace = pagePreparationTrace
         recordPreparation(.frameTaskAt, trace: trace)
+        var nativePreparationID: UUID?
         do {
           guard let lease = surfaceLease else { throw CancellationError() }
           prepareNativePaper()
-          guard let subscriber = sourcePreparationSubscriber, sourcePreparationGeneration == expected else {
+          guard let subscriber = sourcePreparationSubscriber, let preparationID = sourcePreparationID,
+            sourcePreparationGeneration == expected else {
             throw CancellationError()
           }
+          nativePreparationID = preparationID
           let prepared = try await subscriber.value
           try Task.checkCancellation()
           guard !isInvalidated, frameTaskID == taskID, webView === web else { return }
           guard generation == expected, payload?.source === next.source else { continue }
+          guard sourcePreparationID == preparationID else { continue }
           // The sender now owns this packet through its real JS callback. The
           // coordinator need not retain another completed preparation task.
           sourcePreparationSubscriber = nil
@@ -2038,9 +2119,21 @@ final class DocumentWebCoordinator: NSObject,
           sentSourceKey = next.source.message.key; sentSourcePage = prepared.fragment.pageIndex; sentStateKey = next.state.message.key; sentGeneration = expected
         } catch {
           guard !Task.isCancelled, !isInvalidated, frameTaskID == taskID, generation == expected else { continue }
+          if let nativePreparationID, sourcePreparationID != nativePreparationID {
+            // A withdrawn optional subscriber may finish after a required
+            // remount starts its successor in this same source generation.
+            // Its result belongs to that retired attempt; the single sender
+            // continues with the already admitted successor.
+            if acquisitionError == nil { continue }
+            return
+          }
           // The native job already publishes its own failure independently of
           // this sender. Only a failure from the remaining JS work is new here.
-          if acquisitionError == nil { failPreparation(error, scope: .interaction) }
+          if acquisitionError == nil {
+            if error is CancellationError, !resources.allowsOptionalPreparation,
+              requestedPreparationPurpose() == .optional { withdrawPreparation() }
+            else { failPreparation(error, scope: .interaction) }
+          }
           return
         }
       }
@@ -2185,34 +2278,71 @@ final class DocumentWebCoordinator: NSObject,
   }
 
   func retainPreparedSnapshot(pixelWidth: Int, nativeScale: Double? = nil, force: Bool = false,
-    waitsForRasterAdmission: Bool = false, reservation granted: RasterReservation? = nil, videoFrame: (blockID: String, time: Double)? = nil) async throws -> RasterLease {
+    waitsForRasterAdmission: Bool = false, reservation granted: RasterReservation? = nil, videoFrame: (blockID: String, time: Double)? = nil,
+    purpose: (@MainActor () -> ScenePreparationPurpose)? = nil) async throws -> RasterLease {
+    let callerPurpose: @MainActor () -> ScenePreparationPurpose = purpose ?? { [weak self] in
+      self?.requestedPreparationPurpose() ?? .optional
+    }
+    let claim = DocumentSnapshotClaim(purpose: callerPurpose)
+    return try await withTaskCancellationHandler {
+      defer { claim.admission?.remove(claim) }
+      try Task.checkCancellation()
+      guard resources.allowsOptionalPreparation || callerPurpose() == .required else { throw CancellationError() }
+      let raster = try await retainPreparedSnapshot(pixelWidth: pixelWidth, nativeScale: nativeScale, force: force,
+        waitsForRasterAdmission: waitsForRasterAdmission, reservation: granted, videoFrame: videoFrame, claim: claim)
+      guard !Task.isCancelled, !claim.isCancelled else { raster.release(); throw CancellationError() }
+      return raster
+    } onCancel: {
+      claim.cancel()
+      Task { @MainActor [weak self] in
+        if let admission = claim.admission { self?.withdrawSnapshotIfUnneeded(admission) }
+      }
+    }
+  }
+
+  private func retainPreparedSnapshot(pixelWidth: Int, nativeScale: Double?, force: Bool,
+    waitsForRasterAdmission: Bool, reservation granted: RasterReservation?, videoFrame: (blockID: String, time: Double)?,
+    claim: DocumentSnapshotClaim) async throws -> RasterLease {
     guard let payload, !isInvalidated else { throw CancellationError() }
     let requestGeneration = generation
     // Only measured page membership can name a composite image. Before that
     // point no exact page-state cache lookup exists, so join canonical readiness.
     if payload.source.layout == nil {
       try await awaitPresentation(token: payload.renderToken)
+      try Task.checkCancellation()
       guard generation == requestGeneration else { throw CancellationError() }
     }
     let source = SceneRasterSource.document(id: payload.documentID, token: snapshotToken(payload))
     let minimumScale = nativeScale ?? Self.snapshotMinimumScale(pixelWidth: pixelWidth, size: physicalSize)
     if !force, let cached = resources.retainRaster(for: source, minimumScale: minimumScale) { return cached }
-    if force, let preceding = readerTask {
+    if let preceding = readerTask, let admission = readerAdmission, force || admission.withdrawn {
+      // Force still requires a fresh capture, but its required demand protects
+      // the shared predecessor while this caller joins its actual drain.
+      if !admission.withdrawn { try admission.add(claim) }
       try? await preceding.value
+      admission.remove(claim)
       try Task.checkCancellation()
       guard !isInvalidated, generation == requestGeneration,
         self.payload?.renderToken == payload.renderToken else { throw CancellationError() }
     }
     if readerTask == nil {
       let expectedGeneration = generation
-      let taskID = UUID(); readerTaskID = taskID
+      let taskID = UUID()
+      let admission = DocumentSnapshotAdmission(resources: resources)
+      try admission.add(claim)
+      readerTaskID = taskID
+      readerAdmission = admission
       readerTask = Task { @MainActor [weak self] in
         guard let self else { throw CancellationError() }
-        defer { if readerTaskID == taskID { readerTaskID = nil; readerTask = nil } }
+        defer {
+          if readerTaskID == taskID { readerTaskID = nil; readerTask = nil; readerAdmission = nil }
+        }
+        try admission.requireCapture(resources: resources)
         if !force, let cached = resources.retainRaster(for: source, minimumScale: minimumScale) {
           readerPreparedLease?.release(); readerPreparedLease = cached; return
         }
         try await awaitPresentation(token: payload.renderToken)
+        try admission.requireCapture(resources: resources)
         guard generation == expectedGeneration else { throw CancellationError() }
         guard let size = webView?.bounds.size else { throw CancellationError() }
         guard size.width > 0, size.height > 0 else { throw SceneRenderError.resourceLimit }
@@ -2223,9 +2353,9 @@ final class DocumentWebCoordinator: NSObject,
           reservation = granted
         } else {
           reservation = try await reserveSnapshot(source: source, pixelWidth: pixelWidth,
-            pixelHeight: height, waitsForAdmission: waitsForRasterAdmission)
+            pixelHeight: height, waitsForAdmission: waitsForRasterAdmission, admission: admission)
         }
-        guard !Task.isCancelled, !isInvalidated, generation == expectedGeneration, let web = webView else {
+        guard !Task.isCancelled, admission.permitsCapture(resources: resources), !isInvalidated, generation == expectedGeneration, let web = webView else {
           reservation.release(); throw CancellationError()
         }
         if exportSnapshotID != nil {
@@ -2237,6 +2367,7 @@ final class DocumentWebCoordinator: NSObject,
                 "state": payload.states[block.id] ?? block.initialState, "pixelRatio": .number(Double(pixelWidth) / size.width)]
               if let videoFrame, videoFrame.blockID == block.id { request["time"] = .number(videoFrame.time) }
               _ = try await NotebookProgramBridge.lifecycle("exportProgram", controller: "notebookRenderer", argument: .object(request), in: web)
+              try admission.requireCapture(resources: resources)
             }
             guard !Task.isCancelled, !isInvalidated, generation == expectedGeneration else { throw CancellationError() }
           } catch { reservation.release(); throw error }
@@ -2256,9 +2387,12 @@ final class DocumentWebCoordinator: NSObject,
             finishReader(throwing: SceneRenderError.snapshotPending("document_snapshot_timeout"))
           }
           beginCanonicalSnapshot(id: id, capture: capture, payload: payload, generation: expectedGeneration,
-            pixelWidth: pixelWidth, size: size, scale: scale, nativeScale: nativeScale)
+            pixelWidth: pixelWidth, size: size, scale: scale, nativeScale: nativeScale, admission: admission)
         }
       }
+      observeSnapshotAdmission(admission)
+    } else if let admission = readerAdmission {
+      try admission.add(claim)
     }
     do { try await readerTask?.value }
     catch {
@@ -2276,23 +2410,41 @@ final class DocumentWebCoordinator: NSObject,
     return retained
   }
 
+  private func observeSnapshotAdmission(_ admission: DocumentSnapshotAdmission) {
+    _ = withObservationTracking { resources.optionalPreparationGeneration } onChange: { [weak self, weak admission] in
+      MainActor.assumeIsolated {
+        if let admission { self?.withdrawSnapshotIfUnneeded(admission) }
+      }
+    }
+  }
+
+  private func withdrawSnapshotIfUnneeded(_ admission: DocumentSnapshotAdmission) {
+    guard readerAdmission === admission, admission.withdrawIfUnneeded(resources: resources) else { return }
+    // Only this unsubmitted optional read retires. The mounted source and any
+    // required borrower keep their existing physical producer and input fences.
+    readerTask?.cancel()
+    finishRasterSnapshotAdmission(throwing: CancellationError())
+    finishReader(throwing: CancellationError())
+  }
+
   /// The caller owns a retained copy. Intermediate paper pixels need no second
   /// pin after a composition or physical fallback has taken ownership.
   func releasePreparedSnapshot() { readerPreparedLease?.release(); readerPreparedLease = nil }
 
   private func reserveSnapshot(source: SceneRasterSource, pixelWidth: Int, pixelHeight: Int,
-    waitsForAdmission: Bool) async throws -> RasterReservation {
+    waitsForAdmission: Bool, admission: DocumentSnapshotAdmission) async throws -> RasterReservation {
+    try admission.requireCapture(resources: resources)
     if let reservation = resources.reserveRaster(pixelWidth: pixelWidth, pixelHeight: pixelHeight, bytesPerPixel: SceneRenderResources.webSnapshotBytesPerPixel) { return reservation }
-    let admission = resources.rasterAdmission
+    let capacity = resources.rasterAdmission
     guard waitsForAdmission,
       let bytes = SceneRenderResources.estimatedRasterBytes(pixelWidth: pixelWidth, pixelHeight: pixelHeight, bytesPerPixel: SceneRenderResources.webSnapshotBytesPerPixel),
-      bytes <= admission.byteLimit, bytes <= admission.passiveByteLimit, admission.countLimit > 0 else {
+      bytes <= capacity.byteLimit, bytes <= capacity.passiveByteLimit, capacity.countLimit > 0 else {
       throw SceneRenderError.resourceLimit
     }
     precondition(rasterSnapshotAdmissionContinuation == nil)
     return try await withCheckedThrowingContinuation { continuation in
       pendingRasterSnapshot = .init(source: source, pixelWidth: pixelWidth, pixelHeight: pixelHeight,
-        bytes: bytes, admission: admission)
+        bytes: bytes, admission: capacity)
       rasterSnapshotAdmissionGeneration = generation
       rasterSnapshotAdmissionContinuation = continuation
       rasterSnapshotAdmissionObserver = NotificationCenter.default.addObserver(
@@ -2306,6 +2458,9 @@ final class DocumentWebCoordinator: NSObject,
 
   private func retryRasterSnapshotAdmission() {
     guard let demand = pendingRasterSnapshot else { return }
+    guard readerAdmission?.permitsCapture(resources: resources) == true else {
+      finishRasterSnapshotAdmission(throwing: CancellationError()); return
+    }
     guard !isInvalidated, generation == rasterSnapshotAdmissionGeneration,
       payload.map({ SceneRasterSource.document(id: $0.documentID, token: snapshotToken($0)) }) == demand.source else {
       finishRasterSnapshotAdmission(throwing: CancellationError()); return
@@ -2339,7 +2494,7 @@ final class DocumentWebCoordinator: NSObject,
   /// name the same canonical presentation, including its installation epoch.
   private func beginCanonicalSnapshot(id: UUID, capture: DocumentSnapshotCapture,
     payload: DocumentRuntimePayload, generation expected: UInt64,
-    pixelWidth: Int, size: CGSize, scale: Double, nativeScale: Double?) {
+    pixelWidth: Int, size: CGSize, scale: Double, nativeScale: Double?, admission: DocumentSnapshotAdmission) {
     guard let web = webView else { finishReader(throwing: CancellationError()); return }
     web.evaluateJavaScript("window.notebookRenderer.presentationReceipt()") { [weak self, capture] raw, error in
       guard let self, readerID == id else {
@@ -2352,6 +2507,7 @@ final class DocumentWebCoordinator: NSObject,
         let configuration = WKSnapshotConfiguration()
         configuration.afterScreenUpdates = true
         if nativeScale == nil { configuration.snapshotWidth = NSNumber(value: Double(pixelWidth) / scale) }
+        try admission.submit(resources: resources)
         capture.submit()
         web.takeSnapshot(with: configuration) { [weak self, capture] image, error in
           guard capture.receive(image) else { return }

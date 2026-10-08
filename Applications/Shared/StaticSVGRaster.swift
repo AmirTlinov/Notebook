@@ -13,21 +13,22 @@ import AppKit
 enum StaticSVGRaster {
   static func prepare(_ element: AgentElement, resources: SceneRenderResources,
     policy initialPolicy: AgentSnapshotPolicy, captureRequest: SceneRasterCaptureRequest? = nil,
+    purpose: @escaping @MainActor () -> ScenePreparationPurpose = { .required },
     permitsPreparation: @MainActor () -> Bool) async throws -> RasterLease {
     precondition(element.usesNativeSVGRaster)
     try Task.checkCancellation()
-    guard permitsPreparation() else { throw CancellationError() }
+    guard permitsPreparation(), resources.allowsOptionalPreparation || purpose() == .required else { throw CancellationError() }
     // The inner SVG's percentages resolve against its authored physical frame,
     // never the camera's crop. Native admission excludes browser text/layout.
     let svg = "<svg xmlns='http://www.w3.org/2000/svg' width='\(element.frame.width)' height='\(element.frame.height)' color='#171714'>\(element.html)</svg>"
     let pdf = try await DocumentCanonicalPrint.store.vectorPDF(Data(svg.utf8))
     try Task.checkCancellation()
-    guard permitsPreparation() else { throw CancellationError() }
+    guard permitsPreparation(), resources.allowsOptionalPreparation || purpose() == .required else { throw CancellationError() }
     guard let sourceReservation = resources.reserveDerivedBytes(pdf.count, priority: .passive) else { throw SceneRenderError.resourceLimit }
     defer { sourceReservation.release() }
     while true {
       try Task.checkCancellation()
-      guard permitsPreparation() else { throw CancellationError() }
+      guard permitsPreparation(), resources.allowsOptionalPreparation || purpose() == .required else { throw CancellationError() }
       let policy = captureRequest?.policy ?? initialPolicy
       let source = policy.rasterSource(for: element)
       if let hit = resources.retainRaster(for: source, minimumScale: policy.minimumScale(for: element)) { return hit }

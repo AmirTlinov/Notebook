@@ -1,0 +1,39 @@
+{
+  "format": 1,
+  "issues": [
+    "GUI-486",
+    "GUI-492",
+    "GUI-505"
+  ],
+  "positionsInThisSlice": [
+    "NB02 protective merge",
+    "NB19",
+    "B16 source integration",
+    "DC01/DC02/DC07/DC08 cleanup preserved"
+  ],
+  "sourceSHA256": "18e237019f81543422b379c46034107506b62b8c57a1c9068fc72f2db49b63b8",
+  "sourceFiles": 1731,
+  "core": {
+    "status": "passed component of v3",
+    "functions": 20,
+    "cases": 37,
+    "failed": 0,
+    "skipped": 0,
+    "inputDeltaToFinal": "Only two App files gained explicit callback labels; Core/Tests/Package/toolchain remain byte-identical."
+  },
+  "mac": {
+    "status": "passed",
+    "executed": 19,
+    "failed": 0,
+    "skipped": 0,
+    "runtimeWarnings": []
+  },
+  "physicalAcceptance": false,
+  "installedPairChanged": false,
+  "remaining": [
+    "Physical iPad execution (device passcode required), actual B16 raster100k workload and affected gesture acceptance.",
+    "App/WebContent footprint and device-tier budget measurements, full system measurements, ten repetitions and 30 minutes joint work.",
+    "GUI486: immutable birth/event convergence, coordinated format migration and complete 65k Undo.",
+    "GUI505: remaining test-only cache/reservation shells tracked for the next slice."
+  ]
+}

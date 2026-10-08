@@ -44,7 +44,7 @@ extension SessionPresence {
   }
 }
 
-private struct PreviewPageKey: Equatable {
+private struct PreviewPageKey: Equatable, Sendable {
   let pageID: UUID
   let inkStamp: VersionStamp
   let size: PageSize?
@@ -113,11 +113,24 @@ private enum PreviewPublicationError {
 /// window. Stopping it drains every accepted preparation before storage closes.
 @MainActor
 final class MacPreviewPublisher {
+  #if DEBUG
+    /// Configure the real AppModel-started owner for one isolated acceptance
+    /// store. Other workspaces keep the production delays and read lifetime.
+    struct AcceptanceConfiguration {
+      let storeRoot: URL
+      let currentViewDelay: Duration
+      let reconciliationInterval: Duration
+      let sourceReader: NotebookSceneReader
+    }
+    static var acceptanceConfiguration: AcceptanceConfiguration?
+  #endif
   private weak var model: NotebookAppModel?
+  private let sourceReader: NotebookSceneReader
   private let currentViewDelay: Duration
   private let reconciliationInterval: Duration
   private var currentViewTask: Task<Void, Never>?
   private var pageRequestTask: Task<Void, Never>?
+  private var pageRequestPublication: NotebookPreviewPublication<PreviewPageKey>?
   private var sourceReadTask: Task<Void, Never>?
   private var lastReadDemand: PreviewReadDemand?
   private var receiptRefresh: (demand: PreviewReadDemand, permit: NotebookPreviewPublication<CurrentViewPublicationFiles?>)?
@@ -159,6 +172,15 @@ final class MacPreviewPublisher {
   ) {
     self.model = model
     panelObservation = NotebookPanelObservation(model: model)
+    #if DEBUG
+      if let configuration = Self.acceptanceConfiguration, configuration.storeRoot == model.store.root {
+        sourceReader = configuration.sourceReader
+        self.currentViewDelay = configuration.currentViewDelay
+        self.reconciliationInterval = configuration.reconciliationInterval
+        return
+      }
+    #endif
+    sourceReader = NotebookSceneReader(store: model.store)
     self.currentViewDelay = currentViewDelay
     self.reconciliationInterval = reconciliationInterval
   }
@@ -193,6 +215,7 @@ final class MacPreviewPublisher {
         scheduleCurrentView(for: makeCurrentViewKey())
       }
     }
+    observeOptionalPreparation()
     observeCurrentView()
     let reconciliationInterval = reconciliationInterval
     reconciliationTask = Task { [weak self] in
@@ -218,13 +241,16 @@ final class MacPreviewPublisher {
     agentSnapshotObserver?.cancel(); agentSnapshotObserver = nil
     let tasks = [currentViewTask, pageRequestTask, reconciliationTask, targetTask, sourceReadTask, healthWriteTask].compactMap { $0 }
     for task in tasks { task.cancel() }
+    let sourceReader = sourceReader
     let drain = Task { @MainActor [weak self] in
       await self?.panelObservation.stop()
       for task in tasks { await task.value }
+      await sourceReader.close()
       guard let self else { return }
       currentViewTask = nil; pageRequestTask = nil; reconciliationTask = nil
       targetTask = nil; sourceReadTask = nil; healthWriteTask = nil
       targetInProgress = nil; requestedPageKey = nil; renderedScene = nil
+      pageRequestPublication = nil
       currentView = .init()
       stoppingTask = nil
     }
@@ -305,11 +331,35 @@ final class MacPreviewPublisher {
   }
 
   func suspendForInput() {
-    receiptRefresh?.permit.revoke()
-    currentViewTask?.cancel()
-    pageRequestTask?.cancel()
+    suspendOptionalPreparation()
     if model?.permitsPanelPreparation != true { targetTask?.cancel() }
     else if case .durable? = targetInProgress { targetTask?.cancel() }
+  }
+
+  /// Pressure revokes automatic preparation, never a durable target or a
+  /// foreground panel. Publications already admitted by the writer keep their
+  /// original bytes/request through the same FIFO's Retry.
+  private func suspendOptionalPreparation() {
+    if !SceneRenderResources.shared.allowsOptionalPreparation {
+      model?.notebookPagePreparation.releaseOptionalPanelSource()
+    }
+    receiptRefresh?.permit.revoke()
+    pageRequestPublication?.revoke()
+    currentViewTask?.cancel()
+    pageRequestTask?.cancel()
+    sourceReadTask?.cancel()
+  }
+
+  private func permitsOptionalPreparation(_ generation: UInt64) -> Bool {
+    model?.permitsOptionalPreparation == true
+      && SceneRenderResources.shared.optionalPreparationGeneration == generation
+  }
+
+  private func resumeOptionalPreparation() {
+    guard started, model?.permitsOptionalPreparation == true else { return }
+    requestSourceIdentity()
+    scheduleCurrentView(for: makeCurrentViewKey())
+    schedulePagePreview(for: pageKey)
   }
 
   /// Observation gives immediate updates. This small process-level pass gives
@@ -430,10 +480,30 @@ final class MacPreviewPublisher {
 
   private func observeCurrentView() {
     guard started else { return }
-    _ = withObservationTracking { readDemand } onChange: { [weak self] in
+    _ = withObservationTracking {
+      (readDemand, model?.permitsOptionalPreparation)
+    } onChange: { [weak self] in
       Task { @MainActor [weak self] in self?.observeCurrentView() }
     }
-    requestSourceIdentity()
+    if model?.permitsOptionalPreparation != true { suspendOptionalPreparation() }
+    resumeOptionalPreparation()
+  }
+
+  private func observeOptionalPreparation() {
+    guard started else { return }
+    _ = withObservationTracking {
+      SceneRenderResources.shared.optionalPreparationGeneration
+    } onChange: { [weak self] in
+      // The pool changes this generation on MainActor. Revoke queued permits
+      // in that same pressure turn; a deferred callback could lose the writer
+      // admission race. Rearm and retry after the new value has been installed.
+      MainActor.assumeIsolated { self?.suspendOptionalPreparation() }
+      Task { @MainActor [weak self] in
+        guard let self, started else { return }
+        observeOptionalPreparation()
+        resumeOptionalPreparation()
+      }
+    }
   }
 
   private func samePresentation(_ key: PreviewCurrentViewKey, _ demand: PreviewReadDemand) -> Bool {
@@ -448,16 +518,23 @@ final class MacPreviewPublisher {
     if let pending = currentView.pending,
       demand.map({ samePresentation(pending, $0) }) != true { currentViewTask?.cancel() }
     if let refresh = receiptRefresh, refresh.demand != demand { refresh.permit.revoke() }
-    guard started, let model, model.permitsBackgroundPreparation, sourceReadTask == nil,
+    guard started, let model, model.permitsOptionalPreparation, sourceReadTask == nil,
       readDemand != lastReadDemand else { return }
     // The renderer validates its own dependencies during preparation. Discover
     // unrelated cursor changes after it finishes, not by cancelling that work.
     if let pending = currentView.pending, let demand = readDemand, samePresentation(pending, demand) { return }
-    let reader = NotebookSceneReader(store: model.store)
+    let reader = sourceReader
+    let optionalGeneration = SceneRenderResources.shared.optionalPreparationGeneration
     sourceReadTask = Task { [weak self] in
       guard let self else { return }
-      defer { sourceReadTask = nil }
-      while started, !Task.isCancelled, let demand = readDemand, demand != lastReadDemand {
+      defer {
+        sourceReadTask = nil
+        if Task.isCancelled || !permitsOptionalPreparation(optionalGeneration) {
+          resumeOptionalPreparation()
+        }
+      }
+      while started, !Task.isCancelled, permitsOptionalPreparation(optionalGeneration),
+        let demand = readDemand, demand != lastReadDemand {
         if let pending = currentView.pending, samePresentation(pending, demand) { break }
         let previous = renderedScene.flatMap { samePresentation($0.key, demand) ? $0 : nil }
         let read = Task.detached(priority: .utility) {
@@ -472,7 +549,7 @@ final class MacPreviewPublisher {
         }
         do {
           let (identity, page) = try await withTaskCancellationHandler { try await read.value } onCancel: { read.cancel() }
-          guard started, !Task.isCancelled, model.permitsBackgroundPreparation else { return }
+          guard started, !Task.isCancelled, permitsOptionalPreparation(optionalGeneration) else { return }
           lastReadDemand = demand
           guard readDemand?.workspaceID == demand.workspaceID, readDemand?.presence == demand.presence else { continue }
           sourceKey = .init(workspaceID: demand.workspaceID, source: identity, presence: demand.presence,
@@ -513,17 +590,19 @@ final class MacPreviewPublisher {
 
   private func scheduleCurrentView(for key: PreviewCurrentViewKey?) {
     guard started else { return }
-    guard let key, key.presencePhase == .settled, model?.permitsBackgroundPreparation == true else { currentViewTask?.cancel(); return }
+    guard let key, key.presencePhase == .settled, model?.permitsOptionalPreparation == true else { currentViewTask?.cancel(); return }
     guard currentView.request(key) else { return }
     // Keep the cancelled task owned until it has drained. Replacing its handle
     // would let shutdown acknowledge while an older renderer still uses SQL.
     if let currentViewTask { currentViewTask.cancel(); return }
     let generation = currentView.begin(key)
+    let optionalGeneration = SceneRenderResources.shared.optionalPreparationGeneration
+    let reader = sourceReader
     currentViewTask = Task { [weak self] in
       try? await Task.sleep(for: self?.currentViewDelay ?? .zero)
       guard let self else { return }
       guard started, !Task.isCancelled,
-        model?.permitsBackgroundPreparation == true,
+        permitsOptionalPreparation(optionalGeneration),
         makeCurrentViewKey() == key
       else {
         finishCurrentViewPublication(key, generation: generation, error: PreviewPublicationError.sourceChanged)
@@ -532,23 +611,31 @@ final class MacPreviewPublisher {
       do {
         guard let model else { throw PreviewPublicationError.sourceUnavailable }
         // The peer's page may be outside the Mac window's bounded scene cache.
-        // Read its addressed materials from the same writer, not a second model.
+        // Join the accepted prefix, then use this publisher's cancellable WAL
+        // reader. Optional decoding must not become an accepted writer task.
         guard let presence = model.observedPresence else { throw PreviewPublicationError.sourceUnavailable }
-        let content = try await model.performStoreCommand { store in
-          try store.readTransaction { _ -> (PageDocument?, DocumentDocument?, DocumentStateJournal?) in
-            let page = try presence.mode == .page ? presence.notebookPageID.map { try store.loadPage($0) } : nil
-            let document = try presence.mode == .document ? presence.focusedItemID.map { try store.loadDocument($0) } : nil
-            let state = try document.map { try store.loadDocumentState($0.id) }
-            return (page, document, state)
-          }
+        let fence = model.capturePreviewReadFence()
+        try await fence.wait()
+        guard started, !Task.isCancelled, permitsOptionalPreparation(optionalGeneration), makeCurrentViewKey() == key else {
+          throw PreviewPublicationError.sourceChanged
+        }
+        let content = try await reader.read { store -> (PageDocument?, DocumentDocument?, DocumentStateJournal?) in
+          guard try store.storedWorkspaceID() == key.workspaceID else { throw PreviewPublicationError.sourceChanged }
+          let page = try presence.mode == .page ? presence.notebookPageID.map { try store.loadPage($0) } : nil
+          let document = try presence.mode == .document ? presence.focusedItemID.map { try store.loadDocument($0) } : nil
+          let state = try document.map { try store.loadDocumentState($0.id) }
+          return (page, document, state)
+        }
+        guard started, !Task.isCancelled, permitsOptionalPreparation(optionalGeneration), makeCurrentViewKey() == key else {
+          throw PreviewPublicationError.sourceChanged
         }
         var documentRaster: RasterLease?
         defer { documentRaster?.release() }
         if let document = content.1, let state = content.2 {
           documentRaster = try await DocumentSnapshotCache.shared.prepare(document: document, state: state,
-            pageIndex: presence.documentPageIndex, programStore: model.store)
+            pageIndex: presence.documentPageIndex, programStore: model.store, purpose: { .optional })
         }
-        guard started, !Task.isCancelled, model.permitsBackgroundPreparation, makeCurrentViewKey() == key else {
+        guard started, !Task.isCancelled, permitsOptionalPreparation(optionalGeneration), makeCurrentViewKey() == key else {
           throw PreviewPublicationError.sourceChanged
         }
         let dependencies = try await CurrentViewPreviewWriter.write(model: model,
@@ -574,27 +661,44 @@ final class MacPreviewPublisher {
     currentView.finish(key, generation: generation, error: error)
     currentViewTask = nil
     if started { requestSourceIdentity() }
-    if started, wasSuperseded { scheduleCurrentView(for: makeCurrentViewKey()) }
+    if started, wasSuperseded || Task.isCancelled { scheduleCurrentView(for: makeCurrentViewKey()) }
   }
 
   /// Only the selected physical page is requested automatically. Explicit
   /// agent requests and this request share one queue and one render executor.
   private func schedulePagePreview(for key: PreviewPageKey?) {
     guard started, let key, requestedPageKey != key, pageRequestTask == nil, let model,
-      model.permitsBackgroundPreparation else { return }
+      model.permitsOptionalPreparation else { return }
+    let optionalGeneration = SceneRenderResources.shared.optionalPreparationGeneration
+    let publication = NotebookPreviewPublication<PreviewPageKey>()
+    pageRequestPublication = publication
     pageRequestTask = Task { [weak self, weak model] in
-      defer { self?.pageRequestTask = nil }
-      guard self?.started == true, !Task.isCancelled, let model else { return }
-      do {
-        _ = try await model.performStoreCommand { store in
-          guard let stamp = try store.readContentHeader(target: .init(kind: .page, id: key.pageID)).inkStamp,
-            stamp == key.inkStamp else {
-            throw PreviewPublicationError.sourceUnavailable
-          }
-          return try store.requestPageVision(pageID: key.pageID, expectedRevision: stamp.revision)
+      defer {
+        self?.pageRequestTask = nil
+        if self?.pageRequestPublication === publication { self?.pageRequestPublication = nil }
+        if Task.isCancelled || self?.permitsOptionalPreparation(optionalGeneration) != true {
+          self?.resumeOptionalPreparation()
         }
-        guard !Task.isCancelled, let self, started, pageKey == key else { return }
-        requestedPageKey = key
+      }
+      guard let self, started, !Task.isCancelled, let model,
+        permitsOptionalPreparation(optionalGeneration) else { return }
+      do {
+        try await withTaskCancellationHandler {
+          try await model.performStoreCommand { store in
+            try publication.publish(preparing: {
+              guard try store.readContentHeader(target: .init(kind: .page, id: key.pageID)).inkStamp == key.inkStamp else {
+                throw PreviewPublicationError.sourceUnavailable
+              }
+              return key
+            }, writing: { admitted in
+              _ = try store.requestPageVision(pageID: admitted.pageID, expectedRevision: admitted.inkStamp.revision)
+            })
+          }
+        } onCancel: { publication.revoke() }
+        // Persistence makes this request required even if pressure cancelled
+        // its automatic producer while the accepted writer was finishing.
+        guard started else { return }
+        if pageKey == key { requestedPageKey = key }
         scheduleTargetRender(model)
       } catch { }
     }

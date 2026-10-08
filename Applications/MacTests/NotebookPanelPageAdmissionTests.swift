@@ -138,6 +138,59 @@ final class NotebookPanelPageAdmissionTests: XCTestCase {
   }
 
   @MainActor
+  func testPressurePulseDrainsRequiredSourceBorrowWithoutRestoringOptionalRetention() async throws {
+    let (fixture, header, target) = try await fixture()
+    let projection = NotebookPanelRenderProjection(workspaceID: header.workspaceID,
+      camera: .init(center: .init(x: 417, y: 597), scale: 4), viewport: .init(x: 200, y: 150), pixelScale: 1)
+    let cut = try await cut(fixture, target: target, projection: projection)
+    let prepared = try await CurrentViewPreviewWriter.panelMaterial(cut, model: fixture.model, knownAssets: [])
+    defer { prepared.leafRasterCollector.close() }
+    let source = try XCTUnwrap(prepared.pageSource), bytes = try XCTUnwrap(source.admissionEstimateBytes), owner = UUID()
+    let resources = SceneRenderResources(byteLimit: bytes * 2, profile: .headless)
+    let window = NotebookPagePreparationWindow(resources: resources)
+    defer { _ = window.stop() }
+    var demand = try XCTUnwrap(window.beginPanelSource(owner: owner, target: target))
+    window.finishPanelSource(demand, source: source)
+    XCTAssertEqual(resources.reservedBytes, bytes)
+    demand = try XCTUnwrap(window.beginPanelSource(owner: owner, target: target))
+    let borrowed = try XCTUnwrap(window.panelSource(for: demand))
+    resources.handleMemoryPressure(.warning)
+    XCTAssertEqual(window.panelSource(for: demand)?.captureIdentity, source.captureIdentity,
+      "The required borrow survives pressure until its final boundary")
+    XCTAssertEqual(resources.reservedBytes, bytes)
+    resources.handleMemoryPressure(.normal)
+    window.finishPanelSource(demand, source: borrowed)
+    XCTAssertEqual(resources.reservedBytes, 0, "A warning-to-normal pulse cannot resurrect the old optional credit")
+
+    resources.handleMemoryPressure(.critical)
+    demand = try XCTUnwrap(window.beginPanelSource(owner: owner, target: target))
+    XCTAssertNil(window.panelSource(for: demand))
+    window.finishPanelSource(demand, source: source)
+    XCTAssertEqual(resources.reservedBytes, 0, "A completed required cold read under pressure declines optional retention")
+    resources.handleMemoryPressure(.normal)
+    window.acceptNativeSources([target.id: source])
+    demand = try XCTUnwrap(window.beginPanelSource(owner: owner, target: target))
+    XCTAssertEqual(window.panelSource(for: demand)?.captureIdentity, source.captureIdentity)
+    window.finishPanelSource(demand, source: source)
+    XCTAssertEqual(window.nativeSources[target.id]?.captureIdentity, source.captureIdentity)
+    resources.handleMemoryPressure(.critical)
+    demand = try XCTUnwrap(window.beginPanelSource(owner: owner, target: target))
+    let nativeBorrow = try XCTUnwrap(window.panelSource(for: demand))
+    window.retainNativeSources([])
+    XCTAssertEqual(resources.reservedBytes, 0, "Native retirement under pressure cannot create a panel-only charge")
+    window.finishPanelSource(demand, source: nativeBorrow)
+    XCTAssertEqual(resources.reservedBytes, 0)
+    XCTAssertEqual(prepared.snapshot["appearance"]?["status"], .string("ready"))
+    XCTAssertFalse(prepared.snapshot["appearance"]?["layers"]?.arrayValues.isEmpty ?? true)
+
+    resources.handleMemoryPressure(.normal)
+    demand = try XCTUnwrap(window.beginPanelSource(owner: owner, target: target))
+    XCTAssertNil(window.panelSource(for: demand))
+    window.finishPanelSource(demand, source: source)
+    XCTAssertEqual(resources.reservedBytes, bytes, "Fresh normal-generation work may retain its new optional source")
+  }
+
+  @MainActor
   func testPageSkipsDistantBodiesAndPrioritizesVisibleSeventeenthOverPrefetch() async throws {
     for prefetched in [false, true] {
       let (fixture, header, target) = try await fixture()

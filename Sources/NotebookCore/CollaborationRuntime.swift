@@ -253,11 +253,7 @@ public struct CollaborationEnvelope: Codable, Equatable, Sendable {
     }
     var actions = Dictionary(uniqueKeysWithValues: actions.map { ($0.id, $0) })
     for next in incoming.actions {
-      if let old = actions[next.id] {
-        guard old.hasSameLifecycleIdentity(as: next) else { throw CollaborationError("action_id_conflict", "Разные ходы или основания отмены имеют одинаковый ID.") }
-        if old.undo != nil { continue }
-      }
-      actions[next.id] = next
+      actions[next.id] = try NotebookReceiptPhaseMerge.merging(next, into: actions[next.id])
     }
     var contexts = Dictionary(uniqueKeysWithValues: contexts.map { ($0.id, $0) })
     for next in incoming.contexts {

@@ -1,0 +1,85 @@
+{
+  "slowest": [
+    {
+      "seconds": 6.436408996582031,
+      "target": "NotebookMacTests",
+      "test": "NotebookItemCreationTests/testColdCoverUndoAndParentRedoReachTheSameCommittedBirthForEveryKind()"
+    },
+    {
+      "seconds": 3.03330397605896,
+      "target": "NotebookMacTests",
+      "test": "NotebookPanelPresentationTests/testNotebookCardFirstPageOpensNativePixelsAndNavigationWithoutMovingPresence()"
+    },
+    {
+      "seconds": 1.3847119808197021,
+      "target": "NotebookMacTests",
+      "test": "NotebookPanelPageAdmissionTests/testPageSkipsDistantBodiesAndPrioritizesVisibleSeventeenthOverPrefetch()"
+    },
+    {
+      "seconds": 1.3538119792938232,
+      "target": "NotebookMacTests",
+      "test": "NotebookPanelPageAdmissionTests/testPanelSourceWindowReclaimsIdleCreditAndRefusesOptionalRetentionWithoutLosingReadyPixels()"
+    },
+    {
+      "seconds": 1.3313709497451782,
+      "target": "NotebookMacTests",
+      "test": "NotebookPanelPageAdmissionTests/testHeadlessPanelRetainsWarmSourceWithoutAdmittingANativePage()"
+    },
+    {
+      "seconds": 1.2886919975280762,
+      "target": "NotebookMacTests",
+      "test": "NotebookPanelPageAdmissionTests/testPageWindowDisclosesOverflowTextAndNewlyExposedBodies()"
+    },
+    {
+      "seconds": 1.150001049041748,
+      "target": "NotebookMacTests",
+      "test": "NotebookPanelPageAdmissionTests/testPressurePulseDrainsRequiredSourceBorrowWithoutRestoringOptionalRetention()"
+    },
+    {
+      "seconds": 1.1395589113235474,
+      "target": "NotebookMacTests",
+      "test": "NotebookPanelPageAdmissionTests/testPanelSourceWindowSharesExactNativeAliasAndDrainsCancelledOrReplacedBorrow()"
+    },
+    {
+      "seconds": 1.0944240093231201,
+      "target": "NotebookMacTests",
+      "test": "NotebookPanelPageAdmissionTests/testClippedPageBudgetPreservesVisibleSubjectPainterBandsAndRequestedDensity()"
+    },
+    {
+      "seconds": 1.0733599662780762,
+      "target": "NotebookMacTests",
+      "test": "NotebookPanelPageContentTests/testPagePublicationRejectsSourceChangedDuringNativePreparation()"
+    },
+    {
+      "seconds": 1.017760992050171,
+      "target": "NotebookMacTests",
+      "test": "NotebookPanelPageContentTests/testPagePublicationRefreshesPresenceAndMembershipChangedDuringNativePreparation()"
+    },
+    {
+      "seconds": 0.6324830055236816,
+      "target": "NotebookMacTests",
+      "test": "DocumentTargetSnapshotPreparationTests/testPressureWithdrawsQueuedOptionalPaperAndKeepsItsPromotedDerivedAdmission()"
+    },
+    {
+      "seconds": 0.421875,
+      "target": "NotebookMacTests",
+      "test": "DocumentTargetSnapshotPreparationTests/testBorrowedProducerRevokesOptionalCaptureButPreservesItsJoinedRequiredReader()"
+    },
+    {
+      "seconds": 0.341048002243042,
+      "target": "NotebookMacTests",
+      "test": "DocumentTargetSnapshotPreparationTests/testMemoryPressureCancelsAutomaticReadButKeepsDurableTargetAndPanelUntilNormalResumes()"
+    },
+    {
+      "seconds": 0.1627359390258789,
+      "target": "NotebookMacTests",
+      "test": "DocumentTargetSnapshotPreparationTests/testCapturePressureKeepsTheSameProducerUntilItsWholeRasterFits()"
+    }
+  ],
+  "targets": {
+    "NotebookMacTests": {
+      "seconds": 22.12350070476532,
+      "tests": 19
+    }
+  }
+}

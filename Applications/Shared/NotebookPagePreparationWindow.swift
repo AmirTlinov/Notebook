@@ -47,6 +47,7 @@ final class NotebookPagePreparationWindow {
   private struct PanelSourceJob {
     let demand: PanelSourceDemand
     let identity: NotebookPageSource.CaptureIdentity?
+    let retentionGeneration: UInt64?
     var reservation: RasterReservation?
     var withdrawn = false
   }
@@ -417,7 +418,9 @@ extension NotebookPagePreparationWindow {
     let source = sourceCapabilities[target.id]
     let reservation = panelSourceSlot?.reservation
     panelSourceSlot?.reservation = nil
-    panelSourceJob = .init(demand: demand, identity: source?.captureIdentity, reservation: reservation)
+    panelSourceJob = .init(demand: demand, identity: source?.captureIdentity,
+      retentionGeneration: resources.allowsOptionalPreparation ? resources.optionalPreparationGeneration : nil,
+      reservation: reservation)
     resources.reclamationOffersChanged()
     return demand
   }
@@ -435,7 +438,9 @@ extension NotebookPagePreparationWindow {
     panelSourceJob = nil
     var reservation = job.reservation
     defer { reservation?.release() }
-    guard !stopped, !job.withdrawn, let source, source.document.id == demand.pageID, source.permitsReuse else {
+    guard !stopped, !job.withdrawn, resources.allowsOptionalPreparation,
+      job.retentionGeneration == resources.optionalPreparationGeneration,
+      let source, source.document.id == demand.pageID, source.permitsReuse else {
       removePanelSourceSlot(); return
     }
     if nativeSourceIDs.contains(demand.pageID) {
@@ -481,7 +486,8 @@ extension NotebookPagePreparationWindow {
 
   private func reconcilePanelSourceAlias() {
     guard let slot = panelSourceSlot else { return }
-    guard let source = sourceCapabilities[slot.pageID], source.permitsReuse, source.captureIdentity == slot.identity else {
+    guard resources.allowsOptionalPreparation,
+      let source = sourceCapabilities[slot.pageID], source.permitsReuse, source.captureIdentity == slot.identity else {
       removePanelSourceSlot(); return
     }
     if nativeSourceIDs.contains(slot.pageID) {

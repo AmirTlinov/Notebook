@@ -1,0 +1,179 @@
+{
+  "format": 1,
+  "baseCommit": "fe9488510523d05816090698f8a6a1d4a3dbd08d",
+  "sourceSHA256": "18e237019f81543422b379c46034107506b62b8c57a1c9068fc72f2db49b63b8",
+  "sourceFiles": 1731,
+  "beforeEqualsAfter": true,
+  "changedInputs": [
+    {
+      "executable": false,
+      "path": "Applications/Mac/MacPreviewPublisher.swift",
+      "sha256": "f61e44a0c0de20f04e5452430bfeac3c2f90014ffebc03a6e082bb33c53179ab"
+    },
+    {
+      "executable": false,
+      "path": "Applications/MacTests/DocumentTargetSnapshotPreparationTests.swift",
+      "sha256": "4edb2219079d3e97d106f6a7168739777852ccc5b8b4cc9ec7af063304e14f95"
+    },
+    {
+      "executable": false,
+      "path": "Applications/MacTests/NotebookPanelPageAdmissionTests.swift",
+      "sha256": "3ad8cf21d7c27b40cff1b744d1a6c5f9a0a62d5f74c81b7baa8a20f5a28ea5be"
+    },
+    {
+      "executable": false,
+      "path": "Applications/Shared/CoverOpeningSurface.swift",
+      "sha256": "0b3ef065cad643b2462f872563194514ce188adbe7bb2249ad877e4cdb593aa2"
+    },
+    {
+      "executable": false,
+      "path": "Applications/Shared/DocumentPagePreparation.swift",
+      "sha256": "c06c2b6a3955f40c680fe5e9780b7b671f0caf9e3232ba74a8cc7363de9e88f6"
+    },
+    {
+      "executable": false,
+      "path": "Applications/Shared/DocumentPagePresentationOwner.swift",
+      "sha256": "941b4962bf8ec509a8592bdfdc1df441c9f2fcd6b4f88811a18b1633ebc1071b"
+    },
+    {
+      "executable": false,
+      "path": "Applications/Shared/DocumentPaperView.swift",
+      "sha256": "47041f4f23f98a6da7e1de959626dff82986a2a0530d4fb7a62a9f7b299c92a3"
+    },
+    {
+      "executable": false,
+      "path": "Applications/Shared/DocumentShellPreparation.swift",
+      "sha256": "95a5cbf019145da0a8cc8225514d6a6f962a9071ea7aa39d0577f95718066e3a"
+    },
+    {
+      "executable": false,
+      "path": "Applications/Shared/DocumentSnapshotAdmission.swift",
+      "sha256": "2357a9f99a9ef69f8afedb34fd2baefc1ecd074223e027d513da7571cab10bfc"
+    },
+    {
+      "executable": false,
+      "path": "Applications/Shared/DocumentWebView.swift",
+      "sha256": "b813035069bf98266f1177d19b9897db936434a43bb9525f504ad26b14c05bf4"
+    },
+    {
+      "executable": false,
+      "path": "Applications/Shared/NotebookAppModel.swift",
+      "sha256": "76f20eac6e250df9c88d6b24c5fba0cd999985717b71c6fbf8eb548325cda2c1"
+    },
+    {
+      "executable": false,
+      "path": "Applications/Shared/NotebookPagePreparationWindow.swift",
+      "sha256": "b47049c7bfcb042565608f9f09af7809f23ea68675a21a785fb318899c6aa016"
+    },
+    {
+      "executable": false,
+      "path": "Applications/Shared/PageRasterPreparation.swift",
+      "sha256": "9fc9bf56d7608314cb361844af64da657c1df19445e4a45f6aa7412219124c4b"
+    },
+    {
+      "executable": false,
+      "path": "Applications/Shared/SceneCompositionTiles.swift",
+      "sha256": "ee977ad05cde1a0888056fcda423ad0b2cd8668adfcb4bd1e00ab19d8613cef5"
+    },
+    {
+      "executable": false,
+      "path": "Applications/Shared/SceneMemoryPressure.swift",
+      "sha256": "bf1fb90e83519aea8175f3a602b9ae6458dc9191c8c7f8207e42709d72d51d34"
+    },
+    {
+      "executable": false,
+      "path": "Applications/Shared/SceneRasterEvictionIndex.swift",
+      "sha256": "e3b6a04128faf72ce68e2adbc530ddf534ee0451194d271e9329e29ad2decff1"
+    },
+    {
+      "executable": false,
+      "path": "Applications/Shared/SceneRenderResources.swift",
+      "sha256": "60a5f6107d24b77bffdd48433440b9afed0480efd9e88efacffa68a8d789fbd1"
+    },
+    {
+      "executable": false,
+      "path": "Applications/Shared/SceneWebRasterPreparation.swift",
+      "sha256": "dc45fc1d948b12d73bc3c9864294d56fa4608090b224f544f761a775d7e4176c"
+    },
+    {
+      "executable": false,
+      "path": "Applications/Shared/StaticSVGRaster.swift",
+      "sha256": "c01c3c4bee17f2979d8bcf6f5e42d65c2b922e8a8beac547c5e3b5056b9f3639"
+    },
+    {
+      "executable": false,
+      "path": "Applications/Tests/CoverOpeningPhysicsTests.swift",
+      "sha256": "7282cea26cd821f4bfaaa25c5f9747e0caf1e8ba15665ded4662b90b2610a78d"
+    },
+    {
+      "executable": false,
+      "path": "Applications/Tests/DocumentProgramOwnerTests.swift",
+      "sha256": "80a80e78613a588e1865cd6ba4a07cadf57542e965ec4b5b36bdcfaaf0c28eda"
+    },
+    {
+      "executable": false,
+      "path": "Applications/Tests/DocumentShellPreparationTests.swift",
+      "sha256": "16df39ee87616b4ea93104aa9e221f8b276fc39ed3a1df9539f9afb26f7d001d"
+    },
+    {
+      "executable": false,
+      "path": "Applications/Tests/PageRasterPreparationTests.swift",
+      "sha256": "db70633a4dac48fb56919e300ac4d160e6ee27e8d1ee063dbff890808e07f1bd"
+    },
+    {
+      "executable": false,
+      "path": "Applications/Tests/SceneCompositionTests.swift",
+      "sha256": "8a1a659aa48e4a292c5e76f91dc6c7934edac386e2c13aeadab11deeb132d42f"
+    },
+    {
+      "executable": false,
+      "path": "Applications/Tests/SceneRenderResourcesTests.swift",
+      "sha256": "f814d031afa3fb3edfb2f000627b607feadf7ec6f09089cfb08d952712549e81"
+    },
+    {
+      "executable": false,
+      "path": "Applications/Tests/SceneWebRasterPreparationTests.swift",
+      "sha256": "41873c2f9691e1e91ca7c06447d8b740db3694b49e276ac7739f8688c1423de2"
+    },
+    {
+      "executable": false,
+      "path": "Applications/iPad/PageTurnFrame.swift",
+      "sha256": "dcbb4ef853e93f716e8a460b765af948f6b2f1f62f34bcb0357f5a734ec21dfa"
+    },
+    {
+      "executable": false,
+      "path": "Sources/NotebookCore/Collaboration.swift",
+      "sha256": "41ad7041426492b815f497be0f2250ba462d7d484abff72791f67c651fa24d75"
+    },
+    {
+      "executable": false,
+      "path": "Sources/NotebookCore/CollaborationRuntime.swift",
+      "sha256": "835b33e903d6cf506f4bf34c4b1c87724f042950fc0ec204be48ad387dc9af65"
+    },
+    {
+      "executable": false,
+      "path": "Sources/NotebookCore/CollaborationStore.swift",
+      "sha256": "6d2d5b28ccd74a1fc3d53d8f10da478b7ca187937da5066d19f5a0ac7ac70ea1"
+    },
+    {
+      "executable": false,
+      "path": "Sources/NotebookCore/NotebookReceiptPhaseMerge.swift",
+      "sha256": "175b74c5119a4694b5643a827322d0079ebe4bc4b20742c75ef5a2bfe2d0e67d"
+    },
+    {
+      "executable": false,
+      "path": "Sources/NotebookCore/NotebookReplicationStore.swift",
+      "sha256": "dc42a3978f1108ef7d653fb7bd23504de51fe6c3305c4fe9dfe9848d1787b065"
+    },
+    {
+      "executable": false,
+      "path": "Tests/NotebookCoreTests/NotebookReceiptPhaseMergeTests.swift",
+      "sha256": "6c171441ed715fe6513ef6bac43a7094e0be36b41fe1ac29938b850f69f13f1a"
+    }
+  ],
+  "rawMacEvidence": "/Users/amir/Documents/projects/Notebook/.build/common-main-memory-and-receipt-phase-20261008-v4-mac",
+  "rawMacReceiptSHA256": "0b7e5be342e7eda64035a0ef865d94278a27e46d0890f049c6684ccb5f45adcd",
+  "rawInventorySHA256": "ceb9a6282f59d0dd182dba7fa350d106b1577a7ffd3fcfc65e114fb984688e9d",
+  "coreSourceSHA256": "96046138ec1bcf082acd7d88e6f6187c04dc4bfd7a2c8b9580e37d18f19b57ce",
+  "coreScope": "Core inputs unchanged; four callback argument labels in two App files changed after the Core component completed. See core-component.json."
+}

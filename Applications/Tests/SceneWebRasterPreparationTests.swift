@@ -11,6 +11,65 @@ final class SceneWebRasterPreparationTests: XCTestCase {
   }
 
   @MainActor
+  func testPressureWithdrawsPreparingOptionalWebAndKeepsItsPromotedSource() async throws {
+    let resources = SceneRenderResources(maximumBackgroundWebSurfaces: 2)
+    var promotedPurpose: ScenePreparationPurpose = .optional
+    let optional = try await SceneWebRasterPreparation.create(resources: resources,
+      purpose: { .optional }, permitsPreparation: { true })
+    let promoted = try await SceneWebRasterPreparation.create(resources: resources,
+      purpose: { promotedPurpose }, permitsPreparation: { true })
+    defer { optional.close(); promoted.close() }
+    let neverReady = AgentElement(id: "pressure-optional-web", kind: .web,
+      frame: .init(x: 0, y: 0, width: 64, height: 64), source: "Pending optional pixels",
+      html: "<script>window.notebook.ready(new Promise(() => {}))</script>")
+    let acceptedSource = AgentElement(id: "pressure-promoted-web", kind: .web,
+      frame: .init(x: 0, y: 0, width: 64, height: 64), source: "Accepted pixels",
+      html: "<div style='position:absolute;inset:0;background:red'></div><script>window.notebook.ready(new Promise(resolve => setTimeout(resolve,500)))</script>")
+    let optionalTask = Task { try await optional.prepare(neverReady, requestedScale: 1,
+      purpose: { .optional }, permitsPreparation: { true }) }
+    let promotedTask = Task { try await promoted.prepare(acceptedSource, requestedScale: 1,
+      purpose: { promotedPurpose }, permitsPreparation: { true }) }
+    defer { optionalTask.cancel(); promotedTask.cancel() }
+    let deadline = ContinuousClock.now + .seconds(2)
+    while (optional.loadToken == nil || promoted.loadToken == nil), ContinuousClock.now < deadline { await Task.yield() }
+    XCTAssertNotNil(optional.loadToken)
+    let acceptedToken = try XCTUnwrap(promoted.loadToken), acceptedWeb = promoted.webIdentity
+    promotedPurpose = .required
+    resources.handleMemoryPressure(.critical)
+    do {
+      let unexpected = try await optionalTask.value
+      unexpected.release(); XCTFail("Pressure must withdraw the waiting optional source before it allocates a snapshot")
+    } catch { XCTAssertTrue(error is CancellationError) }
+    XCTAssertEqual(resources.activeWebSurfaceCount, 1)
+    XCTAssertNil(resources.image(for: neverReady))
+    let raster = try await promotedTask.value
+    XCTAssertEqual(raster.source, .agent(acceptedSource)); raster.release()
+    XCTAssertEqual(promoted.loadToken, acceptedToken)
+    XCTAssertEqual(promoted.webIdentity, acceptedWeb, "Accepted role keeps the already admitted producer")
+
+    resources.handleMemoryPressure(.normal)
+    let next = Task { try await promoted.prepare(neverReady, requestedScale: 1,
+      purpose: { promotedPurpose }, permitsPreparation: { true }) }
+    defer { next.cancel() }
+    let reusedDeadline = ContinuousClock.now + .seconds(2)
+    while promoted.loadToken == acceptedToken, ContinuousClock.now < reusedDeadline { await Task.yield() }
+    XCTAssertNotEqual(promoted.loadToken, acceptedToken)
+    // These edges occur before the one-shot observer's deferred rearm. The
+    // new job starts required, then becomes optional under a second warning.
+    resources.handleMemoryPressure(.warning)
+    resources.handleMemoryPressure(.normal)
+    promotedPurpose = .optional
+    resources.handleMemoryPressure(.warning)
+    do {
+      let unexpected = try await next.value
+      unexpected.release(); XCTFail("Rearming must reconcile pressure missed during rapid edges")
+    } catch { XCTAssertTrue(error is CancellationError) }
+    promoted.close()
+    XCTAssertEqual(resources.activeWebSurfaceCount, 0)
+    XCTAssertEqual(resources.pendingWebRequestCount, 0)
+  }
+
+  @MainActor
   func testQueuedCaptureOutlivesTheExecutionDeadlineAndUsesItsLatestDemandAfterAdmission() async throws {
     let resources = SceneRenderResources(maximumBackgroundWebSurfaces: 1)
     let held = try await resources.acquireWebSurface(priority: .background)

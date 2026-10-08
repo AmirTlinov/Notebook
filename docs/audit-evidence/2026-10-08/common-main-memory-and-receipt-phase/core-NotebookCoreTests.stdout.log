@@ -1,0 +1,73 @@
+◇ Test run started.
+↳ Testing Library Version: 2084
+↳ Target Platform: arm64e-apple-macos14.0
+◇ Suite "Native history follows the material transaction" started.
+◇ Suite "Lifecycle evidence remains the identity of its original action" started.
+◇ Suite "Delivery acknowledges an exact saved action phase" started.
+◇ Test "Последовательная отмена восстанавливает авторство поля после открытия SQLite заново" started.
+◇ Test "Независимый возврат того же значения не возвращает авторство для отмены" started.
+◇ Suite "Receipt phases preserve one exact original and one completed Undo" started.
+◇ Test "Доставка обратной записи на вторую SQLite сохраняет последовательную отмену" started.
+◇ Test nativeRedoAndDirectoryCommitAtomicallyAndRetryByTheSameID(_:) started.
+◇ Test consecutiveGraphicChangesRepeatTheirCausalOwnerNotTheOldInverseDot() started.
+◇ Test nativeRedoCreatesOneNewReversibleActionWithoutRevivingTheOldReceipt() started.
+◇ Test originalFieldsCannotBeReplacedInHeldOrDiskMerge(field:) started.
+◇ Test case passing 1 argument fault → .afterRecordWrites to nativeRedoAndDirectoryCommitAtomicallyAndRetryByTheSameID(_:) started.
+◇ Test heldEnvelopeCannotReplaceOrDropTheOriginalInverse() started.
+◇ Test case passing 1 argument fault → .afterCommit to nativeRedoAndDirectoryCommitAtomicallyAndRetryByTheSameID(_:) started.
+◇ Test case passing 1 argument fault → .beforeCommit to nativeRedoAndDirectoryCommitAtomicallyAndRetryByTheSameID(_:) started.
+◇ Test realReplicationOfALateAckKeepsTheCurrentUndoArrival() started.
+◇ Test lateOldPhaseCannotOverwriteOrUnionTheCurrentReceipt() started.
+◇ Test canonicalVersionSurvivesEncodingAndChangesWithTheSavedOutcome() started.
+◇ Test case passing 1 argument field → "createdAt" to originalFieldsCannotBeReplacedInHeldOrDiskMerge(field:) started.
+✔ Test heldEnvelopeCannotReplaceOrDropTheOriginalInverse() passed after 0.164 seconds.
+◇ Test envelopeAndDiskCannotRewriteCompactOriginalEffects() started.
+✔ Test lateOldPhaseCannotOverwriteOrUnionTheCurrentReceipt() passed after 0.290 seconds.
+✔ Test envelopeAndDiskCannotRewriteCompactOriginalEffects() passed after 0.136 seconds.
+◇ Test aNewEnvelopeReceiptCannotPublishAnUnavailableInverse() started.
+✔ Test canonicalVersionSurvivesEncodingAndChangesWithTheSavedOutcome() passed after 0.305 seconds.
+✔ Test "Независимый возврат того же значения не возвращает авторство для отмены" passed after 0.347 seconds.
+✔ Test aNewEnvelopeReceiptCannotPublishAnUnavailableInverse() passed after 0.076 seconds.
+✔ Suite "Lifecycle evidence remains the identity of its original action" passed after 0.378 seconds.
+✔ Test nativeRedoAndDirectoryCommitAtomicallyAndRetryByTheSameID(_:) with 3 test cases passed after 0.418 seconds.
+✔ Test nativeRedoCreatesOneNewReversibleActionWithoutRevivingTheOldReceipt() passed after 0.446 seconds.
+✔ Test "Последовательная отмена восстанавливает авторство поля после открытия SQLite заново" passed after 0.458 seconds.
+✔ Test consecutiveGraphicChangesRepeatTheirCausalOwnerNotTheOldInverseDot() passed after 0.574 seconds.
+✔ Suite "Native history follows the material transaction" passed after 0.574 seconds.
+◇ Test case passing 1 argument field → "changes" to originalFieldsCannotBeReplacedInHeldOrDiskMerge(field:) started.
+✔ Test realReplicationOfALateAckKeepsTheCurrentUndoArrival() passed after 0.828 seconds.
+✔ Suite "Delivery acknowledges an exact saved action phase" passed after 0.829 seconds.
+◇ Test case passing 1 argument field → "fingerprint" to originalFieldsCannotBeReplacedInHeldOrDiskMerge(field:) started.
+✔ Test "Доставка обратной записи на вторую SQLite сохраняет последовательную отмену" passed after 0.997 seconds.
+◇ Test case passing 1 argument field → "author" to originalFieldsCannotBeReplacedInHeldOrDiskMerge(field:) started.
+◇ Test case passing 1 argument field → "revisions" to originalFieldsCannotBeReplacedInHeldOrDiskMerge(field:) started.
+✔ Test originalFieldsCannotBeReplacedInHeldOrDiskMerge(field:) with 5 test cases passed after 1.687 seconds.
+◇ Test completedUndoCannotSelectADivergentCut(field:) started.
+◇ Test case passing 1 argument field → "restored" to completedUndoCannotSelectADivergentCut(field:) started.
+◇ Test case passing 1 argument field → "preserved" to completedUndoCannotSelectADivergentCut(field:) started.
+◇ Test case passing 1 argument field → "completedAt" to completedUndoCannotSelectADivergentCut(field:) started.
+◇ Test case passing 1 argument field → "restorations" to completedUndoCannotSelectADivergentCut(field:) started.
+◇ Test case passing 1 argument field → "redoGates" to completedUndoCannotSelectADivergentCut(field:) started.
+◇ Test case passing 1 argument field → "dependencies" to completedUndoCannotSelectADivergentCut(field:) started.
+◇ Test case passing 1 argument field → "revisions" to completedUndoCannotSelectADivergentCut(field:) started.
+✔ Test completedUndoCannotSelectADivergentCut(field:) with 7 test cases passed after 2.386 seconds.
+◇ Test rawConflictsRollBackMaterialReceiptAndAcknowledgements(kind:) started.
+◇ Test case passing 1 argument kind → "createdAt" to rawConflictsRollBackMaterialReceiptAndAcknowledgements(kind:) started.
+◇ Test case passing 1 argument kind → "undo" to rawConflictsRollBackMaterialReceiptAndAcknowledgements(kind:) started.
+◇ Test case passing 1 argument kind → "unknownOriginal" to rawConflictsRollBackMaterialReceiptAndAcknowledgements(kind:) started.
+◇ Test case passing 1 argument kind → "unknownUndo" to rawConflictsRollBackMaterialReceiptAndAcknowledgements(kind:) started.
+◇ Test case passing 1 argument kind → "signedZero" to rawConflictsRollBackMaterialReceiptAndAcknowledgements(kind:) started.
+◇ Test case passing 1 argument kind → "receiptID" to rawConflictsRollBackMaterialReceiptAndAcknowledgements(kind:) started.
+✔ Test rawConflictsRollBackMaterialReceiptAndAcknowledgements(kind:) with 6 test cases passed after 2.001 seconds.
+◇ Test rawSelectedPhaseRetainsUnknownsAndLateOriginalDoesNotRewriteMaterial() started.
+✔ Test rawSelectedPhaseRetainsUnknownsAndLateOriginalDoesNotRewriteMaterial() passed after 0.362 seconds.
+◇ Test damagedStoredReceiptIsNotTreatedAsAbsent() started.
+✔ Test damagedStoredReceiptIsNotTreatedAsAbsent() passed after 0.223 seconds.
+◇ Test exactOriginalAndUndoReplaysKeepTheSameDiskCut() started.
+✔ Test exactOriginalAndUndoReplaysKeepTheSameDiskCut() passed after 0.332 seconds.
+◇ Test typedEncodingBorrowsAndLatchesOuterJSONCreditBeforeEncoding() started.
+✔ Test typedEncodingBorrowsAndLatchesOuterJSONCreditBeforeEncoding() passed after 0.217 seconds.
+◇ Test anExisting8192PointReceiptRetainsItsExactBodyUnderDefaultDelivery() started.
+✔ Test anExisting8192PointReceiptRetainsItsExactBodyUnderDefaultDelivery() passed after 3.011 seconds.
+✔ Suite "Receipt phases preserve one exact original and one completed Undo" passed after 10.223 seconds.
+✔ Test run with 20 tests in 4 suites passed after 10.224 seconds.

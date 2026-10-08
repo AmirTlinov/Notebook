@@ -120,6 +120,11 @@ eviction priority, not publication order or which frame is newest.
 All levels release after the final lease. Movement permits only bounded √2
 upsampling; stationary refinement must meet real pixel density.
 
+Free byte/count capacity admits without scanning the cache. The pool maintains
+pinned totals and one eviction-index slot per unretained UUID/access; the index
+owns no pixels. Each removal rechecks the live minimum after synchronous consumers
+run. A final pin release preserves its earlier access and publication order.
+
 `AgentWebSourceFailure` binds source, lease, load token and capture policy.
 A changed crop/density cannot inherit an old failure. Program failure revokes input
 and live-installation proof; capture-only failure may retain a healthy runtime.
@@ -238,6 +243,25 @@ Real order, placement, membership or board-source changes still rebuild normally
 state, navigation and visibility guards. `captureCurrent` obtains a later frame
 for live/static handoff. Neither restart nor cache may replace historical Send
 pixels. `storeAndRetain` returns the new capture, not an older higher-resolution one.
+
+## OS memory pressure
+
+The shared `SceneRenderResources` binds OS pressure and the iPad memory warning
+to one policy. Warning/critical latch optional preparation closed; only an OS
+normal event reopens it. Foreground and returned credit cannot reset that latch.
+Execution priority and preparation purpose remain independent: current/accepted
+pages, pinned sources, durable captures and panels retain their required demand.
+Neighbour pictures, resting covers and automatic previews are optional. Their
+queued demand may promote in place; a late withdrawal cannot fail its successor.
+The existing derived-byte queue carries that live purpose too. Pressure withdraws
+queued optional paper before required admission; a promoted request keeps its slot.
+
+The existing pool drops unretained rasters, then retires idle runtimes and owner
+offers sequentially. Submitted WebKit/GPU work retains physical credit until its
+actual fence. Refused retirement waits for another eligible owner or normal,
+without a polling loop. Authored content/history is outside this reclamation.
+Event diagnostics record app RSS/physical footprint separately from the ledger.
+WebContent memory and the device-tier process budget require physical measurement.
 
 ## Allocation failure and density
 

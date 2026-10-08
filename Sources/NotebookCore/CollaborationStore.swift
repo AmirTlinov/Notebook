@@ -754,14 +754,13 @@ extension NotebookStore {
         removals = old.keys.filter { files[$0] == nil && !retainedSources.contains($0) }
       }
       for incoming in actions {
-        if let current = try? loadAction(incoming.id) {
-          guard current.hasSameLifecycleIdentity(as: incoming) else { throw CollaborationError("action_id_conflict", "Разные ходы или основания отмены имеют одинаковый ID.") }
-          if current.undo != nil || current == incoming { continue }
-        }
+        let current = try storedValue(actionFile(incoming.id))
+        let resolved = try NotebookReceiptPhaseMerge.merging(incoming, into: current, database: currentSQL!)
+        if resolved == current { continue }
         for reference in [incoming.lifecycleInverse, incoming.undo?.restorationInverse].compactMap({ $0 }) {
           try visitLifecycleInverse(reference: reference, actionID: incoming.id) { _ in }
         }
-        writes[actionFile(incoming.id)] = try .encode(incoming)
+        writes[actionFile(incoming.id)] = resolved
       }
       let metadata = try contextWrites(contexts, selection: selection)
       writes.merge(metadata) { _, new in new }

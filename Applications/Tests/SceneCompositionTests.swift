@@ -1199,6 +1199,76 @@ final class SceneCompositionTests: XCTestCase {
   }
 
   @MainActor
+  func testPressureRevocationRetriesAPinAcceptedBeforeItsSourceCatchWithoutAnotherCameraSample() async throws {
+    let fixture = Fixture(count: 1, side: 64,
+      html: "<div style='position:absolute;inset:0;background:red'></div>", origin: .init(x: 400, y: 0))
+    let resources = SceneRenderResources(byteLimit: 96 * 1024 * 1024, profile: .headless,
+      maximumWebSurfaces: 1, maximumBackgroundWebSurfaces: 1, reservedInteractiveSlots: 0)
+    let coordinator = SceneCompositionTiles(resources: resources)
+    addTeardownBlock { @MainActor in await coordinator.stop() }
+    let blocker = try await resources.acquireWebSurface(priority: .background)
+    defer { blocker.release() }
+    let source = fixture.source(), frame = fixture.frame()
+    let element = agentElementSnapshotSource(fixture.elements[0])
+    let pin = WorkspaceSpatialID.element(element.id)
+    let address = SceneSourceAddress(plane: .board(fixture.presence.boardID), elementID: element.id)
+    XCTAssertFalse(element.usesNativeSVGRaster, "This source needs a real queued WebKit executor")
+    XCTAssertTrue(SceneSourceCapture.visibleRect(source: element,
+      origin: try XCTUnwrap(fixture.elements[0].worldOrigin), presence: fixture.presence).isNull)
+    var permitsInstallation = true
+    coordinator.prepare(source: source, presence: fixture.presence, frame: frame,
+      pinned: [], displayScale: 1, permitsPreparation: { permitsInstallation })
+    try await waitUntil {
+      coordinator.published?.sourceReceipts[address]?.hasCurrentPixels == false
+        && resources.pendingWebRequestCount == 1
+    }
+    var placeholder: SceneCompositionCohort? = try XCTUnwrap(coordinator.published)
+    XCTAssertEqual(resources.activeWebSurfaceCount, 1)
+    XCTAssertNil(coordinator.failure)
+
+    // No await separates revocation, accepted pin and input-barrier release:
+    // the old job still owns this address when its required demand arrives.
+    resources.handleMemoryPressure(.warning)
+    XCTAssertFalse(resources.allowsOptionalPreparation)
+    XCTAssertEqual(resources.pendingWebRequestCount, 0, "Pressure revokes the offscreen optional queue place")
+    permitsInstallation = false
+    coordinator.prepare(source: source, presence: fixture.presence, frame: fixture.frame(pinned: [pin]),
+      pinned: [pin], displayScale: 1, permitsPreparation: { permitsInstallation })
+    XCTAssertTrue(coordinator.published === placeholder, "The input barrier cannot start a replacement cohort")
+    permitsInstallation = true
+    blocker.release()
+
+    // The cancelled source's catch must supply the wake. There is no normal
+    // signal, further prepare call, or camera sample after the accepted pin.
+    try await waitUntil {
+      coordinator.published?.sourceReceipts[address]?.hasCurrentPixels == true
+        && !coordinator.isPreparing && resources.activeWebSurfaceCount == 0
+    }
+    do {
+      let ready = try XCTUnwrap(coordinator.published)
+      XCTAssertEqual(ready.requestedSources, frame.sourceIdentity)
+      XCTAssertEqual(ready.sourceReceipts[address]?.demand.source, element)
+      XCTAssertTrue(ready.plan.protectedOwners.contains { $0.id == pin && $0.plane == address.plane })
+      let raster = try XCTUnwrap(ready.sourceRasters[address])
+      XCTAssertNotNil(raster.image(for: .agent(element), minimumScale: 1))
+      let image = try XCTUnwrap(raster.image.cgImage), rgba = try pixels(image)
+      let center = ((image.height / 2) * image.width + image.width / 2) * 4
+      XCTAssertGreaterThan(rgba[center], 240); XCTAssertLessThan(rgba[center + 1], 10)
+      XCTAssertFalse(raster.isReleased)
+      XCTAssertNil(coordinator.failure)
+      XCTAssertFalse(resources.allowsOptionalPreparation, "The accepted pin prepares while OS pressure remains latched")
+    }
+    placeholder = nil
+    await coordinator.stop()
+    await resources.finishPendingReclamations()
+    try await waitUntil { resources.reservedBytes == 0 && resources.rasterAdmission.pinnedBytes == 0 }
+    XCTAssertEqual(resources.activeWebSurfaceCount, 0)
+    XCTAssertEqual(resources.pendingWebRequestCount, 0)
+    XCTAssertEqual(resources.pendingDerivedRequestCount, 0)
+    XCTAssertEqual(resources.pendingReclamationCount, 0)
+  }
+
+  @MainActor
   func testGeometryPublishesBeforeItsSourceAndThenRetainsTheReadyPixels() async throws {
     let fixture = Fixture(count: 1, html: "<div style='position:absolute;inset:0;background:red'></div>")
     // This fixture has no mounted native consumer. Give the source job the

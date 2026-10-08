@@ -1,0 +1,779 @@
+{
+  "format": 1,
+  "files": [
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v3",
+      "name": "codex-resources.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v3",
+      "name": "codex-resources.stdout.log",
+      "bytes": 582,
+      "sha256": "701d6620ab6042b832faac58053f89a7a3f9da853eeee118725f8451f648ec14"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v3",
+      "name": "commands.json",
+      "bytes": 32104,
+      "sha256": "b3edac98d81719aa6f33f1433f0fa9acbf9458a7781447af92d9fcec4e4b1756"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v3",
+      "name": "core-NotebookCoreTests-events.jsonl",
+      "bytes": 47007,
+      "sha256": "b4c98ce486fefcf0cb446e3a15681f57fc75c9dba90e16d94b17368d42e76045"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v3",
+      "name": "core-NotebookCoreTests-inventory.jsonl",
+      "bytes": 928488,
+      "sha256": "8f905ced625c844ceca12a29313374d508f80260278ca6179ce1b523253ec268"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v3",
+      "name": "core-NotebookCoreTests.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v3",
+      "name": "core-NotebookCoreTests.stdout.log",
+      "bytes": 7465,
+      "sha256": "ac8facca4301812b2cf58a24507876dd818c0f0eb91e078105f7235e88e1796e"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v3",
+      "name": "core-execution.json",
+      "bytes": 9136,
+      "sha256": "b9148cbf7fd9302a7cb4ed8b50c3d916d0a721d58b83712330e825e6ac02128b"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v3",
+      "name": "core-inventory-NotebookCoreTests.stderr.log",
+      "bytes": 1063,
+      "sha256": "995017b9c45216ced5a396eec162f4a7a0892fbb3fddd3eeecf51bba415bbdea"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v3",
+      "name": "core-inventory-NotebookCoreTests.stdout.log",
+      "bytes": 150463,
+      "sha256": "ecb9b3bb2ba3784f4e4ef39d28e96c1bf89a1b8744cad2df96bc47844672bbbb"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v3",
+      "name": "core-package.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v3",
+      "name": "core-package.stdout.log",
+      "bytes": 36385,
+      "sha256": "f4cbb4fad408644483ceb85ea6ab220861b2206edd1c0e1103322f11124f709f"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v3",
+      "name": "generate-project.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v3",
+      "name": "generate-project.stdout.log",
+      "bytes": 177,
+      "sha256": "83ff91fd67f392e6d25df2e78150ac8274b0f4eea0a8894c6ebdc1c05a5f3bfb"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v3",
+      "name": "mac-build-for-testing.stderr.log",
+      "bytes": 25,
+      "sha256": "ecb3d66f4d821032aff4eee4ab6755971c662e052463cfa778405bc49e022237"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v3",
+      "name": "mac-build-for-testing.stdout.log",
+      "bytes": 15665,
+      "sha256": "40e7cf59ab147d51761195240f20452c889784aa4cb405bd0bb00374b0382556"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v3",
+      "name": "mcp-dependencies.stderr.log",
+      "bytes": 122,
+      "sha256": "67389c0b6efbe86c5fc51293d278be25159d27ace6d73ae2da626b49a0143470"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v3",
+      "name": "mcp-dependencies.stdout.log",
+      "bytes": 307,
+      "sha256": "3ff8bd5a13041632e9644d461005aa27c4dd3adcb0963026056d23f1e9937add"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v3",
+      "name": "selection.json",
+      "bytes": 6558,
+      "sha256": "ace19b38d9de9d2ff85f8f5f5ea90892df13f32667ad1dfd1cb55b7a1efa9ecc"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v3",
+      "name": "source-before.json",
+      "bytes": 329733,
+      "sha256": "bf1e9247308410109df5870b9aa8cba3b545abc1862793f605c2c214f0e44f29"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v3",
+      "name": "surface-resources.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v3",
+      "name": "surface-resources.stdout.log",
+      "bytes": 1037,
+      "sha256": "6102f88d98abc27a704a70f3ab9ac70582cd3d22977275b481ee18f2514101a1"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v3",
+      "name": "toolchain-iphoneosSDK.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v3",
+      "name": "toolchain-iphoneosSDK.stdout.log",
+      "bytes": 7,
+      "sha256": "62cbab419e9a35d0a85cc03b9d4bb98e5dae96591632655688ac714805d333be"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v3",
+      "name": "toolchain-macosSDK.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v3",
+      "name": "toolchain-macosSDK.stdout.log",
+      "bytes": 7,
+      "sha256": "8e78a5c0c20fa1f07a154dbd8319d52d2bc1c38974a5b30047e300e8d0ec8a23"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v3",
+      "name": "toolchain-node.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v3",
+      "name": "toolchain-node.stdout.log",
+      "bytes": 9,
+      "sha256": "f2ec568164f99546161909b0189b57bb5be3e80f8e2ccd8a51a4aed8c4055a04"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v3",
+      "name": "toolchain-npm.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v3",
+      "name": "toolchain-npm.stdout.log",
+      "bytes": 7,
+      "sha256": "3feff640caf45a44b1f043aee65d8fdfec6379d905d9efc1a2ba8b51a9f23652"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v3",
+      "name": "toolchain-python.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v3",
+      "name": "toolchain-python.stdout.log",
+      "bytes": 14,
+      "sha256": "917601090ffb73a030e3eaa8b7a01c41400cad4b61366b4218d7756a5733b66c"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v3",
+      "name": "toolchain-swift.stderr.log",
+      "bytes": 30,
+      "sha256": "bbc8b176d3c74d4c5a7fd00b40280f98168e116d5272273bfe8e71407625540e"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v3",
+      "name": "toolchain-swift.stdout.log",
+      "bytes": 98,
+      "sha256": "04630ab8fa201f57c63c59730e638135e32584a97e16e004a417eb8ed283dc83"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v3",
+      "name": "toolchain-xcode.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v3",
+      "name": "toolchain-xcode.stdout.log",
+      "bytes": 33,
+      "sha256": "694b44731d0b415c5b11d844151e466d7f5e200a95627efda377f232f1a6ab77"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v3",
+      "name": "toolchain-xcodegen.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v3",
+      "name": "toolchain-xcodegen.stdout.log",
+      "bytes": 16,
+      "sha256": "bf8aa757345fcd22d1fd26e760aa058f02991e2d930686b8eaf750cd6e5f8532"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v3",
+      "name": "toolchain.json",
+      "bytes": 318,
+      "sha256": "5d490c0c11042b67180f7aa900961d34b44c362ca4c89bf657ef438ebc8a7027"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v3",
+      "name": "typescript-resources.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v3",
+      "name": "typescript-resources.stdout.log",
+      "bytes": 1938,
+      "sha256": "d8d83c93b90c54bc23e2b3285d557dd30f580d064857048b5c52e8a478ef6cd4"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v3",
+      "name": "typesetter-resources-macosx.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v3",
+      "name": "typesetter-resources-macosx.stdout.log",
+      "bytes": 75,
+      "sha256": "03f34ea7cd00d599964b795b0bfc521418a4746804a4e1338eb48439b5758498"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "codex-resources.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "codex-resources.stdout.log",
+      "bytes": 582,
+      "sha256": "701d6620ab6042b832faac58053f89a7a3f9da853eeee118725f8451f648ec14"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "commands.json",
+      "bytes": 63829,
+      "sha256": "58aa2f29494d2c2d160a7894b2757b12ca75978ccb758d0b6649eeb709fefebf"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "completed.json",
+      "bytes": 5226,
+      "sha256": "a7c07105119e0b36a8ccfd640a17f0981d4170bdab2afd3b29f47921421af599"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "generate-project.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "generate-project.stdout.log",
+      "bytes": 177,
+      "sha256": "83ff91fd67f392e6d25df2e78150ac8274b0f4eea0a8894c6ebdc1c05a5f3bfb"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "mac-build-for-testing.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "mac-build-for-testing.stdout.log",
+      "bytes": 10802,
+      "sha256": "79730f79c9a53e2cbc9429e591d632ff58a79d1fbeb211aec7c0fdf6c628df40"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "mac-execution.json",
+      "bytes": 4994,
+      "sha256": "aa425a3d74368914662297110ef9c20dfc8afd461c7d6f2f1459acaab21745f5"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "mac-inventory.json",
+      "bytes": 102896,
+      "sha256": "6fe3139a1429fb6d9fb7db710a3de8c635c6f34b8c2d1a193e7e4754bababf29"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "mac-inventory.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "mac-inventory.stdout.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "mac-native-signature.json",
+      "bytes": 260,
+      "sha256": "9a3d2225a4162b2d9d565e10a3ef01c447f19d309d95cb7c152e1ee08a960e7d"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "mac-native-signer.stderr.log",
+      "bytes": 1229,
+      "sha256": "667ec5a981e20af07eabfd1ca5cd53734900c0ea16473d869ebce2142e832d0e"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "mac-native-signer.stdout.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "mac-summary.json",
+      "bytes": 1133,
+      "sha256": "90e6e0b1c8d6b227c3d03002d57b3d4592e02e142f1f11d42fca9e93f145be48"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "mac-summary.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "mac-summary.stdout.log",
+      "bytes": 870,
+      "sha256": "f7d22a461d54fe28eccc7a626f463255f367ba9d287bb74b45fe8028d1872846"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "mac-tests.json",
+      "bytes": 15240,
+      "sha256": "65253e0e8c0811d775072237772f5c2ea2ead802955a7c0190a2b68c8e27a6c5"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "mac-tests.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "mac-tests.stdout.log",
+      "bytes": 10956,
+      "sha256": "4b3c799794c313ffb76623cdbeb833287d454ceee103cf071ef4aca263801a04"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "mac-timings.json",
+      "bytes": 3273,
+      "sha256": "7a1275453374fbfbc16dadd3ee0ff590090224c48de2dfb94b07f822b6b2c5a8"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "mac.stderr.log",
+      "bytes": 371,
+      "sha256": "410f13f60be2ed25e2d0bbdf26d7db70eff1c97b5e43adb4c0f7f7fb05b64687"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "mac.stdout.log",
+      "bytes": 162,
+      "sha256": "e1d00cf979b1f79f040df861d8a4ccf4d48612e399d04e8251bf3e1f05c70820"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "mcp-dependencies.stderr.log",
+      "bytes": 122,
+      "sha256": "67389c0b6efbe86c5fc51293d278be25159d27ace6d73ae2da626b49a0143470"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "mcp-dependencies.stdout.log",
+      "bytes": 307,
+      "sha256": "f9a706fc58d19b5d62252cbbd02f8cf153c904d7b31b5c248bc9c752f3e6f7e5"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "selection.json",
+      "bytes": 5592,
+      "sha256": "dc24fd6bea71ee621c1f33e16f4df7e77747c5a59816c2d509f25dbc64d7653e"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "source-after.json",
+      "bytes": 329733,
+      "sha256": "ceb9a6282f59d0dd182dba7fa350d106b1577a7ffd3fcfc65e114fb984688e9d"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "source-before.json",
+      "bytes": 329733,
+      "sha256": "ceb9a6282f59d0dd182dba7fa350d106b1577a7ffd3fcfc65e114fb984688e9d"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "surface-resources.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "surface-resources.stdout.log",
+      "bytes": 1037,
+      "sha256": "6102f88d98abc27a704a70f3ab9ac70582cd3d22977275b481ee18f2514101a1"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "test-host-reseal.stderr.log",
+      "bytes": 174,
+      "sha256": "e7a6b2b404adaa9b45196c48a990eb3b93bfe829cd517cec0bd1d723772760fe"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "test-host-reseal.stdout.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "test-host-seal-verify.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "test-host-seal-verify.stdout.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "test-worker-rights-0.stderr.log",
+      "bytes": 348,
+      "sha256": "c1c6bdeb46315737db99f26a21fb4e2a6517e95d3dfbe847ef37409441bfb0af"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "test-worker-rights-0.stdout.log",
+      "bytes": 276,
+      "sha256": "367fd06da553732455876f7e31bd0abc7862848d7f1464f41eeadb6121efb568"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "test-worker-rights-1.stderr.log",
+      "bytes": 327,
+      "sha256": "5f697b393b52b84df3613ae9a0b0f115d330ab7355a6d790f0c7c139bf19d948"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "test-worker-rights-1.stdout.log",
+      "bytes": 232,
+      "sha256": "f8b4cfc5e7c5076be716c5a3e37f8f6b03db3f5c47220215175e9ea3cd9ef6f0"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "test-worker-rights-2.stderr.log",
+      "bytes": 327,
+      "sha256": "426961698f41fc0f16e902bbe197fc184a1478fe1950486593037c95b824a9cd"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "test-worker-rights-2.stdout.log",
+      "bytes": 232,
+      "sha256": "f8b4cfc5e7c5076be716c5a3e37f8f6b03db3f5c47220215175e9ea3cd9ef6f0"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "test-worker-sign-0.stderr.log",
+      "bytes": 279,
+      "sha256": "1a6e0c0a6d2dd2bdfe1b77da255c523055c4d006b6f6244d0b0b0d15350214a8"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "test-worker-sign-0.stdout.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "test-worker-sign-1.stderr.log",
+      "bytes": 221,
+      "sha256": "80c83a6065b767ffd5611f22dca2f7d18400a7a46775140e204a167c5e665971"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "test-worker-sign-1.stdout.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "test-worker-sign-2.stderr.log",
+      "bytes": 221,
+      "sha256": "febc447fc3cf6ae2407d38d78a6d119e46438e8106fa2fde07d9a38f65a1dfd3"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "test-worker-sign-2.stdout.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "toolchain-after-iphoneosSDK.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "toolchain-after-iphoneosSDK.stdout.log",
+      "bytes": 7,
+      "sha256": "62cbab419e9a35d0a85cc03b9d4bb98e5dae96591632655688ac714805d333be"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "toolchain-after-macosSDK.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "toolchain-after-macosSDK.stdout.log",
+      "bytes": 7,
+      "sha256": "8e78a5c0c20fa1f07a154dbd8319d52d2bc1c38974a5b30047e300e8d0ec8a23"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "toolchain-after-node.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "toolchain-after-node.stdout.log",
+      "bytes": 9,
+      "sha256": "f2ec568164f99546161909b0189b57bb5be3e80f8e2ccd8a51a4aed8c4055a04"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "toolchain-after-npm.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "toolchain-after-npm.stdout.log",
+      "bytes": 7,
+      "sha256": "3feff640caf45a44b1f043aee65d8fdfec6379d905d9efc1a2ba8b51a9f23652"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "toolchain-after-python.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "toolchain-after-python.stdout.log",
+      "bytes": 14,
+      "sha256": "917601090ffb73a030e3eaa8b7a01c41400cad4b61366b4218d7756a5733b66c"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "toolchain-after-swift.stderr.log",
+      "bytes": 30,
+      "sha256": "bbc8b176d3c74d4c5a7fd00b40280f98168e116d5272273bfe8e71407625540e"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "toolchain-after-swift.stdout.log",
+      "bytes": 98,
+      "sha256": "04630ab8fa201f57c63c59730e638135e32584a97e16e004a417eb8ed283dc83"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "toolchain-after-xcode.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "toolchain-after-xcode.stdout.log",
+      "bytes": 33,
+      "sha256": "694b44731d0b415c5b11d844151e466d7f5e200a95627efda377f232f1a6ab77"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "toolchain-after-xcodegen.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "toolchain-after-xcodegen.stdout.log",
+      "bytes": 16,
+      "sha256": "bf8aa757345fcd22d1fd26e760aa058f02991e2d930686b8eaf750cd6e5f8532"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "toolchain-after.json",
+      "bytes": 318,
+      "sha256": "5d490c0c11042b67180f7aa900961d34b44c362ca4c89bf657ef438ebc8a7027"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "toolchain-iphoneosSDK.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "toolchain-iphoneosSDK.stdout.log",
+      "bytes": 7,
+      "sha256": "62cbab419e9a35d0a85cc03b9d4bb98e5dae96591632655688ac714805d333be"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "toolchain-macosSDK.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "toolchain-macosSDK.stdout.log",
+      "bytes": 7,
+      "sha256": "8e78a5c0c20fa1f07a154dbd8319d52d2bc1c38974a5b30047e300e8d0ec8a23"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "toolchain-node.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "toolchain-node.stdout.log",
+      "bytes": 9,
+      "sha256": "f2ec568164f99546161909b0189b57bb5be3e80f8e2ccd8a51a4aed8c4055a04"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "toolchain-npm.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "toolchain-npm.stdout.log",
+      "bytes": 7,
+      "sha256": "3feff640caf45a44b1f043aee65d8fdfec6379d905d9efc1a2ba8b51a9f23652"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "toolchain-python.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "toolchain-python.stdout.log",
+      "bytes": 14,
+      "sha256": "917601090ffb73a030e3eaa8b7a01c41400cad4b61366b4218d7756a5733b66c"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "toolchain-swift.stderr.log",
+      "bytes": 30,
+      "sha256": "bbc8b176d3c74d4c5a7fd00b40280f98168e116d5272273bfe8e71407625540e"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "toolchain-swift.stdout.log",
+      "bytes": 98,
+      "sha256": "04630ab8fa201f57c63c59730e638135e32584a97e16e004a417eb8ed283dc83"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "toolchain-xcode.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "toolchain-xcode.stdout.log",
+      "bytes": 33,
+      "sha256": "694b44731d0b415c5b11d844151e466d7f5e200a95627efda377f232f1a6ab77"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "toolchain-xcodegen.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "toolchain-xcodegen.stdout.log",
+      "bytes": 16,
+      "sha256": "bf8aa757345fcd22d1fd26e760aa058f02991e2d930686b8eaf750cd6e5f8532"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "toolchain.json",
+      "bytes": 318,
+      "sha256": "5d490c0c11042b67180f7aa900961d34b44c362ca4c89bf657ef438ebc8a7027"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "typescript-resources.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "typescript-resources.stdout.log",
+      "bytes": 1938,
+      "sha256": "d8d83c93b90c54bc23e2b3285d557dd30f580d064857048b5c52e8a478ef6cd4"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "typesetter-resources-macosx.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "typesetter-resources-macosx.stdout.log",
+      "bytes": 75,
+      "sha256": "03f34ea7cd00d599964b795b0bfc521418a4746804a4e1338eb48439b5758498"
+    },
+    {
+      "scope": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+      "name": "verification.json",
+      "bytes": 378818,
+      "sha256": "0b7e5be342e7eda64035a0ef865d94278a27e46d0890f049c6684ccb5f45adcd"
+    }
+  ]
+}

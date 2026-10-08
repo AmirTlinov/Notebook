@@ -1,4 +1,5 @@
 import NotebookCore
+import Observation
 import WebKit
 
 /// One source job owns its latest camera crop/density. Retargeting delivers an
@@ -35,6 +36,7 @@ final class SceneWebRasterPreparation {
     let id: UUID
     let element: AgentElement
     let capture: SceneRasterCaptureRequest
+    let purpose: @MainActor () -> ScenePreparationPurpose
     let completion: CheckedContinuation<RasterLease, any Error>
   }
   private var job: Job?
@@ -45,13 +47,15 @@ final class SceneWebRasterPreparation {
   static func create(resources: SceneRenderResources,
     executionSource: InteractiveElementReference? = nil,
     priority: WebPriority = .background,
+    purpose: @escaping @MainActor () -> ScenePreparationPurpose = { .required },
     permitsPreparation: @MainActor () -> Bool) async throws -> SceneWebRasterPreparation {
     try Task.checkCancellation()
     guard permitsPreparation() else { throw CancellationError() }
-    let lease = try await resources.acquireWebSurface(priority: priority, source: executionSource, constructsView: true)
+    let lease = try await resources.acquireWebSurface(priority: priority, source: executionSource,
+      constructsView: true, purpose: purpose)
     do {
       try Task.checkCancellation()
-      guard permitsPreparation() else { throw CancellationError() }
+      guard permitsPreparation(), resources.allowsOptionalPreparation || purpose() == .required else { throw CancellationError() }
       return try Self(resources: resources, lease: lease)
     } catch { lease.release(); throw error }
   }
@@ -86,12 +90,30 @@ final class SceneWebRasterPreparation {
       guard let self, let job else { return }
       finish(.failure(coordinator.snapshotFailure ?? SceneRenderError.snapshotPending(job.element.id)))
     })
+    observeOptionalPreparation()
+  }
+
+  private func observeOptionalPreparation() {
+    guard !isClosed else { return }
+    _ = withObservationTracking { resources.optionalPreparationGeneration } onChange: { [weak self] in
+      // A readiness callback can allocate its snapshot in this actor turn.
+      // Withdraw optional work before that callback; close retains submitted
+      // physical captures through the existing drain.
+      MainActor.assumeIsolated {
+        guard let self else { return }
+        if !self.resources.allowsOptionalPreparation, self.job?.purpose() == .optional { self.close() }
+      }
+      Task { @MainActor [weak self] in self?.observeOptionalPreparation() }
+    }
+    if !resources.allowsOptionalPreparation, job?.purpose() == .optional { close() }
   }
 
   func prepare(_ element: AgentElement, requestedScale: Double, region: PageRect? = nil,
     captureRequest: SceneRasterCaptureRequest? = nil, programStore: NotebookStore? = nil,
+    purpose: @escaping @MainActor () -> ScenePreparationPurpose = { .required },
     permitsPreparation: @MainActor () -> Bool) async throws -> RasterLease {
     precondition(job == nil, "A raster executor runs exactly one job at a time")
+    lease.offerIdleReclamation(nil)
     guard !isClosed else { throw CancellationError() }
     let request = captureRequest ?? SceneRasterCaptureRequest(policy:
       region.map { .region($0, scale: requestedScale) } ?? .exact(scale: requestedScale))
@@ -99,7 +121,7 @@ final class SceneWebRasterPreparation {
     guard requestedScale.isFinite, requestedScale > 0,
       policy.pixelSize(for: element) != nil else { throw SceneRenderError.resourceLimit }
     try Task.checkCancellation()
-    guard permitsPreparation() else { throw CancellationError() }
+    guard permitsPreparation(), resources.allowsOptionalPreparation || purpose() == .required else { throw CancellationError() }
     if let raster = resources.retainRaster(for: policy.rasterSource(for: element),
       minimumScale: policy.minimumScale(for: element)) { return raster }
     let id = UUID()
@@ -108,7 +130,7 @@ final class SceneWebRasterPreparation {
         try Task.checkCancellation()
         return try await withCheckedThrowingContinuation { completion in
           precondition(request.onPolicyChange == nil, "A capture request belongs to one admitted executor")
-          job = Job(id: id, element: element, capture: request, completion: completion)
+          job = Job(id: id, element: element, capture: request, purpose: purpose, completion: completion)
           request.onPolicyChange = { [weak self] policy in self?.retarget(id, policy: policy) }
           place(element, policy: policy)
           // The coordinator owns the versioned render/capture deadline and its
@@ -153,6 +175,11 @@ final class SceneWebRasterPreparation {
       window.setContentSize(crop.size); window.setFrameOrigin(.init(x: -20_000 - crop.width, y: -20_000 - crop.height))
       web.frame = CGRect(origin: .init(x: -crop.minX, y: -crop.minY), size: size); window.orderBack(nil)
     #endif
+  }
+
+  func offerIdleReclamation(_ reclaim: (@MainActor () -> Void)?) {
+    guard job == nil, !isClosed else { return }
+    lease.offerIdleReclamation(reclaim)
   }
 
   func close() {

@@ -237,6 +237,162 @@ final class SceneRenderResourcesTests: XCTestCase {
   }
 
   @MainActor
+  func testPressureTrimWaitsForPhysicalReleaseAndDoesNotRepeatARefusedOwner() async throws {
+    let resources = SceneRenderResources(byteLimit: 1_000, maximumWebSurfaces: 2,
+      maximumBackgroundWebSurfaces: 2, reservedInteractiveSlots: 0)
+    let refused = try await resources.acquireWebSurface(priority: .visible)
+    let retiring = try await resources.acquireWebSurface(priority: .visible)
+    let physicalCall = try retiring.borrow()
+    let first = try XCTUnwrap(resources.reserveDerivedBytes(200, priority: .passive))
+    let second = try XCTUnwrap(resources.reserveDerivedBytes(150, priority: .passive))
+    let reservations: [RasterReservation] = [first, second]
+    let firstID = UUID(), secondID = UUID()
+    var sequence: [String] = []
+    var finish: CheckedContinuation<Void, Never>?
+    func offerRefusal() {
+      refused.offerIdleReclamation {
+        sequence.append("refused")
+        refused.cancelIdleReclamation()
+        offerRefusal()
+      }
+    }
+    offerRefusal()
+    retiring.offerIdleReclamation { sequence.append("web"); retiring.release() }
+    let owner = resources.registerReclamationOwner {
+      reservations.filter { !$0.isReleased }.map { reservation in
+        .init(id: reservation === first ? firstID : secondID, bytes: reservation.byteCount,
+          rasterCount: 0, value: .neighbour, distance: reservation === first ? 2 : 1,
+          restorationMilliseconds: 1, release: {
+            sequence.append(reservation === first ? "first" : "second")
+            return Task { @MainActor in
+              await withCheckedContinuation { finish = $0 }
+              reservation.release()
+            }
+          })
+      }
+    }
+    defer {
+      finish?.resume(); finish = nil
+      physicalCall.release(); refused.release(); retiring.release()
+      first.release(); second.release(); resources.unregisterReclamationOwner(owner)
+    }
+    resources.handleMemoryPressure(.warning)
+    let pressureEpoch = resources.optionalPreparationGeneration
+    try await waitUntil { retiring.isReleased }
+    XCTAssertEqual(sequence, ["refused", "web"])
+    XCTAssertEqual(resources.activeWebSurfaceCount, 2, "The submitted Web call still owns its slot")
+    XCTAssertEqual(resources.reservedBytes, 350)
+    resources.handleMemoryPressure(.warning)
+    for _ in 0..<10 { await Task.yield() }
+    XCTAssertEqual(sequence, ["refused", "web"], "A refused owner is attempted once per pressure cycle")
+    physicalCall.release()
+    try await waitUntil { finish != nil && resources.pendingReclamationCount == 1 }
+    XCTAssertEqual(sequence, ["refused", "web", "first"])
+    XCTAssertEqual(resources.reservedBytes, 350, "Requesting release does not return physical credit")
+    resources.handleMemoryPressure(.critical)
+    for _ in 0..<10 { await Task.yield() }
+    XCTAssertEqual(resources.optionalPreparationGeneration, pressureEpoch)
+    XCTAssertEqual(sequence, ["refused", "web", "first"])
+    resources.handleMemoryPressure(.normal)
+    XCTAssertTrue(resources.allowsOptionalPreparation)
+    XCTAssertEqual(resources.optionalPreparationGeneration, pressureEpoch + 1)
+    XCTAssertEqual(resources.reservedBytes, 350)
+    finish?.resume(); finish = nil
+    await resources.finishPendingReclamations()
+    XCTAssertEqual(resources.reservedBytes, 150)
+    XCTAssertFalse(second.isReleased, "Normal stops the sweep after its already requested release drains")
+    XCTAssertEqual(sequence, ["refused", "web", "first"])
+    XCTAssertEqual(resources.lastMemoryPressureDiagnostic?.event, .normal)
+  }
+
+  @MainActor
+  func testPressureKeepsPinnedInputAndSubmittedBorrowersWhileDroppingUnusedPixels() async throws {
+    let resources = SceneRenderResources(byteLimit: 64 * 1024)
+    let kept = element("pressure-current"), unused = element("pressure-unused")
+    XCTAssertTrue(resources.store(image(), for: kept))
+    let pinned = try XCTUnwrap(resources.retainRaster(for: kept))
+    XCTAssertTrue(resources.store(image(), for: unused))
+    let inputOwner = try XCTUnwrap(resources.reservePhysicalOwners([.boardInk(UUID())], priority: .input))
+    let submittedBytes = try XCTUnwrap(resources.reserveDerivedBytes(4_096, priority: .input, owner: inputOwner))
+    inputOwner.release()
+    let current = try await resources.acquireWebSurface(priority: .currentPage)
+    let submitted = try await resources.acquireWebSurface(priority: .input)
+    let physicalCall = try submitted.borrow()
+    submitted.release()
+    defer { pinned.release(); submittedBytes.release(); current.release(); physicalCall.release() }
+    resources.handleMemoryPressure(.critical)
+    try await waitUntil { resources.image(for: unused) == nil }
+    XCTAssertTrue(resources.image(for: kept) === pinned.image)
+    XCTAssertEqual(resources.reservedBytes, 4_096)
+    XCTAssertEqual(resources.activePhysicalOwnerCount, 1)
+    XCTAssertEqual(resources.activeWebSurfaceCount, 2)
+    XCTAssertFalse(current.isReleased)
+    XCTAssertFalse(submittedBytes.isReleased)
+    let diagnostic = try XCTUnwrap(resources.lastMemoryPressureDiagnostic)
+    XCTAssertEqual(diagnostic.event, .critical)
+    XCTAssertEqual(diagnostic.ledgerReservedBytes, 4_096)
+    XCTAssertGreaterThan(diagnostic.ledgerPinnedBytes, 0)
+    XCTAssertGreaterThan(try XCTUnwrap(diagnostic.process.residentBytes), 0)
+    XCTAssertGreaterThan(try XCTUnwrap(diagnostic.process.physicalFootprintBytes), 0)
+    let memory = XCTAttachment(string: String(decoding: try JSONEncoder().encode(diagnostic), as: UTF8.self))
+    memory.name = "injected-pressure-process-and-ledger"
+    memory.lifetime = .keepAlways; add(memory)
+    resources.handleMemoryPressure(.normal)
+    physicalCall.release(); submittedBytes.release()
+    XCTAssertEqual(resources.activeWebSurfaceCount, 1)
+    XCTAssertEqual(resources.activePhysicalOwnerCount, 0)
+    XCTAssertEqual(resources.reservedBytes, 0)
+  }
+
+  @MainActor
+  func testPressureCancelsOnlyQueuedOptionalPurposeAndNormalPermitsItsRetry() async throws {
+    let resources = SceneRenderResources(maximumWebSurfaces: 1, reservedInteractiveSlots: 0)
+    let blocker = try await resources.acquireWebSurface(priority: .currentPage)
+    var promotedPurpose: ScenePreparationPurpose = .optional
+    let promoted = Task { @MainActor in
+      try await resources.acquireWebSurface(priority: .background, purpose: { promotedPurpose })
+    }
+    try await waitUntil { resources.pendingWebRequestCount == 1 }
+    let required = Task { @MainActor in try await resources.acquireWebSurface(priority: .background) }
+    try await waitUntil { resources.pendingWebRequestCount == 2 }
+    let optional = Task { @MainActor in
+      try await resources.acquireWebSurface(priority: .input, purpose: { .optional })
+    }
+    defer { blocker.release(); promoted.cancel(); required.cancel(); optional.cancel() }
+    try await waitUntil { resources.pendingWebRequestCount == 3 }
+    promotedPurpose = .required
+    resources.handleMemoryPressure(.warning)
+    let pressureEpoch = resources.optionalPreparationGeneration
+    XCTAssertEqual(resources.pendingWebRequestCount, 2)
+    do {
+      let unexpected = try await optional.value
+      unexpected.release(); XCTFail("Optional purpose must be cancelled even at input execution priority")
+    } catch { XCTAssertTrue(error is CancellationError) }
+    resources.handleMemoryPressure(.warning)
+    XCTAssertEqual(resources.optionalPreparationGeneration, pressureEpoch)
+    do {
+      let unexpected = try await resources.acquireWebSurface(priority: .visible, purpose: { .optional })
+      unexpected.release(); XCTFail("Latched pressure refuses a new optional queue position")
+    } catch { XCTAssertTrue(error is CancellationError) }
+    blocker.release()
+    let promotedLease = try await promoted.value
+    XCTAssertEqual(resources.pendingWebRequestCount, 1, "Live required promotion preserves the original FIFO position")
+    promotedLease.release()
+    let requiredLease = try await required.value
+    XCTAssertFalse(resources.allowsOptionalPreparation)
+    requiredLease.release()
+    XCTAssertNil(resources.tryAcquireIdleWebSurface(), "Returned capacity cannot clear OS pressure")
+    XCTAssertEqual(resources.pendingWebRequestCount, 0)
+    resources.handleMemoryPressure(.normal)
+    XCTAssertEqual(resources.optionalPreparationGeneration, pressureEpoch + 1)
+    let retry = try await resources.acquireWebSurface(priority: .background, purpose: { .optional })
+    retry.release()
+    let idle = try XCTUnwrap(resources.tryAcquireIdleWebSurface())
+    idle.release()
+    XCTAssertEqual(resources.activeWebSurfaceCount, 0)
+  }
+
+  @MainActor
   func testSmallNewRequestsCannotConsumeCapacityAheadOfALargeAcceptedStage() async throws {
     let resources = SceneRenderResources(byteLimit: 1_000, profile: .interactive)
     let blocker = try XCTUnwrap(resources.reserveDerivedBytes(300, priority: .passive))
@@ -689,6 +845,158 @@ final class SceneRenderResourcesTests: XCTestCase {
     XCTAssertNotNil(resources.image(for: c))
     XCTAssertEqual(resources.residentBytes, cost * 2)
     XCTAssertEqual(resources.rasterCount, 2)
+  }
+
+  @MainActor
+  func testEvictionRechecksObserverPinsAndFinalReleasePreservesEarlierAccess() throws {
+    let raster = image(), cost = try byteCost(raster)
+    let resources = SceneRenderResources(byteLimit: cost * 2, profile: .headless)
+    let first = SceneRasterSource.document(id: UUID(), token: "first"),
+      next = SceneRasterSource.document(id: UUID(), token: "next")
+    XCTAssertTrue(resources.store(raster, for: first))
+    XCTAssertTrue(resources.store(raster, for: next))
+    var protected: RasterLease?
+    let observer = NotificationCenter.default.addObserver(forName: SceneRenderResources.didChange,
+      object: nil, queue: .main) { note in
+      let changedID = note.object as? UUID
+      MainActor.assumeIsolated {
+        guard case .document(let firstID, _) = first, changedID == firstID else { return }
+        protected = resources.retainRaster(for: next)
+      }
+    }
+    defer { NotificationCenter.default.removeObserver(observer); protected?.release() }
+    XCTAssertNil(resources.reserveDerivedBytes(cost * 2, priority: .passive),
+      "The first eviction's synchronous observer protects the next candidate before admission continues")
+    XCTAssertNotNil(protected)
+    XCTAssertNil(resources.image(for: first))
+    XCTAssertTrue(protected?.image === raster)
+    XCTAssertEqual(resources.rasterCount, 1)
+    XCTAssertEqual(resources.rasterAdmission.pinnedCount, 1)
+    XCTAssertEqual(resources.rasterAdmission.pinnedBytes, cost)
+    protected?.release(); protected = nil
+    let admitted = try XCTUnwrap(resources.reserveDerivedBytes(cost * 2, priority: .passive))
+    XCTAssertEqual(resources.rasterCount, 0)
+    XCTAssertEqual(resources.rasterAdmission.pinnedCount, 0)
+    XCTAssertEqual(resources.rasterAdmission.pinnedBytes, 0)
+    admitted.release()
+
+    let old = element("old-access"), young = element("young-access"), incoming = element("incoming-access")
+    XCTAssertTrue(resources.store(raster, for: old))
+    let owner = try XCTUnwrap(resources.retainRaster(for: old))
+    let borrower = try XCTUnwrap(owner.retainedCopy())
+    defer { owner.release(); borrower.release() }
+    XCTAssertTrue(resources.store(raster, for: young))
+    owner.release()
+    XCTAssertEqual(resources.rasterAdmission.pinnedCount, 1, "Another lease still excludes this entry from eviction")
+    borrower.release()
+    XCTAssertEqual(resources.rasterAdmission.pinnedCount, 0)
+    XCTAssertTrue(resources.store(raster, for: incoming))
+    XCTAssertNil(resources.image(for: old), "Final release preserves the earlier access instead of making an old pin newest")
+    XCTAssertNotNil(resources.image(for: young))
+    XCTAssertNotNil(resources.image(for: incoming))
+  }
+
+  @MainActor
+  func testHundredThousandRasterEntriesKeepFreeAdmissionAndChurnBounded() throws {
+    let count = 100_000, repetitions = 512, evictions = 17
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = 1; format.opaque = true; format.preferredRange = .standard
+    let raster = UIGraphicsImageRenderer(size: CGSize(width: 1, height: 1), format: format).image { context in
+      UIColor.systemBlue.setFill(); context.fill(CGRect(x: 0, y: 0, width: 1, height: 1))
+    }
+    let cost = try byteCost(raster)
+    let freeBytes = try XCTUnwrap(SceneRenderResources.estimatedRasterBytes(pixelWidth: 1, pixelHeight: 1))
+    let resources = SceneRenderResources(byteLimit: cost * count + freeBytes, profile: .headless,
+      maximumRasterCount: count + 1)
+    let key = SceneCompositionTileKey(workspaceID: UUID(), revision: 0, plane: .board(UUID()),
+      tile: try XCTUnwrap(CompositionTile(containing: .zero, level: 0)), range: .whole(.elements),
+      presentationScale: 1, viewportWidth: 1, viewportHeight: 1, focusedItemID: nil, mode: "", pixelSize: 1)
+    func source(_ index: Int) -> SceneRasterSource { .composition(key.atRevision(UInt64(index))) }
+    func milliseconds(_ duration: Duration) -> Double {
+      Double(duration.components.seconds) * 1_000 + Double(duration.components.attoseconds) / 1_000_000_000_000_000
+    }
+    let clock = ContinuousClock(), populationStart = clock.now
+    for index in 0..<count {
+      guard resources.store(raster, for: source(index)) else { XCTFail("Population refused entry \(index)"); return }
+    }
+    let populationMS = milliseconds(populationStart.duration(to: clock.now))
+    XCTAssertEqual(resources.rasterCount, count)
+    XCTAssertEqual(resources.residentBytes, count * cost)
+    XCTAssertEqual(resources.rasterAdmission.pinnedBytes, 0)
+    #if DEBUG
+    let populatedWork = resources.rasterEvictionDiagnostics
+    XCTAssertEqual(populatedWork.entryCount, count)
+    XCTAssertEqual(populatedWork.positionCount, count)
+    #endif
+
+    let freeStart = clock.now
+    for _ in 0..<repetitions {
+      let grant = try XCTUnwrap(resources.reserveRaster(pixelWidth: 1, pixelHeight: 1))
+      XCTAssertEqual(resources.rasterAdmission.reservedCount, 1)
+      grant.release()
+    }
+    let freeMS = milliseconds(freeStart.duration(to: clock.now))
+    XCTAssertEqual(resources.rasterCount, count)
+    XCTAssertEqual(resources.reservedBytes, 0)
+    #if DEBUG
+    let freeWork = resources.rasterEvictionDiagnostics
+    XCTAssertEqual(freeWork.oldestLookups, populatedWork.oldestLookups,
+      "Actual free capacity must not even consult the eviction index")
+    XCTAssertEqual(freeWork.comparisons, populatedWork.comparisons)
+    #endif
+
+    let evictionStart = clock.now
+    let incoming = try XCTUnwrap(resources.reserveDerivedBytes(freeBytes + cost * evictions, priority: .passive))
+    let evictionMS = milliseconds(evictionStart.duration(to: clock.now))
+    XCTAssertEqual(resources.rasterCount, count - evictions, "Reclaim only the bytes actually needed")
+    for index in 0..<evictions { XCTAssertNil(resources.image(for: source(index))) }
+    XCTAssertNotNil(resources.image(for: source(evictions)))
+    XCTAssertLessThanOrEqual(resources.residentBytes + resources.reservedBytes, resources.byteLimit)
+    incoming.release()
+    #if DEBUG
+    let evictedWork = resources.rasterEvictionDiagnostics
+    XCTAssertEqual(evictedWork.entryCount, count - evictions)
+    XCTAssertEqual(evictedWork.positionCount, count - evictions)
+    XCTAssertEqual(evictedWork.oldestLookups - freeWork.oldestLookups, evictions)
+    XCTAssertLessThanOrEqual(evictedWork.comparisons - freeWork.comparisons, evictions * 40,
+      "Selecting seventeen victims cannot revisit a hundred thousand entries")
+    #endif
+
+    let churnStart = clock.now
+    for turn in 0..<repetitions {
+      let requested = source(count - 1 - turn % 64)
+      XCTAssertNotNil(resources.image(for: requested))
+      let pin = try XCTUnwrap(resources.retainRaster(for: requested))
+      let peer = try XCTUnwrap(pin.retainedCopy())
+      XCTAssertEqual(resources.rasterAdmission.pinnedCount, 1)
+      XCTAssertEqual(resources.rasterAdmission.pinnedBytes, cost)
+      pin.release()
+      XCTAssertEqual(resources.rasterAdmission.pinnedCount, 1)
+      peer.release()
+      XCTAssertEqual(resources.rasterAdmission.pinnedCount, 0)
+      XCTAssertEqual(resources.rasterAdmission.pinnedBytes, 0)
+      #if DEBUG
+      let work = resources.rasterEvictionDiagnostics
+      XCTAssertEqual(work.entryCount, count - evictions)
+      XCTAssertEqual(work.positionCount, count - evictions, "Repeated pins must not leave stale index nodes")
+      #endif
+    }
+    let churnMS = milliseconds(churnStart.duration(to: clock.now))
+    var measurement: [String: Any] = ["entries": count, "repetitions": repetitions, "evictions": evictions,
+      "rasterBytes": cost, "freeReservationBytes": freeBytes,
+      "populationMS": populationMS, "freeReservationAndReleaseMS": freeMS,
+      "evictionMS": evictionMS, "churnMS": churnMS, "peakAccountedBytes": resources.peakAccountedBytes]
+    #if DEBUG
+    let churnWork = resources.rasterEvictionDiagnostics
+    XCTAssertLessThanOrEqual(churnWork.comparisons - evictedWork.comparisons, repetitions * 120)
+    measurement["freeIndexLookups"] = freeWork.oldestLookups - populatedWork.oldestLookups
+    measurement["evictionComparisons"] = evictedWork.comparisons - freeWork.comparisons
+    measurement["churnComparisons"] = churnWork.comparisons - evictedWork.comparisons
+    measurement["remainingIndexEntries"] = churnWork.entryCount
+    #endif
+    let data = try JSONSerialization.data(withJSONObject: measurement, options: [.sortedKeys])
+    let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
+    attachment.name = "100k raster allocation and eviction work"; attachment.lifetime = .keepAlways; add(attachment)
   }
 
   @MainActor

@@ -6,6 +6,343 @@ import XCTest
 
 @MainActor
 final class DocumentTargetSnapshotPreparationTests: XCTestCase {
+  func testHeadlessPressureWithdrawsOptionalQueueButKeepsRequiredPreparation() async throws {
+    let resources = SceneRenderResources(byteLimit: 64 * 1024 * 1024, maximumBackgroundWebSurfaces: 1)
+    let blocker = BackgroundPaper(resources: resources)
+    defer { blocker.close() }
+    try await waitUntil { blocker.coordinator.hasCanonicalPixels }
+    let optionalDocument = DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "body", source: "Optional current view")])
+    let requiredDocument = DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "body", source: "Accepted target")])
+    let optionalState = DocumentStateJournal(id: optionalDocument.id, actor: UUID())
+    let requiredState = DocumentStateJournal(id: requiredDocument.id, actor: UUID())
+    var optionalRaster: RasterLease?, requiredRaster: RasterLease?
+    var optionalFinished = false, requiredFinished = false
+    let optional = Task { @MainActor in
+      defer { optionalFinished = true }
+      optionalRaster = try await DocumentSnapshotCache.shared.prepare(document: optionalDocument, state: optionalState,
+        pageIndex: 0, resources: resources, pixelWidth: 160, purpose: { .optional })
+    }
+    let required = Task { @MainActor in
+      defer { requiredFinished = true }
+      requiredRaster = try await DocumentSnapshotCache.shared.prepare(document: requiredDocument, state: requiredState,
+        pageIndex: 0, resources: resources, pixelWidth: 160)
+    }
+    defer { optional.cancel(); required.cancel() }
+    addTeardownBlock { @MainActor in
+      optional.cancel(); required.cancel(); blocker.close()
+      _ = await optional.result; _ = await required.result
+      optionalRaster?.release(); requiredRaster?.release()
+    }
+    try await waitUntil { resources.pendingWebRequestCount == 2 }
+    resources.handleMemoryPressure(.warning)
+    // Pool admission must withdraw the optional queue place in this actor turn,
+    // before the caller's deferred invalidation could reach the coordinator.
+    XCTAssertEqual(resources.pendingWebRequestCount, 1)
+    XCTAssertEqual(resources.activeBackgroundWebSurfaceCount, 1)
+    try await waitUntil { optionalFinished }
+    do { try await optional.value; XCTFail("Optional pressure returned a new document raster") }
+    catch { XCTAssertTrue(error is CancellationError, "\(error)") }
+    XCTAssertNil(optionalRaster)
+    XCTAssertFalse(requiredFinished)
+    blocker.close()
+    try await waitUntil { requiredFinished }
+    try await required.value
+    let raster = try XCTUnwrap(requiredRaster)
+    XCTAssertEqual(raster.source, .document(id: requiredDocument.id,
+      token: DocumentSnapshotCache.token(document: requiredDocument, state: requiredState, pageIndex: 0)))
+    XCTAssertEqual(resources.pendingWebRequestCount, 0)
+    try attach(["fixture": "headless-required-versus-optional-pressure", "optionalFinished": optionalFinished,
+      "requiredFinished": requiredFinished, "requiredRaster": requiredRaster != nil,
+      "pendingWeb": resources.pendingWebRequestCount], name: "headless-pressure-admission-result")
+  }
+
+  func testPressureWithdrawsQueuedOptionalPaperAndKeepsItsPromotedDerivedAdmission() async throws {
+    let mib = 1024 * 1024
+    let resources = SceneRenderResources(byteLimit: 64 * mib)
+    let document = DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "body", source: "Derived paper admission")])
+    let artifact = try await DocumentCanonicalPrint.store.artifact(for: document)
+    XCTAssertLessThan(artifact.pdf.count, mib)
+    let sourceCharge = try XCTUnwrap(resources.reserveDerivedBytes(artifact.pdf.count, priority: .passive))
+    let source = DocumentPrintedSource(artifact: artifact, pdf: .init(artifact.pdf), reservation: sourceCharge,
+      lineIndices: [:], slots: [:])
+    let page = DocumentPrintedPage(source: source, pageIndex: 0, width: 1024, height: 1408)
+    let sourceKey = "derived-pressure-" + document.id.uuidString
+    let baseline = resources.reservedBytes
+    let pinnedSource = SceneRasterSource.document(id: UUID(), token: "pinned-sixty-mib")
+    func pinnedImage() throws -> NSImage {
+      let context = try XCTUnwrap(CGContext(data: nil, width: 2048, height: 3840, bitsPerComponent: 8,
+        bytesPerRow: 2048 * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+      context.setFillColor(CGColor(gray: 1, alpha: 1)); context.fill(.init(x: 0, y: 0, width: 2048, height: 3840))
+      return NSImage(cgImage: try XCTUnwrap(context.makeImage()), size: .init(width: 2048, height: 3840))
+    }
+    XCTAssertTrue(resources.store(try pinnedImage(), for: pinnedSource))
+    let pinned = try XCTUnwrap(resources.retainRaster(for: pinnedSource))
+    XCTAssertEqual(pinned.accountedByteCount, 60 * mib)
+    XCTAssertEqual(resources.rasterAdmission.pinnedBytes, 60 * mib)
+    var optionalFinished = false, requiredFinished = false, optionalWaiting = false
+    var optionalPaper: DocumentPaperRaster?, promotedPaper: DocumentPaperRaster?, requiredCharge: RasterReservation?
+    var promotedPurpose = ScenePreparationPurpose.optional
+    var required: Task<Void, any Error>?, promoted: Task<Void, any Error>?
+    let optional = Task { @MainActor in
+      defer { optionalFinished = true }
+      optionalPaper = try await DocumentPaperRaster.prepare(page: page, sourceKey: sourceKey, pixelWidth: 1024,
+        resources: resources, purpose: { .optional }, waits: { optionalWaiting = $0 })
+    }
+    defer { optional.cancel(); required?.cancel(); promoted?.cancel(); pinned.release() }
+    addTeardownBlock { @MainActor in
+      optional.cancel(); required?.cancel(); promoted?.cancel(); pinned.release()
+      _ = await optional.result
+      if let required { _ = await required.result }
+      if let promoted { _ = await promoted.result }
+      requiredCharge?.release(); optionalPaper = nil; promotedPaper = nil
+    }
+    try await waitUntil { resources.pendingDerivedRequestCount == 1 && optionalWaiting }
+    required = Task { @MainActor in
+      defer { requiredFinished = true }
+      requiredCharge = try await resources.acquirePassiveDerivedBytes(mib)
+    }
+    try await waitUntil { resources.pendingDerivedRequestCount == 2 }
+    XCTAssertTrue(optionalWaiting); XCTAssertFalse(requiredFinished)
+    XCTAssertEqual(resources.reservedBytes, baseline, "Queued paper consumes no physical credit")
+    resources.handleMemoryPressure(.warning)
+    XCTAssertEqual(resources.pendingDerivedRequestCount, 0, "Optional 11 MiB cannot hold required 1 MiB behind its FIFO position")
+    XCTAssertEqual(resources.rasterAdmission.pinnedBytes, 60 * mib)
+    try await waitUntil { optionalFinished && requiredFinished }
+    do { try await optional.value; XCTFail("Pressure admitted the unneeded paper") }
+    catch { XCTAssertTrue(error is CancellationError, "\(error)") }
+    let requiredTask = try XCTUnwrap(required)
+    try await requiredTask.value
+    XCTAssertNil(optionalPaper); XCTAssertFalse(optionalWaiting)
+    XCTAssertEqual(requiredCharge?.byteCount, mib)
+    XCTAssertEqual(resources.reservedBytes, baseline + mib)
+    let unopened = await source.pdf.openedDocumentCount()
+    XCTAssertEqual(unopened, 0, "Revoked queued paper never starts the PDF/image worker")
+    requiredCharge?.release(); requiredCharge = nil
+
+    resources.handleMemoryPressure(.normal)
+    promoted = Task { @MainActor in
+      promotedPaper = try await DocumentPaperRaster.prepare(page: page, sourceKey: sourceKey, pixelWidth: 1024,
+        resources: resources, purpose: { promotedPurpose }, waits: { _ in })
+    }
+    try await waitUntil { resources.pendingDerivedRequestCount == 1 }
+    promotedPurpose = .required
+    resources.handleMemoryPressure(.warning)
+    XCTAssertEqual(resources.pendingDerivedRequestCount, 1, "The same queued paper reads its accepted promotion live")
+    XCTAssertEqual(resources.rasterAdmission.pinnedBytes, 60 * mib)
+    XCTAssertEqual(resources.reservedBytes, baseline)
+    XCTAssertNil(promotedPaper)
+    pinned.release()
+    let promotedTask = try XCTUnwrap(promoted)
+    try await promotedTask.value
+    XCTAssertFalse(resources.allowsOptionalPreparation)
+    XCTAssertEqual(promotedPaper?.sourceKey, sourceKey)
+    XCTAssertEqual(promotedPaper?.page.artifact.pixelIdentity, artifact.pixelIdentity)
+    XCTAssertEqual(promotedPaper?.image.width, 1024); XCTAssertEqual(promotedPaper?.image.height, 1408)
+    XCTAssertEqual(resources.reservedBytes, baseline + 11 * mib, "Actual completed pixels retain their original grant under pressure")
+    let opened = await source.pdf.openedDocumentCount()
+    XCTAssertEqual(opened, 1)
+    XCTAssertEqual(source.pdf.pendingOperationCount, 0)
+    promotedPaper = nil
+    XCTAssertEqual(resources.pendingDerivedRequestCount, 0)
+    XCTAssertEqual(resources.rasterAdmission.pinnedBytes, 0)
+    XCTAssertEqual(resources.reservedBytes, baseline)
+  }
+
+  func testBorrowedProducerRevokesOptionalCaptureButPreservesItsJoinedRequiredReader() async throws {
+    let resources = SceneRenderResources(byteLimit: 32 * 1024 * 1024)
+    let paper = BackgroundPaper(resources: resources)
+    defer { paper.close() }
+    try await waitUntil { paper.coordinator.hasCanonicalPixels }
+    let web = try XCTUnwrap(paper.coordinator.webView)
+    let held = try XCTUnwrap(resources.reserveDerivedBytes(resources.byteLimit - resources.reservedBytes - 1_000_000, priority: .passive))
+    defer { held.release() }
+    var firstRaster: RasterLease?, secondRaster: RasterLease?, requiredRaster: RasterLease?
+    var firstFinished = false, secondFinished = false, requiredFinished = false, requiredJoined = false
+    let first = Task { @MainActor in
+      defer { firstFinished = true }
+      firstRaster = try await paper.coordinator.retainPreparedSnapshot(pixelWidth: 512,
+        force: true, waitsForRasterAdmission: true, purpose: { .optional })
+    }
+    var second: Task<Void, any Error>?, required: Task<Void, any Error>?
+    defer { first.cancel(); second?.cancel(); required?.cancel() }
+    addTeardownBlock { @MainActor in
+      first.cancel(); second?.cancel(); required?.cancel(); held.release(); paper.close()
+      _ = await first.result
+      if let second { _ = await second.result }
+      if let required { _ = await required.result }
+      firstRaster?.release(); secondRaster?.release(); requiredRaster?.release()
+    }
+    try await waitUntil { paper.coordinator.pendingRasterSnapshot != nil }
+    first.cancel()
+    resources.handleMemoryPressure(.warning)
+    XCTAssertNil(paper.coordinator.pendingRasterSnapshot, "Revocation retires the optional reservation waiter synchronously")
+    resources.handleMemoryPressure(.normal)
+    try await waitUntil { firstFinished }
+    do { try await first.value; XCTFail("A revoked claim resumed when pressure became normal") }
+    catch { XCTAssertTrue(error is CancellationError, "\(error)") }
+    XCTAssertNil(firstRaster)
+    XCTAssertTrue(paper.coordinator.webView === web)
+    XCTAssertTrue(paper.coordinator.hasCanonicalPixels)
+    XCTAssertEqual(resources.rasterCount, 0)
+    second = Task { @MainActor in
+      defer { secondFinished = true }
+      secondRaster = try await paper.coordinator.retainPreparedSnapshot(pixelWidth: 512,
+        force: true, waitsForRasterAdmission: true, purpose: { .optional })
+    }
+    try await waitUntil { paper.coordinator.pendingRasterSnapshot != nil }
+    let demand = try XCTUnwrap(paper.coordinator.pendingRasterSnapshot)
+    required = Task { @MainActor in
+      defer { requiredFinished = true }
+      requiredRaster = try await paper.coordinator.retainPreparedSnapshot(pixelWidth: 512, waitsForRasterAdmission: true,
+        purpose: { requiredJoined = true; return .required })
+    }
+    // While pressure is normal, this closure is first read by the actual shared
+    // job's add(claim), before its first await; the role is already latched here.
+    try await waitUntil { requiredJoined }
+    resources.handleMemoryPressure(.warning)
+    second?.cancel()
+    XCTAssertNotNil(paper.coordinator.pendingRasterSnapshot, "A required borrower keeps the exact reservation waiter")
+    held.release()
+    try await waitUntil { requiredFinished && secondFinished }
+    let requiredTask = try XCTUnwrap(required), optionalTask = try XCTUnwrap(second)
+    try await requiredTask.value
+    do { try await optionalTask.value; XCTFail("The cancelled optional borrower received the required reader's output") }
+    catch { XCTAssertTrue(error is CancellationError, "\(error)") }
+    XCTAssertNil(secondRaster)
+    let raster = try XCTUnwrap(requiredRaster)
+    XCTAssertEqual(raster.source, demand.source)
+    XCTAssertTrue(paper.coordinator.webView === web, "Pressure never invalidates the borrowed live producer")
+    XCTAssertTrue(paper.coordinator.hasCanonicalPixels)
+    XCTAssertNil(paper.coordinator.pendingRasterSnapshot)
+    XCTAssertEqual(resources.activeWebSurfaceCount, 1)
+    try attach(["fixture": "borrowed-reader-required-latch", "firstRevoked": firstFinished && firstRaster == nil,
+      "requiredJoined": requiredJoined, "requiredFinished": requiredFinished, "optionalFinished": secondFinished,
+      "samePhysicalProducer": paper.coordinator.webView === web, "activeWeb": resources.activeWebSurfaceCount,
+      "captureBytes": demand.bytes], name: "borrowed-reader-pressure-result")
+  }
+
+  func testMemoryPressureCancelsAutomaticReadButKeepsDurableTargetAndPanelUntilNormalResumes() async throws {
+    let resources = SceneRenderResources.shared
+    let previousPressure = resources.memoryPressureLevel
+    resources.handleMemoryPressure(.normal)
+    defer { resources.handleMemoryPressure(previousPressure) }
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("preview-pressure-" + UUID().uuidString)
+    let fixture = MacCommandFixture(root: root)
+    retainNotebookUntilTeardown(fixture.model, removing: root)
+    let size = PageSize(width: 320, height: 460)
+    let header = try fixture.store.initializeWorkspace(actor: fixture.model.actorID, pageSize: size)
+    let item = try XCTUnwrap(fixture.store.readItemHeaders(limit: 1).first)
+    let pageID = try XCTUnwrap(item.firstPageID)
+    try fixture.store.savePresence(.init(boardID: header.rootBoardID, mode: .page,
+      camera: .init(), viewport: .init(x: size.width, y: size.height),
+      focusedItemID: item.id, openProgress: 1, selectedItemID: item.id, notebookPageID: pageID))
+    let source = try fixture.store.readContentHeader(target: .init(kind: .page, id: pageID))
+    let request = try fixture.store.requestPageVision(pageID: pageID,
+      expectedRevision: XCTUnwrap(source.inkStamp).revision)
+    let reading = NotebookPersistenceFenceContract.Blocker()
+    let readCount = NotebookPersistenceFenceContract.Signal<Int>()
+    let cancelledRead = NotebookPersistenceFenceContract.Signal<Bool>()
+    let reader = NotebookSceneReader(store: fixture.store, beforeRead: {
+      let count = (readCount.value ?? 0) + 1
+      readCount.set(count)
+      if count == 2 {
+        try reading.hold()
+        cancelledRead.set(Task.isCancelled)
+        try Task.checkCancellation()
+      }
+    })
+    let previousConfiguration = MacPreviewPublisher.acceptanceConfiguration
+    MacPreviewPublisher.acceptanceConfiguration = .init(storeRoot: fixture.store.root,
+      currentViewDelay: .zero, reconciliationInterval: .seconds(3_600), sourceReader: reader)
+    let previousTargetHook = CurrentViewPreviewWriter.onPageVisionPrepared
+    var targetContinuation: CheckedContinuation<Void, Never>?
+    var targetCancelled: Bool?
+    CurrentViewPreviewWriter.onPageVisionPrepared = { id in
+      guard id == request.id else { return }
+      await withCheckedContinuation { targetContinuation = $0 }
+      targetCancelled = Task.isCancelled
+    }
+    var panel: Task<JSONValue, any Error>?
+    var panelFinished = false
+    defer {
+      reading.release()
+      let waiting = targetContinuation; targetContinuation = nil; waiting?.resume()
+      panel?.cancel()
+      MacPreviewPublisher.acceptanceConfiguration = previousConfiguration
+      CurrentViewPreviewWriter.onPageVisionPrepared = previousTargetHook
+    }
+    var phase = "startup"
+    func proof() -> [String: Any] {
+      ["phase": phase, "automaticReadCount": readCount.value ?? 0,
+        "automaticReadCancelled": cancelledRead.value.map { $0 as Any } ?? NSNull(),
+        "durableTargetCancelled": targetCancelled.map { $0 as Any } ?? NSNull(),
+        "panelFinished": panelFinished,
+        "durableRequestID": request.id.uuidString,
+        "currentPreviewExists": FileManager.default.fileExists(atPath: fixture.store.currentViewPreviewURL.path),
+        "pressure": String(describing: resources.memoryPressureLevel), "reconciliationSeconds": 3_600]
+    }
+    do {
+      // AppModel starts the sole real publisher; the exact-root configuration
+      // holds its second serial read, after it has discovered the page source.
+      try await fixture.start(pageSize: size)
+      phase = "automatic-read-and-durable-target-held"
+      try await waitUntil { reading.entered.value == true && targetContinuation != nil }
+      XCTAssertNil(try fixture.store.loadCurrentViewReceipt())
+      XCTAssertNil(try fixture.store.loadTargetRenderReceipt(request.id))
+      resources.handleMemoryPressure(.warning)
+      reading.release()
+      phase = "pressure-cancelled-actual-read"
+      try await waitUntil { cancelledRead.value != nil }
+      XCTAssertEqual(cancelledRead.value, true, "Pressure cancels the actual automatic worker, not just its observer")
+      XCTAssertNil(try fixture.store.loadCurrentViewReceipt())
+      XCTAssertTrue(fixture.model.permitsBackgroundPreparation)
+      XCTAssertFalse(fixture.model.permitsOptionalPreparation)
+      XCTAssertEqual(try fixture.store.targetRenderRequests().map(\.id), [request.id])
+      var command = NotebookCommand(command: .panelPresentation)
+      command.panelPresentation = .init(workspaceID: header.workspaceID,
+        target: .init(kind: .page, id: pageID), appearance: .init(viewport: .init(x: 320, y: 460), pixelScale: 1))
+      let panelCommand = command
+      panel = Task { @MainActor in
+        defer { panelFinished = true }
+        return try await fixture.send(panelCommand)
+      }
+      let waiting = targetContinuation; targetContinuation = nil; waiting?.resume()
+      phase = "required-publications-under-pressure"
+      try await waitUntil { panelFinished }
+      let panelTask = try XCTUnwrap(panel)
+      let panelResult = try await panelTask.value
+      XCTAssertEqual(try XCTUnwrap(panelResult["target"]).decode(CollaborationTarget.self), .init(kind: .page, id: pageID))
+      try await waitUntil { (try? fixture.store.loadTargetRenderReceipt(request.id)) != nil }
+      let targetReceipt = try XCTUnwrap(fixture.store.loadTargetRenderReceipt(request.id))
+      XCTAssertEqual(targetCancelled, false, "An admitted durable target survives automatic preparation pressure")
+      XCTAssertEqual(targetReceipt.request, request)
+      XCTAssertEqual(targetReceipt.status, "ready", "\(targetReceipt.diagnostics)")
+      let vision = try XCTUnwrap(fixture.store.loadPageVisionReceipt(pageID))
+      XCTAssertEqual(vision.drawingStamp, try XCTUnwrap(source.inkStamp))
+      let targetHash = try XCTUnwrap(targetReceipt.pngSHA256)
+      XCTAssertEqual(targetHash, vision.previewPNG_SHA256)
+      let artifact = try fixture.store.authorizedArtifact(.init(kind: .pageOverview, id: pageID,
+        expectedSHA256: targetHash))
+      XCTAssertEqual(artifact.path, fixture.store.previewURL(pageID).path)
+      XCTAssertNotNil(NSImage(contentsOfFile: artifact.path))
+      XCTAssertNil(try fixture.store.loadCurrentViewReceipt(), "Panel preparation does not revive the optional current-view publication")
+      phase = "normal-event-resumes-without-timer"
+      resources.handleMemoryPressure(.normal)
+      try await waitUntil { (try? fixture.store.loadCurrentViewReceipt()) != nil }
+      let currentReceipt = try XCTUnwrap(fixture.store.loadCurrentViewReceipt())
+      XCTAssertEqual(currentReceipt.presence.notebookPageID, pageID)
+      XCTAssertNotNil(NSImage(contentsOf: fixture.store.currentViewPreviewURL))
+      XCTAssertGreaterThan(readCount.value ?? 0, 2)
+      XCTAssertEqual(try fixture.store.readContentHeader(target: .init(kind: .page, id: pageID)), source)
+      phase = "completed"
+      try attach(proof(), name: "preview-pressure-required-and-optional-owner")
+    } catch {
+      var failed = proof(); failed["error"] = String(describing: error)
+      try? attach(failed, name: "preview-pressure-primary-failure-before-cleanup")
+      throw error
+    }
+  }
+
   func testExtendedColorSnapshotFitsItsGrantBeforePublication() async throws {
     let resources = SceneRenderResources(byteLimit: 32 * 1024 * 1024)
     let paper = BackgroundPaper(resources: resources)

@@ -1,8 +1,5 @@
 import Foundation
 import WebKit
-#if os(iOS)
-import UIKit
-#endif
 
 /// One unused, body-free runtime belongs to the application, within the same
 /// WebKit admission pool as real paper. Used document runtimes never return.
@@ -24,8 +21,8 @@ final class DocumentShellPreparation {
   private let resources: SceneRenderResources
   private var entry: Entry?
   private var deferredAdmission: UInt64?
+  private var deferredOptionalGeneration: UInt64?
   private var failedThisForeground = false
-  private var memoryObserver: NSObjectProtocol?
   private(set) var isStopped = false
   var onTransition: (Observation) -> Void = { _ in }
   var unusedCoordinator: DocumentWebCoordinator? { entry?.coordinator }
@@ -34,23 +31,19 @@ final class DocumentShellPreparation {
     precondition(resources.documentShellPreparation == nil)
     self.resources = resources
     resources.documentShellPreparation = self
-    #if os(iOS)
-      memoryObserver = NotificationCenter.default.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification,
-        object: nil, queue: .main) { [weak self] _ in
-          Task { @MainActor [weak self] in self?.retireUnused(suspendUntilAdmissionChanges: true) }
-        }
-    #endif
   }
 
   /// The model supplies the actual installed/foreground/idle opportunity.
   /// A refused optional grant retries only after capacity has improved.
   func prepareIfIdle() {
-    guard !isStopped, !failedThisForeground, entry == nil,
-      deferredAdmission != resources.webAdmissionGeneration else { return }
+    guard !isStopped, !failedThisForeground, entry == nil, resources.allowsOptionalPreparation,
+      deferredAdmission != resources.webAdmissionGeneration
+        || deferredOptionalGeneration != resources.optionalPreparationGeneration else { return }
     guard let lease = resources.tryAcquireIdleWebSurface() else {
-      deferredAdmission = resources.webAdmissionGeneration; return
+      deferredAdmission = resources.webAdmissionGeneration
+      deferredOptionalGeneration = resources.optionalPreparationGeneration; return
     }
-    deferredAdmission = nil
+    deferredAdmission = nil; deferredOptionalGeneration = nil
     let renderer = DocumentWebCoordinator(resources: resources, onRenderReady: .init { _ in },
       onPageLayout: { _ in },  onStateChange: { _, _ in nil })
     let next = Entry(coordinator: renderer, host: DocumentWebHost(), leaseID: lease.id)
@@ -85,15 +78,11 @@ final class DocumentShellPreparation {
     return true
   }
 
-  func retireUnused(suspendUntilAdmissionChanges: Bool = false) {
-    guard let current = entry else {
-      if suspendUntilAdmissionChanges { deferredAdmission = resources.webAdmissionGeneration }
-      return
-    }
+  func retireUnused() {
+    guard let current = entry else { return }
     entry = nil
     current.coordinator.invalidate()
     current.host.removeSurface()
-    if suspendUntilAdmissionChanges { deferredAdmission = resources.webAdmissionGeneration }
     observe("retired", current)
   }
 
@@ -105,7 +94,6 @@ final class DocumentShellPreparation {
     guard !isStopped else { return }
     isStopped = true
     retireUnused()
-    if let memoryObserver { NotificationCenter.default.removeObserver(memoryObserver); self.memoryObserver = nil }
     if resources.documentShellPreparation === self { resources.documentShellPreparation = nil }
     onTransition = { _ in }
   }

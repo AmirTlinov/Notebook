@@ -49,6 +49,7 @@ struct CoverOpeningSurface<Cover: View>: View {
     // Observe eligibility here, then recheck its live owner when deferred work
     // runs: a contact can begin before SwiftUI delivers the next view update.
     let permitsPreparation = model.permitsBackgroundPreparation
+    _ = SceneRenderResources.shared.optionalPreparationGeneration
     return PlatformCoverOpeningSurface(
       ownerID: ownerID,
       progress: progress,
@@ -346,7 +347,8 @@ struct CoverSnapshotState<Frame> {
       curlView.isHidden = true
       curlView.permitsFrameSubmission = { [weak self] in
         guard let self else { return false }
-        return lifecycle.isTransitioning || (preparesCoverMotion && canPrepare())
+        return lifecycle.isTransitioning || (preparesCoverMotion && canPrepare()
+          && SceneRenderResources.shared.allowsOptionalPreparation)
       }
       curlView.onCoverRenderingReady = { [weak self] in self?.renderCurrentState() }
       curlView.onCoverRenderFailure = { [weak self] _ in
@@ -439,8 +441,10 @@ struct CoverSnapshotState<Frame> {
       self.canPrepare = canPrepare
       self.cornerRadius = cornerRadius
       let preparationAllowed = preparesCoverMotion && canPrepare()
+        && SceneRenderResources.shared.allowsOptionalPreparation
       if preparationAllowed, !preparationWasAllowed { materialDemand = UUID(); failedMaterialDemand = nil }
       preparationWasAllowed = preparationAllowed
+      if !preparationAllowed, !lifecycle.isTransitioning { cancelMaterial() }
 
       guard isViewLoaded else { return }
       view.setNeedsLayout()
@@ -620,14 +624,15 @@ struct CoverSnapshotState<Frame> {
       // the display pool and block the document's MainActor for a second.
       // Keep the snapshot and shared CI program warm, not a fake screen frame.
       curlView.isHidden = true
-      guard preparesCoverMotion, !hasLivePrograms, canPrepare() else { return }
+      guard preparesCoverMotion, !hasLivePrograms, canPrepare(),
+        SceneRenderResources.shared.allowsOptionalPreparation else { return }
       if lifecycle.needsCurrentSnapshot { requestMaterial() }
     }
 
     private func prepareCoverProgramIfNeeded() {
       guard let ownerID = materialOwnerID, let revision = lifecycle.revision,
         let window = view.window, !window.isHidden,
-        preparesCoverMotion, canPrepare() else { return }
+        preparesCoverMotion, canPrepare(), SceneRenderResources.shared.allowsOptionalPreparation else { return }
       var ancestor: UIView? = view
       while let node = ancestor {
         guard !node.isHidden, node.alpha > 0.001 else { return }
@@ -645,7 +650,8 @@ struct CoverSnapshotState<Frame> {
       guard let window = view.window, !window.isHidden else { return false }
       if lifecycle.isTransitioning { return lifecycle.capturedCover == nil }
       return CoverOpeningPhysics.isClosed(lifecycle.progress)
-        && preparesCoverMotion && !hasLivePrograms && canPrepare() && lifecycle.needsCurrentSnapshot
+        && preparesCoverMotion && !hasLivePrograms && canPrepare()
+        && SceneRenderResources.shared.allowsOptionalPreparation && lifecycle.needsCurrentSnapshot
     }
 
     private func cancelMaterial() {
@@ -749,7 +755,9 @@ struct CoverSnapshotState<Frame> {
       let size = CGSize(width: revision.geometry.width, height: revision.geometry.height)
       return try await PageTurnFrame.compose(size: size, scale: scale,
         images: [.init(image: pixels.image, frame: CGRect(origin: .zero, size: size))],
-        priority: priority, retaining: [pixels])
+        priority: priority,
+        purpose: { [weak self] in self?.lifecycle.isTransitioning == true ? .required : .optional },
+        retaining: [pixels])
     }
 
     private static func captureCoverCuts(elements: [SpatialElement], plane: SceneCompositionPlane) async throws -> [SceneSourceAddress: SceneRasterCut] {
@@ -853,7 +861,8 @@ struct CoverSnapshotState<Frame> {
       curlView.isHidden = true
       curlView.permitsFrameSubmission = { [weak self] in
         guard let self else { return false }
-        return lifecycle.isTransitioning || (preparesCoverMotion && canPrepare())
+        return lifecycle.isTransitioning || (preparesCoverMotion && canPrepare()
+          && SceneRenderResources.shared.allowsOptionalPreparation)
       }
       curlView.onCoverRenderingReady = { [weak self] in self?.renderCurrentState() }
       curlView.onCoverRenderFailure = { [weak self] _ in
@@ -960,7 +969,7 @@ struct CoverSnapshotState<Frame> {
 
     private func prepareRestingCoverIfNeeded() {
       curlView.isHidden = true
-      guard preparesCoverMotion, canPrepare() else { return }
+      guard preparesCoverMotion, canPrepare(), SceneRenderResources.shared.allowsOptionalPreparation else { return }
       if lifecycle.needsCurrentSnapshot {
         SheetCurlGPU.shared.requestCoverPreparation()
         lifecycle.storeCapturedCover(captureCover())

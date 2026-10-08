@@ -1,0 +1,20 @@
+{
+  "format": 1,
+  "kind": "independent-source-only",
+  "status": "ready",
+  "receiptOwnerSHA256": "175b74c5119a4694b5643a827322d0079ebe4bc4b20742c75ef5a2bfe2d0e67d",
+  "receiptTestsSHA256": "6c171441ed715fe6513ef6bac43a7094e0be36b41fe1ac29938b850f69f13f1a",
+  "receiptFindings": [
+    "All three existing merges use one owner; the replaced weaker identity predicate is removed.",
+    "Immutable fields and full completed Undo agree; canonical raw comparison binds unknown fields and signed zero.",
+    "Decode/hash/roundtrip credit is paid before allocation through the current refusal latch.",
+    "Initial unknown material is authored in its first transaction; invalid path identity refuses at real discovery.",
+    "Genuine workspace rename precedes raw phase conflict; unchanged material/models/received markers/cursors and zero ACK are verified."
+  ],
+  "memoryFindings": [
+    "Current, accepted, pinned and durable demand retains required preparation; pressure latches optional closed until OS normal.",
+    "Existing pool owns eviction and reclamation; physical workers retain grants to actual completion.",
+    "64/60/11/1 MiB PDF counterexample withdraws queued optional paper without releasing the pin; required promotion retains the same queued job."
+  ],
+  "laterCorrection": "Four callback argument labels were made explicit; selected Mac execution validates the updated call sites."
+}

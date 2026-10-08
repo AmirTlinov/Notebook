@@ -752,3 +752,22 @@ not installed. Xcode requires a concrete unlocked device for native inventory.
 Both builds have identical source `0cbc76282b8ac8cd6e2bc4bc746386c412e5d6c53020a91c0ca8a445906f9604`
 / 1726 files, unchanged within each route. Installed260 and physical acceptance
 remain unchanged. [Scope and pending checks](audit-evidence/2026-10-08/dead-native-owners/results.json).
+
+## 2026-10-08: common receipt and memory owners
+
+NB19/B16 memory admission is integrated into primary main, preserving the prior
+native cleanup. The shared pool withdraws queued optional PDF work under pressure,
+keeps required promotion and protects pins/physical tails. One Core merge owner
+preserves immutable originals, complete Undo cuts, unknown raw fields and signed
+zero; incompatible delivery rolls back without acceptance or ACK.
+
+Selected Core: 20 functions / 37 cases PASS. Selected Mac: 19 PASS, zero
+failures/skips/runtime warnings. Final source
+`18e237019f81543422b379c46034107506b62b8c57a1c9068fc72f2db49b63b8` / 1731 files.
+Core's executed component used `96046138ec1bcf082acd7d88e6f6187c04dc4bfd7a2c8b9580e37d18f19b57ce`;
+only four callback argument labels in two App files changed afterward. Core inputs
+and toolchain stayed exact; final Mac source is unchanged before/after its route.
+[Results, source delta and failed attempts](audit-evidence/2026-10-08/common-main-memory-and-receipt-phase/results.json).
+Physical iPad execution and raster100k acceptance await device unlock. Process/
+WebContent budgets, joint measurements and convergent birth/Undo migration remain
+open; DB29/wire44/manifest26 and the installed pair are unchanged.

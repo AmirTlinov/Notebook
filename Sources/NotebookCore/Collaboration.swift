@@ -229,17 +229,6 @@ public struct CollaborationReceipt: Codable, Equatable, Sendable, Identifiable {
   public var redoOf: UUID? = nil
 
   public var summary: String { action.summary }
-
-  /// Original content evidence cannot change when a receipt is relayed or
-  /// completed by undo. An already published undo has its own immutable cut.
-  func hasSameLifecycleIdentity(as other: Self) -> Bool {
-    action == other.action && redoOf == other.redoOf && lifecycleInverse == other.lifecycleInverse
-      && lifecycleChanges == other.lifecycleChanges
-      && (undo == nil || other.undo == nil || (
-        undo?.restorationInverse == other.undo?.restorationInverse
-          && undo?.lifecycleChanges == other.undo?.lifecycleChanges
-          && undo?.preservedLifecycle == other.undo?.preservedLifecycle))
-  }
 }
 
 extension VersionStamp {

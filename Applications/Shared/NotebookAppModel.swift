@@ -1199,6 +1199,10 @@ final class NotebookAppModel {
       && !inputIsActive && !peerInputIsActive && presencePhase == .settled
   }
 
+  var permitsOptionalPreparation: Bool {
+    permitsBackgroundPreparation && SceneRenderResources.shared.allowsOptionalPreparation
+  }
+
   /// A finger navigating paper must not suspend the destination it needs.
   /// Preparation reads immutable sources and cannot replace accepted ink or
   /// an active content edit. A focused program must not suspend immutable
@@ -5275,6 +5279,10 @@ final class NotebookAppModel {
 
     /// A fixed accepted prefix is captured before the first await. The reader
     /// then owns its own fresh WAL snapshot; later writes keep draining.
+    func capturePreviewReadFence() -> NotebookPersistenceQueue.ReadFence {
+      persistence.captureReadFence()
+    }
+
     func readCommandCut<Value: Sendable>(
       _ operation: @escaping @Sendable (NotebookQueryCut) throws -> Value) async throws -> Value {
       guard loadState == .ready, permitsExternalWork, let workspaceID = admittedWorkspaceID else {
@@ -6336,7 +6344,7 @@ final class NotebookAppModel {
   func prepareCommonDocumentShellIfIdle(presence visible: SessionPresence, cohort: SceneCompositionCohort?) {
     #if os(iOS)
       guard preparationIsForeground, UIApplication.shared.applicationState == .active,
-        !isClosing, permitsBackgroundPreparation, requestedReference == nil, requestedReturn == nil,
+        !isClosing, permitsOptionalPreparation, requestedReference == nil, requestedReturn == nil,
         presence == visible,
         visible.openProgress <= 0, let cohort, cohort.isPaintInstalled,
         cohort.plan.rootBoardID == visible.boardID,

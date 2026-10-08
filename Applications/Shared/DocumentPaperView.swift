@@ -31,11 +31,17 @@ final class DocumentPaperRaster {
     return .init(page: page, sourceKey: sourceKey, image: image, storage: storage)
   }
   static func prepare(page: DocumentPrintedPage, sourceKey: String, pixelWidth: Int,
-    resources: SceneRenderResources, waits: (Bool) -> Void) async throws -> DocumentPaperRaster {
+    resources: SceneRenderResources,
+    purpose: @escaping @MainActor () -> ScenePreparationPurpose = { .required },
+    waits: (Bool) -> Void) async throws -> DocumentPaperRaster {
+    try Task.checkCancellation()
+    guard resources.allowsOptionalPreparation || purpose() == .required else { throw CancellationError() }
     let height = Int(ceil(Double(pixelWidth)*page.height/page.width))
-    let reservation = try await resources.acquirePassiveDerivedBytes(pixelWidth*height*8) { waits(true) }
     defer { waits(false) }
+    let reservation = try await resources.acquirePassiveDerivedBytes(pixelWidth*height*8, purpose: purpose, onDeferred: { waits(true) })
     do {
+      try Task.checkCancellation()
+      guard resources.allowsOptionalPreparation || purpose() == .required else { throw CancellationError() }
       let image = try await page.image(width: pixelWidth)
       try Task.checkCancellation()
       return .init(page: page, sourceKey: sourceKey, image: image, reservation: reservation)
@@ -50,6 +56,7 @@ final class DocumentPaperView: PaperPlatformView {
   private(set) var raster: DocumentPaperRaster?
   private var refinement: Task<Void, Never>?
   private weak var resources: SceneRenderResources?
+  private var preparationPurpose: @MainActor () -> ScenePreparationPurpose = { .required }
   #if os(iOS)
   private var paperLayer: CALayer { layer }
   #else
@@ -65,16 +72,18 @@ final class DocumentPaperView: PaperPlatformView {
     paperLayer.backgroundColor = CGColor(gray: 1, alpha: 1)
   }
   @available(*, unavailable) required init?(coder: NSCoder) { fatalError("Use init()") }
-  func install(_ raster: DocumentPaperRaster, resources: SceneRenderResources) {
+  func install(_ raster: DocumentPaperRaster, resources: SceneRenderResources,
+    purpose: @escaping @MainActor () -> ScenePreparationPurpose = { .required }) {
     refinement?.cancel(); refinement = nil; self.resources = resources
     self.raster = raster
+    preparationPurpose = purpose
     CATransaction.begin(); CATransaction.setDisableActions(true)
     paperLayer.contents = raster.image; paperLayer.contentsGravity = .resize
     CATransaction.commit()
   }
   func clear() {
     refinement?.cancel(); refinement = nil
-    paperLayer.contents = nil; raster = nil; resources = nil
+    paperLayer.contents = nil; raster = nil; resources = nil; preparationPurpose = { .required }
   }
   #if os(iOS)
   override func layoutSubviews() { super.layoutSubviews(); refine() }
@@ -86,6 +95,7 @@ final class DocumentPaperView: PaperPlatformView {
     // A window-attached offscreen executor needs only its admitted preparation
     // pixels. Refining it to display density competes with its own snapshot.
     guard refinement == nil, let raster, let resources, SceneSourceVisibility.isVisible(self) else { return }
+    guard resources.allowsOptionalPreparation || preparationPurpose() == .required else { return }
     #if os(iOS)
     let size = convert(bounds, to: window).size
     let scale = window?.screen.scale ?? 2
@@ -102,10 +112,13 @@ final class DocumentPaperView: PaperPlatformView {
     refinement = Task { @MainActor [weak self] in
       defer { self?.refinement = nil }
       do {
+        guard self != nil, resources.allowsOptionalPreparation || self?.preparationPurpose() == .required
+        else { charge.release(); return }
         let image = try await raster.page.image(width: width)
         guard !Task.isCancelled, let self, self.raster === raster,
           SceneSourceVisibility.isVisible(self) else { charge.release(); return }
-        install(.init(page: raster.page, sourceKey: raster.sourceKey, image: image, reservation: charge), resources: resources)
+        install(.init(page: raster.page, sourceKey: raster.sourceKey, image: image, reservation: charge),
+          resources: resources, purpose: preparationPurpose)
       } catch { charge.release() }
     }
   }

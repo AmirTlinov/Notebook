@@ -388,6 +388,7 @@ final class SceneRenderResources {
     #if os(iOS)
       resources.webConstruction.requireSceneLifetime()
     #endif
+    resources.memoryPressureAdapter = SceneMemoryPressureAdapter(resources: resources)
     return resources
   }()
   static let didChange = Notification.Name("NotebookSceneRenderResourcesDidChange")
@@ -421,6 +422,14 @@ final class SceneRenderResources {
   private(set) var webAdmissionGeneration: UInt64 = 0
   private(set) var rasterGeneration: UInt64 = 0
   private(set) var rasterAdmissionGeneration: UInt64 = 0
+  private(set) var memoryPressureLevel: SceneMemoryPressureLevel = .normal
+  var allowsOptionalPreparation: Bool { memoryPressureLevel == .normal }
+  private(set) var optionalPreparationGeneration: UInt64 = 0
+  private(set) var lastMemoryPressureDiagnostic: SceneMemoryPressureDiagnostic?
+  @ObservationIgnored private var memoryPressureAdapter: SceneMemoryPressureAdapter?
+  @ObservationIgnored private var pressureTrim: Task<Void, Never>?
+  @ObservationIgnored private var pressureAttemptedResources: Set<UUID> = []
+  @ObservationIgnored private var pressureAttemptedWebSurfaces: Set<UUID> = []
   @ObservationIgnored private var admissionNotification: Task<Void, Never>?
   @ObservationIgnored private var reclamationOwners: [UUID: @MainActor () -> [SceneResourceReclamationCandidate]] = [:]
   @ObservationIgnored private var pendingReclamations: [UUID: Task<Void, Never>] = [:]
@@ -449,6 +458,7 @@ final class SceneRenderResources {
       waiterClock &+= 1
       idleWebSurfaces[id] = .init(order: waiterClock, reclaim: reclaim)
       admitWaiters()
+      schedulePressureTrim()
     } else { idleWebSurfaces[id] = nil }
   }
 
@@ -456,18 +466,22 @@ final class SceneRenderResources {
     idleWebSurfaces[id] = nil
     guard retiringIdleWebSurfaces.remove(id) != nil else { return }
     admitWaiters()
+    schedulePressureTrim()
   }
 
   /// Reading offers does not release anything. The planner addresses one
   /// concrete resource and checks the ledger again after its actual release.
   func registerReclamationOwner(_ offers: @escaping @MainActor () -> [SceneResourceReclamationCandidate]) -> UUID {
-    let id = UUID(); reclamationOwners[id] = offers; return id
+    let id = UUID(); reclamationOwners[id] = offers
+    schedulePressureTrim()
+    return id
   }
   func unregisterReclamationOwner(_ id: UUID) { reclamationOwners[id] = nil }
 
   /// Visibility/contact changes can make an existing resource disposable even
   /// when no allocation was released. Wake admission from that owner event.
   func reclamationOffersChanged() {
+    schedulePressureTrim()
     guard !derivedWaiters.isEmpty, reclamationNotification == nil else { return }
     reclamationNotification = Task { @MainActor [weak self] in
       await Task.yield()
@@ -480,26 +494,98 @@ final class SceneRenderResources {
   /// Optional work never occupies a pending position ahead of an actual source.
   /// Its live lease still consumes the ordinary background/passive allowances.
   func tryAcquireIdleWebSurface() -> WebSurfaceLease? {
-    guard waiters.isEmpty, canAdmit(.background, constructsView: true) else { return nil }
+    guard waiters.isEmpty, canAdmit(.background, constructsView: true, purpose: .optional) else { return nil }
     return grantWebSurface(id: UUID(), priority: .background, source: nil, constructsView: true)
   }
 
   private func reclaimUnusedWebIfNeeded(for priority: WebPriority) {
-    guard !hasWebCapacity(priority), !isReclaimingIdleWeb, retiringIdleWebSurfaces.isEmpty else { return }
+    guard !hasWebCapacity(priority), !isReclaimingIdleWeb, !isReclaimingIdleResources,
+      pendingReclamations.isEmpty, retiringIdleWebSurfaces.isEmpty else { return }
     let rasterBlocked = priority.preparesRaster && activeBackgroundWebSurfaceCount >= maximumBackgroundWebSurfaces
     let passiveBlocked = priority.isPassive && activePassiveWebSurfaceCount >= maximumWebSurfaces - reservedInteractiveSlots
     let candidates = idleWebSurfaces.filter { id, _ in
       guard let role = activeWebSurfaces[id] else { return false }
-      return (!rasterBlocked || role.preparesRaster) && (!passiveBlocked || role.isPassive)
+      return (allowsOptionalPreparation || !pressureAttemptedWebSurfaces.contains(id))
+        && (!rasterBlocked || role.preparesRaster) && (!passiveBlocked || role.isPassive)
     }
     guard let selected = candidates.min(by: { $0.value.order < $1.value.order }) else { return }
+    reclaimIdleWebSurface(selected.key)
+  }
+
+  private func reclaimIdleWebSurface(_ id: UUID) {
+    guard !isReclaimingIdleWeb, !isReclaimingIdleResources,
+      pendingReclamations.isEmpty, retiringIdleWebSurfaces.isEmpty,
+      let offer = idleWebSurfaces.removeValue(forKey: id) else { return }
+    if !allowsOptionalPreparation { pressureAttemptedWebSurfaces.insert(id) }
     isReclaimingIdleWeb = true
     defer { isReclaimingIdleWeb = false }
-    idleWebSurfaces[selected.key] = nil
-    retiringIdleWebSurfaces.insert(selected.key)
-    selected.value.reclaim()
+    retiringIdleWebSurfaces.insert(id)
+    offer.reclaim()
     // Release may admit a waiter synchronously or await the final physical
     // borrow. Either way this request asks exactly one owner to retire.
+  }
+
+  /// The OS adapter and focused checks enter the same pool-owned policy route.
+  func handleMemoryPressure(_ level: SceneMemoryPressureLevel) {
+    let wasAllowed = allowsOptionalPreparation
+    lastMemoryPressureDiagnostic = .init(event: level, uptime: ProcessInfo.processInfo.systemUptime,
+      processID: ProcessInfo.processInfo.processIdentifier, process: .sample(),
+      ledgerResidentBytes: residentBytes, ledgerReservedBytes: reservedBytes,
+      ledgerPinnedBytes: rasterAdmission.pinnedBytes,
+      activeWebSurfaceCount: activeWebSurfaceCount, pendingWebRequestCount: pendingWebRequestCount)
+    memoryPressureLevel = level
+    if wasAllowed != allowsOptionalPreparation { optionalPreparationGeneration &+= 1 }
+    if wasAllowed, !allowsOptionalPreparation {
+      pressureAttemptedResources.removeAll()
+      pressureAttemptedWebSurfaces.removeAll()
+    }
+    admitWaiters()
+    admitDerivedWaiters()
+    schedulePressureTrim()
+  }
+
+  private func schedulePressureTrim() {
+    guard !allowsOptionalPreparation, pressureTrim == nil else { return }
+    pressureTrim = Task { @MainActor [weak self] in
+      guard let self else { return }
+      await trimDisposableResources()
+      pressureTrim = nil
+    }
+  }
+
+  private func trimDisposableResources() async {
+    while !allowsOptionalPreparation {
+      if !pendingReclamations.isEmpty {
+        await finishPendingReclamations()
+        continue
+      }
+      // Web release/checkpoint refusal wakes this same route. Waiting here
+      // would introduce another lifetime owner for a borrowed physical slot.
+      guard retiringIdleWebSurfaces.isEmpty, !isReclaimingIdleResources, !isReclaimingIdleWeb else { return }
+      if rasterEviction.oldestID() != nil {
+        let before = rasterAdmission
+        while let id = rasterEviction.oldestID() {
+          guard !allowsOptionalPreparation, pendingReclamations.isEmpty,
+            retiringIdleWebSurfaces.isEmpty, !isReclaimingIdleResources, !isReclaimingIdleWeb else { break }
+          removeRaster(id)
+        }
+        scheduleAdmissionNotification(before)
+        continue
+      }
+      if let idle = idleWebSurfaces.filter({ !pressureAttemptedWebSurfaces.contains($0.key) })
+        .min(by: { $0.value.order < $1.value.order }) {
+        reclaimIdleWebSurface(idle.key)
+        continue
+      }
+      let offers = reclamationOwners.values.flatMap { $0() }
+      // Refusals retain their marker while the owner still offers this cut.
+      // Disposed allocations cannot grow a history inside the pressure policy.
+      pressureAttemptedResources.formIntersection(Set(offers.map(\.id)).union(pendingReclamations.keys))
+      guard let candidate = SceneResourceReclamationPlanner.next(
+        offers.filter { !pressureAttemptedResources.contains($0.id) },
+        bytes: max(1, residentBytes + reservedBytes), count: max(1, rasterCount + reservedRasterCount)) else { return }
+      beginReclamation(candidate)
+    }
   }
   private struct PhysicalOwnerEntry {
     var retains: Int
@@ -609,6 +695,7 @@ final class SceneRenderResources {
     var priority: WebPriority
     let source: WebExecutionSource?
     let constructsView: Bool
+    let purpose: @MainActor () -> ScenePreparationPurpose
     let order: UInt64
     let continuation: CheckedContinuation<WebSurfaceLease, any Error>
   }
@@ -625,6 +712,9 @@ final class SceneRenderResources {
     }
   }
   @ObservationIgnored private var entries: [UUID: RasterEntry] = [:]
+  @ObservationIgnored private var rasterEviction = SceneRasterEvictionIndex()
+  @ObservationIgnored private var pinnedRasterBytes = 0
+  @ObservationIgnored private var pinnedRasterCount = 0
   @ObservationIgnored private var rasterOwners: [RasterOwner: [UUID]] = [:]
   private struct ReservedAllocation {
     var bytes: Int
@@ -637,6 +727,7 @@ final class SceneRenderResources {
   private struct DerivedWaiter {
     let id: UUID
     let bytes: Int
+    let purpose: @MainActor () -> ScenePreparationPurpose
     let continuation: CheckedContinuation<RasterReservation, Error>
   }
   @ObservationIgnored private var derivedWaiters: [DerivedWaiter] = []
@@ -684,12 +775,14 @@ final class SceneRenderResources {
   }
 
   var rasterAdmission: SceneRasterAdmission {
-    let pinned = entries.values.filter { $0.retains > 0 }
-    return .init(pinnedBytes: pinned.reduce(0) { $0 + $1.cost }, reservedBytes: reservedBytes,
-      pinnedCount: pinned.count, reservedCount: reservedRasterCount,
+    .init(pinnedBytes: pinnedRasterBytes, reservedBytes: reservedBytes,
+      pinnedCount: pinnedRasterCount, reservedCount: reservedRasterCount,
       byteLimit: byteLimit, countLimit: maximumRasterCount,
       passiveReservedBytes: passiveReservedBytes, passiveByteLimit: passiveByteLimit)
   }
+  #if DEBUG
+  var rasterEvictionDiagnostics: SceneRasterEvictionIndex.Diagnostics { rasterEviction.diagnostics }
+  #endif
   @ObservationIgnored private(set) var lastRasterRefusal: SceneRasterRefusal?
   @ObservationIgnored private var refusalGeneration: UInt64 = 0
 
@@ -711,6 +804,10 @@ final class SceneRenderResources {
   }
   fileprivate func retainRasterEntry(_ id: UUID) -> RasterLease? {
     guard var entry = entries[id] else { return nil }
+    if entry.retains == 0 {
+      rasterEviction.remove(id)
+      pinnedRasterBytes += entry.cost; pinnedRasterCount += 1
+    }
     accessClock &+= 1; entry.access = accessClock; entry.retains += 1; entries[id] = entry
     return RasterLease(source: entry.source, pixelScale: entry.pixelScale, image: entry.image,
       mipmaps: entry.mipmaps, entryID: id, semanticSelection: entry.semanticSelection, resources: self)
@@ -755,6 +852,7 @@ final class SceneRenderResources {
             let previous = rasterAdmission
             allocation.transferToEntry(self)
             entries[id]?.encodedPNG = allocation
+            if current.retains > 0 { pinnedRasterBytes += value.accountedByteCount }
             residentBytes += value.accountedByteCount
             scheduleAdmissionNotification(previous)
           }
@@ -1058,24 +1156,32 @@ final class SceneRenderResources {
   /// its immutable source with a temporary refusal. No bytes are reserved while
   /// queued. The caller owns cancellation and its existing preparation deadline.
   func acquirePassiveDerivedBytes(_ byteCount: Int,
+    purpose: @escaping @MainActor () -> ScenePreparationPurpose = { .required },
     onDeferred: @MainActor () -> Void = {}) async throws -> RasterReservation {
     try Task.checkCancellation()
-    if derivedWaiters.isEmpty, let reservation = reserveDerivedBytes(byteCount, priority: .passive) { return reservation }
+    guard allowsOptionalPreparation || purpose() == .required else { throw CancellationError() }
+    if derivedWaiters.isEmpty, let reservation = reserveDerivedBytes(byteCount, priority: .passive) {
+      guard !Task.isCancelled, allowsOptionalPreparation || purpose() == .required
+      else { reservation.release(); throw CancellationError() }
+      return reservation
+    }
     onDeferred()
     guard byteCount > 0, byteCount <= passiveByteLimit,
       derivedWaiters.count < maximumPendingPreparationRequests else { throw SceneRenderError.resourceLimit }
     let id = UUID()
     let reservation: RasterReservation = try await withTaskCancellationHandler {
       try await withCheckedThrowingContinuation { continuation in
-        guard !Task.isCancelled else { continuation.resume(throwing: CancellationError()); return }
-        derivedWaiters.append(.init(id: id, bytes: byteCount, continuation: continuation))
+        guard !Task.isCancelled, allowsOptionalPreparation || purpose() == .required
+        else { continuation.resume(throwing: CancellationError()); return }
+        derivedWaiters.append(.init(id: id, bytes: byteCount, purpose: purpose, continuation: continuation))
         admitDerivedWaiters()
       }
     } onCancel: {
       Task { @MainActor [weak self] in self?.cancelDerivedRequest(id) }
     }
     // A release and cancellation may reach this actor in either order.
-    if Task.isCancelled { reservation.release(); throw CancellationError() }
+    guard !Task.isCancelled, allowsOptionalPreparation || purpose() == .required
+    else { reservation.release(); throw CancellationError() }
     return reservation
   }
 
@@ -1086,15 +1192,32 @@ final class SceneRenderResources {
   }
 
   private func admitDerivedWaiters() {
+    cancelOptionalDerivedWaitersIfPressured()
     // Preserve capacity for the oldest accepted stage. A stream of small
     // asynchronous requests cannot continually pass a large waiting stage.
     while let waiter = derivedWaiters.first {
       guard rasterAdmission.fits(additionalBytes: waiter.bytes, additionalCount: 0)
         || (pendingReclamations.isEmpty && reclamationOwners.values.contains(where: { !$0().isEmpty })) else { break }
-      guard makeRoom(for: waiter.bytes, additionalEntry: false, priority: .passive),
-        let index = derivedWaiters.firstIndex(where: { $0.id == waiter.id }) else { break }
+      guard makeRoom(for: waiter.bytes, additionalEntry: false, priority: .passive) else { break }
+      guard allowsOptionalPreparation || waiter.purpose() == .required else {
+        if let index = derivedWaiters.firstIndex(where: { $0.id == waiter.id }) {
+          derivedWaiters.remove(at: index).continuation.resume(throwing: CancellationError())
+        }
+        continue
+      }
+      guard let index = derivedWaiters.firstIndex(where: { $0.id == waiter.id }) else { continue }
+      let granted = derivedWaiters.remove(at: index)
       let reservation = reserveAllocation(bytes: waiter.bytes, rasterCount: 0, priority: .passive, physicalOwner: nil)
-      derivedWaiters.remove(at: index).continuation.resume(returning: reservation)
+      granted.continuation.resume(returning: reservation)
+    }
+  }
+
+  private func cancelOptionalDerivedWaitersIfPressured() {
+    guard !allowsOptionalPreparation else { return }
+    for id in derivedWaiters.map(\.id) {
+      guard let waiter = derivedWaiters.first(where: { $0.id == id }), waiter.purpose() == .optional,
+        let index = derivedWaiters.firstIndex(where: { $0.id == id }) else { continue }
+      derivedWaiters.remove(at: index).continuation.resume(throwing: CancellationError())
     }
   }
 
@@ -1187,6 +1310,8 @@ final class SceneRenderResources {
     let publicationOrder = accessClock, id = UUID()
     entries[id] = RasterEntry(source: source, image: image, mipmaps: mipmaps, pixelScale: raster.scale,
       pixelCost: raster.cost, documentLayout: documentLayout, semanticSelection: semanticSelection, publication: accessClock, access: accessClock, retains: retaining ? 1 : 0)
+    if retaining { pinnedRasterBytes += raster.cost; pinnedRasterCount += 1 }
+    else { rasterEviction.insert(id, access: accessClock) }
     rasterOwners[source.owner, default: []].append(id)
     residentBytes += raster.cost; rasterCount = entries.count
     scheduleAdmissionNotification(previous)
@@ -1206,6 +1331,7 @@ final class SceneRenderResources {
         userInfo: [Self.leafRasterPublicationKey: publication])
     }
     changed(source.owner)
+    schedulePressureTrim()
     return id
   }
 
@@ -1230,9 +1356,10 @@ final class SceneRenderResources {
   var diagnosticOwnerCount: Int { diagnosticEntries.count }
 
   func acquireWebSurface(priority: WebPriority, source: InteractiveElementReference? = nil, constructsView: Bool = false,
+    purpose: @escaping @MainActor () -> ScenePreparationPurpose = { .required },
     deadline: ContinuousClock.Instant? = nil, requestID: UUID = UUID()) async throws -> WebSurfaceLease {
     try await acquireWebSurface(priority: priority, executionSource: source.map(WebExecutionSource.element),
-      constructsView: constructsView, deadline: deadline, requestID: requestID)
+      constructsView: constructsView, purpose: purpose, deadline: deadline, requestID: requestID)
   }
 
   /// Interaction changes the role of the accepted waiter, not its lifetime.
@@ -1254,12 +1381,15 @@ final class SceneRenderResources {
   }
 
   func acquireDocumentProgramSurface(priority: WebPriority, documentID: UUID, blockID: String,
+    purpose: @escaping @MainActor () -> ScenePreparationPurpose = { .required },
     deadline: ContinuousClock.Instant? = nil, requestID: UUID = UUID()) async throws -> WebSurfaceLease {
-    try await acquireWebSurface(priority: priority, executionSource: .document(documentID, blockID), constructsView: true, deadline: deadline, requestID: requestID)
+    try await acquireWebSurface(priority: priority, executionSource: .document(documentID, blockID),
+      constructsView: true, purpose: purpose, deadline: deadline, requestID: requestID)
   }
 
   private func acquireWebSurface(priority: WebPriority, executionSource source: WebExecutionSource?,
-    constructsView: Bool, deadline: ContinuousClock.Instant?, requestID id: UUID) async throws -> WebSurfaceLease {
+    constructsView: Bool, purpose: @escaping @MainActor () -> ScenePreparationPurpose,
+    deadline: ContinuousClock.Instant?, requestID id: UUID) async throws -> WebSurfaceLease {
     try Task.checkCancellation()
     guard !priority.preparesRaster || maximumBackgroundWebSurfaces > 0 else { throw SceneWebAdmissionError.preparationDisabled }
     let timeout = deadline.map { deadline in
@@ -1272,11 +1402,14 @@ final class SceneRenderResources {
     let lease: WebSurfaceLease = try await withTaskCancellationHandler(operation: { () async throws -> WebSurfaceLease in
       return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<WebSurfaceLease, any Error>) in
         guard !Task.isCancelled else { continuation.resume(throwing: CancellationError()); return }
+        guard allowsOptionalPreparation || purpose() == .required else {
+          continuation.resume(throwing: CancellationError()); return
+        }
         // A source which is actually needed retains its place even while the
         // constructor/UI or running-surface allowance is occupied. Optional
         // background work cannot consume that source's pending admission.
         reclaimUnusedWebIfNeeded(for: priority)
-        if canAdmit(priority, source: source, constructsView: constructsView) {
+        if canAdmit(priority, source: source, constructsView: constructsView, purpose: purpose()) {
           continuation.resume(returning: grantWebSurface(id: id, priority: priority, source: source, constructsView: constructsView))
           return
         }
@@ -1284,7 +1417,8 @@ final class SceneRenderResources {
           continuation.resume(throwing: SceneWebAdmissionError.backgroundQueueFull); return
         }
         waiterClock &+= 1
-        waiters.append(WebWaiter(id: id, priority: priority, source: source, constructsView: constructsView, order: waiterClock, continuation: continuation))
+        waiters.append(WebWaiter(id: id, priority: priority, source: source, constructsView: constructsView,
+          purpose: purpose, order: waiterClock, continuation: continuation))
         waiters.sort { $0.priority == $1.priority ? $0.order < $1.order : $0.priority < $1.priority }
         pendingWebRequestCount = waiters.count
         admitWaiters()
@@ -1303,7 +1437,12 @@ final class SceneRenderResources {
     guard var entry = entries[id], entry.retains > 0 else { return }
     let previous = rasterAdmission
     entry.retains -= 1; entries[id] = entry
-    if entry.retains == 0 { scheduleAdmissionNotification(previous) }
+    if entry.retains == 0 {
+      pinnedRasterBytes -= entry.cost; pinnedRasterCount -= 1
+      rasterEviction.insert(id, access: entry.access)
+      scheduleAdmissionNotification(previous)
+      schedulePressureTrim()
+    }
   }
   fileprivate func releaseReservation(_ id: UUID, notifies: Bool = true) {
     let previous = rasterAdmission
@@ -1317,6 +1456,7 @@ final class SceneRenderResources {
       }
       reservedBytes -= allocation.bytes; reservedRasterCount -= allocation.rasterCount
       if notifies { scheduleAdmissionNotification(previous) }
+      schedulePressureTrim()
     }
   }
 
@@ -1340,6 +1480,7 @@ final class SceneRenderResources {
   fileprivate func releaseWebSurface(_ id: UUID) {
     let availability = webAvailability
     guard let priority = activeWebSurfaces.removeValue(forKey: id) else { return }
+    pressureAttemptedWebSurfaces.remove(id)
     webConstruction.abandon(id)
     activeWebSources[id] = nil; idleWebSurfaces[id] = nil; retiringIdleWebSurfaces.remove(id)
     activeWebSurfaceCount = activeWebSurfaces.count
@@ -1347,6 +1488,7 @@ final class SceneRenderResources {
     if priority.isPassive { activePassiveWebSurfaceCount -= 1 }
     admitWaiters()
     publishWebAvailability(after: availability)
+    schedulePressureTrim()
   }
   fileprivate func finishConstruction(_ id: UUID, elapsed: Duration) {
     webConstruction.finish(id, elapsed: elapsed)
@@ -1392,13 +1534,15 @@ final class SceneRenderResources {
         < min(Self.maximumVisiblePrograms,
           maximumWebSurfaces - (maximumWebSurfaces > 1 && maximumBackgroundWebSurfaces > 0 ? 1 : 0)))
   }
-  private func canAdmit(_ priority: WebPriority, source: WebExecutionSource? = nil, constructsView: Bool = false) -> Bool {
+  private func canAdmit(_ priority: WebPriority, source: WebExecutionSource? = nil, constructsView: Bool = false,
+    purpose: ScenePreparationPurpose = .required) -> Bool {
     // A dense scene may retain 32 independent programs, but constructing all
     // their WKWebViews in one SwiftUI transaction blocks the first output.
     // UIKit grants one unconstructed owner, then considers its actual cost
     // before another grant. Spent work retires at the native UI completion;
     // remote navigation and author readiness never hold this short allowance.
-    hasWebCapacity(priority) && (!constructsView || webConstruction.canConstruct)
+    (allowsOptionalPreparation || purpose == .required)
+      && hasWebCapacity(priority) && (!constructsView || webConstruction.canConstruct)
       && (source.map { !activeWebSources.values.contains($0) } ?? true)
   }
   private func grantWebSurface(id: UUID, priority: WebPriority, source: WebExecutionSource? = nil, constructsView: Bool = false) -> WebSurfaceLease {
@@ -1420,12 +1564,27 @@ final class SceneRenderResources {
     return WebSurfaceLease(id: id, priority: priority, resources: self)
   }
   private func admitWaiters() {
+    cancelOptionalWebWaitersIfPressured()
     if let priority = waiters.first?.priority { reclaimUnusedWebIfNeeded(for: priority) }
-    while let position = waiters.firstIndex(where: { canAdmit($0.priority, source: $0.source, constructsView: $0.constructsView) }) {
+    while let position = waiters.firstIndex(where: {
+      canAdmit($0.priority, source: $0.source, constructsView: $0.constructsView, purpose: $0.purpose())
+    }) {
       let waiter = waiters.remove(at: position)
       pendingWebRequestCount = waiters.count
       waiter.continuation.resume(returning: grantWebSurface(id: waiter.id, priority: waiter.priority, source: waiter.source, constructsView: waiter.constructsView))
     }
+  }
+
+  private func cancelOptionalWebWaitersIfPressured() {
+    guard !allowsOptionalPreparation else { return }
+    let before = webAvailability
+    for id in waiters.map(\.id) {
+      guard let waiter = waiters.first(where: { $0.id == id }), waiter.purpose() == .optional,
+        let index = waiters.firstIndex(where: { $0.id == id }) else { continue }
+      waiters.remove(at: index).continuation.resume(throwing: CancellationError())
+    }
+    pendingWebRequestCount = waiters.count
+    publishWebAvailability(after: before)
   }
   private func cancelWebRequest(_ id: UUID, error: any Error = CancellationError()) {
     let availability = webAvailability
@@ -1466,6 +1625,7 @@ final class SceneRenderResources {
   private func touchRaster(_ id: UUID) {
     guard var entry = entries[id] else { return }
     accessClock &+= 1; entry.access = accessClock; entries[id] = entry
+    if entry.retains == 0 { rasterEviction.updateAccess(id, to: entry.access) }
   }
   private func makeRoom(for cost: Int, additionalEntry: Bool, priority: SceneAllocationPriority,
     passiveReserved: Int? = nil, entryCount: Int? = nil, attempted: Set<UUID> = []) -> Bool {
@@ -1476,43 +1636,54 @@ final class SceneRenderResources {
       !additionalEntry || maximumRasterCount > 0 else { return refuseRaster(cost: cost, additionalEntry: additionalEntry) }
     let neededCount = entryCount ?? (additionalEntry ? 1 : 0)
     guard neededCount >= 0, neededCount <= maximumRasterCount else { return false }
-    // Keep only IDs here. Copying entries would retain the very layout leases
-    // that eviction must release before the next admission calculation.
-    let candidates = entries.keys.filter { entries[$0]!.retains == 0 }.sorted { entries[$0]!.access < entries[$1]!.access }
     func residentLimit() -> Int {
       min(byteLimit - reservedBytes - cost,
         passiveByteLimit - passiveReservedBytes - passiveAdjustment - passiveCost)
     }
-    var position = 0
+    // Admission with actual free bytes and slots does not inspect the cache.
+    if residentBytes <= residentLimit(),
+      entries.count + reservedRasterCount + neededCount <= maximumRasterCount { return true }
     while residentBytes > residentLimit()
       || entries.count + reservedRasterCount + neededCount > maximumRasterCount {
-      if position < candidates.count {
-        removeRaster(candidates[position]); position += 1
+      // A removal synchronously notifies consumers, which can touch or pin
+      // another entry. Select from the live index again after that callback.
+      if let id = rasterEviction.oldestID() {
+        removeRaster(id)
         continue
       }
-      if !isReclaimingIdleResources, passiveReserved == nil, pendingReclamations.isEmpty,
+      if !isReclaimingIdleResources, !isReclaimingIdleWeb, passiveReserved == nil,
+        pendingReclamations.isEmpty, retiringIdleWebSurfaces.isEmpty,
         let candidate = SceneResourceReclamationPlanner.next(
-          reclamationOwners.values.flatMap { $0() }.filter { !attempted.contains($0.id) },
+          reclamationOwners.values.flatMap { $0() }.filter {
+            !attempted.contains($0.id) && (allowsOptionalPreparation || !pressureAttemptedResources.contains($0.id))
+          },
           bytes: max(0, residentBytes - residentLimit()),
           count: max(0, entries.count + reservedRasterCount + neededCount - maximumRasterCount)) {
-        isReclaimingIdleResources = true
-        let before = rasterAdmission
-        let completion = candidate.release()
-        isReclaimingIdleResources = false
-        if let completion {
-          pendingReclamations[candidate.id] = Task { @MainActor [weak self] in
-            await completion.value
-            guard let self else { return }
-            pendingReclamations[candidate.id] = nil
-            scheduleAdmissionNotification(before)
-          }
-        }
+        beginReclamation(candidate)
         return makeRoom(for: cost, additionalEntry: additionalEntry, priority: priority,
           entryCount: entryCount, attempted: attempted.union([candidate.id]))
       }
       return refuseRaster(cost: cost, additionalEntry: additionalEntry)
     }
     return true
+  }
+
+  private func beginReclamation(_ candidate: SceneResourceReclamationCandidate) {
+    if !allowsOptionalPreparation { pressureAttemptedResources.insert(candidate.id) }
+    isReclaimingIdleResources = true
+    let before = rasterAdmission
+    let completion = candidate.release()
+    isReclaimingIdleResources = false
+    if let completion {
+      pendingReclamations[candidate.id] = Task { @MainActor [weak self] in
+        await completion.value
+        guard let self else { return }
+        pendingReclamations[candidate.id] = nil
+        scheduleAdmissionNotification(before)
+        admitWaiters()
+        schedulePressureTrim()
+      }
+    } else { scheduleAdmissionNotification(before) }
   }
   private func refuseRaster(cost: Int, additionalEntry: Bool) -> Bool {
     refusalGeneration &+= 1
@@ -1521,8 +1692,10 @@ final class SceneRenderResources {
     return false
   }
   private func removeRaster(_ id: UUID) {
-    guard let entry = entries.removeValue(forKey: id) else { return }
+    guard let entry = entries[id] else { return }
     precondition(entry.retains == 0)
+    rasterEviction.remove(id)
+    entries[id] = nil
     residentBytes -= entry.cost; rasterCount = entries.count
     entry.encodedPNG?.detachFromEntry(self)
     rasterOwners[entry.source.owner]?.removeAll { $0 == id }
@@ -1599,20 +1772,23 @@ final class SceneRenderResources {
   func prepareRaster(_ element: AgentElement, requestedScale: Double = 2, region: PageRect? = nil,
     executionSource: InteractiveElementReference? = nil,
     captureRequest: SceneRasterCaptureRequest? = nil, programStore: NotebookStore? = nil,
+    purpose: @escaping @MainActor () -> ScenePreparationPurpose = { .required },
     permitsPreparation: @MainActor () -> Bool = { true }) async throws -> RasterLease {
     try Task.checkCancellation()
+    guard allowsOptionalPreparation || purpose() == .required else { throw CancellationError() }
     let policy = captureRequest?.policy ?? region.map { AgentSnapshotPolicy.region($0, scale: requestedScale) }
       ?? .exact(scale: requestedScale)
     if let raster = retainRaster(for: policy.rasterSource(for: element), minimumScale: policy.minimumScale(for: element)) { return raster }
     if element.usesNativeSVGRaster {
       return try await StaticSVGRaster.prepare(element, resources: self, policy: policy,
-        captureRequest: captureRequest, permitsPreparation: permitsPreparation)
+        captureRequest: captureRequest, purpose: purpose, permitsPreparation: permitsPreparation)
     }
     let preparation = try await SceneWebRasterPreparation.create(resources: self, executionSource: executionSource,
-      permitsPreparation: permitsPreparation)
+      purpose: purpose, permitsPreparation: permitsPreparation)
     defer { preparation.close() }
     return try await preparation.prepare(element, requestedScale: requestedScale, region: region,
-      captureRequest: captureRequest, programStore: programStore, permitsPreparation: permitsPreparation)
+      captureRequest: captureRequest, programStore: programStore, purpose: purpose,
+      permitsPreparation: permitsPreparation)
   }
 
 }

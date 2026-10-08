@@ -1,4 +1,5 @@
 import NotebookCore
+import Observation
 import SwiftUI
 
 /// One producer for passive material in the bounded page window. Consumers
@@ -52,7 +53,18 @@ final class PageRasterPreparation {
   private(set) var executorCount = 0
   private(set) var completedCount = 0
 
-  init(resources: SceneRenderResources = .shared) { self.resources = resources }
+  init(resources: SceneRenderResources = .shared) {
+    self.resources = resources
+    observeOptionalPreparation()
+  }
+
+  private func observeOptionalPreparation() {
+    _ = withObservationTracking { resources.optionalPreparationGeneration } onChange: { [weak self] in
+      Task { @MainActor [weak self] in self?.observeOptionalPreparation() }
+    }
+    if !resources.allowsOptionalPreparation { closeIdleExecutors() }
+    startWorkers()
+  }
 
   /// Current-page material and an accepted landing never wait for speculation.
   /// The native controller latches the current host's first content receipt.
@@ -65,7 +77,13 @@ final class PageRasterPreparation {
   }
 
   private func canPrepare(_ page: Int) -> Bool {
-    page == displayedIndex || page == targetIndex || (targetIndex == nil && displayedContentReady)
+    page == displayedIndex || page == targetIndex
+      || (resources.allowsOptionalPreparation && targetIndex == nil && displayedContentReady)
+  }
+
+  private func purpose(for request: Request) -> ScenePreparationPurpose {
+    let page = pageIndex(for: request)
+    return page == displayedIndex || page == targetIndex ? .required : .optional
   }
 
   func prepare(_ element: AgentElement, policy: AgentSnapshotPolicy, pageIndex: Int, pageID: UUID? = nil, store: NotebookStore? = nil,
@@ -125,12 +143,11 @@ final class PageRasterPreparation {
   }
 
   private func run(workerID: UUID) async {
-    var executor = idleExecutors.popLast()
+    var executor: SceneWebRasterPreparation?
     defer {
       // A visibility receipt may follow completion by one native transaction.
       // Keep the admitted shell while its queued consumer waits for that event.
-      if let executor, !Task.isCancelled, !pending.isEmpty { idleExecutors.append(executor) }
-      else { executor?.close() }
+      if let executor { parkIdleExecutor(executor) }
       workers[workerID] = nil
       startWorkers()
     }
@@ -143,21 +160,32 @@ final class PageRasterPreparation {
       guard request.permits() else {
         request.completion.resume(throwing: CancellationError()); continue
       }
+      let optionalGeneration = resources.optionalPreparationGeneration
       active[request.id] = (request, workerID)
       do {
         let raster: RasterLease
         if request.element.usesNativeSVGRaster {
+          if let previous = executor { executor = nil; parkIdleExecutor(previous) }
           raster = try await resources.prepareRaster(request.element,
-            captureRequest: .init(policy: request.policy), permitsPreparation: request.permits)
+            captureRequest: .init(policy: request.policy),
+            purpose: { [weak self] in self?.purpose(for: request) ?? .optional },
+            permitsPreparation: request.permits)
         } else {
           if executor == nil {
+            executor = idleExecutors.popLast()
+            executor?.offerIdleReclamation(nil)
+          }
+          if executor == nil {
             executor = try await SceneWebRasterPreparation.create(resources: resources,
-              priority: .visible, permitsPreparation: request.permits)
+              priority: .visible, purpose: { [weak self] in self?.purpose(for: request) ?? .optional },
+              permitsPreparation: request.permits)
             executorCount += 1
           }
           raster = try await executor!.prepare(request.element,
             requestedScale: request.policy.minimumScale(for: request.element),
-            captureRequest: .init(policy: request.policy), programStore: request.store, permitsPreparation: request.permits)
+            captureRequest: .init(policy: request.policy), programStore: request.store,
+            purpose: { [weak self] in self?.purpose(for: request) ?? .optional },
+            permitsPreparation: request.permits)
         }
         if active.removeValue(forKey: request.id) != nil {
           completedCount += 1
@@ -166,15 +194,34 @@ final class PageRasterPreparation {
       } catch {
         executor?.close(); executor = nil
         if active.removeValue(forKey: request.id) != nil {
-          request.completion.resume(throwing: error)
+          if error is CancellationError, !Task.isCancelled, request.permits(),
+            optionalGeneration != resources.optionalPreparationGeneration || purpose(for: request) == .required {
+            // Pool admission was revoked before submission. Keep this exact
+            // demand parked, or retry its newly accepted current/target role.
+            pending.insert(request, at: 0)
+          } else { request.completion.resume(throwing: error) }
         }
       }
     }
   }
 
   private func closeIdleExecutors() {
-    for executor in idleExecutors { executor.close() }
-    idleExecutors.removeAll()
+    let idle = idleExecutors; idleExecutors.removeAll()
+    for executor in idle { executor.close() }
+  }
+
+  private func parkIdleExecutor(_ executor: SceneWebRasterPreparation) {
+    guard !Task.isCancelled, !pending.isEmpty, resources.allowsOptionalPreparation else { executor.close(); return }
+    idleExecutors.append(executor)
+    executor.offerIdleReclamation { [weak self, weak executor] in
+      guard let executor else { return }
+      self?.retireIdleExecutor(executor)
+    }
+  }
+
+  private func retireIdleExecutor(_ executor: SceneWebRasterPreparation) {
+    guard let index = idleExecutors.firstIndex(where: { $0 === executor }) else { return }
+    idleExecutors.remove(at: index).close()
   }
 
   isolated deinit { closeIdleExecutors() }

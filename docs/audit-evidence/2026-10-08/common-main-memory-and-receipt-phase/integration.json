@@ -1,0 +1,51 @@
+{
+  "format": 1,
+  "status": "integrated-in-primary-and-selected-checks-passed",
+  "sourceWorktree": "/Users/amir/.codex/worktrees/notebook-remediation-integration/Notebook",
+  "incomingBase": "f9268c79de9f226c4c4e9e213b0db070833a849d",
+  "incomingSource": {
+    "count": 1728,
+    "sha256": "2b77fa95bb2435ab7f0db6a63bbb403f55a43e69e8c1b10d30286d4deaad6345"
+  },
+  "primaryBase": "fe9488510523d05816090698f8a6a1d4a3dbd08d",
+  "originalTrackedFiles": [
+    "Applications/Mac/MacPreviewPublisher.swift",
+    "Applications/MacTests/DocumentTargetSnapshotPreparationTests.swift",
+    "Applications/MacTests/NotebookPanelPageAdmissionTests.swift",
+    "Applications/Shared/CoverOpeningSurface.swift",
+    "Applications/Shared/DocumentPagePresentationOwner.swift",
+    "Applications/Shared/DocumentPaperView.swift",
+    "Applications/Shared/DocumentShellPreparation.swift",
+    "Applications/Shared/DocumentWebView.swift",
+    "Applications/Shared/NotebookAppModel.swift",
+    "Applications/Shared/NotebookPagePreparationWindow.swift",
+    "Applications/Shared/PageRasterPreparation.swift",
+    "Applications/Shared/SceneCompositionTiles.swift",
+    "Applications/Shared/SceneRenderResources.swift",
+    "Applications/Shared/SceneWebRasterPreparation.swift",
+    "Applications/Shared/StaticSVGRaster.swift",
+    "Applications/Tests/CoverOpeningPhysicsTests.swift",
+    "Applications/Tests/DocumentProgramOwnerTests.swift",
+    "Applications/Tests/DocumentShellPreparationTests.swift",
+    "Applications/Tests/PageRasterPreparationTests.swift",
+    "Applications/Tests/SceneCompositionTests.swift",
+    "Applications/Tests/SceneRenderResourcesTests.swift",
+    "Applications/Tests/SceneWebRasterPreparationTests.swift",
+    "Applications/iPad/PageTurnFrame.swift"
+  ],
+  "added": [
+    "Applications/Shared/DocumentSnapshotAdmission.swift",
+    "Applications/Shared/SceneMemoryPressure.swift",
+    "Applications/Shared/SceneRasterEvictionIndex.swift"
+  ],
+  "conflicts": [],
+  "mergedWithPrimaryChanges": [
+    "Applications/Shared/NotebookAppModel.swift"
+  ],
+  "preservedCleanup": {
+    "Applications/Shared/SceneCompositionRenderer.swift": "8c67d88a7e75afffe353aeaaef06009a80625315931567eae8f98309f94f0721",
+    "Applications/iPad/PencilCanvasView.swift": "187f6eec3da2bee817e9cc7ce644592b2c4828a2ccadecfb1663e99d380f83ad"
+  },
+  "furtherChanges": "Live-purpose withdrawal for the existing derived queue; explicit onDeferred callback labels; strict receipt phase owner and meaningful regressions. Final hashes in source-scope.json.",
+  "originalPatchSHA256": "523d3a3390212c3b5a8a81f140c9a5b5b6a2a77bbd777d77bfacca2dfa8458aa"
+}

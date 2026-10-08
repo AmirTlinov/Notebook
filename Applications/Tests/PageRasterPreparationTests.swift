@@ -5,6 +5,68 @@ import XCTest
 @testable import Notebook
 
 @MainActor final class PageRasterPreparationTests: XCTestCase {
+  func testRequiredPageRetriesQueuedRevocationWithinOnePressureEpoch() async throws {
+    try await WorkspaceInkFixture.waitForForegroundWindow()
+    let resources = SceneRenderResources(maximumWebSurfaces: 1, maximumBackgroundWebSurfaces: 1, reservedInteractiveSlots: 0)
+    let preparation = PageRasterPreparation(resources: resources)
+    let blocker = try await resources.acquireWebSurface(priority: .currentPage)
+    defer { blocker.release() }
+    resources.handleMemoryPressure(.warning)
+    let epoch = resources.optionalPreparationGeneration
+    preparation.prioritize(displayed: 1, target: nil)
+    let source = AgentElement(id: "same-epoch-page", kind: .web,
+      frame: .init(x: 0, y: 0, width: 20, height: 20), source: "",
+      html: "<div style='width:20px;height:20px;background:red'></div>")
+    let requested = Task { try await preparation.prepare(source, policy: .exact(scale: 1), pageIndex: 1, permits: { true }) }
+    defer { requested.cancel() }
+    for _ in 0..<200 where resources.pendingWebRequestCount == 0 {
+      try await Task.sleep(for: .milliseconds(5))
+    }
+    XCTAssertEqual(resources.pendingWebRequestCount, 1)
+    preparation.prioritize(displayed: 0, target: nil)
+    blocker.release() // The optional waiter is revoked under the existing latch.
+    preparation.prioritize(displayed: 0, target: 1) // Accepted before cancellation delivery.
+    XCTAssertEqual(resources.optionalPreparationGeneration, epoch)
+    let raster = try await requested.value
+    XCTAssertEqual(raster.source, .agent(source)); raster.release()
+    XCTAssertEqual(preparation.completedCount, 1)
+    XCTAssertEqual(resources.pendingWebRequestCount, 0)
+  }
+
+  func testPressureParksNeighboursButAdmitsTheCurrentPageAndAcceptedLanding() async throws {
+    let resources = SceneRenderResources(maximumBackgroundWebSurfaces: 1)
+    let preparation = PageRasterPreparation(resources: resources)
+    let sources = (0..<3).map { index in
+      AgentElement(id: "pressure-page-\(index)", kind: .web,
+        frame: .init(x: 0, y: 0, width: 20, height: 20), source: "",
+        html: "<svg xmlns='http://www.w3.org/2000/svg' width='20' height='20'><rect width='20' height='20' fill='red'/></svg>")
+    }
+    preparation.prioritize(displayed: 0, target: nil)
+    resources.handleMemoryPressure(.warning)
+    var started: Set<String> = []
+    let neighbour = Task { try await preparation.prepare(sources[1], policy: .exact(scale: 1), pageIndex: 1,
+      permits: { started.insert(sources[1].id); return true }) }
+    defer { neighbour.cancel() }
+    for _ in 0..<8 { await Task.yield() }
+    XCTAssertFalse(started.contains(sources[1].id))
+    let current = try await preparation.prepare(sources[0], policy: .exact(scale: 1), pageIndex: 0, permits: { true })
+    XCTAssertEqual(current.source, .agent(sources[0])); current.release()
+    resources.handleMemoryPressure(.warning)
+    XCTAssertFalse(resources.allowsOptionalPreparation, "Releasing current pixels cannot clear OS pressure")
+    preparation.prioritize(displayed: 0, target: 1)
+    let accepted = try await neighbour.value
+    XCTAssertEqual(accepted.source, .agent(sources[1])); accepted.release()
+    preparation.prioritize(displayed: 0, target: nil)
+    let later = Task { try await preparation.prepare(sources[2], policy: .exact(scale: 1), pageIndex: 2,
+      permits: { started.insert(sources[2].id); return true }) }
+    defer { later.cancel() }
+    for _ in 0..<8 { await Task.yield() }
+    XCTAssertFalse(started.contains(sources[2].id))
+    resources.handleMemoryPressure(.normal)
+    let resumed = try await later.value
+    XCTAssertEqual(resumed.source, .agent(sources[2])); resumed.release()
+  }
+
   func testVisibleSourcesWinTheQueueAndAcceptedTurnStillPreparesTheWholeSheet() async throws {
     let resources = SceneRenderResources(maximumBackgroundWebSurfaces: 1)
     let preparation = PageRasterPreparation(resources: resources), page = UUID()

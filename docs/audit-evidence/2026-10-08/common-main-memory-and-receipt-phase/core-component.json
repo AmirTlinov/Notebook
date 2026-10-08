@@ -1,0 +1,44 @@
+{
+  "format": 1,
+  "scope": "executed Core component of combined route; Mac build failed and not claimed passed",
+  "status": "passed",
+  "plannedFunctions": 20,
+  "executedFunctions": 20,
+  "executedCases": 37,
+  "failed": [],
+  "skipped": [],
+  "rawEvidence": "/Users/amir/Documents/projects/Notebook/.build/common-main-memory-and-receipt-phase-20261008-v3",
+  "sourceSHA256": "96046138ec1bcf082acd7d88e6f6187c04dc4bfd7a2c8b9580e37d18f19b57ce",
+  "sourceFiles": 1731,
+  "unchangedCoreInputs": true,
+  "laterAppOnlyDelta": [
+    {
+      "path": "Applications/Shared/DocumentPagePreparation.swift",
+      "before": {
+        "executable": false,
+        "path": "Applications/Shared/DocumentPagePreparation.swift",
+        "sha256": "d67cbecf6527f58c03e920b5f1b48e49ead08b82a83a925feeb9b707c051bd65"
+      },
+      "after": {
+        "path": "Applications/Shared/DocumentPagePreparation.swift",
+        "sha256": "c06c2b6a3955f40c680fe5e9780b7b671f0caf9e3232ba74a8cc7363de9e88f6",
+        "executable": false
+      }
+    },
+    {
+      "path": "Applications/Shared/DocumentPaperView.swift",
+      "before": {
+        "executable": false,
+        "path": "Applications/Shared/DocumentPaperView.swift",
+        "sha256": "f64b2a865d2e49fa0faa6ce07840722fefdec35f3bf14190575cf34f57d3baf6"
+      },
+      "after": {
+        "path": "Applications/Shared/DocumentPaperView.swift",
+        "sha256": "47041f4f23f98a6da7e1de959626dff82986a2a0530d4fb7a62a9f7b299c92a3",
+        "executable": false
+      }
+    }
+  ],
+  "finalMacSourceSHA256": "18e237019f81543422b379c46034107506b62b8c57a1c9068fc72f2db49b63b8",
+  "sameToolchain": true
+}

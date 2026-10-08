@@ -41,20 +41,24 @@ final class PageTurnFrame {
   static func compose(size: CGSize, scale: Double, images: [ImageLayer],
     resources: SceneRenderResources = .shared,
     priority: SceneAllocationPriority = .passive,
+    purpose: @escaping @MainActor () -> ScenePreparationPurpose = { .required },
     ink: InkCanvasView.AcceptedFrameLease? = nil, retaining: [AnyObject] = [],
     onRelease: (@MainActor () -> Void)? = nil) async throws -> PageTurnFrame {
-    try await compose(size: size, scale: scale, layers: images.map { .image($0.image, $0.frame) },
-      resources: resources, priority: priority, ink: ink, retaining: retaining, onRelease: onRelease)
+    guard resources.allowsOptionalPreparation || purpose() == .required else { throw CancellationError() }
+    return try await compose(size: size, scale: scale, layers: images.map { .image($0.image, $0.frame) },
+      resources: resources, priority: priority, purpose: purpose, ink: ink, retaining: retaining, onRelease: onRelease)
   }
 
   static func compose(size: CGSize, scale: Double, layers: [Layer],
     resources: SceneRenderResources = .shared,
     priority: SceneAllocationPriority = .passive,
+    purpose: @escaping @MainActor () -> ScenePreparationPurpose = { .required },
     inputFallback: Bool = false,
     ink: InkCanvasView.AcceptedFrameLease? = nil, retaining: [AnyObject] = [],
     onRelease: (@MainActor () -> Void)? = nil,
     onCompositionMeasured: (@MainActor (CompositionTiming, TimeInterval) -> Void)? = nil) async throws -> PageTurnFrame {
     try Task.checkCancellation()
+    guard resources.allowsOptionalPreparation || purpose() == .required else { throw CancellationError() }
     let gpu = SheetCurlGPU.shared
     guard size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0, scale.isFinite, scale > 0,
       size.width * scale <= 8192, size.height * scale <= 8192,
@@ -63,6 +67,7 @@ final class PageTurnFrame {
     // Reader cancellation never cancels shared initialization, and cannot
     // admit storage or submit a late composition after the borrow returns.
     try Task.checkCancellation()
+    guard resources.allowsOptionalPreparation || purpose() == .required else { throw CancellationError() }
     guard let command = gpu.commandQueue?.makeCommandBuffer() else { throw SceneRenderError.snapshotPending("page_compositor") }
     let width = Int(ceil(size.width * scale)), height = Int(ceil(size.height * scale))
     guard width <= 8192, height <= 8192 else { throw SceneRenderError.resourceLimit }

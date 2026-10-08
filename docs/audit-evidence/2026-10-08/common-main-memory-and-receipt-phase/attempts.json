@@ -1,0 +1,41 @@
+{
+  "format": 1,
+  "attempts": [
+    {
+      "attempt": "v1",
+      "status": "failed",
+      "rawEvidence": "/Users/amir/Documents/projects/Notebook/.build/common-main-memory-and-receipt-phase-20261008-v1",
+      "sourceSHA256": "295331ec2dd79dee5d4c370cfed2e6118bcb74ed3e37482d5d14b5ef3e1b49de",
+      "boundary": "test compilation",
+      "correction": "Nested try inside Swift Testing require and explicit sources argument repaired.",
+      "macExecuted": 0
+    },
+    {
+      "attempt": "v2",
+      "status": "failed",
+      "rawEvidence": "/Users/amir/Documents/projects/Notebook/.build/common-main-memory-and-receipt-phase-20261008-v2",
+      "sourceSHA256": "7a1840b834543e5720f9e80d571544f3c4008d5b866f9cd54d4e932b842e43ae",
+      "boundary": "test fixture setup",
+      "correction": "Unknown fields must be present in the first original; malformed identity is tested at receiver discovery.",
+      "macExecuted": 0
+    },
+    {
+      "attempt": "v3",
+      "status": "failed",
+      "rawEvidence": "/Users/amir/Documents/projects/Notebook/.build/common-main-memory-and-receipt-phase-20261008-v3",
+      "sourceSHA256": "96046138ec1bcf082acd7d88e6f6187c04dc4bfd7a2c8b9580e37d18f19b57ce",
+      "boundary": "Mac compilation after Core passed",
+      "correction": "New purpose parameter made old trailing callbacks ambiguous; four explicit onDeferred argument labels repaired.",
+      "macExecuted": 0,
+      "coreComponent": {
+        "status": "passed",
+        "functions": 20,
+        "cases": 37,
+        "failed": 0,
+        "skipped": 0
+      }
+    }
+  ],
+  "finalMacAttempt": "common-main-memory-and-receipt-phase-20261008-v4-mac",
+  "finalMacStatus": "passed"
+}

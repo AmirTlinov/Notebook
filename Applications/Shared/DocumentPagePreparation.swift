@@ -104,7 +104,7 @@ final class DocumentPreparedPage {
       $0 + jsonByteBound($1.initialState) + ($1.id.utf8.count + $1.path.utf8.count)*6 + 1024
     }
     guard admittedBytes <= 16*1024*1024 else { throw SceneRenderError.resourceLimit }
-    let charge = try await resources.acquirePassiveDerivedBytes(admittedBytes*4) { onAdmissionWait(true) }
+    let charge = try await resources.acquirePassiveDerivedBytes(admittedBytes*4, onDeferred: { onAdmissionWait(true) })
     defer { onAdmissionWait(false) }
     do {
       let diagnostics = printed.artifact.diagnostics.map { DocumentBrowserDiagnostic(kind: $0.severity, message: $0.message, blockID: nil, fileID: $0.fileID, path: $0.path, line: $0.line) } + programDiagnostics
@@ -362,7 +362,7 @@ final class DocumentPagePreparation {
     let readingBound = min(value.projection.locations.count, value.pages.count * value.sourceMap.files.count)
     let layoutBound = readingBound*512 + value.pages.count*128 + value.interactiveRegions.count*512
       + value.sourceMap.files.reduce(0) { $0 + $1.lineCount*MemoryLayout<Int>.stride }
-    let charge = try await resources.acquirePassiveDerivedBytes(bodyBytes + value.projection.locations.count*128 + layoutBound + 4*1024*1024) { onAdmissionWait(true) }
+    let charge = try await resources.acquirePassiveDerivedBytes(bodyBytes + value.projection.locations.count*128 + layoutBound + 4*1024*1024, onDeferred: { onAdmissionWait(true) })
     preparationPhasesMS["admission"] = printPreparationMilliseconds(since: admissionStart)
     defer { onAdmissionWait(false) }
     do {
@@ -463,7 +463,7 @@ final class DocumentPagePreparation {
     if let text = navigation.pageText[index] {
       html += "<div role=\"article\" style=\"position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);pointer-events:none\">\(escape(text))</div>"
     }
-    let charge = try await resources.acquirePassiveDerivedBytes(html.utf8.count + regions.count*256 + 4096) { onAdmissionWait(true) }
+    let charge = try await resources.acquirePassiveDerivedBytes(html.utf8.count + regions.count*256 + 4096, onDeferred: { onAdmissionWait(true) })
     defer { onAdmissionWait(false) }
     do { try Task.checkCancellation() } catch { charge.release(); throw error }
     let fragment = DocumentPageFragment(format: 1, sourceKey: sourceKey, pageIndex: index,

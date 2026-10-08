@@ -1,0 +1,120 @@
+{
+  "format": 1,
+  "files": [
+    {
+      "name": "attempts.json",
+      "bytes": 1680,
+      "sha256": "13f6992469d8b7513ee6e5b739137dcfb8e1792afc9742c910c1565ac1c95af7"
+    },
+    {
+      "name": "commands.json",
+      "bytes": 23936,
+      "sha256": "b24aad3d6b4043d94dcf3e80205439f173fe50a9572d62ab2caeb9f1f82f3417"
+    },
+    {
+      "name": "completed.json",
+      "bytes": 5226,
+      "sha256": "a7c07105119e0b36a8ccfd640a17f0981d4170bdab2afd3b29f47921421af599"
+    },
+    {
+      "name": "core-NotebookCoreTests.stdout.log",
+      "bytes": 7465,
+      "sha256": "ac8facca4301812b2cf58a24507876dd818c0f0eb91e078105f7235e88e1796e"
+    },
+    {
+      "name": "core-commands.json",
+      "bytes": 12813,
+      "sha256": "b44fa772d22b8f160af8187e927db4f388b45f88c42dca92a376268e90eea31d"
+    },
+    {
+      "name": "core-component.json",
+      "bytes": 1628,
+      "sha256": "23070df51abfa42ffa4bcccca4cc2dcf28bcd109f6bcba0d9bf202840e6c76be"
+    },
+    {
+      "name": "core-execution.json",
+      "bytes": 9136,
+      "sha256": "b9148cbf7fd9302a7cb4ed8b50c3d916d0a721d58b83712330e825e6ac02128b"
+    },
+    {
+      "name": "core-selection.json",
+      "bytes": 6558,
+      "sha256": "ace19b38d9de9d2ff85f8f5f5ea90892df13f32667ad1dfd1cb55b7a1efa9ecc"
+    },
+    {
+      "name": "integration.json",
+      "bytes": 2625,
+      "sha256": "9b5166d953c17144e152906a5c87100f10f06bc2de8dc35d1e1b48520ee1c2c3"
+    },
+    {
+      "name": "ipad-lock-state.json",
+      "bytes": 609,
+      "sha256": "111c4c166d60b6d62af9ac4654d1e60424b80051e9d8054764bb876039844ba8"
+    },
+    {
+      "name": "mac-execution.json",
+      "bytes": 4994,
+      "sha256": "aa425a3d74368914662297110ef9c20dfc8afd461c7d6f2f1459acaab21745f5"
+    },
+    {
+      "name": "mac-native-signature.json",
+      "bytes": 260,
+      "sha256": "9a3d2225a4162b2d9d565e10a3ef01c447f19d309d95cb7c152e1ee08a960e7d"
+    },
+    {
+      "name": "mac-summary.json",
+      "bytes": 1133,
+      "sha256": "90e6e0b1c8d6b227c3d03002d57b3d4592e02e142f1f11d42fca9e93f145be48"
+    },
+    {
+      "name": "mac-tests.json",
+      "bytes": 15240,
+      "sha256": "65253e0e8c0811d775072237772f5c2ea2ead802955a7c0190a2b68c8e27a6c5"
+    },
+    {
+      "name": "mac-timings.json",
+      "bytes": 3273,
+      "sha256": "7a1275453374fbfbc16dadd3ee0ff590090224c48de2dfb94b07f822b6b2c5a8"
+    },
+    {
+      "name": "mac.stderr.log",
+      "bytes": 371,
+      "sha256": "410f13f60be2ed25e2d0bbdf26d7db70eff1c97b5e43adb4c0f7f7fb05b64687"
+    },
+    {
+      "name": "mac.stdout.log",
+      "bytes": 162,
+      "sha256": "e1d00cf979b1f79f040df861d8a4ccf4d48612e399d04e8251bf3e1f05c70820"
+    },
+    {
+      "name": "raw-artifacts.json",
+      "bytes": 29744,
+      "sha256": "55ae182e887783fce0e913b8bb670b83dc5312ed13aae1ed0044e433fdf3c919"
+    },
+    {
+      "name": "results.json",
+      "bytes": 1256,
+      "sha256": "51ad5eb986229aab1fda1d66ab692ffc9470266a3954eb2751fe41185d3ebcc3"
+    },
+    {
+      "name": "review.json",
+      "bytes": 1401,
+      "sha256": "5cbfca4ad2f05c0304e4dd1e9adb80ac9b955f694b582f5cdd2306d37a356a8b"
+    },
+    {
+      "name": "selection.json",
+      "bytes": 5592,
+      "sha256": "dc24fd6bea71ee621c1f33e16f4df7e77747c5a59816c2d509f25dbc64d7653e"
+    },
+    {
+      "name": "source-scope.json",
+      "bytes": 7061,
+      "sha256": "4124697bbd86c20459c96b4d0cf27111d6b0c92a27f9b27b0b6c4781130949f2"
+    },
+    {
+      "name": "toolchain.json",
+      "bytes": 318,
+      "sha256": "5d490c0c11042b67180f7aa900961d34b44c362ca4c89bf657ef438ebc8a7027"
+    }
+  ]
+}

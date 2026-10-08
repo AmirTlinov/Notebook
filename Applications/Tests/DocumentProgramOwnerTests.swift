@@ -1113,6 +1113,144 @@ final class DocumentProgramOwnerTests: XCTestCase {
     XCTAssertTrue(fixture.preparationErrors.isEmpty, fixture.diagnostics)
   }
 
+  func testPressureParksNeighbourAndPromotesItsSameAdmissionToAnAcceptedTarget() async throws {
+    let document = DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "body", source:
+      "\\section{Current}\\hypertarget{current}{}Current paper remains interactive."
+      + "\\newpage\\section{Neighbour}\\hypertarget{neighbour}{}The accepted target keeps its original queue place.")])
+    let resources = SceneRenderResources(maximumWebSurfaces: 2, reservedInteractiveSlots: 0)
+    let fixture = try ProgramFixture(document: document, resources: resources, showsNeighbour: false)
+    defer { fixture.close() }
+    try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.canonicalPaper(in: 0) }
+    let current = WeakDocumentPaper(fixture.paper(in: 0))
+    let currentID = ObjectIdentifier(try XCTUnwrap(current.value))
+    _ = try await XCTUnwrap(current.value).evaluateJavaScript("window.pressureDocument=document;window.pressureValue=47;true")
+    let owner = DocumentPagePresentationOwner.shared(documentID: document.id, resources: resources)
+    let source = DocumentRenderRegistry.shared.session(documentID: document.id, resources: resources).source(document)
+    XCTAssertEqual(source.layout?.pageCount, 2)
+    let blocker = DocumentWebCoordinator(resources: resources, onRenderReady: .init { _ in },
+      onPageLayout: { _ in }, onStateChange: { _, _ in nil })
+    let blockerHost = DocumentWebHost()
+    fixture.window.rootViewController?.view.addSubview(blockerHost)
+    blockerHost.frame = .init(x: 720, y: 0, width: 240, height: 340)
+    let blockerDocument = DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "blocker", source: "An independently admitted paper holds the second slot.")])
+    blocker.update(document: blockerDocument, state: .init(id: blockerDocument.id, actor: UUID()),
+      selectedPageIndex: 0, capturesSnapshot: false, onRenderReady: .init { _ in },
+      onPageLayout: { _ in }, onStateChange: { _, _ in nil })
+    let geometry = DocumentRenderRegistry.shared.geometry(document: blockerDocument, pageIndex: 0)
+    blocker.mount(in: blockerHost, physicalSize: .init(width: geometry.width, height: geometry.height),
+      isInteractive: true, priority: .currentPage)
+    defer { blocker.invalidate(); blockerHost.removeFromSuperview() }
+    try await wait(message: { fixture.diagnostics }) { blocker.hasCanonicalPixels && resources.activeWebSurfaceCount == 2 }
+    fixture.restorePresentation(1)
+    try await wait(message: { fixture.diagnostics }) { owner.pendingPassivePageIndex == 1 && resources.pendingWebRequestCount == 1 }
+    let optionalID = try XCTUnwrap(owner.pendingPassiveSurfaceRequestID)
+
+    resources.handleMemoryPressure(.warning)
+    try await wait(message: { fixture.diagnostics }) { resources.pendingWebRequestCount == 0 }
+    await owner.observePendingPresentationWork()
+    XCTAssertNil(owner.pendingPassiveSurfaceRequestID)
+    XCTAssertTrue(fixture.canonicalPaper(in: 0))
+    XCTAssertEqual(ObjectIdentifier(try XCTUnwrap(current.value)), currentID)
+    XCTAssertTrue(fixture.preparationErrors.isEmpty, fixture.diagnostics)
+    resources.handleMemoryPressure(.critical)
+    await owner.observePendingPresentationWork()
+    try await wait(message: { fixture.diagnostics }) {
+      fixture.snapshot(in: 1) == nil && resources.pendingReclamationCount == 0 && resources.pendingWebRequestCount == 0
+    }
+    XCTAssertEqual(resources.pendingWebRequestCount, 0, "A latched pressure event cannot resume optional admission")
+
+    resources.handleMemoryPressure(.normal)
+    try await wait(message: { fixture.diagnostics }) { owner.pendingPassivePageIndex == 1 && resources.pendingWebRequestCount == 1 }
+    let resumedID = try XCTUnwrap(owner.pendingPassiveSurfaceRequestID)
+    XCTAssertNotEqual(resumedID, optionalID)
+    XCTAssertTrue(DocumentRenderRegistry.shared.session(documentID: document.id, resources: resources).source(document) === source,
+      "Normal pressure resumes the same source without a terminal preparation failure")
+    fixture.activity.prepare(1, presentation: .live)
+    XCTAssertEqual(owner.pendingPassiveSurfaceRequestID, resumedID,
+      "Accepting this exact neighbour promotes its original admission")
+    resources.handleMemoryPressure(.warning)
+    XCTAssertEqual(resources.pendingWebRequestCount, 1, "The offscreen accepted target is required under pressure")
+    XCTAssertEqual(owner.pendingPassiveSurfaceRequestID, resumedID)
+    XCTAssertTrue(fixture.canonicalPaper(in: 0))
+    let heap = try await XCTUnwrap(current.value).evaluateJavaScript("pressureDocument===document && pressureValue===47")
+    XCTAssertEqual(heap as? Bool, true)
+    XCTAssertTrue(blocker.hasCanonicalPixels, "Pressure keeps independently admitted physical owners")
+
+    blocker.invalidate(); blockerHost.removeFromSuperview()
+    try await wait(message: { fixture.diagnostics }) { fixture.ready[1] == true && fixture.canonicalPaper(in: 1) }
+    let incoming = WeakDocumentPaper(fixture.paper(in: 1))
+    let incomingID = ObjectIdentifier(try XCTUnwrap(incoming.value))
+    let demand = try XCTUnwrap(fixture.activity.preparationDemand)
+    fixture.activity.update(true); fixture.activity.didInstall(demand)
+    fixture.select(1); fixture.activity.prepare(nil); fixture.activity.update(false)
+    try await wait(message: { fixture.diagnostics }) {
+      fixture.canonicalPaper(in: 1) && (incoming.value?.navigationDelegate as? DocumentWebCoordinator)?.nativeInputIsReady(in: fixture.hosts[1]) == true
+    }
+    XCTAssertEqual(ObjectIdentifier(try XCTUnwrap(fixture.paper(in: 1))), incomingID,
+      "Native landing uses the admitted target without rebuilding its WebKit")
+    XCTAssertTrue(fixture.preparationErrors.isEmpty, fixture.diagnostics)
+    fixture.close()
+    try await wait(message: { fixture.diagnostics }) { resources.pendingWebRequestCount == 0 && resources.activeWebSurfaceCount == 0 }
+  }
+
+  func testRequiredRemountOutlivesItsWithdrawnNativeSubscriber() async throws {
+    let document = DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "body", source:
+      "\\section{Current}The admitted current page retains the canonical PDF."
+      + "\\newpage\\section{Target}An optional native subscriber can become the required paper.")])
+    let resources = SceneRenderResources(maximumWebSurfaces: 2, reservedInteractiveSlots: 0)
+    let fixture = try ProgramFixture(document: document, resources: resources, showsNeighbour: false)
+    defer { fixture.close() }
+    try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.canonicalPaper(in: 0) }
+    let session = DocumentRenderRegistry.shared.session(documentID: document.id, resources: resources)
+    let source = session.source(document)
+    XCTAssertEqual(source.layout?.pageCount, 2)
+    let admission = resources.rasterAdmission
+    let held = try XCTUnwrap(resources.reserveDerivedBytes(min(admission.byteLimit - admission.heldBytes,
+      admission.passiveByteLimit - admission.pinnedBytes - admission.passiveReservedBytes), priority: .passive))
+    defer { held.release() }
+    let renderer = DocumentWebCoordinator(resources: resources, renderSession: session, onRenderReady: .init { _ in },
+      onPageLayout: { _ in }, onStateChange: { _, _ in nil })
+    let targetHost = DocumentWebHost()
+    fixture.window.rootViewController?.view.addSubview(targetHost)
+    targetHost.frame = .init(x: 720, y: 0, width: 240, height: 340)
+    defer { renderer.onPresentationChange = {}; renderer.invalidate(); targetHost.removeFromSuperview() }
+    var failures: [String] = [], withdrawals = 0
+    let geometry = try XCTUnwrap(source.layout).paper(on: 1).geometry
+    let size = CGSize(width: geometry.width, height: geometry.height)
+    renderer.update(document: document, state: .init(id: document.id, actor: UUID()),
+      selectedPageIndex: 1, capturesSnapshot: false, onRenderReady: .init { _ in },
+      onPageLayout: { _ in }, onStateChange: { _, _ in nil },
+      onPreparationFailure: { failures.append(String(describing: $0)) }, preparationRequestID: UUID())
+    renderer.onPresentationChange = { [weak renderer] in
+      guard let renderer, withdrawals == 0, renderer.acquisitionError is CancellationError else { return }
+      withdrawals += 1
+      // Promotion occurs synchronously before the withdrawn native task throws
+      // to the sender already waiting on that task, in the same source generation.
+      renderer.mount(in: targetHost, physicalSize: size, isInteractive: true, priority: .currentPage)
+    }
+    renderer.mount(in: targetHost, physicalSize: size, isInteractive: false, priority: .visible, purpose: { .optional })
+    try await wait(message: { fixture.diagnostics }) {
+      renderer.webView != nil && renderer.installedPaper == nil && resources.pendingDerivedRequestCount > 0
+        && renderer.pagePreparationTrace?.phasesMS["frameTaskAt"] != nil
+    }
+    let admitted = WeakDocumentPaper(renderer.webView)
+    let admittedID = ObjectIdentifier(try XCTUnwrap(admitted.value))
+    let token = try XCTUnwrap(renderer.payload?.renderToken)
+    resources.handleMemoryPressure(.warning)
+    held.release()
+    try await wait(message: { fixture.diagnostics + " targetErrors=\(failures)" }) { renderer.hasCanonicalPixels }
+    try await renderer.awaitPresentation(token: token)
+    XCTAssertEqual(withdrawals, 1)
+    XCTAssertTrue(failures.isEmpty, "The retired optional subscriber cannot fail the required remount: \(failures)")
+    XCTAssertNil(renderer.acquisitionError)
+    XCTAssertEqual(ObjectIdentifier(try XCTUnwrap(renderer.webView)), admittedID)
+    XCTAssertTrue(renderer.nativeInputIsReady(in: targetHost))
+    XCTAssertTrue(fixture.canonicalPaper(in: 0))
+    XCTAssertTrue(session.source(document) === source)
+    renderer.invalidate(); targetHost.removeFromSuperview(); fixture.close()
+    try await wait(message: { fixture.diagnostics }) { resources.activeWebSurfaceCount == 0 && resources.pendingWebRequestCount == 0 }
+  }
+
   func testAcceptedDistantTargetPreemptsARealQueuedNeighbourWithoutRetiringCurrentPaper() async throws {
     let document = DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "body", source:
       "\\section{Current}\\hypertarget{current}{}Current paper remains interactive."

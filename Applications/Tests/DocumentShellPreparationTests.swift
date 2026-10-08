@@ -6,6 +6,32 @@ import XCTest
 
 @MainActor
 final class DocumentShellPreparationTests: XCTestCase {
+  func testPressureRetiresOnlyTheUnusedShellAndForegroundCannotReopenAdmission() async throws {
+    let resources = SceneRenderResources(maximumWebSurfaces: 1)
+    let preparation = DocumentShellPreparation(resources: resources)
+    var adopted: DocumentWebCoordinator?
+    defer { adopted?.invalidate(); preparation.stop() }
+    preparation.prepareIfIdle()
+    await waitUntil { preparation.unusedCoordinator?.commonRuntimeReady == true }
+    let unused = WeakPreparedDocumentWeb(preparation.unusedCoordinator?.webView)
+    resources.handleMemoryPressure(.warning)
+    await waitUntil { resources.activeWebSurfaceCount == 0 && unused.value == nil }
+    preparation.allowPreparationAfterForeground()
+    for _ in 0..<10 { preparation.prepareIfIdle() }
+    XCTAssertNil(preparation.unusedCoordinator)
+    XCTAssertEqual(resources.pendingWebRequestCount, 0)
+    resources.handleMemoryPressure(.normal)
+    preparation.prepareIfIdle()
+    await waitUntil { preparation.unusedCoordinator?.commonRuntimeReady == true }
+    XCTAssertTrue(preparation.adoptForCurrentPage { adopted = $0 })
+    let current = try XCTUnwrap(adopted?.webView)
+    resources.handleMemoryPressure(.critical)
+    for _ in 0..<10 { await Task.yield() }
+    XCTAssertTrue(adopted?.webView === current, "The adopted required runtime survives optional reclamation")
+    XCTAssertEqual(resources.activeWebSurfaceCount, 1)
+    XCTAssertFalse(adopted?.isInvalidated ?? true)
+  }
+
   func testCommonStartupHasOneBodyFreeRuntimeAndPublishesNoDocumentReadiness() async throws {
     let resources = SceneRenderResources(maximumWebSurfaces: 1)
     let preparation = DocumentShellPreparation(resources: resources)

@@ -1,6 +1,7 @@
 #if os(iOS)
 import Foundation
 import NotebookCore
+import Observation
 import UIKit
 import WebKit
 
@@ -433,6 +434,7 @@ final class DocumentPagePresentationOwner {
   /// The configured passive request, including a real queued WebKit admission.
   /// This observation neither starts preparation nor changes readiness.
   var pendingPassivePageIndex: Int? { passive?.payload?.pageIndex }
+  var pendingPassiveSurfaceRequestID: UUID? { passive?.pendingSurfaceRequestID }
 
   private init(documentID: UUID, resources: SceneRenderResources) {
     self.documentID = documentID; self.resources = resources
@@ -463,6 +465,17 @@ final class DocumentPagePresentationOwner {
     admissionObserver = NotificationCenter.default.addObserver(forName: SceneRenderResources.didGainRasterAdmission,
       object: resources, queue: .main) { [weak self] _ in
       Task { @MainActor [weak self] in self?.retryAfterAdmission() }
+    }
+    observeOptionalPreparation()
+  }
+
+  private func observeOptionalPreparation() {
+    guard !stopped else { return }
+    _ = withObservationTracking { resources.optionalPreparationGeneration } onChange: { [weak self] in
+      Task { @MainActor [weak self] in
+        guard let self, !stopped else { return }
+        observeOptionalPreparation(); schedule()
+      }
     }
   }
 
@@ -589,6 +602,23 @@ final class DocumentPagePresentationOwner {
   }
   private var inputLocked: Bool { gestureLocked || programOwner.hasFocus }
 
+  private func preparationPurpose(for entry: Entry) -> ScenePreparationPurpose {
+    guard !stopped, entries[entry.id] === entry else { return .optional }
+    return entry.input.isCurrent || entry.id == mountedID
+      || preparationDemand?.pageIndex == entry.input.pageIndex
+      || entry.acceptedTurnCaptures > 0 || hasStagedPaper(for: entry) ? .required : .optional
+  }
+
+  private func permitsPreparation(of entry: Entry) -> Bool {
+    resources.allowsOptionalPreparation || preparationPurpose(for: entry) == .required
+  }
+
+  private func passiveMatches(_ entry: Entry) -> Bool {
+    passive?.payload?.pageIndex == entry.input.pageIndex
+      && passive?.payload?.renderToken == entry.input.paperToken
+      && passive?.payload?.source.matches(entry.input.document) == true
+  }
+
   func update(_ id: UUID, input: DocumentPagePresentation, host: DocumentWebHost) {
     guard !stopped else { return }
     // Only a matching pending action is observed. Its target may still be a
@@ -691,6 +721,9 @@ final class DocumentPagePresentationOwner {
         || entry.activity?.installedPreparation?.id == stagedPaper.demandID
         || (preparationDemand == nil && entry.activity?.isTransitioning == true) { return }
     if stagedPaper != nil { retirePassiveRenderer(); return }
+    if passiveStage == .preparing, entries.values.contains(where: {
+      preparationPurpose(for: $0) == .required && passiveMatches($0)
+    }) { return }
     let sourceChanged = current.map { current in
       passive?.payload.map { !$0.source.matches(current.input.document) } ?? false
     } ?? false
@@ -729,7 +762,9 @@ final class DocumentPagePresentationOwner {
       reason: latest == nil ? "retired" : "accepted")
     // Current paper preparation and accepted input keep their owner. Only an
     // unrelated passive preparation/capture can be preempted by this demand.
-    if passive != nil { interruptPassiveWork() }
+    if passive != nil, !entries.values.contains(where: {
+      preparationPurpose(for: $0) == .required && passiveMatches($0)
+    }) { interruptPassiveWork() }
     schedule()
   }
 
@@ -919,10 +954,10 @@ final class DocumentPagePresentationOwner {
       }
       try Task.checkCancellation()
       guard !inputLocked, entry.input.token == input.token else { return }
-      if hasStagedPaper(for: entry), let incoming = passive {
-        // The non-curl destination already owns canonical pixels in its native
-        // container. Exchange the two existing paper coordinators; do not render
-        // the destination again or manufacture a full-page bridge snapshot.
+      if hasStagedPaper(for: entry) || (passiveStage == .preparing && passiveMatches(entry)), let incoming = passive {
+        // A matching destination keeps its paper coordinator and any queued
+        // admission. A prepared live landing additionally keeps its canonical
+        // pixels in the native container through this exchange.
         let outgoing = paper!
         stagedPaper = nil; passive = nil
         paper = incoming
@@ -965,9 +1000,14 @@ final class DocumentPagePresentationOwner {
       }
       try await paper.awaitPaperReady(token: input.paperToken)
     } else if current == nil, source == nil {
+      guard permitsPreparation(of: entry) else { return }
       let renderer = passiveRenderer(in: host, input: input)
       configure(renderer, input: input, page: input.pageIndex)
-      renderer.mount(in: passiveHost, physicalSize: physicalSize(input), isInteractive: false, priority: .visible)
+      renderer.mount(in: passiveHost, physicalSize: physicalSize(input), isInteractive: false, priority: .visible,
+        purpose: { [weak self, weak entry] in
+          guard let self, let entry else { return .optional }
+          return preparationPurpose(for: entry)
+        })
       try await renderer.awaitPaperReady(token: input.paperToken)
     }
     guard let layout = source?.layout else { return }
@@ -990,7 +1030,7 @@ final class DocumentPagePresentationOwner {
     let target = preparationDemand?.pageIndex
     if let target, !entries.values.contains(where: { $0.input.pageIndex == target }) { return }
     let candidates = entries.values.filter {
-      guard $0.requiresPreparation else { return false }
+      guard $0.requiresPreparation, permitsPreparation(of: $0) else { return false }
       guard let target else { return true }
       // A retained overview thumbnail is a picture consumer, not the native
       // destination of a page request. Wait for the physical host if needed.
@@ -1002,6 +1042,7 @@ final class DocumentPagePresentationOwner {
     }) {
       guard !stopped, !Task.isCancelled else { return }
       if candidate.id == current?.id { continue }
+      guard permitsPreparation(of: candidate) else { continue }
       guard needsPicture(candidate), failures[candidate.input.token] == nil,
         !hasTerminalFailure(for: candidate) else { continue }
       if requestsLivePaper(for: candidate), candidate.host?.window == nil { continue }
@@ -1028,21 +1069,43 @@ final class DocumentPagePresentationOwner {
         observe("passive_page_configured", entryID: candidate.id, page: candidate.input.pageIndex, renderer: renderer)
         landingTrace = renderer.pagePreparationTrace
         measurements?.observeLanding(landingTrace, stage: .preparing)
-        let liveDemand = requestsLivePaper(for: candidate) ? preparationDemand : nil
+        var liveDemand = requestsLivePaper(for: candidate) ? preparationDemand : nil
         // Only curl needs an immutable composite. A non-curl landing transfers
         // canonical paper and mounts each program at the actual handoff.
-        let preparationHost = liveDemand == nil ? passiveHost : (candidate.host ?? passiveHost)
+        var preparationHost = liveDemand == nil ? passiveHost : (candidate.host ?? passiveHost)
         renderer.preservesFallback = true
-        renderer.mount(in: preparationHost, physicalSize: physicalSize(candidate.input), isInteractive: false, priority: .visible)
+        renderer.mount(in: preparationHost, physicalSize: physicalSize(candidate.input), isInteractive: false, priority: .visible,
+          purpose: { [weak self, weak candidate] in
+            guard let self, let candidate else { return .optional }
+            return preparationPurpose(for: candidate)
+          })
         observe("passive_page_mounted", entryID: candidate.id, page: candidate.input.pageIndex, renderer: renderer)
         if liveDemand != nil { try await renderer.awaitPresentation(token: candidate.input.paperToken) }
         else { try await renderer.awaitPaperReady(token: candidate.input.paperToken) }
+        try Task.checkCancellation()
+        guard permitsPreparation(of: candidate) else { offerPassiveRenderer(renderer); continue }
+        // Acceptance can promote this exact queued neighbour while its paper
+        // is preparing. Reuse its admission and reread the physical handoff.
+        if requestsLivePaper(for: candidate), let demand = preparationDemand,
+          let targetHost = candidate.host, targetHost.window != nil {
+          let needsNativeMount = liveDemand == nil || preparationHost !== targetHost
+          liveDemand = demand; preparationHost = targetHost
+          if needsNativeMount {
+            renderer.mount(in: targetHost, physicalSize: physicalSize(candidate.input), isInteractive: false, priority: .visible,
+              purpose: { [weak self, weak candidate] in
+                guard let self, let candidate else { return .optional }
+                return preparationPurpose(for: candidate)
+              })
+            try await renderer.awaitPresentation(token: candidate.input.paperToken)
+          }
+        }
         observe("passive_page_paper_ready", entryID: candidate.id, page: candidate.input.pageIndex, renderer: renderer)
-        if let liveDemand {
+        if liveDemand != nil {
           try Task.checkCancellation()
-          guard preparationDemand == liveDemand, entries[candidate.id] === candidate, candidate.input.token == token,
+          guard requestsLivePaper(for: candidate), let latestDemand = preparationDemand,
+            entries[candidate.id] === candidate, candidate.input.token == token,
             candidate.host === preparationHost else { throw CancellationError() }
-          stagedPaper = .init(entryID: candidate.id, token: token, demandID: liveDemand.id)
+          stagedPaper = .init(entryID: candidate.id, token: token, demandID: latestDemand.id)
           passiveStage = .staged
           preparationHost.installProgramOverlay()
           _ = preparationHost.programOverlay.present([], paperSize: physicalSize(candidate.input), interactive: false)
@@ -1064,6 +1127,12 @@ final class DocumentPagePresentationOwner {
         measurements?.observeLanding(landingTrace, stage: .completed)
         observe("passive_page_capture_finished", entryID: candidate.id, page: candidate.input.pageIndex, renderer: renderer)
         guard candidate.input.token == token, entries[candidate.id] === candidate else { raster.release(); continue }
+        if requestsLivePaper(for: candidate) {
+          // This capture was already admitted before acceptance. Let it finish,
+          // then stage the same renderer against the latest live demand rather
+          // than publishing snapshot-only readiness for its native landing.
+          raster.release(); passiveStage = .preparing; needsWork = true; return
+        }
         pictures[candidate.input.pageIndex] = Picture(token: token, source: source?.message.key ?? "", raster: raster)
         offerPassiveRenderer(renderer)
         candidate.host?.installSnapshot(raster); candidate.host?.removeFailure()
@@ -1491,6 +1560,7 @@ final class DocumentPagePresentationOwner {
         entry.releaseTurnFrame()
       }
       guard mayPrewarm, entry.acceptedTurnCaptures == 0,
+        resources.allowsOptionalPreparation,
         entry.turnFrame == nil, entry.turnFramePreparation == nil else { continue }
       _ = prepareResidentTurnFrame(entry, material: material, opportunistic: true)
     }
@@ -1509,7 +1579,7 @@ final class DocumentPagePresentationOwner {
     if opportunistic {
       // No pending allocation and no reclamation for a speculative GPU copy.
       // Paper readiness/input have already been published by their owner.
-      guard resources.pendingDerivedRequestCount == 0, entry.turnFrameRefusal != admission,
+      guard resources.allowsOptionalPreparation, resources.pendingDerivedRequestCount == 0, entry.turnFrameRefusal != admission,
         admission.fits(additionalBytes: bytes / 2, additionalCount: 1) else { return nil }
     }
     let operation = UUID()
@@ -1520,11 +1590,13 @@ final class DocumentPagePresentationOwner {
       do {
         try Task.checkCancellation()
         if entry?.turnFramePreparationIsRequired != true {
+          guard resources.allowsOptionalPreparation else { throw CancellationError() }
           guard resources.pendingDerivedRequestCount == 0,
             resources.rasterAdmission.fits(additionalBytes: bytes / 2, additionalCount: 1) else { throw SceneRenderError.resourceLimit }
         }
         let frame = try await PageTurnFrame.compose(size: key.size, scale: key.scale,
           images: [.init(image: material.image, frame: .init(origin: .zero, size: key.size))], resources: resources,
+          purpose: { [weak entry] in entry?.turnFramePreparationIsRequired == true ? .required : .optional },
           retaining: [material.owner])
         try Task.checkCancellation()
         guard let self, let entry, self.entries[entry.id] === entry,
@@ -1537,7 +1609,8 @@ final class DocumentPagePresentationOwner {
       } catch {
         if let entry, entry.turnFramePreparationID == operation {
           entry.turnFramePreparation = nil; entry.turnFramePreparationID = nil
-          entry.turnFramePreparationIsRequired = false; entry.turnFrameRefusal = resources.rasterAdmission
+          entry.turnFramePreparationIsRequired = false
+          entry.turnFrameRefusal = error is CancellationError ? nil : resources.rasterAdmission
         }
         throw error
       }
@@ -1559,6 +1632,7 @@ final class DocumentPagePresentationOwner {
         // Reuse an already submitted passive GPU copy when possible. A refused
         // speculative allocation must not veto this accepted physical turn.
         if let task = entry.turnFramePreparation {
+          entry.turnFramePreparationIsRequired = true
           do {
             let frame = try await task.value
             try Task.checkCancellation()

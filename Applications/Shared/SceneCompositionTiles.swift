@@ -945,6 +945,7 @@ final class SceneCompositionTiles {
   private struct SourceJob {
     let id: UUID
     var demand: SceneSourceDemand
+    var purpose: ScenePreparationPurpose
     let capture: SceneRasterCaptureRequest
     let task: Task<Void, Never>
   }
@@ -969,6 +970,14 @@ final class SceneCompositionTiles {
       object: resources, queue: .main) { [weak self] _ in
       Task { @MainActor [weak self] in self?.refineAfterAdmission() }
     }
+    observeOptionalPreparation()
+  }
+
+  private func observeOptionalPreparation() {
+    _ = withObservationTracking { resources.optionalPreparationGeneration } onChange: { [weak self] in
+      Task { @MainActor [weak self] in self?.observeOptionalPreparation() }
+    }
+    if resources.allowsOptionalPreparation { refreshSources() }
   }
 
   func prepare(source: SceneCompositionSource, presence: SessionPresence, frame: WorkspaceSceneFrame,
@@ -991,6 +1000,11 @@ final class SceneCompositionTiles {
   private func prepare(_ request: Request) {
     guard !stopped else { return }
     lastRequest = request
+    for (address, job) in sourceJobs where job.purpose == .optional {
+      if sourcePreparationPurpose(address, demand: job.demand, presence: request.presence, frame: request.frame) == .required {
+        sourceJobs[address]?.purpose = .required
+      }
+    }
     guard request.permitsPreparation() else { cancelPreparation(); return }
     resumeRetiredRuntimeCapturesIfAdmitted()
     // Camera samples replace one waiting address. They cannot repeatedly
@@ -1013,7 +1027,8 @@ final class SceneCompositionTiles {
       guard !receipt.hasCurrentPixels, sourceJobs[address] == nil,
         sourceFailure(address, demand: receipt.demand) == nil else { return false }
       if published?.runtimeOwners.contains(address) == true { return false }
-      return true
+      return resources.allowsOptionalPreparation
+        || sourcePreparationPurpose(address, demand: receipt.demand, presence: presence, frame: frame) == .required
     } ?? false
     let coveredPaint = published.flatMap { cohort -> SceneCompositionCohort? in
       guard dirtySources.isEmpty, !needsSourceScheduling,
@@ -1337,6 +1352,9 @@ final class SceneCompositionTiles {
       // Source/state identity owns the job. Pinch density and viewport crops
       // retarget that same executor instead of resetting its readiness work.
       sourceJobs[address]?.demand = demand
+      if sourcePreparationPurpose(address, demand: demand, presence: presence, frame: frame) == .required {
+        sourceJobs[address]?.purpose = .required
+      }
       job.capture.update(demand.policy)
     }
     sourceFailures = sourceFailures.filter { address, failure in
@@ -1366,12 +1384,17 @@ final class SceneCompositionTiles {
       // Its admitted on-screen WebKit is the sole executor of a live
       // interactive program. Static tiles and passive exports use jobs below.
       if runtimeOwners.contains(address) { continue }
+      let purpose = sourcePreparationPurpose(address, demand: receipt.demand, presence: presence, frame: frame)
+      guard purpose == .required || resources.allowsOptionalPreparation else { continue }
       guard sourceJobs.count < 32 else { break }
       let id = UUID(), demand = receipt.demand, programSource = lastRequest?.source
       let capture = SceneRasterCaptureRequest(policy: demand.policy)
       let work = Task { @MainActor [weak self, resources] in
         defer { self?.sourceWork[id] = nil }
         do {
+          guard !Task.isCancelled, self?.sourceJobs[address]?.id == id,
+            resources.allowsOptionalPreparation || self?.sourceJobs[address]?.purpose == .required
+          else { throw CancellationError() }
           let focus = InteractiveElementReference.board(boardID: address.plane.boardID, elementID: address.elementID)
           let current = try await AgentWebCoordinator.captureCurrent(focus: focus, element: demand.source, resources: resources)
           let raster: RasterLease
@@ -1385,6 +1408,7 @@ final class SceneCompositionTiles {
             raster = try await resources.prepareRaster(demand.source, requestedScale: demand.minimumScale, region: demand.region,
             executionSource: focus,
             captureRequest: capture, programStore: await programSource?.programStore(),
+            purpose: { [weak self] in self?.sourceJobs[address]?.purpose ?? .optional },
             permitsPreparation: { [weak self] in
               guard let self, !stopped, sourceJobs[address]?.id == id else { return false }
               // This address already owns an admitted executor. A transient
@@ -1411,12 +1435,32 @@ final class SceneCompositionTiles {
             refreshSources()
           }
           isPreparing = preparingRequest != nil || !sourceJobs.isEmpty
+          if error is CancellationError, !Task.isCancelled, let request = lastRequest,
+            resources.allowsOptionalPreparation
+              || sourcePreparationPurpose(address, demand: failedDemand, presence: request.presence, frame: request.frame) == .required {
+            // A required promotion or normal event may precede this queued
+            // revocation's delivery. Removing its id supplies the missing wake.
+            refreshSources()
+          }
         }
       }
-      sourceJobs[address] = .init(id: id, demand: demand, capture: capture, task: work)
+      sourceJobs[address] = .init(id: id, demand: demand, purpose: purpose, capture: capture, task: work)
       sourceWork[id] = work
     }
     isPreparing = preparingRequest != nil || !sourceJobs.isEmpty
+  }
+
+  private func sourcePreparationPurpose(_ address: SceneSourceAddress, demand: SceneSourceDemand,
+    presence: SessionPresence, frame: WorkspaceSceneFrame) -> ScenePreparationPurpose {
+    if lastRequest?.pinned.contains(.element(address.elementID)) == true { return .required }
+    if let cover = address.plane.coverID,
+      lastRequest?.pinned.contains(.item(cover)) == true || presence.focusedItemID == cover { return .required }
+    guard let origin = demand.worldOrigin,
+      let view = address.plane.boardID == presence.boardID ? presence : frame.presences[address.plane.boardID]
+    else { return .optional }
+    let visible = SceneSourceCapture.visibleRect(source: demand.source, origin: origin,
+      transform: demand.bodyTransform, presence: view)
+    return visible.isEmpty || visible.isNull ? .optional : .required
   }
 
   private func markSourceDirty(_ address: SceneSourceAddress) {

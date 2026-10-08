@@ -275,6 +275,38 @@ final class CoverOpeningPhysicsTests: XCTestCase {
   }
 
   @MainActor
+  func testPressureBlocksRestingCaptureAndPreservesAcceptedCurl() async throws {
+    let resources = SceneRenderResources.shared
+    resources.handleMemoryPressure(.normal)
+    let (window, controller) = try coverWindow()
+    defer { window.isHidden = true; resources.handleMemoryPressure(.normal) }
+    let owner = UUID(), coverRevision = revision(title: "Pressure cover")
+    func update(_ progress: Double) {
+      controller.update(ownerID: owner, progress: progress, revision: coverRevision,
+        backsideColor: .document, preparesCoverMotion: true,
+        canPrepare: { true }, cornerRadius: 12, cover: AnyView(Color.red))
+    }
+    update(0); window.layoutIfNeeded()
+    resources.handleMemoryPressure(.critical)
+    for _ in 0..<20 { await Task.yield() }
+    XCTAssertEqual(controller.capturedCoverCount, 0, "Queued resting work rechecks the pool without a view update")
+    update(0.3)
+    for _ in 0..<200 where controller.submittedCurlFrameCount == 0 {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    XCTAssertEqual(controller.capturedCoverCount, 1)
+    XCTAssertGreaterThan(controller.submittedCurlFrameCount, 0, "Accepted opening retains required GPU admission")
+    let before = controller.submittedCurlFrameCount
+    resources.handleMemoryPressure(.warning)
+    update(0.6)
+    for _ in 0..<200 where controller.submittedCurlFrameCount == before {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    XCTAssertEqual(controller.capturedCoverCount, 1, "The same accepted cut survives repeated pressure")
+    XCTAssertGreaterThan(controller.submittedCurlFrameCount, before)
+  }
+
+  @MainActor
   func testRestingCoverDefersCaptureDuringContactAndReusesItForOpening() async throws {
     let (window, controller) = try coverWindow()
     defer { window.isHidden = true }
