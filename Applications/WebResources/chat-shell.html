@@ -275,10 +275,11 @@ window.updateMessages=async function(update){
  const {focus,work,turnStatuses}=update;
  const messages=order.map(id=>messagesByID.get(id));
  if(messages.some(x=>!x))throw new Error('Incomplete transcript delta');
+ const live=new Set(order);
+ for(const id of messagesByID.keys())if(!live.has(id))messagesByID.delete(id);
  const viewport=transcriptViewport(root,changed);
  const expanded=new Set([...root.querySelectorAll('details[open]')].map(x=>x.dataset.key));
  const selection=changed?null:textSelection(dirty);
- const live=new Set(order);
  for(const [id,article] of articles)if(!live.has(id)){pendingMath.delete(article);article.remove();articles.delete(id);}
  for(const id of controls)if(!dirty.has(id)&&articles.has(id))updateMessageActions(messagesByID.get(id),articles.get(id));
  for(const m of messages)if(dirty.has(m.id)||!articles.has(m.id)){

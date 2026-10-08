@@ -74,6 +74,31 @@ test('chat delta retains unchanged nodes and prepares only changed message bodie
   await publish({...base,order:['older-tool','tool'],upserts:[{...activity,id:'older-tool'}]});assert.equal(h.root.children[0],group);assert.equal(group.open,true);h.close();
 });
 
+test('full retry after partial publication removes orphan bodies and preserves the unchanged live article',async()=>{
+  const h=chatHarness(),keep=message('keep','Stable prose [Focus link](https://example.com)');
+  try{
+    await h.window.updateMessages(update('one',[keep,message('old','Old body')]));await h.settle();
+    const article=h.root.querySelector('[data-item-id="keep"]'),link=article.querySelector('a');
+    const text=article.querySelector('.content p').firstChild,selection=h.window.getSelection();
+    link.focus();selection.setBaseAndExtent(text,0,text,6);
+    const parse=h.window.marked.parse;
+    h.window.marked.parse=(source:string)=>{if(source==='Fail during rendering')throw new Error('fixture partial publication');return parse(source);};
+    await assert.rejects(h.window.updateMessages(update('one',[
+      keep,message('orphan','Partially admitted body'),message('broken','Fail during rendering')
+    ],{upserts:[message('orphan','Partially admitted body'),message('broken','Fail during rendering')],removed:['old']})),/fixture partial publication/);
+    assert.equal(h.evaluate('messagesByID.has("orphan")'),true,'The failure must occur after real map mutation');
+    h.window.marked.parse=parse;
+    // The native owner lost its ACK. Retry sends all current rows on the same
+    // DOM; it cannot enumerate every ID left by an interrupted JS publication.
+    await h.window.updateMessages(update('one',[keep,message('new','Current body')]));await h.settle();
+    assert.equal(h.evaluate('JSON.stringify([...messagesByID.keys()].sort())'),'["keep","new"]');
+    assert.deepEqual([...h.root.querySelectorAll('article')].map((row:any)=>row.dataset.itemId),['keep','new']);
+    assert.equal(h.root.querySelector('[data-item-id="keep"]'),article);
+    assert.equal(h.document.activeElement,link);assert.equal(selection.toString(),'Stable');
+    assert.doesNotMatch(h.root.textContent,/Partially admitted|Fail during|Old body/);
+  }finally{h.close();}
+});
+
 test('plain text and reset publish before startup and only current bodies are cloned',async()=>{
   const startup=deferred(),h=chatHarness({startup:startup.promise});
   await accepted(h.window.updateMessages(update('old',[message('same','$old$')])));

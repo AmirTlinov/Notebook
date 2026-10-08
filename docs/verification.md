@@ -55,6 +55,13 @@ PASS**, без failures/skips. После трёх явных `Void?` annotation
 сохранены [в результате](audit-evidence/2026-10-08/codex-notification-delivery/results.json).
 Установленная пара265 сохранена. NB28, DP16 и остальные критерии GUI-498 открыты.
 
+**8 октября, GUI-498/DP17:** после частичной ошибки JavaScript следующая полная
+публикация удаляет лишние body-map entries и сохраняет текущий article, focus и
+selection. **18 DOM + 3 bundled MathJax cases PASS**, 0 failures/skips; 70 входов
+`be1dc303…` неизменны. [Результат](audit-evidence/2026-10-08/chat-publication-retry/results.json)
+относится к DOM и локальным engine/assets. Native Coordinator recovery и physical
+iPad ещё не приняты; установленная пара265 сохранена.
+
 GUI-541 уже в общей `main`: плагины, marketplace-регистрации, панель, браузерная
 отрисовка и Swift WASM адаптер удалены; GUI-539 отменён. Историческая подписанная
 пара262 и sandbox repair сборщика описаны

@@ -174,6 +174,8 @@ reset the transcript. Streaming and history pagination retain the existing
 article/group nodes, the reading anchor, open work groups and unchanged text
 selection. Markdown and MathJax run only for changed message contents, never for
 a status-only update. The WebKit surface accepts only this delta route.
+An accepted order retires body-map entries outside that order, including values
+left by an interrupted JavaScript publication.
 
 ### Полный текст в Notebook
 

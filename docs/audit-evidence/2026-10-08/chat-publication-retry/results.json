@@ -1,0 +1,41 @@
+{
+  "format": 1,
+  "issue": "GUI-498",
+  "positions": [
+    "DP17"
+  ],
+  "status": "selected-DOM-regressions-passed",
+  "baseCommit": "2cc63cd4ef3b1042f26015758f133a5716a30fbf",
+  "change": "An accepted transcript order retires body-map entries outside that order, including values left by a partially applied failed publication. A complete retry preserves unchanged live articles, focus and selection.",
+  "files": {
+    "Applications/WebResources/chat-shell.html": "66cd58c23444f3a9c821fd152f6e9c28032efb5ed7cd4a88f9b49c8bfedf417b",
+    "MCP/test/chat-mathjax-state.test.ts": "57224e39106c07e779354aeefe1e5b3b0c8ba46eb1fb5aab7b8ac0c11eafc6cd",
+    "MCP/test/chat-render.test.ts": "2b3b54cadb2d2ff4719541673aec8dc6ac1132ecf8cce47f7b76098d220c1b34"
+  },
+  "checks": {
+    "DOMCases": 18,
+    "bundledMathJaxCases": 3,
+    "passed": 21,
+    "failed": 0,
+    "skipped": 0,
+    "cancelled": 0,
+    "durationMs": 1192.782792,
+    "node": "v24.21.0",
+    "evidence": ".build/gui498-chat-dom-20261008-v1",
+    "eventsSHA256": "b496d9e52917a6efd01f18bc97ac00c0ca36652dda18769ec758c67b567d7452",
+    "stderrBytes": 0
+  },
+  "source": {
+    "sha256": "be1dc3035307fad9927d1f67a1cc6f0dd9792cc80afc56b7eaa546b06861d19f",
+    "files": 70,
+    "unchanged": true,
+    "scope": "WebResources including local engine/font assets, both selected tests, Node event reporter and MCP dependency pins; native/Core sources excluded."
+  },
+  "physicalAcceptance": false,
+  "installationChanged": false,
+  "open": [
+    "Native Coordinator retry/process-recovery compilation and execution",
+    "Physical iPad scenarios",
+    "DP16 streaming delta transfer and full104 acceptance"
+  ]
+}
