@@ -1,0 +1,25 @@
+{
+  "slowest": [
+    {
+      "seconds": 11.32354199886322,
+      "target": "NotebookTests",
+      "test": "DocumentProgramOwnerTests/testRequiredRemountOutlivesItsWithdrawnNativeSubscriber()"
+    },
+    {
+      "seconds": 2.4009510278701782,
+      "target": "NotebookTests",
+      "test": "DocumentProgramOwnerTests/testPressureParksNeighbourAndPromotesItsSameAdmissionToAnAcceptedTarget()"
+    },
+    {
+      "seconds": 0.16388201713562012,
+      "target": "NotebookTests",
+      "test": "DocumentShellPreparationTests/testPressureRetiresOnlyTheUnusedShellAndForegroundCannotReopenAdmission()"
+    }
+  ],
+  "targets": {
+    "NotebookTests": {
+      "seconds": 13.888375043869019,
+      "tests": 3
+    }
+  }
+}

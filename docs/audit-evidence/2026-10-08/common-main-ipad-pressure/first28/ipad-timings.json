@@ -1,0 +1,89 @@
+{
+  "slowest": [
+    {
+      "seconds": 15.32570505142212,
+      "target": "NotebookUITests",
+      "test": "DrawingResponsivenessTests/testDocumentClosesWithPinchAndReopensByDoubleTap()"
+    },
+    {
+      "seconds": 2.366805076599121,
+      "target": "NotebookTests",
+      "test": "DocumentProgramOwnerTests/testPressureParksNeighbourAndPromotesItsSameAdmissionToAnAcceptedTarget()"
+    },
+    {
+      "seconds": 2.2945330142974854,
+      "target": "NotebookTests",
+      "test": "DocumentProgramOwnerTests/testAcceptedDistantTargetPreemptsARealQueuedNeighbourWithoutRetiringCurrentPaper()"
+    },
+    {
+      "seconds": 1.9500340223312378,
+      "target": "NotebookTests",
+      "test": "DocumentProgramOwnerTests/testStaticTurnFramesReuseTheirExactPixelsAcrossLandingAndReplaceEditedSource()"
+    },
+    {
+      "seconds": 1.3191030025482178,
+      "target": "NotebookTests",
+      "test": "NotebookDrawingToolsTests/testAuthoredToolsPersistOnPageBoardAndCoverThroughOneUndoQueue()"
+    },
+    {
+      "seconds": 1.3012709617614746,
+      "target": "NotebookTests",
+      "test": "DocumentProgramOwnerTests/testPressureReclaimsAnUnselectedMountedNeighbourWithoutRevokingCurrentInput()"
+    },
+    {
+      "seconds": 1.2043449878692627,
+      "target": "NotebookTests",
+      "test": "DocumentProgramOwnerTests/testStationaryPassivePageRefinesAfterSharedPressureIsReleased()"
+    },
+    {
+      "seconds": 1.1683709621429443,
+      "target": "NotebookTests",
+      "test": "DocumentShellPreparationTests/testCurrentPageAdoptsTheSameReadyCoordinatorWebAndAdmission()"
+    },
+    {
+      "seconds": 1.0604280233383179,
+      "target": "NotebookTests",
+      "test": "DocumentProgramOwnerTests/testLiveTargetSupersessionAndCloseCancelItsQueuedAdmission()"
+    },
+    {
+      "seconds": 1.052035927772522,
+      "target": "NotebookTests",
+      "test": "SceneRenderResourcesTests/testHundredThousandRasterEntriesKeepFreeAdmissionAndChurnBounded()"
+    },
+    {
+      "seconds": 1.0415750741958618,
+      "target": "NotebookTests",
+      "test": "DocumentProgramOwnerTests/testRequiredRemountOutlivesItsWithdrawnNativeSubscriber()"
+    },
+    {
+      "seconds": 0.7404379844665527,
+      "target": "NotebookTests",
+      "test": "NotebookDrawingToolsTests/testMarkerRunsThroughMeasuredPageInputWithoutPressureOrQuickShape()"
+    },
+    {
+      "seconds": 0.6273230314254761,
+      "target": "NotebookTests",
+      "test": "SceneCompositionTests/testAdmittedSourceSurvivesInputPauseAndCancelledPrivateRepaint()"
+    },
+    {
+      "seconds": 0.6184040307998657,
+      "target": "NotebookTests",
+      "test": "SceneWebRasterPreparationTests/testPressureWithdrawsPreparingOptionalWebAndKeepsItsPromotedSource()"
+    },
+    {
+      "seconds": 0.30795300006866455,
+      "target": "NotebookTests",
+      "test": "PageRasterPreparationTests/testPressureParksNeighboursButAdmitsTheCurrentPageAndAcceptedLanding()"
+    }
+  ],
+  "targets": {
+    "NotebookTests": {
+      "seconds": 17.77451801300049,
+      "tests": 27
+    },
+    "NotebookUITests": {
+      "seconds": 15.32570505142212,
+      "tests": 1
+    }
+  }
+}

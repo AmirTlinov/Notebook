@@ -1,0 +1,397 @@
+[
+  {
+    "path": "codex-resources.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "codex-resources.stdout.log",
+    "bytes": 582,
+    "sha256": "701d6620ab6042b832faac58053f89a7a3f9da853eeee118725f8451f648ec14"
+  },
+  {
+    "path": "commands.json",
+    "bytes": 53826,
+    "sha256": "516d6105e10ff7d7dad0bc0f6468ed7035761e6e44e72a154cccabeedd362d3a"
+  },
+  {
+    "path": "completed.json",
+    "bytes": 385,
+    "sha256": "bb0bc2067c78a88cd12096f56f748af07be5f4541f66d042b8e9616c6830e7c0"
+  },
+  {
+    "path": "execution-summary.json",
+    "bytes": 386476,
+    "sha256": "4c47b479ecd500f7ec37561c4a7ba23c4d29dbca33066886bb49b12c9c4bd0d7"
+  },
+  {
+    "path": "generate-project.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "generate-project.stdout.log",
+    "bytes": 177,
+    "sha256": "83ff91fd67f392e6d25df2e78150ac8274b0f4eea0a8894c6ebdc1c05a5f3bfb"
+  },
+  {
+    "path": "ipad-build-for-testing.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "ipad-build-for-testing.stdout.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "ipad-execution.json",
+    "bytes": 296,
+    "sha256": "e10ecca8ff6a1b57ca77781271fa54463ff7f81adf5696e0978d398a9ece741d"
+  },
+  {
+    "path": "ipad-inventory.json",
+    "bytes": 277936,
+    "sha256": "38476bf38ae9855bb515c53350365cc601d375e3d9e8cdf2769c3d2ebf78a531"
+  },
+  {
+    "path": "ipad-inventory.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "ipad-inventory.stdout.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "ipad-native-test-cleanup-after.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "ipad-native-test-cleanup-after.stdout.log",
+    "bytes": 77,
+    "sha256": "400b9b6e5dd2b81955c55a4a017fa5beafb08a9655663266daa1ec5f7b103de8"
+  },
+  {
+    "path": "ipad-native-test-cleanup-before.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "ipad-native-test-cleanup-before.stdout.log",
+    "bytes": 78,
+    "sha256": "dd6cc41d24dd69f7bbd6f9642f03003de020ef59f1e121e304047c9829a11711"
+  },
+  {
+    "path": "ipad-summary.json",
+    "bytes": 966,
+    "sha256": "8cd9b509033280e73e08b8530f5e7a12f037cdb177c9117fb981e53b1c775bc1"
+  },
+  {
+    "path": "ipad-summary.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "ipad-summary.stdout.log",
+    "bytes": 740,
+    "sha256": "418d13acc8cc15febcdf7ed144ef99585eee9ff481a32145d4df1bf3cbefe833"
+  },
+  {
+    "path": "ipad-tests.json",
+    "bytes": 1717,
+    "sha256": "947e8e1a00ec9b1a8cca75c360dd8b6a9c51c79879daa1dd0cda0d9f1e10bb11"
+  },
+  {
+    "path": "ipad-tests.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "ipad-tests.stdout.log",
+    "bytes": 1170,
+    "sha256": "2f5865238cfa519b1123fafa58e6d21552da6f9dedd327b62147a8d114600650"
+  },
+  {
+    "path": "ipad-timings.json",
+    "bytes": 308,
+    "sha256": "a735f713934a3e909e389d0b3879a15bd7c350e3a442eaf798415999715f5bc2"
+  },
+  {
+    "path": "ipad.stderr.log",
+    "bytes": 368,
+    "sha256": "362b562c6224de51fc416ebbf069423a55ab38952ff591805e65667e076cdd9a"
+  },
+  {
+    "path": "ipad.stdout.log",
+    "bytes": 154,
+    "sha256": "6c1eda0a9fadcac2fb08f0c8552bbe1ddda41eb04ee6d318f58251e1b4885cea"
+  },
+  {
+    "path": "physical-ipad-lock-state-execution.json",
+    "bytes": 691,
+    "sha256": "ebb9aeea5653e7e93e82a8a6097a27b0e2bf1f5a94fb76867f7cb9da1352a4d2"
+  },
+  {
+    "path": "physical-ipad-lock-state-inventory.json",
+    "bytes": 691,
+    "sha256": "b4e87d72432920db6d3ce0d9ea4f23ba163337ba370191783a469b5190cfbe07"
+  },
+  {
+    "path": "physical-ipad-lock-state.json",
+    "bytes": 681,
+    "sha256": "4ef8d5ee2c9115f688efeb7448fda208becb688bc92de9cbc3bce5021f9fdb51"
+  },
+  {
+    "path": "physical-ipad.json",
+    "bytes": 12856,
+    "sha256": "3eeb844930a0599d065d0615d9003f981ec193318f0e72f2c42d39b696de835c"
+  },
+  {
+    "path": "physical-ipad.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "physical-ipad.stdout.log",
+    "bytes": 6538,
+    "sha256": "a23679e2c14c67fd6f9940ed65b0eb3ceda54b94c3e1b63bacf6e569082306a4"
+  },
+  {
+    "path": "selection.json",
+    "bytes": 4662,
+    "sha256": "90d430a3fcee60744921aeb7e2414e72691b2ca2aa0135b1b57964defc0e3d9c"
+  },
+  {
+    "path": "source-after.json",
+    "bytes": 329733,
+    "sha256": "04d9eee433b06449736bea00c99f7e14cb9343e0352b6895f96c37976732a951"
+  },
+  {
+    "path": "source-before.json",
+    "bytes": 329733,
+    "sha256": "04d9eee433b06449736bea00c99f7e14cb9343e0352b6895f96c37976732a951"
+  },
+  {
+    "path": "source-delta.json",
+    "bytes": 2090,
+    "sha256": "b5b7eaf656b376ce47c20f70ce7fc2b46a42082401221488e927c79606c4f625"
+  },
+  {
+    "path": "toolchain-after-iphoneosSDK.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "toolchain-after-iphoneosSDK.stdout.log",
+    "bytes": 7,
+    "sha256": "62cbab419e9a35d0a85cc03b9d4bb98e5dae96591632655688ac714805d333be"
+  },
+  {
+    "path": "toolchain-after-macosSDK.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "toolchain-after-macosSDK.stdout.log",
+    "bytes": 7,
+    "sha256": "8e78a5c0c20fa1f07a154dbd8319d52d2bc1c38974a5b30047e300e8d0ec8a23"
+  },
+  {
+    "path": "toolchain-after-node.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "toolchain-after-node.stdout.log",
+    "bytes": 9,
+    "sha256": "f2ec568164f99546161909b0189b57bb5be3e80f8e2ccd8a51a4aed8c4055a04"
+  },
+  {
+    "path": "toolchain-after-npm.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "toolchain-after-npm.stdout.log",
+    "bytes": 7,
+    "sha256": "3feff640caf45a44b1f043aee65d8fdfec6379d905d9efc1a2ba8b51a9f23652"
+  },
+  {
+    "path": "toolchain-after-python.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "toolchain-after-python.stdout.log",
+    "bytes": 14,
+    "sha256": "917601090ffb73a030e3eaa8b7a01c41400cad4b61366b4218d7756a5733b66c"
+  },
+  {
+    "path": "toolchain-after-swift.stderr.log",
+    "bytes": 30,
+    "sha256": "bbc8b176d3c74d4c5a7fd00b40280f98168e116d5272273bfe8e71407625540e"
+  },
+  {
+    "path": "toolchain-after-swift.stdout.log",
+    "bytes": 98,
+    "sha256": "04630ab8fa201f57c63c59730e638135e32584a97e16e004a417eb8ed283dc83"
+  },
+  {
+    "path": "toolchain-after-xcode.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "toolchain-after-xcode.stdout.log",
+    "bytes": 33,
+    "sha256": "694b44731d0b415c5b11d844151e466d7f5e200a95627efda377f232f1a6ab77"
+  },
+  {
+    "path": "toolchain-after-xcodegen.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "toolchain-after-xcodegen.stdout.log",
+    "bytes": 16,
+    "sha256": "bf8aa757345fcd22d1fd26e760aa058f02991e2d930686b8eaf750cd6e5f8532"
+  },
+  {
+    "path": "toolchain-after.json",
+    "bytes": 318,
+    "sha256": "5d490c0c11042b67180f7aa900961d34b44c362ca4c89bf657ef438ebc8a7027"
+  },
+  {
+    "path": "toolchain-iphoneosSDK.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "toolchain-iphoneosSDK.stdout.log",
+    "bytes": 7,
+    "sha256": "62cbab419e9a35d0a85cc03b9d4bb98e5dae96591632655688ac714805d333be"
+  },
+  {
+    "path": "toolchain-macosSDK.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "toolchain-macosSDK.stdout.log",
+    "bytes": 7,
+    "sha256": "8e78a5c0c20fa1f07a154dbd8319d52d2bc1c38974a5b30047e300e8d0ec8a23"
+  },
+  {
+    "path": "toolchain-node.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "toolchain-node.stdout.log",
+    "bytes": 9,
+    "sha256": "f2ec568164f99546161909b0189b57bb5be3e80f8e2ccd8a51a4aed8c4055a04"
+  },
+  {
+    "path": "toolchain-npm.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "toolchain-npm.stdout.log",
+    "bytes": 7,
+    "sha256": "3feff640caf45a44b1f043aee65d8fdfec6379d905d9efc1a2ba8b51a9f23652"
+  },
+  {
+    "path": "toolchain-python.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "toolchain-python.stdout.log",
+    "bytes": 14,
+    "sha256": "917601090ffb73a030e3eaa8b7a01c41400cad4b61366b4218d7756a5733b66c"
+  },
+  {
+    "path": "toolchain-swift.stderr.log",
+    "bytes": 30,
+    "sha256": "bbc8b176d3c74d4c5a7fd00b40280f98168e116d5272273bfe8e71407625540e"
+  },
+  {
+    "path": "toolchain-swift.stdout.log",
+    "bytes": 98,
+    "sha256": "04630ab8fa201f57c63c59730e638135e32584a97e16e004a417eb8ed283dc83"
+  },
+  {
+    "path": "toolchain-xcode.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "toolchain-xcode.stdout.log",
+    "bytes": 33,
+    "sha256": "694b44731d0b415c5b11d844151e466d7f5e200a95627efda377f232f1a6ab77"
+  },
+  {
+    "path": "toolchain-xcodegen.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "toolchain-xcodegen.stdout.log",
+    "bytes": 16,
+    "sha256": "bf8aa757345fcd22d1fd26e760aa058f02991e2d930686b8eaf750cd6e5f8532"
+  },
+  {
+    "path": "toolchain.json",
+    "bytes": 318,
+    "sha256": "5d490c0c11042b67180f7aa900961d34b44c362ca4c89bf657ef438ebc8a7027"
+  },
+  {
+    "path": "typesetter-resources-iphoneos.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "typesetter-resources-iphoneos.stdout.log",
+    "bytes": 75,
+    "sha256": "03f34ea7cd00d599964b795b0bfc521418a4746804a4e1338eb48439b5758498"
+  },
+  {
+    "path": "unlocked-ipad-execution.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "unlocked-ipad-execution.stdout.log",
+    "bytes": 142,
+    "sha256": "89c90ba92bc3c0a805b5b68c335045693646604753da9d0ab87e560a55961a27"
+  },
+  {
+    "path": "unlocked-ipad-inventory.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "unlocked-ipad-inventory.stdout.log",
+    "bytes": 142,
+    "sha256": "89c90ba92bc3c0a805b5b68c335045693646604753da9d0ab87e560a55961a27"
+  },
+  {
+    "path": "unlocked-ipad.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "unlocked-ipad.stdout.log",
+    "bytes": 142,
+    "sha256": "89c90ba92bc3c0a805b5b68c335045693646604753da9d0ab87e560a55961a27"
+  },
+  {
+    "path": "verification.json",
+    "bytes": 366762,
+    "sha256": "63ec5c0b3a1a057bb18d07d1562bbb6da1cec63414c3560cc7a45ae879e840e8"
+  }
+]

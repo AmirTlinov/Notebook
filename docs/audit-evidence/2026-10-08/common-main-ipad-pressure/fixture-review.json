@@ -1,0 +1,49 @@
+{
+  "schema": "notebook.memory.ipad-fixture-review.v1",
+  "status": "READY",
+  "reviewScope": "Source-only review of two frozen fixture files against unchanged production owners; no new test result.",
+  "previousPhysicalSource": {
+    "sha256": "18e237019f81543422b379c46034107506b62b8c57a1c9068fc72f2db49b63b8",
+    "count": 1731
+  },
+  "fixtures": {
+    "Applications/Tests/DocumentProgramOwnerTests.swift": "6b28b7c0f493e541f7afc3ee20aea50e5a8e0d135247dbd6d4e6c2db1d30cf40",
+    "Applications/Tests/DocumentShellPreparationTests.swift": "4dad7e412283635dc62dc14895534c6ba5e9280481e69fffbd3613afbf0bc1eb"
+  },
+  "findings": [
+    {
+      "test": "testPressureParksNeighbourAndPromotesItsSameAdmissionToAnAcceptedTarget",
+      "lines": "DocumentProgramOwnerTests.swift:1148-1153",
+      "result": "Pool queue empty and coordinator acquisition completion are distinct MainActor edges. The revised wait observes both queue removal and the already asserted pending-ID retirement; it does not schedule new work.",
+      "proof": "SceneRenderResources1578-1587 removes/resumes optional waiters synchronously. DocumentWebView824-845 clears acquisitionTask in resumed catch; pendingSurfaceRequestID477 stays nonnil until that edge. DocumentPagePresentationOwner485-487 joins only its work task.",
+      "originalAssertionsAndTimeoutPreserved": true
+    },
+    {
+      "test": "testRequiredRemountOutlivesItsWithdrawnNativeSubscriber",
+      "lines": "DocumentProgramOwnerTests.swift:1243-1251",
+      "result": "Wait now reaches both canonical pixels and the existing final assertion's actual native input readiness. It preserves the same physical renderer/WebKit identity, failure/withdrawal count, source identity and cleanup oracles.",
+      "rationaleCorrection": "Canonical hasCanonicalPixels403-405 already includes renderIsReady via interactionIsReady392. The additional readiness is acceptsInput plus exact installed interactive/key/active host, not renderIsReady alone.",
+      "proof": "nativeInputIsReady641-644, refreshInputAdmission614-627 and host.hasInteractiveSurface3078-3099 establish the extra physical/input gate.",
+      "originalAssertionsAndTimeoutPreserved": true
+    },
+    {
+      "test": "testPressureRetiresOnlyTheUnusedShellAndForegroundCannotReopenAdmission",
+      "lines": "DocumentShellPreparationTests.swift:12,27-42",
+      "result": "The callback synchronously mounts the same prepared coordinator/physical viewport into a retained native host with current-page priority and required default purpose before the old Entry is released. Weak pre-adopt WebKit and ObjectIdentifier avoid a hidden strong pre-adoption WebKit pin.",
+      "proof": "DocumentShellPreparation70-78 requires synchronous adoption. Coordinator host358/webView1439 are weak. DocumentWebView734-747 transfers subtree and772-777 updates the same lease role; production DocumentPagePresentationOwner976-990 follows this owner path.",
+      "retainedHostObservedBeforeAndAfterCritical": true,
+      "exactWebKitIdentityAsserted": true,
+      "originalReclaimForegroundNormalCriticalAssertionsAndTimeoutPreserved": true,
+      "existingCleanupPreserved": true
+    }
+  ],
+  "unchangedProduction": {
+    "Applications/Shared/DocumentPagePresentationOwner.swift": "941b4962bf8ec509a8592bdfdc1df441c9f2fcd6b4f88811a18b1633ebc1071b",
+    "Applications/Shared/DocumentShellPreparation.swift": "95a5cbf019145da0a8cc8225514d6a6f962a9071ea7aa39d0577f95718066e3a",
+    "Applications/Shared/DocumentWebView.swift": "b813035069bf98266f1177d19b9897db936434a43bb9525f504ad26b14c05bf4",
+    "Applications/Shared/SceneRenderResources.swift": "60a5f6107d24b77bffdd48433440b9afed0480efd9e88efacffa68a8d789fbd1"
+  },
+  "blockers": [],
+  "nextCheck": "Root's single selected physical rerun of these three original failed selectors.",
+  "reviewerActions": "Read source/diff/captured records; write this authorized .build JSON only. No source edit, parse, runner, signature, installation or index mutation."
+}

@@ -1,0 +1,116 @@
+{
+  "schema": "notebook.ipad-preparation.source-review.v1",
+  "status": "READY",
+  "scope": "Review of existing build/signature/source/toolchain records only; no build, signature, installation, execution or live-container action performed by reviewer.",
+  "head": "69342a7ca83ee1152202799089f7ddae1f99653c",
+  "evidenceRoot": ".build/common-main-ipad-build-20261008-v1",
+  "inputs": {
+    "build-preparation.json": "d70b7a6120e87385ca4128cdbff42659cd57eaea7679f986a95ea1f298894bd9",
+    "ui-runner-reseal.json": "1163a843886a578443d0dc57cddea995fa6958689281f389ae8f0f7ba2e082c7",
+    "commands.json": "b81cba5904453318a915d3fb29cdaac6df874a71dc4bd9db0f43a4dc85471051",
+    "source-before.json": "ceb9a6282f59d0dd182dba7fa350d106b1577a7ffd3fcfc65e114fb984688e9d",
+    "source-after.json": "ceb9a6282f59d0dd182dba7fa350d106b1577a7ffd3fcfc65e114fb984688e9d",
+    "toolchain.json": "5d490c0c11042b67180f7aa900961d34b44c362ca4c89bf657ef438ebc8a7027",
+    "toolchain-after.json": "5d490c0c11042b67180f7aa900961d34b44c362ca4c89bf657ef438ebc8a7027",
+    "prepared-run.xctestrun": "07bd9a4d53c902bc7683f7108efaf91c7597c19b09c7dc6a52bb86564f7f3f2b",
+    "ui-runner-resealed-deep-strict-valid-requirement.stderr.log": "27dd33b2ce6048622e1e7e549002ee1de69c7311b0fddc8d8ca46654cfb1f69c",
+    "ui-plugin-after-reseal-strict.stderr.log": "a21c868c97b4eb099629ce3fb3703dbde1d5a09962c048cf49b060ad137fd508",
+    "native-app-after-reseal-deep-strict.stderr.log": "282daa57e9aeffe57c3f0a50699439cbb81c3cfcee5cbd13b0f7840a26a65b77"
+  },
+  "source": {
+    "sha256": "18e237019f81543422b379c46034107506b62b8c57a1c9068fc72f2db49b63b8",
+    "count": 1731,
+    "allFourSourceCutsEqual": true,
+    "headBeforeEqualsAfter": true
+  },
+  "toolchain": {
+    "allFourRecordsEqual": true,
+    "xcode": "Xcode 27.0 / 27A266a",
+    "swift": "Apple Swift 6.4 / swiftlang-6.4.0.34.1",
+    "iphoneosSDK": "24A430"
+  },
+  "build": {
+    "command": "ipad-build-for-testing",
+    "exitCode": 0,
+    "cwd": "/Users/amir/Documents/projects/Notebook/Applications",
+    "destination": "generic/platform=iOS",
+    "buildArgvExactlyMatchesSummary": true,
+    "plannedSelectorsExactlyMatchSelection": true,
+    "plannedSelectorsUnique": true,
+    "plannedCount": 28
+  },
+  "reseal": {
+    "command": "ui-runner-one-outer-reseal",
+    "exitCode": 0,
+    "deepSigning": false,
+    "preserves": "identifier,entitlements,flags,requirements,runtime",
+    "onlyOuterExecutableSignatureAndOuterSealChanged": true,
+    "childExecutableBeforeEqualsAfter": "fec59de8abbf5e4cac8e4572e1b896802c179923667f49c05199181cb6a71e9e",
+    "childInfoAndSealUnchanged": true,
+    "outerMachOUUIDUnchanged": true,
+    "certificateBeforeEqualsAfter": "9535baba0844a6de39c0eae00f68de680f169f9635bedb3b14b550085ad1b2e6",
+    "profileBeforeEqualsAfter": "15b7e60d61bd96d60505957291e882c76b55c85b2af8e470c7ff7682e8d78a8a",
+    "admittedTeam": "M94V58FCVP",
+    "admittedPhysicalUDIDPresentInBothProfiles": true,
+    "xctestrunUnchanged": true
+  },
+  "successfulSignatureChecks": [
+    {
+      "command": "ui-runner-resealed-deep-strict-valid-requirement",
+      "exitCode": 0,
+      "checks": [
+        "deep",
+        "strict",
+        "designated",
+        "explicit Apple/team/identifier requirement"
+      ],
+      "inlineRequirementBeginsWithEquals": true
+    },
+    {
+      "command": "ui-plugin-after-reseal-strict",
+      "exitCode": 0,
+      "checks": [
+        "strict",
+        "designated"
+      ]
+    },
+    {
+      "command": "native-app-after-reseal-deep-strict",
+      "exitCode": 0,
+      "checks": [
+        "deep",
+        "strict",
+        "designated"
+      ]
+    }
+  ],
+  "preservedFailures": [
+    {
+      "commands": [
+        "signature-verify-NotebookUITests-Runner.app",
+        "ui-runner-sealed-resource-detail"
+      ],
+      "exitCode": 1,
+      "cause": "Stale outer hash2 for exactly one child executable; captured resource comparison has one mismatch and no nested signed-code entries."
+    },
+    {
+      "command": "ui-runner-resealed-deep-strict",
+      "exitCode": 1,
+      "cause": "Inline -R requirement omitted leading '=' and was treated as a file; later valid-requirement command passes without another signing mutation."
+    }
+  ],
+  "boundaries": {
+    "executedCount": 0,
+    "installed": false,
+    "launched": false,
+    "physicalAcceptance": false,
+    "offlineInventory": "unavailable",
+    "offlineInventoryCommandExitCode": 0,
+    "offlineInventoryErrors": "Both native test targets require a concrete device; generic destination output contains errors and no admitted individual-test inventory.",
+    "deviceLockRecordedPasscodeRequired": true,
+    "nativeTests": "pending",
+    "runtimeWarnings": "not measured; no native test execution",
+    "buildDiagnostics": "Existing build log contains warnings and exit-zero task diagnostics; this review does not claim a warning-free build."
+  },
+  "blockers": []
+}

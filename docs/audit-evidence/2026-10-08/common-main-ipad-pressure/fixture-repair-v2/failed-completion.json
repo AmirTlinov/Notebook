@@ -1,0 +1,60 @@
+{
+  "cleanup": {
+    "ipad-native-test-cleanup-after": true
+  },
+  "counts": {
+    "failed": 1,
+    "passed": 2,
+    "skipped": 0
+  },
+  "executed": [
+    "NotebookTests/DocumentProgramOwnerTests/testPressureParksNeighbourAndPromotesItsSameAdmissionToAnAcceptedTarget",
+    "NotebookTests/DocumentProgramOwnerTests/testRequiredRemountOutlivesItsWithdrawnNativeSubscriber",
+    "NotebookTests/DocumentShellPreparationTests/testPressureRetiresOnlyTheUnusedShellAndForegroundCannotReopenAdmission"
+  ],
+  "failedDetails": "failed-case-1.json",
+  "first25PASS": "remain on original18e/1731 cut; no generic28 cleanrun claim",
+  "fixturePatch": "fixture-repair.patch",
+  "format": 1,
+  "noFurtherRepeat": true,
+  "outcomes": {
+    "NotebookTests/DocumentProgramOwnerTests/testPressureParksNeighbourAndPromotesItsSameAdmissionToAnAcceptedTarget": "Passed",
+    "NotebookTests/DocumentProgramOwnerTests/testRequiredRemountOutlivesItsWithdrawnNativeSubscriber": "Failed",
+    "NotebookTests/DocumentShellPreparationTests/testPressureRetiresOnlyTheUnusedShellAndForegroundCannotReopenAdmission": "Passed"
+  },
+  "ownerValidation": [
+    {
+      "accepted": false,
+      "api": "native_execution",
+      "expectedForFailedRoute": true,
+      "owner": "Applications/notebook_check_reports.py",
+      "reason": "XCTest сообщил failed/skipped/неполный результат."
+    },
+    {
+      "accepted": false,
+      "api": "validate_summary",
+      "expectedForFailedRoute": true,
+      "owner": "Applications/notebook_check_reports.py",
+      "reason": "Нужны исполненные тесты без ошибок, пропусков и runtime warnings."
+    }
+  ],
+  "planned": [
+    "NotebookTests/DocumentProgramOwnerTests/testPressureParksNeighbourAndPromotesItsSameAdmissionToAnAcceptedTarget",
+    "NotebookTests/DocumentProgramOwnerTests/testRequiredRemountOutlivesItsWithdrawnNativeSubscriber",
+    "NotebookTests/DocumentShellPreparationTests/testPressureRetiresOnlyTheUnusedShellAndForegroundCannotReopenAdmission"
+  ],
+  "runnerTerminal": true,
+  "runtimeWarnings": [],
+  "scope": "only3-originalfailed-physical-selectors-after2fixture-repairs",
+  "source": {
+    "count": 1731,
+    "sha256": "9d8d7e866b8ccbef43f65adf01078e792546752aee23664ebce67427b9650d43"
+  },
+  "sourceDelta": "source-delta-first28.json",
+  "sourceUnchanged": true,
+  "status": "failed",
+  "timings": "ipad-timings.json",
+  "toolchainUnchanged": true,
+  "xcodeExitCode": 65,
+  "xcresult": "ipad.xcresult"
+}

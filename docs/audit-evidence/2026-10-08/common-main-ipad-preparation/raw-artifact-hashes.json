@@ -1,0 +1,822 @@
+[
+  {
+    "path": "build-driver.py",
+    "bytes": 9236,
+    "sha256": "f21ba11778e5bbdc24339b8b9e788b2d23c9288b14da11ca744daf3e4cc8f12a"
+  },
+  {
+    "path": "build-preparation.json",
+    "bytes": 12856,
+    "sha256": "d70b7a6120e87385ca4128cdbff42659cd57eaea7679f986a95ea1f298894bd9"
+  },
+  {
+    "path": "commands.json",
+    "bytes": 116721,
+    "sha256": "b81cba5904453318a915d3fb29cdaac6df874a71dc4bd9db0f43a4dc85471051"
+  },
+  {
+    "path": "finish-metadata.py",
+    "bytes": 5254,
+    "sha256": "ba6be0e4ac9dc79017c7a6deedbe0aed16cce1724e12c5eccaefd6d319358e7c"
+  },
+  {
+    "path": "generate-project.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "generate-project.stdout.log",
+    "bytes": 177,
+    "sha256": "83ff91fd67f392e6d25df2e78150ac8274b0f4eea0a8894c6ebdc1c05a5f3bfb"
+  },
+  {
+    "path": "ipad-build-for-testing.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "ipad-build-for-testing.stdout.log",
+    "bytes": 26028,
+    "sha256": "c7cdda1494bbd4936fed36e06047a80e3c33038b04a470a268631ffcda74ccf2"
+  },
+  {
+    "path": "ipad-offline-inventory.json",
+    "bytes": 500,
+    "sha256": "699f5bb06908e7c39d3f98127c00ce5ff9017ad98d7326894d40d94ca132ec9b"
+  },
+  {
+    "path": "ipad-offline-inventory.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "ipad-offline-inventory.stdout.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "native-app-after-reseal-deep-strict.stderr.log",
+    "bytes": 331,
+    "sha256": "282daa57e9aeffe57c3f0a50699439cbb81c3cfcee5cbd13b0f7840a26a65b77"
+  },
+  {
+    "path": "native-app-after-reseal-deep-strict.stdout.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "physical-executable-Notebook.app.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "physical-executable-Notebook.app.stdout.log",
+    "bytes": 180,
+    "sha256": "2870d3346d780abade0c5592f5135c6f31a6bb39368784212253bb14d7bc8800"
+  },
+  {
+    "path": "physical-executable-NotebookUITests-Runner.app.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "physical-executable-NotebookUITests-Runner.app.stdout.log",
+    "bytes": 494,
+    "sha256": "3ce4cd0937a8a5e7a56552c9bb67a3abc9bb3b33e142a0bb96dc518cab690dbb"
+  },
+  {
+    "path": "physical-ipad-lock-state.json",
+    "bytes": 671,
+    "sha256": "c6b999216abf1fa52a6d1847c73d19b55eb90ecfd251ab9341df19301b7da866"
+  },
+  {
+    "path": "physical-ipad-lock-state.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "physical-ipad-lock-state.stdout.log",
+    "bytes": 141,
+    "sha256": "6ec7377324f5f1738919b707cf05f7ab2e7b0df547438041f4c28e5651d1182a"
+  },
+  {
+    "path": "prepared-run.xctestrun",
+    "bytes": 7192,
+    "sha256": "07bd9a4d53c902bc7683f7108efaf91c7597c19b09c7dc6a52bb86564f7f3f2b"
+  },
+  {
+    "path": "profile-Notebook.app.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "profile-Notebook.app.stdout.log",
+    "bytes": 8256,
+    "sha256": "9957666aed8b4910679848b8d20f2a17759248969b273df2fb3b02e4310d79ee"
+  },
+  {
+    "path": "profile-NotebookUITests-Runner.app.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "profile-NotebookUITests-Runner.app.stdout.log",
+    "bytes": 8256,
+    "sha256": "9957666aed8b4910679848b8d20f2a17759248969b273df2fb3b02e4310d79ee"
+  },
+  {
+    "path": "reseal-source-after.json",
+    "bytes": 329733,
+    "sha256": "ceb9a6282f59d0dd182dba7fa350d106b1577a7ffd3fcfc65e114fb984688e9d"
+  },
+  {
+    "path": "reseal-source-before.json",
+    "bytes": 329733,
+    "sha256": "ceb9a6282f59d0dd182dba7fa350d106b1577a7ffd3fcfc65e114fb984688e9d"
+  },
+  {
+    "path": "reseal-toolchain-after-iphoneosSDK.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "reseal-toolchain-after-iphoneosSDK.stdout.log",
+    "bytes": 7,
+    "sha256": "62cbab419e9a35d0a85cc03b9d4bb98e5dae96591632655688ac714805d333be"
+  },
+  {
+    "path": "reseal-toolchain-after-macosSDK.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "reseal-toolchain-after-macosSDK.stdout.log",
+    "bytes": 7,
+    "sha256": "8e78a5c0c20fa1f07a154dbd8319d52d2bc1c38974a5b30047e300e8d0ec8a23"
+  },
+  {
+    "path": "reseal-toolchain-after-node.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "reseal-toolchain-after-node.stdout.log",
+    "bytes": 9,
+    "sha256": "f2ec568164f99546161909b0189b57bb5be3e80f8e2ccd8a51a4aed8c4055a04"
+  },
+  {
+    "path": "reseal-toolchain-after-npm.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "reseal-toolchain-after-npm.stdout.log",
+    "bytes": 7,
+    "sha256": "3feff640caf45a44b1f043aee65d8fdfec6379d905d9efc1a2ba8b51a9f23652"
+  },
+  {
+    "path": "reseal-toolchain-after-python.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "reseal-toolchain-after-python.stdout.log",
+    "bytes": 14,
+    "sha256": "917601090ffb73a030e3eaa8b7a01c41400cad4b61366b4218d7756a5733b66c"
+  },
+  {
+    "path": "reseal-toolchain-after-swift.stderr.log",
+    "bytes": 30,
+    "sha256": "bbc8b176d3c74d4c5a7fd00b40280f98168e116d5272273bfe8e71407625540e"
+  },
+  {
+    "path": "reseal-toolchain-after-swift.stdout.log",
+    "bytes": 98,
+    "sha256": "04630ab8fa201f57c63c59730e638135e32584a97e16e004a417eb8ed283dc83"
+  },
+  {
+    "path": "reseal-toolchain-after-xcode.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "reseal-toolchain-after-xcode.stdout.log",
+    "bytes": 33,
+    "sha256": "694b44731d0b415c5b11d844151e466d7f5e200a95627efda377f232f1a6ab77"
+  },
+  {
+    "path": "reseal-toolchain-after-xcodegen.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "reseal-toolchain-after-xcodegen.stdout.log",
+    "bytes": 16,
+    "sha256": "bf8aa757345fcd22d1fd26e760aa058f02991e2d930686b8eaf750cd6e5f8532"
+  },
+  {
+    "path": "reseal-toolchain-after.json",
+    "bytes": 318,
+    "sha256": "5d490c0c11042b67180f7aa900961d34b44c362ca4c89bf657ef438ebc8a7027"
+  },
+  {
+    "path": "reseal-toolchain-before-iphoneosSDK.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "reseal-toolchain-before-iphoneosSDK.stdout.log",
+    "bytes": 7,
+    "sha256": "62cbab419e9a35d0a85cc03b9d4bb98e5dae96591632655688ac714805d333be"
+  },
+  {
+    "path": "reseal-toolchain-before-macosSDK.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "reseal-toolchain-before-macosSDK.stdout.log",
+    "bytes": 7,
+    "sha256": "8e78a5c0c20fa1f07a154dbd8319d52d2bc1c38974a5b30047e300e8d0ec8a23"
+  },
+  {
+    "path": "reseal-toolchain-before-node.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "reseal-toolchain-before-node.stdout.log",
+    "bytes": 9,
+    "sha256": "f2ec568164f99546161909b0189b57bb5be3e80f8e2ccd8a51a4aed8c4055a04"
+  },
+  {
+    "path": "reseal-toolchain-before-npm.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "reseal-toolchain-before-npm.stdout.log",
+    "bytes": 7,
+    "sha256": "3feff640caf45a44b1f043aee65d8fdfec6379d905d9efc1a2ba8b51a9f23652"
+  },
+  {
+    "path": "reseal-toolchain-before-python.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "reseal-toolchain-before-python.stdout.log",
+    "bytes": 14,
+    "sha256": "917601090ffb73a030e3eaa8b7a01c41400cad4b61366b4218d7756a5733b66c"
+  },
+  {
+    "path": "reseal-toolchain-before-swift.stderr.log",
+    "bytes": 30,
+    "sha256": "bbc8b176d3c74d4c5a7fd00b40280f98168e116d5272273bfe8e71407625540e"
+  },
+  {
+    "path": "reseal-toolchain-before-swift.stdout.log",
+    "bytes": 98,
+    "sha256": "04630ab8fa201f57c63c59730e638135e32584a97e16e004a417eb8ed283dc83"
+  },
+  {
+    "path": "reseal-toolchain-before-xcode.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "reseal-toolchain-before-xcode.stdout.log",
+    "bytes": 33,
+    "sha256": "694b44731d0b415c5b11d844151e466d7f5e200a95627efda377f232f1a6ab77"
+  },
+  {
+    "path": "reseal-toolchain-before-xcodegen.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "reseal-toolchain-before-xcodegen.stdout.log",
+    "bytes": 16,
+    "sha256": "bf8aa757345fcd22d1fd26e760aa058f02991e2d930686b8eaf750cd6e5f8532"
+  },
+  {
+    "path": "reseal-toolchain-before.json",
+    "bytes": 318,
+    "sha256": "5d490c0c11042b67180f7aa900961d34b44c362ca4c89bf657ef438ebc8a7027"
+  },
+  {
+    "path": "reseal-ui-runner.py",
+    "bytes": 8309,
+    "sha256": "35f415c48d02ee8b8f0bacdc83dd7dd7c280cf4f062f41fc0a6abfba48ae6e15"
+  },
+  {
+    "path": "selection.json",
+    "bytes": 3888,
+    "sha256": "5b4866f02aa37cf865099c16c18dbab972f973e219f09efa66b5ff3cd07aadd4"
+  },
+  {
+    "path": "signature-display-Notebook.app.stderr.log",
+    "bytes": 1208,
+    "sha256": "27cb4e51c98806bd12adc6d3b6c7a1d7b88b0d551d091e20e712dd8733c3a22a"
+  },
+  {
+    "path": "signature-display-Notebook.app.stdout.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "signature-display-NotebookUITests-Runner.app.stderr.log",
+    "bytes": 1246,
+    "sha256": "814a0b1493c195bcef31abc58b2b909b7e241c05805b800b86cb8b8f810e7e4f"
+  },
+  {
+    "path": "signature-display-NotebookUITests-Runner.app.stdout.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "signature-verify-Notebook.app.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "signature-verify-Notebook.app.stdout.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "signature-verify-NotebookUITests-Runner.app.stderr.log",
+    "bytes": 194,
+    "sha256": "158a9dfb4bb2018bf6997a20aa379b0208e5ed2b730075f2674fcd0dbfa01123"
+  },
+  {
+    "path": "signature-verify-NotebookUITests-Runner.app.stdout.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "signature.json",
+    "bytes": 1822,
+    "sha256": "455c7f2a73d45d565e7867acd028228e1eaead66330bddbc19b6fc534df0207b"
+  },
+  {
+    "path": "source-after.json",
+    "bytes": 329733,
+    "sha256": "ceb9a6282f59d0dd182dba7fa350d106b1577a7ffd3fcfc65e114fb984688e9d"
+  },
+  {
+    "path": "source-before.json",
+    "bytes": 329733,
+    "sha256": "ceb9a6282f59d0dd182dba7fa350d106b1577a7ffd3fcfc65e114fb984688e9d"
+  },
+  {
+    "path": "toolchain-after-iphoneosSDK.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "toolchain-after-iphoneosSDK.stdout.log",
+    "bytes": 7,
+    "sha256": "62cbab419e9a35d0a85cc03b9d4bb98e5dae96591632655688ac714805d333be"
+  },
+  {
+    "path": "toolchain-after-macosSDK.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "toolchain-after-macosSDK.stdout.log",
+    "bytes": 7,
+    "sha256": "8e78a5c0c20fa1f07a154dbd8319d52d2bc1c38974a5b30047e300e8d0ec8a23"
+  },
+  {
+    "path": "toolchain-after-node.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "toolchain-after-node.stdout.log",
+    "bytes": 9,
+    "sha256": "f2ec568164f99546161909b0189b57bb5be3e80f8e2ccd8a51a4aed8c4055a04"
+  },
+  {
+    "path": "toolchain-after-npm.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "toolchain-after-npm.stdout.log",
+    "bytes": 7,
+    "sha256": "3feff640caf45a44b1f043aee65d8fdfec6379d905d9efc1a2ba8b51a9f23652"
+  },
+  {
+    "path": "toolchain-after-python.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "toolchain-after-python.stdout.log",
+    "bytes": 14,
+    "sha256": "917601090ffb73a030e3eaa8b7a01c41400cad4b61366b4218d7756a5733b66c"
+  },
+  {
+    "path": "toolchain-after-swift.stderr.log",
+    "bytes": 30,
+    "sha256": "bbc8b176d3c74d4c5a7fd00b40280f98168e116d5272273bfe8e71407625540e"
+  },
+  {
+    "path": "toolchain-after-swift.stdout.log",
+    "bytes": 98,
+    "sha256": "04630ab8fa201f57c63c59730e638135e32584a97e16e004a417eb8ed283dc83"
+  },
+  {
+    "path": "toolchain-after-xcode.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "toolchain-after-xcode.stdout.log",
+    "bytes": 33,
+    "sha256": "694b44731d0b415c5b11d844151e466d7f5e200a95627efda377f232f1a6ab77"
+  },
+  {
+    "path": "toolchain-after-xcodegen.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "toolchain-after-xcodegen.stdout.log",
+    "bytes": 16,
+    "sha256": "bf8aa757345fcd22d1fd26e760aa058f02991e2d930686b8eaf750cd6e5f8532"
+  },
+  {
+    "path": "toolchain-after.json",
+    "bytes": 318,
+    "sha256": "5d490c0c11042b67180f7aa900961d34b44c362ca4c89bf657ef438ebc8a7027"
+  },
+  {
+    "path": "toolchain-iphoneosSDK.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "toolchain-iphoneosSDK.stdout.log",
+    "bytes": 7,
+    "sha256": "62cbab419e9a35d0a85cc03b9d4bb98e5dae96591632655688ac714805d333be"
+  },
+  {
+    "path": "toolchain-macosSDK.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "toolchain-macosSDK.stdout.log",
+    "bytes": 7,
+    "sha256": "8e78a5c0c20fa1f07a154dbd8319d52d2bc1c38974a5b30047e300e8d0ec8a23"
+  },
+  {
+    "path": "toolchain-node.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "toolchain-node.stdout.log",
+    "bytes": 9,
+    "sha256": "f2ec568164f99546161909b0189b57bb5be3e80f8e2ccd8a51a4aed8c4055a04"
+  },
+  {
+    "path": "toolchain-npm.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "toolchain-npm.stdout.log",
+    "bytes": 7,
+    "sha256": "3feff640caf45a44b1f043aee65d8fdfec6379d905d9efc1a2ba8b51a9f23652"
+  },
+  {
+    "path": "toolchain-python.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "toolchain-python.stdout.log",
+    "bytes": 14,
+    "sha256": "917601090ffb73a030e3eaa8b7a01c41400cad4b61366b4218d7756a5733b66c"
+  },
+  {
+    "path": "toolchain-swift.stderr.log",
+    "bytes": 30,
+    "sha256": "bbc8b176d3c74d4c5a7fd00b40280f98168e116d5272273bfe8e71407625540e"
+  },
+  {
+    "path": "toolchain-swift.stdout.log",
+    "bytes": 98,
+    "sha256": "04630ab8fa201f57c63c59730e638135e32584a97e16e004a417eb8ed283dc83"
+  },
+  {
+    "path": "toolchain-xcode.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "toolchain-xcode.stdout.log",
+    "bytes": 33,
+    "sha256": "694b44731d0b415c5b11d844151e466d7f5e200a95627efda377f232f1a6ab77"
+  },
+  {
+    "path": "toolchain-xcodegen.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "toolchain-xcodegen.stdout.log",
+    "bytes": 16,
+    "sha256": "bf8aa757345fcd22d1fd26e760aa058f02991e2d930686b8eaf750cd6e5f8532"
+  },
+  {
+    "path": "toolchain.json",
+    "bytes": 318,
+    "sha256": "5d490c0c11042b67180f7aa900961d34b44c362ca4c89bf657ef438ebc8a7027"
+  },
+  {
+    "path": "typesetter-resources-iphoneos.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "typesetter-resources-iphoneos.stdout.log",
+    "bytes": 75,
+    "sha256": "03f34ea7cd00d599964b795b0bfc521418a4746804a4e1338eb48439b5758498"
+  },
+  {
+    "path": "ui-plugin-after-reseal-strict.stderr.log",
+    "bytes": 421,
+    "sha256": "a21c868c97b4eb099629ce3fb3703dbde1d5a09962c048cf49b060ad137fd508"
+  },
+  {
+    "path": "ui-plugin-after-reseal-strict.stdout.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "ui-plugin-signature-verify.stderr.log",
+    "bytes": 421,
+    "sha256": "a21c868c97b4eb099629ce3fb3703dbde1d5a09962c048cf49b060ad137fd508"
+  },
+  {
+    "path": "ui-plugin-signature-verify.stdout.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "ui-reseal-after-certificate-0",
+    "bytes": 1484,
+    "sha256": "9535baba0844a6de39c0eae00f68de680f169f9635bedb3b14b550085ad1b2e6"
+  },
+  {
+    "path": "ui-reseal-after-certificate-1",
+    "bytes": 1109,
+    "sha256": "dcf21878c77f4198e4b4614f03d696d89c66c66008d4244e1b99161aac91601f"
+  },
+  {
+    "path": "ui-reseal-after-certificate-2",
+    "bytes": 1215,
+    "sha256": "b0b1730ecbc7ff4505142c49f1295e6eda6bcaed7e2c68c5be91b5a11001f024"
+  },
+  {
+    "path": "ui-reseal-after-certificate-identity.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "ui-reseal-after-certificate-identity.stdout.log",
+    "bytes": 314,
+    "sha256": "a402343146b31e02cdb147dce4066cf506b9bcf2974842a9ae6f624cb81f8891"
+  },
+  {
+    "path": "ui-reseal-after-certificates.stderr.log",
+    "bytes": 195,
+    "sha256": "6930dd9fb2a02d8c3a5f8aea92d5da903fd2bfdd8b9ec905425d980bffa22dde"
+  },
+  {
+    "path": "ui-reseal-after-certificates.stdout.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "ui-reseal-after-entitlements.stderr.log",
+    "bytes": 283,
+    "sha256": "7f764ee644ad8ef90a373cf2efa711f6fe6def42bcf2b730530ed05ea20a9923"
+  },
+  {
+    "path": "ui-reseal-after-entitlements.stdout.log",
+    "bytes": 508,
+    "sha256": "af04234e087814aa9813a56e89fc83b04aebebb525f3e688fe1616e804c1a0bb"
+  },
+  {
+    "path": "ui-reseal-after-identity.stderr.log",
+    "bytes": 1246,
+    "sha256": "da8b93ff5f31f378a6f1e445012e0224f517a1ada064a15aaff7d97772fc73e3"
+  },
+  {
+    "path": "ui-reseal-after-identity.stdout.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "ui-reseal-after-mach-o-uuid.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "ui-reseal-after-mach-o-uuid.stdout.log",
+    "bytes": 227,
+    "sha256": "744cab05364a69980daf8d7044bf1ed9051728f602355551be2be3410ce60c3b"
+  },
+  {
+    "path": "ui-reseal-after-mach-o.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "ui-reseal-after-mach-o.stdout.log",
+    "bytes": 494,
+    "sha256": "3ce4cd0937a8a5e7a56552c9bb67a3abc9bb3b33e142a0bb96dc518cab690dbb"
+  },
+  {
+    "path": "ui-reseal-after-profile.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "ui-reseal-after-profile.stdout.log",
+    "bytes": 8256,
+    "sha256": "9957666aed8b4910679848b8d20f2a17759248969b273df2fb3b02e4310d79ee"
+  },
+  {
+    "path": "ui-reseal-after-requirements.stderr.log",
+    "bytes": 195,
+    "sha256": "6930dd9fb2a02d8c3a5f8aea92d5da903fd2bfdd8b9ec905425d980bffa22dde"
+  },
+  {
+    "path": "ui-reseal-after-requirements.stdout.log",
+    "bytes": 240,
+    "sha256": "53805513f909be4c85ae47c5b2770e1f6df1b8718c2c8acf54922f8d66f344a2"
+  },
+  {
+    "path": "ui-reseal-before-certificate-0",
+    "bytes": 1484,
+    "sha256": "9535baba0844a6de39c0eae00f68de680f169f9635bedb3b14b550085ad1b2e6"
+  },
+  {
+    "path": "ui-reseal-before-certificate-1",
+    "bytes": 1109,
+    "sha256": "dcf21878c77f4198e4b4614f03d696d89c66c66008d4244e1b99161aac91601f"
+  },
+  {
+    "path": "ui-reseal-before-certificate-2",
+    "bytes": 1215,
+    "sha256": "b0b1730ecbc7ff4505142c49f1295e6eda6bcaed7e2c68c5be91b5a11001f024"
+  },
+  {
+    "path": "ui-reseal-before-certificate-identity.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "ui-reseal-before-certificate-identity.stdout.log",
+    "bytes": 314,
+    "sha256": "a402343146b31e02cdb147dce4066cf506b9bcf2974842a9ae6f624cb81f8891"
+  },
+  {
+    "path": "ui-reseal-before-certificates.stderr.log",
+    "bytes": 195,
+    "sha256": "6930dd9fb2a02d8c3a5f8aea92d5da903fd2bfdd8b9ec905425d980bffa22dde"
+  },
+  {
+    "path": "ui-reseal-before-certificates.stdout.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "ui-reseal-before-entitlements.stderr.log",
+    "bytes": 283,
+    "sha256": "7f764ee644ad8ef90a373cf2efa711f6fe6def42bcf2b730530ed05ea20a9923"
+  },
+  {
+    "path": "ui-reseal-before-entitlements.stdout.log",
+    "bytes": 508,
+    "sha256": "af04234e087814aa9813a56e89fc83b04aebebb525f3e688fe1616e804c1a0bb"
+  },
+  {
+    "path": "ui-reseal-before-identity.stderr.log",
+    "bytes": 1246,
+    "sha256": "814a0b1493c195bcef31abc58b2b909b7e241c05805b800b86cb8b8f810e7e4f"
+  },
+  {
+    "path": "ui-reseal-before-identity.stdout.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "ui-reseal-before-mach-o-uuid.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "ui-reseal-before-mach-o-uuid.stdout.log",
+    "bytes": 227,
+    "sha256": "744cab05364a69980daf8d7044bf1ed9051728f602355551be2be3410ce60c3b"
+  },
+  {
+    "path": "ui-reseal-before-mach-o.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "ui-reseal-before-mach-o.stdout.log",
+    "bytes": 494,
+    "sha256": "3ce4cd0937a8a5e7a56552c9bb67a3abc9bb3b33e142a0bb96dc518cab690dbb"
+  },
+  {
+    "path": "ui-reseal-before-profile.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "ui-reseal-before-profile.stdout.log",
+    "bytes": 8256,
+    "sha256": "9957666aed8b4910679848b8d20f2a17759248969b273df2fb3b02e4310d79ee"
+  },
+  {
+    "path": "ui-reseal-before-requirements.stderr.log",
+    "bytes": 195,
+    "sha256": "6930dd9fb2a02d8c3a5f8aea92d5da903fd2bfdd8b9ec905425d980bffa22dde"
+  },
+  {
+    "path": "ui-reseal-before-requirements.stdout.log",
+    "bytes": 240,
+    "sha256": "53805513f909be4c85ae47c5b2770e1f6df1b8718c2c8acf54922f8d66f344a2"
+  },
+  {
+    "path": "ui-runner-one-outer-reseal.stderr.log",
+    "bytes": 183,
+    "sha256": "f7f33f4ec5858a7092f35c431a9667b448997aed4eac05f8959731fce620c5e8"
+  },
+  {
+    "path": "ui-runner-one-outer-reseal.stdout.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "ui-runner-reseal.json",
+    "bytes": 5508,
+    "sha256": "1163a843886a578443d0dc57cddea995fa6958689281f389ae8f0f7ba2e082c7"
+  },
+  {
+    "path": "ui-runner-resealed-deep-strict-valid-requirement.stderr.log",
+    "bytes": 544,
+    "sha256": "27dd33b2ce6048622e1e7e549002ee1de69c7311b0fddc8d8ca46654cfb1f69c"
+  },
+  {
+    "path": "ui-runner-resealed-deep-strict-valid-requirement.stdout.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "ui-runner-resealed-deep-strict.stderr.log",
+    "bytes": 189,
+    "sha256": "c1cf86a125ea5b177e1c0125b4789fe524fd50cbce239242877891fdc39429f6"
+  },
+  {
+    "path": "ui-runner-resealed-deep-strict.stdout.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "ui-runner-sealed-entry-inventory.json",
+    "bytes": 70,
+    "sha256": "c91c380f1d7af5ec17fcbd51c21d8674335ac219aac256faedcdfebfd308f1ba"
+  },
+  {
+    "path": "ui-runner-sealed-resource-comparison.json",
+    "bytes": 350,
+    "sha256": "d355f25f42bedb11a5f287c090a1c498bad7b213ef149eb0ae3dd47b31219f92"
+  },
+  {
+    "path": "ui-runner-sealed-resource-detail.stderr.log",
+    "bytes": 194,
+    "sha256": "158a9dfb4bb2018bf6997a20aa379b0208e5ed2b730075f2674fcd0dbfa01123"
+  },
+  {
+    "path": "ui-runner-sealed-resource-detail.stdout.log",
+    "bytes": 223,
+    "sha256": "71268190bdd9933008d87d0b1892b601d644b524c737aa1319b51cd4d9acefdc"
+  },
+  {
+    "path": "verify-reseal.py",
+    "bytes": 7452,
+    "sha256": "95f8b0c75daadb28ed386a9bcec61bd12750a59bee4b80be90962330184c8461"
+  }
+]

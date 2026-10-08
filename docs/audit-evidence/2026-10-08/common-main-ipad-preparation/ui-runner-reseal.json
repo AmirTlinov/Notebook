@@ -1,0 +1,102 @@
+{
+  "after": {
+    "certificateSHA256": "9535baba0844a6de39c0eae00f68de680f169f9635bedb3b14b550085ad1b2e6",
+    "childExecutableSHA256": "fec59de8abbf5e4cac8e4572e1b896802c179923667f49c05199181cb6a71e9e",
+    "childInfoSHA256": "70d3c417daa9b563b3c55aa61db9eca05a5515092c0a7441a0ac41226b9a16f0",
+    "childSealSHA256": "10bef5b58cb44582bb4bc4317d968b8c089e2a04e76d305e27c783fa6630c907",
+    "entitlements": {
+      "application-identifier": "M94V58FCVP.com.amirtlinov.notebook.uitests.xctrunner",
+      "com.apple.developer.team-identifier": "M94V58FCVP",
+      "get-task-allow": true,
+      "keychain-access-groups": [
+        "M94V58FCVP.com.amirtlinov.notebook.uitests.xctrunner"
+      ]
+    },
+    "executableSHA256": "78394fc6c241521a4c10e14f57869c7377405bc7ea087d27e07020a3582e31ee",
+    "flags": "0x0(none)",
+    "identity": {
+      "cdhash": "addb7bf241a34b742e82f099a9f105cf329cc190",
+      "identifier": "com.amirtlinov.notebook.uitests.xctrunner",
+      "team": "M94V58FCVP"
+    },
+    "infoSHA256": "0b9d7e177f368ea4cb97e600114dd902c4dd7d6d73f51b768652d324e02fd5ef",
+    "machOUUID": "UUID: 71F7DF93-3C5D-3A00-951B-4524B958FED2 (arm64) /var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/b12ca6d0c0574691/ipad/Build/Products/Debug-iphoneos/NotebookUITests-Runner.app/NotebookUITests-Runner\n",
+    "outerSealSHA256": "adff557c9e3564ea6369762adc1ac2cd4b70477d011e97d1a3e319733b12564e",
+    "physicalUDID": "00008103-001E059934D9001E",
+    "profileExpiry": "2027-09-16T14:45:27",
+    "profileSHA256": "15b7e60d61bd96d60505957291e882c76b55c85b2af8e470c7ff7682e8d78a8a",
+    "profileUUID": "00d2537d-07c4-450a-91d9-7dc280d5dda0",
+    "requirements": "designated => identifier \"com.amirtlinov.notebook.uitests.xctrunner\" and anchor apple generic and certificate leaf[subject.CN] = \"Apple Development: FINLEY KIWM Q (Q487Y359U5)\" and certificate 1[field.1.2.840.113635.100.6.2.1] /* exists */\n\nExecutable=/private/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/b12ca6d0c0574691/ipad/Build/Products/Debug-iphoneos/NotebookUITests-Runner.app/NotebookUITests-Runner\n",
+    "runtime": null,
+    "signer": "Apple Development: FINLEY KIWM Q (Q487Y359U5)",
+    "xctestrunSHA256": "07bd9a4d53c902bc7683f7108efaf91c7597c19b09c7dc6a52bb86564f7f3f2b"
+  },
+  "before": {
+    "certificateSHA256": "9535baba0844a6de39c0eae00f68de680f169f9635bedb3b14b550085ad1b2e6",
+    "childExecutableSHA256": "fec59de8abbf5e4cac8e4572e1b896802c179923667f49c05199181cb6a71e9e",
+    "childInfoSHA256": "70d3c417daa9b563b3c55aa61db9eca05a5515092c0a7441a0ac41226b9a16f0",
+    "childSealSHA256": "10bef5b58cb44582bb4bc4317d968b8c089e2a04e76d305e27c783fa6630c907",
+    "entitlements": {
+      "application-identifier": "M94V58FCVP.com.amirtlinov.notebook.uitests.xctrunner",
+      "com.apple.developer.team-identifier": "M94V58FCVP",
+      "get-task-allow": true,
+      "keychain-access-groups": [
+        "M94V58FCVP.com.amirtlinov.notebook.uitests.xctrunner"
+      ]
+    },
+    "executableSHA256": "2c190cd54109f51299b3e99d93c0037049d726c150f9dd89587dd3d606121a53",
+    "flags": "0x0(none)",
+    "identity": {
+      "cdhash": "d5ffcf15d7cf3a0275390e580f71e092353e20a6",
+      "identifier": "com.amirtlinov.notebook.uitests.xctrunner",
+      "team": "M94V58FCVP"
+    },
+    "infoSHA256": "0b9d7e177f368ea4cb97e600114dd902c4dd7d6d73f51b768652d324e02fd5ef",
+    "machOUUID": "UUID: 71F7DF93-3C5D-3A00-951B-4524B958FED2 (arm64) /var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/b12ca6d0c0574691/ipad/Build/Products/Debug-iphoneos/NotebookUITests-Runner.app/NotebookUITests-Runner\n",
+    "outerSealSHA256": "2e59fbb80dc0562757ae5a1de324f8ec29605d0557f1b6799030da08a8a7531f",
+    "physicalUDID": "00008103-001E059934D9001E",
+    "profileExpiry": "2027-09-16T14:45:27",
+    "profileSHA256": "15b7e60d61bd96d60505957291e882c76b55c85b2af8e470c7ff7682e8d78a8a",
+    "profileUUID": "00d2537d-07c4-450a-91d9-7dc280d5dda0",
+    "requirements": "designated => identifier \"com.amirtlinov.notebook.uitests.xctrunner\" and anchor apple generic and certificate leaf[subject.CN] = \"Apple Development: FINLEY KIWM Q (Q487Y359U5)\" and certificate 1[field.1.2.840.113635.100.6.2.1] /* exists */\n\nExecutable=/private/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/b12ca6d0c0574691/ipad/Build/Products/Debug-iphoneos/NotebookUITests-Runner.app/NotebookUITests-Runner\n",
+    "runtime": null,
+    "signer": "Apple Development: FINLEY KIWM Q (Q487Y359U5)",
+    "xctestrunSHA256": "07bd9a4d53c902bc7683f7108efaf91c7597c19b09c7dc6a52bb86564f7f3f2b"
+  },
+  "executedCount": 0,
+  "installed": false,
+  "launched": false,
+  "preservedMetadata": [
+    "identifier",
+    "entitlements",
+    "flags",
+    "requirements",
+    "runtime"
+  ],
+  "rebuild": false,
+  "route": "one-outer-ui-runner-reseal-only",
+  "runnerReleased": true,
+  "sourceCount": 1731,
+  "sourceSHA256": "18e237019f81543422b379c46034107506b62b8c57a1c9068fc72f2db49b63b8",
+  "sourceUnchanged": true,
+  "toolchainUnchanged": true,
+  "unchanged": {
+    "certificateSHA256": true,
+    "childExecutableSHA256": true,
+    "childInfoSHA256": true,
+    "childSealSHA256": true,
+    "entitlements": true,
+    "flags": true,
+    "infoSHA256": true,
+    "machOUUID": true,
+    "physicalUDID": true,
+    "profileExpiry": true,
+    "profileSHA256": true,
+    "profileUUID": true,
+    "requirements": true,
+    "runtime": true,
+    "signer": true,
+    "xctestrunSHA256": true
+  },
+  "verified": true
+}

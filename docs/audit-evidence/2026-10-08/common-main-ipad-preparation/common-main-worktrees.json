@@ -1,0 +1,93 @@
+{
+  "commonMain": "69342a7ca83ee1152202799089f7ddae1f99653c",
+  "allHeadAncestors": true,
+  "worktrees": [
+    {
+      "path": "/Users/amir/Documents/projects/Notebook",
+      "head": "69342a7ca83ee1152202799089f7ddae1f99653c",
+      "isAncestorOfCommonMain": true,
+      "status": [
+        "?? docs/audit-evidence/2026-10-08/common-main-ipad-preparation/"
+      ]
+    },
+    {
+      "path": "/Users/amir/.codex/worktrees/gui-240-merge/Notebook",
+      "head": "451161d7731c6f8dcd3c47a9f7b8517bb49b7154",
+      "isAncestorOfCommonMain": true,
+      "status": []
+    },
+    {
+      "path": "/Users/amir/.codex/worktrees/gui-295-lasso-immediate/Notebook",
+      "head": "24f7236346dacef3e13307be39358a13330e3168",
+      "isAncestorOfCommonMain": true,
+      "status": []
+    },
+    {
+      "path": "/Users/amir/.codex/worktrees/ink-zoom-sharpness/Notebook",
+      "head": "fae917b0b13fdf03532a33afccaab52c3d3a0400",
+      "isAncestorOfCommonMain": true,
+      "status": []
+    },
+    {
+      "path": "/Users/amir/.codex/worktrees/merge-pending/Notebook",
+      "head": "8605a3f4fa02b03f99287fa6a5106fa548c54e97",
+      "isAncestorOfCommonMain": true,
+      "status": []
+    },
+    {
+      "path": "/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook",
+      "head": "f9268c79de9f226c4c4e9e213b0db070833a849d",
+      "isAncestorOfCommonMain": true,
+      "status": []
+    },
+    {
+      "path": "/Users/amir/.codex/worktrees/notebook-integration/Notebook",
+      "head": "02c98d2887cf84fb2a57a23606014377b3ce426d",
+      "isAncestorOfCommonMain": true,
+      "status": []
+    },
+    {
+      "path": "/Users/amir/.codex/worktrees/notebook-interaction-followup/Notebook",
+      "head": "48b3581358ccfcbd7d75cd086a65d5272d45afd7",
+      "isAncestorOfCommonMain": true,
+      "status": []
+    },
+    {
+      "path": "/Users/amir/.codex/worktrees/notebook-offline-sync/Notebook",
+      "head": "b5fed1e1e482c893c290166afcb5d8149a8f4eaf",
+      "isAncestorOfCommonMain": true,
+      "status": []
+    },
+    {
+      "path": "/Users/amir/.codex/worktrees/notebook-product-quality/Notebook",
+      "head": "99ee2035b998b292242d109233c0711953928fd2",
+      "isAncestorOfCommonMain": true,
+      "status": []
+    },
+    {
+      "path": "/Users/amir/.codex/worktrees/notebook-sync-baseline/Notebook",
+      "head": "f5011d126f9a8801da76d82b2ad6581491d67f5a",
+      "isAncestorOfCommonMain": true,
+      "status": [
+        "?? Tests/NotebookCoreTests/AddressedReplicationTests.swift"
+      ]
+    },
+    {
+      "path": "/Users/amir/.codex/worktrees/relational-render-contract/Notebook",
+      "head": "41aaec4839f73b67d2ad362b1d4b832b22c35cf4",
+      "isAncestorOfCommonMain": true,
+      "status": []
+    }
+  ],
+  "onlyOtherUntrackedFile": "/Users/amir/.codex/worktrees/notebook-sync-baseline/Notebook/Tests/NotebookCoreTests/AddressedReplicationTests.swift",
+  "oldTestFunctionsCoveredInCommonMain": [
+    "anElementPacketCannotReadUnrelatedInkOrAnotherElement",
+    "oneChangeAmongIndependentOwnersHasAConstantReadSet",
+    "stage"
+  ],
+  "additionalCurrentFunctions": [
+    "independentAndConflictingPageFieldsUseTheExistingOwner"
+  ],
+  "oldDraftSHA256": "77e69ff1aababeea88f7f1e65f9215d3ea0683d2345bb95d237e0f9bb602a4ca",
+  "currentTestSHA256": "145083202f35997ac2aaa416709055a3919c77c93c2238d0469aecbcb3becf53"
+}

@@ -1,0 +1,46 @@
+{
+  "devicesAndConfigurations": [
+    {
+      "device": {
+        "architecture": "arm64",
+        "deviceId": "00008103-001E059934D9001E",
+        "deviceName": "iPad (Елизавета)",
+        "modelName": "iPad Pro (11-inch) (3rd generation)",
+        "osBuildNumber": "24A435",
+        "osVersion": "27.0",
+        "platform": "iOS"
+      },
+      "expectedFailures": 0,
+      "failedTests": 1,
+      "passedTests": 2,
+      "skippedTests": 0,
+      "testPlanConfiguration": {
+        "configurationId": "1",
+        "configurationName": "Test Scheme Action"
+      }
+    }
+  ],
+  "environmentDescription": "Notebook · Built with macOS 27.0.1",
+  "expectedFailures": 0,
+  "failedTests": 1,
+  "finishTime": 1791445183.01,
+  "passedTests": 2,
+  "result": "Failed",
+  "runtimeWarnings": [],
+  "skippedTests": 0,
+  "startTime": 1791445166.148,
+  "statistics": [],
+  "testFailures": [
+    {
+      "failureText": "XCTAssertTrue failed - The exact physical presentation did not become ready: ready=[0: true] errors=[] web=2 queued=0 held=23771550 state=[] programs=[] regions=[(\"body\", 0, NotebookCore.PageRect(x: 66.000017836758, y: 68.78506037742581, width: 959.3393543539527, height: 1463.5144377407962), 0.0), (\"body\", 1, NotebookCore.PageRect(x: 66.000017836758, y: 68.39053358661535, width: 959.3393543539527, height: 66.95500900756284), 0.0), (\"main\", 1, NotebookCore.PageRect(x: 66.000017836758, y: 116.70557309503445, width: 959.3393543539527, height: 1415.5939250231875), 0.0)] targetErrors=[]",
+      "targetName": "NotebookTests",
+      "testIdentifier": 2,
+      "testIdentifierString": "DocumentProgramOwnerTests/testRequiredRemountOutlivesItsWithdrawnNativeSubscriber()",
+      "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/DocumentProgramOwnerTests/testRequiredRemountOutlivesItsWithdrawnNativeSubscriber",
+      "testName": "testRequiredRemountOutlivesItsWithdrawnNativeSubscriber()"
+    }
+  ],
+  "title": "Test - Notebook",
+  "topInsights": [],
+  "totalTestCount": 3
+}

@@ -1,0 +1,512 @@
+{
+  "rawCommandLogSHA256": "6a51442522899fac77fd39d9d9e4128304c91f248bb90a220d89aa948a454ed2",
+  "commands": [
+    {
+      "label": "physical-ipad",
+      "argv": [
+        "xcrun",
+        "devicectl",
+        "device",
+        "info",
+        "details",
+        "--device",
+        "9CF2C22D-1CC6-573F-B27D-7EB0C81D2DD9",
+        "--timeout",
+        "30",
+        "--json-output",
+        "/Users/amir/Documents/projects/Notebook/.build/common-main-ipad-fixture-repair-20261008-v2/physical-ipad.json",
+        "--omit-deprecated-fields-in-json"
+      ],
+      "cwd": "/Users/amir/Documents/projects/Notebook",
+      "exitCode": 0,
+      "environmentSHA256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "label": "unlocked-ipad",
+      "argv": [
+        "xcrun",
+        "devicectl",
+        "device",
+        "info",
+        "lockState",
+        "--device",
+        "00008103-001E059934D9001E",
+        "--timeout",
+        "30",
+        "--json-output",
+        "/Users/amir/Documents/projects/Notebook/.build/common-main-ipad-fixture-repair-20261008-v2/physical-ipad-lock-state.json"
+      ],
+      "cwd": "/Users/amir/Documents/projects/Notebook",
+      "exitCode": 0,
+      "environmentSHA256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "label": "codex-resources",
+      "argv": [
+        "/opt/homebrew/opt/python@3.14/bin/python3.14",
+        "-B",
+        "/Users/amir/Documents/projects/Notebook/Applications/prepare_notebook_codex.py",
+        "--prepare",
+        "--stage-root",
+        "/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes"
+      ],
+      "cwd": "/Users/amir/Documents/projects/Notebook",
+      "exitCode": 0,
+      "environmentSHA256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "label": "toolchain-python",
+      "argv": [
+        "/opt/homebrew/opt/python@3.14/bin/python3.14",
+        "--version"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "46b438ef779965ad40302d526edc247dc8f4328a26350e08a6abbf9c94a5a4f6"
+    },
+    {
+      "label": "toolchain-xcode",
+      "argv": [
+        "/usr/bin/xcrun",
+        "xcodebuild",
+        "-version"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "46b438ef779965ad40302d526edc247dc8f4328a26350e08a6abbf9c94a5a4f6"
+    },
+    {
+      "label": "toolchain-swift",
+      "argv": [
+        "/usr/bin/xcrun",
+        "swift",
+        "--version"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "46b438ef779965ad40302d526edc247dc8f4328a26350e08a6abbf9c94a5a4f6"
+    },
+    {
+      "label": "toolchain-iphoneosSDK",
+      "argv": [
+        "/usr/bin/xcrun",
+        "--sdk",
+        "iphoneos",
+        "--show-sdk-build-version"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "46b438ef779965ad40302d526edc247dc8f4328a26350e08a6abbf9c94a5a4f6"
+    },
+    {
+      "label": "toolchain-macosSDK",
+      "argv": [
+        "/usr/bin/xcrun",
+        "--sdk",
+        "macosx",
+        "--show-sdk-build-version"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "46b438ef779965ad40302d526edc247dc8f4328a26350e08a6abbf9c94a5a4f6"
+    },
+    {
+      "label": "toolchain-xcodegen",
+      "argv": [
+        "/opt/homebrew/bin/xcodegen",
+        "--version"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "46b438ef779965ad40302d526edc247dc8f4328a26350e08a6abbf9c94a5a4f6"
+    },
+    {
+      "label": "toolchain-node",
+      "argv": [
+        "/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a/node",
+        "--version"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "46b438ef779965ad40302d526edc247dc8f4328a26350e08a6abbf9c94a5a4f6"
+    },
+    {
+      "label": "toolchain-npm",
+      "argv": [
+        "/Users/amir/.volta/bin/npm",
+        "--version"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "46b438ef779965ad40302d526edc247dc8f4328a26350e08a6abbf9c94a5a4f6"
+    },
+    {
+      "label": "ipad-native-test-cleanup-before",
+      "argv": [
+        "/opt/homebrew/opt/python@3.14/bin/python3.14",
+        "-B",
+        "-c",
+        "\nimport json\nimport subprocess\nimport sys\nimport time\n\ndevice, bundle = sys.argv[1:]\n\ndef installed():\n    result = subprocess.run([\n        \"xcrun\", \"devicectl\", \"device\", \"info\", \"apps\",\n        \"--device\", device, \"--include-all-apps\", \"--bundle-id\", bundle,\n        \"--timeout\", \"30\", \"--json-output\", \"-\",\n    ], capture_output=True, text=True)\n    if result.returncode:\n        sys.stderr.write(result.stderr)\n        raise SystemExit(result.returncode)\n    return [app for app in json.loads(result.stdout)[\"result\"][\"apps\"]\n            if app.get(\"bundleIdentifier\") == bundle]\n\nfound = installed()\nif found:\n    result = subprocess.run([\n        \"xcrun\", \"devicectl\", \"device\", \"uninstall\", \"app\",\n        \"--device\", device, bundle, \"--timeout\", \"60\",\n    ], capture_output=True, text=True)\n    if result.returncode:\n        sys.stderr.write(result.stderr)\n        raise SystemExit(result.returncode)\n    for _ in range(20):\n        if not installed():\n            break\n        time.sleep(0.1)\nif installed():\n    raise SystemExit(\"XCTest bundle \u043e\u0441\u0442\u0430\u043b\u0441\u044f \u043d\u0430 \u0444\u0438\u0437\u0438\u0447\u0435\u0441\u043a\u043e\u043c iPad: \" + bundle)\nprint(json.dumps({\"bundleIdentifier\": bundle, \"removed\": bool(found)}, sort_keys=True))\n",
+        "00008103-001E059934D9001E",
+        "com.amirtlinov.notebook.native-test"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "46b438ef779965ad40302d526edc247dc8f4328a26350e08a6abbf9c94a5a4f6"
+    },
+    {
+      "label": "generate-project",
+      "argv": [
+        "xcodegen",
+        "generate",
+        "--spec",
+        "project.yml"
+      ],
+      "cwd": "/Users/amir/Documents/projects/Notebook/Applications",
+      "exitCode": 0,
+      "environmentSHA256": "46b438ef779965ad40302d526edc247dc8f4328a26350e08a6abbf9c94a5a4f6"
+    },
+    {
+      "label": "typesetter-resources-iphoneos",
+      "argv": [
+        "/opt/homebrew/opt/python@3.14/bin/python3.14",
+        "-B",
+        "/Users/amir/Documents/projects/Notebook/Applications/prepare_notebook_typesetter.py",
+        "--prepare",
+        "--platform",
+        "iphoneos",
+        "--stage",
+        "/Users/amir/Documents/projects/Notebook/.build/notebook-typesetter-runtime"
+      ],
+      "cwd": "/Users/amir/Documents/projects/Notebook",
+      "exitCode": 0,
+      "environmentSHA256": "46b438ef779965ad40302d526edc247dc8f4328a26350e08a6abbf9c94a5a4f6"
+    },
+    {
+      "label": "ipad-build-for-testing",
+      "argv": [
+        "xcrun",
+        "xcodebuild",
+        "-quiet",
+        "-project",
+        "Notebook.xcodeproj",
+        "-scheme",
+        "Notebook",
+        "-configuration",
+        "Debug",
+        "-destination",
+        "platform=iOS,id=00008103-001E059934D9001E",
+        "-derivedDataPath",
+        "/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/b12ca6d0c0574691/ipad",
+        "-parallel-testing-enabled",
+        "NO",
+        "-collect-test-diagnostics",
+        "never",
+        "build-for-testing",
+        "-allowProvisioningUpdates",
+        "CODE_SIGN_IDENTITY=Apple Development",
+        "CODE_SIGN_STYLE=Automatic",
+        "CODE_SIGNING_ALLOWED=YES",
+        "DEVELOPMENT_TEAM=M94V58FCVP",
+        "NOTEBOOK_BUNDLE_SUFFIX=.native-test",
+        "NOTEBOOK_TYPESETTER_RUNTIME=/Users/amir/Documents/projects/Notebook/.build/notebook-typesetter-runtime",
+        "-only-testing:NotebookTests/DocumentProgramOwnerTests/testPressureParksNeighbourAndPromotesItsSameAdmissionToAnAcceptedTarget",
+        "-only-testing:NotebookTests/DocumentProgramOwnerTests/testRequiredRemountOutlivesItsWithdrawnNativeSubscriber",
+        "-only-testing:NotebookTests/DocumentShellPreparationTests/testPressureRetiresOnlyTheUnusedShellAndForegroundCannotReopenAdmission"
+      ],
+      "cwd": "/Users/amir/Documents/projects/Notebook/Applications",
+      "exitCode": 0,
+      "environmentSHA256": "46b438ef779965ad40302d526edc247dc8f4328a26350e08a6abbf9c94a5a4f6"
+    },
+    {
+      "label": "unlocked-ipad-inventory",
+      "argv": [
+        "xcrun",
+        "devicectl",
+        "device",
+        "info",
+        "lockState",
+        "--device",
+        "00008103-001E059934D9001E",
+        "--timeout",
+        "30",
+        "--json-output",
+        "/Users/amir/Documents/projects/Notebook/.build/common-main-ipad-fixture-repair-20261008-v2/physical-ipad-lock-state-inventory.json"
+      ],
+      "cwd": "/Users/amir/Documents/projects/Notebook",
+      "exitCode": 0,
+      "environmentSHA256": "46b438ef779965ad40302d526edc247dc8f4328a26350e08a6abbf9c94a5a4f6"
+    },
+    {
+      "label": "ipad-inventory",
+      "argv": [
+        "xcrun",
+        "xcodebuild",
+        "-quiet",
+        "-project",
+        "Notebook.xcodeproj",
+        "-scheme",
+        "Notebook",
+        "-configuration",
+        "Debug",
+        "-destination",
+        "platform=iOS,id=00008103-001E059934D9001E",
+        "-derivedDataPath",
+        "/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/b12ca6d0c0574691/ipad",
+        "-parallel-testing-enabled",
+        "NO",
+        "-collect-test-diagnostics",
+        "never",
+        "test-without-building",
+        "-allowProvisioningUpdates",
+        "CODE_SIGN_IDENTITY=Apple Development",
+        "CODE_SIGN_STYLE=Automatic",
+        "CODE_SIGNING_ALLOWED=YES",
+        "DEVELOPMENT_TEAM=M94V58FCVP",
+        "NOTEBOOK_BUNDLE_SUFFIX=.native-test",
+        "NOTEBOOK_TYPESETTER_RUNTIME=/Users/amir/Documents/projects/Notebook/.build/notebook-typesetter-runtime",
+        "-only-testing:NotebookTests/DocumentProgramOwnerTests/testPressureParksNeighbourAndPromotesItsSameAdmissionToAnAcceptedTarget",
+        "-only-testing:NotebookTests/DocumentProgramOwnerTests/testRequiredRemountOutlivesItsWithdrawnNativeSubscriber",
+        "-only-testing:NotebookTests/DocumentShellPreparationTests/testPressureRetiresOnlyTheUnusedShellAndForegroundCannotReopenAdmission",
+        "-enumerate-tests",
+        "-test-enumeration-style",
+        "flat",
+        "-test-enumeration-format",
+        "json",
+        "-test-enumeration-output-path",
+        "/Users/amir/Documents/projects/Notebook/.build/common-main-ipad-fixture-repair-20261008-v2/ipad-inventory.json"
+      ],
+      "cwd": "/Users/amir/Documents/projects/Notebook/Applications",
+      "exitCode": 0,
+      "environmentSHA256": "46b438ef779965ad40302d526edc247dc8f4328a26350e08a6abbf9c94a5a4f6"
+    },
+    {
+      "label": "unlocked-ipad-execution",
+      "argv": [
+        "xcrun",
+        "devicectl",
+        "device",
+        "info",
+        "lockState",
+        "--device",
+        "00008103-001E059934D9001E",
+        "--timeout",
+        "30",
+        "--json-output",
+        "/Users/amir/Documents/projects/Notebook/.build/common-main-ipad-fixture-repair-20261008-v2/physical-ipad-lock-state-execution.json"
+      ],
+      "cwd": "/Users/amir/Documents/projects/Notebook",
+      "exitCode": 0,
+      "environmentSHA256": "46b438ef779965ad40302d526edc247dc8f4328a26350e08a6abbf9c94a5a4f6"
+    },
+    {
+      "label": "ipad",
+      "argv": [
+        "xcrun",
+        "xcodebuild",
+        "-quiet",
+        "-project",
+        "Notebook.xcodeproj",
+        "-scheme",
+        "Notebook",
+        "-configuration",
+        "Debug",
+        "-destination",
+        "platform=iOS,id=00008103-001E059934D9001E",
+        "-derivedDataPath",
+        "/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/b12ca6d0c0574691/ipad",
+        "-parallel-testing-enabled",
+        "NO",
+        "-collect-test-diagnostics",
+        "never",
+        "test-without-building",
+        "-resultBundlePath",
+        "/Users/amir/Documents/projects/Notebook/.build/common-main-ipad-fixture-repair-20261008-v2/ipad.xcresult",
+        "-allowProvisioningUpdates",
+        "CODE_SIGN_IDENTITY=Apple Development",
+        "CODE_SIGN_STYLE=Automatic",
+        "CODE_SIGNING_ALLOWED=YES",
+        "DEVELOPMENT_TEAM=M94V58FCVP",
+        "NOTEBOOK_BUNDLE_SUFFIX=.native-test",
+        "NOTEBOOK_TYPESETTER_RUNTIME=/Users/amir/Documents/projects/Notebook/.build/notebook-typesetter-runtime",
+        "-only-testing:NotebookTests/DocumentProgramOwnerTests/testPressureParksNeighbourAndPromotesItsSameAdmissionToAnAcceptedTarget",
+        "-only-testing:NotebookTests/DocumentProgramOwnerTests/testRequiredRemountOutlivesItsWithdrawnNativeSubscriber",
+        "-only-testing:NotebookTests/DocumentShellPreparationTests/testPressureRetiresOnlyTheUnusedShellAndForegroundCannotReopenAdmission"
+      ],
+      "cwd": "/Users/amir/Documents/projects/Notebook/Applications",
+      "exitCode": 65,
+      "environmentSHA256": "46b438ef779965ad40302d526edc247dc8f4328a26350e08a6abbf9c94a5a4f6"
+    },
+    {
+      "label": "ipad-native-test-cleanup-after",
+      "argv": [
+        "/opt/homebrew/opt/python@3.14/bin/python3.14",
+        "-B",
+        "-c",
+        "\nimport json\nimport subprocess\nimport sys\nimport time\n\ndevice, bundle = sys.argv[1:]\n\ndef installed():\n    result = subprocess.run([\n        \"xcrun\", \"devicectl\", \"device\", \"info\", \"apps\",\n        \"--device\", device, \"--include-all-apps\", \"--bundle-id\", bundle,\n        \"--timeout\", \"30\", \"--json-output\", \"-\",\n    ], capture_output=True, text=True)\n    if result.returncode:\n        sys.stderr.write(result.stderr)\n        raise SystemExit(result.returncode)\n    return [app for app in json.loads(result.stdout)[\"result\"][\"apps\"]\n            if app.get(\"bundleIdentifier\") == bundle]\n\nfound = installed()\nif found:\n    result = subprocess.run([\n        \"xcrun\", \"devicectl\", \"device\", \"uninstall\", \"app\",\n        \"--device\", device, bundle, \"--timeout\", \"60\",\n    ], capture_output=True, text=True)\n    if result.returncode:\n        sys.stderr.write(result.stderr)\n        raise SystemExit(result.returncode)\n    for _ in range(20):\n        if not installed():\n            break\n        time.sleep(0.1)\nif installed():\n    raise SystemExit(\"XCTest bundle \u043e\u0441\u0442\u0430\u043b\u0441\u044f \u043d\u0430 \u0444\u0438\u0437\u0438\u0447\u0435\u0441\u043a\u043e\u043c iPad: \" + bundle)\nprint(json.dumps({\"bundleIdentifier\": bundle, \"removed\": bool(found)}, sort_keys=True))\n",
+        "00008103-001E059934D9001E",
+        "com.amirtlinov.notebook.native-test"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "46b438ef779965ad40302d526edc247dc8f4328a26350e08a6abbf9c94a5a4f6"
+    },
+    {
+      "label": "ipad-summary",
+      "argv": [
+        "xcrun",
+        "xcresulttool",
+        "get",
+        "test-results",
+        "summary",
+        "--path",
+        "/Users/amir/Documents/projects/Notebook/.build/common-main-ipad-fixture-repair-20261008-v2/ipad.xcresult",
+        "--compact"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "label": "ipad-tests",
+      "argv": [
+        "xcrun",
+        "xcresulttool",
+        "get",
+        "test-results",
+        "tests",
+        "--path",
+        "/Users/amir/Documents/projects/Notebook/.build/common-main-ipad-fixture-repair-20261008-v2/ipad.xcresult",
+        "--compact"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "label": "toolchain-after-python",
+      "argv": [
+        "/opt/homebrew/opt/python@3.14/bin/python3.14",
+        "--version"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "label": "toolchain-after-xcode",
+      "argv": [
+        "/usr/bin/xcrun",
+        "xcodebuild",
+        "-version"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "label": "toolchain-after-swift",
+      "argv": [
+        "/usr/bin/xcrun",
+        "swift",
+        "--version"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "label": "toolchain-after-iphoneosSDK",
+      "argv": [
+        "/usr/bin/xcrun",
+        "--sdk",
+        "iphoneos",
+        "--show-sdk-build-version"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "label": "toolchain-after-macosSDK",
+      "argv": [
+        "/usr/bin/xcrun",
+        "--sdk",
+        "macosx",
+        "--show-sdk-build-version"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "label": "toolchain-after-xcodegen",
+      "argv": [
+        "/opt/homebrew/bin/xcodegen",
+        "--version"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "label": "toolchain-after-node",
+      "argv": [
+        "/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a/node",
+        "--version"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "label": "toolchain-after-npm",
+      "argv": [
+        "/Users/amir/.volta/bin/npm",
+        "--version"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "label": "failed-case-1",
+      "argv": [
+        "xcrun",
+        "xcresulttool",
+        "get",
+        "test-results",
+        "test-details",
+        "--path",
+        "/Users/amir/Documents/projects/Notebook/.build/common-main-ipad-fixture-repair-20261008-v2/ipad.xcresult",
+        "--test-id",
+        "DocumentProgramOwnerTests/testRequiredRemountOutlivesItsWithdrawnNativeSubscriber()",
+        "--compact"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "label": "failed-test-attachments",
+      "argv": [
+        "xcrun",
+        "xcresulttool",
+        "export",
+        "attachments",
+        "--path",
+        "/Users/amir/Documents/projects/Notebook/.build/common-main-ipad-fixture-repair-20261008-v2/ipad.xcresult",
+        "--test-id",
+        "DocumentProgramOwnerTests/testRequiredRemountOutlivesItsWithdrawnNativeSubscriber()",
+        "--output-path",
+        "/Users/amir/Documents/projects/Notebook/.build/common-main-ipad-fixture-repair-20261008-v2/failed-attachments",
+        "--only-failures",
+        "--filter",
+        "*.txt"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    }
+  ]
+}

@@ -771,3 +771,19 @@ and toolchain stayed exact; final Mac source is unchanged before/after its route
 Physical iPad execution and raster100k acceptance await device unlock. Process/
 WebContent budgets, joint measurements and convergent birth/Undo migration remain
 open; DB29/wire44/manifest26 and the installed pair are unchanged.
+
+## 2026-10-08: physical pressure and native handoffs
+
+All 28 selected physical iPad scenarios have a passing route: the first run passed
+25; two repaired fixtures then passed; the final geometry repair passed its one
+remaining scenario. The first two failed routes and exact assertions are retained.
+Fixtures now await cancellation/native input, transfer WebKit into its receiving
+host, and use the measured paper aspect. Runtime inputs stayed exact;
+only two iPad test files changed. Final source `ff125bf88cc249aa4b2ba24a7cf0420a5e0effba05aad48b894127cc4a2ab3f7`
+/ 1731 files. Each route has unchanged sources/toolchain and no runtime warnings.
+Raster100k passed; 1.052 s is test duration. [Cases and source intersections](audit-evidence/2026-10-08/common-main-ipad-pressure/results.json).
+[Signed preparation and outer runner reseal](audit-evidence/2026-10-08/common-main-ipad-preparation/results.json).
+All other checkout commits already belong to common main; this task's worktrees
+are archived. Production pair 260 is unchanged. Process/WebContent budgets,
+compositor publication cleanup, birth/Undo transition and full joint acceptance
+remain open in Linear.

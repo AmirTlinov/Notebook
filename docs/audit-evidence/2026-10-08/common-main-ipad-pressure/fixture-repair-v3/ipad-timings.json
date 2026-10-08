@@ -1,0 +1,15 @@
+{
+  "slowest": [
+    {
+      "seconds": 1.3557569980621338,
+      "target": "NotebookTests",
+      "test": "DocumentProgramOwnerTests/testRequiredRemountOutlivesItsWithdrawnNativeSubscriber()"
+    }
+  ],
+  "targets": {
+    "NotebookTests": {
+      "seconds": 1.3557569980621338,
+      "tests": 1
+    }
+  }
+}

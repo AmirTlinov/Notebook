@@ -1,0 +1,10 @@
+{
+  "iphoneosSDK": "24A430",
+  "macosSDK": "26A425",
+  "node": "v24.21.0",
+  "npm": "11.6.0",
+  "python": "Python 3.14.6",
+  "swift": "Apple Swift version 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1)\nTarget: arm64-apple-macosx27.0.0",
+  "xcode": "Xcode 27.0\nBuild version 27A266a",
+  "xcodegen": "Version: 2.46.0"
+}

@@ -1,0 +1,12 @@
+{
+  "hashedBytes": 31893578,
+  "mismatches": [
+    {
+      "path": "PlugIns/NotebookUITests.xctest/NotebookUITests",
+      "field": "hash2",
+      "expected": "7c016c70c920717d52111205ceb837ccb32b92baa1ca19cbf33e70602a58f21a",
+      "observed": "fec59de8abbf5e4cac8e4572e1b896802c179923667f49c05199181cb6a71e9e"
+    }
+  ],
+  "nestedSignedCode": []
+}

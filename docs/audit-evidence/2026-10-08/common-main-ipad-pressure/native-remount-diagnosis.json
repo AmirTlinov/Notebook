@@ -1,0 +1,55 @@
+{
+  "status": "source_only_fixture_cause_confirmed",
+  "head": "69342a7ca83ee1152202799089f7ddae1f99653c",
+  "selector": "NotebookTests/DocumentProgramOwnerTests/testRequiredRemountOutlivesItsWithdrawnNativeSubscriber",
+  "sourceSHA256": {
+    "Applications/Tests/DocumentProgramOwnerTests.swift": "be9d440de9bb846ce4dddffa477911453f268085ebe53b0037d742b69f8f2a28",
+    "Applications/Shared/DocumentWebView.swift": "b813035069bf98266f1177d19b9897db936434a43bb9525f504ad26b14c05bf4",
+    "Applications/Shared/DocumentPagePresentationOwner.swift": "941b4962bf8ec509a8592bdfdc1df441c9f2fcd6b4f88811a18b1633ebc1071b",
+    "Applications/iPad/PhysicalWebViewport.swift": "08d5213aae1c09f9637faf4a0ff4fbb1cdb2b2d1034299a3f44f20b09abb64a0",
+    "Applications/Shared/DocumentLayoutRecord.swift": "47441a05904c559e3b47b5bb1793aa284acfee70bda123f475becae7e7eb759e",
+    "Applications/Shared/DocumentPagePreparation.swift": "c06c2b6a3955f40c680fe5e9780b7b671f0caf9e3232ba74a8cc7363de9e88f6"
+  },
+  "actualFailureFromRoot": {
+    "firstRoute": "canonical presentation completed; native input false",
+    "targetedRoute": "same canonical-and-input wait timed out after 10 seconds; errors empty; web surfaces 2; queued 0",
+    "secondaryCleanup": "caughtInvalidTransition after timeout is not a runtime PASS"
+  },
+  "cause": {
+    "fixture": "Fixed 240x340 target host does not use the accepted compiled paper aspect ratio.",
+    "chain": [
+      "DocumentWebView.swift:403 hasCanonicalPixels checks source/paper/frame readiness without physical host geometry.",
+      "DocumentWebView.swift:614 refreshInputAdmission requires requestedInput and host.hasCanonicalSurface.",
+      "DocumentWebView.swift:3078 hasCanonicalSurface requires hasCanonicalPaperProjection and key active window with no overlay.",
+      "DocumentWebView.swift:2916 hasCanonicalPaperProjection rejects unequal two-axis scale beyond one physical pixel."
+    ],
+    "exactSizeBinding": [
+      "DocumentLayoutRecord.swift:18 and :21 bind surface size and geometry to the same measured paper points.",
+      "DocumentPagePreparation.swift:469 emits fragment width/height from that surface size.",
+      "DocumentWebView.swift:1980 configures the same physical fragment size before native installation."
+    ]
+  },
+  "otherGuardsReadback": {
+    "attempt": "sourcePreparationID fences the retired subscriber. Sender catch at DocumentWebView.swift:2122 continues with the already-started required successor when its old ID differs and current acquisition error is nil.",
+    "loading": "Direct host init creates no loading view; coordinator never invokes showLoading. Only the presentation owner creates its loading placeholder.",
+    "fallback": "showFallback returns false without cached raster; setRenderReady(true) removes default fallback before rechecking input.",
+    "callback": "No-op onRenderReady does not skip refreshInputAdmission: it runs before the callback and on unchanged readiness.",
+    "input": "Mount isInteractive=true sets requestedInput. CanonicalSurface does not require prior input enablement; configure can therefore enable the native subtree once geometry is installed.",
+    "window": "Target is a child of ProgramFixture key window. New diagnostics expose projection, canonical, input and keyWindow for actual physical rerun.",
+    "finding": "No second source blocker or overlay was found in this exact trace; physical success is pending."
+  },
+  "minimumFixtureRepair": {
+    "beforeMount": [
+      "targetHost.frame.size.height = targetHost.bounds.width * size.height / size.width",
+      "targetHost.setNeedsLayout(); targetHost.layoutIfNeeded()"
+    ],
+    "alreadyPresentInRootSource": true,
+    "oraclePreserved": "canonical AND nativeInput wait; one withdrawal; no terminal errors; exact admitted WebKit identity; current paper retained; exact source identity; physical cleanup",
+    "existingContractSelector": "NotebookTests/DocumentProgramOwnerTests/testColdLetterPaperWaitsForItsNativeGeometryWithoutBlockingPreparedMaterial"
+  },
+  "actionsByThisReview": {
+    "sourceEdits": false,
+    "runners": false,
+    "liveData": false
+  }
+}

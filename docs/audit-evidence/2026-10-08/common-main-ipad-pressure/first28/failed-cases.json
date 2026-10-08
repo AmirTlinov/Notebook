@@ -1,0 +1,227 @@
+[
+  {
+    "details": {
+      "devices": [
+        {
+          "architecture": "arm64e",
+          "deviceId": "00008103-001E059934D9001E",
+          "deviceName": "iPad (Елизавета)",
+          "modelName": "iPad Pro (11-inch) (3rd generation)",
+          "osBuildNumber": "24A435",
+          "osVersion": "27.0",
+          "platform": "iOS"
+        }
+      ],
+      "duration": "Ran for 2,4 seconds",
+      "durationInSeconds": 2.366805076599121,
+      "hasMediaAttachments": false,
+      "hasPerformanceMetrics": false,
+      "testDescription": "Test case with 1 run",
+      "testIdentifier": "DocumentProgramOwnerTests/testPressureParksNeighbourAndPromotesItsSameAdmissionToAnAcceptedTarget()",
+      "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/DocumentProgramOwnerTests/testPressureParksNeighbourAndPromotesItsSameAdmissionToAnAcceptedTarget",
+      "testName": "testPressureParksNeighbourAndPromotesItsSameAdmissionToAnAcceptedTarget()",
+      "testPlanConfigurations": [
+        {
+          "configurationId": "1",
+          "configurationName": "Test Scheme Action"
+        }
+      ],
+      "testResult": "Failed",
+      "testRuns": [
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "children": [
+                    {
+                      "name": "",
+                      "nodeType": "Source Code Reference",
+                      "sourceLocation": {
+                        "filePath": "/Users/amir/Documents/projects/Notebook/Applications/Tests/DocumentProgramOwnerTests.swift",
+                        "lineNumber": 1151
+                      }
+                    }
+                  ],
+                  "name": "XCTAssertNil failed: \"E025CDC4-4831-45A4-BF80-3DC42BE5C209\"",
+                  "nodeType": "Test Case Run",
+                  "result": "Failed",
+                  "sourceLocation": {
+                    "filePath": "/Users/amir/Documents/projects/Notebook/Applications/Tests/DocumentProgramOwnerTests.swift",
+                    "lineNumber": 1151
+                  }
+                }
+              ],
+              "duration": "2 с",
+              "durationInSeconds": 2.366805076599121,
+              "name": "Test Scheme Action",
+              "nodeIdentifier": "1",
+              "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/DocumentProgramOwnerTests/testPressureParksNeighbourAndPromotesItsSameAdmissionToAnAcceptedTarget",
+              "nodeType": "Test Plan Configuration",
+              "result": "Failed"
+            }
+          ],
+          "details": "iOS 27.0",
+          "duration": "2 с",
+          "durationInSeconds": 2.366805076599121,
+          "name": "iPad Pro (11-inch) (3rd generation)",
+          "nodeIdentifier": "00008103-001E059934D9001E",
+          "nodeType": "Device",
+          "result": "Failed"
+        }
+      ]
+    },
+    "failureText": "XCTAssertNil failed: \"E025CDC4-4831-45A4-BF80-3DC42BE5C209\"",
+    "test": "DocumentProgramOwnerTests/testPressureParksNeighbourAndPromotesItsSameAdmissionToAnAcceptedTarget()"
+  },
+  {
+    "details": {
+      "devices": [
+        {
+          "architecture": "arm64e",
+          "deviceId": "00008103-001E059934D9001E",
+          "deviceName": "iPad (Елизавета)",
+          "modelName": "iPad Pro (11-inch) (3rd generation)",
+          "osBuildNumber": "24A435",
+          "osVersion": "27.0",
+          "platform": "iOS"
+        }
+      ],
+      "duration": "Ran for 0,17 seconds",
+      "durationInSeconds": 0.1652449369430542,
+      "hasMediaAttachments": false,
+      "hasPerformanceMetrics": false,
+      "testDescription": "Test case with 1 run",
+      "testIdentifier": "DocumentShellPreparationTests/testPressureRetiresOnlyTheUnusedShellAndForegroundCannotReopenAdmission()",
+      "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/DocumentShellPreparationTests/testPressureRetiresOnlyTheUnusedShellAndForegroundCannotReopenAdmission",
+      "testName": "testPressureRetiresOnlyTheUnusedShellAndForegroundCannotReopenAdmission()",
+      "testPlanConfigurations": [
+        {
+          "configurationId": "1",
+          "configurationName": "Test Scheme Action"
+        }
+      ],
+      "testResult": "Failed",
+      "testRuns": [
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "children": [
+                    {
+                      "name": "",
+                      "nodeType": "Source Code Reference",
+                      "sourceLocation": {
+                        "filePath": "/Users/amir/Documents/projects/Notebook/Applications/Tests/DocumentShellPreparationTests.swift",
+                        "lineNumber": 27
+                      }
+                    }
+                  ],
+                  "name": "XCTUnwrap failed: expected non-nil value of type \"WKWebView\"",
+                  "nodeType": "Test Case Run",
+                  "result": "Failed",
+                  "sourceLocation": {
+                    "filePath": "/Users/amir/Documents/projects/Notebook/Applications/Tests/DocumentShellPreparationTests.swift",
+                    "lineNumber": 27
+                  }
+                }
+              ],
+              "duration": "0,17s",
+              "durationInSeconds": 0.1652449369430542,
+              "name": "Test Scheme Action",
+              "nodeIdentifier": "1",
+              "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/DocumentShellPreparationTests/testPressureRetiresOnlyTheUnusedShellAndForegroundCannotReopenAdmission",
+              "nodeType": "Test Plan Configuration",
+              "result": "Failed"
+            }
+          ],
+          "details": "iOS 27.0",
+          "duration": "0,17s",
+          "durationInSeconds": 0.1652449369430542,
+          "name": "iPad Pro (11-inch) (3rd generation)",
+          "nodeIdentifier": "00008103-001E059934D9001E",
+          "nodeType": "Device",
+          "result": "Failed"
+        }
+      ]
+    },
+    "failureText": "XCTUnwrap failed: expected non-nil value of type \"WKWebView\"",
+    "test": "DocumentShellPreparationTests/testPressureRetiresOnlyTheUnusedShellAndForegroundCannotReopenAdmission()"
+  },
+  {
+    "details": {
+      "devices": [
+        {
+          "architecture": "arm64e",
+          "deviceId": "00008103-001E059934D9001E",
+          "deviceName": "iPad (Елизавета)",
+          "modelName": "iPad Pro (11-inch) (3rd generation)",
+          "osBuildNumber": "24A435",
+          "osVersion": "27.0",
+          "platform": "iOS"
+        }
+      ],
+      "duration": "Ran for 1,0 seconds",
+      "durationInSeconds": 1.0415750741958618,
+      "hasMediaAttachments": false,
+      "hasPerformanceMetrics": false,
+      "testDescription": "Test case with 1 run",
+      "testIdentifier": "DocumentProgramOwnerTests/testRequiredRemountOutlivesItsWithdrawnNativeSubscriber()",
+      "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/DocumentProgramOwnerTests/testRequiredRemountOutlivesItsWithdrawnNativeSubscriber",
+      "testName": "testRequiredRemountOutlivesItsWithdrawnNativeSubscriber()",
+      "testPlanConfigurations": [
+        {
+          "configurationId": "1",
+          "configurationName": "Test Scheme Action"
+        }
+      ],
+      "testResult": "Failed",
+      "testRuns": [
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "children": [
+                    {
+                      "name": "",
+                      "nodeType": "Source Code Reference",
+                      "sourceLocation": {
+                        "filePath": "/Users/amir/Documents/projects/Notebook/Applications/Tests/DocumentProgramOwnerTests.swift",
+                        "lineNumber": 1247
+                      }
+                    }
+                  ],
+                  "name": "XCTAssertTrue failed",
+                  "nodeType": "Test Case Run",
+                  "result": "Failed",
+                  "sourceLocation": {
+                    "filePath": "/Users/amir/Documents/projects/Notebook/Applications/Tests/DocumentProgramOwnerTests.swift",
+                    "lineNumber": 1247
+                  }
+                }
+              ],
+              "duration": "1 с",
+              "durationInSeconds": 1.0415750741958618,
+              "name": "Test Scheme Action",
+              "nodeIdentifier": "1",
+              "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/DocumentProgramOwnerTests/testRequiredRemountOutlivesItsWithdrawnNativeSubscriber",
+              "nodeType": "Test Plan Configuration",
+              "result": "Failed"
+            }
+          ],
+          "details": "iOS 27.0",
+          "duration": "1 с",
+          "durationInSeconds": 1.0415750741958618,
+          "name": "iPad Pro (11-inch) (3rd generation)",
+          "nodeIdentifier": "00008103-001E059934D9001E",
+          "nodeType": "Device",
+          "result": "Failed"
+        }
+      ]
+    },
+    "failureText": "XCTAssertTrue failed",
+    "test": "DocumentProgramOwnerTests/testRequiredRemountOutlivesItsWithdrawnNativeSubscriber()"
+  }
+]

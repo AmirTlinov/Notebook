@@ -1,0 +1,31 @@
+{
+  "bundles": [
+    {
+      "cdhash": "6ebcc8278f7d95c213a172eea987adf253f74e9a",
+      "certificateSHA256": "9535baba0844a6de39c0eae00f68de680f169f9635bedb3b14b550085ad1b2e6",
+      "executableSHA256": "8082c9cb38160cc6a6a018c88e67c20bade2eb0b2bf7cd7b6d548cdc0e38f133",
+      "identifier": "com.amirtlinov.notebook.native-test",
+      "infoSHA256": "180fb8b4ec2f17491b67818c2d833e9c8a5fcbffcd78d1b51b3fb69912036555",
+      "name": "Notebook.app",
+      "profileSHA256": "15b7e60d61bd96d60505957291e882c76b55c85b2af8e470c7ff7682e8d78a8a",
+      "profileUUID": "00d2537d-07c4-450a-91d9-7dc280d5dda0",
+      "sealSHA256": "40d807a7e6b47be32a13eee99fcc44012f842e16b1de63be5379254506c3017f",
+      "team": "M94V58FCVP"
+    },
+    {
+      "cdhash": "addb7bf241a34b742e82f099a9f105cf329cc190",
+      "certificateSHA256": "9535baba0844a6de39c0eae00f68de680f169f9635bedb3b14b550085ad1b2e6",
+      "executableSHA256": "78394fc6c241521a4c10e14f57869c7377405bc7ea087d27e07020a3582e31ee",
+      "identifier": "com.amirtlinov.notebook.uitests.xctrunner",
+      "infoSHA256": "0b9d7e177f368ea4cb97e600114dd902c4dd7d6d73f51b768652d324e02fd5ef",
+      "name": "NotebookUITests-Runner.app",
+      "profileSHA256": "15b7e60d61bd96d60505957291e882c76b55c85b2af8e470c7ff7682e8d78a8a",
+      "profileUUID": "00d2537d-07c4-450a-91d9-7dc280d5dda0",
+      "sealSHA256": "adff557c9e3564ea6369762adc1ac2cd4b70477d011e97d1a3e319733b12564e",
+      "team": "M94V58FCVP"
+    }
+  ],
+  "childExecutableSHA256": "fec59de8abbf5e4cac8e4572e1b896802c179923667f49c05199181cb6a71e9e",
+  "copiedXctestrunSHA256": "07bd9a4d53c902bc7683f7108efaf91c7597c19b09c7dc6a52bb86564f7f3f2b",
+  "xctestrunSHA256": "07bd9a4d53c902bc7683f7108efaf91c7597c19b09c7dc6a52bb86564f7f3f2b"
+}

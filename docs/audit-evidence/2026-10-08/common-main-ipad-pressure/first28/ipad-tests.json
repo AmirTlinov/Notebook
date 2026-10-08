@@ -1,0 +1,398 @@
+{
+  "devices": [
+    {
+      "architecture": "arm64e",
+      "deviceId": "00008103-001E059934D9001E",
+      "deviceName": "iPad (Елизавета)",
+      "modelName": "iPad Pro (11-inch) (3rd generation)",
+      "osBuildNumber": "24A435",
+      "osVersion": "27.0",
+      "platform": "iOS"
+    }
+  ],
+  "testNodes": [
+    {
+      "children": [
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "duration": "0,14s",
+                  "durationInSeconds": 0.14405393600463867,
+                  "name": "testPressureBlocksRestingCaptureAndPreservesAcceptedCurl()",
+                  "nodeIdentifier": "CoverOpeningPhysicsTests/testPressureBlocksRestingCaptureAndPreservesAcceptedCurl()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/CoverOpeningPhysicsTests/testPressureBlocksRestingCaptureAndPreservesAcceptedCurl",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                }
+              ],
+              "name": "CoverOpeningPhysicsTests",
+              "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/CoverOpeningPhysicsTests",
+              "nodeType": "Test Suite",
+              "result": "Passed"
+            },
+            {
+              "children": [
+                {
+                  "duration": "2 с",
+                  "durationInSeconds": 2.2945330142974854,
+                  "name": "testAcceptedDistantTargetPreemptsARealQueuedNeighbourWithoutRetiringCurrentPaper()",
+                  "nodeIdentifier": "DocumentProgramOwnerTests/testAcceptedDistantTargetPreemptsARealQueuedNeighbourWithoutRetiringCurrentPaper()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/DocumentProgramOwnerTests/testAcceptedDistantTargetPreemptsARealQueuedNeighbourWithoutRetiringCurrentPaper",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "1 с",
+                  "durationInSeconds": 1.0604280233383179,
+                  "name": "testLiveTargetSupersessionAndCloseCancelItsQueuedAdmission()",
+                  "nodeIdentifier": "DocumentProgramOwnerTests/testLiveTargetSupersessionAndCloseCancelItsQueuedAdmission()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/DocumentProgramOwnerTests/testLiveTargetSupersessionAndCloseCancelItsQueuedAdmission",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "children": [
+                    {
+                      "name": "XCTAssertNil failed: \"E025CDC4-4831-45A4-BF80-3DC42BE5C209\"",
+                      "nodeType": "Failure Message",
+                      "sourceLocation": {
+                        "filePath": "/Users/amir/Documents/projects/Notebook/Applications/Tests/DocumentProgramOwnerTests.swift",
+                        "lineNumber": 1151
+                      }
+                    }
+                  ],
+                  "duration": "2 с",
+                  "durationInSeconds": 2.366805076599121,
+                  "name": "testPressureParksNeighbourAndPromotesItsSameAdmissionToAnAcceptedTarget()",
+                  "nodeIdentifier": "DocumentProgramOwnerTests/testPressureParksNeighbourAndPromotesItsSameAdmissionToAnAcceptedTarget()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/DocumentProgramOwnerTests/testPressureParksNeighbourAndPromotesItsSameAdmissionToAnAcceptedTarget",
+                  "nodeType": "Test Case",
+                  "result": "Failed"
+                },
+                {
+                  "duration": "1 с",
+                  "durationInSeconds": 1.3012709617614746,
+                  "name": "testPressureReclaimsAnUnselectedMountedNeighbourWithoutRevokingCurrentInput()",
+                  "nodeIdentifier": "DocumentProgramOwnerTests/testPressureReclaimsAnUnselectedMountedNeighbourWithoutRevokingCurrentInput()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/DocumentProgramOwnerTests/testPressureReclaimsAnUnselectedMountedNeighbourWithoutRevokingCurrentInput",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "children": [
+                    {
+                      "name": "XCTAssertTrue failed",
+                      "nodeType": "Failure Message",
+                      "sourceLocation": {
+                        "filePath": "/Users/amir/Documents/projects/Notebook/Applications/Tests/DocumentProgramOwnerTests.swift",
+                        "lineNumber": 1247
+                      }
+                    }
+                  ],
+                  "duration": "1 с",
+                  "durationInSeconds": 1.0415750741958618,
+                  "name": "testRequiredRemountOutlivesItsWithdrawnNativeSubscriber()",
+                  "nodeIdentifier": "DocumentProgramOwnerTests/testRequiredRemountOutlivesItsWithdrawnNativeSubscriber()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/DocumentProgramOwnerTests/testRequiredRemountOutlivesItsWithdrawnNativeSubscriber",
+                  "nodeType": "Test Case",
+                  "result": "Failed"
+                },
+                {
+                  "duration": "1 с",
+                  "durationInSeconds": 1.9500340223312378,
+                  "name": "testStaticTurnFramesReuseTheirExactPixelsAcrossLandingAndReplaceEditedSource()",
+                  "nodeIdentifier": "DocumentProgramOwnerTests/testStaticTurnFramesReuseTheirExactPixelsAcrossLandingAndReplaceEditedSource()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/DocumentProgramOwnerTests/testStaticTurnFramesReuseTheirExactPixelsAcrossLandingAndReplaceEditedSource",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "1 с",
+                  "durationInSeconds": 1.2043449878692627,
+                  "name": "testStationaryPassivePageRefinesAfterSharedPressureIsReleased()",
+                  "nodeIdentifier": "DocumentProgramOwnerTests/testStationaryPassivePageRefinesAfterSharedPressureIsReleased()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/DocumentProgramOwnerTests/testStationaryPassivePageRefinesAfterSharedPressureIsReleased",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                }
+              ],
+              "name": "DocumentProgramOwnerTests",
+              "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/DocumentProgramOwnerTests",
+              "nodeType": "Test Suite",
+              "result": "Failed"
+            },
+            {
+              "children": [
+                {
+                  "duration": "1 с",
+                  "durationInSeconds": 1.1683709621429443,
+                  "name": "testCurrentPageAdoptsTheSameReadyCoordinatorWebAndAdmission()",
+                  "nodeIdentifier": "DocumentShellPreparationTests/testCurrentPageAdoptsTheSameReadyCoordinatorWebAndAdmission()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/DocumentShellPreparationTests/testCurrentPageAdoptsTheSameReadyCoordinatorWebAndAdmission",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "children": [
+                    {
+                      "name": "XCTUnwrap failed: expected non-nil value of type \"WKWebView\"",
+                      "nodeType": "Failure Message",
+                      "sourceLocation": {
+                        "filePath": "/Users/amir/Documents/projects/Notebook/Applications/Tests/DocumentShellPreparationTests.swift",
+                        "lineNumber": 27
+                      }
+                    }
+                  ],
+                  "duration": "0,17s",
+                  "durationInSeconds": 0.1652449369430542,
+                  "name": "testPressureRetiresOnlyTheUnusedShellAndForegroundCannotReopenAdmission()",
+                  "nodeIdentifier": "DocumentShellPreparationTests/testPressureRetiresOnlyTheUnusedShellAndForegroundCannotReopenAdmission()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/DocumentShellPreparationTests/testPressureRetiresOnlyTheUnusedShellAndForegroundCannotReopenAdmission",
+                  "nodeType": "Test Case",
+                  "result": "Failed"
+                }
+              ],
+              "name": "DocumentShellPreparationTests",
+              "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/DocumentShellPreparationTests",
+              "nodeType": "Test Suite",
+              "result": "Failed"
+            },
+            {
+              "children": [
+                {
+                  "duration": "1 с",
+                  "durationInSeconds": 1.3191030025482178,
+                  "name": "testAuthoredToolsPersistOnPageBoardAndCoverThroughOneUndoQueue()",
+                  "nodeIdentifier": "NotebookDrawingToolsTests/testAuthoredToolsPersistOnPageBoardAndCoverThroughOneUndoQueue()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookDrawingToolsTests/testAuthoredToolsPersistOnPageBoardAndCoverThroughOneUndoQueue",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,74s",
+                  "durationInSeconds": 0.7404379844665527,
+                  "name": "testMarkerRunsThroughMeasuredPageInputWithoutPressureOrQuickShape()",
+                  "nodeIdentifier": "NotebookDrawingToolsTests/testMarkerRunsThroughMeasuredPageInputWithoutPressureOrQuickShape()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookDrawingToolsTests/testMarkerRunsThroughMeasuredPageInputWithoutPressureOrQuickShape",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                }
+              ],
+              "name": "NotebookDrawingToolsTests",
+              "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookDrawingToolsTests",
+              "nodeType": "Test Suite",
+              "result": "Passed"
+            },
+            {
+              "children": [
+                {
+                  "duration": "0,31s",
+                  "durationInSeconds": 0.30795300006866455,
+                  "name": "testPressureParksNeighboursButAdmitsTheCurrentPageAndAcceptedLanding()",
+                  "nodeIdentifier": "PageRasterPreparationTests/testPressureParksNeighboursButAdmitsTheCurrentPageAndAcceptedLanding()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/PageRasterPreparationTests/testPressureParksNeighboursButAdmitsTheCurrentPageAndAcceptedLanding",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,12s",
+                  "durationInSeconds": 0.11660003662109375,
+                  "name": "testRequiredPageRetriesQueuedRevocationWithinOnePressureEpoch()",
+                  "nodeIdentifier": "PageRasterPreparationTests/testRequiredPageRetriesQueuedRevocationWithinOnePressureEpoch()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/PageRasterPreparationTests/testRequiredPageRetriesQueuedRevocationWithinOnePressureEpoch",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                }
+              ],
+              "name": "PageRasterPreparationTests",
+              "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/PageRasterPreparationTests",
+              "nodeType": "Test Suite",
+              "result": "Passed"
+            },
+            {
+              "children": [
+                {
+                  "duration": "0,63s",
+                  "durationInSeconds": 0.6273230314254761,
+                  "name": "testAdmittedSourceSurvivesInputPauseAndCancelledPrivateRepaint()",
+                  "nodeIdentifier": "SceneCompositionTests/testAdmittedSourceSurvivesInputPauseAndCancelledPrivateRepaint()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/SceneCompositionTests/testAdmittedSourceSurvivesInputPauseAndCancelledPrivateRepaint",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,15s",
+                  "durationInSeconds": 0.15202903747558594,
+                  "name": "testGeometryPublishesBeforeItsSourceAndThenRetainsTheReadyPixels()",
+                  "nodeIdentifier": "SceneCompositionTests/testGeometryPublishesBeforeItsSourceAndThenRetainsTheReadyPixels()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/SceneCompositionTests/testGeometryPublishesBeforeItsSourceAndThenRetainsTheReadyPixels",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,12s",
+                  "durationInSeconds": 0.11907804012298584,
+                  "name": "testPressureRevocationRetriesAPinAcceptedBeforeItsSourceCatchWithoutAnotherCameraSample()",
+                  "nodeIdentifier": "SceneCompositionTests/testPressureRevocationRetriesAPinAcceptedBeforeItsSourceCatchWithoutAnotherCameraSample()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/SceneCompositionTests/testPressureRevocationRetriesAPinAcceptedBeforeItsSourceCatchWithoutAnotherCameraSample",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                }
+              ],
+              "name": "SceneCompositionTests",
+              "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/SceneCompositionTests",
+              "nodeType": "Test Suite",
+              "result": "Passed"
+            },
+            {
+              "children": [
+                {
+                  "duration": "0,004s",
+                  "durationInSeconds": 0.004005908966064453,
+                  "name": "testCompleteRasterCaptureKeepsEveryGrantedSlotThroughPublication()",
+                  "nodeIdentifier": "SceneRenderResourcesTests/testCompleteRasterCaptureKeepsEveryGrantedSlotThroughPublication()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/SceneRenderResourcesTests/testCompleteRasterCaptureKeepsEveryGrantedSlotThroughPublication",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,0015s",
+                  "durationInSeconds": 0.0015380382537841797,
+                  "name": "testEvictionRechecksObserverPinsAndFinalReleasePreservesEarlierAccess()",
+                  "nodeIdentifier": "SceneRenderResourcesTests/testEvictionRechecksObserverPinsAndFinalReleasePreservesEarlierAccess()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/SceneRenderResourcesTests/testEvictionRechecksObserverPinsAndFinalReleasePreservesEarlierAccess",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "1 с",
+                  "durationInSeconds": 1.052035927772522,
+                  "name": "testHundredThousandRasterEntriesKeepFreeAdmissionAndChurnBounded()",
+                  "nodeIdentifier": "SceneRenderResourcesTests/testHundredThousandRasterEntriesKeepFreeAdmissionAndChurnBounded()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/SceneRenderResourcesTests/testHundredThousandRasterEntriesKeepFreeAdmissionAndChurnBounded",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,0076s",
+                  "durationInSeconds": 0.007642984390258789,
+                  "name": "testPressureCancelsOnlyQueuedOptionalPurposeAndNormalPermitsItsRetry()",
+                  "nodeIdentifier": "SceneRenderResourcesTests/testPressureCancelsOnlyQueuedOptionalPurposeAndNormalPermitsItsRetry()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/SceneRenderResourcesTests/testPressureCancelsOnlyQueuedOptionalPurposeAndNormalPermitsItsRetry",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,0038s",
+                  "durationInSeconds": 0.003812074661254883,
+                  "name": "testPressureKeepsPinnedInputAndSubmittedBorrowersWhileDroppingUnusedPixels()",
+                  "nodeIdentifier": "SceneRenderResourcesTests/testPressureKeepsPinnedInputAndSubmittedBorrowersWhileDroppingUnusedPixels()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/SceneRenderResourcesTests/testPressureKeepsPinnedInputAndSubmittedBorrowersWhileDroppingUnusedPixels",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,0056s",
+                  "durationInSeconds": 0.005590915679931641,
+                  "name": "testPressureTrimWaitsForPhysicalReleaseAndDoesNotRepeatARefusedOwner()",
+                  "nodeIdentifier": "SceneRenderResourcesTests/testPressureTrimWaitsForPhysicalReleaseAndDoesNotRepeatARefusedOwner()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/SceneRenderResourcesTests/testPressureTrimWaitsForPhysicalReleaseAndDoesNotRepeatARefusedOwner",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,0006s",
+                  "durationInSeconds": 0.0006040334701538086,
+                  "name": "testPublicationObserversCannotReclaimTheIncomingRetainedRaster()",
+                  "nodeIdentifier": "SceneRenderResourcesTests/testPublicationObserversCannotReclaimTheIncomingRetainedRaster()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/SceneRenderResourcesTests/testPublicationObserversCannotReclaimTheIncomingRetainedRaster",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,00096s",
+                  "durationInSeconds": 0.0009590387344360352,
+                  "name": "testRasterEvictionReleasesItsSharedLayoutBeforeReadmittingDerivedBytes()",
+                  "nodeIdentifier": "SceneRenderResourcesTests/testRasterEvictionReleasesItsSharedLayoutBeforeReadmittingDerivedBytes()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/SceneRenderResourcesTests/testRasterEvictionReleasesItsSharedLayoutBeforeReadmittingDerivedBytes",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,00074s",
+                  "durationInSeconds": 0.0007399320602416992,
+                  "name": "testRetainingAnOldReceiptCannotReplaceANewerEqualDensityCapture()",
+                  "nodeIdentifier": "SceneRenderResourcesTests/testRetainingAnOldReceiptCannotReplaceANewerEqualDensityCapture()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/SceneRenderResourcesTests/testRetainingAnOldReceiptCannotReplaceANewerEqualDensityCapture",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                }
+              ],
+              "name": "SceneRenderResourcesTests",
+              "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/SceneRenderResourcesTests",
+              "nodeType": "Test Suite",
+              "result": "Passed"
+            },
+            {
+              "children": [
+                {
+                  "duration": "0,62s",
+                  "durationInSeconds": 0.6184040307998657,
+                  "name": "testPressureWithdrawsPreparingOptionalWebAndKeepsItsPromotedSource()",
+                  "nodeIdentifier": "SceneWebRasterPreparationTests/testPressureWithdrawsPreparingOptionalWebAndKeepsItsPromotedSource()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/SceneWebRasterPreparationTests/testPressureWithdrawsPreparingOptionalWebAndKeepsItsPromotedSource",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                }
+              ],
+              "name": "SceneWebRasterPreparationTests",
+              "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/SceneWebRasterPreparationTests",
+              "nodeType": "Test Suite",
+              "result": "Passed"
+            }
+          ],
+          "name": "NotebookTests",
+          "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests",
+          "nodeType": "Unit test bundle",
+          "result": "Failed"
+        },
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "duration": "15 с",
+                  "durationInSeconds": 15.32570505142212,
+                  "name": "testDocumentClosesWithPinchAndReopensByDoubleTap()",
+                  "nodeIdentifier": "DrawingResponsivenessTests/testDocumentClosesWithPinchAndReopensByDoubleTap()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookUITests/DrawingResponsivenessTests/testDocumentClosesWithPinchAndReopensByDoubleTap",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                }
+              ],
+              "name": "DrawingResponsivenessTests",
+              "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookUITests/DrawingResponsivenessTests",
+              "nodeType": "Test Suite",
+              "result": "Passed"
+            }
+          ],
+          "name": "NotebookUITests",
+          "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookUITests",
+          "nodeType": "UI test bundle",
+          "result": "Passed"
+        }
+      ],
+      "name": "Notebook",
+      "nodeType": "Test Plan",
+      "result": "Failed"
+    }
+  ],
+  "testPlanConfigurations": [
+    {
+      "configurationId": "1",
+      "configurationName": "Test Scheme Action"
+    }
+  ]
+}

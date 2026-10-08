@@ -1,0 +1,761 @@
+{
+  "rawCommandLogSHA256": "4bd14f4770087d47394bdbcdab523fcfd51b7ab057c1358d49fabd78d6189563",
+  "commands": [
+    {
+      "label": "unlocked-ipad",
+      "argv": [
+        "xcrun",
+        "devicectl",
+        "device",
+        "info",
+        "lockState",
+        "--device",
+        "00008103-001E059934D9001E",
+        "--timeout",
+        "30",
+        "--json-output",
+        "/Users/amir/Documents/projects/Notebook/.build/common-main-ipad-execution-20261008-v1/physical-ipad-lock-state.json"
+      ],
+      "cwd": "/Users/amir/Documents/projects/Notebook",
+      "exitCode": 0,
+      "environmentSHA256": "24db2eff73b8094c01bf8ed2591334369139c5f9da3d51710033c2a280b625a6"
+    },
+    {
+      "label": "physical-ipad",
+      "argv": [
+        "xcrun",
+        "devicectl",
+        "device",
+        "info",
+        "details",
+        "--device",
+        "00008103-001E059934D9001E",
+        "--timeout",
+        "30",
+        "--json-output",
+        "/Users/amir/Documents/projects/Notebook/.build/common-main-ipad-execution-20261008-v1/physical-ipad.json",
+        "--omit-deprecated-fields-in-json"
+      ],
+      "cwd": "/Users/amir/Documents/projects/Notebook",
+      "exitCode": 0,
+      "environmentSHA256": "24db2eff73b8094c01bf8ed2591334369139c5f9da3d51710033c2a280b625a6"
+    },
+    {
+      "label": "toolchain-python",
+      "argv": [
+        "/opt/homebrew/opt/python@3.14/bin/python3.14",
+        "--version"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "24db2eff73b8094c01bf8ed2591334369139c5f9da3d51710033c2a280b625a6"
+    },
+    {
+      "label": "toolchain-xcode",
+      "argv": [
+        "/usr/bin/xcrun",
+        "xcodebuild",
+        "-version"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "24db2eff73b8094c01bf8ed2591334369139c5f9da3d51710033c2a280b625a6"
+    },
+    {
+      "label": "toolchain-swift",
+      "argv": [
+        "/usr/bin/xcrun",
+        "swift",
+        "--version"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "24db2eff73b8094c01bf8ed2591334369139c5f9da3d51710033c2a280b625a6"
+    },
+    {
+      "label": "toolchain-iphoneosSDK",
+      "argv": [
+        "/usr/bin/xcrun",
+        "--sdk",
+        "iphoneos",
+        "--show-sdk-build-version"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "24db2eff73b8094c01bf8ed2591334369139c5f9da3d51710033c2a280b625a6"
+    },
+    {
+      "label": "toolchain-macosSDK",
+      "argv": [
+        "/usr/bin/xcrun",
+        "--sdk",
+        "macosx",
+        "--show-sdk-build-version"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "24db2eff73b8094c01bf8ed2591334369139c5f9da3d51710033c2a280b625a6"
+    },
+    {
+      "label": "toolchain-xcodegen",
+      "argv": [
+        "/opt/homebrew/bin/xcodegen",
+        "--version"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "24db2eff73b8094c01bf8ed2591334369139c5f9da3d51710033c2a280b625a6"
+    },
+    {
+      "label": "toolchain-node",
+      "argv": [
+        "/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a/node",
+        "--version"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "24db2eff73b8094c01bf8ed2591334369139c5f9da3d51710033c2a280b625a6"
+    },
+    {
+      "label": "toolchain-npm",
+      "argv": [
+        "/Users/amir/.volta/bin/npm",
+        "--version"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "24db2eff73b8094c01bf8ed2591334369139c5f9da3d51710033c2a280b625a6"
+    },
+    {
+      "label": "before-strict-Notebook.app",
+      "argv": [
+        "/usr/bin/codesign",
+        "--verify",
+        "--deep",
+        "--strict",
+        "/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/b12ca6d0c0574691/ipad/Build/Products/Debug-iphoneos/Notebook.app"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "24db2eff73b8094c01bf8ed2591334369139c5f9da3d51710033c2a280b625a6"
+    },
+    {
+      "label": "before-identity-Notebook.app",
+      "argv": [
+        "/usr/bin/codesign",
+        "--display",
+        "--verbose=4",
+        "/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/b12ca6d0c0574691/ipad/Build/Products/Debug-iphoneos/Notebook.app"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "24db2eff73b8094c01bf8ed2591334369139c5f9da3d51710033c2a280b625a6"
+    },
+    {
+      "label": "before-profile-Notebook.app",
+      "argv": [
+        "/usr/bin/security",
+        "cms",
+        "-D",
+        "-i",
+        "/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/b12ca6d0c0574691/ipad/Build/Products/Debug-iphoneos/Notebook.app/embedded.mobileprovision"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "24db2eff73b8094c01bf8ed2591334369139c5f9da3d51710033c2a280b625a6"
+    },
+    {
+      "label": "before-certificates-Notebook.app",
+      "argv": [
+        "/usr/bin/codesign",
+        "--display",
+        "--extract-certificates=/Users/amir/Documents/projects/Notebook/.build/common-main-ipad-execution-20261008-v1/before-Notebook.app-certificate-",
+        "/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/b12ca6d0c0574691/ipad/Build/Products/Debug-iphoneos/Notebook.app"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "24db2eff73b8094c01bf8ed2591334369139c5f9da3d51710033c2a280b625a6"
+    },
+    {
+      "label": "before-architecture-Notebook.app",
+      "argv": [
+        "/usr/bin/file",
+        "/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/b12ca6d0c0574691/ipad/Build/Products/Debug-iphoneos/Notebook.app/Notebook"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "24db2eff73b8094c01bf8ed2591334369139c5f9da3d51710033c2a280b625a6"
+    },
+    {
+      "label": "before-strict-NotebookUITests-Runner.app",
+      "argv": [
+        "/usr/bin/codesign",
+        "--verify",
+        "--deep",
+        "--strict",
+        "/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/b12ca6d0c0574691/ipad/Build/Products/Debug-iphoneos/NotebookUITests-Runner.app"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "24db2eff73b8094c01bf8ed2591334369139c5f9da3d51710033c2a280b625a6"
+    },
+    {
+      "label": "before-identity-NotebookUITests-Runner.app",
+      "argv": [
+        "/usr/bin/codesign",
+        "--display",
+        "--verbose=4",
+        "/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/b12ca6d0c0574691/ipad/Build/Products/Debug-iphoneos/NotebookUITests-Runner.app"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "24db2eff73b8094c01bf8ed2591334369139c5f9da3d51710033c2a280b625a6"
+    },
+    {
+      "label": "before-profile-NotebookUITests-Runner.app",
+      "argv": [
+        "/usr/bin/security",
+        "cms",
+        "-D",
+        "-i",
+        "/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/b12ca6d0c0574691/ipad/Build/Products/Debug-iphoneos/NotebookUITests-Runner.app/embedded.mobileprovision"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "24db2eff73b8094c01bf8ed2591334369139c5f9da3d51710033c2a280b625a6"
+    },
+    {
+      "label": "before-certificates-NotebookUITests-Runner.app",
+      "argv": [
+        "/usr/bin/codesign",
+        "--display",
+        "--extract-certificates=/Users/amir/Documents/projects/Notebook/.build/common-main-ipad-execution-20261008-v1/before-NotebookUITests-Runner.app-certificate-",
+        "/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/b12ca6d0c0574691/ipad/Build/Products/Debug-iphoneos/NotebookUITests-Runner.app"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "24db2eff73b8094c01bf8ed2591334369139c5f9da3d51710033c2a280b625a6"
+    },
+    {
+      "label": "before-architecture-NotebookUITests-Runner.app",
+      "argv": [
+        "/usr/bin/file",
+        "/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/b12ca6d0c0574691/ipad/Build/Products/Debug-iphoneos/NotebookUITests-Runner.app/NotebookUITests-Runner"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "24db2eff73b8094c01bf8ed2591334369139c5f9da3d51710033c2a280b625a6"
+    },
+    {
+      "label": "ipad-native-test-cleanup-before",
+      "argv": [
+        "/opt/homebrew/opt/python@3.14/bin/python3.14",
+        "-B",
+        "-c",
+        "\nimport json\nimport subprocess\nimport sys\nimport time\n\ndevice, bundle = sys.argv[1:]\n\ndef installed():\n    result = subprocess.run([\n        \"xcrun\", \"devicectl\", \"device\", \"info\", \"apps\",\n        \"--device\", device, \"--include-all-apps\", \"--bundle-id\", bundle,\n        \"--timeout\", \"30\", \"--json-output\", \"-\",\n    ], capture_output=True, text=True)\n    if result.returncode:\n        sys.stderr.write(result.stderr)\n        raise SystemExit(result.returncode)\n    return [app for app in json.loads(result.stdout)[\"result\"][\"apps\"]\n            if app.get(\"bundleIdentifier\") == bundle]\n\nfound = installed()\nif found:\n    result = subprocess.run([\n        \"xcrun\", \"devicectl\", \"device\", \"uninstall\", \"app\",\n        \"--device\", device, bundle, \"--timeout\", \"60\",\n    ], capture_output=True, text=True)\n    if result.returncode:\n        sys.stderr.write(result.stderr)\n        raise SystemExit(result.returncode)\n    for _ in range(20):\n        if not installed():\n            break\n        time.sleep(0.1)\nif installed():\n    raise SystemExit(\"XCTest bundle \u043e\u0441\u0442\u0430\u043b\u0441\u044f \u043d\u0430 \u0444\u0438\u0437\u0438\u0447\u0435\u0441\u043a\u043e\u043c iPad: \" + bundle)\nprint(json.dumps({\"bundleIdentifier\": bundle, \"removed\": bool(found)}, sort_keys=True))\n",
+        "00008103-001E059934D9001E",
+        "com.amirtlinov.notebook.native-test"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "24db2eff73b8094c01bf8ed2591334369139c5f9da3d51710033c2a280b625a6"
+    },
+    {
+      "label": "ipad-ui-runner-cleanup-before",
+      "argv": [
+        "/opt/homebrew/opt/python@3.14/bin/python3.14",
+        "-B",
+        "-c",
+        "\nimport json\nimport subprocess\nimport sys\nimport time\n\ndevice, bundle = sys.argv[1:]\n\ndef installed():\n    result = subprocess.run([\n        \"xcrun\", \"devicectl\", \"device\", \"info\", \"apps\",\n        \"--device\", device, \"--include-all-apps\", \"--bundle-id\", bundle,\n        \"--timeout\", \"30\", \"--json-output\", \"-\",\n    ], capture_output=True, text=True)\n    if result.returncode:\n        sys.stderr.write(result.stderr)\n        raise SystemExit(result.returncode)\n    return [app for app in json.loads(result.stdout)[\"result\"][\"apps\"]\n            if app.get(\"bundleIdentifier\") == bundle]\n\nfound = installed()\nif found:\n    result = subprocess.run([\n        \"xcrun\", \"devicectl\", \"device\", \"uninstall\", \"app\",\n        \"--device\", device, bundle, \"--timeout\", \"60\",\n    ], capture_output=True, text=True)\n    if result.returncode:\n        sys.stderr.write(result.stderr)\n        raise SystemExit(result.returncode)\n    for _ in range(20):\n        if not installed():\n            break\n        time.sleep(0.1)\nif installed():\n    raise SystemExit(\"XCTest bundle \u043e\u0441\u0442\u0430\u043b\u0441\u044f \u043d\u0430 \u0444\u0438\u0437\u0438\u0447\u0435\u0441\u043a\u043e\u043c iPad: \" + bundle)\nprint(json.dumps({\"bundleIdentifier\": bundle, \"removed\": bool(found)}, sort_keys=True))\n",
+        "00008103-001E059934D9001E",
+        "com.amirtlinov.notebook.uitests.xctrunner"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "24db2eff73b8094c01bf8ed2591334369139c5f9da3d51710033c2a280b625a6"
+    },
+    {
+      "label": "ipad-install-app",
+      "argv": [
+        "xcrun",
+        "devicectl",
+        "device",
+        "install",
+        "app",
+        "--device",
+        "00008103-001E059934D9001E",
+        "/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/b12ca6d0c0574691/ipad/Build/Products/Debug-iphoneos/Notebook.app",
+        "--timeout",
+        "180",
+        "--json-output",
+        "/Users/amir/Documents/projects/Notebook/.build/common-main-ipad-execution-20261008-v1/ipad-install-app.json"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "24db2eff73b8094c01bf8ed2591334369139c5f9da3d51710033c2a280b625a6"
+    },
+    {
+      "label": "unlocked-ipad-inventory",
+      "argv": [
+        "xcrun",
+        "devicectl",
+        "device",
+        "info",
+        "lockState",
+        "--device",
+        "00008103-001E059934D9001E",
+        "--timeout",
+        "30",
+        "--json-output",
+        "/Users/amir/Documents/projects/Notebook/.build/common-main-ipad-execution-20261008-v1/physical-ipad-lock-state-inventory.json"
+      ],
+      "cwd": "/Users/amir/Documents/projects/Notebook",
+      "exitCode": 0,
+      "environmentSHA256": "24db2eff73b8094c01bf8ed2591334369139c5f9da3d51710033c2a280b625a6"
+    },
+    {
+      "label": "ipad-inventory",
+      "argv": [
+        "xcrun",
+        "xcodebuild",
+        "-quiet",
+        "-xctestrun",
+        "/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/b12ca6d0c0574691/ipad/Build/Products/Notebook_iphoneos27.0-arm64.xctestrun",
+        "-destination",
+        "platform=iOS,id=00008103-001E059934D9001E",
+        "-parallel-testing-enabled",
+        "NO",
+        "-collect-test-diagnostics",
+        "never",
+        "test-without-building",
+        "-only-testing:NotebookTests/CoverOpeningPhysicsTests/testPressureBlocksRestingCaptureAndPreservesAcceptedCurl",
+        "-only-testing:NotebookTests/DocumentProgramOwnerTests/testAcceptedDistantTargetPreemptsARealQueuedNeighbourWithoutRetiringCurrentPaper",
+        "-only-testing:NotebookTests/DocumentProgramOwnerTests/testLiveTargetSupersessionAndCloseCancelItsQueuedAdmission",
+        "-only-testing:NotebookTests/DocumentProgramOwnerTests/testPressureParksNeighbourAndPromotesItsSameAdmissionToAnAcceptedTarget",
+        "-only-testing:NotebookTests/DocumentProgramOwnerTests/testPressureReclaimsAnUnselectedMountedNeighbourWithoutRevokingCurrentInput",
+        "-only-testing:NotebookTests/DocumentProgramOwnerTests/testRequiredRemountOutlivesItsWithdrawnNativeSubscriber",
+        "-only-testing:NotebookTests/DocumentProgramOwnerTests/testStaticTurnFramesReuseTheirExactPixelsAcrossLandingAndReplaceEditedSource",
+        "-only-testing:NotebookTests/DocumentProgramOwnerTests/testStationaryPassivePageRefinesAfterSharedPressureIsReleased",
+        "-only-testing:NotebookTests/DocumentShellPreparationTests/testCurrentPageAdoptsTheSameReadyCoordinatorWebAndAdmission",
+        "-only-testing:NotebookTests/DocumentShellPreparationTests/testPressureRetiresOnlyTheUnusedShellAndForegroundCannotReopenAdmission",
+        "-only-testing:NotebookTests/NotebookDrawingToolsTests/testAuthoredToolsPersistOnPageBoardAndCoverThroughOneUndoQueue",
+        "-only-testing:NotebookTests/NotebookDrawingToolsTests/testMarkerRunsThroughMeasuredPageInputWithoutPressureOrQuickShape",
+        "-only-testing:NotebookTests/PageRasterPreparationTests/testPressureParksNeighboursButAdmitsTheCurrentPageAndAcceptedLanding",
+        "-only-testing:NotebookTests/PageRasterPreparationTests/testRequiredPageRetriesQueuedRevocationWithinOnePressureEpoch",
+        "-only-testing:NotebookTests/SceneCompositionTests/testAdmittedSourceSurvivesInputPauseAndCancelledPrivateRepaint",
+        "-only-testing:NotebookTests/SceneCompositionTests/testGeometryPublishesBeforeItsSourceAndThenRetainsTheReadyPixels",
+        "-only-testing:NotebookTests/SceneCompositionTests/testPressureRevocationRetriesAPinAcceptedBeforeItsSourceCatchWithoutAnotherCameraSample",
+        "-only-testing:NotebookTests/SceneRenderResourcesTests/testCompleteRasterCaptureKeepsEveryGrantedSlotThroughPublication",
+        "-only-testing:NotebookTests/SceneRenderResourcesTests/testEvictionRechecksObserverPinsAndFinalReleasePreservesEarlierAccess",
+        "-only-testing:NotebookTests/SceneRenderResourcesTests/testHundredThousandRasterEntriesKeepFreeAdmissionAndChurnBounded",
+        "-only-testing:NotebookTests/SceneRenderResourcesTests/testPressureCancelsOnlyQueuedOptionalPurposeAndNormalPermitsItsRetry",
+        "-only-testing:NotebookTests/SceneRenderResourcesTests/testPressureKeepsPinnedInputAndSubmittedBorrowersWhileDroppingUnusedPixels",
+        "-only-testing:NotebookTests/SceneRenderResourcesTests/testPressureTrimWaitsForPhysicalReleaseAndDoesNotRepeatARefusedOwner",
+        "-only-testing:NotebookTests/SceneRenderResourcesTests/testPublicationObserversCannotReclaimTheIncomingRetainedRaster",
+        "-only-testing:NotebookTests/SceneRenderResourcesTests/testRasterEvictionReleasesItsSharedLayoutBeforeReadmittingDerivedBytes",
+        "-only-testing:NotebookTests/SceneRenderResourcesTests/testRetainingAnOldReceiptCannotReplaceANewerEqualDensityCapture",
+        "-only-testing:NotebookTests/SceneWebRasterPreparationTests/testPressureWithdrawsPreparingOptionalWebAndKeepsItsPromotedSource",
+        "-only-testing:NotebookUITests/DrawingResponsivenessTests/testDocumentClosesWithPinchAndReopensByDoubleTap",
+        "-enumerate-tests",
+        "-test-enumeration-style",
+        "flat",
+        "-test-enumeration-format",
+        "json",
+        "-test-enumeration-output-path",
+        "/Users/amir/Documents/projects/Notebook/.build/common-main-ipad-execution-20261008-v1/ipad-inventory.json"
+      ],
+      "cwd": "/Users/amir/Documents/projects/Notebook/Applications",
+      "exitCode": 0,
+      "environmentSHA256": "24db2eff73b8094c01bf8ed2591334369139c5f9da3d51710033c2a280b625a6"
+    },
+    {
+      "label": "unlocked-ipad-execution",
+      "argv": [
+        "xcrun",
+        "devicectl",
+        "device",
+        "info",
+        "lockState",
+        "--device",
+        "00008103-001E059934D9001E",
+        "--timeout",
+        "30",
+        "--json-output",
+        "/Users/amir/Documents/projects/Notebook/.build/common-main-ipad-execution-20261008-v1/physical-ipad-lock-state-execution.json"
+      ],
+      "cwd": "/Users/amir/Documents/projects/Notebook",
+      "exitCode": 0,
+      "environmentSHA256": "24db2eff73b8094c01bf8ed2591334369139c5f9da3d51710033c2a280b625a6"
+    },
+    {
+      "label": "ipad",
+      "argv": [
+        "xcrun",
+        "xcodebuild",
+        "-quiet",
+        "-xctestrun",
+        "/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/b12ca6d0c0574691/ipad/Build/Products/Notebook_iphoneos27.0-arm64.xctestrun",
+        "-destination",
+        "platform=iOS,id=00008103-001E059934D9001E",
+        "-resultBundlePath",
+        "/Users/amir/Documents/projects/Notebook/.build/common-main-ipad-execution-20261008-v1/ipad.xcresult",
+        "-parallel-testing-enabled",
+        "NO",
+        "-collect-test-diagnostics",
+        "never",
+        "test-without-building",
+        "-only-testing:NotebookTests/CoverOpeningPhysicsTests/testPressureBlocksRestingCaptureAndPreservesAcceptedCurl",
+        "-only-testing:NotebookTests/DocumentProgramOwnerTests/testAcceptedDistantTargetPreemptsARealQueuedNeighbourWithoutRetiringCurrentPaper",
+        "-only-testing:NotebookTests/DocumentProgramOwnerTests/testLiveTargetSupersessionAndCloseCancelItsQueuedAdmission",
+        "-only-testing:NotebookTests/DocumentProgramOwnerTests/testPressureParksNeighbourAndPromotesItsSameAdmissionToAnAcceptedTarget",
+        "-only-testing:NotebookTests/DocumentProgramOwnerTests/testPressureReclaimsAnUnselectedMountedNeighbourWithoutRevokingCurrentInput",
+        "-only-testing:NotebookTests/DocumentProgramOwnerTests/testRequiredRemountOutlivesItsWithdrawnNativeSubscriber",
+        "-only-testing:NotebookTests/DocumentProgramOwnerTests/testStaticTurnFramesReuseTheirExactPixelsAcrossLandingAndReplaceEditedSource",
+        "-only-testing:NotebookTests/DocumentProgramOwnerTests/testStationaryPassivePageRefinesAfterSharedPressureIsReleased",
+        "-only-testing:NotebookTests/DocumentShellPreparationTests/testCurrentPageAdoptsTheSameReadyCoordinatorWebAndAdmission",
+        "-only-testing:NotebookTests/DocumentShellPreparationTests/testPressureRetiresOnlyTheUnusedShellAndForegroundCannotReopenAdmission",
+        "-only-testing:NotebookTests/NotebookDrawingToolsTests/testAuthoredToolsPersistOnPageBoardAndCoverThroughOneUndoQueue",
+        "-only-testing:NotebookTests/NotebookDrawingToolsTests/testMarkerRunsThroughMeasuredPageInputWithoutPressureOrQuickShape",
+        "-only-testing:NotebookTests/PageRasterPreparationTests/testPressureParksNeighboursButAdmitsTheCurrentPageAndAcceptedLanding",
+        "-only-testing:NotebookTests/PageRasterPreparationTests/testRequiredPageRetriesQueuedRevocationWithinOnePressureEpoch",
+        "-only-testing:NotebookTests/SceneCompositionTests/testAdmittedSourceSurvivesInputPauseAndCancelledPrivateRepaint",
+        "-only-testing:NotebookTests/SceneCompositionTests/testGeometryPublishesBeforeItsSourceAndThenRetainsTheReadyPixels",
+        "-only-testing:NotebookTests/SceneCompositionTests/testPressureRevocationRetriesAPinAcceptedBeforeItsSourceCatchWithoutAnotherCameraSample",
+        "-only-testing:NotebookTests/SceneRenderResourcesTests/testCompleteRasterCaptureKeepsEveryGrantedSlotThroughPublication",
+        "-only-testing:NotebookTests/SceneRenderResourcesTests/testEvictionRechecksObserverPinsAndFinalReleasePreservesEarlierAccess",
+        "-only-testing:NotebookTests/SceneRenderResourcesTests/testHundredThousandRasterEntriesKeepFreeAdmissionAndChurnBounded",
+        "-only-testing:NotebookTests/SceneRenderResourcesTests/testPressureCancelsOnlyQueuedOptionalPurposeAndNormalPermitsItsRetry",
+        "-only-testing:NotebookTests/SceneRenderResourcesTests/testPressureKeepsPinnedInputAndSubmittedBorrowersWhileDroppingUnusedPixels",
+        "-only-testing:NotebookTests/SceneRenderResourcesTests/testPressureTrimWaitsForPhysicalReleaseAndDoesNotRepeatARefusedOwner",
+        "-only-testing:NotebookTests/SceneRenderResourcesTests/testPublicationObserversCannotReclaimTheIncomingRetainedRaster",
+        "-only-testing:NotebookTests/SceneRenderResourcesTests/testRasterEvictionReleasesItsSharedLayoutBeforeReadmittingDerivedBytes",
+        "-only-testing:NotebookTests/SceneRenderResourcesTests/testRetainingAnOldReceiptCannotReplaceANewerEqualDensityCapture",
+        "-only-testing:NotebookTests/SceneWebRasterPreparationTests/testPressureWithdrawsPreparingOptionalWebAndKeepsItsPromotedSource",
+        "-only-testing:NotebookUITests/DrawingResponsivenessTests/testDocumentClosesWithPinchAndReopensByDoubleTap"
+      ],
+      "cwd": "/Users/amir/Documents/projects/Notebook/Applications",
+      "exitCode": 65,
+      "environmentSHA256": "24db2eff73b8094c01bf8ed2591334369139c5f9da3d51710033c2a280b625a6"
+    },
+    {
+      "label": "ipad-summary",
+      "argv": [
+        "xcrun",
+        "xcresulttool",
+        "get",
+        "test-results",
+        "summary",
+        "--path",
+        "/Users/amir/Documents/projects/Notebook/.build/common-main-ipad-execution-20261008-v1/ipad.xcresult",
+        "--compact"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "24db2eff73b8094c01bf8ed2591334369139c5f9da3d51710033c2a280b625a6"
+    },
+    {
+      "label": "ipad-tests",
+      "argv": [
+        "xcrun",
+        "xcresulttool",
+        "get",
+        "test-results",
+        "tests",
+        "--path",
+        "/Users/amir/Documents/projects/Notebook/.build/common-main-ipad-execution-20261008-v1/ipad.xcresult",
+        "--compact"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "24db2eff73b8094c01bf8ed2591334369139c5f9da3d51710033c2a280b625a6"
+    },
+    {
+      "label": "ipad-native-test-cleanup-after",
+      "argv": [
+        "/opt/homebrew/opt/python@3.14/bin/python3.14",
+        "-B",
+        "-c",
+        "\nimport json\nimport subprocess\nimport sys\nimport time\n\ndevice, bundle = sys.argv[1:]\n\ndef installed():\n    result = subprocess.run([\n        \"xcrun\", \"devicectl\", \"device\", \"info\", \"apps\",\n        \"--device\", device, \"--include-all-apps\", \"--bundle-id\", bundle,\n        \"--timeout\", \"30\", \"--json-output\", \"-\",\n    ], capture_output=True, text=True)\n    if result.returncode:\n        sys.stderr.write(result.stderr)\n        raise SystemExit(result.returncode)\n    return [app for app in json.loads(result.stdout)[\"result\"][\"apps\"]\n            if app.get(\"bundleIdentifier\") == bundle]\n\nfound = installed()\nif found:\n    result = subprocess.run([\n        \"xcrun\", \"devicectl\", \"device\", \"uninstall\", \"app\",\n        \"--device\", device, bundle, \"--timeout\", \"60\",\n    ], capture_output=True, text=True)\n    if result.returncode:\n        sys.stderr.write(result.stderr)\n        raise SystemExit(result.returncode)\n    for _ in range(20):\n        if not installed():\n            break\n        time.sleep(0.1)\nif installed():\n    raise SystemExit(\"XCTest bundle \u043e\u0441\u0442\u0430\u043b\u0441\u044f \u043d\u0430 \u0444\u0438\u0437\u0438\u0447\u0435\u0441\u043a\u043e\u043c iPad: \" + bundle)\nprint(json.dumps({\"bundleIdentifier\": bundle, \"removed\": bool(found)}, sort_keys=True))\n",
+        "00008103-001E059934D9001E",
+        "com.amirtlinov.notebook.native-test"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "24db2eff73b8094c01bf8ed2591334369139c5f9da3d51710033c2a280b625a6"
+    },
+    {
+      "label": "ipad-ui-runner-cleanup-after",
+      "argv": [
+        "/opt/homebrew/opt/python@3.14/bin/python3.14",
+        "-B",
+        "-c",
+        "\nimport json\nimport subprocess\nimport sys\nimport time\n\ndevice, bundle = sys.argv[1:]\n\ndef installed():\n    result = subprocess.run([\n        \"xcrun\", \"devicectl\", \"device\", \"info\", \"apps\",\n        \"--device\", device, \"--include-all-apps\", \"--bundle-id\", bundle,\n        \"--timeout\", \"30\", \"--json-output\", \"-\",\n    ], capture_output=True, text=True)\n    if result.returncode:\n        sys.stderr.write(result.stderr)\n        raise SystemExit(result.returncode)\n    return [app for app in json.loads(result.stdout)[\"result\"][\"apps\"]\n            if app.get(\"bundleIdentifier\") == bundle]\n\nfound = installed()\nif found:\n    result = subprocess.run([\n        \"xcrun\", \"devicectl\", \"device\", \"uninstall\", \"app\",\n        \"--device\", device, bundle, \"--timeout\", \"60\",\n    ], capture_output=True, text=True)\n    if result.returncode:\n        sys.stderr.write(result.stderr)\n        raise SystemExit(result.returncode)\n    for _ in range(20):\n        if not installed():\n            break\n        time.sleep(0.1)\nif installed():\n    raise SystemExit(\"XCTest bundle \u043e\u0441\u0442\u0430\u043b\u0441\u044f \u043d\u0430 \u0444\u0438\u0437\u0438\u0447\u0435\u0441\u043a\u043e\u043c iPad: \" + bundle)\nprint(json.dumps({\"bundleIdentifier\": bundle, \"removed\": bool(found)}, sort_keys=True))\n",
+        "00008103-001E059934D9001E",
+        "com.amirtlinov.notebook.uitests.xctrunner"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "24db2eff73b8094c01bf8ed2591334369139c5f9da3d51710033c2a280b625a6"
+    },
+    {
+      "label": "toolchain-after-python",
+      "argv": [
+        "/opt/homebrew/opt/python@3.14/bin/python3.14",
+        "--version"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "24db2eff73b8094c01bf8ed2591334369139c5f9da3d51710033c2a280b625a6"
+    },
+    {
+      "label": "toolchain-after-xcode",
+      "argv": [
+        "/usr/bin/xcrun",
+        "xcodebuild",
+        "-version"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "24db2eff73b8094c01bf8ed2591334369139c5f9da3d51710033c2a280b625a6"
+    },
+    {
+      "label": "toolchain-after-swift",
+      "argv": [
+        "/usr/bin/xcrun",
+        "swift",
+        "--version"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "24db2eff73b8094c01bf8ed2591334369139c5f9da3d51710033c2a280b625a6"
+    },
+    {
+      "label": "toolchain-after-iphoneosSDK",
+      "argv": [
+        "/usr/bin/xcrun",
+        "--sdk",
+        "iphoneos",
+        "--show-sdk-build-version"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "24db2eff73b8094c01bf8ed2591334369139c5f9da3d51710033c2a280b625a6"
+    },
+    {
+      "label": "toolchain-after-macosSDK",
+      "argv": [
+        "/usr/bin/xcrun",
+        "--sdk",
+        "macosx",
+        "--show-sdk-build-version"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "24db2eff73b8094c01bf8ed2591334369139c5f9da3d51710033c2a280b625a6"
+    },
+    {
+      "label": "toolchain-after-xcodegen",
+      "argv": [
+        "/opt/homebrew/bin/xcodegen",
+        "--version"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "24db2eff73b8094c01bf8ed2591334369139c5f9da3d51710033c2a280b625a6"
+    },
+    {
+      "label": "toolchain-after-node",
+      "argv": [
+        "/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a/node",
+        "--version"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "24db2eff73b8094c01bf8ed2591334369139c5f9da3d51710033c2a280b625a6"
+    },
+    {
+      "label": "toolchain-after-npm",
+      "argv": [
+        "/Users/amir/.volta/bin/npm",
+        "--version"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "24db2eff73b8094c01bf8ed2591334369139c5f9da3d51710033c2a280b625a6"
+    },
+    {
+      "label": "after-strict-Notebook.app",
+      "argv": [
+        "/usr/bin/codesign",
+        "--verify",
+        "--deep",
+        "--strict",
+        "/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/b12ca6d0c0574691/ipad/Build/Products/Debug-iphoneos/Notebook.app"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "24db2eff73b8094c01bf8ed2591334369139c5f9da3d51710033c2a280b625a6"
+    },
+    {
+      "label": "after-identity-Notebook.app",
+      "argv": [
+        "/usr/bin/codesign",
+        "--display",
+        "--verbose=4",
+        "/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/b12ca6d0c0574691/ipad/Build/Products/Debug-iphoneos/Notebook.app"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "24db2eff73b8094c01bf8ed2591334369139c5f9da3d51710033c2a280b625a6"
+    },
+    {
+      "label": "after-profile-Notebook.app",
+      "argv": [
+        "/usr/bin/security",
+        "cms",
+        "-D",
+        "-i",
+        "/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/b12ca6d0c0574691/ipad/Build/Products/Debug-iphoneos/Notebook.app/embedded.mobileprovision"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "24db2eff73b8094c01bf8ed2591334369139c5f9da3d51710033c2a280b625a6"
+    },
+    {
+      "label": "after-certificates-Notebook.app",
+      "argv": [
+        "/usr/bin/codesign",
+        "--display",
+        "--extract-certificates=/Users/amir/Documents/projects/Notebook/.build/common-main-ipad-execution-20261008-v1/after-Notebook.app-certificate-",
+        "/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/b12ca6d0c0574691/ipad/Build/Products/Debug-iphoneos/Notebook.app"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "24db2eff73b8094c01bf8ed2591334369139c5f9da3d51710033c2a280b625a6"
+    },
+    {
+      "label": "after-architecture-Notebook.app",
+      "argv": [
+        "/usr/bin/file",
+        "/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/b12ca6d0c0574691/ipad/Build/Products/Debug-iphoneos/Notebook.app/Notebook"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "24db2eff73b8094c01bf8ed2591334369139c5f9da3d51710033c2a280b625a6"
+    },
+    {
+      "label": "after-strict-NotebookUITests-Runner.app",
+      "argv": [
+        "/usr/bin/codesign",
+        "--verify",
+        "--deep",
+        "--strict",
+        "/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/b12ca6d0c0574691/ipad/Build/Products/Debug-iphoneos/NotebookUITests-Runner.app"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "24db2eff73b8094c01bf8ed2591334369139c5f9da3d51710033c2a280b625a6"
+    },
+    {
+      "label": "after-identity-NotebookUITests-Runner.app",
+      "argv": [
+        "/usr/bin/codesign",
+        "--display",
+        "--verbose=4",
+        "/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/b12ca6d0c0574691/ipad/Build/Products/Debug-iphoneos/NotebookUITests-Runner.app"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "24db2eff73b8094c01bf8ed2591334369139c5f9da3d51710033c2a280b625a6"
+    },
+    {
+      "label": "after-profile-NotebookUITests-Runner.app",
+      "argv": [
+        "/usr/bin/security",
+        "cms",
+        "-D",
+        "-i",
+        "/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/b12ca6d0c0574691/ipad/Build/Products/Debug-iphoneos/NotebookUITests-Runner.app/embedded.mobileprovision"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "24db2eff73b8094c01bf8ed2591334369139c5f9da3d51710033c2a280b625a6"
+    },
+    {
+      "label": "after-certificates-NotebookUITests-Runner.app",
+      "argv": [
+        "/usr/bin/codesign",
+        "--display",
+        "--extract-certificates=/Users/amir/Documents/projects/Notebook/.build/common-main-ipad-execution-20261008-v1/after-NotebookUITests-Runner.app-certificate-",
+        "/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/b12ca6d0c0574691/ipad/Build/Products/Debug-iphoneos/NotebookUITests-Runner.app"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "24db2eff73b8094c01bf8ed2591334369139c5f9da3d51710033c2a280b625a6"
+    },
+    {
+      "label": "after-architecture-NotebookUITests-Runner.app",
+      "argv": [
+        "/usr/bin/file",
+        "/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/b12ca6d0c0574691/ipad/Build/Products/Debug-iphoneos/NotebookUITests-Runner.app/NotebookUITests-Runner"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "24db2eff73b8094c01bf8ed2591334369139c5f9da3d51710033c2a280b625a6"
+    },
+    {
+      "label": "failed-case-1",
+      "argv": [
+        "xcrun",
+        "xcresulttool",
+        "get",
+        "test-results",
+        "test-details",
+        "--path",
+        "/Users/amir/Documents/projects/Notebook/.build/common-main-ipad-execution-20261008-v1/ipad.xcresult",
+        "--test-id",
+        "DocumentProgramOwnerTests/testPressureParksNeighbourAndPromotesItsSameAdmissionToAnAcceptedTarget()",
+        "--compact"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "24db2eff73b8094c01bf8ed2591334369139c5f9da3d51710033c2a280b625a6"
+    },
+    {
+      "label": "failed-case-2",
+      "argv": [
+        "xcrun",
+        "xcresulttool",
+        "get",
+        "test-results",
+        "test-details",
+        "--path",
+        "/Users/amir/Documents/projects/Notebook/.build/common-main-ipad-execution-20261008-v1/ipad.xcresult",
+        "--test-id",
+        "DocumentShellPreparationTests/testPressureRetiresOnlyTheUnusedShellAndForegroundCannotReopenAdmission()",
+        "--compact"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "24db2eff73b8094c01bf8ed2591334369139c5f9da3d51710033c2a280b625a6"
+    },
+    {
+      "label": "failed-case-3",
+      "argv": [
+        "xcrun",
+        "xcresulttool",
+        "get",
+        "test-results",
+        "test-details",
+        "--path",
+        "/Users/amir/Documents/projects/Notebook/.build/common-main-ipad-execution-20261008-v1/ipad.xcresult",
+        "--test-id",
+        "DocumentProgramOwnerTests/testRequiredRemountOutlivesItsWithdrawnNativeSubscriber()",
+        "--compact"
+      ],
+      "cwd": null,
+      "exitCode": 0,
+      "environmentSHA256": "24db2eff73b8094c01bf8ed2591334369139c5f9da3d51710033c2a280b625a6"
+    }
+  ]
+}

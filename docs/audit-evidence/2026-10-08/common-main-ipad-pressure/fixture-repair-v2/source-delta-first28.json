@@ -1,0 +1,40 @@
+{
+  "changed": [
+    {
+      "after": {
+        "executable": false,
+        "path": "Applications/Tests/DocumentProgramOwnerTests.swift",
+        "sha256": "6b28b7c0f493e541f7afc3ee20aea50e5a8e0d135247dbd6d4e6c2db1d30cf40"
+      },
+      "before": {
+        "executable": false,
+        "path": "Applications/Tests/DocumentProgramOwnerTests.swift",
+        "sha256": "80a80e78613a588e1865cd6ba4a07cadf57542e965ec4b5b36bdcfaaf0c28eda"
+      },
+      "path": "Applications/Tests/DocumentProgramOwnerTests.swift"
+    },
+    {
+      "after": {
+        "executable": false,
+        "path": "Applications/Tests/DocumentShellPreparationTests.swift",
+        "sha256": "4dad7e412283635dc62dc14895534c6ba5e9280481e69fffbd3613afbf0bc1eb"
+      },
+      "before": {
+        "executable": false,
+        "path": "Applications/Tests/DocumentShellPreparationTests.swift",
+        "sha256": "16df39ee87616b4ea93104aa9e221f8b276fc39ed3a1df9539f9afb26f7d001d"
+      },
+      "path": "Applications/Tests/DocumentShellPreparationTests.swift"
+    }
+  ],
+  "new": {
+    "count": 1731,
+    "sha256": "9d8d7e866b8ccbef43f65adf01078e792546752aee23664ebce67427b9650d43"
+  },
+  "old": {
+    "count": 1731,
+    "sha256": "18e237019f81543422b379c46034107506b62b8c57a1c9068fc72f2db49b63b8"
+  },
+  "productionCoreMacInputsUnchanged": true,
+  "scope": "only three repaired selectors rerun; first25PASS remain originalcut"
+}

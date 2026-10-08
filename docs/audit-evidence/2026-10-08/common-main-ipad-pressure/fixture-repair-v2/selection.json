@@ -1,0 +1,49 @@
+{
+  "baseCommit": "69342a7ca83ee1152202799089f7ddae1f99653c",
+  "changedFiles": [
+    "Applications/Tests/DocumentProgramOwnerTests.swift",
+    "Applications/Tests/DocumentShellPreparationTests.swift",
+    "docs/audit-evidence/2026-10-08/common-main-ipad-preparation/build-preparation.json",
+    "docs/audit-evidence/2026-10-08/common-main-ipad-preparation/commands.json",
+    "docs/audit-evidence/2026-10-08/common-main-ipad-preparation/common-main-worktrees.json",
+    "docs/audit-evidence/2026-10-08/common-main-ipad-preparation/independent-review.json",
+    "docs/audit-evidence/2026-10-08/common-main-ipad-preparation/ipad-build-for-testing.stderr.log",
+    "docs/audit-evidence/2026-10-08/common-main-ipad-preparation/ipad-build-for-testing.stdout.log",
+    "docs/audit-evidence/2026-10-08/common-main-ipad-preparation/ipad-offline-inventory.json",
+    "docs/audit-evidence/2026-10-08/common-main-ipad-preparation/native-app-after-reseal-deep-strict.stderr.log",
+    "docs/audit-evidence/2026-10-08/common-main-ipad-preparation/prepared-run.xctestrun",
+    "docs/audit-evidence/2026-10-08/common-main-ipad-preparation/raw-artifact-hashes.json",
+    "docs/audit-evidence/2026-10-08/common-main-ipad-preparation/reseal-toolchain-after.json",
+    "docs/audit-evidence/2026-10-08/common-main-ipad-preparation/reseal-toolchain-before.json",
+    "docs/audit-evidence/2026-10-08/common-main-ipad-preparation/results.json",
+    "docs/audit-evidence/2026-10-08/common-main-ipad-preparation/selection.json",
+    "docs/audit-evidence/2026-10-08/common-main-ipad-preparation/signature-verify-NotebookUITests-Runner.app.stderr.log",
+    "docs/audit-evidence/2026-10-08/common-main-ipad-preparation/toolchain-after.json",
+    "docs/audit-evidence/2026-10-08/common-main-ipad-preparation/toolchain.json",
+    "docs/audit-evidence/2026-10-08/common-main-ipad-preparation/ui-plugin-after-reseal-strict.stderr.log",
+    "docs/audit-evidence/2026-10-08/common-main-ipad-preparation/ui-runner-one-outer-reseal.stderr.log",
+    "docs/audit-evidence/2026-10-08/common-main-ipad-preparation/ui-runner-reseal.json",
+    "docs/audit-evidence/2026-10-08/common-main-ipad-preparation/ui-runner-resealed-deep-strict-valid-requirement.stderr.log",
+    "docs/audit-evidence/2026-10-08/common-main-ipad-preparation/ui-runner-resealed-deep-strict.stderr.log",
+    "docs/audit-evidence/2026-10-08/common-main-ipad-preparation/ui-runner-sealed-resource-comparison.json"
+  ],
+  "checks": {
+    "commands": [],
+    "core": [],
+    "ipad": [
+      "NotebookTests/DocumentProgramOwnerTests/testPressureParksNeighbourAndPromotesItsSameAdmissionToAnAcceptedTarget",
+      "NotebookTests/DocumentProgramOwnerTests/testRequiredRemountOutlivesItsWithdrawnNativeSubscriber",
+      "NotebookTests/DocumentShellPreparationTests/testPressureRetiresOnlyTheUnusedShellAndForegroundCannotReopenAdmission"
+    ],
+    "mac": []
+  },
+  "codexRuntimeStage": "/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a",
+  "format": 2,
+  "manualSelection": true,
+  "optimized": false,
+  "profiles": [],
+  "selectionMode": "explicit-only",
+  "sourceRoot": "/Users/amir/Documents/projects/Notebook",
+  "typesetterRuntime": "/Users/amir/Documents/projects/Notebook/.build/notebook-typesetter-runtime",
+  "unclassified": []
+}

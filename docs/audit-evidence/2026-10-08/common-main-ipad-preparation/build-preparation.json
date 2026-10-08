@@ -1,0 +1,213 @@
+{
+  "NOTEBOOK_SWIFT": "/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/.build/toolchains/swift-6.4.0/swift-6.4.0-RELEASE-osx-package.pkg/Payload/usr/bin/swift",
+  "artifactRepair": {
+    "path": "ui-runner-reseal.json",
+    "rebuild": false,
+    "resealVerified": true,
+    "sha256": "1163a843886a578443d0dc57cddea995fa6958689281f389ae8f0f7ba2e082c7"
+  },
+  "buildArgv": [
+    "xcrun",
+    "xcodebuild",
+    "-quiet",
+    "-project",
+    "Notebook.xcodeproj",
+    "-scheme",
+    "Notebook",
+    "-configuration",
+    "Debug",
+    "-destination",
+    "generic/platform=iOS",
+    "-derivedDataPath",
+    "/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/b12ca6d0c0574691/ipad",
+    "-parallel-testing-enabled",
+    "NO",
+    "-collect-test-diagnostics",
+    "never",
+    "build-for-testing",
+    "-allowProvisioningUpdates",
+    "CODE_SIGN_IDENTITY=Apple Development",
+    "CODE_SIGN_STYLE=Automatic",
+    "CODE_SIGNING_ALLOWED=YES",
+    "DEVELOPMENT_TEAM=M94V58FCVP",
+    "NOTEBOOK_BUNDLE_SUFFIX=.native-test",
+    "NOTEBOOK_TYPESETTER_RUNTIME=/Users/amir/Documents/projects/Notebook/.build/notebook-typesetter-runtime",
+    "-only-testing:NotebookTests/CoverOpeningPhysicsTests/testPressureBlocksRestingCaptureAndPreservesAcceptedCurl",
+    "-only-testing:NotebookTests/DocumentProgramOwnerTests/testAcceptedDistantTargetPreemptsARealQueuedNeighbourWithoutRetiringCurrentPaper",
+    "-only-testing:NotebookTests/DocumentProgramOwnerTests/testLiveTargetSupersessionAndCloseCancelItsQueuedAdmission",
+    "-only-testing:NotebookTests/DocumentProgramOwnerTests/testPressureParksNeighbourAndPromotesItsSameAdmissionToAnAcceptedTarget",
+    "-only-testing:NotebookTests/DocumentProgramOwnerTests/testPressureReclaimsAnUnselectedMountedNeighbourWithoutRevokingCurrentInput",
+    "-only-testing:NotebookTests/DocumentProgramOwnerTests/testRequiredRemountOutlivesItsWithdrawnNativeSubscriber",
+    "-only-testing:NotebookTests/DocumentProgramOwnerTests/testStaticTurnFramesReuseTheirExactPixelsAcrossLandingAndReplaceEditedSource",
+    "-only-testing:NotebookTests/DocumentProgramOwnerTests/testStationaryPassivePageRefinesAfterSharedPressureIsReleased",
+    "-only-testing:NotebookTests/DocumentShellPreparationTests/testCurrentPageAdoptsTheSameReadyCoordinatorWebAndAdmission",
+    "-only-testing:NotebookTests/DocumentShellPreparationTests/testPressureRetiresOnlyTheUnusedShellAndForegroundCannotReopenAdmission",
+    "-only-testing:NotebookTests/PageRasterPreparationTests/testPressureParksNeighboursButAdmitsTheCurrentPageAndAcceptedLanding",
+    "-only-testing:NotebookTests/PageRasterPreparationTests/testRequiredPageRetriesQueuedRevocationWithinOnePressureEpoch",
+    "-only-testing:NotebookTests/SceneCompositionTests/testAdmittedSourceSurvivesInputPauseAndCancelledPrivateRepaint",
+    "-only-testing:NotebookTests/SceneCompositionTests/testPressureRevocationRetriesAPinAcceptedBeforeItsSourceCatchWithoutAnotherCameraSample",
+    "-only-testing:NotebookTests/SceneRenderResourcesTests/testCompleteRasterCaptureKeepsEveryGrantedSlotThroughPublication",
+    "-only-testing:NotebookTests/SceneRenderResourcesTests/testEvictionRechecksObserverPinsAndFinalReleasePreservesEarlierAccess",
+    "-only-testing:NotebookTests/SceneRenderResourcesTests/testHundredThousandRasterEntriesKeepFreeAdmissionAndChurnBounded",
+    "-only-testing:NotebookTests/SceneRenderResourcesTests/testPressureCancelsOnlyQueuedOptionalPurposeAndNormalPermitsItsRetry",
+    "-only-testing:NotebookTests/SceneRenderResourcesTests/testPressureKeepsPinnedInputAndSubmittedBorrowersWhileDroppingUnusedPixels",
+    "-only-testing:NotebookTests/SceneRenderResourcesTests/testPressureTrimWaitsForPhysicalReleaseAndDoesNotRepeatARefusedOwner",
+    "-only-testing:NotebookTests/SceneRenderResourcesTests/testPublicationObserversCannotReclaimTheIncomingRetainedRaster",
+    "-only-testing:NotebookTests/SceneRenderResourcesTests/testRasterEvictionReleasesItsSharedLayoutBeforeReadmittingDerivedBytes",
+    "-only-testing:NotebookTests/SceneRenderResourcesTests/testRetainingAnOldReceiptCannotReplaceANewerEqualDensityCapture",
+    "-only-testing:NotebookTests/SceneWebRasterPreparationTests/testPressureWithdrawsPreparingOptionalWebAndKeepsItsPromotedSource",
+    "-only-testing:NotebookUITests/DrawingResponsivenessTests/testDocumentClosesWithPinchAndReopensByDoubleTap",
+    "-only-testing:NotebookTests/NotebookDrawingToolsTests/testAuthoredToolsPersistOnPageBoardAndCoverThroughOneUndoQueue",
+    "-only-testing:NotebookTests/SceneCompositionTests/testGeometryPublishesBeforeItsSourceAndThenRetainsTheReadyPixels",
+    "-only-testing:NotebookTests/NotebookDrawingToolsTests/testMarkerRunsThroughMeasuredPageInputWithoutPressureOrQuickShape"
+  ],
+  "buildStatus": "passed",
+  "deviceLockState": {
+    "deviceIdentifier": "9CF2C22D-1CC6-573F-B27D-7EB0C81D2DD9",
+    "passcodeRequired": true,
+    "unlockedSinceBoot": true
+  },
+  "executed": [],
+  "executedCount": 0,
+  "format": 1,
+  "genericDestination": "generic/platform=iOS",
+  "headAfter": "69342a7ca83ee1152202799089f7ddae1f99653c",
+  "headBefore": "69342a7ca83ee1152202799089f7ddae1f99653c",
+  "installed": false,
+  "launched": false,
+  "offlineInventoryErrors": [
+    "Cannot test target “NotebookTests” on “Any iOS Device”: Tests must be run on a concrete device",
+    "Cannot test target “NotebookUITests” on “Any iOS Device”: Tests must be run on a concrete device"
+  ],
+  "offlineInventoryReason": "Generic Any iOS Device cannot enumerate native tests; Xcode requires a concrete device destination. No concrete device discovery/execution attempted.",
+  "offlineInventoryStatus": "unavailable",
+  "physicalAcceptance": false,
+  "planned": [
+    "NotebookTests/CoverOpeningPhysicsTests/testPressureBlocksRestingCaptureAndPreservesAcceptedCurl",
+    "NotebookTests/DocumentProgramOwnerTests/testAcceptedDistantTargetPreemptsARealQueuedNeighbourWithoutRetiringCurrentPaper",
+    "NotebookTests/DocumentProgramOwnerTests/testLiveTargetSupersessionAndCloseCancelItsQueuedAdmission",
+    "NotebookTests/DocumentProgramOwnerTests/testPressureParksNeighbourAndPromotesItsSameAdmissionToAnAcceptedTarget",
+    "NotebookTests/DocumentProgramOwnerTests/testPressureReclaimsAnUnselectedMountedNeighbourWithoutRevokingCurrentInput",
+    "NotebookTests/DocumentProgramOwnerTests/testRequiredRemountOutlivesItsWithdrawnNativeSubscriber",
+    "NotebookTests/DocumentProgramOwnerTests/testStaticTurnFramesReuseTheirExactPixelsAcrossLandingAndReplaceEditedSource",
+    "NotebookTests/DocumentProgramOwnerTests/testStationaryPassivePageRefinesAfterSharedPressureIsReleased",
+    "NotebookTests/DocumentShellPreparationTests/testCurrentPageAdoptsTheSameReadyCoordinatorWebAndAdmission",
+    "NotebookTests/DocumentShellPreparationTests/testPressureRetiresOnlyTheUnusedShellAndForegroundCannotReopenAdmission",
+    "NotebookTests/PageRasterPreparationTests/testPressureParksNeighboursButAdmitsTheCurrentPageAndAcceptedLanding",
+    "NotebookTests/PageRasterPreparationTests/testRequiredPageRetriesQueuedRevocationWithinOnePressureEpoch",
+    "NotebookTests/SceneCompositionTests/testAdmittedSourceSurvivesInputPauseAndCancelledPrivateRepaint",
+    "NotebookTests/SceneCompositionTests/testPressureRevocationRetriesAPinAcceptedBeforeItsSourceCatchWithoutAnotherCameraSample",
+    "NotebookTests/SceneRenderResourcesTests/testCompleteRasterCaptureKeepsEveryGrantedSlotThroughPublication",
+    "NotebookTests/SceneRenderResourcesTests/testEvictionRechecksObserverPinsAndFinalReleasePreservesEarlierAccess",
+    "NotebookTests/SceneRenderResourcesTests/testHundredThousandRasterEntriesKeepFreeAdmissionAndChurnBounded",
+    "NotebookTests/SceneRenderResourcesTests/testPressureCancelsOnlyQueuedOptionalPurposeAndNormalPermitsItsRetry",
+    "NotebookTests/SceneRenderResourcesTests/testPressureKeepsPinnedInputAndSubmittedBorrowersWhileDroppingUnusedPixels",
+    "NotebookTests/SceneRenderResourcesTests/testPressureTrimWaitsForPhysicalReleaseAndDoesNotRepeatARefusedOwner",
+    "NotebookTests/SceneRenderResourcesTests/testPublicationObserversCannotReclaimTheIncomingRetainedRaster",
+    "NotebookTests/SceneRenderResourcesTests/testRasterEvictionReleasesItsSharedLayoutBeforeReadmittingDerivedBytes",
+    "NotebookTests/SceneRenderResourcesTests/testRetainingAnOldReceiptCannotReplaceANewerEqualDensityCapture",
+    "NotebookTests/SceneWebRasterPreparationTests/testPressureWithdrawsPreparingOptionalWebAndKeepsItsPromotedSource",
+    "NotebookUITests/DrawingResponsivenessTests/testDocumentClosesWithPinchAndReopensByDoubleTap",
+    "NotebookTests/NotebookDrawingToolsTests/testAuthoredToolsPersistOnPageBoardAndCoverThroughOneUndoQueue",
+    "NotebookTests/SceneCompositionTests/testGeometryPublishesBeforeItsSourceAndThenRetainsTheReadyPixels",
+    "NotebookTests/NotebookDrawingToolsTests/testMarkerRunsThroughMeasuredPageInputWithoutPressureOrQuickShape"
+  ],
+  "plannedCount": 28,
+  "route": "physical-ipad-build-for-testing-only",
+  "runnerReleased": true,
+  "signatureBlocker": {
+    "hashedBytes": 31893578,
+    "mismatches": [
+      {
+        "expected": "7c016c70c920717d52111205ceb837ccb32b92baa1ca19cbf33e70602a58f21a",
+        "field": "hash2",
+        "observed": "fec59de8abbf5e4cac8e4572e1b896802c179923667f49c05199181cb6a71e9e",
+        "path": "PlugIns/NotebookUITests.xctest/NotebookUITests"
+      }
+    ],
+    "nestedSignedCode": []
+  },
+  "signatureStatus": "passed",
+  "signatures": [
+    {
+      "admittedPhysicalUDID": "00008103-001E059934D9001E",
+      "cdhash": "6ebcc8278f7d95c213a172eea987adf253f74e9a",
+      "deepStrictVerification": "passed",
+      "identifier": "com.amirtlinov.notebook.native-test",
+      "info": {
+        "CFBundleIdentifier": "com.amirtlinov.notebook.native-test",
+        "CFBundleShortVersionString": "0.3.190",
+        "CFBundleSupportedPlatforms": [
+          "iPhoneOS"
+        ],
+        "CFBundleVersion": "260",
+        "DTPlatformName": "iphoneos",
+        "DTSDKName": "iphoneos27.0",
+        "MinimumOSVersion": "27.0"
+      },
+      "path": "/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/b12ca6d0c0574691/ipad/Build/Products/Debug-iphoneos/Notebook.app",
+      "profileExpiry": "2027-09-16T14:45:27",
+      "profileName": "iOS Team Provisioning Profile: *",
+      "profileUUID": "00d2537d-07c4-450a-91d9-7dc280d5dda0",
+      "team": "M94V58FCVP"
+    },
+    {
+      "admittedPhysicalUDID": "00008103-001E059934D9001E",
+      "cdhash": "addb7bf241a34b742e82f099a9f105cf329cc190",
+      "deepStrictVerification": "passed",
+      "identifier": "com.amirtlinov.notebook.uitests.xctrunner",
+      "info": {
+        "CFBundleIdentifier": "com.amirtlinov.notebook.uitests.xctrunner",
+        "CFBundleShortVersionString": "1.0",
+        "CFBundleSupportedPlatforms": [
+          "iPhoneOS"
+        ],
+        "CFBundleVersion": "1",
+        "DTPlatformName": "iphoneos",
+        "DTSDKName": "iphoneos27.0.internal",
+        "MinimumOSVersion": "17.0"
+      },
+      "path": "/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/b12ca6d0c0574691/ipad/Build/Products/Debug-iphoneos/NotebookUITests-Runner.app",
+      "profileExpiry": "2027-09-16T14:45:27",
+      "profileName": "iOS Team Provisioning Profile: *",
+      "profileUUID": "00d2537d-07c4-450a-91d9-7dc280d5dda0",
+      "team": "M94V58FCVP"
+    }
+  ],
+  "sourceAfter": {
+    "count": 1731,
+    "sha256": "18e237019f81543422b379c46034107506b62b8c57a1c9068fc72f2db49b63b8"
+  },
+  "sourceBefore": {
+    "count": 1731,
+    "sha256": "18e237019f81543422b379c46034107506b62b8c57a1c9068fc72f2db49b63b8"
+  },
+  "sourceRoot": "/Users/amir/Documents/projects/Notebook",
+  "sourceUnchanged": true,
+  "staleAttempt": {
+    "error": "Команда signature-verify-NotebookUITests-Runner.app завершилась ошибкой; см. каталог доказательств.",
+    "signatureBlocker": {
+      "hashedBytes": 31893578,
+      "mismatches": [
+        {
+          "expected": "7c016c70c920717d52111205ceb837ccb32b92baa1ca19cbf33e70602a58f21a",
+          "field": "hash2",
+          "observed": "fec59de8abbf5e4cac8e4572e1b896802c179923667f49c05199181cb6a71e9e",
+          "path": "PlugIns/NotebookUITests.xctest/NotebookUITests"
+        }
+      ],
+      "nestedSignedCode": []
+    },
+    "status": "build-passed-ui-runner-signature-blocked-tests-pending"
+  },
+  "status": "signed-build-prepared-tests-pending",
+  "toolchainUnchanged": true,
+  "uiPluginSignature": "passed",
+  "wallSeconds": 79.402,
+  "xctestrun": {
+    "bytes": 7192,
+    "copy": "prepared-run.xctestrun",
+    "path": "/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/b12ca6d0c0574691/ipad/Build/Products/Notebook_iphoneos27.0-arm64.xctestrun",
+    "sha256": "07bd9a4d53c902bc7683f7108efaf91c7597c19b09c7dc6a52bb86564f7f3f2b"
+  }
+}

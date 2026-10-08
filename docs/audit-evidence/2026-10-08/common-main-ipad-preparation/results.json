@@ -1,0 +1,126 @@
+{
+  "format": 1,
+  "codeCommit": "69342a7ca83ee1152202799089f7ddae1f99653c",
+  "source": {
+    "count": 1731,
+    "sha256": "18e237019f81543422b379c46034107506b62b8c57a1c9068fc72f2db49b63b8"
+  },
+  "build": "passed",
+  "signatures": "passed-after-one-outer-ui-runner-reseal",
+  "plannedCount": 28,
+  "executedCount": 0,
+  "installed": false,
+  "launched": false,
+  "physicalAcceptance": false,
+  "offlineInventory": "unavailable-concrete-device-required",
+  "reseal": "ui-runner-reseal.json",
+  "buildPreparation": "build-preparation.json",
+  "priorCoreMacResults": "../common-main-memory-and-receipt-phase/results.json",
+  "worktrees": "common-main-worktrees.json",
+  "allRemainingWorktreeHeadsAlreadyInCommonMain": true,
+  "uncommittedProductionOutsideMain": false,
+  "originalSignatureAttemptPreserved": true,
+  "objects": [
+    {
+      "path": "build-preparation.json",
+      "bytes": 12856,
+      "sha256": "d70b7a6120e87385ca4128cdbff42659cd57eaea7679f986a95ea1f298894bd9"
+    },
+    {
+      "path": "ui-runner-reseal.json",
+      "bytes": 5508,
+      "sha256": "1163a843886a578443d0dc57cddea995fa6958689281f389ae8f0f7ba2e082c7"
+    },
+    {
+      "path": "selection.json",
+      "bytes": 3888,
+      "sha256": "5b4866f02aa37cf865099c16c18dbab972f973e219f09efa66b5ff3cd07aadd4"
+    },
+    {
+      "path": "toolchain.json",
+      "bytes": 318,
+      "sha256": "5d490c0c11042b67180f7aa900961d34b44c362ca4c89bf657ef438ebc8a7027"
+    },
+    {
+      "path": "toolchain-after.json",
+      "bytes": 318,
+      "sha256": "5d490c0c11042b67180f7aa900961d34b44c362ca4c89bf657ef438ebc8a7027"
+    },
+    {
+      "path": "reseal-toolchain-before.json",
+      "bytes": 318,
+      "sha256": "5d490c0c11042b67180f7aa900961d34b44c362ca4c89bf657ef438ebc8a7027"
+    },
+    {
+      "path": "reseal-toolchain-after.json",
+      "bytes": 318,
+      "sha256": "5d490c0c11042b67180f7aa900961d34b44c362ca4c89bf657ef438ebc8a7027"
+    },
+    {
+      "path": "prepared-run.xctestrun",
+      "bytes": 7192,
+      "sha256": "07bd9a4d53c902bc7683f7108efaf91c7597c19b09c7dc6a52bb86564f7f3f2b"
+    },
+    {
+      "path": "ui-runner-sealed-resource-comparison.json",
+      "bytes": 350,
+      "sha256": "d355f25f42bedb11a5f287c090a1c498bad7b213ef149eb0ae3dd47b31219f92"
+    },
+    {
+      "path": "ui-runner-resealed-deep-strict.stderr.log",
+      "bytes": 189,
+      "sha256": "c1cf86a125ea5b177e1c0125b4789fe524fd50cbce239242877891fdc39429f6"
+    },
+    {
+      "path": "ui-runner-resealed-deep-strict-valid-requirement.stderr.log",
+      "bytes": 544,
+      "sha256": "27dd33b2ce6048622e1e7e549002ee1de69c7311b0fddc8d8ca46654cfb1f69c"
+    },
+    {
+      "path": "ui-plugin-after-reseal-strict.stderr.log",
+      "bytes": 421,
+      "sha256": "a21c868c97b4eb099629ce3fb3703dbde1d5a09962c048cf49b060ad137fd508"
+    },
+    {
+      "path": "native-app-after-reseal-deep-strict.stderr.log",
+      "bytes": 331,
+      "sha256": "282daa57e9aeffe57c3f0a50699439cbb81c3cfcee5cbd13b0f7840a26a65b77"
+    },
+    {
+      "path": "ui-runner-one-outer-reseal.stderr.log",
+      "bytes": 183,
+      "sha256": "f7f33f4ec5858a7092f35c431a9667b448997aed4eac05f8959731fce620c5e8"
+    },
+    {
+      "path": "signature-verify-NotebookUITests-Runner.app.stderr.log",
+      "bytes": 194,
+      "sha256": "158a9dfb4bb2018bf6997a20aa379b0208e5ed2b730075f2674fcd0dbfa01123"
+    },
+    {
+      "path": "ipad-build-for-testing.stdout.log",
+      "bytes": 26028,
+      "sha256": "c7cdda1494bbd4936fed36e06047a80e3c33038b04a470a268631ffcda74ccf2"
+    },
+    {
+      "path": "ipad-build-for-testing.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "ipad-offline-inventory.json",
+      "bytes": 500,
+      "sha256": "699f5bb06908e7c39d3f98127c00ce5ff9017ad98d7326894d40d94ca132ec9b"
+    }
+  ],
+  "pending": [
+    "physical iPad execution and raster100k",
+    "system frame/CPU/GPU/memory and joint acceptance",
+    "convergent birth/Undo fleet migration"
+  ],
+  "independentReview": {
+    "path": "independent-review.json",
+    "sha256": "0e3ef5116d824632cb9d3ece2e919dcfeeb2377d5db2cd54139a458c9685201e",
+    "status": "ready",
+    "scope": "signed build preparation only"
+  }
+}

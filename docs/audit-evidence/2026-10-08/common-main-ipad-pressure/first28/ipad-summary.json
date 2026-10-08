@@ -1,0 +1,62 @@
+{
+  "devicesAndConfigurations": [
+    {
+      "device": {
+        "architecture": "arm64e",
+        "deviceId": "00008103-001E059934D9001E",
+        "deviceName": "iPad (Елизавета)",
+        "modelName": "iPad Pro (11-inch) (3rd generation)",
+        "osBuildNumber": "24A435",
+        "osVersion": "27.0",
+        "platform": "iOS"
+      },
+      "expectedFailures": 0,
+      "failedTests": 3,
+      "passedTests": 25,
+      "skippedTests": 0,
+      "testPlanConfiguration": {
+        "configurationId": "1",
+        "configurationName": "Test Scheme Action"
+      }
+    }
+  ],
+  "environmentDescription": "Notebook · Built with macOS 27.0.1",
+  "expectedFailures": 0,
+  "failedTests": 3,
+  "finishTime": 1791444368.718,
+  "passedTests": 25,
+  "result": "Failed",
+  "runtimeWarnings": [],
+  "skippedTests": 0,
+  "startTime": 1791444329.802,
+  "statistics": [],
+  "testFailures": [
+    {
+      "failureText": "XCTAssertNil failed: \"E025CDC4-4831-45A4-BF80-3DC42BE5C209\"",
+      "targetName": "NotebookTests",
+      "testIdentifier": 4,
+      "testIdentifierString": "DocumentProgramOwnerTests/testPressureParksNeighbourAndPromotesItsSameAdmissionToAnAcceptedTarget()",
+      "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/DocumentProgramOwnerTests/testPressureParksNeighbourAndPromotesItsSameAdmissionToAnAcceptedTarget",
+      "testName": "testPressureParksNeighbourAndPromotesItsSameAdmissionToAnAcceptedTarget()"
+    },
+    {
+      "failureText": "XCTUnwrap failed: expected non-nil value of type \"WKWebView\"",
+      "targetName": "NotebookTests",
+      "testIdentifier": 10,
+      "testIdentifierString": "DocumentShellPreparationTests/testPressureRetiresOnlyTheUnusedShellAndForegroundCannotReopenAdmission()",
+      "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/DocumentShellPreparationTests/testPressureRetiresOnlyTheUnusedShellAndForegroundCannotReopenAdmission",
+      "testName": "testPressureRetiresOnlyTheUnusedShellAndForegroundCannotReopenAdmission()"
+    },
+    {
+      "failureText": "XCTAssertTrue failed",
+      "targetName": "NotebookTests",
+      "testIdentifier": 6,
+      "testIdentifierString": "DocumentProgramOwnerTests/testRequiredRemountOutlivesItsWithdrawnNativeSubscriber()",
+      "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/DocumentProgramOwnerTests/testRequiredRemountOutlivesItsWithdrawnNativeSubscriber",
+      "testName": "testRequiredRemountOutlivesItsWithdrawnNativeSubscriber()"
+    }
+  ],
+  "title": "Test - Notebook",
+  "topInsights": [],
+  "totalTestCount": 28
+}

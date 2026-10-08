@@ -1,0 +1,77 @@
+{
+  "schema": "notebook.memory.ipad-shell-diagnosis.v1",
+  "status": "fixture_repair_required",
+  "scope": "Source-only diagnosis of one actual physical test failure; existing xcresult extraction read, no runner or source mutation.",
+  "test": "NotebookTests/DocumentShellPreparationTests/testPressureRetiresOnlyTheUnusedShellAndForegroundCannotReopenAdmission",
+  "source": {
+    "sha256": "18e237019f81543422b379c46034107506b62b8c57a1c9068fc72f2db49b63b8",
+    "count": 1731,
+    "beforeEqualsAfter": true
+  },
+  "actual": {
+    "evidence": ".build/common-main-ipad-execution-20261008-v1/failed-case-2.json",
+    "evidenceSHA256": "c5f01d6fa5a971110ab8bb8d787bf271036dd30adf282559020a08d74c9e67b4",
+    "line": 27,
+    "failure": "XCTUnwrap failed: expected non-nil value of type \"WKWebView\"",
+    "durationSeconds": 0.1652449369430542,
+    "runs": 1,
+    "adoptReturnedTrue": true,
+    "earlierPressureAndForegroundAssertionsHadNoFailures": true,
+    "criticalPressureAssertionsReached": false
+  },
+  "cause": {
+    "kind": "Native subtree ownership omitted by fixture",
+    "offendingOwner": "Applications/Tests/DocumentShellPreparationTests.swift:26",
+    "detail": "The adoption callback only assigns the coordinator. Adoption keeps the preparation Entry/host alive through the synchronous callback, then drops that Entry. Both coordinator.host and coordinator.webView are weak. With no receiving native host, the old host/viewport/WebKit subtree ends its lifetime and adopted.webView becomes nil synchronously.",
+    "sourceProof": [
+      {
+        "file": "Applications/Shared/DocumentShellPreparation.swift",
+        "lines": "15-20,67-78",
+        "fact": "Entry strongly owns host; adoption explicitly requires synchronous configure/mount while the old Entry is retained."
+      },
+      {
+        "file": "Applications/Shared/DocumentWebView.swift",
+        "lines": "358,1439",
+        "fact": "Both host and webView references on coordinator are weak."
+      },
+      {
+        "file": "Applications/Shared/DocumentWebView.swift",
+        "lines": "734-747,772-777",
+        "fact": "mount installs the exact existing WebKit into a receiving host and reclassifies the same lease to current priority."
+      },
+      {
+        "file": "Applications/Shared/DocumentWebView.swift",
+        "lines": "3011-3029",
+        "fact": "UIKit host.install transfers the existing physical viewport; old host relinquishes that subtree."
+      },
+      {
+        "file": "Applications/Shared/DocumentPagePresentationOwner.swift",
+        "lines": "976-990",
+        "fact": "The actual current-page adopter configures and mounts within that same synchronous callback."
+      }
+    ]
+  },
+  "pressureTrace": [
+    "prepareIfIdle admits only optional idle capacity (DocumentShellPreparation38-64; SceneRenderResources494-498).",
+    "warning changes the pool optional generation and schedules pressure trim (SceneRenderResources529-552).",
+    "The trim selects an idle offer once, preserves the actual retiring slot through physical borrows, and calls retireUnused (SceneRenderResources515-525,575-578).",
+    "retireUnused clears the Entry before invalidation, removes its native surface; eventual Web lease release clears idle/retiring bookkeeping (DocumentShellPreparation81-86; SceneRenderResources1480-1491).",
+    "foreground clears only preparation retry state; prepareIfIdle still checks resources.allowsOptionalPreparation, so foreground cannot reopen pressure admission (DocumentShellPreparation38-41,89-90).",
+    "normal restores optional eligibility; a new shell reaches ready and adoption succeeds. No await lies between the failed fixture adoption and its nil unwrap."
+  ],
+  "minimalRepair": {
+    "scope": "Applications/Tests/DocumentShellPreparationTests.swift, this one method",
+    "change": "Retain a receiving DocumentWebHost through test cleanup; inside adoptForCurrentPage callback mount the same coordinator into that host with current-page/required role. Capture exact WebKit identity before adoption, then assert the receiving host owns that same WebKit after callback return and after critical pressure. Keep active count/non-invalidation/reclamation/foreground assertions and existing timeouts.",
+    "noProductionRepairIdentified": true,
+    "cleanup": "Invalidate the adopted coordinator and remove its receiving surface in defer; preserve preparation.stop().",
+    "sufficientCheck": "Rerun the same physical selector as part of Root's selected failure repair route."
+  },
+  "otherProgramFailures": "A common cause with the two DocumentProgramOwnerTests failures is not established by this shell path.",
+  "sources": {
+    "Applications/Shared/DocumentShellPreparation.swift": "95a5cbf019145da0a8cc8225514d6a6f962a9071ea7aa39d0577f95718066e3a",
+    "Applications/Shared/DocumentWebView.swift": "b813035069bf98266f1177d19b9897db936434a43bb9525f504ad26b14c05bf4",
+    "Applications/Shared/SceneRenderResources.swift": "60a5f6107d24b77bffdd48433440b9afed0480efd9e88efacffa68a8d789fbd1",
+    "Applications/Shared/DocumentPagePresentationOwner.swift": "941b4962bf8ec509a8592bdfdc1df441c9f2fcd6b4f88811a18b1633ebc1071b",
+    "Applications/Tests/DocumentShellPreparationTests.swift": "16df39ee87616b4ea93104aa9e221f8b276fc39ed3a1df9539f9afb26f7d001d"
+  }
+}

@@ -1,0 +1,192 @@
+{
+  "format": 1,
+  "status": "selected28-each-have-a-passing-physical-route",
+  "scope": "25 original PASS + 2 repaired-fixture PASS + 1 repaired-geometry PASS; not one all28 clean run",
+  "finalSource": {
+    "sha256": "ff125bf88cc249aa4b2ba24a7cf0420a5e0effba05aad48b894127cc4a2ab3f7",
+    "count": 1731
+  },
+  "productionAndAllOtherTestInputsUnchanged": true,
+  "changedSourceFiles": [
+    "Applications/Tests/DocumentProgramOwnerTests.swift",
+    "Applications/Tests/DocumentShellPreparationTests.swift"
+  ],
+  "counts": {
+    "uniquePassingCases": 28,
+    "first28": {
+      "passed": 25,
+      "failed": 3,
+      "skipped": 0
+    },
+    "fixtureRepairV2": {
+      "passed": 2,
+      "failed": 1,
+      "skipped": 0
+    },
+    "fixtureRepairV3": {
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0
+    }
+  },
+  "caseResults": {
+    "NotebookTests/CoverOpeningPhysicsTests/testPressureBlocksRestingCaptureAndPreservesAcceptedCurl": {
+      "result": "Passed",
+      "route": "first28",
+      "source": "18e237019f81543422b379c46034107506b62b8c57a1c9068fc72f2db49b63b8"
+    },
+    "NotebookTests/DocumentProgramOwnerTests/testAcceptedDistantTargetPreemptsARealQueuedNeighbourWithoutRetiringCurrentPaper": {
+      "result": "Passed",
+      "route": "first28",
+      "source": "18e237019f81543422b379c46034107506b62b8c57a1c9068fc72f2db49b63b8"
+    },
+    "NotebookTests/DocumentProgramOwnerTests/testLiveTargetSupersessionAndCloseCancelItsQueuedAdmission": {
+      "result": "Passed",
+      "route": "first28",
+      "source": "18e237019f81543422b379c46034107506b62b8c57a1c9068fc72f2db49b63b8"
+    },
+    "NotebookTests/DocumentProgramOwnerTests/testPressureReclaimsAnUnselectedMountedNeighbourWithoutRevokingCurrentInput": {
+      "result": "Passed",
+      "route": "first28",
+      "source": "18e237019f81543422b379c46034107506b62b8c57a1c9068fc72f2db49b63b8"
+    },
+    "NotebookTests/DocumentProgramOwnerTests/testStaticTurnFramesReuseTheirExactPixelsAcrossLandingAndReplaceEditedSource": {
+      "result": "Passed",
+      "route": "first28",
+      "source": "18e237019f81543422b379c46034107506b62b8c57a1c9068fc72f2db49b63b8"
+    },
+    "NotebookTests/DocumentProgramOwnerTests/testStationaryPassivePageRefinesAfterSharedPressureIsReleased": {
+      "result": "Passed",
+      "route": "first28",
+      "source": "18e237019f81543422b379c46034107506b62b8c57a1c9068fc72f2db49b63b8"
+    },
+    "NotebookTests/DocumentShellPreparationTests/testCurrentPageAdoptsTheSameReadyCoordinatorWebAndAdmission": {
+      "result": "Passed",
+      "route": "first28",
+      "source": "18e237019f81543422b379c46034107506b62b8c57a1c9068fc72f2db49b63b8"
+    },
+    "NotebookTests/NotebookDrawingToolsTests/testAuthoredToolsPersistOnPageBoardAndCoverThroughOneUndoQueue": {
+      "result": "Passed",
+      "route": "first28",
+      "source": "18e237019f81543422b379c46034107506b62b8c57a1c9068fc72f2db49b63b8"
+    },
+    "NotebookTests/NotebookDrawingToolsTests/testMarkerRunsThroughMeasuredPageInputWithoutPressureOrQuickShape": {
+      "result": "Passed",
+      "route": "first28",
+      "source": "18e237019f81543422b379c46034107506b62b8c57a1c9068fc72f2db49b63b8"
+    },
+    "NotebookTests/PageRasterPreparationTests/testPressureParksNeighboursButAdmitsTheCurrentPageAndAcceptedLanding": {
+      "result": "Passed",
+      "route": "first28",
+      "source": "18e237019f81543422b379c46034107506b62b8c57a1c9068fc72f2db49b63b8"
+    },
+    "NotebookTests/PageRasterPreparationTests/testRequiredPageRetriesQueuedRevocationWithinOnePressureEpoch": {
+      "result": "Passed",
+      "route": "first28",
+      "source": "18e237019f81543422b379c46034107506b62b8c57a1c9068fc72f2db49b63b8"
+    },
+    "NotebookTests/SceneCompositionTests/testAdmittedSourceSurvivesInputPauseAndCancelledPrivateRepaint": {
+      "result": "Passed",
+      "route": "first28",
+      "source": "18e237019f81543422b379c46034107506b62b8c57a1c9068fc72f2db49b63b8"
+    },
+    "NotebookTests/SceneCompositionTests/testGeometryPublishesBeforeItsSourceAndThenRetainsTheReadyPixels": {
+      "result": "Passed",
+      "route": "first28",
+      "source": "18e237019f81543422b379c46034107506b62b8c57a1c9068fc72f2db49b63b8"
+    },
+    "NotebookTests/SceneCompositionTests/testPressureRevocationRetriesAPinAcceptedBeforeItsSourceCatchWithoutAnotherCameraSample": {
+      "result": "Passed",
+      "route": "first28",
+      "source": "18e237019f81543422b379c46034107506b62b8c57a1c9068fc72f2db49b63b8"
+    },
+    "NotebookTests/SceneRenderResourcesTests/testCompleteRasterCaptureKeepsEveryGrantedSlotThroughPublication": {
+      "result": "Passed",
+      "route": "first28",
+      "source": "18e237019f81543422b379c46034107506b62b8c57a1c9068fc72f2db49b63b8"
+    },
+    "NotebookTests/SceneRenderResourcesTests/testEvictionRechecksObserverPinsAndFinalReleasePreservesEarlierAccess": {
+      "result": "Passed",
+      "route": "first28",
+      "source": "18e237019f81543422b379c46034107506b62b8c57a1c9068fc72f2db49b63b8"
+    },
+    "NotebookTests/SceneRenderResourcesTests/testHundredThousandRasterEntriesKeepFreeAdmissionAndChurnBounded": {
+      "result": "Passed",
+      "route": "first28",
+      "source": "18e237019f81543422b379c46034107506b62b8c57a1c9068fc72f2db49b63b8"
+    },
+    "NotebookTests/SceneRenderResourcesTests/testPressureCancelsOnlyQueuedOptionalPurposeAndNormalPermitsItsRetry": {
+      "result": "Passed",
+      "route": "first28",
+      "source": "18e237019f81543422b379c46034107506b62b8c57a1c9068fc72f2db49b63b8"
+    },
+    "NotebookTests/SceneRenderResourcesTests/testPressureKeepsPinnedInputAndSubmittedBorrowersWhileDroppingUnusedPixels": {
+      "result": "Passed",
+      "route": "first28",
+      "source": "18e237019f81543422b379c46034107506b62b8c57a1c9068fc72f2db49b63b8"
+    },
+    "NotebookTests/SceneRenderResourcesTests/testPressureTrimWaitsForPhysicalReleaseAndDoesNotRepeatARefusedOwner": {
+      "result": "Passed",
+      "route": "first28",
+      "source": "18e237019f81543422b379c46034107506b62b8c57a1c9068fc72f2db49b63b8"
+    },
+    "NotebookTests/SceneRenderResourcesTests/testPublicationObserversCannotReclaimTheIncomingRetainedRaster": {
+      "result": "Passed",
+      "route": "first28",
+      "source": "18e237019f81543422b379c46034107506b62b8c57a1c9068fc72f2db49b63b8"
+    },
+    "NotebookTests/SceneRenderResourcesTests/testRasterEvictionReleasesItsSharedLayoutBeforeReadmittingDerivedBytes": {
+      "result": "Passed",
+      "route": "first28",
+      "source": "18e237019f81543422b379c46034107506b62b8c57a1c9068fc72f2db49b63b8"
+    },
+    "NotebookTests/SceneRenderResourcesTests/testRetainingAnOldReceiptCannotReplaceANewerEqualDensityCapture": {
+      "result": "Passed",
+      "route": "first28",
+      "source": "18e237019f81543422b379c46034107506b62b8c57a1c9068fc72f2db49b63b8"
+    },
+    "NotebookTests/SceneWebRasterPreparationTests/testPressureWithdrawsPreparingOptionalWebAndKeepsItsPromotedSource": {
+      "result": "Passed",
+      "route": "first28",
+      "source": "18e237019f81543422b379c46034107506b62b8c57a1c9068fc72f2db49b63b8"
+    },
+    "NotebookUITests/DrawingResponsivenessTests/testDocumentClosesWithPinchAndReopensByDoubleTap": {
+      "result": "Passed",
+      "route": "first28",
+      "source": "18e237019f81543422b379c46034107506b62b8c57a1c9068fc72f2db49b63b8"
+    },
+    "NotebookTests/DocumentProgramOwnerTests/testPressureParksNeighbourAndPromotesItsSameAdmissionToAnAcceptedTarget": {
+      "result": "Passed",
+      "route": "fixture-repair-v2",
+      "source": "9d8d7e866b8ccbef43f65adf01078e792546752aee23664ebce67427b9650d43"
+    },
+    "NotebookTests/DocumentShellPreparationTests/testPressureRetiresOnlyTheUnusedShellAndForegroundCannotReopenAdmission": {
+      "result": "Passed",
+      "route": "fixture-repair-v2",
+      "source": "9d8d7e866b8ccbef43f65adf01078e792546752aee23664ebce67427b9650d43"
+    },
+    "NotebookTests/DocumentProgramOwnerTests/testRequiredRemountOutlivesItsWithdrawnNativeSubscriber": {
+      "result": "Passed",
+      "route": "fixture-repair-v3",
+      "source": "ff125bf88cc249aa4b2ba24a7cf0420a5e0effba05aad48b894127cc4a2ab3f7"
+    }
+  },
+  "actualRaster100k": {
+    "result": "Passed",
+    "selector": "NotebookTests/SceneRenderResourcesTests/testHundredThousandRasterEntriesKeepFreeAdmissionAndChurnBounded",
+    "testDurationSeconds": 1.052035927772522,
+    "timingReport": "ipad-timings.json"
+  },
+  "runtimeWarnings": [],
+  "sourceRoot": "/Users/amir/Documents/projects/Notebook",
+  "signingPreparation": "../common-main-ipad-preparation/results.json",
+  "coreMacScope": "../common-main-memory-and-receipt-phase/results.json",
+  "installedProductionPairUnchanged": true,
+  "fullPhysicalAcceptance": false,
+  "pending": [
+    "GUI-505 live compositor publication handoff and unused cache/APIs",
+    "GUI-492 process/WebContent budgets",
+    "GUI-535/536/537 convergent birth/Undo and coordinated fleet transition",
+    "GUI-506 system measurements, ten repetitions and 30-minute joint work"
+  ]
+}

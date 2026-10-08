@@ -1146,7 +1146,9 @@ final class DocumentProgramOwnerTests: XCTestCase {
     let optionalID = try XCTUnwrap(owner.pendingPassiveSurfaceRequestID)
 
     resources.handleMemoryPressure(.warning)
-    try await wait(message: { fixture.diagnostics }) { resources.pendingWebRequestCount == 0 }
+    try await wait(message: { fixture.diagnostics }) {
+      resources.pendingWebRequestCount == 0 && owner.pendingPassiveSurfaceRequestID == nil
+    }
     await owner.observePendingPresentationWork()
     XCTAssertNil(owner.pendingPassiveSurfaceRequestID)
     XCTAssertTrue(fixture.canonicalPaper(in: 0))
@@ -1217,6 +1219,8 @@ final class DocumentProgramOwnerTests: XCTestCase {
     var failures: [String] = [], withdrawals = 0
     let geometry = try XCTUnwrap(source.layout).paper(on: 1).geometry
     let size = CGSize(width: geometry.width, height: geometry.height)
+    targetHost.frame.size.height = targetHost.bounds.width * size.height / size.width
+    targetHost.setNeedsLayout(); targetHost.layoutIfNeeded()
     renderer.update(document: document, state: .init(id: document.id, actor: UUID()),
       selectedPageIndex: 1, capturesSnapshot: false, onRenderReady: .init { _ in },
       onPageLayout: { _ in }, onStateChange: { _, _ in nil },
@@ -1238,7 +1242,13 @@ final class DocumentProgramOwnerTests: XCTestCase {
     let token = try XCTUnwrap(renderer.payload?.renderToken)
     resources.handleMemoryPressure(.warning)
     held.release()
-    try await wait(message: { fixture.diagnostics + " targetErrors=\(failures)" }) { renderer.hasCanonicalPixels }
+    try await wait(message: {
+      fixture.diagnostics + " targetErrors=\(failures) canonical=\(renderer.hasCanonicalPixels)"
+        + " projection=\(targetHost.hasCanonicalPaperProjection) input=\(renderer.nativeInputIsReady(in: targetHost))"
+        + " keyWindow=\(targetHost.window?.isKeyWindow == true)"
+    }) {
+      renderer.hasCanonicalPixels && renderer.nativeInputIsReady(in: targetHost)
+    }
     try await renderer.awaitPresentation(token: token)
     XCTAssertEqual(withdrawals, 1)
     XCTAssertTrue(failures.isEmpty, "The retired optional subscriber cannot fail the required remount: \(failures)")
