@@ -1,0 +1,33 @@
+{
+  "executed": [
+    "NotebookMacTests/NotebookPanelPageAdmissionTests/testClippedPageBudgetPreservesVisibleSubjectPainterBandsAndRequestedDensity",
+    "NotebookMacTests/NotebookPanelPageAdmissionTests/testHeadlessPanelRetainsWarmSourceWithoutAdmittingANativePage",
+    "NotebookMacTests/NotebookPanelPageAdmissionTests/testHundredThousandDistantPageSubjectsUseTheSameBoundedAdmission",
+    "NotebookMacTests/NotebookPanelPageAdmissionTests/testHundredThousandPagePaintCandidatesKeepResolvedCrossingsAndGlobalClaims",
+    "NotebookMacTests/NotebookPanelPageAdmissionTests/testPageSkipsDistantBodiesAndPrioritizesVisibleSeventeenthOverPrefetch",
+    "NotebookMacTests/NotebookPanelPageAdmissionTests/testPageWindowDisclosesOverflowTextAndNewlyExposedBodies",
+    "NotebookMacTests/NotebookPanelPageAdmissionTests/testPanelSourceWindowReclaimsIdleCreditAndRefusesOptionalRetentionWithoutLosingReadyPixels",
+    "NotebookMacTests/NotebookPanelPageAdmissionTests/testPanelSourceWindowSharesExactNativeAliasAndDrainsCancelledOrReplacedBorrow",
+    "NotebookMacTests/NotebookPanelPageAdmissionTests/testPrefetchBoundaryKeepsWholeBodiesAndExistingSemanticExclusions",
+    "NotebookMacTests/NotebookPanelPageContentTests/testPagePublicationRefreshesPresenceAndMembershipChangedDuringNativePreparation",
+    "NotebookMacTests/NotebookPanelPageContentTests/testPagePublicationRejectsSourceChangedDuringNativePreparation",
+    "NotebookMacTests/NotebookPanelPresentationTests/testNotebookCardFirstPageOpensNativePixelsAndNavigationWithoutMovingPresence"
+  ],
+  "failed": [],
+  "format": 1,
+  "planned": [
+    "NotebookMacTests/NotebookPanelPageAdmissionTests/testClippedPageBudgetPreservesVisibleSubjectPainterBandsAndRequestedDensity",
+    "NotebookMacTests/NotebookPanelPageAdmissionTests/testHeadlessPanelRetainsWarmSourceWithoutAdmittingANativePage",
+    "NotebookMacTests/NotebookPanelPageAdmissionTests/testHundredThousandDistantPageSubjectsUseTheSameBoundedAdmission",
+    "NotebookMacTests/NotebookPanelPageAdmissionTests/testHundredThousandPagePaintCandidatesKeepResolvedCrossingsAndGlobalClaims",
+    "NotebookMacTests/NotebookPanelPageAdmissionTests/testPageSkipsDistantBodiesAndPrioritizesVisibleSeventeenthOverPrefetch",
+    "NotebookMacTests/NotebookPanelPageAdmissionTests/testPageWindowDisclosesOverflowTextAndNewlyExposedBodies",
+    "NotebookMacTests/NotebookPanelPageAdmissionTests/testPanelSourceWindowReclaimsIdleCreditAndRefusesOptionalRetentionWithoutLosingReadyPixels",
+    "NotebookMacTests/NotebookPanelPageAdmissionTests/testPanelSourceWindowSharesExactNativeAliasAndDrainsCancelledOrReplacedBorrow",
+    "NotebookMacTests/NotebookPanelPageAdmissionTests/testPrefetchBoundaryKeepsWholeBodiesAndExistingSemanticExclusions",
+    "NotebookMacTests/NotebookPanelPageContentTests/testPagePublicationRefreshesPresenceAndMembershipChangedDuringNativePreparation",
+    "NotebookMacTests/NotebookPanelPageContentTests/testPagePublicationRejectsSourceChangedDuringNativePreparation",
+    "NotebookMacTests/NotebookPanelPresentationTests/testNotebookCardFirstPageOpensNativePixelsAndNavigationWithoutMovingPresence"
+  ],
+  "skipped": []
+}

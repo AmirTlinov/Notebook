@@ -104,7 +104,13 @@ enum PageCompositionRenderer {
     graph: NotebookGraphicGraph) -> [AgentElement] {
     let bounds = CGRect(x: region.x, y: region.y, width: region.width, height: region.height)
     let graphics = page.graphicPresentation.geometryIDs
-    return page.elements.filter { element in
+    let ids: Set<String>
+    if let elementID { ids = [elementID] }
+    else {
+      let visible = graph.visiblePageGraphics(page.id, in: bounds)
+      ids = Set(visible.layouts.keys).union(visible.placements.keys)
+    }
+    return page.interactionElements(ids: ids, includingIdentityAliases: true).filter { element in
       let presentation=element.graphic == nil ? graph.placement(element.id).map { NotebookElementPresentation(element,placement:$0) } : nil
       guard let frame=graph.resolve(element.id).layout?.frame ?? presentation?.frame else { return false }
       return element.kind != .group && (elementID == nil || elementID == element.id)

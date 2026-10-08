@@ -70,10 +70,13 @@ final class NotebookAppModel {
       scheduleScenePreparation()
     }
   }
-  @ObservationIgnored private var acceptedPageSources: [UUID: NotebookPageSource] = [:]
+  private var acceptedPageSources: [UUID: NotebookPageSource] {
+    get { notebookPagePreparation.nativeSources }
+    set { notebookPagePreparation.acceptNativeSources(newValue) }
+  }
   private(set) var pages: [UUID: PageDocument] = [:] {
     didSet {
-      acceptedPageSources = acceptedPageSources.filter { pages[$0.key] != nil }
+      notebookPagePreparation.retainNativeSources(Set(pages.keys))
       elementErasureCache.retain(pages: pages)
       notebookPagePreparation.acceptedPages(pages, model: self)
       for id in oldValue.keys where pages[id] == nil { peerPublication.scopes[.init(kind: .page, id: id)] = nil }

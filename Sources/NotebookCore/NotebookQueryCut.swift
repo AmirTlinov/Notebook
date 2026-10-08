@@ -53,8 +53,9 @@ public struct NotebookQueryCut {
   public func readPanelMetadata(workspaceID: UUID, target: CollaborationTarget, actor: UUID) throws -> NotebookPanelMetadata {
     try requireActive(); return try store.readPanelMetadata(workspaceID: workspaceID, target: target, actor: actor)
   }
-  public func capturePanelPageContent(_ cut: NotebookPanelPresentationCut) throws -> NotebookPanelPageContent {
-    try requireActive(); return try store.capturePanelPageContent(cut)
+  public func capturePanelPageContent(_ cut: NotebookPanelPresentationCut,
+    reusing source: NotebookPageSource? = nil) throws -> NotebookPanelPageContent {
+    try requireActive(); return try store.capturePanelPageContent(cut, reusing: source)
   }
   public func requestPanelPresentation(_ request: NotebookPanelPresentationRequest) throws -> NotebookPanelPresentationCut {
     try requireActive(); return try store.requestPanelPresentation(request)

@@ -7,6 +7,7 @@ struct NotebookPanelPreparedScene {
   let metadata: NotebookPanelMetadata
   let pixels: ScenePixelDependencies?
   let leafRasterCollector: SceneLeafRasterWitnessCollector
+  let pageSource: NotebookPageSource?
 }
 
 /// Ephemeral app presentation executes in the publisher's existing target queue.
@@ -14,7 +15,7 @@ struct NotebookPanelPreparedScene {
 extension CurrentViewPreviewWriter {
   @MainActor
   static func panelMaterial(_ cut: NotebookPanelPresentationCut, model: NotebookAppModel,
-    knownAssets: Set<UUID>) async throws -> NotebookPanelPreparedScene {
+    knownAssets: Set<UUID>, reusing pageSource: NotebookPageSource? = nil) async throws -> NotebookPanelPreparedScene {
     let projection = cut.projection, target = cut.target, actor = model.actorID
     try projection.validated()
     guard model.permitsPanelPreparation else { throw CancellationError() }
@@ -28,15 +29,27 @@ extension CurrentViewPreviewWriter {
     observe("panel_prepare_started")
     let viewBounds = WorkspaceSpatialBounds(origin: projection.worldOrigin,
       width: projection.viewport.x / projection.camera.scale, height: projection.viewport.y / projection.camera.scale)
-    let initialCoverage = try CompositionTileCoverage(bounds: viewBounds,
-      pixelsPerWorldPoint: projection.camera.scale * projection.pixelScale)
+    let initialCoverage = target.kind == .page
+      ? try CompositionTileCoverage(bounds: viewBounds,
+        pixelsPerWorldPoint: projection.camera.scale * projection.pixelScale, maximumTiles: 8)
+      : try CompositionTileCoverage(bounds: viewBounds,
+        pixelsPerWorldPoint: projection.camera.scale * projection.pixelScale)
     let initialBounds = WorkspaceSpatialBounds(origin: initialCoverage.tiles.first!.origin,
       maximum: initialCoverage.tiles.last!.bounds.maximum)
     let captured = try await model.readCommandCut { reader in
       let header = try reader.workspaceHeader()
       guard header.workspaceID == projection.workspaceID,
         try reader.referenceRevision(target: target) == cut.sourceRevision else { throw NotebookStorageError.transactionConflict }
-      let page = target.kind == .page ? try reader.capturePanelPageContent(cut) : nil
+      let page = target.kind == .page ? try reader.capturePanelPageContent(cut, reusing: pageSource) : nil
+      if let page {
+        // The painter always borrows this graph. Build it on the existing
+        // reader; prepare visibility only for its actual physical paint window.
+        let graph = page.page.graphicGraph()
+        if initialBounds.intersection(.init(origin: .zero, width: page.page.size.width, height: page.page.size.height)) != nil {
+          graph.prepareVisibility(on: .page(page.page.id))
+        }
+        try Task.checkCancellation()
+      }
       let snapshot = target.kind == .board ? try reader.readPanel(.init(workspaceID: projection.workspaceID, target: target,
         bounds: .init(anchor: initialBounds.origin,
           region: .init(x: 0, y: 0, width: initialBounds.width, height: initialBounds.height))), actor: actor) : nil
@@ -51,7 +64,7 @@ extension CurrentViewPreviewWriter {
     let layers: [NotebookPanelRasterLayer], coverage: CompositionTileCoverage, diagnostics: [RenderDiagnostic]
     let materialBounds: WorkspaceSpatialBounds
     if let page {
-      (layers, coverage, diagnostics, materialBounds) = try await pagePanelMaterials(page, projection: projection,
+      (layers, coverage, diagnostics, materialBounds) = try await pagePanelMaterials(page, projection: projection, initialCoverage: initialCoverage,
         knownAssets: knownAssets, sourceRevision: cut.sourceRevision, model: model, leafRasterCollector: collector)
     } else {
       let candidates = Array((capturedSnapshot?["elements"]?.arrayValues ?? []).filter(NotebookPanelEditableSubject.allows)
@@ -92,7 +105,7 @@ extension CurrentViewPreviewWriter {
     let dependencies = try await source.pixelDependencies()
     try Task.checkCancellation()
     guard model.permitsPanelPreparation else { throw CancellationError() }
-    let (snapshot, metadata) = try await model.readCommandCut { reader in
+    let (snapshot, metadata, retainedSource) = try await model.readCommandCut { reader in
       try Task.checkCancellation()
       guard try reader.storedWorkspaceID() == projection.workspaceID,
         try reader.referenceRevision(target: target) == cut.sourceRevision,
@@ -142,28 +155,32 @@ extension CurrentViewPreviewWriter {
       guard try JSONEncoder().encode(snapshot).count <= NotebookPanelRenderProjection.maximumEncodedBytes else {
         throw SceneRenderError.resourceLimit
       }
-      return (snapshot, metadata)
+      var retainedSource = page?.source
+      if let page, let visible = materialBounds.intersection(.init(origin: .zero, width: page.page.size.width, height: page.page.size.height)),
+        visible.width > 0, visible.height > 0 { retainedSource = page.sourceForRetention() }
+      return (snapshot, metadata, retainedSource)
     }
     try Task.checkCancellation()
     guard model.permitsPanelPreparation else { throw CancellationError() }
     guard collector.isCurrent else { throw NotebookStorageError.transactionConflict }
     observe("panel_published")
     prepared = true
-    return .init(snapshot: snapshot, metadata: metadata, pixels: dependencies, leafRasterCollector: collector)
+    return .init(snapshot: snapshot, metadata: metadata, pixels: dependencies, leafRasterCollector: collector,
+      pageSource: retainedSource)
   }
 
   /// Finite pages use the same world grid and native paper/ordered ink owners.
   /// Their body pixels are stable across a pan just like board materials.
   @MainActor
   private static func pagePanelMaterials(_ content: NotebookPanelPageContent, projection: NotebookPanelRenderProjection,
+    initialCoverage: CompositionTileCoverage,
     knownAssets: Set<UUID>, sourceRevision: String, model: NotebookAppModel,
     leafRasterCollector: SceneLeafRasterWitnessCollector)
     async throws -> ([NotebookPanelRasterLayer], CompositionTileCoverage, [RenderDiagnostic], WorkspaceSpatialBounds) {
     let page = content.page, resources = SceneRenderResources.shared, graph = page.graphicGraph()
     let requested = WorkspaceSpatialBounds(origin: projection.worldOrigin,
       width: projection.viewport.x / projection.camera.scale, height: projection.viewport.y / projection.camera.scale)
-    var coverage = try CompositionTileCoverage(bounds: requested,
-      pixelsPerWorldPoint: projection.camera.scale * projection.pixelScale, maximumTiles: 8)
+    var coverage = initialCoverage
     var admitted = WorkspaceSpatialBounds(origin: coverage.tiles.first!.origin,
       maximum: coverage.tiles.last!.bounds.maximum)
     let requestedOffset = WorldPoint.zero.delta(to: requested.origin)
@@ -201,14 +218,21 @@ extension CurrentViewPreviewWriter {
       return value
     }
     var output = NotebookPanelRasterSet()
-    let elements = PageCompositionRenderer.elements(in: page,
-      region: .init(x: 0, y: 0, width: page.size.width, height: page.size.height), elementID: nil)
-    let elementFrames = Dictionary(uniqueKeysWithValues: elements.compactMap { element -> (String, CGRect)? in
-      let frame = graph.resolve(element.id).layout?.frame
-        ?? graph.placement(element.id).map { NotebookElementPresentation(element, placement: $0).frame }
-      return frame.map { (element.id, CGRect(x: $0.x, y: $0.y, width: $0.width, height: $0.height)) }
-    })
-    let inkOwnedIDs = Set(elements.compactMap { $0.graphic?.sourceInkContactID == nil ? nil : $0.id })
+    func paintElements(in window: CGRect) -> [AgentElement] {
+      let clipped = window.intersection(physical)
+      guard !clipped.isNull, !clipped.isEmpty else { return [] }
+      return PageCompositionRenderer.elements(in: page,
+        region: .init(x: clipped.minX, y: clipped.minY, width: clipped.width, height: clipped.height), elementID: nil)
+    }
+    func paintFrames(_ elements: [AgentElement]) -> [String: CGRect] {
+      Dictionary(uniqueKeysWithValues: elements.compactMap { element -> (String, CGRect)? in
+        let frame = graph.resolve(element.id).layout?.frame
+          ?? graph.placement(element.id).map { NotebookElementPresentation(element, placement: $0).frame }
+        return frame.map { (element.id, CGRect(x: $0.x, y: $0.y, width: $0.width, height: $0.height)) }
+      })
+    }
+    var elements = paintElements(in: materialWindow), elementFrames = paintFrames(elements)
+    var inkOwnedIDs = Set(elements.compactMap { $0.graphic?.sourceInkContactID == nil ? nil : $0.id })
     func projectedElements(in bounds: WorkspaceSpatialBounds) throws -> [JSONValue] {
       try content.projection(in: .init(anchor: bounds.origin,
         region: .init(x: 0, y: 0, width: bounds.width, height: bounds.height))).elements
@@ -222,7 +246,7 @@ extension CurrentViewPreviewWriter {
     let inkRead = Task.detached(priority: .utility) { try inkSource.drawing() }
     let drawing = try await withTaskCancellationHandler { try await inkRead.value } onCancel: { inkRead.cancel() }
     try Task.checkCancellation()
-    let hasInk = !drawing.isEmpty || !inkOwnedIDs.isEmpty
+    var hasInk: Bool { !drawing.isEmpty || !inkOwnedIDs.isEmpty }
     func painterRuns() -> (bands: [(ids: Set<String>, rank: Int)], subjects: [String: Int]) {
       var bands: [(Set<String>, Int)] = [], pending = Set<String>(), ranks: [String: Int] = [:], rank = 0
       for element in elements {
@@ -296,6 +320,8 @@ extension CurrentViewPreviewWriter {
       // Coarsening changes the grid inside one admitted overscan window. Only
       // this budget transition narrows that window and rebuilds admission.
       admitted = requested; materialWindow = viewport
+      elements = paintElements(in: materialWindow); elementFrames = paintFrames(elements)
+      inkOwnedIDs = Set(elements.compactMap { $0.graphic?.sourceInkContactID == nil ? nil : $0.id })
       subjects = pagePanelSubjects(try projectedElements(in: admitted), frames: elementFrames, physical: physical,
         materialWindow: materialWindow, viewport: viewport, density: density, inkOwnedIDs: inkOwnedIDs)
       runs = painterRuns(); try fitCompositionCoverage()
@@ -328,6 +354,7 @@ extension CurrentViewPreviewWriter {
       return value
     }
     let bands = runs.bands
+    let bandRoles = bands.map { "page-elements:" + $0.ids.sorted().joined(separator: ",") }
     for element in elements {
       guard let frame = subjects[element.id], let rank = runs.subjects[element.id] else { continue }
       let key = try SceneMaterialKey(workspaceID: projection.workspaceID, target: target, revision: sourceRevision,
@@ -354,7 +381,7 @@ extension CurrentViewPreviewWriter {
       for index in -1...bands.count {
         if index == bands.count && !hasInk { continue }
         if index >= 0 && index < bands.count && bands[index].ids.isDisjoint(with: owners) { continue }
-        let role = index == -1 ? "page-paper" : index == bands.count ? "page-ink" : "page-elements:" + bands[index].ids.sorted().joined(separator: ",")
+        let role = index == -1 ? "page-paper" : index == bands.count ? "page-ink" : bandRoles[index]
         let order = index == -1 ? -1 : index == bands.count ? 1000 : bands[index].rank
         let rasterDensity = tileDensity
         let key = try SceneMaterialKey(workspaceID: projection.workspaceID, target: target, revision: sourceRevision,

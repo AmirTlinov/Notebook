@@ -85,7 +85,7 @@ function neighbor(direction:number):PanelTarget|undefined{
 }
 function buttons(){
   const drawing=ink.pointer!==undefined,waiting=!session.mutationReady||drawing;
-  el<HTMLButtonElement>("delete").disabled=!active()||!canEdit(active()!)||waiting;
+  el<HTMLButtonElement>("delete").disabled=!active()||!canEdit(active()!)||waiting||!!draft;
   el<HTMLButtonElement>("workspaces").disabled=session.busy||drawing||!!draft||!!gesture;
   el<HTMLButtonElement>("undo").disabled=!session.snapshot?.history.undoActionID||waiting;
   editor.readOnly=waiting||!!editorFinish;

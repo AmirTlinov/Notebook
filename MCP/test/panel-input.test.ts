@@ -215,14 +215,17 @@ test('editor entry updates controls without a camera state refresh',async()=>{
   const f=await fixture(),before=f.counts();
   assert.equal(f.otherControls.get('zoom-in')!.disabled,false);
   assert.equal(f.otherControls.get('workspaces')!.disabled,false);
+  assert.equal(f.otherControls.get('delete')!.disabled,false);
   await f.key('Enter');
   assert.equal(f.context.draft.element,f.snapshot.elements[0]);assert.equal(f.editor.hidden,false);
   assert.equal(f.counts().cameraPublications,before.cameraPublications+1);
   assert.equal(f.counts().editorFocus,before.editorFocus+1);assert.equal(f.editor.readOnly,false);
   for(const id of ['zoom-in','zoom-out','zoom-fit','workspaces'])assert.equal(f.otherControls.get(id)!.disabled,true,id);
   assert.equal(f.toolControls.get('hand')!.disabled,false,'A draft still finishes through the toolbar');
+  assert.equal(f.otherControls.get('delete')!.disabled,true,'An open draft cannot advertise deletion');
   await f.editorKey('Escape');assert.equal(f.context.draft,null);assert.equal(f.editor.hidden,true);
   for(const id of ['zoom-in','zoom-out','zoom-fit','workspaces'])assert.equal(f.otherControls.get(id)!.disabled,false,id);
+  assert.equal(f.otherControls.get('delete')!.disabled,false,'Finishing the draft restores selection deletion');
   assert.equal(f.writes.length,0);
 });
 

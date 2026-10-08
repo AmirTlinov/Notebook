@@ -174,6 +174,14 @@ struct NotebookPanelPageReadTests {
     #expect(after["basis"] == (try .encode(store.readBasis(targets: [target], includeSource: true))))
     #expect(after["fitBounds"] != .null)
     #expect(trace.pageLoads == 0, "Publication refreshes dynamic fields without loading the painted page again")
+    let refreshedCut = try store.requestPanelPresentation(.init(target: target,
+      appearance: .init(viewport: .init(x: 834, y: 1194), pixelScale: 1)))
+    let (warm, warmTrace) = try measured(store) { try store.capturePanelPageContent(refreshedCut, reusing: content.source) }
+    #expect(warmTrace.pageLoads == 0)
+    #expect(warm.page.elementSourceIdentity == content.page.elementSourceIdentity)
+    #expect(warm.page.inkSource.identity == content.page.inkSource.identity)
+    #expect(try store.readPanel(.init(target: target, includeFitBounds: true), actor: actor, reusing: warm) == after,
+      "The retained immutable source does not retain its prior history, membership, presence or read cursor")
   }
 
   @Test func boundedPageProjectionKeepsNativeBodiesConnectionsAndWholeSources() throws {
@@ -261,6 +269,16 @@ struct NotebookPanelPageReadTests {
     #expect(next["unchanged"] == nil && next["cursor"] == result["cursor"])
     #expect(next["elements"]?.array.compactMap { $0["source"]?["id"]?.string } == ["distant"],
       "A newly exposed window receives sources even without a content commit")
+    let exactID = "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE"
+    let aliases = [exactID, exactID.lowercased()].map { AgentElement(id: $0, kind: .nativeText,
+      frame: .init(x: 490, y: 490, width: 20, height: 20), source: $0, html: "") }
+    let aliased = PageDocument(size: size, actor: actor, elements: aliases)
+    let aliasedProjection = try NotebookPanelPageContent.projection(aliased,
+      bounds: .init(origin: .init(x: 480, y: 480), width: 40, height: 40))
+    #expect(aliasedProjection.elements.map { $0["source"] } == (try aliases.map(JSONValue.encode)),
+      "Normalized visibility candidates disclose every exact authored alias in painter order")
+    #expect(aliased.interactionElements(ids: [exactID.lowercased()]).first == aliases.first,
+      "The ordinary canonical interaction lookup keeps its first-source contract")
   }
 
   @Test func boundedPageReadValidatesBeforeUnchangedAndKeepsTiledAnchors() throws {
@@ -345,6 +363,12 @@ struct NotebookPanelPageReadTests {
     #expect(throws: NotebookStorageError.transactionConflict) {
       try other.readPanel(.init(target: target), actor: actor, reusing: content)
     }
+    let otherCut = try other.requestPanelPresentation(.init(target: target,
+      appearance: .init(viewport: .init(x: 834, y: 1194), pixelScale: 1)))
+    let (otherContent, otherTrace) = try measured(other) { try other.capturePanelPageContent(otherCut, reusing: content.source) }
+    #expect(otherTrace.pageLoads == 1)
+    #expect(otherContent.page.elementSourceIdentity != content.page.elementSourceIdentity,
+      "A matching UUID in another store/workspace never borrows a retained capability")
     var changed = content.page
     let didChange = changed.replaceElements([.init(id: "new", kind: .nativeText,
       frame: .init(x: 600, y: 900, width: 100, height: 80), source: "Changed outside the window", html: "")], actor: actor)
@@ -357,6 +381,13 @@ struct NotebookPanelPageReadTests {
     }
     let after = try store.readPanel(.init(target: target, bounds: bounds), actor: actor)
     #expect(after["elements"] == before["elements"], "Offscreen edits invalidate the whole source fence even when bounded hits stay the same")
+    let changedCut = try store.requestPanelPresentation(.init(target: target,
+      appearance: .init(viewport: .init(x: 834, y: 1194), pixelScale: 1)))
+    let (changedContent, changedTrace) = try measured(store) { try store.capturePanelPageContent(changedCut, reusing: content.source) }
+    #expect(changedTrace.pageLoads == 1)
+    #expect(changedContent.page.elementSourceIdentity != content.page.elementSourceIdentity)
+    #expect(changedContent.page.elements == changedPage.elements)
+    #expect(try store.readPanel(.init(target: target, bounds: bounds), actor: actor, reusing: changedContent) == after)
   }
 
   @Test func retainedContentRejectsLiveInkChangeBeforePersistence() throws {
@@ -378,6 +409,10 @@ struct NotebookPanelPageReadTests {
     #expect(throws: NotebookStorageError.transactionConflict) {
       try f.store.readPanel(.init(target: target, knownCursor: String(cursor)), actor: f.actor, reusing: content)
     }
+    let (fresh, trace) = try measured(f.store) { try f.store.capturePanelPageContent(presentation, reusing: content.source) }
+    #expect(trace.pageLoads == 1, "Advancing the live journal root revokes reuse even before a SQLite commit")
+    #expect(fresh.page.inkSource.identity != content.page.inkSource.identity)
+    #expect(try fresh.page.inkDrawing().action(id: stroke.id) == nil, "Fresh capture remains the admitted durable WAL value")
   }
 
   @Test func hundredThousandPageElementsUseOneSourceRead() throws {
@@ -439,11 +474,26 @@ struct NotebookPanelPageReadTests {
     #expect(projected.elements == entries)
     #expect(captureTrace.pageLoads == 1 && reuseTrace.pageLoads == 0)
     #expect(reuseTrace.elementReads == 0 && reuseTrace.erasureReads == 0)
+    let retainedSource = content.sourceForRetention()
+    let warmStarted = ContinuousClock.now
+    let (warmContent, warmTrace) = try measured(store) { try store.capturePanelPageContent(presentation, reusing: retainedSource) }
+    let warmElapsed = warmStarted.duration(to: .now)
+    #expect(warmTrace.pageLoads == 0 && warmTrace.elementReads == 0 && warmTrace.erasureReads == 0)
+    #expect(warmContent.page.elements.count == count)
+    #expect(warmContent.page.elementSourceIdentity == content.page.elementSourceIdentity)
+    #expect(warmContent.page.inkSource.identity == content.page.inkSource.identity)
+    let warmReadStarted = ContinuousClock.now
+    let (warmResult, warmReadTrace) = try measured(store) {
+      try store.readPanel(.init(target: target, bounds: bounds), actor: actor, reusing: warmContent)
+    }
+    let warmReadElapsed = warmReadStarted.duration(to: .now)
+    #expect(warmReadTrace.pageLoads == 0 && warmResult == result)
     #expect(try store.currentReadCursor() == cursor)
     let bytes = try JSONEncoder().encode(result).count
     #expect(bytes < 65_536, "The actual 100K-source reply fits the panel's encoded budget with only four exposed whole bodies")
     print("PANEL_PAGE_SCALE source_elements=\(count) projected_elements=\(entries.count) SQL=\(trace.statements) addressed=\(trace.elementReads) erasures=\(trace.erasureReads) elapsed=\(elapsed) bytes=\(bytes)")
     print("PANEL_PAGE_CUT_SCALE source_elements=\(count) capture=\(captureElapsed) projection=\(projectionElapsed) reuse=\(reuseElapsed) capture_page_loads=\(captureTrace.pageLoads) reuse_page_loads=\(reuseTrace.pageLoads)")
+    print("PANEL_PAGE_SOURCE_WARM source_elements=\(count) capture=\(warmElapsed) read=\(warmReadElapsed) capture_page_loads=\(warmTrace.pageLoads) read_page_loads=\(warmReadTrace.pageLoads) sources=\(entries.count) bytes=\(bytes) admission_estimate=\(retainedSource.admissionEstimateBytes ?? 0) direct_capability=true publisher_grant=false")
     print("PANEL_METADATA_SCALE elements=\(count) SQL=\(metadataTrace.statements) empty_SQL=\(emptyMetadataTrace.statements) elapsed=\(metadataElapsed) page_loads=\(metadataTrace.pageLoads)")
   }
 

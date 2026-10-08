@@ -4,15 +4,13 @@ import Foundation
 /// One ephemeral content cut feeds both the panel projection and native painter.
 /// Only the store can capture it; navigation, history and cursor remain fresh reads.
 public struct NotebookPanelPageContent: Sendable {
-  public let page: PageDocument
+  public let source: NotebookPageSource
+  public var page: PageDocument { source.document }
   private let workspaceID: UUID
   private let sourceRevision: String
-  private let storeKey: String
-  private let ink: PageInkSource
 
-  fileprivate init(page: PageDocument, workspaceID: UUID, sourceRevision: String, storeKey: String) {
-    self.page = page; self.workspaceID = workspaceID; self.sourceRevision = sourceRevision; self.storeKey = storeKey
-    ink = page.inkSource
+  fileprivate init(source: NotebookPageSource, workspaceID: UUID, sourceRevision: String) {
+    self.source = source; self.workspaceID = workspaceID; self.sourceRevision = sourceRevision
   }
 
   /// Disclosure follows the admitted material window; the captured source and
@@ -21,10 +19,15 @@ public struct NotebookPanelPageContent: Sendable {
     try Self.projection(page, bounds: bounds.map { try $0.validated() })
   }
 
+  /// Required material is already prepared. Optional warm retention cannot
+  /// turn a successful presentation into an allocation or accounting failure.
+  public func sourceForRetention() -> NotebookPageSource { source.withPreparedAdmissionEstimate() }
+
   func validate(in store: NotebookStore, workspaceID: UUID, target: CollaborationTarget) throws {
-    guard self.workspaceID == workspaceID, storeKey == store.connectionKey,
+    guard self.workspaceID == workspaceID,
       target.kind == .page, target.boardID == nil, target.id == page.id,
-      page.inkSource.identity == ink.identity,
+      let revision = try store.pageSourceRevision(page.id),
+      source.matches(revision, storeKey: store.connectionKey, workspaceID: workspaceID),
       try store.referenceRevision(target: target) == sourceRevision else {
       throw NotebookStorageError.transactionConflict
     }
@@ -77,20 +80,22 @@ public struct NotebookPanelPageContent: Sendable {
     for id in Array(ids) {
       ids.formUnion((graph.placement(id)?.ancestors ?? []).map(collaborationIdentity))
     }
-    return page.elements.filter { ids.contains(collaborationIdentity($0.id)) }
+    return page.interactionElements(ids: ids, includingIdentityAliases: true)
   }
 }
 
 extension NotebookStore {
-  public func capturePanelPageContent(_ cut: NotebookPanelPresentationCut) throws -> NotebookPanelPageContent {
+  public func capturePanelPageContent(_ cut: NotebookPanelPresentationCut,
+    reusing source: NotebookPageSource? = nil) throws -> NotebookPanelPageContent {
     try readTransaction { _ in
       guard cut.target.kind == .page, cut.target.boardID == nil,
         try storedWorkspaceID() == cut.projection.workspaceID,
         try referenceRevision(target: cut.target) == cut.sourceRevision else {
         throw NotebookStorageError.transactionConflict
       }
-      return try .init(page: loadPage(cut.target.id), workspaceID: cut.projection.workspaceID,
-        sourceRevision: cut.sourceRevision, storeKey: connectionKey)
+      guard let revision = try pageSourceRevision(cut.target.id) else { throw NotebookStorageError.transactionConflict }
+      return try .init(source: capturePageSource(cut.target.id, revision: revision, workspaceID: cut.projection.workspaceID, reusing: source),
+        workspaceID: cut.projection.workspaceID, sourceRevision: cut.sourceRevision)
     }
   }
 }

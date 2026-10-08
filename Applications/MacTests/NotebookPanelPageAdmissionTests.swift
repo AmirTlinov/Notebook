@@ -5,6 +5,139 @@ import XCTest
 
 final class NotebookPanelPageAdmissionTests: XCTestCase {
   @MainActor
+  func testHeadlessPanelRetainsWarmSourceWithoutAdmittingANativePage() async throws {
+    let (fixture, header, _) = try await fixture(), itemID = UUID(), pageID = UUID()
+    let board = CollaborationTarget(kind: .board, id: header.rootBoardID), target = CollaborationTarget(kind: .page, id: pageID)
+    try await fixture.apply([.init(kind: .createNotebook, target: board, id: itemID.uuidString,
+      values: ["center": try .encode(WorldPoint(x: 50_000, y: 50_000)), "pageID": try .encode(pageID)])])
+    try await fixture.apply([try graphic("panel-only", frame: .init(x: 400, y: 580, width: 24, height: 24), color: .black, target: target)])
+    XCTAssertNil(fixture.model.pages[pageID]); XCTAssertNil(fixture.model.notebookPagePreparation.nativeSources[pageID])
+    let presence = fixture.model.presence
+    var command = NotebookCommand(command: .panelPresentation)
+    command.panelPresentation = .init(workspaceID: header.workspaceID, target: target,
+      appearance: .init(viewport: .init(x: 200, y: 150), pixelScale: 1,
+        camera: .init(center: .init(x: 417, y: 597), scale: 4)))
+    var phases: [UUID: [String: TimeInterval]] = [:]
+    XCTAssertNil(NotebookNavigationObservation.onPageMaterialPreparation)
+    NotebookNavigationObservation.onPageMaterialPreparation = { stage, request, page, _, _, time in
+      guard page == pageID else { return }; phases[request, default: [:]][stage] = time
+    }
+    defer { NotebookNavigationObservation.onPageMaterialPreparation = nil }
+    let cold = try await fixture.send(command), coldLayers = try XCTUnwrap(cold["appearance"]?["layers"]?.arrayValues)
+    let coldBody = try XCTUnwrap(coldLayers.first { $0["elementID"] == .string("panel-only") })
+    command.panelPresentation = .init(workspaceID: header.workspaceID, target: target,
+      appearance: .init(viewport: .init(x: 200, y: 150), pixelScale: 1,
+        camera: .init(center: .init(x: 422, y: 597), scale: 4)),
+      knownAssets: coldLayers.compactMap { $0["assetID"]?.stringValue.flatMap(UUID.init(uuidString:)) })
+    let warm = try await fixture.send(command), warmLayers = try XCTUnwrap(warm["appearance"]?["layers"]?.arrayValues)
+    let warmBody = try XCTUnwrap(warmLayers.first { $0["elementID"] == .string("panel-only") })
+    XCTAssertEqual(warm["elements"], cold["elements"]); XCTAssertEqual(warmBody["assetID"], coldBody["assetID"])
+    XCTAssertNil(warmBody["pngBase64"]); XCTAssertEqual(warm["appearance"]?["status"], .string("ready"))
+    XCTAssertNil(fixture.model.pages[pageID]); XCTAssertNil(fixture.model.notebookPagePreparation.nativeSources[pageID])
+    XCTAssertEqual(fixture.model.presence, presence, "Panel source retention never admits a native mount, program or durable selection")
+    let held = SceneRenderResources.shared.reservedBytes
+    fixture.model.notebookPagePreparation.releaseOptionalPanelSource()
+    XCTAssertLessThan(SceneRenderResources.shared.reservedBytes, held, "The actual headless publisher retained one reclaimable source credit")
+    for response in [cold, warm] {
+      let request = try XCTUnwrap(response["appearance"]?["requestID"]).decode(UUID.self), sample = try XCTUnwrap(phases[request])
+      let started = try XCTUnwrap(sample["panel_prepare_started"]), captured = try XCTUnwrap(sample["panel_content_captured"])
+      print("PANEL_SOURCE_ROUTE request=\(request) capture_ms=\((captured-started)*1000) retained_native=false")
+    }
+  }
+
+  @MainActor
+  func testPanelSourceWindowSharesExactNativeAliasAndDrainsCancelledOrReplacedBorrow() async throws {
+    let (fixture, header, target) = try await fixture()
+    let projection = NotebookPanelRenderProjection(workspaceID: header.workspaceID,
+      camera: .init(center: .init(x: 417, y: 597), scale: 4), viewport: .init(x: 200, y: 150), pixelScale: 1)
+    let cut = try await cut(fixture, target: target, projection: projection)
+    let prepared = try await CurrentViewPreviewWriter.panelMaterial(cut, model: fixture.model, knownAssets: [])
+    defer { prepared.leafRasterCollector.close() }
+    let source = try XCTUnwrap(prepared.pageSource), bytes = try XCTUnwrap(source.admissionEstimateBytes), owner = UUID()
+    let resources = SceneRenderResources(byteLimit: bytes * 2, profile: .headless)
+    let window = NotebookPagePreparationWindow(resources: resources)
+    defer { _ = window.stop() }
+    var demand = try XCTUnwrap(window.beginPanelSource(owner: owner, target: target))
+    window.finishPanelSource(demand, source: source)
+    XCTAssertEqual(resources.reservedBytes, bytes)
+    demand = try XCTUnwrap(window.beginPanelSource(owner: owner, target: target))
+    let borrowed = try XCTUnwrap(window.panelSource(for: demand))
+    XCTAssertEqual(borrowed.captureIdentity, source.captureIdentity)
+    window.withdrawPanelSource(owner: owner)
+    XCTAssertNil(window.panelSource(for: demand)); XCTAssertEqual(resources.reservedBytes, bytes, "An active borrow still owns its credit")
+    window.finishPanelSource(demand, source: borrowed)
+    XCTAssertEqual(resources.reservedBytes, 0, "Late completion cannot restore a withdrawn slot")
+
+    window.acceptNativeSources([target.id: source])
+    demand = try XCTUnwrap(window.beginPanelSource(owner: owner, target: target))
+    XCTAssertEqual(window.panelSource(for: demand)?.captureIdentity, source.captureIdentity)
+    XCTAssertEqual(resources.reservedBytes, 0, "An exact native capability alias receives no second credit")
+    window.retainNativeSources([])
+    XCTAssertEqual(resources.reservedBytes, 0)
+    window.finishPanelSource(demand, source: source)
+    XCTAssertEqual(resources.reservedBytes, bytes, "A retired native alias may become the one optional panel-only source")
+    window.acceptNativeSources([target.id: source])
+    XCTAssertEqual(resources.reservedBytes, 0)
+    demand = try XCTUnwrap(window.beginPanelSource(owner: owner, target: target))
+    let replacement = try await fixture.model.readCommandCut { try $0.capturePanelPageContent(cut) }.source
+    XCTAssertNotEqual(replacement.captureIdentity, source.captureIdentity)
+    window.acceptNativeSources([target.id: replacement])
+    window.finishPanelSource(demand, source: source)
+    XCTAssertEqual(window.nativeSources[target.id]?.captureIdentity, replacement.captureIdentity,
+      "A late panel cut cannot overwrite a replacement native capability which merely shares its page UUID")
+    XCTAssertEqual(resources.reservedBytes, 0)
+
+    demand = try XCTUnwrap(window.beginPanelSource(owner: owner, target: target))
+    XCTAssertEqual(window.panelSource(for: demand)?.captureIdentity, replacement.captureIdentity)
+    window.finishPanelSource(demand, source: replacement)
+    window.retainNativeSources([])
+    XCTAssertEqual(resources.reservedBytes, 0, "Unknown optional estimate declines retention without affecting native/required admission")
+    demand = try XCTUnwrap(window.beginPanelSource(owner: owner, target: target))
+    XCTAssertNil(window.panelSource(for: demand)); window.finishPanelSource(demand, source: source)
+    demand = try XCTUnwrap(window.beginPanelSource(owner: owner, target: target))
+    let pending = try XCTUnwrap(window.panelSource(for: demand))
+    _ = window.stop()
+    XCTAssertEqual(resources.reservedBytes, bytes, "Shutdown withdraws retention but drains the accepted borrow before credit release")
+    window.finishPanelSource(demand, source: pending)
+    XCTAssertEqual(resources.reservedBytes, 0); XCTAssertNil(window.beginPanelSource(owner: owner, target: target))
+  }
+
+  @MainActor
+  func testPanelSourceWindowReclaimsIdleCreditAndRefusesOptionalRetentionWithoutLosingReadyPixels() async throws {
+    let (fixture, header, target) = try await fixture()
+    let projection = NotebookPanelRenderProjection(workspaceID: header.workspaceID,
+      camera: .init(center: .init(x: 417, y: 597), scale: 4), viewport: .init(x: 200, y: 150), pixelScale: 1)
+    let cut = try await cut(fixture, target: target, projection: projection)
+    let prepared = try await CurrentViewPreviewWriter.panelMaterial(cut, model: fixture.model, knownAssets: [])
+    defer { prepared.leafRasterCollector.close() }
+    let source = try XCTUnwrap(prepared.pageSource), bytes = try XCTUnwrap(source.admissionEstimateBytes), owner = UUID()
+    let resources = SceneRenderResources(byteLimit: bytes * 2, profile: .headless), window = NotebookPagePreparationWindow(resources: resources)
+    defer { _ = window.stop() }
+    var demand = try XCTUnwrap(window.beginPanelSource(owner: owner, target: target))
+    window.finishPanelSource(demand, source: source)
+    demand = try XCTUnwrap(window.beginPanelSource(owner: owner, target: target))
+    let borrowed = try XCTUnwrap(window.panelSource(for: demand))
+    XCTAssertNil(resources.reserveDerivedBytes(bytes * 2, priority: .passive), "Required borrow cannot be offered as idle backing")
+    XCTAssertEqual(resources.reservedBytes, bytes)
+    window.finishPanelSource(demand, source: borrowed)
+    let occupying = try XCTUnwrap(resources.reserveDerivedBytes(bytes * 2, priority: .passive))
+    XCTAssertEqual(resources.reservedBytes, bytes * 2)
+    demand = try XCTUnwrap(window.beginPanelSource(owner: owner, target: target))
+    XCTAssertNil(window.panelSource(for: demand), "The existing resource planner retired its idle source offer")
+    window.finishPanelSource(demand, source: source)
+    XCTAssertEqual(resources.reservedBytes, bytes * 2, "Failed optional credit never queues behind required work")
+    XCTAssertEqual(prepared.snapshot["appearance"]?["status"], .string("ready"))
+    XCTAssertFalse(prepared.snapshot["appearance"]?["layers"]?.arrayValues.isEmpty ?? true)
+    occupying.release()
+    demand = try XCTUnwrap(window.beginPanelSource(owner: owner, target: target))
+    XCTAssertNil(window.panelSource(for: demand)); window.finishPanelSource(demand, source: source)
+    let otherTarget = CollaborationTarget(kind: .page, id: UUID())
+    demand = try XCTUnwrap(window.beginPanelSource(owner: owner, target: otherTarget))
+    XCTAssertNil(window.panelSource(for: demand)); XCTAssertEqual(resources.reservedBytes, 0, "Target replacement frees the prior panel-only source")
+    window.finishPanelSource(demand, source: nil)
+  }
+
+  @MainActor
   func testPageSkipsDistantBodiesAndPrioritizesVisibleSeventeenthOverPrefetch() async throws {
     for prefetched in [false, true] {
       let (fixture, header, target) = try await fixture()
@@ -58,8 +191,11 @@ final class NotebookPanelPageAdmissionTests: XCTestCase {
       XCTAssertEqual(try XCTUnwrap(bounds["region"]).decode(PageRect.self),
         .init(x: 0, y: 0, width: geometry.window.width, height: geometry.window.height))
       let warm = try await CurrentViewPreviewWriter.panelMaterial(cut, model: fixture.model,
-        knownAssets: Set(layers.compactMap { $0["assetID"]?.stringValue.flatMap(UUID.init(uuidString:)) }))
+        knownAssets: Set(layers.compactMap { $0["assetID"]?.stringValue.flatMap(UUID.init(uuidString:)) }),
+        reusing: prepared.pageSource)
       defer { warm.leafRasterCollector.close() }
+      XCTAssertEqual(warm.pageSource?.document.elementSourceIdentity, prepared.pageSource?.document.elementSourceIdentity)
+      XCTAssertEqual(warm.pageSource?.document.inkSource.identity, prepared.pageSource?.document.inkSource.identity)
       let reused = try XCTUnwrap(warm.snapshot["appearance"]?["layers"]?.arrayValues.first { $0["elementID"] == .string(visibleID) })
       XCTAssertEqual(reused["assetID"], body["assetID"]); XCTAssertNil(reused["pngBase64"])
     }
@@ -101,8 +237,10 @@ final class NotebookPanelPageAdmissionTests: XCTestCase {
       camera: .init(center: .init(x: 702, y: 912), scale: 4), viewport: projection.viewport, pixelScale: 1)
     let nextCut = try await self.cut(fixture, target: target, projection: nextProjection)
     XCTAssertEqual(nextCut.sourceRevision, cut.sourceRevision)
-    let next = try await CurrentViewPreviewWriter.panelMaterial(nextCut, model: fixture.model, knownAssets: [])
+    let next = try await CurrentViewPreviewWriter.panelMaterial(nextCut, model: fixture.model, knownAssets: [], reusing: prepared.pageSource)
     defer { next.leafRasterCollector.close() }
+    XCTAssertEqual(next.pageSource?.document.elementSourceIdentity, prepared.pageSource?.document.elementSourceIdentity,
+      "A new camera window borrows the same full source, without preserving the old disclosure")
     XCTAssertEqual(next.snapshot["elements"]?.arrayValues.compactMap { $0["source"]?["id"]?.stringValue }, ["newly-exposed"])
     XCTAssertEqual(next.snapshot["elements"]?.arrayValues.first?["source"]?["frame"], try .encode(nextFrame))
     XCTAssertEqual(Set(next.snapshot["appearance"]?["layers"]?.arrayValues.compactMap { $0["elementID"]?.stringValue } ?? []), ["newly-exposed"])
@@ -201,6 +339,69 @@ final class NotebookPanelPageAdmissionTests: XCTestCase {
       let unused = SceneRenderResources.shared.retainMaterial(key)
       XCTAssertNil(unused, "Budget-clipped prefetch cannot begin pixel preparation"); unused?.release()
     }
+  }
+
+  @MainActor
+  func testHundredThousandPagePaintCandidatesKeepResolvedCrossingsAndGlobalClaims() throws {
+    let actor = UUID(), count = 100_000, region = PageRect(x: 480, y: 480, width: 40, height: 40)
+    let bounds = CGRect(x: region.x, y: region.y, width: region.width, height: region.height), claimedID = UUID()
+    func shape(_ id: String, frame: PageRect, graphic: NotebookGraphic = .init(shape: .rectangle), parent: String? = nil) -> AgentElement {
+      .init(id: id, kind: .graphic, frame: frame, source: "", html: "", graphic: graphic, parentID: parent)
+    }
+    let group = AgentElement(id: "group", kind: .group, frame: .init(x: 100, y: 100, width: 100, height: 100),
+      source: "", html: "", basis: .init(size: .init(x: 100, y: 100),
+        transform: .init(a: 0, b: 1, c: -1, d: 0, tx: 1, ty: 0)))
+    let erasedFrame = PageRect(x: 490, y: 490, width: 20, height: 20)
+    let textFrame = PageRect(x: 480, y: 430, width: 100, height: 10)
+    let collisionID = "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE"
+    var elements = (0..<count).map { shape("distant-\($0)",
+      frame: .init(x: 600 + Double($0 % 100), y: 890 + Double($0 % 100), width: 5, height: 5)) }
+    elements += [group, shape("escaped", frame: .init(x: 380, y: -310, width: 30, height: 30), parent: group.id),
+      shape("left", frame: .init(x: 80, y: 490, width: 20, height: 20)),
+      shape("right", frame: .init(x: 850, y: 490, width: 20, height: 20)),
+      shape("edge", frame: .init(x: 800, y: 800, width: 50, height: 50), graphic: .init(shape: .connector,
+        connection: .init(start: .init(point: .zero, binding: .init(elementID: "left")),
+          end: .init(point: .zero, binding: .init(elementID: "right"))))),
+      .init(id: "overflow", kind: .nativeText, frame: textFrame, source: Array(repeating: "Body", count: 8).joined(separator: "\n"), html: ""),
+      .init(id: "erased", kind: .nativeText, frame: erasedFrame, source: "Erased source", html: ""),
+      shape("losing-claim", frame: erasedFrame, graphic: .init(shape: .rectangle, sourceInkIDs: [claimedID])),
+      shape("winning-offscreen-claim", frame: .init(x: 900, y: 900, width: 20, height: 20),
+        graphic: .init(shape: .rectangle, sourceInkIDs: [claimedID])),
+      .init(id: collisionID, kind: .nativeText, frame: erasedFrame, source: "First exact owner", html: ""),
+      .init(id: collisionID.lowercased(), kind: .nativeText, frame: erasedFrame, source: "Second exact owner", html: "")]
+    let drawing = PageInkDrawing(actions: [
+      .init(id: claimedID, tool: .pen, samples: [.init(point: .init(x: 500, y: 500), timeOffset: 0,
+        width: 4, opacity: 1, force: 1, azimuth: 0, altitude: 1)]),
+      .init(tool: .eraser, samples: [.init(point: .init(x: 500, y: 500), timeOffset: 0,
+        width: 200, opacity: 1, force: 1, azimuth: 0, altitude: 1)], sequence: 1,
+        elementTargets: [.init(elementID: "erased", frame: erasedFrame, wholeElement: true)])])
+    // The production sparse causal format admits this full source without
+    // manufacturing one field frontier per workload object in the fixture.
+    let base = PageDocument(size: .init(width: 1000, height: 1000), actor: actor, drawingData: try drawing.dataRepresentation())
+    let page = try JSONValue.encode(base).setting("elements", .encode(elements)).setting("collaboration", .null).decode(PageDocument.self)
+    let graphStarted = ContinuousClock.now, graph = page.graphicGraph()
+    graph.prepareVisibility(on: .page(page.id))
+    let graphElapsed = graphStarted.duration(to: .now), queryStarted = ContinuousClock.now
+    let selected = PageCompositionRenderer.elements(in: page, region: region, elementID: nil)
+    let queryElapsed = queryStarted.duration(to: .now)
+    let expected = page.elements.filter { element in
+      let presentation = element.graphic == nil ? graph.placement(element.id).map { NotebookElementPresentation(element, placement: $0) } : nil
+      guard let frame = graph.resolve(element.id).layout?.frame ?? presentation?.frame else { return false }
+      return element.kind != .group && (element.graphic == nil || page.graphicPresentation.geometryIDs.contains(element.id))
+        && (element.graphic == nil || graph.resolve(element.id).layout != nil)
+        && bounds.intersects(CGRect(x: frame.x, y: frame.y, width: frame.width, height: frame.height))
+    }
+    XCTAssertEqual(selected, expected, "Visibility narrows preparation while the existing exact painter predicate and source order remain authoritative")
+    XCTAssertEqual(selected.map(\.id), ["escaped", "edge", "overflow", "erased", collisionID, collisionID.lowercased()])
+    XCTAssertTrue(page.graphicPresentation.suppressedInkIDs.contains(claimedID), "Off-window claim arbitration still suppresses the raw contact")
+    XCTAssertFalse(selected.contains { $0.id == "losing-claim" })
+    XCTAssertEqual(PageCompositionRenderer.elements(in: page, region: region, elementID: collisionID.lowercased()).map(\.id),
+      [collisionID.lowercased()], "Exact selected-element export keeps the second owner of a canonical UUID collision")
+    XCTAssertTrue(try XCTUnwrap(page.inkDrawing().elementErasures["erased"]).contains { $0.target.wholeElement })
+    let nextRegion = PageRect(x: 850, y: 490, width: 20, height: 20)
+    XCTAssertTrue(PageCompositionRenderer.elements(in: page, region: nextRegion, elementID: nil).contains { $0.id == "right" })
+    XCTAssertEqual(page.elements.count, count + 11)
+    print("PANEL_PAGE_PAINT_SCALE source_elements=\(page.elements.count) selected=\(selected.count) graph=\(graphElapsed) warm_query=\(queryElapsed)")
   }
 
   @MainActor

@@ -1,0 +1,19 @@
+{
+  "MCPFiles": 4,
+  "closedFindings": [
+    "Exact canonical UUID aliases retain both authored painter positions; normalized interaction owner stays unchanged.",
+    "Diagnostics follow actual toolbar height, avoiding the two-row overlap.",
+    "One actual eight-tile page coverage feeds both reader preflight and painter; required graph construction executes on the existing reader."
+  ],
+  "nativeCoreFiles": 12,
+  "notPerformed": [
+    "test execution by reviewer",
+    "real Codex visual/focus acceptance"
+  ],
+  "reviewer": "independent density subagent",
+  "sourceOnly": true,
+  "sourceScope": "c2bbcf908aa04685eda7b2d8dffae3507dd65ed83bfbb2efa48eb4e8dc34d9b6",
+  "status": "PASS",
+  "v1ScopeManifest": "c80aa58ec108959802dac42666608de71849ac9f11ef241dd4e042d9b4588fe0",
+  "v2ScopeManifest": "c2bbcf908aa04685eda7b2d8dffae3507dd65ed83bfbb2efa48eb4e8dc34d9b6"
+}

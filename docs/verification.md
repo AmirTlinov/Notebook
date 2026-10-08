@@ -5,14 +5,33 @@
 Самостоятельного Mac-приложения нет. Изолированные native-проверки используют
 отдельную test-идентичность; каждый результат относится к своим исходникам.
 
+GUI-532: существующий page window удерживает native capabilities и один
+optional panel-only source; точный alias разделяет backing. Каждый запрос
+подтверждает полный source/store/workspace/live-ink fence. Painter получает
+одно фактическое окно8tiles; required graph готовится в существующем reader.
+**13 Core functions /14 cases +12 Mac +39 Node cases и TypeScript PASS**,
+0 failures/skips/runtime warnings. Core source `a6fe5432…`/1717 одинаков до/после;
+final Mac/MCP `ca752e78…`/1717 одинаков до/после/final. Delta — только два Mac
+файла, Core bytes прежние. Independent review PASS16files.
+100000 typed sources →4 whole sources/4129B; Debug cold capture8758мс,
+direct warm capture1,364мс/0page loads, warm read108мс. Admission estimate641MiB
+превышает default128MiB: publisher grant100K и input/display latency не установлены.
+Новый native100K fixture проверяет прежний painter oracle; его исходный отказ
+из-за4000 root bodies за нижней границей исправлен без ослабления assertions.
+Toolbar имеет одну responsive раскладку/Tab order и diagnostics над controls;
+Delete недоступен во время text draft. Срез ещё вне260. NB19/B16 интегрирует
+optional pressure/generation gate перед общим выпуском; cold GUI-533,
+консервативные label/fallback scans, свежая Codex UI и physical iPad открыты.
+[Точный scope, результаты и исправленные отказы](audit-evidence/2026-10-07/panel-page-source-reuse/results.json).
+
 GUI-388: camera publication обновляет zoom readout; state boundaries обновляют
 controls. После ink/geometry resize cancellation кнопки готовы до ответа runtime.
 **39 Node cases и TypeScript PASS**, 0 failures/skips; source `774570e2…`/1717
 до/после/final одинаков, независимое ревью принято. Реальные controller/Session/
 InkInput через bounded DOM/GPU/Swift ports проверяют zero reads по100000
 elements/pages/unsupported во время wheel/pan. Это ещё вне installed260.
-Повторное чтение страницы ведётся в GUI-532; preview outside writer входит в
-NB19/B16; cold addressed cut — GUI-533.
+Повторное чтение страницы устранено для admitted warm source в GUI-532;
+preview outside writer входит в NB19/B16; cold addressed cut — GUI-533.
 [Scope и исправленные отказы](audit-evidence/2026-10-07/panel-camera-controls/results.json).
 
 GUI-388: JSON страницы кодирует фактическое окно native-подготовки; полный typed

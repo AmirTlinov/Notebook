@@ -86,6 +86,15 @@ the accepted hit descriptor and updates only the old and new pressed hit.
 The controller updates the zoom readout during camera publication. Tool,
 selection, editor and contact state changes update controls separately; cancelling
 ink publishes readiness after releasing suspension, before a pending response.
+`NotebookPagePreparationWindow` owns native source capabilities and one optional
+panel-only source. Each new camera cut verifies the full stored revision and live
+ink in a fresh read. Exact native aliases share backing; other warm retention uses
+the existing passive resource budget. Its conservative admission estimate is
+computed after required material. A refused grant preserves the completed result;
+an active borrow drains after final publication or cancellation. Replacement,
+pressure and shutdown retire optional retention through this same owner.
+The toolbar uses one responsive layout and DOM order. Diagnostics follow its
+actual height, and Delete is disabled while a text draft owns editing.
 The panel controller owns one text-editor completion. Blur, toolbar and shortcuts
 join it; only the latest tool intent applies after a successful save. Primary
 pointer activation defers focus until that completion is owned, preventing a fast

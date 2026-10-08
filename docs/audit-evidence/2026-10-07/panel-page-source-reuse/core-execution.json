@@ -1,0 +1,50 @@
+{
+  "executed": [
+    "NotebookCoreTests.NotebookPageElementCommandTests/programBasisRequiresTheExactLiveWebOwnerAfterIndexedLookup()/NotebookPageElementCommandTests.swift:11:4",
+    "NotebookCoreTests.NotebookPageWindowTests/missingRequestsAndDuplicateResolvedIdentitiesFailBeforeAnyBodyRead()/NotebookPageWindowTests.swift:327:4",
+    "NotebookCoreTests.NotebookPageWindowTests/pageSourceRevisionIncludesCausalOnlyABAAndIgnoresOtherPages()/NotebookPageWindowTests.swift:149:4",
+    "NotebookCoreTests.NotebookPageWindowTests/reusablePageBodyRequiresItsStoredDigestBeyondAggregateStamps()/NotebookPageWindowTests.swift:127:4",
+    "NotebookCoreTests.NotebookPanelPageReadTests/boundedPageProjectionKeepsNativeBodiesConnectionsAndWholeSources()/NotebookPanelPageReadTests.swift:187:4",
+    "NotebookCoreTests.NotebookPanelPageReadTests/boundedPageReadValidatesBeforeUnchangedAndKeepsTiledAnchors()/NotebookPanelPageReadTests.swift:284:4",
+    "NotebookCoreTests.NotebookPanelPageReadTests/contentReuseRefreshesNavigationPresenceHistoryAndCursorAfterAwait()/NotebookPanelPageReadTests.swift:139:4",
+    "NotebookCoreTests.NotebookPanelPageReadTests/groupDepthUsesNativePendingProjectionWithoutDiscardingSource(depth:)/NotebookPanelPageReadTests.swift:500:4",
+    "NotebookCoreTests.NotebookPanelPageReadTests/hundredThousandPageElementsUseOneSourceRead()/NotebookPanelPageReadTests.swift:418:4",
+    "NotebookCoreTests.NotebookPanelPageReadTests/mixedPageMatchesAddressedGeometryAndAppearance()/NotebookPanelPageReadTests.swift:45:4",
+    "NotebookCoreTests.NotebookPanelPageReadTests/panelMetadataIgnoresNavigationReadClocksButRetainsAddressedChanges()/NotebookPanelPageReadTests.swift:301:4",
+    "NotebookCoreTests.NotebookPanelPageReadTests/retainedContentRejectsChangedSourceTargetAndWorkspace()/NotebookPanelPageReadTests.swift:349:4",
+    "NotebookCoreTests.NotebookPanelPageReadTests/retainedContentRejectsLiveInkChangeBeforePersistence()/NotebookPanelPageReadTests.swift:393:4"
+  ],
+  "executions": {
+    "NotebookCoreTests.NotebookPageElementCommandTests/programBasisRequiresTheExactLiveWebOwnerAfterIndexedLookup()/NotebookPageElementCommandTests.swift:11:4": 1,
+    "NotebookCoreTests.NotebookPageWindowTests/missingRequestsAndDuplicateResolvedIdentitiesFailBeforeAnyBodyRead()/NotebookPageWindowTests.swift:327:4": 1,
+    "NotebookCoreTests.NotebookPageWindowTests/pageSourceRevisionIncludesCausalOnlyABAAndIgnoresOtherPages()/NotebookPageWindowTests.swift:149:4": 1,
+    "NotebookCoreTests.NotebookPageWindowTests/reusablePageBodyRequiresItsStoredDigestBeyondAggregateStamps()/NotebookPageWindowTests.swift:127:4": 1,
+    "NotebookCoreTests.NotebookPanelPageReadTests/boundedPageProjectionKeepsNativeBodiesConnectionsAndWholeSources()/NotebookPanelPageReadTests.swift:187:4": 1,
+    "NotebookCoreTests.NotebookPanelPageReadTests/boundedPageReadValidatesBeforeUnchangedAndKeepsTiledAnchors()/NotebookPanelPageReadTests.swift:284:4": 1,
+    "NotebookCoreTests.NotebookPanelPageReadTests/contentReuseRefreshesNavigationPresenceHistoryAndCursorAfterAwait()/NotebookPanelPageReadTests.swift:139:4": 1,
+    "NotebookCoreTests.NotebookPanelPageReadTests/groupDepthUsesNativePendingProjectionWithoutDiscardingSource(depth:)/NotebookPanelPageReadTests.swift:500:4": 2,
+    "NotebookCoreTests.NotebookPanelPageReadTests/hundredThousandPageElementsUseOneSourceRead()/NotebookPanelPageReadTests.swift:418:4": 1,
+    "NotebookCoreTests.NotebookPanelPageReadTests/mixedPageMatchesAddressedGeometryAndAppearance()/NotebookPanelPageReadTests.swift:45:4": 1,
+    "NotebookCoreTests.NotebookPanelPageReadTests/panelMetadataIgnoresNavigationReadClocksButRetainsAddressedChanges()/NotebookPanelPageReadTests.swift:301:4": 1,
+    "NotebookCoreTests.NotebookPanelPageReadTests/retainedContentRejectsChangedSourceTargetAndWorkspace()/NotebookPanelPageReadTests.swift:349:4": 1,
+    "NotebookCoreTests.NotebookPanelPageReadTests/retainedContentRejectsLiveInkChangeBeforePersistence()/NotebookPanelPageReadTests.swift:393:4": 1
+  },
+  "failed": [],
+  "format": 1,
+  "planned": [
+    "NotebookCoreTests.NotebookPageElementCommandTests/programBasisRequiresTheExactLiveWebOwnerAfterIndexedLookup()/NotebookPageElementCommandTests.swift:11:4",
+    "NotebookCoreTests.NotebookPageWindowTests/missingRequestsAndDuplicateResolvedIdentitiesFailBeforeAnyBodyRead()/NotebookPageWindowTests.swift:327:4",
+    "NotebookCoreTests.NotebookPageWindowTests/pageSourceRevisionIncludesCausalOnlyABAAndIgnoresOtherPages()/NotebookPageWindowTests.swift:149:4",
+    "NotebookCoreTests.NotebookPageWindowTests/reusablePageBodyRequiresItsStoredDigestBeyondAggregateStamps()/NotebookPageWindowTests.swift:127:4",
+    "NotebookCoreTests.NotebookPanelPageReadTests/boundedPageProjectionKeepsNativeBodiesConnectionsAndWholeSources()/NotebookPanelPageReadTests.swift:187:4",
+    "NotebookCoreTests.NotebookPanelPageReadTests/boundedPageReadValidatesBeforeUnchangedAndKeepsTiledAnchors()/NotebookPanelPageReadTests.swift:284:4",
+    "NotebookCoreTests.NotebookPanelPageReadTests/contentReuseRefreshesNavigationPresenceHistoryAndCursorAfterAwait()/NotebookPanelPageReadTests.swift:139:4",
+    "NotebookCoreTests.NotebookPanelPageReadTests/groupDepthUsesNativePendingProjectionWithoutDiscardingSource(depth:)/NotebookPanelPageReadTests.swift:500:4",
+    "NotebookCoreTests.NotebookPanelPageReadTests/hundredThousandPageElementsUseOneSourceRead()/NotebookPanelPageReadTests.swift:418:4",
+    "NotebookCoreTests.NotebookPanelPageReadTests/mixedPageMatchesAddressedGeometryAndAppearance()/NotebookPanelPageReadTests.swift:45:4",
+    "NotebookCoreTests.NotebookPanelPageReadTests/panelMetadataIgnoresNavigationReadClocksButRetainsAddressedChanges()/NotebookPanelPageReadTests.swift:301:4",
+    "NotebookCoreTests.NotebookPanelPageReadTests/retainedContentRejectsChangedSourceTargetAndWorkspace()/NotebookPanelPageReadTests.swift:349:4",
+    "NotebookCoreTests.NotebookPanelPageReadTests/retainedContentRejectsLiveInkChangeBeforePersistence()/NotebookPanelPageReadTests.swift:393:4"
+  ],
+  "skipped": []
+}

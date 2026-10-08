@@ -1,0 +1,70 @@
+{
+  "slowest": [
+    {
+      "seconds": 12.12785005569458,
+      "target": "NotebookMacTests",
+      "test": "NotebookPanelPageAdmissionTests/testHundredThousandPagePaintCandidatesKeepResolvedCrossingsAndGlobalClaims()"
+    },
+    {
+      "seconds": 3.0087039470672607,
+      "target": "NotebookMacTests",
+      "test": "NotebookPanelPresentationTests/testNotebookCardFirstPageOpensNativePixelsAndNavigationWithoutMovingPresence()"
+    },
+    {
+      "seconds": 1.3918699026107788,
+      "target": "NotebookMacTests",
+      "test": "NotebookPanelPageAdmissionTests/testPageSkipsDistantBodiesAndPrioritizesVisibleSeventeenthOverPrefetch()"
+    },
+    {
+      "seconds": 1.2846260070800781,
+      "target": "NotebookMacTests",
+      "test": "NotebookPanelPageAdmissionTests/testHeadlessPanelRetainsWarmSourceWithoutAdmittingANativePage()"
+    },
+    {
+      "seconds": 1.1044989824295044,
+      "target": "NotebookMacTests",
+      "test": "NotebookPanelPageAdmissionTests/testClippedPageBudgetPreservesVisibleSubjectPainterBandsAndRequestedDensity()"
+    },
+    {
+      "seconds": 1.0293769836425781,
+      "target": "NotebookMacTests",
+      "test": "NotebookPanelPageAdmissionTests/testPanelSourceWindowReclaimsIdleCreditAndRefusesOptionalRetentionWithoutLosingReadyPixels()"
+    },
+    {
+      "seconds": 1.0291600227355957,
+      "target": "NotebookMacTests",
+      "test": "NotebookPanelPageAdmissionTests/testPanelSourceWindowSharesExactNativeAliasAndDrainsCancelledOrReplacedBorrow()"
+    },
+    {
+      "seconds": 1.0243359804153442,
+      "target": "NotebookMacTests",
+      "test": "NotebookPanelPageContentTests/testPagePublicationRefreshesPresenceAndMembershipChangedDuringNativePreparation()"
+    },
+    {
+      "seconds": 1.0175819396972656,
+      "target": "NotebookMacTests",
+      "test": "NotebookPanelPageAdmissionTests/testPageWindowDisclosesOverflowTextAndNewlyExposedBodies()"
+    },
+    {
+      "seconds": 1.005560040473938,
+      "target": "NotebookMacTests",
+      "test": "NotebookPanelPageContentTests/testPagePublicationRejectsSourceChangedDuringNativePreparation()"
+    },
+    {
+      "seconds": 0.09094107151031494,
+      "target": "NotebookMacTests",
+      "test": "NotebookPanelPageAdmissionTests/testHundredThousandDistantPageSubjectsUseTheSameBoundedAdmission()"
+    },
+    {
+      "seconds": 0.0004099607467651367,
+      "target": "NotebookMacTests",
+      "test": "NotebookPanelPageAdmissionTests/testPrefetchBoundaryKeepsWholeBodiesAndExistingSemanticExclusions()"
+    }
+  ],
+  "targets": {
+    "NotebookMacTests": {
+      "seconds": 24.114914894104004,
+      "tests": 12
+    }
+  }
+}

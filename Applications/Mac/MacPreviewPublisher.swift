@@ -148,6 +148,7 @@ final class MacPreviewPublisher {
   }
   private var panelWaiters: [UUID: PanelWaiter] = [:]
   private let panelObservation: NotebookPanelObservation
+  private let panelSourceOwner = UUID()
   private var targetQueuePrepared = false
   private var lastTargetWasPanel = false
 
@@ -210,6 +211,7 @@ final class MacPreviewPublisher {
     guard !stopped else { return }
     stopped = true
     started = false
+    model?.notebookPagePreparation.withdrawPanelSource(owner: panelSourceOwner)
     let waiters = panelWaiters.values; panelWaiters.removeAll()
     for waiter in waiters { waiter.continuation.resume(throwing: CancellationError()) }
     documentSnapshotObserver?.cancel(); documentSnapshotObserver = nil
@@ -267,15 +269,21 @@ final class MacPreviewPublisher {
   }
 
   private func completePanel(_ waiter: PanelWaiter, model: NotebookAppModel) async {
+    let sourceWindow = model.notebookPagePreparation
+    let sourceDemand = sourceWindow.beginPanelSource(owner: panelSourceOwner, target: waiter.cut.target)
     let result: Result<JSONValue, any Error>
     do {
       let prepared = try await CurrentViewPreviewWriter.panelMaterial(waiter.cut, model: model,
-        knownAssets: waiter.knownAssets)
+        knownAssets: waiter.knownAssets, reusing: sourceWindow.panelSource(for: sourceDemand))
       defer { prepared.leafRasterCollector.close() }
       try Task.checkCancellation()
       guard started, !stopped, model.permitsPanelPreparation else { throw CancellationError() }
       result = .success(try panelObservation.publish(prepared, requestID: waiter.cut.id))
-    } catch { result = .failure(error) }
+      sourceWindow.finishPanelSource(sourceDemand, source: prepared.pageSource)
+    } catch {
+      sourceWindow.finishPanelSource(sourceDemand, source: nil)
+      result = .failure(error)
+    }
     // Readers with identical asset possession may join even while this job is
     // painting. Other readers keep their own missing-byte contract in the queue.
     let ids = panelWaiters.filter { $0.value.cut.id == waiter.cut.id && $0.value.cut.cursor == waiter.cut.cursor

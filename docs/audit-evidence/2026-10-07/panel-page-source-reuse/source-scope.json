@@ -1,0 +1,120 @@
+{
+  "baseCommit": "32245752100cee5f53b39fbd3732e505663fef41",
+  "coreDependencyBytesChanged": false,
+  "coreSourceBeforeAfter": "a6fe543269f21088783d1bb13236226e87c4779e69c5da8f5581cdfa4d1f94b8",
+  "coreToFinalDelta": [
+    {
+      "after": {
+        "executable": false,
+        "path": "Applications/Mac/NotebookPanelPreviewWriter.swift",
+        "sha256": "2865dba16cf6b6432175fe5a143a4bb4f3046178f8dd6f708381589472d71979"
+      },
+      "before": {
+        "executable": false,
+        "path": "Applications/Mac/NotebookPanelPreviewWriter.swift",
+        "sha256": "d49bab32ff97e47212339c2535c3b56b0fe514d7f40656dfd9a65fdffbb43ba5"
+      },
+      "path": "Applications/Mac/NotebookPanelPreviewWriter.swift"
+    },
+    {
+      "after": {
+        "executable": false,
+        "path": "Applications/MacTests/NotebookPanelPageAdmissionTests.swift",
+        "sha256": "1b57ca165f272511d069ee0d7e7c3bfbaf6fb3811103fa17e8675ad898da70ba"
+      },
+      "before": {
+        "executable": false,
+        "path": "Applications/MacTests/NotebookPanelPageAdmissionTests.swift",
+        "sha256": "82682db173dfaacc5390191f3355be14fc416f1528877b37d7fcb3add3d7bc96"
+      },
+      "path": "Applications/MacTests/NotebookPanelPageAdmissionTests.swift"
+    }
+  ],
+  "excludedGeneratedInputs": "canonical Applications/notebook_release.py source_inputs inventory",
+  "format": 1,
+  "macMCPFinalSourceBeforeAfter": "ca752e780e99a233452188a37c4cb53fcfca42b96da05932538934487c0561a8",
+  "reviewedInputs": [
+    {
+      "executable": false,
+      "path": "Applications/Mac/MacPreviewPublisher.swift",
+      "sha256": "e8ea538a16bc7eed8890f0ee4fd589170eb9ec823aa2a2bb9f26c195061462f9"
+    },
+    {
+      "executable": false,
+      "path": "Applications/Mac/NotebookPanelPreviewWriter.swift",
+      "sha256": "2865dba16cf6b6432175fe5a143a4bb4f3046178f8dd6f708381589472d71979"
+    },
+    {
+      "executable": false,
+      "path": "Applications/MacTests/NotebookPanelPageAdmissionTests.swift",
+      "sha256": "1b57ca165f272511d069ee0d7e7c3bfbaf6fb3811103fa17e8675ad898da70ba"
+    },
+    {
+      "executable": false,
+      "path": "Applications/Shared/NotebookAppModel.swift",
+      "sha256": "68e21d740adc8969df8cf13f631e7e071892852cd0b8a67e4ede7a707df78d68"
+    },
+    {
+      "executable": false,
+      "path": "Applications/Shared/NotebookPagePreparationWindow.swift",
+      "sha256": "061640344f2d5d7ec72a4bb67d4867790fb2907edc6b29e95bbd7c9ca77440fa"
+    },
+    {
+      "executable": false,
+      "path": "Applications/Shared/PageCompositionRenderer.swift",
+      "sha256": "8798c54ae71e79639a5502ce0c0edf2219b31dde6104909f242fd85da2ff7224"
+    },
+    {
+      "executable": false,
+      "path": "MCP/panel/index.html",
+      "sha256": "c3921151a9426d1d5a0b9fb7a9b07268f739eb1e64c28ddee90089d94e893cb0"
+    },
+    {
+      "executable": false,
+      "path": "MCP/panel/panel.ts",
+      "sha256": "83cac5a8474d5b65378aec0502d6ea8a8bba09b71beb972414b875da31f1f046"
+    },
+    {
+      "executable": false,
+      "path": "MCP/panel/styles.css",
+      "sha256": "11b05c876fdedc1c3b9752c5a3989a1a93775e87ad72beb2c0af18e056e12eac"
+    },
+    {
+      "executable": false,
+      "path": "MCP/test/panel-input.test.ts",
+      "sha256": "d46596f41f626bc9f7f9c6b0f516c6f604b5599c41481c2be4afdc3cdfe156ad"
+    },
+    {
+      "executable": false,
+      "path": "Sources/NotebookCore/NotebookPageWindow.swift",
+      "sha256": "d6b91c65b5e691e04e526ec6fb3f95f56dc7d5b427ab8402ffa7627ea520f41c"
+    },
+    {
+      "executable": false,
+      "path": "Sources/NotebookCore/NotebookPanelPageContent.swift",
+      "sha256": "d2877fae8788cc16f162d853bbeed0e0aef2d7aedb7b5926a583d932389fc27c"
+    },
+    {
+      "executable": false,
+      "path": "Sources/NotebookCore/NotebookQueryCut.swift",
+      "sha256": "4497fb42dab64101607214136ae5190ac301a8c0ede1c4a6dc174a2ba8ea5df3"
+    },
+    {
+      "executable": false,
+      "path": "Sources/NotebookCore/PageDocument.swift",
+      "sha256": "7c327e05db2db3f30b64d1fced787f269322c3869fe851eff742f9deb4cfbd02"
+    },
+    {
+      "executable": false,
+      "path": "Sources/NotebookCore/PageElementProjection.swift",
+      "sha256": "31b381346ef824e7ecfef5cc0afd1e3bd45ad3a9075221a7b31f1ef15f21afe7"
+    },
+    {
+      "executable": false,
+      "path": "Tests/NotebookCoreTests/NotebookPanelPageReadTests.swift",
+      "sha256": "fd87c18a286cec302e1b9181f2a07f7af9aad15b290059ef22a8fd8e3b262adb"
+    }
+  ],
+  "reviewedScopeManifestSha256": "c2bbcf908aa04685eda7b2d8dffae3507dd65ed83bfbb2efa48eb4e8dc34d9b6",
+  "sourceFiles": 1717
+}

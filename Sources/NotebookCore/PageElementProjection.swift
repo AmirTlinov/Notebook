@@ -69,7 +69,15 @@ struct PageElementProjection: Sendable {
     let visible=graphicIDs.compactMap { positions[collaborationIdentity($0)] }.filter { source[$0].graphic != nil }
     return (nonGraphics+visible).sorted().map { source[$0] }
   }
-  func elements(ids:Set<String>) -> [AgentElement] {
-    ids.compactMap { positions[collaborationIdentity($0)] }.sorted().map { source[$0] }
+  func elements(ids:Set<String>,includingIdentityAliases:Bool = false) -> [AgentElement] {
+    guard includingIdentityAliases else {return ids.compactMap {positions[collaborationIdentity($0)]}.sorted().map {source[$0]}}
+    let normalized=Set(ids.map(collaborationIdentity))
+    let primary=normalized.compactMap { positions[$0] }
+    guard !exactCollisionPositions.isEmpty else { return primary.sorted().map {source[$0]} }
+    // Interaction keeps the first normalized owner. Presentation also needs
+    // every exact authored alias, in its original painter slot.
+    var selected=Set(primary)
+    for (id,position) in exactCollisionPositions where normalized.contains(collaborationIdentity(id)) {selected.insert(position)}
+    return selected.sorted().map {source[$0]}
   }
 }

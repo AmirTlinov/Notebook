@@ -1,0 +1,45 @@
+{
+  "v1": {
+    "cause": "4000 distant fixture root bodies exceeded page height1000 (bottom1001…1004).",
+    "core": "13 functions /14 cases PASS",
+    "failedTest": "NotebookPanelPageAdmissionTests/testHundredThousandPagePaintCandidatesKeepResolvedCrossingsAndGlobalClaims",
+    "failure": "DecodingError.dataCorrupted: Invalid page, path format",
+    "mac": "11 passed /1 failed /0 skipped /0 runtime warnings",
+    "rawEvidence": ".build/panel-page-source-reuse-20261008-v1",
+    "repair": "Only distant y base900→890; all100000 objects and painter/crossing/claim/alias assertions retained.",
+    "source": "a6fe543269f21088783d1bb13236226e87c4779e69c5da8f5581cdfa4d1f94b8"
+  },
+  "v2": {
+    "changes": [
+      {
+        "after": {
+          "executable": false,
+          "path": "Applications/Mac/NotebookPanelPreviewWriter.swift",
+          "sha256": "2865dba16cf6b6432175fe5a143a4bb4f3046178f8dd6f708381589472d71979"
+        },
+        "before": {
+          "executable": false,
+          "path": "Applications/Mac/NotebookPanelPreviewWriter.swift",
+          "sha256": "d49bab32ff97e47212339c2535c3b56b0fe514d7f40656dfd9a65fdffbb43ba5"
+        },
+        "path": "Applications/Mac/NotebookPanelPreviewWriter.swift"
+      },
+      {
+        "after": {
+          "executable": false,
+          "path": "Applications/MacTests/NotebookPanelPageAdmissionTests.swift",
+          "sha256": "1b57ca165f272511d069ee0d7e7c3bfbaf6fb3811103fa17e8675ad898da70ba"
+        },
+        "before": {
+          "executable": false,
+          "path": "Applications/MacTests/NotebookPanelPageAdmissionTests.swift",
+          "sha256": "82682db173dfaacc5390191f3355be14fc416f1528877b37d7fcb3add3d7bc96"
+        },
+        "path": "Applications/MacTests/NotebookPanelPageAdmissionTests.swift"
+      }
+    ],
+    "mac": "12 PASS,0fail/skip/runtime warnings",
+    "rawEvidence": ".build/panel-page-source-reuse-20261008-v2",
+    "source": "ca752e780e99a233452188a37c4cb53fcfca42b96da05932538934487c0561a8"
+  }
+}

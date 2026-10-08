@@ -1,0 +1,76 @@
+{
+  "MCP": {
+    "cases": 39,
+    "failed": 0,
+    "nodeAfter": "v24.21.0",
+    "nodeBefore": "v24.21.0",
+    "ports": "Shipped controller/Session/InkInput through bounded DOM/GPU/Swift ports; real Codex geometry/focus unrun.",
+    "reportedMilliseconds": 494.724708,
+    "skipped": 0,
+    "typescript": "PASS"
+  },
+  "UI": "One responsive DOM/grid,36px controls, diagnostics above actual controls, Delete disabled during text draft.",
+  "core": {
+    "cases": 14,
+    "failed": 0,
+    "functions": 13,
+    "reportedSeconds": 56.068,
+    "scope": "core-execution.json",
+    "skipped": 0,
+    "source": "a6fe543269f21088783d1bb13236226e87c4779e69c5da8f5581cdfa4d1f94b8",
+    "unchangedToFinal": "Only Mac production/test files changed after this phase."
+  },
+  "format": 1,
+  "hundredThousandNative": {
+    "assertions": "Existing precise native painter oracle, original order, transformed group crossing, connector, fitted text overflow, exact UUID aliases, global ink claims/whole erasure.",
+    "measurement": "Whole fixture+graph/query/assertions, not UI input latency.",
+    "selectedElements": 6,
+    "sourceElements": 100011,
+    "testSeconds": 12.12785005569458
+  },
+  "hundredThousandSource": {
+    "actualTypedElements": 100000,
+    "admissionEstimateBytes": 671740448,
+    "coldCaptureMilliseconds": 8757.690875,
+    "directCapability": true,
+    "encodedReplyBytes": 4129,
+    "firstProjectionMilliseconds": 1260.645708,
+    "measurement": "One Debug fixture sample for each phase, not input/display latency or p95.",
+    "publisherGrant": false,
+    "retainedReadMilliseconds": 105.668834,
+    "visibleWholeSources": 4,
+    "warmCaptureMilliseconds": 1.363916,
+    "warmCapturePageLoads": 0,
+    "warmReadMilliseconds": 107.726125,
+    "warmReadPageLoads": 0
+  },
+  "issue": "GUI-532",
+  "mac": {
+    "failed": 0,
+    "passed": 12,
+    "runtimeWarnings": 0,
+    "scope": "mac-execution.json",
+    "skipped": 0,
+    "timings": "mac-timings.json",
+    "wallSeconds": 24.68499994277954
+  },
+  "ownership": "NotebookPagePreparationWindow owns native capabilities plus one finite optional panel-only slot. Fresh full-source/store/workspace/live-ink fences remain. Required active credit drains at final boundary; optional refusal preserves ready pixels. Existing passive pool/reclamation owner, no second store/reader/painter/native mount.",
+  "parent": "GUI-388",
+  "rawEvidence": [
+    ".build/panel-page-source-reuse-20261008-v1",
+    ".build/panel-page-source-reuse-20261008-v2",
+    ".build/panel-source-toolbar-controller-20261008-v1"
+  ],
+  "remaining": [
+    "Cold full typed decode (GUI-533) and existing conservative label/fallback scans.",
+    "100K admission estimate exceeds the default128MiB budget; this does not establish publisher retention of100K.",
+    "NB19/B16 common integration must apply optional pressure/generation gate to this slot before joint release.",
+    "Changes remain outside installed260/plugin0.2.12.",
+    "Fresh real Codex gestures/focus/pixels and physical iPad acceptance, system frame/CPU/GPU/memory,10 repetitions/30min joint work remain unrun;20ms not established."
+  ],
+  "review": "review.json",
+  "source": "ca752e780e99a233452188a37c4cb53fcfca42b96da05932538934487c0561a8",
+  "sourceFiles": 1717,
+  "sourceScope": "source-scope.json",
+  "status": "verified source slice; installation and physical acceptance pending"
+}

@@ -221,8 +221,8 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
   }
   /// A local interaction query keeps the authored painter order without
   /// reading unrelated page elements.
-  public func interactionElements(ids:Set<String>) -> [AgentElement] {
-    elementProjection.elements(ids:ids)
+  public func interactionElements(ids:Set<String>, includingIdentityAliases:Bool = false) -> [AgentElement] {
+    elementProjection.elements(ids:ids,includingIdentityAliases:includingIdentityAliases)
   }
   /// Absent until a user activates ink; not a second page or editor.
   public internal(set) var computations: [NotebookComputation]?

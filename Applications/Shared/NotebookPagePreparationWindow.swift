@@ -32,6 +32,24 @@ final class NotebookPagePreparationWindow {
     var identity: Identity? { pageID.map { .init(itemID: itemID, pageID: $0) } }
   }
   private struct Preparation { let operationID: UUID; let reader: Reader? }
+  struct PanelSourceDemand: Equatable {
+    fileprivate let id: UUID
+    fileprivate let owner: UUID
+    fileprivate let pageID: UUID
+  }
+  private struct PanelSourceSlot {
+    let reclamationID = UUID()
+    let owner: UUID
+    let pageID: UUID
+    let identity: NotebookPageSource.CaptureIdentity
+    var reservation: RasterReservation?
+  }
+  private struct PanelSourceJob {
+    let demand: PanelSourceDemand
+    let identity: NotebookPageSource.CaptureIdentity?
+    var reservation: RasterReservation?
+    var withdrawn = false
+  }
 
   /// Durable value equality deliberately ignores these in-process roots. A
   /// mounted paper must observe their replacement even when its bytes agree.
@@ -113,9 +131,15 @@ final class NotebookPagePreparationWindow {
   @ObservationIgnored private var current: Reader?
   @ObservationIgnored private var preparation: Preparation?
   @ObservationIgnored private var stopped = false
+  @ObservationIgnored private var sourceCapabilities: [UUID: NotebookPageSource] = [:]
+  @ObservationIgnored private var nativeSourceIDs: Set<UUID> = []
+  @ObservationIgnored private var panelSourceSlot: PanelSourceSlot?
+  @ObservationIgnored private var panelSourceJob: PanelSourceJob?
+  @ObservationIgnored private var sourceReclamationOwner: UUID?
 
   init(resources: SceneRenderResources = .shared) {
     self.resources = resources
+    sourceReclamationOwner = resources.registerReclamationOwner { [weak self] in self?.panelSourceOffers() ?? [] }
   }
 
   func retain(_ indices: Set<Int>, in itemID: UUID, root: String, target: Int?, targetIsLoaded: Bool,
@@ -344,6 +368,9 @@ final class NotebookPagePreparationWindow {
 
   func stop() -> [Task<Void, Never>] {
     stopped = true
+    releaseOptionalPanelSource()
+    sourceCapabilities.removeAll(); nativeSourceIDs.removeAll()
+    if let sourceReclamationOwner { resources.unregisterReclamationOwner(sourceReclamationOwner); self.sourceReclamationOwner = nil }
     presentations.removeAll()
     let pending = Array(tasks.values)
     for task in pending { task.cancel() }
@@ -353,4 +380,127 @@ final class NotebookPagePreparationWindow {
     return pending
   }
   isolated deinit { _ = stop() }
+}
+
+extension NotebookPagePreparationWindow {
+  /// Native and panel demand share one finite capability map. These operations
+  /// do not install native hosts or alter selection, programs or presence.
+  var nativeSources: [UUID: NotebookPageSource] { sourceCapabilities.filter { nativeSourceIDs.contains($0.key) } }
+
+  func acceptNativeSources(_ incoming: [UUID: NotebookPageSource]) {
+    guard !stopped else { return }
+    nativeSourceIDs = Set(incoming.keys)
+    for (id, source) in incoming {
+      if let retained = sourceCapabilities[id], retained.captureIdentity == source.captureIdentity,
+        retained.admissionEstimateBytes != nil, source.permitsReuse { continue }
+      sourceCapabilities[id] = source
+    }
+    reconcilePanelSourceAlias()
+    sourceCapabilities = sourceCapabilities.filter { nativeSourceIDs.contains($0.key) || panelSourceSlot?.pageID == $0.key }
+  }
+
+  func retainNativeSources(_ ids: Set<UUID>) {
+    nativeSourceIDs.formIntersection(ids)
+    reconcilePanelSourceAlias()
+    sourceCapabilities = sourceCapabilities.filter { nativeSourceIDs.contains($0.key) || panelSourceSlot?.pageID == $0.key }
+  }
+
+  func beginPanelSource(owner: UUID, target: CollaborationTarget) -> PanelSourceDemand? {
+    guard !stopped else { return nil }
+    if target.kind != .page || target.boardID != nil {
+      withdrawPanelSource(owner: owner); return nil
+    }
+    // The publisher's existing target queue serializes required jobs.
+    guard panelSourceJob == nil else { return nil }
+    if let slot = panelSourceSlot, slot.owner != owner || slot.pageID != target.id { releaseOptionalPanelSource() }
+    let demand = PanelSourceDemand(id: UUID(), owner: owner, pageID: target.id)
+    let source = sourceCapabilities[target.id]
+    let reservation = panelSourceSlot?.reservation
+    panelSourceSlot?.reservation = nil
+    panelSourceJob = .init(demand: demand, identity: source?.captureIdentity, reservation: reservation)
+    resources.reclamationOffersChanged()
+    return demand
+  }
+
+  func panelSource(for demand: PanelSourceDemand?) -> NotebookPageSource? {
+    guard let demand, !stopped, panelSourceJob?.demand == demand,
+      panelSourceJob?.withdrawn == false, let source = sourceCapabilities[demand.pageID], source.permitsReuse else { return nil }
+    return source
+  }
+
+  /// Runs after final publication or its terminal failure. A withdrawn job
+  /// drains its pin here; it cannot repopulate a replaced/stopped window.
+  func finishPanelSource(_ demand: PanelSourceDemand?, source: NotebookPageSource?) {
+    guard let demand, let job = panelSourceJob, job.demand == demand else { return }
+    panelSourceJob = nil
+    var reservation = job.reservation
+    defer { reservation?.release() }
+    guard !stopped, !job.withdrawn, let source, source.document.id == demand.pageID, source.permitsReuse else {
+      removePanelSourceSlot(); return
+    }
+    if nativeSourceIDs.contains(demand.pageID) {
+      guard sourceCapabilities[demand.pageID]?.captureIdentity == source.captureIdentity else {
+        removePanelSourceSlot(); return
+      }
+      sourceCapabilities[demand.pageID] = source
+      panelSourceSlot = .init(owner: demand.owner, pageID: demand.pageID, identity: source.captureIdentity,
+        reservation: nil)
+      resources.reclamationOffersChanged()
+      return
+    }
+    guard let bytes = source.admissionEstimateBytes, bytes > 0 else { removePanelSourceSlot(); return }
+    if job.identity != source.captureIdentity || reservation?.byteCount != bytes { reservation?.release(); reservation = nil }
+    if reservation == nil { reservation = resources.reserveDerivedBytes(bytes, priority: .passive) }
+    guard let retained = reservation else { removePanelSourceSlot(); return }
+    sourceCapabilities[demand.pageID] = source
+    panelSourceSlot = .init(owner: demand.owner, pageID: demand.pageID, identity: source.captureIdentity,
+      reservation: retained)
+    reservation = nil
+    resources.reclamationOffersChanged()
+  }
+
+  func withdrawPanelSource(owner: UUID) {
+    if panelSourceSlot?.owner == owner { removePanelSourceSlot() }
+    if panelSourceJob?.demand.owner == owner { panelSourceJob?.withdrawn = true }
+  }
+
+  /// Pressure releases optional retention. A current required borrow keeps its
+  /// already granted bytes until the publisher's last await and final fence.
+  func releaseOptionalPanelSource() {
+    removePanelSourceSlot()
+    panelSourceJob?.withdrawn = true
+  }
+
+  private func removePanelSourceSlot() {
+    guard let slot = panelSourceSlot else { return }
+    panelSourceSlot = nil
+    if !nativeSourceIDs.contains(slot.pageID) { sourceCapabilities[slot.pageID] = nil }
+    slot.reservation?.release()
+    resources.reclamationOffersChanged()
+  }
+
+  private func reconcilePanelSourceAlias() {
+    guard let slot = panelSourceSlot else { return }
+    guard let source = sourceCapabilities[slot.pageID], source.permitsReuse, source.captureIdentity == slot.identity else {
+      removePanelSourceSlot(); return
+    }
+    if nativeSourceIDs.contains(slot.pageID) {
+      panelSourceSlot?.reservation?.release(); panelSourceSlot?.reservation = nil
+      // A previously charged active borrow drains at its own final boundary.
+      return
+    }
+    guard slot.reservation == nil, panelSourceJob?.demand.pageID != slot.pageID else { return }
+    guard let bytes = source.admissionEstimateBytes,
+      let reservation = resources.reserveDerivedBytes(bytes, priority: .passive) else { removePanelSourceSlot(); return }
+    panelSourceSlot?.reservation = reservation
+  }
+
+  private func panelSourceOffers() -> [SceneResourceReclamationCandidate] {
+    guard !stopped, panelSourceJob == nil, let slot = panelSourceSlot, let reservation = slot.reservation else { return [] }
+    return [.init(id: slot.reclamationID, bytes: reservation.byteCount, rasterCount: 0, value: .neighbour, distance: 1,
+      restorationMilliseconds: 0, release: { [weak self] in
+        guard self?.panelSourceSlot?.reclamationID == slot.reclamationID else { return nil }
+        self?.releaseOptionalPanelSource(); return nil
+      })]
+  }
 }
