@@ -621,7 +621,7 @@ def native_arguments(root, evidence, plan, platform, selectors, action, typescri
         argv.extend(native_mac_signing_settings() if platform == "mac" else native_ipad_signing_settings())
         argv.append("NOTEBOOK_TYPESETTER_RUNTIME=" + str(prepared_typesetter_stage(plan)))
         if platform == "mac":
-            argv.extend(("DEBUG_INFORMATION_FORMAT=dwarf-with-dsym",
+            argv.extend(("DEBUG_INFORMATION_FORMAT=dwarf-with-dsym", "ENABLE_DEBUG_DYLIB=NO",
                          "NOTEBOOK_TYPESCRIPT_RUNTIME=" + str(typescript),
                          "NOTEBOOK_CODEX_RUNTIME=" + str(prepared_codex_stage(plan))))
     argv.extend("-only-testing:" + selector for selector in selectors)

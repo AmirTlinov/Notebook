@@ -213,6 +213,7 @@ class CodexReceiptTests(unittest.TestCase):
         argv = verify.native_arguments(self.root, self.evidence, self.plan, "mac", [], "build-for-testing")
         self.assertIn("NOTEBOOK_CODEX_RUNTIME=" + str(self.stage), argv)
         self.assertIn("DEBUG_INFORMATION_FORMAT=dwarf-with-dsym", argv)
+        self.assertIn("ENABLE_DEBUG_DYLIB=NO", argv)
 
     def test_forged_report_cannot_pass_even_when_all_generic_evidence_hashes_are_recomputed(self):
         receipt = release.finish_verification(self.root, self.evidence)
