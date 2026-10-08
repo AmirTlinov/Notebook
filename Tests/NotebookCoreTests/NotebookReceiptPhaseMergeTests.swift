@@ -305,11 +305,10 @@ struct NotebookReceiptPhaseMergeTests {
       "force": .number(0.5), "azimuth": .number(0.25), "altitude": .number(0.75)]) }
     let stroke = CollaborationOperation(kind: .appendInkStroke, target: f.page, id: UUID().uuidString,
       values: ["width": .number(2), "points": .array(points)])
-    let request = NotebookPanelEditRequest(workspaceID: try f.origin.storedWorkspaceID(), actionID: UUID(),
-      target: f.page, summary: "Measured author contact", operations: [stroke], sources: [])
-    _ = try f.origin.editPanel(request, actor: f.actor)
+    let request = CollaborationAction(id: UUID(), summary: "Measured author contact", expected: [], operations: [stroke])
+    _ = try f.origin.applyNativeAction(request, actor: f.actor)
     try f.deliverNew()
-    let file = f.file(request.actionID), before = try f.state(f.replica)
+    let file = f.file(request.id), before = try f.state(f.replica)
     let raw = try #require(try f.origin.storedValue(file))
     let records = try f.origin.sqlRead { try $0.rows("SELECT address,hash FROM records WHERE file=? ORDER BY address", [.text(file)]) }
       .map { NotebookRecordMutation(address: $0[0].text!, blobHash: $0[1].text!) }

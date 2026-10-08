@@ -148,22 +148,6 @@ final class MacPreviewPublisher {
   private var stopped = false
   private var stoppingTask: Task<Void, Never>?
   private var targetTask: Task<Void, Never>?
-  private enum TargetWork: Equatable {
-    case panel(UUID)
-    case durable(UUID)
-  }
-  private var targetInProgress: TargetWork?
-  private struct PanelWaiter {
-    let cut: NotebookPanelPresentationCut
-    let knownAssets: Set<UUID>
-    let enqueuedAt: ContinuousClock.Instant
-    let continuation: CheckedContinuation<JSONValue, any Error>
-  }
-  private var panelWaiters: [UUID: PanelWaiter] = [:]
-  private let panelObservation: NotebookPanelObservation
-  private let panelSourceOwner = UUID()
-  private var targetQueuePrepared = false
-  private var lastTargetWasPanel = false
 
   init(
     model: NotebookAppModel,
@@ -171,7 +155,6 @@ final class MacPreviewPublisher {
     reconciliationInterval: Duration = .seconds(1)
   ) {
     self.model = model
-    panelObservation = NotebookPanelObservation(model: model)
     #if DEBUG
       if let configuration = Self.acceptanceConfiguration, configuration.storeRoot == model.store.root {
         sourceReader = configuration.sourceReader
@@ -234,22 +217,18 @@ final class MacPreviewPublisher {
     guard !stopped else { return }
     stopped = true
     started = false
-    model?.notebookPagePreparation.withdrawPanelSource(owner: panelSourceOwner)
-    let waiters = panelWaiters.values; panelWaiters.removeAll()
-    for waiter in waiters { waiter.continuation.resume(throwing: CancellationError()) }
     documentSnapshotObserver?.cancel(); documentSnapshotObserver = nil
     agentSnapshotObserver?.cancel(); agentSnapshotObserver = nil
     let tasks = [currentViewTask, pageRequestTask, reconciliationTask, targetTask, sourceReadTask, healthWriteTask].compactMap { $0 }
     for task in tasks { task.cancel() }
     let sourceReader = sourceReader
     let drain = Task { @MainActor [weak self] in
-      await self?.panelObservation.stop()
       for task in tasks { await task.value }
       await sourceReader.close()
       guard let self else { return }
       currentViewTask = nil; pageRequestTask = nil; reconciliationTask = nil
       targetTask = nil; sourceReadTask = nil; healthWriteTask = nil
-      targetInProgress = nil; requestedPageKey = nil; renderedScene = nil
+      requestedPageKey = nil; renderedScene = nil
       pageRequestPublication = nil
       currentView = .init()
       stoppingTask = nil
@@ -258,91 +237,14 @@ final class MacPreviewPublisher {
     await drain.value
   }
 
-  /// A panel joins the existing pixel scheduler with an ephemeral source cut.
-  /// Camera movement does not enqueue durable artifacts or author store state.
-  func panelPresentation(_ request: NotebookPanelPresentationRequest) async throws -> JSONValue {
-    guard started, !stopped, let model, model.permitsPanelPreparation else {
-      throw CollaborationError("snapshot_pending", "Представление Notebook ждёт завершения ввода.")
-    }
-    try await prepareTargetQueue(model)
-    guard started, !stopped, !Task.isCancelled, model.permitsPanelPreparation else { throw CancellationError() }
-    let cut = try await model.readCommandCut { try $0.requestPanelPresentation(request) }
-    try Task.checkCancellation()
-    guard started, !stopped, model.permitsPanelPreparation else { throw CancellationError() }
-    if request.knownRequestID == cut.id, request.knownCursor == String(cut.cursor),
-      let unchanged = try panelObservation.unchanged(requestID: cut.id, workspaceID: cut.projection.workspaceID,
-        target: cut.target, cursor: String(cut.cursor)) {
-      return unchanged
-    }
-    let waiterID = UUID()
-    return try await withTaskCancellationHandler {
-      try Task.checkCancellation()
-      return try await withCheckedThrowingContinuation { continuation in
-        guard started, !stopped, model.permitsPanelPreparation else { continuation.resume(throwing: CancellationError()); return }
-        panelWaiters[waiterID] = .init(cut: cut, knownAssets: Set(request.knownAssets ?? []),
-          enqueuedAt: ContinuousClock.now, continuation: continuation)
-        scheduleTargetRender(model)
-      }
-    } onCancel: {
-      Task { @MainActor [weak self] in
-        guard let self, let removed = panelWaiters.removeValue(forKey: waiterID) else { return }
-        removed.continuation.resume(throwing: CancellationError())
-        if targetInProgress == .panel(removed.cut.id) && !panelWaiters.values.contains(where: { $0.cut.id == removed.cut.id }) {
-          targetTask?.cancel()
-        }
-      }
-    }
-  }
-
-  private func completePanel(_ waiter: PanelWaiter, model: NotebookAppModel) async {
-    let sourceWindow = model.notebookPagePreparation
-    let sourceDemand = sourceWindow.beginPanelSource(owner: panelSourceOwner, target: waiter.cut.target)
-    let result: Result<JSONValue, any Error>
-    do {
-      let prepared = try await CurrentViewPreviewWriter.panelMaterial(waiter.cut, model: model,
-        knownAssets: waiter.knownAssets, reusing: sourceWindow.panelSource(for: sourceDemand))
-      defer { prepared.leafRasterCollector.close() }
-      try Task.checkCancellation()
-      guard started, !stopped, model.permitsPanelPreparation else { throw CancellationError() }
-      result = .success(try panelObservation.publish(prepared, requestID: waiter.cut.id))
-      sourceWindow.finishPanelSource(sourceDemand, source: prepared.pageSource)
-    } catch {
-      sourceWindow.finishPanelSource(sourceDemand, source: nil)
-      result = .failure(error)
-    }
-    // Readers with identical asset possession may join even while this job is
-    // painting. Other readers keep their own missing-byte contract in the queue.
-    let ids = panelWaiters.filter { $0.value.cut.id == waiter.cut.id && $0.value.cut.cursor == waiter.cut.cursor
-      && $0.value.knownAssets == waiter.knownAssets }.map(\.key)
-    for id in ids { panelWaiters.removeValue(forKey: id)?.continuation.resume(with: result) }
-  }
-
-  func panelChanges(_ request: NotebookPanelChangesRequest) async throws -> JSONValue {
-    guard started, !stopped, model?.permitsExternalWork == true else { throw CancellationError() }
-    return try await panelObservation.changes(request)
-  }
-
-  func panelContentDidCommit() { panelObservation.contentDidCommit() }
-
-  private func prepareTargetQueue(_ model: NotebookAppModel) async throws {
-    guard !targetQueuePrepared else { return }
-    try await model.performStoreCommand { _ = try $0.retireObsoletePanelRenderRequests() }
-    targetQueuePrepared = true
-  }
-
   func suspendForInput() {
     suspendOptionalPreparation()
-    if model?.permitsPanelPreparation != true { targetTask?.cancel() }
-    else if case .durable? = targetInProgress { targetTask?.cancel() }
+    targetTask?.cancel()
   }
 
-  /// Pressure revokes automatic preparation, never a durable target or a
-  /// foreground panel. Publications already admitted by the writer keep their
-  /// original bytes/request through the same FIFO's Retry.
+  /// Pressure revokes automatic preparation. Durable targets and publications
+  /// already admitted by the writer retain their bytes through the same FIFO.
   private func suspendOptionalPreparation() {
-    if !SceneRenderResources.shared.allowsOptionalPreparation {
-      model?.notebookPagePreparation.releaseOptionalPanelSource()
-    }
     receiptRefresh?.permit.revoke()
     pageRequestPublication?.revoke()
     currentViewTask?.cancel()
@@ -388,37 +290,15 @@ final class MacPreviewPublisher {
     scheduleTargetRender(model)
   }
 
-  private func renderNextPanel(_ model: NotebookAppModel) async -> Bool {
-    guard model.permitsPanelPreparation,
-      let waiter = panelWaiters.values.min(by: { $0.enqueuedAt < $1.enqueuedAt }) else { return false }
-    targetInProgress = .panel(waiter.cut.id)
-    lastTargetWasPanel = true
-    await completePanel(waiter, model: model)
-    return true
-  }
-
   private func scheduleTargetRender(_ model: NotebookAppModel) {
     guard started, !stopped, targetTask == nil,
-      model.permitsBackgroundPreparation || (model.permitsPanelPreparation && !panelWaiters.isEmpty) else { return }
+      model.permitsBackgroundPreparation else { return }
     let selectedPage = pageKey?.pageID
     targetTask = Task { [weak self, weak model] in
-      defer {
-        self?.targetInProgress = nil; self?.targetTask = nil
-        if model?.permitsPanelPreparation != true {
-          let waiters = self?.panelWaiters.values.map { $0 } ?? []
-          self?.panelWaiters.removeAll()
-          for waiter in waiters { waiter.continuation.resume(throwing: CancellationError()) }
-        }
-        if let self, let model, !panelWaiters.isEmpty { scheduleTargetRender(model) }
-      }
+      defer { self?.targetTask = nil }
       guard self?.started == true, !Task.isCancelled, let model else { return }
       do {
-        try await self?.prepareTargetQueue(model)
         try Task.checkCancellation()
-        if let self, !lastTargetWasPanel || !model.permitsBackgroundPreparation,
-          await renderNextPanel(model) {
-          return
-        }
         guard model.permitsBackgroundPreparation else { return }
         let request = try await model.performStoreCommand { store in
           try store.targetRenderRequests().sorted { left, right in
@@ -428,18 +308,7 @@ final class MacPreviewPublisher {
           }.first { !FileManager.default.fileExists(atPath: store.targetReceiptURL($0.id).path) }
         }
         guard self?.started == true, !Task.isCancelled else { return }
-        guard model.permitsBackgroundPreparation else {
-          _ = await self?.renderNextPanel(model)
-          return
-        }
-        guard let request else {
-          _ = await self?.renderNextPanel(model)
-          return
-        }
-        // Continuous human camera motion shares the pixel worker fairly with
-        // the agent's already-admitted durable captures.
-        self?.lastTargetWasPanel = false
-        self?.targetInProgress = .durable(request.id)
+        guard model.permitsBackgroundPreparation, let request else { return }
         do {
           if !FileManager.default.fileExists(atPath: model.store.targetReceiptURL(request.id).path) {
             try await CurrentViewPreviewWriter.writeTarget(request, model: model)
@@ -460,14 +329,9 @@ final class MacPreviewPublisher {
           try await model.performStoreCommand { try $0.saveTargetRender(receipt) }
         }
       } catch is CancellationError {
-        // The cancelled durable producer releases this task. Eligible panel
-        // waiters retain their foreground demand for the next queue turn.
         return
       } catch {
-        let waiters = self?.panelWaiters.values.map { $0 } ?? []
-        self?.panelWaiters.removeAll()
-        for waiter in waiters { waiter.continuation.resume(throwing: error) }
-        // Durable requests still belong to the existing publisher observation.
+        // Durable requests remain owned by reconciliation after a failed read.
       }
     }
   }

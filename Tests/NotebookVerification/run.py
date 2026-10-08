@@ -998,8 +998,7 @@ class SelectionTests(unittest.TestCase):
                 typesetter.assert_called_once_with(self.root, command, "macosx", stage=None)
                 self.assertEqual(labels.count("mcp-dependencies"), 1)
                 self.assertLess(labels.index("mcp-dependencies"), labels.index("mac-build-for-testing"))
-                self.assertEqual(labels.count("surface-resources"), 1)
-                self.assertLess(labels.index("surface-resources"), labels.index("mac-build-for-testing"))
+                self.assertNotIn("surface-resources", labels)
                 dependency = next(item for item in calls if item[0] == "mcp-dependencies")
                 self.assertEqual(dependency[1], ["npm", "ci", "--ignore-scripts"])
                 self.assertEqual(dependency[2]["cwd"], self.root / "MCP")
@@ -1010,7 +1009,7 @@ class SelectionTests(unittest.TestCase):
                 self.assertIn("NOTEBOOK_TYPESCRIPT_RUNTIME=" + str(self.root / "typescript"), build)
                 self.assertIn("NOTEBOOK_CODEX_RUNTIME=" + str(self.codex_stage), build)
                 self.assertEqual(release.read_json(evidence / "selection.json")["codexRuntimeStage"], str(self.codex_stage))
-                self.assertIn("NOTEBOOK_SURFACE_STAGE=" + str(self.root.resolve() / ".build/surface"), build)
+                self.assertFalse(any(argument.startswith("NOTEBOOK_SURFACE_STAGE=") for argument in build))
 
     def test_native_receipt_binds_the_prepared_typesetter_stage_after_environment_changes(self):
         stage = self.root / "shared runtime"

@@ -1,8 +1,8 @@
 import AppKit
 import OSLog
 
-/// The plugin owns this process. AppKit supplies the event loop required by
-/// the document and XPC adapters; the working surface lives in Codex.
+/// The headless runtime owns MCP, sync and the document/XPC adapters.
+/// AppKit supplies their event loop; the working surface lives on iPad.
 @main @MainActor
 enum NotebookRuntime {
   static func main() {
@@ -46,7 +46,7 @@ final class NotebookRuntimeLifecycle: NSObject, NSApplicationDelegate {
     guard !isRunningTests else { return }
     NotebookRuntimeIdentity.recordStartup("launch.delegate")
     // OS termination joins the same saved boundary as a requested quit.
-    // Closing an MCP connection or a panel never invokes this path.
+    // Closing an MCP connection never invokes this path.
     for number in [SIGTERM, SIGINT] {
       signal(number, SIG_IGN)
       let source = DispatchSource.makeSignalSource(signal: number, queue: .main)

@@ -4,10 +4,9 @@ import Darwin
 public enum NotebookIPC {
   public static let version = 1
   public static let maximumFrameBytes = 32 * 1_024 * 1_024
-  /// Ordinary handlers and suspended panel observations retain separate
-  /// admission windows. A frame has no domain quota before typed decoding.
+  /// A frame has no domain quota before typed decoding. Accepted handlers
+  /// retain their command slot until their actual completion.
   public static let maximumConnections = 8
-  public static let maximumWaitingConnections = 16
   public static let maximumUnclassifiedConnections = 8
   public static let requestTimeout: TimeInterval = 30
   public static var defaultSocketURL: URL {
@@ -89,7 +88,7 @@ public final class NotebookIPCServer: @unchecked Sendable {
   private var listener: Int32 = -1
   private var socketIdentity: SocketIO.Identity?
   private var stopped = false
-  private enum Admission: Equatable { case unclassified, command, panelChanges }
+  private enum Admission: Equatable { case unclassified, command }
   private struct AdmittedJob {
     let job: IPCJob
     var admission: Admission
@@ -117,7 +116,6 @@ public final class NotebookIPCServer: @unchecked Sendable {
   var activeConnectionCount: Int { lock.withLock { jobs.count } }
   var acceptedHandlerCount: Int { lock.withLock { jobs.values.filter { $0.job.hasPendingHandler }.count } }
   var cancelledHandlerCount: Int { lock.withLock { jobs.values.filter { $0.job.ownedHandler?.isCancelled == true }.count } }
-  var waitingConnectionCount: Int { lock.withLock { connectionCountLocked(.panelChanges) } }
   var commandConnectionCount: Int { lock.withLock { connectionCountLocked(.command) } }
   var unclassifiedConnectionCount: Int { lock.withLock { connectionCountLocked(.unclassified) } }
   private func connectionCountLocked(_ admission: Admission) -> Int {
@@ -141,7 +139,7 @@ public final class NotebookIPCServer: @unchecked Sendable {
         let binding = try SocketIO.bindPrivate(fd, beside: socketURL)
         privateURL = binding
         boundIdentity = try SocketIO.Identity(binding)
-        let backlog = NotebookIPC.maximumConnections + NotebookIPC.maximumWaitingConnections + NotebookIPC.maximumUnclassifiedConnections
+        let backlog = NotebookIPC.maximumConnections + NotebookIPC.maximumUnclassifiedConnections
         guard chmod(binding.path, 0o600) == 0, listen(fd, Int32(backlog)) == 0 else {
           throw SocketIO.failure("Не удалось защитить локальный сокет.")
         }
@@ -244,24 +242,17 @@ public final class NotebookIPCServer: @unchecked Sendable {
         throw CollaborationError("ipc_protocol", "Обновите согласованную пару Notebook и MCP.")
       }
       let command = try NotebookIPC.decodeCommand(JSONEncoder().encode(envelope.request))
-      // Only this validated observation may suspend in the waiting quota. An
-      // ordinary command cannot borrow it by attaching a panelChanges field.
-      let readCommand: NotebookReadCommand?
-      if command.command == .panelChanges { readCommand = try NotebookReadCommand(command) }
-      else { readCommand = try? NotebookReadCommand(command) }
-      let pureRead = readCommand != nil
-      let admission: Admission = command.command == .panelChanges ? .panelChanges : .command
+      let pureRead = (try? NotebookReadCommand(command)) != nil
       let admitted = try lock.withLock {
         guard !stopped, jobs[id]?.job === job else { return false }
-        let limit = admission == .panelChanges ? NotebookIPC.maximumWaitingConnections : NotebookIPC.maximumConnections
-        guard connectionCountLocked(admission) < limit else {
+        guard connectionCountLocked(.command) < NotebookIPC.maximumConnections else {
           throw CollaborationError("ipc_busy", "Окно одновременных IPC запросов заполнено. Повторите запрос после завершения текущих.")
         }
         try job.beginHandler(pureRead: pureRead, executor: requestExecutor,
           operation: { [handler] in try await handler(command) }, finished: { [self] in
             releaseFinishedJob(id, job: job)
           })
-        jobs[id]?.admission = admission
+        jobs[id]?.admission = .command
         return true
       }
       guard admitted else { throw CollaborationError("owner_unavailable", "Notebook завершает работу.") }

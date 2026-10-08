@@ -1,7 +1,7 @@
 # Automatic connection of personal devices
 
-Open the Notebook plugin in Codex and Notebook on iPad using the same Apple Account. That is the normal
-connection flow. The Devices screen reports status; it is not an enrollment step.
+Start the direct Notebook MCP connection on the Mac and open Notebook on iPad
+using the same Apple Account. The signed Mac runtime starts with MCP. The Devices screen reports status; it is not an enrollment step.
 First discovery requires iCloud. A saved pair can subsequently use the local
 network without internet. Writing remains available without a Mac; chat and live
 agent interaction require a reachable, running Mac.
@@ -87,7 +87,7 @@ independent archive are outside a workspace's deletion scope.
   the directory cannot register that UUID again and removes its local copy.
 
 Directory format 2 reads format 1 once while preserving keys; an old application
-cannot overwrite format 2. Update the plugin runtime and iPad together.
+cannot overwrite format 2. Update the MCP runtime and iPad together.
 
 Explicit archive activation is a separate data-admission operation. Its transition
 ID selects a new device-only Keychain scope; ordinary updates preserve the
@@ -95,22 +95,22 @@ existing one. See [archive transfer](archive-transfer.md).
 
 ## Release and verification
 
-The plugin contains the signed runtime and launches it through its MCP entrypoint.
+The direct `notebook` MCP entrypoint launches the signed runtime from
+`~/Library/Application Support/NotebookRuntime/NotebookRuntime.app`.
 `NotebookApplicationLaunch` claims a process lease and the default IPC endpoint
-before reading the catalog or opening SQLite. Concurrent panel connections join
-that owner. Workspace commands carry the captured workspace UUID and socket key;
-switching another panel cannot redirect an accepted edit.
+before reading the catalog or opening SQLite. Concurrent MCP connections join
+that owner. Workspace commands carry their captured workspace UUID and socket
+key; another connection cannot redirect an accepted edit.
 
-For the first transition, unregister the former application's login item, drain
-accepted writes through ordinary quit and wait for its PID to exit. Install the
-verified plugin payload, verify the serving runtime, then update iPad in place.
-Remove the former standalone bundle after the transition succeeds. Preserve the
-existing bundle identity, containers, keys, workspace catalog and pending queues.
+Updates drain accepted writes through ordinary quit and verify the serving
+runtime before updating iPad in place. The bundle identity, containers, keys,
+workspace catalog and pending queues remain in place. The Mac has no Notebook
+window, Dock application, plugin panel or separate login service.
 
 Read the actual IPC peer PID and its in-memory code-signature CDHash before and
-after the iPad update, comparing them with the signed plugin payload. Version and
-signature on disk alone do not identify the serving runtime. A changed plugin
-build refuses to join an incompatible owner and reports an incomplete update.
+after the iPad update, comparing them with the signed runtime payload. Version
+and signature on disk alone do not identify the serving process. A mismatched
+MCP connection refuses to join another runtime build and requires reconnecting.
 
 Current wire/manifest admission is specified by the
 [transport contract](transport-contract.md). Signed builds use team `M94V58FCVP` and

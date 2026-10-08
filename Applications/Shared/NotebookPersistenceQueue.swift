@@ -28,12 +28,12 @@ final class NotebookPersistenceQueue {
         .fileDraft, .fileWindow, .chatPanel, .runCommand, .peerSession: false
       case .command(let kind):
         switch kind {
-        case .apply, .commitAction, .undo, .point, .panelEdit, .panelUndo: true
+        case .apply, .commitAction, .undo, .point: true
         case .admitAction, .prepareAction, .action, .actions, .continuations, .search, .contexts,
           .delivery, .referenceStatus, .referenceStatuses, .actionDetails, .reference,
           .placement, .render, .pageVision, .read, .artifact, .presentation,
-          .script, .scriptContext, .scriptArtifact, .importProgram, .importDocument, .importDocumentResource, .panelRead, .panelPresentation,
-          .runtimeStatus, .runtimeWorkspace, .panelChanges: false
+          .script, .scriptContext, .scriptArtifact, .importProgram, .importDocument, .importDocumentResource,
+          .runtimeStatus, .runtimeWorkspace: false
         }
       }
     }

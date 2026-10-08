@@ -8,7 +8,7 @@ final class NotebookCommandReaderTests: XCTestCase {
   private typealias Blocker = NotebookPersistenceFenceContract.Blocker
   private typealias Signal<Value: Sendable> = NotebookPersistenceFenceContract.Signal<Value>
 
-  func testPanelReadRefusalAndCancellationKeepTheAcceptedWriteTailUsable() async throws {
+  func testContentReadRefusalAndCancellationKeepTheAcceptedWriteTailUsable() async throws {
     let root = temporaryRoot(), store = NotebookStore(root: root)
     let queue = NotebookPersistenceQueue(store: store)
     let model = NotebookAppModel(store: store, startsNearbySync: false,
@@ -16,42 +16,23 @@ final class NotebookCommandReaderTests: XCTestCase {
     retainNotebookUntilTeardown(model, removing: root)
     await model.start(pageSize: NotebookAppModel.defaultPageSize)
     let settled = await model.finishPendingInteraction(); XCTAssertTrue(settled)
-    let header = try store.workspaceHeader(), actor = model.actorID
-    let target = CollaborationTarget(kind: .board, id: header.rootBoardID)
-    let request = NotebookPanelReadRequest(workspaceID: header.workspaceID, target: target)
-    let generation = queue.acceptedMutationGeneration
-    let presentation = NotebookPanelPresentationRequest(workspaceID: header.workspaceID, target: target,
-      appearance: .init(viewport: .init(x: 640, y: 480), pixelScale: 1))
-    let captured = try await model.readCommandCut { try $0.requestPanelPresentation(presentation) }
-    XCTAssertEqual(captured.target, target); XCTAssertEqual(captured.projection.workspaceID, header.workspaceID)
+    let header = try store.workspaceHeader(), generation = queue.acceptedMutationGeneration
+    let captured = try await model.readCommandCut { try $0.workspaceHeader() }
+    XCTAssertEqual(captured.workspaceID, header.workspaceID)
     XCTAssertEqual(queue.acceptedMutationGeneration, generation,
       "The actual immutable request cut never accepts a mutation")
-    let pixels = try await SceneRasterCompositor.create(size: .init(width: 8, height: 8), scale: 1,
-      resources: SceneRenderResources(byteLimit: 1_048_576, profile: .headless))
-    try await pixels.drawBoardGrid(camera: .init(center: .zero, scale: 1), size: .init(width: 8, height: 8),
-      in: .init(x: 0, y: 0, width: 8, height: 8))
-    let lease = try await pixels.finishRaster(for: .document(id: UUID(), token: "panel_read_refusal"))
-    defer { lease.release() }
-    let layer = try await NotebookPanelRasterLayer.completed(id: "refused-cohort", order: 0,
-      worldOrigin: .zero, frame: .init(x: 0, y: 0, width: 8, height: 8), raster: lease, knownAssets: [])
+    let missing = CollaborationTarget(kind: .page, id: UUID())
     do {
-      _ = try await model.readCommandCut { cut in
-        _ = try cut.readPanel(request, actor: actor)
-        // Actual transport admission refuses a completed material cohort
-        // while its encoded pixels remain owned by the existing raster pool.
-        var raster = NotebookPanelRasterSet()
-        for order in 0..<97 { try raster.append(layer.withOrder(order)) }
-        return 0
-      }
-      XCTFail("The real panel material cohort limit was bypassed")
-    } catch let error as SceneRenderError { XCTAssertEqual(error, .resourceLimit) }
+      _ = try await model.readCommandCut { try $0.readContentHeader(target: missing) }
+      XCTFail("An absent addressed content owner must refuse the read")
+    } catch let error as CollaborationError { XCTAssertEqual(error.code, "target_missing") }
     XCTAssertNil(queue.failure); XCTAssertNil(model.persistenceFailure)
     XCTAssertEqual(queue.pendingCount, 0); XCTAssertEqual(queue.admittedOperationCount, 0)
     XCTAssertEqual(queue.acceptedMutationGeneration, generation)
     let reading = Blocker()
     let observer = Task {
       try await model.readCommandCut { cut in
-        _ = try cut.readPanel(request, actor: actor)
+        _ = try cut.workspaceHeader()
         try reading.hold()
         return try cut.workspaceHeader()
       }
@@ -63,19 +44,19 @@ final class NotebookCommandReaderTests: XCTestCase {
     try await NotebookPersistenceFenceContract.until { reading.entered.value == true }
     observer.cancel()
     queue.enqueue { store in
-      try store.publishRecords(writes: ["after-panel-observer.json": .object(["value": .string("saved")])])
+      try store.publishRecords(writes: ["after-content-observer.json": .object(["value": .string("saved")])])
       return false
     }
     let saved = await queue.flush()
     XCTAssertTrue(saved, "The accepted tail saves while the withdrawn WAL reader is still joined")
-    XCTAssertTrue(try store.hasStoredValue("after-panel-observer.json"))
+    XCTAssertTrue(try store.hasStoredValue("after-content-observer.json"))
     reading.release()
     do { _ = try await observer.value; XCTFail("A cancelled observer published its borrowed result") }
     catch is CancellationError { }
     XCTAssertNil(queue.failure); XCTAssertNil(model.persistenceFailure)
     XCTAssertEqual(queue.pendingCount, 0); XCTAssertEqual(queue.reservedWriteBytes, 0)
-    let next = try await model.readCommandCut { try $0.readPanel(request, actor: actor) }
-    XCTAssertEqual(next["target"], try .encode(target))
+    let next = try await model.readCommandCut { try $0.workspaceHeader() }
+    XCTAssertEqual(next.workspaceID, header.workspaceID)
   }
 
   func testBorrowedPixelValidationRejectsAChangedSourceWithoutBlockingWrites() async throws {
@@ -107,22 +88,6 @@ final class NotebookCommandReaderTests: XCTestCase {
     let stale = try await model.readCommandCut { try dependencies.isCurrent($0) }
     XCTAssertFalse(stale)
     XCTAssertNil(queue.failure); XCTAssertEqual(queue.pendingCount, 0)
-    let target = CollaborationTarget(kind: .board, id: header.rootBoardID)
-    let request = NotebookPanelPresentationRequest(workspaceID: header.workspaceID, target: target,
-      appearance: .init(viewport: .init(x: 640, y: 480), pixelScale: 1))
-    let cut = try await model.readCommandCut { try $0.requestPanelPresentation(request) }
-    let beforeElement = hierarchy
-    XCTAssertTrue(hierarchy.upsertElement(.init(id: "changed-after-panel-cut", surface: .board(target.id), kind: .nativeText,
-      frame: .init(x: 10, y: 10, width: 100, height: 40), worldOrigin: .zero, source: "A later source",
-      stamp: index.stamp), in: target.id, expected: nil, actor: actor))
-    _ = try store.saveBoardEdits(before: beforeElement, after: hierarchy)
-    let generation = queue.acceptedMutationGeneration
-    do {
-      _ = try await CurrentViewPreviewWriter.panelMaterial(cut, model: model, knownAssets: [])
-      XCTFail("The actual panel owner published a replaced source cut")
-    } catch let error as NotebookStorageError { XCTAssertEqual(error, .transactionConflict) }
-    XCTAssertEqual(queue.acceptedMutationGeneration, generation, "A refused panel source never becomes an accepted mutation")
-    XCTAssertNil(queue.failure); XCTAssertEqual(queue.reservedWriteBytes, 0)
     queue.enqueue { store in try store.publishRecords(writes: ["after-stale-pixels.json": .bool(true)]); return false }
     let saved = await queue.flush(); XCTAssertTrue(saved)
     XCTAssertTrue(try store.hasStoredValue("after-stale-pixels.json"))

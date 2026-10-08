@@ -275,37 +275,13 @@ struct NotebookIPCTests {
     #expect(wire["status"]?["socketKey"] == .string("addressed-owner"))
   }
 
-  @Test func panelPresentationWireAdmitsFullTypedProjectionAndRejectsStoreSelection() async throws {
-    let workspaceID = UUID(), target = CollaborationTarget(kind: .page, id: UUID()), requestID = UUID()
-    let panel = NotebookPanelPresentationRequest(workspaceID: workspaceID, target: target,
-      appearance: .init(viewport: .init(x: 1100, y: 780), pixelScale: 1,
-        camera: .init(center: .init(x: 417, y: 597), scale: 0.6)),
-      knownCursor: "42", knownRequestID: requestID, knownAssets: [UUID(), UUID()], includeFitBounds: true)
-    // The MCP bridge sends a plain JSON object, before Swift command decoding.
-    let wire = JSONValue.object(["command": .string("panelPresentation"), "panelPresentation": try .encode(panel)])
-    let command = try NotebookIPC.decodeCommand(JSONEncoder().encode(wire))
-    #expect(command.command == .panelPresentation)
-    #expect(command.panelPresentation?.workspaceID == workspaceID)
-    #expect(command.panelPresentation?.target == target)
-    #expect(command.panelPresentation?.appearance == panel.appearance)
-    #expect(command.panelPresentation?.knownCursor == "42")
-    #expect(command.panelPresentation?.knownRequestID == requestID)
-    #expect(command.panelPresentation?.knownAssets == panel.knownAssets)
-    #expect(command.panelPresentation?.includeFitBounds == true)
-    #expect(throws: CollaborationError.self) {
-      try NotebookIPC.decodeCommand(JSONEncoder().encode(wire.setting("root", .string("/tmp/another-owner"))))
+  @Test func removedPanelCommandsAndFieldsAreRejectedBeforeTheOwner() throws {
+    for name in ["panelRead", "panelEdit", "panelUndo", "panelPresentation", "panelChanges"] {
+      let wire = JSONValue.object(["command": .string(name)])
+      #expect(throws: CollaborationError.self) { try NotebookIPC.decodeCommand(JSONEncoder().encode(wire)) }
+      let field = JSONValue.object(["command": .string("read"), name: .object([:])])
+      #expect(throws: CollaborationError.self) { try NotebookIPC.decodeCommand(JSONEncoder().encode(field)) }
     }
-    let endpoint = try IPCEndpoint(); defer { endpoint.remove() }
-    let server = NotebookIPCServer(socketURL: endpoint.socket) { accepted in
-      guard accepted.command == .panelPresentation, let request = accepted.panelPresentation else {
-        throw CollaborationError("invalid_command", "The complete typed panel request must reach its native owner")
-      }
-      return try .encode(request)
-    }
-    try server.start(); defer { server.stop() }
-    let response = try await blockingIPC { try NotebookIPCClient(socketURL: endpoint.socket).send(command) }
-    #expect(response == (try JSONValue.encode(panel)))
-    try await drainIPC(server)
   }
 
   @Test func anOversizedFrameIsRejectedWithoutCallingTheOwner() async throws {
@@ -515,112 +491,77 @@ struct NotebookIPCTests {
     #expect(await server.stopAndDrain() == .zero)
   }
 
-  @Test func saturatedPanelWaitsLeaveTheOrdinaryQuotaAvailableAndPreserveHalfClose() async throws {
+  @Test func typedReadsAndWritesShareTheBoundedCommandQuotaAndPreserveHalfClose() async throws {
     let endpoint = try IPCEndpoint(); defer { endpoint.remove() }
     let observations = IPCHandlerGate(), writes = IPCHandlerGate(), readCalls = IPCCount(), writeCalls = IPCCount()
     let server = NotebookIPCServer(socketURL: endpoint.socket) { command in
-      if command.command == .panelChanges { readCalls.increment(); await observations.wait(); return .string("observed") }
+      if command.command == .search { readCalls.increment(); await observations.wait(); return .string("observed") }
       writeCalls.increment(); await writes.wait(); return .bool(!Task.isCancelled)
     }
     try server.start(); defer { observations.open(); writes.open(); server.stop() }
-    let waiting = waitingPanelIPCCommand()
     var peers: [Int32] = []
     defer { for fd in peers { close(fd) } }
-    for count in 1...NotebookIPC.maximumWaitingConnections {
-      let fd = try connectIPC(endpoint.socket); peers.append(fd)
-      try sendRawIPC(waiting, id: UUID(), fd: fd)
-      let admitted = await waitForIPC { server.waitingConnectionCount == count && readCalls.value == count }
-      try #require(admitted)
-    }
-    // Completing a request's write half leaves its response reader connected.
-    #expect(shutdown(peers[0], SHUT_WR) == 0)
     for count in 1...NotebookIPC.maximumConnections {
       let fd = try connectIPC(endpoint.socket); peers.append(fd)
-      var command = NotebookCommand(command: .pageVision)
-      command.panelChanges = waiting.panelChanges
-      try sendRawIPC(command, id: UUID(), fd: fd)
-      let admitted = await waitForIPC { server.commandConnectionCount == count && writeCalls.value == count }
+      try sendRawIPC(count % 2 == 1 ? observingIPCCommand() : .init(command: .pageVision), id: UUID(), fd: fd)
+      let admitted = await waitForIPC { server.commandConnectionCount == count && readCalls.value + writeCalls.value == count }
       try #require(admitted)
     }
-    #expect(server.activeConnectionCount == NotebookIPC.maximumConnections + NotebookIPC.maximumWaitingConnections)
-    for command in [waiting, NotebookCommand(command: .pageVision)] {
+    #expect(shutdown(peers[0], SHUT_WR) == 0, "A completed request half retains its response reader")
+    #expect(server.activeConnectionCount == NotebookIPC.maximumConnections)
+    for command in [observingIPCCommand(), NotebookCommand(command: .pageVision)] {
       let code = try await blockingIPC {
         do { _ = try NotebookIPCClient(socketURL: endpoint.socket).send(command); return "accepted" }
         catch let error as CollaborationError { return error.code }
       }
       #expect(code == "ipc_busy")
     }
-    let invalid = try await blockingIPC {
-      do { _ = try NotebookIPCClient(socketURL: endpoint.socket).send(.init(command: .panelChanges)); return "accepted" }
-      catch let error as CollaborationError { return error.code }
-    }
-    #expect(invalid == "invalid_panel_request", "An invalid waiting command receives no observation slot or handler")
-    #expect(readCalls.value == NotebookIPC.maximumWaitingConnections && writeCalls.value == NotebookIPC.maximumConnections)
+    #expect(readCalls.value == NotebookIPC.maximumConnections / 2 && writeCalls.value == NotebookIPC.maximumConnections / 2)
     #expect(server.cancelledHandlerCount == 0)
     observations.open(); writes.open()
     for (index, fd) in peers.enumerated() {
       let response = try await blockingIPC { try JSONDecoder().decode(JSONValue.self, from: SocketIO.readFrame(fd: fd)) }
-      #expect(response["result"] == (index < NotebookIPC.maximumWaitingConnections ? .string("observed") : .bool(true)))
+      #expect(response["result"] == (index % 2 == 0 ? .string("observed") : .bool(true)))
     }
     #expect(await waitForIPC { server.activeConnectionCount == 0 })
     try await drainIPC(server)
   }
 
   @Test(arguments: [ReadWithdrawal.disconnect, .deadline])
-  func withdrawnPanelWaitKeepsItsQuotaUntilItsHandlerActuallyFinishes(reason: ReadWithdrawal) async throws {
+  func withdrawnObservationKeepsItsCommandQuotaUntilItsHandlerActuallyFinishes(reason: ReadWithdrawal) async throws {
     let endpoint = try IPCEndpoint(); defer { endpoint.remove() }
-    let observations = IPCHandlerGate(), write = IPCHandlerGate(), calls = IPCCount(), completedWrites = IPCCount()
-    let withdrawal = IPCCompletion<Void>("the waiting observation withdrawal")
+    let observations = IPCHandlerGate(), calls = IPCCount()
+    let withdrawal = IPCCompletion<Void>("the read observation withdrawal")
     let server = NotebookIPCServer(socketURL: endpoint.socket,
-      workerQueue: .init(label: "Notebook.IPCTests.waiting-quota", attributes: .concurrent),
-      requestTimeout: reason == .deadline ? .seconds(2) : .seconds(30)) { command in
-        if command.command == .panelChanges {
-          calls.increment()
-          await withTaskCancellationHandler { await observations.wait() }
-            onCancel: { withdrawal.resolve(.success(())) }
-          return .bool(Task.isCancelled)
-        }
-        await write.wait(); #expect(!Task.isCancelled); completedWrites.increment(); return .string("committed")
+      workerQueue: .init(label: "Notebook.IPCTests.read-quota", attributes: .concurrent),
+      requestTimeout: reason == .deadline ? .seconds(2) : .seconds(30)) { _ in
+        calls.increment()
+        await withTaskCancellationHandler { await observations.wait() }
+          onCancel: { withdrawal.resolve(.success(())) }
+        return .bool(Task.isCancelled)
       }
-    try server.start(); defer { observations.open(); write.open(); server.stop() }
-    let waiting = waitingPanelIPCCommand()
+    try server.start(); defer { observations.open(); server.stop() }
+    let waiting = observingIPCCommand()
     var peers: [Int32] = []
     defer { for fd in peers where fd >= 0 { close(fd) } }
-    for count in 1...NotebookIPC.maximumWaitingConnections {
+    for count in 1...NotebookIPC.maximumConnections {
       let fd = try connectIPC(endpoint.socket); peers.append(fd)
       try sendRawIPC(waiting, id: UUID(), fd: fd)
       let admitted = await waitForIPC { calls.value == count }
       try #require(admitted)
     }
-    var writer: Int32 = -1
-    defer { if writer >= 0 { close(writer) } }
-    if reason == .disconnect {
-      writer = try connectIPC(endpoint.socket)
-      try sendRawIPC(.init(command: .pageVision), id: UUID(), fd: writer)
-      try await write.waitUntilEntered()
-      close(peers[0]); peers[0] = -1
-    }
+    if reason == .disconnect { close(peers[0]); peers[0] = -1 }
     try await withdrawal.value()
-    #expect(server.waitingConnectionCount == NotebookIPC.maximumWaitingConnections)
-    #expect(server.acceptedHandlerCount == NotebookIPC.maximumWaitingConnections + (reason == .disconnect ? 1 : 0))
+    #expect(server.commandConnectionCount == NotebookIPC.maximumConnections)
+    #expect(server.acceptedHandlerCount == NotebookIPC.maximumConnections)
     let extra = try await blockingIPC {
       do { _ = try NotebookIPCClient(socketURL: endpoint.socket).send(waiting); return "accepted" }
       catch let error as CollaborationError { return error.code }
     }
-    #expect(extra == "ipc_busy", "Socket withdrawal is not the waiting handler's completion")
-    if reason == .deadline {
-      writer = try connectIPC(endpoint.socket)
-      try sendRawIPC(.init(command: .pageVision), id: UUID(), fd: writer)
-      try await write.waitUntilEntered()
-    }
-    #expect(server.commandConnectionCount == 1)
+    #expect(extra == "ipc_busy", "Socket withdrawal is not the handler's completion")
     if reason == .disconnect { #expect(server.cancelledHandlerCount == 1) }
-    write.open()
-    let writerFD = writer
-    let response = try await blockingIPC { try JSONDecoder().decode(JSONValue.self, from: SocketIO.readFrame(fd: writerFD)) }
-    #expect(response["result"] == .string("committed") && completedWrites.value == 1)
     observations.open()
-    #expect(await waitForIPC { server.waitingConnectionCount == 0 })
+    #expect(await waitForIPC { server.commandConnectionCount == 0 })
     let next = try await blockingIPC { try NotebookIPCClient(socketURL: endpoint.socket).send(waiting) }
     #expect(next == .bool(false), "A finished observation releases its slot to the next live reader")
     try await drainIPC(server)
@@ -631,7 +572,7 @@ struct NotebookIPCTests {
     let gate = IPCHandlerGate(), calls = IPCCount()
     let server = NotebookIPCServer(socketURL: endpoint.socket) { command in
       calls.increment()
-      if command.command == .panelChanges { await gate.wait() }
+      if command.command == .search { await gate.wait() }
       return .bool(true)
     }
     try server.start(); defer { gate.open(); server.stop() }
@@ -651,15 +592,15 @@ struct NotebookIPCTests {
       catch let error as CollaborationError { return error.code }
     }
     #expect(code == "ipc_unavailable")
-    #expect(server.waitingConnectionCount == 0 && server.commandConnectionCount == 0 && calls.value == 0)
+    #expect(server.commandConnectionCount == 0 && calls.value == 0)
     let data = try JSONEncoder().encode(JSONValue.object(["version": .number(Double(NotebookIPC.version)),
-      "id": .string(UUID().uuidString), "request": try .encode(waitingPanelIPCCommand())]))
+      "id": .string(UUID().uuidString), "request": try .encode(observingIPCCommand())]))
     try #require(data.count < 65_536)
     var length = UInt32(data.count).bigEndian
     let frame = withUnsafeBytes(of: &length) { Data($0) } + data
     try writeRawIPCBytes(Data(frame.dropFirst(2)), fd: peers[0])
     try await gate.waitUntilEntered()
-    #expect(server.waitingConnectionCount == 1)
+    #expect(server.commandConnectionCount == 1)
     #expect(server.unclassifiedConnectionCount == NotebookIPC.maximumUnclassifiedConnections - 1)
     let ordinary = try await blockingIPC { try NotebookIPCClient(socketURL: endpoint.socket).send(.init(command: .read)) }
     #expect(ordinary == .bool(true))
@@ -667,27 +608,27 @@ struct NotebookIPCTests {
     #expect(server.activeConnectionCount == 0 && calls.value == 2)
   }
 
-  @Test func stopDrainsPanelObserversAndAcceptedMutationThroughTheirRealCompletion() async throws {
+  @Test func stopDrainsReadObserversAndAcceptedMutationThroughTheirRealCompletion() async throws {
     let endpoint = try IPCEndpoint(); defer { endpoint.remove() }
     let observation = IPCHandlerGate(), write = IPCHandlerGate(), written = IPCCount(), acknowledged = IPCCount()
     let server = NotebookIPCServer(socketURL: endpoint.socket) { command in
-      if command.command == .panelChanges { await observation.wait(); #expect(Task.isCancelled) }
+      if command.command == .search { await observation.wait(); #expect(Task.isCancelled) }
       else { await write.wait(); #expect(!Task.isCancelled); written.increment() }
       return .bool(true)
     }
     try server.start(); defer { observation.open(); write.open(); server.stop() }
     let observer = try connectIPC(endpoint.socket); defer { close(observer) }
     let writer = try connectIPC(endpoint.socket); defer { close(writer) }
-    try sendRawIPC(waitingPanelIPCCommand(), id: UUID(), fd: observer)
+    try sendRawIPC(observingIPCCommand(), id: UUID(), fd: observer)
     try sendRawIPC(.init(command: .pageVision), id: UUID(), fd: writer)
     try await observation.waitUntilEntered(); try await write.waitUntilEntered()
     server.stop()
     let drained = IPCCompletion<Void>("observation and accepted write completion")
     Task(executorPreference: IPCQueueIdentity()) { await server.stopAndDrain(); acknowledged.increment(); drained.resolve(.success(())) }
-    #expect(server.waitingConnectionCount == 1 && server.commandConnectionCount == 1)
+    #expect(server.commandConnectionCount == 2)
     #expect(server.cancelledHandlerCount == 1 && written.value == 0 && acknowledged.value == 0)
     observation.open()
-    #expect(await waitForIPC { server.waitingConnectionCount == 0 })
+    #expect(await waitForIPC { server.commandConnectionCount == 1 })
     #expect(server.commandConnectionCount == 1 && acknowledged.value == 0)
     write.open(); try await drained.value()
     #expect(server.activeConnectionCount == 0 && written.value == 1 && acknowledged.value == 1)
@@ -872,10 +813,9 @@ private func sendRawIPC(_ command: NotebookCommand, id: UUID, fd: Int32) throws 
     "id": .string(id.uuidString), "request": try .encode(command)])), fd: fd)
 }
 
-private func waitingPanelIPCCommand() -> NotebookCommand {
-  var command = NotebookCommand(command: .panelChanges)
-  command.panelChanges = .init(workspaceID: UUID(), target: .init(kind: .page, id: UUID()),
-    checkpoint: .init(id: UUID(), epoch: UUID(), readCursor: "0", changeCursor: "0"))
+private func observingIPCCommand() -> NotebookCommand {
+  var command = NotebookCommand(command: .search)
+  command.query = "held-observation"
   return command
 }
 

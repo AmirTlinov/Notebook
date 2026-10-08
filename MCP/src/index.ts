@@ -10,5 +10,5 @@ export function startStdio(options:Parameters<typeof createServer>[1]={}) {
 }
 
 // The development entry has no production launch capability. Only the
-// signed plugin launcher supplies its admitted runtime bootstrap callback.
+// signed runtime launcher supplies its admitted bootstrap callback.
 if(process.argv[1]&&realpathSync(process.argv[1])===fileURLToPath(import.meta.url))startStdio();

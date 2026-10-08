@@ -70,10 +70,10 @@ export async function ensureRuntime(app: string, socket: string, expectedBuild: 
           && BigInt(status.build) > BigInt(expectedBuild);
         throw new BridgeError({code:"runtime_update_required", message:
           `runtime_update_required: Active Notebook runtime build ${status.build ?? "unknown"} `
-          + `(protocol ${status.protocolVersion ?? "unknown"}) differs from plugin build ${expectedBuild}. `
+          + `(protocol ${status.protocolVersion ?? "unknown"}) differs from MCP runtime build ${expectedBuild}. `
           + (olderConnection
-            ? `Reconnect @Notebook in this chat to load plugin build ${status.build}. The runtime is already updated.`
-            : "Install the matching Notebook iPad/plugin pair, then reconnect @Notebook in this chat.")});
+            ? `Reconnect the Notebook MCP server to load build ${status.build}. The runtime is already updated.`
+            : "Install the matching Notebook iPad/runtime pair, then reconnect the Notebook MCP server.")});
       }
       if (!status.ready) throw new BridgeError({code:"owner_unavailable",message:"Notebook runtime is draining accepted work."});
       trace("startup.done",status);
@@ -87,8 +87,8 @@ export async function ensureRuntime(app: string, socket: string, expectedBuild: 
       if (!(error instanceof BridgeError)
         || !["ipc_unavailable", "ipc_timeout", "owner_unavailable"].includes(String(error.detail.code))) {
         trace("startup.failed");
-        throw new BridgeError({code:"runtime_update_required",message:"The active Notebook owner does not support this plugin runtime. "
-          + "Finish the Notebook runtime transition before reconnecting the plugin. "
+        throw new BridgeError({code:"runtime_update_required",message:"The active Notebook owner does not support this MCP runtime. "
+          + "Finish the Notebook runtime transition before reconnecting the MCP server. "
           + (error instanceof Error ? error.message : String(error))});
       }
       if (!launched && error.detail.code === "ipc_unavailable") {
@@ -104,7 +104,7 @@ export async function ensureRuntime(app: string, socket: string, expectedBuild: 
   } while (performance.now() < deadline);
   trace("startup.failed");
   throw new Error("The bundled Notebook runtime has not opened its IPC channel. "
-    + "Retry opening Notebook in the existing panel after resolving its startup error."
+    + "Retry the Notebook MCP call after resolving its startup error."
     + (lastError?` Last attempt: ${String(lastError.detail.code)}: ${lastError.message.slice(0,512).replace(/[\r\n]/g," ")}`:""),
     {cause:lastError});
 }
@@ -126,15 +126,20 @@ async function main() {
   await access(entry, constants.R_OK);
   const socket = defaultSocketPath();
   if (socket !== `/tmp/notebook-${process.getuid!()}/bridge.sock`) {
-    throw new Error("The production Notebook plugin uses its default runtime socket. "
+    throw new Error("The production Notebook MCP server uses its default runtime socket. "
       + "Use MCP/run.sh with NOTEBOOK_SOCKET for an isolated development owner.");
   }
   process.env.NOTEBOOK_SOCKET = socket;
   const {stdout} = await promisify(execFile)("/usr/bin/plutil",
-    ["-extract", "CFBundleVersion", "raw", "-o", "-", join(app, "Contents/Info.plist")],
-    {timeout:2_000,maxBuffer:1024});
-  const build = stdout.trim();
-  if (!build) throw new Error("The bundled Notebook runtime has no build identity.");
+    ["-convert", "json", "-o", "-", join(app, "Contents/Info.plist")],
+    {timeout:2_000,maxBuffer:16_384});
+  const info = JSON.parse(stdout);
+  if (info.CFBundleIdentifier !== "com.amirtlinov.notebook.mac" || info.CFBundleExecutable !== "NotebookRuntime"
+    || info.CFBundlePackageType !== "APPL" || info.LSUIElement !== true || info.NotebookHeadlessRuntime !== true) {
+    throw new Error("The bundled Notebook app is not the signed headless MCP runtime.");
+  }
+  const build = info.CFBundleVersion;
+  if (typeof build !== "string" || !/^\d{1,19}$/.test(build)) throw new Error("The bundled Notebook runtime has no build identity.");
   let tracingStartup=true;
   const bootstrapRuntime=runtimeBootstrap(app,socket,build,{trace:event=>{
     if(!tracingStartup)return;
@@ -146,7 +151,7 @@ async function main() {
   // Closing the transport does not stop the app owner.
   const {startStdio}=await import(pathToFileURL(entry).href);
   startStdio({bootstrapRuntime});
-  // Startup failure belongs to the live panel's retry path, not MCP handshake.
+  // Startup failure remains retryable on the same MCP transport.
   void bootstrapRuntime().catch(error=>{
     console.error(JSON.stringify({kind:"notebook-runtime-startup-error",launcherPID:process.pid,
       message:(error instanceof Error?error.message:String(error)).slice(0,1024).replace(/[\r\n]/g," ")}));

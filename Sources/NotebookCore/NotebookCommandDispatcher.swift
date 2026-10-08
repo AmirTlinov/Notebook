@@ -8,7 +8,6 @@ public struct NotebookCommand: Codable, Sendable {
     case apply, admitAction, prepareAction, commitAction, undo, action, actions, continuations, search, contexts, point, delivery
     case referenceStatus, referenceStatuses, actionDetails, reference, placement, render, pageVision, read, artifact, presentation
     case script, scriptContext, scriptArtifact, importProgram, importDocument, importDocumentResource
-    case panelRead, panelEdit, panelUndo, panelPresentation, panelChanges
     case runtimeStatus, runtimeWorkspace
   }
   public var command: Kind
@@ -43,18 +42,13 @@ public struct NotebookCommand: Codable, Sendable {
   public var programImport: NotebookProgramImportRequest?
   public var documentImport: NotebookDocumentImportRequest?
   public var documentResourceImport: NotebookDocumentResourceImportRequest?
-  public var panelRead: NotebookPanelReadRequest?
-  public var panelEdit: NotebookPanelEditRequest?
-  public var panelUndo: NotebookPanelUndoRequest?
-  public var panelPresentation: NotebookPanelPresentationRequest?
-  public var panelChanges: NotebookPanelChangesRequest?
   public var runtimeWorkspace: NotebookRuntimeWorkspaceRequest?
 
   enum CodingKeys: String, CodingKey, CaseIterable {
     case command, query, filters, next, limit, action, actionID, target, elementID, reference
     case expectedRevision, region, worldOrigin, pageIndex, placement, contextID
-    case replyTo, references, queries, expectedCursor, artifact, presentation, cancel, fingerprint, script, scriptContext, actionPage, scriptEffect, readSnapshots, programImport, documentImport, documentResourceImport, panelRead, panelEdit, panelUndo, panelPresentation
-    case runtimeWorkspace, panelChanges
+    case replyTo, references, queries, expectedCursor, artifact, presentation, cancel, fingerprint, script, scriptContext, actionPage, scriptEffect, readSnapshots, programImport, documentImport, documentResourceImport
+    case runtimeWorkspace
   }
 
   public init(command: Kind) { self.command = command }
@@ -62,7 +56,7 @@ public struct NotebookCommand: Codable, Sendable {
   /// These commands can commit or enqueue work; the Mac owner orders them with native intents.
   public var changesStore: Bool {
     switch command {
-    case .apply, .admitAction, .commitAction, .undo, .point, .placement, .render, .pageVision, .panelEdit, .panelUndo, .panelPresentation: true
+    case .apply, .admitAction, .commitAction, .undo, .point, .placement, .render, .pageVision: true
     case .runtimeWorkspace: runtimeWorkspace?.action != .list
     default: false
     }
@@ -132,8 +126,7 @@ public struct NotebookReadQuery: Codable, Sendable {
 /// typed observations borrow the reader's already admitted snapshot.
 public struct NotebookCommandDispatcher: Sendable {
   public let store: NotebookStore
-  private let nativeActor: UUID?
-  public init(store: NotebookStore, nativeActor: UUID? = nil) { self.store = store; self.nativeActor = nativeActor }
+  public init(store: NotebookStore) { self.store = store }
 
   public func handle(_ request: NotebookCommand) throws -> JSONValue {
     if request.command == .runtimeStatus || request.command == .runtimeWorkspace {
@@ -147,7 +140,7 @@ public struct NotebookCommandDispatcher: Sendable {
         && request.queries?.contains(where: { $0.kind == .storageUsage || $0.kind == .actionHistoryPreflight }) == true
       return try store.readTransaction(requiringCurrentFormat: requiresCurrentFormat) { snapshot in
         try snapshot.currentSQL!.limitReads(.agentCommand)
-        return try NotebookCommandDispatcher(store: snapshot, nativeActor: nativeActor).execute(request)
+        return try NotebookCommandDispatcher(store: snapshot).execute(request)
       }
     }
   }
@@ -180,17 +173,6 @@ public struct NotebookCommandDispatcher: Sendable {
     switch request.command {
     case .runtimeStatus, .runtimeWorkspace:
       throw invalid("runtime_owner_required", "Запуском и пространствами управляет владелец Notebook runtime.")
-    case .panelRead:
-      guard let nativeActor, let panel = request.panelRead else { throw invalid("panel_owner_unavailable", "Панель обслуживает владелец установленного Notebook.") }
-      return try store.readPanel(panel, actor: nativeActor)
-    case .panelPresentation, .panelChanges:
-      throw invalid("panel_owner_unavailable", "Представление панели готовит установленный Mac-владелец.")
-    case .panelEdit:
-      guard let nativeActor, let panel = request.panelEdit else { throw invalid("panel_owner_unavailable", "Правку панели принимает владелец Notebook.") }
-      return try store.editPanel(panel, actor: nativeActor)
-    case .panelUndo:
-      guard let nativeActor, let panel = request.panelUndo else { throw invalid("panel_owner_unavailable", "Отмену панели принимает владелец Notebook.") }
-      return try store.undoPanel(panel, actor: nativeActor)
     case .script, .scriptContext, .importProgram, .importDocument, .importDocumentResource:
       throw invalid("script_owner_unavailable", "Программы обслуживает координатор установленного Mac-помощника.")
     case .scriptArtifact:

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync, spawn } from "node:child_process";
@@ -8,31 +8,29 @@ import { createInterface } from "node:readline";
 
 test("sidecar bundle initializes and exposes shared content tools without node_modules at runtime", {timeout:10000}, async () => {
   const root = await mkdtemp(join(tmpdir(), "notebook-tools-bundle-"));
+  const output = join(root,"NotebookTools"), temporary = join(root,"target-temp");
   try {
-    execFileSync(process.execPath, [new URL("../build-sidecar.mjs", import.meta.url).pathname, root]);
-    const child = spawn(process.execPath, [join(root, "dist/index.mjs")], {stdio:["pipe","pipe","pipe"], cwd:root});
+    await mkdir(join(output,"dist/panel"),{recursive:true});
+    await writeFile(join(output,"panel-bundle.json"),"obsolete panel bundle");
+    await writeFile(join(output,"dist/panel/surface.wasm"),"obsolete browser surface");
+    execFileSync(process.execPath, [new URL("../build-sidecar.mjs", import.meta.url).pathname, output, temporary]);
+    assert.deepEqual((await readdir(output)).sort(),["dist","package.json"]);
+    assert.deepEqual((await readdir(join(output,"dist"))).sort(),["index.mjs","launch-runtime.mjs"]);
+    assert.deepEqual(await readdir(temporary),[],"Complete publication retires obsolete assets and staging");
+    const child = spawn(process.execPath, [join(output, "dist/index.mjs")], {stdio:["pipe","pipe","pipe"], cwd:output});
     const reader = createInterface({input: child.stdout});
     const iterator = reader[Symbol.asyncIterator]();
     try {
       child.stdin.write(JSON.stringify({jsonrpc:"2.0",id:1,method:"initialize",params:{protocolVersion:"2025-11-25",capabilities:{},clientInfo:{name:"notebook-bundle-proof",version:"1"}}})+"\n");
       const initialized = JSON.parse((await iterator.next()).value!);
       assert.equal(initialized.result.serverInfo.name,"notebook");
+      assert.equal(initialized.result.capabilities.resources,undefined);
       child.stdin.write(JSON.stringify({jsonrpc:"2.0",method:"notifications/initialized"})+"\n");
       child.stdin.write(JSON.stringify({jsonrpc:"2.0",id:2,method:"tools/list"})+"\n");
       const tools = JSON.parse((await iterator.next()).value!).result.tools as {name:string;_meta?:{ui?:{resourceUri?:string}}}[];
       const names = tools.map(tool=>tool.name);
-      assert.deepEqual(names.sort(),["notebook_context","notebook_execute","notebook_import_document","notebook_import_document_resource","notebook_import_program","notebook_open","notebook_panel_changes","notebook_panel_connect","notebook_panel_edit","notebook_panel_presentation","notebook_panel_undo","notebook_panel_workspace"]);
-      const uri=tools.find(tool=>tool.name==='notebook_open')?._meta?.ui?.resourceUri;
-      assert.ok(uri);assert.match(uri,/^ui:\/\/notebook\/[a-f0-9]{64}\/workspace\.html$/);
-      child.stdin.write(JSON.stringify({jsonrpc:"2.0",id:3,method:"resources/read",params:{uri}})+"\n");
-      const panel=JSON.parse((await iterator.next()).value!).result.contents[0];
-      assert.equal(panel.mimeType,"text/html;profile=mcp-app");
-      assert.equal(panel.uri,uri);
-      assert.ok(panel.text.includes('notebook-panel-identity'));
-      assert.equal(panel.text.includes("NOTEBOOK_SCRIPT"),false);
-      const module=panel.text.match(/<script type="module">([\s\S]*?)<\/script>/)?.[1];
-      assert.ok(module,"Bundled panel must contain its executable module");
-      execFileSync(process.execPath,["--input-type=module","--check"],{input:module});
+      assert.deepEqual(names.sort(),["notebook_context","notebook_execute","notebook_import_document","notebook_import_document_resource","notebook_import_program","notebook_workspaces"]);
+      assert.ok(tools.every(tool=>tool._meta?.ui===undefined));
     } finally { child.stdin.end(); reader.close(); child.kill(); }
   } finally { await rm(root,{recursive:true,force:true}); }
 });

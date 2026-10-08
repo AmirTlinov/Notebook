@@ -19,9 +19,9 @@ public struct NotebookQueryCut {
     try connection.checkReadAllowance()
   }
 
-  public func handle(_ command: NotebookReadCommand, nativeActor: UUID? = nil) throws -> JSONValue {
+  public func handle(_ command: NotebookReadCommand) throws -> JSONValue {
     try requireActive()
-    return try NotebookCommandDispatcher(store: store, nativeActor: nativeActor).handleRead(command)
+    return try NotebookCommandDispatcher(store: store).handleRead(command)
   }
 
   public func storedWorkspaceID() throws -> UUID {
@@ -45,20 +45,6 @@ public struct NotebookQueryCut {
   }
   public func referenceRevision(target: CollaborationTarget, elementID: String? = nil) throws -> String {
     try requireActive(); return try store.referenceRevision(target: target, elementID: elementID)
-  }
-  public func readPanel(_ request: NotebookPanelReadRequest, actor: UUID,
-    reusing pageContent: NotebookPanelPageContent? = nil) throws -> JSONValue {
-    try requireActive(); return try store.readPanel(request, actor: actor, reusing: pageContent)
-  }
-  public func readPanelMetadata(workspaceID: UUID, target: CollaborationTarget, actor: UUID) throws -> NotebookPanelMetadata {
-    try requireActive(); return try store.readPanelMetadata(workspaceID: workspaceID, target: target, actor: actor)
-  }
-  public func capturePanelPageContent(_ cut: NotebookPanelPresentationCut,
-    reusing source: NotebookPageSource? = nil) throws -> NotebookPanelPageContent {
-    try requireActive(); return try store.capturePanelPageContent(cut, reusing: source)
-  }
-  public func requestPanelPresentation(_ request: NotebookPanelPresentationRequest) throws -> NotebookPanelPresentationCut {
-    try requireActive(); return try store.requestPanelPresentation(request)
   }
   public func loadPage(_ id: UUID) throws -> PageDocument {
     try requireActive(); return try store.loadPage(id)

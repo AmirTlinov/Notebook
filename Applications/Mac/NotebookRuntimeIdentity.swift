@@ -2,8 +2,8 @@ import Foundation
 import OSLog
 import Security
 
-/// Admission follows the signed plugin payload rather than a user's install
-/// path. The preserved identifier also preserves Keychain and CloudKit trust.
+/// Admission follows the signed headless payload. The preserved identifier
+/// also preserves Keychain and CloudKit trust.
 enum NotebookRuntimeIdentity {
   private static let startupBegan = ContinuousClock.now
   private static let startupLog = Logger(subsystem: "com.amirtlinov.notebook", category: "RuntimeStartup")
@@ -27,13 +27,13 @@ enum NotebookRuntimeIdentity {
     var errorDescription: String? { message }
   }
 
-  /// A versioned plugin bundle remains immutable for this process's lifetime.
+  /// The signed runtime bundle remains immutable for this process's lifetime.
   /// Validate its entire seal once, before any workspace owner is constructed.
   static let admission: Result<Void, Failure> = {
     let bundle = Bundle.main
     let acceptanceEnabled = bundle.object(forInfoDictionaryKey: "NotebookAcceptanceEnabled") as? Bool == true
       || bundle.object(forInfoDictionaryKey: "NotebookAcceptanceEnabled") as? String == "YES"
-    guard bundle.object(forInfoDictionaryKey: "NotebookPluginRuntime") as? Bool == true,
+    guard bundle.object(forInfoDictionaryKey: "NotebookHeadlessRuntime") as? Bool == true,
       bundle.object(forInfoDictionaryKey: "LSUIElement") as? Bool == true,
       let bundleID = bundle.bundleIdentifier,
       bundleID == "com.amirtlinov.notebook.mac"

@@ -4,14 +4,13 @@
 Notebook/
 |-- Sources/NotebookCore/            # Content, SQLite, causal actions, and delivery.
 |-- Sources/NotebookSurface/         # Portable camera, coordinates, and ink geometry.
-|-- Sources/NotebookSurfaceWasm/     # Numeric browser ABI; no content or persistence.
 |-- Sources/NotebookCodex/           # Codex adapter; does not own model execution.
 |-- Sources/NotebookArchiveTransfer/ # External copy converter, separate from apps.
 |-- Applications/Shared/             # App model, write queue, camera, ink, documents.
 |-- Applications/iPad/               # iPad workspace and system input.
-|-- Applications/Mac/                # Plugin runtime, IPC, trusted connection, system adapters.
+|-- Applications/Mac/                # Headless MCP runtime, IPC, trusted connection, system adapters.
 |-- Applications/WebResources/       # WebKit document and program presentation.
-|-- MCP/                            # Codex panel, plugin package, tools through the runtime owner.
+|-- MCP/                            # Direct agent tools through the runtime owner.
 |-- Tests/                          # Core, MCP, Codex, and verification contracts.
 |-- Applications/*Tests/             # Native checks and gesture scenarios.
 `-- verify.sh                       # Change-scoped checks; --full is full acceptance.
@@ -35,7 +34,7 @@ installed, admitted helper.
   [replication owner window](docs/replication-owner-window.md),
   [transport](docs/transport-contract.md).
 - Ink, camera, composition, memory: `Applications/Shared/`,
-  [portable surface](docs/surface-consolidation.md),
+  [native surface](docs/native-surface.md),
   [performance](docs/performance.md),
   [page ink](docs/page-ink-conflict-contract.md),
   [scene allocation](docs/scene-allocation-contract.md).
@@ -46,6 +45,7 @@ installed, admitted helper.
 - Shared context and agent actions: [collaboration](docs/collaboration.md),
   [shared context](docs/shared-context-contract.md), and the relevant
   `docs/agent-*-contract.md`.
+- Direct agent access: [MCP](docs/mcp.md).
 - Projects, conversations, Codex: [bridge](docs/codex-desktop-bridge.md),
   [runtime](docs/agent-runtime-contract.md).
 - Builds, pairing, transfer: [release](docs/release-build-contract.md),

@@ -214,14 +214,13 @@ identity and pending asynchronous admission together.
 
 ## Cold runtime startup
 
-MCP starts its transport before awaiting the native process. `notebook_open`
-opens the static panel with its exact target/bounds; the app-only
-`notebook_panel_connect` owns the initial admitted read. Startup failure keeps
-the transport alive for retry. Every domain dispatch validates the current
-runtime, including an old panel's addressed socket. Agent tools spend their
-existing response deadline on admission and execution together; an expired
-admission wait cannot send a command later. Only bootstrap and reads may retry
-automatically; uncertain mutations retain their original identities.
+The direct MCP transport starts before awaiting the native process. The signed
+headless runtime is admitted before each domain dispatch; startup failure keeps
+the transport alive for retry. `notebook_workspaces` can list or select the catalog
+while no workspace is open. Agent tools spend their existing response deadline
+on admission and execution together; an expired admission wait cannot send a
+command later. Only bootstrap and reads may retry automatically; uncertain
+mutations retain their original identities.
 
 The existing admission path emits bounded `RuntimeStartup` OSLog marks with PID
 and monotonic milliseconds from `process.entry`: signature dynamic/static

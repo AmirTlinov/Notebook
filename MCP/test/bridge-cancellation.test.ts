@@ -4,7 +4,7 @@ import {chmod,mkdtemp,rm} from 'node:fs/promises';
 import {createServer,type Socket} from 'node:net';
 import {join} from 'node:path';
 import {Client,InMemoryTransport} from '@modelcontextprotocol/client';
-import {createServer as createNotebookServer,panelBundle} from './panel-fixture.js';
+import {createServer as createNotebookServer} from '../src/server.js';
 import {BridgeError,runBridge} from '../src/bridge.js';
 
 type Value=Record<string,unknown>;
@@ -76,20 +76,17 @@ test('caller abort and shared deadline retire only their actual socket',async t=
   });
 });
 
-test('MCP sender cancellation reaches the existing native panel request without replay',async t=>{
+test('MCP sender cancellation reaches the existing native read without replay',async t=>{
   const native=await endpoint();t.after(()=>native.close());
-  const server=createNotebookServer(native.socketPath,{panelBundle});
+  const server=createNotebookServer(native.socketPath);
   const client=new Client({name:'abort-probe',version:'1'}),[caller,owner]=InMemoryTransport.createLinkedPair();
   await server.connect(owner);await client.connect(caller);t.after(async()=>{await client.close();await server.close()});
   const controller=new AbortController();
-  const result=client.callTool({name:'notebook_panel_presentation',arguments:{uiCohort:panelBundle.cohort,
-    workspaceID:'00000000-0000-4000-8000-000000000001',target:{kind:'board',id:'00000000-0000-4000-8000-000000000002'},
-    socketKey:'0123456789abcdef01234567',appearance:{viewport:{x:800,y:600},pixelScale:1}}},{signal:controller.signal});
-  // The public panel owns an admitted endpoint. This fixture names the actual
-  // endpoint's socketKey rather than relying on another window's selection.
+  const result=client.callTool({name:'notebook_context',arguments:{method:'observe',args:{}}},{signal:controller.signal});
   const refused=assert.rejects(result);
   const request=await native.requested.promise;
-  assert.equal(request.request.command,'panelPresentation');
+  assert.equal(request.request.command,'scriptContext');
+  assert.deepEqual(request.request.scriptContext,{apiVersion:2,method:'observe',arguments:{}});
   controller.abort();await refused;
   // Wait for the SDK cancellation callback to retire the real bridge before
   // observing the late response on the peer's already ended read direction.

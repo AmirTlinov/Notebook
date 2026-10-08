@@ -57,6 +57,68 @@ import XCTest
     await coordinator.stop()
   }
 
+  func testHundredThousandPagePaintCandidatesKeepResolvedCrossingsAndGlobalClaims() throws {
+    let actor = UUID(), count = 100_000, region = PageRect(x: 480, y: 480, width: 40, height: 40)
+    let bounds = CGRect(x: region.x, y: region.y, width: region.width, height: region.height), claimedID = UUID()
+    func shape(_ id: String, frame: PageRect, graphic: NotebookGraphic = .init(shape: .rectangle), parent: String? = nil) -> AgentElement {
+      .init(id: id, kind: .graphic, frame: frame, source: "", html: "", graphic: graphic, parentID: parent)
+    }
+    let group = AgentElement(id: "group", kind: .group, frame: .init(x: 100, y: 100, width: 100, height: 100),
+      source: "", html: "", basis: .init(size: .init(x: 100, y: 100),
+        transform: .init(a: 0, b: 1, c: -1, d: 0, tx: 1, ty: 0)))
+    let erasedFrame = PageRect(x: 490, y: 490, width: 20, height: 20)
+    let textFrame = PageRect(x: 480, y: 430, width: 100, height: 10)
+    let collisionID = "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE"
+    var elements = (0..<count).map { shape("distant-\($0)",
+      frame: .init(x: 600 + Double($0 % 100), y: 890 + Double($0 % 100), width: 5, height: 5)) }
+    elements += [group, shape("escaped", frame: .init(x: 380, y: -310, width: 30, height: 30), parent: group.id),
+      shape("left", frame: .init(x: 80, y: 490, width: 20, height: 20)),
+      shape("right", frame: .init(x: 850, y: 490, width: 20, height: 20)),
+      shape("edge", frame: .init(x: 800, y: 800, width: 50, height: 50), graphic: .init(shape: .connector,
+        connection: .init(start: .init(point: .zero, binding: .init(elementID: "left")),
+          end: .init(point: .zero, binding: .init(elementID: "right"))))),
+      .init(id: "overflow", kind: .nativeText, frame: textFrame, source: Array(repeating: "Body", count: 8).joined(separator: "\n"), html: ""),
+      .init(id: "erased", kind: .nativeText, frame: erasedFrame, source: "Erased source", html: ""),
+      shape("losing-claim", frame: erasedFrame, graphic: .init(shape: .rectangle, sourceInkIDs: [claimedID])),
+      shape("winning-offscreen-claim", frame: .init(x: 900, y: 900, width: 20, height: 20),
+        graphic: .init(shape: .rectangle, sourceInkIDs: [claimedID])),
+      .init(id: collisionID, kind: .nativeText, frame: erasedFrame, source: "First exact owner", html: ""),
+      .init(id: collisionID.lowercased(), kind: .nativeText, frame: erasedFrame, source: "Second exact owner", html: "")]
+    let drawing = PageInkDrawing(actions: [
+      .init(id: claimedID, tool: .pen, samples: [.init(point: .init(x: 500, y: 500), timeOffset: 0,
+        width: 4, opacity: 1, force: 1, azimuth: 0, altitude: 1)]),
+      .init(tool: .eraser, samples: [.init(point: .init(x: 500, y: 500), timeOffset: 0,
+        width: 200, opacity: 1, force: 1, azimuth: 0, altitude: 1)], sequence: 1,
+        elementTargets: [.init(elementID: "erased", frame: erasedFrame, wholeElement: true)])])
+    // The production sparse causal format admits this full source without
+    // manufacturing one field frontier per workload object in the fixture.
+    let base = PageDocument(size: .init(width: 1000, height: 1000), actor: actor, drawingData: try drawing.dataRepresentation())
+    let page = try JSONValue.encode(base).setting("elements", .encode(elements)).setting("collaboration", .null).decode(PageDocument.self)
+    let graphStarted = ContinuousClock.now, graph = page.graphicGraph()
+    graph.prepareVisibility(on: .page(page.id))
+    let graphElapsed = graphStarted.duration(to: .now), queryStarted = ContinuousClock.now
+    let selected = PageCompositionRenderer.elements(in: page, region: region, elementID: nil)
+    let queryElapsed = queryStarted.duration(to: .now)
+    let expected = page.elements.filter { element in
+      let presentation = element.graphic == nil ? graph.placement(element.id).map { NotebookElementPresentation(element, placement: $0) } : nil
+      guard let frame = graph.resolve(element.id).layout?.frame ?? presentation?.frame else { return false }
+      return element.kind != .group && (element.graphic == nil || page.graphicPresentation.geometryIDs.contains(element.id))
+        && (element.graphic == nil || graph.resolve(element.id).layout != nil)
+        && bounds.intersects(CGRect(x: frame.x, y: frame.y, width: frame.width, height: frame.height))
+    }
+    XCTAssertEqual(selected, expected, "Visibility narrows preparation while the existing exact painter predicate and source order remain authoritative")
+    XCTAssertEqual(selected.map(\.id), ["escaped", "edge", "overflow", "erased", collisionID, collisionID.lowercased()])
+    XCTAssertTrue(page.graphicPresentation.suppressedInkIDs.contains(claimedID), "Off-window claim arbitration still suppresses the raw contact")
+    XCTAssertFalse(selected.contains { $0.id == "losing-claim" })
+    XCTAssertEqual(PageCompositionRenderer.elements(in: page, region: region, elementID: collisionID.lowercased()).map(\.id),
+      [collisionID.lowercased()], "Exact selected-element export keeps the second owner of a canonical UUID collision")
+    XCTAssertTrue(try XCTUnwrap(page.inkDrawing().elementErasures["erased"]).contains { $0.target.wholeElement })
+    let nextRegion = PageRect(x: 850, y: 490, width: 20, height: 20)
+    XCTAssertTrue(PageCompositionRenderer.elements(in: page, region: nextRegion, elementID: nil).contains { $0.id == "right" })
+    XCTAssertEqual(page.elements.count, count + 11)
+    print("PAGE_PAINT_SCALE source_elements=\(page.elements.count) selected=\(selected.count) graph=\(graphElapsed) warm_query=\(queryElapsed)")
+  }
+
   @discardableResult
   private func waitUntil(message: () -> String = { "The expected scene must become ready" },
     _ predicate: () async -> Bool) async throws -> Bool {

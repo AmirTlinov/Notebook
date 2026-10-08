@@ -234,26 +234,27 @@ extension NotebookPageInkReadTests {
       return result
     }
     let target = CollaborationTarget(kind: .page, id: f.pageID), strokeID = UUID()
-    let request = NotebookPanelEditRequest(workspaceID: try f.store.storedWorkspaceID(), actionID: UUID(),
-      target: target, summary: "Штрих поверх 100000 касаний", operations: [
-        .init(kind: .appendInkStroke, target: target, id: strokeID.uuidString, values: [
-          "points": .array([.object(["x": .number(40), "y": .number(50)]),
-            .object(["x": .number(60), "y": .number(70)])])])], sources: [])
-    let accepted = try command("append", store: f.store) { try f.store.editPanel(request, actor: f.content.actor) }
+    let request = CollaborationAction(id: UUID(), summary: "Штрих поверх 100000 касаний", expected: [], operations: [
+      .init(kind: .appendInkStroke, target: target, id: strokeID.uuidString, values: [
+        "points": .array([.object(["x": .number(40), "y": .number(50)]),
+          .object(["x": .number(60), "y": .number(70)])])])])
+    let accepted = try command("append", store: f.store) { try f.store.applyNativeAction(request, actor: f.content.actor) }
     let appended = try #require(try f.store.readPageInkAction(pageID: f.pageID, actionID: strokeID)).action
     #expect(appended.isActive && appended.sequence == selected.sequence + 1)
     let cold = NotebookStore(root: f.store.root)
     try cold.prepare()
     let acceptedCursor = try cold.currentReadCursor()
-    #expect(try command("retry_after_reopen", store: cold) { try cold.editPanel(request, actor: f.content.actor) } == accepted)
+    #expect(try command("retry_after_reopen", store: cold) { try cold.applyNativeAction(request, actor: f.content.actor) } == accepted)
     #expect(try cold.currentReadCursor() == acceptedCursor)
-    let undo = NotebookPanelUndoRequest(workspaceID: request.workspaceID, target: target, actionID: request.actionID)
-    _ = try command("undo", store: cold) { try cold.undoPanel(undo, actor: f.content.actor) }
+    let originalResult = try #require(try cold.savedActionResult(request.id))
+    _ = try command("undo", store: cold) { try cold.undoNativeAction(request.id, actor: f.content.actor) }
     let undone = try #require(try cold.readPageInkAction(pageID: f.pageID, actionID: strokeID)).action
     #expect(!undone.isActive && undone.sequence == appended.sequence)
     #expect(try cold.readPageInkAction(pageID: f.pageID, actionID: selected.id)?.action == selected)
     let undoCursor = try cold.currentReadCursor()
-    #expect(try command("retry_after_undo", store: cold) { try cold.editPanel(request, actor: f.content.actor) } == accepted)
+    let afterUndo = try command("retry_after_undo", store: cold) { try cold.applyNativeAction(request, actor: f.content.actor) }
+    #expect(afterUndo.action == accepted.action && afterUndo.undo != nil)
+    #expect(try cold.savedActionResult(request.id) == originalResult)
     #expect(try cold.currentReadCursor() == undoCursor)
   }
 }

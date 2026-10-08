@@ -566,14 +566,13 @@ def validate_prerequisites(plan, evidence, commands):
                         "--prepare", "--stage-root", str(origin / ".build/notebook-typescript-runtime")], origin),
         "codex": ([sys.executable, "-B", str(origin / "Applications/prepare_notebook_codex.py"),
                    "--prepare", "--stage-root", str(origin / ".build/notebook-codex-runtimes")], origin),
-        "surface": (["node", str(origin / "MCP/build-surface.mjs"), "--stage", str(origin / ".build/surface")], origin),
         "ipc-host": (["swift", "build", "--product", "notebook-ipc-test-host"], origin),
         "physical-ipad": (["xcrun", "devicectl", "device", "info", "details", "--device", release.DEVICE,
                             "--timeout", "30", "--json-output", str(evidence / "physical-ipad.json"),
                             "--omit-deprecated-fields-in-json"], origin),
         "unlocked-ipad": (ipad_lock_arguments(evidence), origin),
     }
-    labels = {"project": "generate-project", "typescript": "typescript-resources", "codex": "codex-resources", "surface": "surface-resources"}
+    labels = {"project": "generate-project", "typescript": "typescript-resources", "codex": "codex-resources"}
     for prerequisite in required - {"typesetter"}:
         release.require(prerequisite in definitions, "Неизвестный prerequisite: " + prerequisite)
         argv, cwd = definitions[prerequisite]
@@ -622,7 +621,7 @@ def native_arguments(root, evidence, plan, platform, selectors, action, typescri
         argv.extend(native_mac_signing_settings() if platform == "mac" else native_ipad_signing_settings())
         argv.append("NOTEBOOK_TYPESETTER_RUNTIME=" + str(prepared_typesetter_stage(plan)))
         if platform == "mac":
-            argv.extend(("NOTEBOOK_SURFACE_STAGE=" + str(root / ".build/surface"), "NOTEBOOK_TYPESCRIPT_RUNTIME=" + str(typescript),
+            argv.extend(("NOTEBOOK_TYPESCRIPT_RUNTIME=" + str(typescript),
                          "NOTEBOOK_CODEX_RUNTIME=" + str(prepared_codex_stage(plan))))
     argv.extend("-only-testing:" + selector for selector in selectors)
     return argv
@@ -916,8 +915,6 @@ def run_selected(root, plan, evidence):
         typesetter = release.prepare_typesetter_runtime(root, command, sdk, stage=plan.get("typesetterRuntime"))
         plan["typesetterRuntime"] = str(typesetter)
         release.write_json(evidence / "selection.json", plan)
-        if platform == "mac":
-            release.prepare_surface_stage(root, command)
         try:
             command(platform + "-build-for-testing", native_arguments(root, evidence, plan, platform,
                     checks[platform], "build-for-testing", typescript), cwd=root / "Applications", timeout=1800)

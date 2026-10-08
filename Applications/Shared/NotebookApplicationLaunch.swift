@@ -302,12 +302,12 @@ final class NotebookApplicationLaunch {
                   break
                 }
                 guard mayAccessWorkspace, try await library.snapshot().catalog.entries.contains(where: { $0.id == id }) else {
-                  throw CollaborationError("workspace_missing", "Пространство этой панели недоступно.")
+                  throw CollaborationError("workspace_missing", "Выбранное пространство недоступно.")
                 }
                 await openWorkspace(id)
               }
               selectedModel = workspaceModel(id)
-              if selectedModel == nil { error = workspaceError ?? failure ?? "Не удалось восстановить пространство этой панели." }
+              if selectedModel == nil { error = workspaceError ?? failure ?? "Не удалось восстановить выбранное пространство." }
             }
             if let owner = selectedModel ?? model, owner.allowsCodexRegistration || owner.acceptance != nil {
               await owner.startCodexSidecar()

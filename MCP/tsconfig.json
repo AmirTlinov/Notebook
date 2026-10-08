@@ -15,7 +15,6 @@
   },
   "include": [
     "src/**/*.ts",
-    "panel/**/*.ts",
     "test/**/*.ts"
   ],
   "exclude": [

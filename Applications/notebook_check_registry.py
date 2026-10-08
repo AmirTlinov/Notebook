@@ -23,7 +23,7 @@ class Check:
 
 
 def native(check_id, contract, platform, selectors, profiles=(), full=False):
-    prerequisites = ("project", "typesetter") + (("mcp-dependencies", "codex", "surface", "typescript") if platform == "mac" else ("physical-ipad", "unlocked-ipad"))
+    prerequisites = ("project", "typesetter") + (("mcp-dependencies", "codex", "typescript") if platform == "mac" else ("physical-ipad", "unlocked-ipad"))
     return Check(check_id, contract, platform, tuple(selectors), tuple(profiles), prerequisites,
                  "xcresult", ("xcrun", "xcodebuild"),
                  tuple(platform + suffix for suffix in ("-inventory.json", ".xcresult", "-summary.json", "-tests.json", "-execution.json"))

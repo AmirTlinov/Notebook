@@ -111,19 +111,8 @@ public struct NotebookPageWindowHeader: Codable, Equatable, Sendable {
 /// Live ink may advance the mounted page's journal; that makes this capability
 /// ineligible for reuse without copying or serializing the prior drawing.
 public struct NotebookPageSource: Sendable {
-  /// Equality names this exact captured value, including its in-process roots.
-  /// A same page UUID or equal persisted digest does not imply shared backing.
-  public struct CaptureIdentity: Equatable, Sendable {
-    fileprivate let pageID: UUID
-    fileprivate let workspaceID: UUID
-    fileprivate let storeKey: String
-    fileprivate let revision: String
-    fileprivate let elements: ObjectIdentifier
-    fileprivate let ink: ObjectIdentifier
-  }
   public let document: PageDocument
   public let revision: String
-  public private(set) var admissionEstimateBytes: Int?
   private let ink: PageInkSource
   private let storeKey: String
   private let workspaceID: UUID
@@ -131,64 +120,9 @@ public struct NotebookPageSource: Sendable {
     self.document = document; self.revision = revision; ink = document.inkSource
     self.storeKey = storeKey; self.workspaceID = workspaceID
   }
-  public var captureIdentity: CaptureIdentity {
-    .init(pageID: document.id, workspaceID: workspaceID, storeKey: storeKey, revision: revision,
-      elements: document.elementSourceIdentity, ink: ink.identity)
-  }
-  public var permitsReuse: Bool { document.inkSource.identity == ink.identity }
   func matches(_ revision: String, storeKey: String, workspaceID: UUID) -> Bool {
     self.workspaceID == workspaceID && self.storeKey == storeKey && self.revision == revision
       && document.inkSource.identity == ink.identity
-  }
-
-  /// Optional retention is estimated after required panel material has prepared
-  /// this ink and graph on the existing reader. Native window capture stays lazy.
-  /// This conservative admission estimate includes source/causal buffers and
-  /// existing graph/index storage, plus positions/claim/visibility descriptors;
-  /// it is not an exact heap measurement. Unknown/overflow declines retention.
-  func withPreparedAdmissionEstimate() -> Self {
-    guard admissionEstimateBytes == nil, permitsReuse, let inkBytes = ink.retainedPayloadBytes else { return self }
-    var bytes = MemoryLayout<Self>.stride + MemoryLayout<PageDocument>.stride
-    func add(_ value: Int) -> Bool {
-      let sum = bytes.addingReportingOverflow(value)
-      guard value >= 0, !sum.overflow else { return false }; bytes = sum.partialValue; return true
-    }
-    func buffer(_ count: Int, _ stride: Int) -> Bool {
-      let value = count.multipliedReportingOverflow(by: stride)
-      return !value.overflow && add(value.partialValue)
-    }
-    guard add(inkBytes), add((storeKey.utf8.count + revision.utf8.count) * 2),
-      buffer(document.elements.capacity, MemoryLayout<AgentElement>.stride) else { return self }
-    for element in document.elements {
-      guard add(NotebookNativeElementSource.retainedPayloadBytes(id: element.id, page: element)) else { return self }
-    }
-    if let fields = document.collaboration?.fields {
-      guard buffer(fields.capacity, MemoryLayout<String>.stride + MemoryLayout<ContentFieldVersion>.stride + 32) else { return self }
-      for (key, value) in fields { guard add(key.utf8.count * 2), add(value.retainedPayloadBytes) else { return self } }
-    }
-    if let computations = document.computations {
-      guard buffer(computations.capacity, MemoryLayout<NotebookComputation>.stride) else { return self }
-      for computation in computations {
-        guard add((computation.origin.inkHash.utf8.count + computation.source.inkHash.utf8.count
-          + (computation.predecessor?.utf8.count ?? 0)) * 2) else { return self }
-        if let recognition = computation.recognition {
-          guard add(recognition.recognizer.utf8.count * 2),
-            buffer(recognition.candidates.capacity, MemoryLayout<NotebookRecognitionCandidate>.stride) else { return self }
-          for candidate in recognition.candidates {
-            guard add(candidate.text.utf8.count * 2), buffer(candidate.bindings.capacity, MemoryLayout<NotebookRecognitionBinding>.stride) else { return self }
-            for binding in candidate.bindings {
-              guard buffer(binding.samples.capacity, MemoryLayout<NotebookInkSampleRange>.stride) else { return self }
-            }
-          }
-        }
-      }
-    }
-    let graph = document.graphicGraph()
-    guard add(graph.retainedPayloadBytes), add(graph.visiblePageGraphics(document.id, in: .null).boundsIndexBytes),
-      // A conservative allowance covers existing positions/alias dictionaries,
-      // claim sets and local-frame visibility descriptors without copying them.
-      buffer(document.elements.capacity, 512) else { return self }
-    var prepared = self; prepared.admissionEstimateBytes = max(1, bytes); return prepared
   }
 }
 

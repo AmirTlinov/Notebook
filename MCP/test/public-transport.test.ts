@@ -25,7 +25,7 @@ test('public verifier accepts the shared-workspace bundle only in its checkout s
     await info(`com.amirtlinov.notebook.mac.acceptance.${scope}`);
     const listed=invoke('list-tools');
     assert.equal(listed.status,0,listed.stderr);
-    assert.deepEqual(JSON.parse(listed.stdout).tools.map((x:{name:string})=>x.name).sort(),['notebook_context','notebook_execute','notebook_import_document','notebook_import_document_resource','notebook_import_program','notebook_open','notebook_panel_changes','notebook_panel_connect','notebook_panel_edit','notebook_panel_presentation','notebook_panel_undo','notebook_panel_workspace']);
+    assert.deepEqual(JSON.parse(listed.stdout).tools.map((x:{name:string})=>x.name).sort(),['notebook_context','notebook_execute','notebook_import_document','notebook_import_document_resource','notebook_import_program','notebook_workspaces']);
     assert.equal(invoke('call','notebook_import_program').status,1,'Extra server tool is not extra client authority');
     for(const identifier of ['com.amirtlinov.notebook.mac','com.amirtlinov.notebook.mac.acceptance','com.amirtlinov.notebook.mac.acceptance.000000000000']) {
       await info(identifier); const denied=invoke('list-tools');

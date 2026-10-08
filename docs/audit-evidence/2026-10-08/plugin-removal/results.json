@@ -1,0 +1,390 @@
+{
+  "issue": "GUI-541",
+  "date": "2026-10-08",
+  "decision": "Native iPad surface and direct tools-only MCP; remove desktop plugins and browser surface.",
+  "status": "installed and verified",
+  "baseCommit": "39ea6c7d30c3856be0254628ac52f5a8cf4a2b25",
+  "verification": [
+    {
+      "directory": ".build/verification/gui541-selected-v1",
+      "status": "passed",
+      "sourceSHA256": "dad6dc06f19ba97ca84c3b171223599916a0248849596809ee0db2aae87d29b9",
+      "sourceFiles": 1669,
+      "core": {
+        "executed": [
+          "NotebookCoreTests.NotebookIPCTests/removedPanelCommandsAndFieldsAreRejectedBeforeTheOwner()/NotebookIPCTests.swift:278:4",
+          "NotebookCoreTests.NotebookPageInkReadTests/oneHumanStrokeAmongOneHundredThousandSourcesStaysAddressed()/NotebookPageInkReadTests.swift:163:4",
+          "NotebookCoreTests.NotebookPageWindowTests/reusablePageBodyRequiresItsStoredDigestBeyondAggregateStamps()/NotebookPageWindowTests.swift:127:4",
+          "NotebookCoreTests.NotebookReceiptPhaseMergeTests/anExisting8192PointReceiptRetainsItsExactBodyUnderDefaultDelivery()/NotebookReceiptPhaseMergeTests.swift:300:4"
+        ],
+        "executions": {
+          "NotebookCoreTests.NotebookIPCTests/removedPanelCommandsAndFieldsAreRejectedBeforeTheOwner()/NotebookIPCTests.swift:278:4": 1,
+          "NotebookCoreTests.NotebookPageInkReadTests/oneHumanStrokeAmongOneHundredThousandSourcesStaysAddressed()/NotebookPageInkReadTests.swift:163:4": 1,
+          "NotebookCoreTests.NotebookPageWindowTests/reusablePageBodyRequiresItsStoredDigestBeyondAggregateStamps()/NotebookPageWindowTests.swift:127:4": 1,
+          "NotebookCoreTests.NotebookReceiptPhaseMergeTests/anExisting8192PointReceiptRetainsItsExactBodyUnderDefaultDelivery()/NotebookReceiptPhaseMergeTests.swift:300:4": 1
+        },
+        "failed": [],
+        "planned": [
+          "NotebookCoreTests.NotebookIPCTests/removedPanelCommandsAndFieldsAreRejectedBeforeTheOwner()/NotebookIPCTests.swift:278:4",
+          "NotebookCoreTests.NotebookPageInkReadTests/oneHumanStrokeAmongOneHundredThousandSourcesStaysAddressed()/NotebookPageInkReadTests.swift:163:4",
+          "NotebookCoreTests.NotebookPageWindowTests/reusablePageBodyRequiresItsStoredDigestBeyondAggregateStamps()/NotebookPageWindowTests.swift:127:4",
+          "NotebookCoreTests.NotebookReceiptPhaseMergeTests/anExisting8192PointReceiptRetainsItsExactBodyUnderDefaultDelivery()/NotebookReceiptPhaseMergeTests.swift:300:4"
+        ],
+        "skipped": []
+      },
+      "native": {
+        "mac": {
+          "result": "Passed",
+          "passedTests": 5,
+          "failedTests": 0,
+          "skippedTests": 0,
+          "totalTestCount": 5
+        },
+        "ipad": {
+          "result": "Passed",
+          "passedTests": 2,
+          "failedTests": 0,
+          "skippedTests": 0,
+          "totalTestCount": 2
+        }
+      },
+      "verificationSHA256": "d837b4e6c7fd9596ecb17253b2f893b3f0d08678e88c8e684211d51b52def341"
+    },
+    {
+      "directory": ".build/verification/gui541-selected-v2",
+      "status": "passed",
+      "sourceSHA256": "19c319ef2d430d6384abf0ac21e2f5dd67cb10d98cad1ff0585ffc68a56da07f",
+      "sourceFiles": 1669,
+      "core": {
+        "executed": [
+          "NotebookCoreTests.NotebookIPCTests/typedReadsAndWritesShareTheBoundedCommandQuotaAndPreserveHalfClose()/NotebookIPCTests.swift:494:4",
+          "NotebookCoreTests.NotebookIPCTests/withdrawnObservationKeepsItsCommandQuotaUntilItsHandlerActuallyFinishes(reason:)/NotebookIPCTests.swift:530:4"
+        ],
+        "executions": {
+          "NotebookCoreTests.NotebookIPCTests/typedReadsAndWritesShareTheBoundedCommandQuotaAndPreserveHalfClose()/NotebookIPCTests.swift:494:4": 1,
+          "NotebookCoreTests.NotebookIPCTests/withdrawnObservationKeepsItsCommandQuotaUntilItsHandlerActuallyFinishes(reason:)/NotebookIPCTests.swift:530:4": 2
+        },
+        "failed": [],
+        "planned": [
+          "NotebookCoreTests.NotebookIPCTests/typedReadsAndWritesShareTheBoundedCommandQuotaAndPreserveHalfClose()/NotebookIPCTests.swift:494:4",
+          "NotebookCoreTests.NotebookIPCTests/withdrawnObservationKeepsItsCommandQuotaUntilItsHandlerActuallyFinishes(reason:)/NotebookIPCTests.swift:530:4"
+        ],
+        "skipped": []
+      },
+      "native": {
+        "mac": {
+          "result": "Passed",
+          "passedTests": 1,
+          "failedTests": 0,
+          "skippedTests": 0,
+          "totalTestCount": 1
+        }
+      },
+      "verificationSHA256": "a8d3562e71dd16bb961672c580bc3587d1e062934f82dccea5564cd7a0955622"
+    },
+    {
+      "directory": ".build/verification/gui541-selected-v3",
+      "status": "passed",
+      "sourceSHA256": "b82f819fb003ab91704e6a49d197d9d7b6f1900c0778adb851aeee18df02979c",
+      "sourceFiles": 1669,
+      "native": {
+        "mac": {
+          "result": "Passed",
+          "passedTests": 1,
+          "failedTests": 0,
+          "skippedTests": 0,
+          "totalTestCount": 1
+        }
+      },
+      "verificationSHA256": "c2b7cd1997344b97726f5e6903dfafd8aa70ba53cfbe1da3b09a6fd56c7e5ce0"
+    }
+  ],
+  "sourceDelta": {
+    "beforeSHA256": "dad6dc06f19ba97ca84c3b171223599916a0248849596809ee0db2aae87d29b9",
+    "afterSHA256": "19c319ef2d430d6384abf0ac21e2f5dd67cb10d98cad1ff0585ffc68a56da07f",
+    "changedInputs": [
+      "Tests/NotebookRelease/run.py"
+    ],
+    "runtimeInputsUnchanged": true
+  },
+  "portableChecks": {
+    "typescript": "passed",
+    "mcpCases": 40,
+    "cancellationCases": 6,
+    "verificationSelectionCases": 1,
+    "releaseUniqueCases": 117,
+    "releaseFirstRun": {
+      "passed": 116,
+      "fixtureErrors": 1
+    },
+    "releaseExactRetry": {
+      "passed": 1,
+      "fixtureCorrection": "Read commands.json as a JSON array in InstallationTests; no production change."
+    },
+    "failed": 0,
+    "skipped": 0
+  },
+  "logs": [
+    {
+      "path": ".build/verification/gui541-mcp-types-v1.log",
+      "sha256": "5f1260a7c0c38c60a52936efbe994883b139cdb00116c5c9f145a5e82d5c81f6"
+    },
+    {
+      "path": ".build/verification/gui541-mcp-v1.log",
+      "sha256": "36b07539fde92b4e3b8fa0f623e12b49d4f3331d24da336751e6abc2bd85693a"
+    },
+    {
+      "path": ".build/verification/gui541-mcp-cancellation-v1.log",
+      "sha256": "936f6b9b49b03a55df84857b0c11ad8d55a57f0d9a18ccda8b78a4f04b724f80"
+    },
+    {
+      "path": ".build/verification/gui541-verifier-v1.log",
+      "sha256": "2c0d5182825dd6decca5018ca962e875be07fe5ca0077165f1eb81723baa73b6"
+    },
+    {
+      "path": ".build/verification/gui541-release-v1.log",
+      "sha256": "fe717bb3a2bd1564d97e4e5f4a21222a8542d5954c97e83f9bd9a22f6d8ab22f"
+    },
+    {
+      "path": ".build/verification/gui541-release-fixture-v2.log",
+      "sha256": "66801f4bc75cdcaeb977ac6d93d75b265acf300166d3da488e7a74d2b7d2cc05"
+    }
+  ],
+  "independentReview": {
+    "status": "passed",
+    "owners": [
+      "native/Core removal and retained images",
+      "direct MCP and sidecar",
+      "runtime publication, dual lease inheritance and exact registration"
+    ],
+    "resolved": [
+      "Reject old plugin marker on new runtime admission",
+      "Retain both publication and writer leases in external publication/registration child lifetime",
+      "Remove orphan encoded raster representation and browser-only resource charges",
+      "Read command recorder fixture as an array"
+    ]
+  },
+  "buildAttempts": [
+    {
+      "directory": ".build/releases/gui541-262",
+      "status": "refused before build",
+      "reason": "npm11.6.0 differs from verified11.18.0"
+    },
+    {
+      "directory": ".build/releases/gui541-262-v2",
+      "status": "refused before build",
+      "reason": "same npm mismatch; adding Swift/Node PATH did not change npm"
+    },
+    {
+      "directory": ".build/releases/gui541-262-v3",
+      "status": "failed in Mac tools packaging; iPad build passed",
+      "reason": "Xcode script sandbox denied rmdir NotebookTools/dist during bundle cleanup. Existing output declaration and full-directory replacement are being repaired."
+    },
+    {
+      "directory": ".build/releases/gui541-262-v4",
+      "status": "verified-build"
+    }
+  ],
+  "liveTransition": {
+    "pluginUninstall": "Notebook and surface-host officially uninstalled; both local marketplaces removed",
+    "runtime261": "Moved signed runtime to stable Application Support path under stopped-writer lease; kernel admission confirmed",
+    "content": "Workspace54349F3B-9E0A-4DEA-B990-40CAE04EF45E and page1E5E9179-522C-597D-B554-DFE51270F7F0 bounded read succeeded",
+    "ipad261": "Installed com.amirtlinov.notebook.preview launched; AWDL authentication observed",
+    "remaining": "261 baseline had POSIX60/current_scene_unknown. After262 install and physical foreground launch, fresh native presentation and currentView image were observed. No sustained-link or latency acceptance claimed.",
+    "standaloneDesktopApps": "Neither /Applications/Notebook.app nor ~/Applications/Notebook.app exists.",
+    "pluginReadback": "codex plugin list returned no Notebook entry; stable legacy publication/cache paths absent.",
+    "retiredPluginProcesses": {
+      "pids": [
+        15640,
+        94542
+      ],
+      "signal": "SIGTERM after exact UID/command readback",
+      "remaining": 0
+    },
+    "residualPluginConfigEntries": 0
+  },
+  "scope": "Focused removal, owner/bootstrap, publication and preserved native rendering. Full GUI190 latency/frame/CPU/GPU/memory/ten-runs/30min acceptance remains separate.",
+  "packagingSourceDelta": {
+    "beforeSHA256": "19c319ef2d430d6384abf0ac21e2f5dd67cb10d98cad1ff0585ffc68a56da07f",
+    "afterSHA256": "b82f819fb003ab91704e6a49d197d9d7b6f1900c0778adb851aeee18df02979c",
+    "changedInputs": [
+      "Applications/project.yml",
+      "MCP/build-sidecar.mjs",
+      "MCP/test/sidecar-bundle.test.ts"
+    ],
+    "contentAndNativeInteractionSourcesUnchanged": true
+  },
+  "packagingReview": {
+    "status": "passed",
+    "reviewer": "density",
+    "timestampUTC": "2026-10-08T12:16:41Z",
+    "production": "Build complete payload before retiring old tree; whole-tree rename, rollback and cleanup under permitted TARGET_TEMP_DIR; literal output grants retained.",
+    "correctedDuringReview": "mkdir prepared/dist requires recursive:true",
+    "checksNotRunByReviewer": true
+  },
+  "packagingProof": {
+    "commands": [
+      {
+        "exitCode": 0,
+        "label": "toolchain-node"
+      },
+      {
+        "exitCode": 0,
+        "label": "actual-sandbox-replay"
+      },
+      {
+        "exitCode": 1,
+        "label": "sidecar-fixture"
+      },
+      {
+        "exitCode": 0,
+        "label": "sidecar-fixture-correct-cwd"
+      }
+    ],
+    "correctedInvocation": "Initial sidecar fixture invocation used repo cwd and failed to resolve tsx; the same fixture passed from MCP cwd. Both records remain.",
+    "files": [
+      "dist/index.mjs",
+      "dist/launch-runtime.mjs",
+      "package.json"
+    ],
+    "format": 1,
+    "nativeBuildExecuted": false,
+    "nodeVersion": "v24.21.0",
+    "sandboxProfileOrigin": "/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/.build/releases/gui541-262-v3/derived-mac/Build/Intermediates.noindex/Notebook.build/Release/NotebookRuntime.build/79e55b5ad7a9e41dbc05c550deb2d3a9.sb",
+    "sandboxProfileSHA256": "72a3897cdce5297eb81514777f4894fd10d4c1d31f12f492f2f95089f4b1e19f",
+    "scope": [
+      "actual-v3-sandbox-profile",
+      "seeded-obsolete-panel-assets",
+      "actual-sidecar-fixture"
+    ],
+    "sourceSHA256": "b82f819fb003ab91704e6a49d197d9d7b6f1900c0778adb851aeee18df02979c",
+    "status": "passed"
+  },
+  "installed": {
+    "build": "262",
+    "version": "0.3.192",
+    "mcpVersion": "0.3.42",
+    "sourceSHA256": "b82f819fb003ab91704e6a49d197d9d7b6f1900c0778adb851aeee18df02979c",
+    "runtime": "/Users/amir/Library/Application Support/NotebookRuntime/NotebookRuntime.app",
+    "manifestSHA256": {
+      "iPad": "8f5a6fae12601b4baf6ca07cc5e317779acde2ec80c8f5db06882701a33513b9",
+      "mac": "c7d61d583cc84796a22ed24e177213bb27b49b85e47bcdd3a69d95c2a9592509"
+    },
+    "buildReceiptSHA256": "7a5c70c95cbf6a7d34999de944c8edd17d9ce48c2f1067cdd85d6205f2543355",
+    "installationReceiptSHA256": "166809dcea3d135ecd3db0710209185c3c460ddaeea4b7b7d0daefdeee6dd67a",
+    "installationStatus": "installed",
+    "workspaceIdentityPreserved": true,
+    "runtimePeer": {
+      "pid": 74717,
+      "uid": 501,
+      "executable": "/Users/amir/Library/Application Support/NotebookRuntime/NotebookRuntime.app/Contents/MacOS/NotebookRuntime",
+      "cdhash": "4cd08cc2a03af1ae639a5317c56801cd4ab1e741"
+    },
+    "headless": true,
+    "pluginMarkerPresent": false,
+    "toolFilters": null,
+    "oldPluginProcesses": 0,
+    "openMCPAppTabs": 0
+  },
+  "installedMCP": {
+    "coldStart": {
+      "elapsedMS": 9137.672083,
+      "initialCodes": [
+        "runtime_starting",
+        "owner_unavailable"
+      ],
+      "outcome": "Retried read-only calls after opening, same installed owner."
+    },
+    "tools": [
+      "notebook_context",
+      "notebook_execute",
+      "notebook_import_document",
+      "notebook_import_document_resource",
+      "notebook_import_program",
+      "notebook_workspaces"
+    ],
+    "uiTools": 0,
+    "resources": null,
+    "warmHandshakeMS": 65.6915,
+    "domainReads": "catalog, observe, pageHeader, help, presentation succeeded",
+    "cursor": "67632",
+    "visualStatus": "ready",
+    "images": 1,
+    "presentationAvailability": "ready",
+    "nativeView": {
+      "sessionID": "CEE9C177-3669-49FC-AEC1-7711E277C058",
+      "deviceID": "29DC77FE-8777-41EC-BE98-704F4668A2F4",
+      "sequence": 1,
+      "nonce": "0DB19391-83D2-470B-BDE6-6797922C28CD"
+    },
+    "currentTarget": {
+      "kind": "page",
+      "id": "B0BCDACE-99E1-472D-98F0-F83558CA2CC1"
+    },
+    "visualReceipt": {
+      "artifact": {
+        "expectedSHA256": "e565db0d1869d12be6cc1e1eee758a76d272c9a83578c06ada2c4c1c61b58a38",
+        "kind": "currentView"
+      },
+      "receipt": {
+        "surface": {
+          "kind": "page",
+          "revision": {
+            "pageID": "B0BCDACE-99E1-472D-98F0-F83558CA2CC1",
+            "agentStamp": {
+              "counter": 19,
+              "actor": "29DC77FE-8777-41EC-BE98-704F4668A2F4"
+            },
+            "drawingStamp": {
+              "counter": 147,
+              "actor": "29DC77FE-8777-41EC-BE98-704F4668A2F4"
+            }
+          },
+          "itemID": "F226D2FD-1738-4182-B28C-374EB89A672C",
+          "snapshotPNG_SHA256": "d55df4bcec9927bf3db26fadf892d33bdedb0cff15ca1e1533b8db2fa4e3f460"
+        },
+        "presence": {
+          "documentPageIndex": 0,
+          "notebookPageID": "B0BCDACE-99E1-472D-98F0-F83558CA2CC1",
+          "camera": {
+            "scale": 1,
+            "center": {
+              "localY": 1385.0454454352703,
+              "tileY": 0,
+              "localX": 5959.193981599088,
+              "tileX": 0
+            }
+          },
+          "viewport": {
+            "y": 1194,
+            "x": 834
+          },
+          "focusedItemID": "F226D2FD-1738-4182-B28C-374EB89A672C",
+          "format": 5,
+          "selectedItemID": "F226D2FD-1738-4182-B28C-374EB89A672C",
+          "boardID": "7E7A0000-0000-4000-8000-000000000003",
+          "mode": "page",
+          "openProgress": 1
+        },
+        "spatialInkStamp": {
+          "counter": 31,
+          "actor": "FE3F4542-687E-4827-921B-7CF9D5659BA4"
+        },
+        "format": 6,
+        "boardRevision": "50a52f6eb619b336101829cb651bdebae2d9baa3d1b40eae120b04e2cc5e1bec",
+        "renderViewport": {
+          "x": 834,
+          "y": 1194
+        },
+        "workspaceStamp": {
+          "counter": 124,
+          "actor": "29DC77FE-8777-41EC-BE98-704F4668A2F4"
+        },
+        "pngSHA256": "e565db0d1869d12be6cc1e1eee758a76d272c9a83578c06ada2c4c1c61b58a38"
+      },
+      "status": "ready"
+    },
+    "contentEditsForProof": 0,
+    "imageBytesMatchReceipt": true
+  }
+}

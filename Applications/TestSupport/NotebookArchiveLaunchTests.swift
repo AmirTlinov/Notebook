@@ -346,11 +346,23 @@ final class NotebookArchiveLaunchTests: XCTestCase {
       let workspaceID = try XCTUnwrap(original.model.workspaceHeader?.workspaceID)
       let page = CollaborationTarget(kind: .page, id: try XCTUnwrap(original.model.workspace?.selectedPageID))
       let actionID = UUID(), strokeID = UUID()
-      var edit = NotebookCommand(command: .panelEdit)
-      edit.panelEdit = .init(workspaceID: workspaceID, actionID: actionID, target: page,
-        summary: "Accepted IPC stroke", operations: [.init(kind: .appendInkStroke, target: page, id: strokeID.uuidString,
+      let basis = try original.model.store.readBasis(targets: [page])
+      let action = CollaborationAction(id: actionID, summary: "Accepted IPC stroke",
+        references: [.init(target: page, revision: try original.model.store.referenceRevision(target: page))],
+        expected: basis.owners, operations: [.init(kind: .appendInkStroke, target: page, id: strokeID.uuidString,
           values: ["width": .number(4), "points": .array([.object(["x": .number(100), "y": .number(120)]),
-            .object(["x": .number(160), "y": .number(190)])])])], sources: [])
+            .object(["x": .number(160), "y": .number(190)])])])])
+      var admission = NotebookCommand(command: .admitAction); admission.action = action
+      let admitted = try await Task.detached { [admission, endpoint = original.socket] in
+        try NotebookIPCClient(socketURL: endpoint).send(admission).decode(NotebookActionAdmission.self)
+      }.value
+      var preparation = NotebookCommand(command: .prepareAction)
+      preparation.actionID = actionID; preparation.fingerprint = admitted.fingerprint
+      let prepared = try await Task.detached { [preparation, endpoint = original.socket] in
+        try NotebookIPCClient(socketURL: endpoint).send(preparation).decode(NotebookActionPreparation.self)
+      }.value
+      var edit = NotebookCommand(command: .commitAction)
+      edit.action = prepared.action; edit.fingerprint = admitted.fingerprint
       let blocked = expectation(description: "IPC mutation retains its result after an unknown commit")
       let receive = original.writer.onFailureChange
       original.writer.onFailureChange = { message in receive?(message); if message != nil { blocked.fulfill() } }
@@ -578,14 +590,13 @@ final class NotebookArchiveLaunchTests: XCTestCase {
       XCTAssertEqual(opened.workspaceID, firstID); XCTAssertEqual(opened.socketKey, first.status.socketKey)
       let second = try await send(.init(action: .create, id: UUID(), name: "Второе"))
       XCTAssertNotEqual(second.status.workspaceID, firstID)
-      let firstPanel = try await Task.detached {
-        var command = NotebookCommand(command: .panelRead)
-        command.panelRead = .init(workspaceID: firstID)
+      let firstRead = try await Task.detached {
+        var command = NotebookCommand(command: .read)
+        command.queries = [.init(kind: .workspaceHeader)]
         return try NotebookIPCClient(socketURL: firstSocket).send(command)
       }.value
-      XCTAssertEqual(firstPanel["workspaceID"]?.stringValue?.lowercased(), firstID.uuidString.lowercased(),
-        "Opening a second workspace keeps the first panel's addressed owner alive")
-      XCTAssertEqual(firstPanel["socketKey"]?.stringValue, first.status.socketKey)
+      XCTAssertEqual(firstRead["values"]?.array.first?["workspaceID"]?.stringValue?.lowercased(), firstID.uuidString.lowercased(),
+        "Opening a second workspace keeps the first addressed MCP owner alive")
       let selected = try await send(.init(action: .select, id: firstID))
       XCTAssertEqual(selected.status.workspaceID, firstID); XCTAssertNil(selected.error)
       let renamed = try await send(.init(action: .rename, id: firstID, name: "Записи"))

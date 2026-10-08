@@ -3,7 +3,7 @@ import {mkdtemp,rm} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {Client,InMemoryTransport} from "@modelcontextprotocol/client";
-import {createServer} from "./panel-fixture.js";
+import {createServer} from "../src/server.js";
 import {runBridge} from "../src/bridge.js";
 import {writeFixture,fixtureSocket,stopFixture} from "./fixture.js";
 
@@ -15,12 +15,12 @@ try {
   await writeFixture(root);
   const socket=fixtureSocket(root),server=createServer(socket);
   const [c,s]=InMemoryTransport.createLinkedPair();await server.connect(s);await client.connect(c);
-  assert.deepEqual((await client.listTools()).tools.map(t=>t.name).sort(),["notebook_context","notebook_execute","notebook_import_document","notebook_import_document_resource","notebook_import_program","notebook_open","notebook_panel_changes","notebook_panel_connect","notebook_panel_edit","notebook_panel_presentation","notebook_panel_undo","notebook_panel_workspace"]);
+  assert.deepEqual((await client.listTools()).tools.map(t=>t.name).sort(),["notebook_context","notebook_execute","notebook_import_document","notebook_import_document_resource","notebook_import_program","notebook_workspaces"]);
   const read=await runBridge<{cursor:string;values:unknown[]}>(socket,{command:"read",queries:[{kind:"workspaceHeader"},{kind:"presence"}]});
   assert.equal(read.values.length,2);
   const absent=await client.callTool({name:"notebook_context",arguments:{method:"help"}});
   assert.equal(absent.isError,true);
   assert.equal((absent.structuredContent as any).code,"script_owner_unavailable");
-  console.log(JSON.stringify({status:"ready",scope:"two-tool registration + isolated Core IPC; native XPC is a separate test",cursor:read.cursor}));
+  console.log(JSON.stringify({status:"ready",scope:"domain-tool registration + isolated Core IPC; native XPC is a separate test",cursor:read.cursor}));
   await server.close();
 } finally {await client.close();await stopFixture(root);await rm(root,{recursive:true,force:true});}

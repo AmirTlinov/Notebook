@@ -1,6 +1,6 @@
 {
   "name": "notebook-mcp",
-  "version": "0.3.40",
+  "version": "0.3.42",
   "private": true,
   "type": "module",
   "engines": {
@@ -11,10 +11,10 @@
     "check": "tsc --noEmit && node build-script-services.mjs --check",
     "test": "./test/run.sh",
     "smoke": "./test/run.sh smoke",
-    "smoke:installed": "tsx test/installed-smoke.ts"
+    "smoke:installed": "tsx test/installed-smoke.ts",
+    "package:runtime": "node package-runtime.mjs"
   },
   "dependencies": {
-    "@modelcontextprotocol/ext-apps": "2.0.3",
     "@modelcontextprotocol/server": "^2.0.0",
     "@xterm/addon-fit": "0.11.0",
     "@xterm/xterm": "6.0.0",
@@ -29,7 +29,6 @@
     "@types/d3": "7.4.3",
     "@types/node": "^26.4.0",
     "@types/three": "0.186.0",
-    "@webgpu/types": "0.1.74",
     "esbuild": "0.28.2",
     "jsdom": "26.1.0",
     "parse5": "8.0.0",

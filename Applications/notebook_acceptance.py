@@ -234,7 +234,6 @@ def build(args):
     typescript_runtime = release.prepare_typescript_runtime(snapshot, release.release_commands(evidence))
     codex_runtime = release.prepare_codex_runtime(snapshot, release.release_commands(evidence),
         stage_root=ROOT / ".build/notebook-codex-runtimes")
-    surface_stage = release.prepare_surface_stage(ROOT, release.release_commands(evidence))
     run(["xcodegen", "generate", "--spec", "project.yml"], cwd=snapshot / "Applications", output=evidence / "project.log")
     for platform, scheme, destination in (("ipad", "NotebookAcceptance", "platform=iOS Simulator,id=" + args.simulator),
                                            ("mac", "NotebookRuntime", "platform=macOS,arch=arm64")):
@@ -259,7 +258,6 @@ def build(args):
         if platform == "mac":
             command.append("NOTEBOOK_TYPESCRIPT_RUNTIME=" + str(typescript_runtime))
             command.append("NOTEBOOK_CODEX_RUNTIME=" + str(codex_runtime))
-            command.append("NOTEBOOK_SURFACE_STAGE=" + str(surface_stage))
         run(command + ["build-for-testing" if platform == "ipad" else "build"], output=evidence / (platform + "-build.log"))
         if platform == "mac":
             mac_app = evidence / "derived/mac/Build/Products/Release/NotebookRuntime.app"

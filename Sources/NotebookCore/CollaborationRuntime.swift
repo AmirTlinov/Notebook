@@ -407,30 +407,6 @@ extension NotebookStore {
     return request
   }
 
-  /// Retire the previous panel's derived camera jobs before the target queue
-  /// decodes them as ordinary render requests. Saved user material is untouched.
-  @discardableResult
-  public func retireObsoletePanelRenderRequests() throws -> Int {
-    let obsolete: [UUID] = try commandTransaction {
-      var entries: [(path: String, id: UUID)] = []
-      for row in try currentSQL!.rows("SELECT address FROM metadata_index WHERE kind='renderRequest'") {
-        let path = String(row[0].text!.dropLast())
-        guard let value = try storedValue(path), let projection = value["panelProjection"], projection != .null else { continue }
-        guard let id = value["id"]?.string.flatMap(UUID.init(uuidString:)) else {
-          throw NotebookStorageError.corruptRecord("panel render request")
-        }
-        entries.append((path, id))
-      }
-      if !entries.isEmpty { try publishRecords(writes: [:], removals: entries.map(\.path)) }
-      return entries.map(\.id)
-    }
-    for id in obsolete {
-      try? FileManager.default.removeItem(at: targetPNGURL(id))
-      try? FileManager.default.removeItem(at: targetReceiptURL(id))
-    }
-    return obsolete.count
-  }
-
   public func targetRenderRequests(target: CollaborationTarget? = nil, afterID: UUID? = nil, limit: Int = 80) throws -> [TargetRenderRequest] {
     guard (1...128).contains(limit) else { throw NotebookStorageError.limitExceeded("render_request_page") }
     return try readTransaction { _ in

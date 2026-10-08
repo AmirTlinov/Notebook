@@ -9,7 +9,7 @@ public struct NotebookReadCommand: Sendable {
     switch kind {
     case .search, .read, .contexts, .action, .actions, .continuations,
       .referenceStatus, .referenceStatuses, .actionDetails, .reference,
-      .delivery, .artifact, .scriptArtifact, .panelRead, .panelChanges, .prepareAction: true
+      .delivery, .artifact, .scriptArtifact, .prepareAction: true
     default: false
     }
   }
@@ -54,15 +54,6 @@ public struct NotebookReadCommand: Sendable {
       guard request.artifact != nil else {
         throw CollaborationError("invalid_artifact", "Нужен точный адрес изображения.")
       }
-    case .panelRead:
-      guard request.panelRead != nil else {
-        throw CollaborationError("invalid_panel_request", "Нужен адресованный запрос панели.")
-      }
-    case .panelChanges:
-      guard let changes = request.panelChanges else {
-        throw CollaborationError("invalid_panel_request", "Нужен адресованный запрос ожидания панели.")
-      }
-      try changes.validated()
     case .actionDetails:
       guard request.actionID != nil || request.actionPage?.section == nil else {
         throw CollaborationError("action_required", "Раздел квитанции требует actionID.")

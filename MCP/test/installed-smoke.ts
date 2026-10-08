@@ -3,8 +3,7 @@ import {spawnSync} from "node:child_process";
 import {Client} from "@modelcontextprotocol/client";
 import {StdioClientTransport,getDefaultEnvironment} from "@modelcontextprotocol/client/stdio";
 
-// Read through the installed plugin's actual launch route, including admission
-// of its bundled runtime. No separately installed application is consulted.
+// Read through the configured MCP launch route and its signed runtime admission.
 const client=new Client({name:"notebook-installed-proof",version:"1"});
 const environment=getDefaultEnvironment();delete environment.NOTEBOOK_SOCKET;
 const configured=spawnSync(process.env.CODEX_BIN??"codex",["mcp","get","notebook","--json"],{encoding:"utf8"});
@@ -17,7 +16,7 @@ for(const name of env_vars??[])if(process.env[name]!==undefined)environment[name
 const transport=new StdioClientTransport({command,args,env:{...environment,...env},...(cwd?{cwd}:{}),stderr:"pipe"});
 try {
   await client.connect(transport);
-  assert.deepEqual((await client.listTools()).tools.map(t=>t.name).sort(),["notebook_context","notebook_execute","notebook_import_document","notebook_import_document_resource","notebook_import_program","notebook_open","notebook_panel_changes","notebook_panel_connect","notebook_panel_edit","notebook_panel_presentation","notebook_panel_undo","notebook_panel_workspace"]);
+  assert.deepEqual((await client.listTools()).tools.map(t=>t.name).sort(),["notebook_context","notebook_execute","notebook_import_document","notebook_import_document_resource","notebook_import_program","notebook_workspaces"]);
   const help=await client.callTool({name:"notebook_context",arguments:{method:"help",args:{topic:"operation/insertElement"}}});
   assert.notEqual(help.isError,true,JSON.stringify(help));assert.match(JSON.stringify(help.structuredContent),/"nativeText"/);
   const deadline=Date.now()+30_000;
@@ -33,5 +32,5 @@ try {
   const runtime=await client.callTool({name:"notebook_context",arguments:{method:"read",args:{kind:"runtime"}}});
   assert.equal((runtime.structuredContent as any)?.value?.data?.status,"connected");
   assert.ok(result?.content.some(block=>block.type==="image"));
-  console.log(JSON.stringify({status:"ready",scope:"installed plugin and paired workspace",image:"ready",runtime:"connected"},null,2));
+  console.log(JSON.stringify({status:"ready",scope:"configured MCP and paired workspace",image:"ready",runtime:"connected"},null,2));
 } finally {await client.close();}

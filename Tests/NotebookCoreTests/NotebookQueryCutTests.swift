@@ -4,24 +4,23 @@ import Testing
 
 @Suite("Borrowed query cuts")
 struct NotebookQueryCutTests {
-  @Test func panelAndPixelReadsBorrowOneCutAndExpireWithoutAcceptingWrites() throws {
+  @Test func contentAndPixelReadsBorrowOneCutAndExpireWithoutAcceptingWrites() throws {
     try fixture { store in
       let workspace = try store.loadIndex(), item = try #require(workspace.items.first)
-      let pageID = try #require(item.pageIDs.first), header = try store.workspaceHeader(), actor = header.stamp.actor
+      let pageID = try #require(item.pageIDs.first), header = try store.workspaceHeader()
       let target = CollaborationTarget(kind: .page, id: pageID)
-      let request = NotebookPanelReadRequest(workspaceID: header.workspaceID, target: target)
-      let presentation = NotebookPanelPresentationRequest(workspaceID: header.workspaceID, target: target,
-        appearance: .init(viewport: .init(x: 640, y: 480), pixelScale: 1))
+      var request = NotebookCommand(command: .read)
+      request.queries = [.init(kind: .workspaceHeader)]
+      let read = try NotebookReadCommand(request)
       let records = try store.readSpatialInkWindowRecords(coverage: [:], pinnedActionIDs: [], elementIDs: [:])
       let before = try store.currentReadCursor(), revision = try store.referenceRevision(target: target)
       let bounds = WorkspaceSpatialBounds(origin: .zero, width: 100, height: 100)
       let expired = try NotebookReadSession(store: store).observe { cut in
         let actualRevision = try cut.referenceRevision(target: target)
-        let page = try cut.loadPage(pageID), panel = try cut.readPanel(request, actor: actor)
-        let projected = try cut.requestPanelPresentation(presentation)
-        #expect(actualRevision == revision && page.id == pageID && projected.target == target)
-        let encoded = try JSONValue.encode(target)
-        #expect(panel["target"] == encoded)
+        let page = try cut.loadPage(pageID), content = try cut.readContentHeader(target: target)
+        let result = try cut.handle(read)
+        #expect(actualRevision == revision && page.id == pageID && content.target == target)
+        #expect(result["values"]?.array.first?["workspaceID"] == .string(header.workspaceID.uuidString))
         let node = try cut.readBoardNodeHeader(header.rootBoardID), owner = try cut.readBoardItem(item.id)
         #expect(node?.id == header.rootBoardID && owner?.id == header.rootBoardID)
         let hasContent = try cut.boardHasContent(header.rootBoardID)
@@ -34,8 +33,8 @@ struct NotebookQueryCutTests {
       }
       expectExpired { _ = try expired.loadPage(pageID) }
       expectExpired { _ = try expired.referenceRevision(target: target) }
-      expectExpired { _ = try expired.readPanel(request, actor: actor) }
-      expectExpired { _ = try expired.requestPanelPresentation(presentation) }
+      expectExpired { _ = try expired.handle(read) }
+      expectExpired { _ = try expired.readContentHeader(target: target) }
       expectExpired { _ = try expired.readBoardNodeHeader(header.rootBoardID) }
       expectExpired { _ = try expired.readBoardItem(item.id) }
       expectExpired { _ = try expired.boardHasContent(header.rootBoardID) }
@@ -80,8 +79,7 @@ struct NotebookQueryCutTests {
   @Test func immutableReadCommandRefusesEveryMutationAndRetainsItsOriginalRequest() throws {
     let prohibited: [NotebookCommand.Kind] = [.apply, .admitAction, .commitAction, .undo, .point,
       .placement, .render, .pageVision, .presentation, .script, .scriptContext,
-      .importProgram, .importDocument, .importDocumentResource, .panelEdit, .panelUndo,
-      .panelPresentation, .runtimeStatus, .runtimeWorkspace]
+      .importProgram, .importDocument, .importDocumentResource, .runtimeStatus, .runtimeWorkspace]
     for kind in prohibited {
       #expect(!NotebookReadCommand.accepts(kind))
       do {
@@ -91,7 +89,7 @@ struct NotebookQueryCutTests {
     }
     let allowed: [NotebookCommand.Kind] = [.search, .read, .contexts, .action, .actions,
       .continuations, .referenceStatus, .referenceStatuses, .actionDetails, .reference,
-      .delivery, .artifact, .scriptArtifact, .panelRead, .prepareAction]
+      .delivery, .artifact, .scriptArtifact, .prepareAction]
     #expect(allowed.allSatisfy(NotebookReadCommand.accepts))
     try fixture { store in
       var wire = NotebookCommand(command: .read); wire.queries = [.init(kind: .workspaceHeader)]

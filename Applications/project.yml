@@ -25,7 +25,6 @@ settings:
     NOTEBOOK_CLOUD_CONTAINER: ""
     NOTEBOOK_TYPESETTER_RUNTIME: $(SRCROOT)/../.build/notebook-typesetter-runtime
     NOTEBOOK_CODEX_RUNTIME: ""
-    NOTEBOOK_SURFACE_STAGE: $(SRCROOT)/../.build/surface
 
 targets:
   Notebook:
@@ -100,8 +99,8 @@ targets:
         PRODUCT_NAME: Notebook
         OTHER_LDFLAGS: "$(inherited) $(NOTEBOOK_TYPESETTER_RUNTIME)/$(PLATFORM_NAME)/libnotebook_typesetter_runtime.a -liconv -lresolv -framework Security"
         NOTEBOOK_DISPLAY_NAME: Notebook
-        MARKETING_VERSION: 0.3.190
-        CURRENT_PROJECT_VERSION: 260
+        MARKETING_VERSION: 0.3.192
+        CURRENT_PROJECT_VERSION: 262
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_ENTITLEMENTS: $(NOTEBOOK_IPAD_ENTITLEMENTS)
         DEVELOPMENT_TEAM: M94V58FCVP
@@ -204,26 +203,17 @@ targets:
           - $(SRCROOT)/NotebookCodexResources.xcfilelist
       - name: Bundle Notebook tools
         script: |
-          /usr/bin/env node "$SRCROOT/../MCP/build-sidecar.mjs" "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/NotebookTools"
+          /usr/bin/env node "$SRCROOT/../MCP/build-sidecar.mjs" "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/NotebookTools" "$TARGET_TEMP_DIR"
         inputFiles:
           - $(SRCROOT)/../MCP/src
-          - $(SRCROOT)/../MCP/panel
           - $(SRCROOT)/../MCP/package.json
           - $(SRCROOT)/../MCP/package-lock.json
           - $(SRCROOT)/../MCP/build-sidecar.mjs
-          - $(SRCROOT)/../MCP/build-panel.mjs
-          - $(SRCROOT)/../MCP/panel-bundle.mjs
-          - $(SRCROOT)/../MCP/plugin/notebook/plugin.json
-          - $(SRCROOT)/../MCP/build-surface.mjs
-          - $(SRCROOT)/../Package.swift
-          - $(SRCROOT)/../Sources/NotebookSurface
-          - $(SRCROOT)/../Sources/NotebookSurfaceWasm
-          - $(NOTEBOOK_SURFACE_STAGE)
         outputFiles:
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/NotebookTools
           - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/NotebookTools/dist/index.mjs
           - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/NotebookTools/dist/launch-runtime.mjs
           - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/NotebookTools/package.json
-          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/NotebookTools/panel-bundle.json
     dependencies:
       - package: NotebookCore
         product: NotebookTypesetter
@@ -242,7 +232,7 @@ targets:
       properties:
         CFBundleDisplayName: Notebook Runtime
         LSUIElement: true
-        NotebookPluginRuntime: true
+        NotebookHeadlessRuntime: true
         UTExportedTypeDeclarations:
           - UTTypeIdentifier: com.amirtlinov.notebook.fragment
             UTTypeDescription: Notebook selection
@@ -272,8 +262,8 @@ targets:
         PRODUCT_NAME: NotebookRuntime
         PRODUCT_MODULE_NAME: Notebook
         OTHER_LDFLAGS: "$(inherited) $(NOTEBOOK_TYPESETTER_RUNTIME)/$(PLATFORM_NAME)/libnotebook_typesetter_runtime.a -liconv -lresolv -framework Security"
-        MARKETING_VERSION: 0.3.190
-        CURRENT_PROJECT_VERSION: 260
+        MARKETING_VERSION: 0.3.192
+        CURRENT_PROJECT_VERSION: 262
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: M94V58FCVP
         GENERATE_INFOPLIST_FILE: false

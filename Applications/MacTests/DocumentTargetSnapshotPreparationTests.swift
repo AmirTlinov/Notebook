@@ -221,7 +221,7 @@ final class DocumentTargetSnapshotPreparationTests: XCTestCase {
       "captureBytes": demand.bytes], name: "borrowed-reader-pressure-result")
   }
 
-  func testMemoryPressureCancelsAutomaticReadButKeepsDurableTargetAndPanelUntilNormalResumes() async throws {
+  func testMemoryPressureCancelsAutomaticReadButKeepsDurableTargetUntilNormalResumes() async throws {
     let resources = SceneRenderResources.shared
     let previousPressure = resources.memoryPressureLevel
     resources.handleMemoryPressure(.normal)
@@ -262,12 +262,9 @@ final class DocumentTargetSnapshotPreparationTests: XCTestCase {
       await withCheckedContinuation { targetContinuation = $0 }
       targetCancelled = Task.isCancelled
     }
-    var panel: Task<JSONValue, any Error>?
-    var panelFinished = false
     defer {
       reading.release()
       let waiting = targetContinuation; targetContinuation = nil; waiting?.resume()
-      panel?.cancel()
       MacPreviewPublisher.acceptanceConfiguration = previousConfiguration
       CurrentViewPreviewWriter.onPageVisionPrepared = previousTargetHook
     }
@@ -276,7 +273,6 @@ final class DocumentTargetSnapshotPreparationTests: XCTestCase {
       ["phase": phase, "automaticReadCount": readCount.value ?? 0,
         "automaticReadCancelled": cancelledRead.value.map { $0 as Any } ?? NSNull(),
         "durableTargetCancelled": targetCancelled.map { $0 as Any } ?? NSNull(),
-        "panelFinished": panelFinished,
         "durableRequestID": request.id.uuidString,
         "currentPreviewExists": FileManager.default.fileExists(atPath: fixture.store.currentViewPreviewURL.path),
         "pressure": String(describing: resources.memoryPressureLevel), "reconciliationSeconds": 3_600]
@@ -298,20 +294,8 @@ final class DocumentTargetSnapshotPreparationTests: XCTestCase {
       XCTAssertTrue(fixture.model.permitsBackgroundPreparation)
       XCTAssertFalse(fixture.model.permitsOptionalPreparation)
       XCTAssertEqual(try fixture.store.targetRenderRequests().map(\.id), [request.id])
-      var command = NotebookCommand(command: .panelPresentation)
-      command.panelPresentation = .init(workspaceID: header.workspaceID,
-        target: .init(kind: .page, id: pageID), appearance: .init(viewport: .init(x: 320, y: 460), pixelScale: 1))
-      let panelCommand = command
-      panel = Task { @MainActor in
-        defer { panelFinished = true }
-        return try await fixture.send(panelCommand)
-      }
       let waiting = targetContinuation; targetContinuation = nil; waiting?.resume()
       phase = "required-publications-under-pressure"
-      try await waitUntil { panelFinished }
-      let panelTask = try XCTUnwrap(panel)
-      let panelResult = try await panelTask.value
-      XCTAssertEqual(try XCTUnwrap(panelResult["target"]).decode(CollaborationTarget.self), .init(kind: .page, id: pageID))
       try await waitUntil { (try? fixture.store.loadTargetRenderReceipt(request.id)) != nil }
       let targetReceipt = try XCTUnwrap(fixture.store.loadTargetRenderReceipt(request.id))
       XCTAssertEqual(targetCancelled, false, "An admitted durable target survives automatic preparation pressure")
@@ -325,7 +309,7 @@ final class DocumentTargetSnapshotPreparationTests: XCTestCase {
         expectedSHA256: targetHash))
       XCTAssertEqual(artifact.path, fixture.store.previewURL(pageID).path)
       XCTAssertNotNil(NSImage(contentsOfFile: artifact.path))
-      XCTAssertNil(try fixture.store.loadCurrentViewReceipt(), "Panel preparation does not revive the optional current-view publication")
+      XCTAssertNil(try fixture.store.loadCurrentViewReceipt(), "The durable target does not revive optional current-view publication")
       phase = "normal-event-resumes-without-timer"
       resources.handleMemoryPressure(.normal)
       try await waitUntil { (try? fixture.store.loadCurrentViewReceipt()) != nil }

@@ -73,8 +73,8 @@ Python and Node retain per-test outcomes. An unmatched selector, incomplete or
 malformed report, selected skip, changed argv/source or missing prerequisite
 refuses the receipt. `./verify.sh:selected` names the selected scope; `./verify.sh`
 names all registry contracts. Neither receipt certifies physical acceptance.
-Runtime admission and document publication are native checks; the real Codex panel
-has separate host acceptance. Historical reports cannot become receipts retroactively.
+Runtime admission and document publication are native checks; direct MCP has an
+installed transport check, and user interactions are accepted on the physical iPad. Historical reports cannot become receipts retroactively.
 
 Selected iPad verification installs signed Debug `.native-test` on the physical
 release device. The selector removes that exact test identity before and after the
@@ -95,7 +95,7 @@ The builder verifies current inputs, its own executable code and all evidence,
 retaining the selected/full distinction in `verificationRoute`. It creates an
 independent source copy, installs locked MCP dependencies without install scripts
 and builds Release iPad, then `NotebookRuntime`. It packages the signed runtime
-with the plugin metadata under `plugin/notebook/runtime/NotebookRuntime.app`;
+under `runtime/NotebookRuntime.app`;
 `build.json` identifies that payload and both native products. Packaging preserves
 the signed bytes. Xcode, Swift, SDK, XcodeGen, Node and npm must
 match verification and remain unchanged.
@@ -107,19 +107,15 @@ Mac build phases receive that exact stage, not a fresh network-only copy.
 and pair builds. Both platforms use that same resolved path; without an override
 the checkout's `.build/notebook-typesetter-runtime` remains the default. The
 preparer verifies source identity and resources before reusing a stage.
-The browser Swift module is also compiled before Xcode. `NOTEBOOK_SURFACE_STAGE`
-points at the original checkout's prepared WASM and receipt. The Mac bundle
-phase verifies that receipt against the snapshot's inputs and module bytes;
-the Xcode script sandbox remains enabled.
 
 Both apps require genuine Apple Development signatures from team `M94V58FCVP`,
 matching pair versions and exact bundle identities:
 
 - iPad: `com.amirtlinov.notebook.preview`, its existing Keychain group and a profile
   admitting the certificate and designated physical device.
-- Plugin runtime: `com.amirtlinov.notebook.mac`, arm64, `LSUIElement` and
-  `NotebookPluginRuntime`. It bundles the MCP server and runs AppKit for system
-  document adapters without a Dock icon or workspace window. Closing a panel
+- MCP runtime: `com.amirtlinov.notebook.mac`, arm64, `LSUIElement` and
+  `NotebookHeadlessRuntime`. It bundles the MCP server and runs AppKit for system
+  document adapters without a Dock icon or workspace window. Closing a MCP connection
   leaves storage, transport and active agent work alive.
 
 Both signatures require `iCloud.com.amirtlinov.notebook`, CloudKit and Production;
@@ -206,7 +202,7 @@ claim. The preparer is a build prerequisite, not a live-runtime startup path.
 
 Selected checks that use Node and signed pair builds prepare that stage once
 before probing tools. The recorded command environment puts its exact directory
-first on PATH; explicit Node probes and plugin packaging use `<stage>/node`.
+first on PATH; explicit Node probes and runtime packaging use `<stage>/node`.
 Receipts bind both version probes and the scoped PATH to the checked source pin.
 Pure Python selections retain their existing prerequisites.
 
@@ -231,8 +227,7 @@ and acceptance Xcode builds. Xcode has no default cache lookup. Bundling checks
 the source and copied output against the same lock; release rechecks the final
 bundle and records the identity in `build.json` and signature evidence. Selected
 verification records that identity only when it actually admits Codex, and binds
-the command, stage and receipt to the source pin. Existing final plugin
-publication and installer owners remain unchanged.
+the command, stage and receipt to the source pin. The release owner publishes and verifies this same signed runtime.
 
 ## Build versus installation
 
@@ -250,12 +245,11 @@ python3 -B Applications/notebook_release.py install-pair \
 
 The installer completes device, signature and storage preflight before requesting
 the installed runtime's saved quit. It admits only bundle paths resolved from the
-current publication and Codex cache, matching the IPC peer's kernel audit token,
+installed runtime path, matching the IPC peer's kernel audit token,
 running path and CDHash. Token-bound SIGTERM cannot target a reused PID. The same
-writer-lease FD stays held through publication, plugin installation and cached
-payload validation. Up to three verified relaunches may be retired; unsaved work,
+writer-lease FD stays held through publication, direct MCP registration and
+installed payload validation. Up to three verified relaunches may be retired; unsaved work,
 an unknown owner or a 30-second drain timeout refuses publication without force.
-On the first plugin transition, unregister the former Notebook login item.
 Downgrades and changed signed bytes refuse installation. The installer then
 updates iPad in place and reads back its identity. Unknown outcomes remain
 `incomplete`; it never restores data or retries an uncertain installation.
@@ -272,34 +266,16 @@ without a provable catalog refuses installation. App-group IDs stay unchanged;
 iPadOS container paths and SQLite/WAL sizes are diagnostic. The installer reads
 only the small catalog and file metadata, never copies SQLite or archives.
 
-`MCP/plugin` is authored input. `install-pair` publishes its frozen metadata and
-signed runtime together into `~/Library/Application Support/NotebookPlugin/marketplace`.
-The publisher validates the copied package before atomically changing the catalog
-pointer to `releases/<version>/notebook`. A version binds all metadata and runtime
-bytes; reusing it for changed content is refused. Installation scripts come from
-the verified snapshot. Edits in the primary checkout cannot change a published pair.
-After the complete installed pair is confirmed, obsolete published packages are
-removed; Codex's own cache and active connections remain host-owned.
+`install-pair` publishes the signed runtime into
+`~/Library/Application Support/NotebookRuntime/NotebookRuntime.app` and registers
+its bundled Node/launcher with `codex mcp add notebook`. The publisher verifies
+the staged payload before atomic replacement; changed bytes under an already
+published build are refused. Installer code comes from the verified source copy.
+There is one release owner and one runtime publication path.
 
-Before the next authored version change, migrate an existing source registration once:
-
-```sh
-python3 -B Applications/notebook_release.py migrate-plugin-source \
-  --source-root "$PWD" --evidence-dir /absolute/new-migration-directory
-```
-
-This adopts the currently installed signed cache as the first immutable publication,
-then uses official `codex plugin marketplace remove/add` commands to retain the
-`notebook@notebook-local` identity, version and enabled state at the new source.
-It does not reinstall the plugin or change its cache. A failed registration restores
-the previous source; an unfinished transition keeps a pinned receipt for the next
-invocation with a new evidence directory. The catalog can briefly
-disappear between the two CLI commands. Existing chats reconnect through the host's
-normal lifecycle. Complete this transition before bumping the manifest; each later
-native pair receives a new plugin version and is released only by `install-pair`.
-The release owner holds an OS `flock` shared with its Node adapter and Codex CLI
-through an inherited descriptor. The last process exit releases it; the next admitted attempt discards unpublished
-copy stages. There is no persistent directory lock to remove after a crash.
+Publication holds an OS `flock` shared with its Node adapter through an inherited
+descriptor. The last process exit releases it; the next admitted attempt handles
+unfinished copy stages. No persistent directory lock requires manual removal.
 Verify the live IPC peer and current data/trust separately after delivery.
 
 Ordinary in-place updates preserve containers, identities and keys.

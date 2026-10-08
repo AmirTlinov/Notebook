@@ -1230,13 +1230,6 @@ final class NotebookAppModel {
         && $0.publication == nil }
   }
   #if os(macOS)
-    /// The foreground Codex reader owns its pinned stored cut. Local input and
-    /// shutdown keep their preparation fence; remote contact owns publication
-    /// to its device independently from this read.
-    var permitsPanelPreparation: Bool {
-      loadState == .ready && !isStopped && !inputIsActive
-    }
-
     @ObservationIgnored var codexHost: NotebookCodexHost?
     @ObservationIgnored private var codexSidecar: NotebookCodexSidecar?
     @ObservationIgnored private var codexStartupTask: Task<Void, Never>?
@@ -1339,9 +1332,6 @@ final class NotebookAppModel {
       if message == nil, let cloudSync { Task { await cloudSync.writerRecovered() } }
     }
     persistence.onContentMerged = { [weak self] in
-      #if os(macOS)
-        self?.previewPublisher?.panelContentDidCommit()
-      #endif
       self?.reloadExternalChanges()
     }
     persistence.onCommit = { [weak self] owner in self?.didCommitDurableChanges(owner: owner) }
@@ -1388,9 +1378,6 @@ final class NotebookAppModel {
 
   private func didCommitDurableChanges(owner: NotebookPersistenceQueue.Owner?) {
     guard !isStopped else { return }
-    #if os(macOS)
-      previewPublisher?.panelContentDidCommit()
-    #endif
     sync?.notifyDurableChanges()
     if let cloudSync { Task { await cloudSync.notifyLocalChanges() } }
     switch owner {
@@ -5231,32 +5218,9 @@ final class NotebookAppModel {
         }
         return try presentationRelay.handle(command)
       }
-      if command.command == .panelPresentation || command.command == .panelChanges {
-        guard let publisher = previewPublisher,
-          let socket = commandSocketURL else {
-          throw CollaborationError("owner_unavailable", "Представление Notebook ещё не готово.")
-        }
-        let result: JSONValue
-        if command.command == .panelChanges, let request = command.panelChanges {
-          _ = try NotebookReadCommand(command)
-          result = try await publisher.panelChanges(request)
-        } else if command.command == .panelPresentation, let request = command.panelPresentation {
-          result = try await publisher.panelPresentation(request)
-        } else { throw CollaborationError("invalid_panel_request", "Запрос панели отсутствует.") }
-        guard case .object(var fields) = result else {
-          throw CollaborationError("invalid_panel_presentation", "Представление Notebook не содержит адреса.")
-        }
-        fields["socketKey"] = .string(socket.deletingPathExtension().lastPathComponent)
-        return .object(fields)
-      }
       if NotebookReadCommand.accepts(command.command) {
-        let request = try NotebookReadCommand(command), nativeActor = actorID
-        var result = try await readCommandCut { try $0.handle(request, nativeActor: nativeActor) }
-        if command.command == .panelRead, let socket = commandSocketURL, case .object(var fields) = result {
-          fields["socketKey"] = .string(socket.deletingPathExtension().lastPathComponent)
-          result = .object(fields)
-        }
-        return result
+        let request = try NotebookReadCommand(command)
+        return try await readCommandCut { try $0.handle(request) }
       }
       let deadline = ContinuousClock.now.advanced(by: .seconds(4))
       while true {
@@ -5265,9 +5229,8 @@ final class NotebookAppModel {
         // affected surface waits outside the FIFO so its release can commit.
         do {
           guard permitsExternalWork else { throw CollaborationError("owner_unavailable", "Notebook завершает работу.") }
-          let nativeActor = actorID
           let result = try await persistence.submit(owner: .command(command.command)) {
-            try NotebookCommandDispatcher(store: $0, nativeActor: nativeActor).handle(command)
+            try NotebookCommandDispatcher(store: $0).handle(command)
           }
           if command.changesStore { reloadExternalChanges() }
           return result
