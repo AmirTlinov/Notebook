@@ -1,0 +1,111 @@
+{
+  "attempts": [
+    {
+      "cause": "Fixture sample map exceeded Swift type-check work.",
+      "executedCases": 0,
+      "path": ".build/nb02-original-body-and-dependencies-core-20261008-v1",
+      "repair": "Typed sample locals; production unchanged.",
+      "sourceSHA256": "547223dc55edeb68996d7bfcefb8c0599e3b37bc6728d49d0d4b559013d21092",
+      "status": "compile_failed"
+    },
+    {
+      "cause": "Swift Testing closure macro function-type mismatch.",
+      "executedCases": 0,
+      "path": ".build/nb02-original-body-and-dependencies-core-20261008-v2",
+      "repair": "Find optionals before #require; production unchanged.",
+      "sourceSHA256": "e735c01e796bdb66d1138a46b7f889960b890a0070821cfd533e71f2caad1e26",
+      "status": "compile_failed"
+    },
+    {
+      "cause": "Depth257 malformed-header fixture encoded a deep source witness with Foundation before entering the bounded reader (SIGBUS).",
+      "path": ".build/nb02-original-body-and-dependencies-core-20261008-v3",
+      "repair": "Use a valid shallow original witness while preserving the malformed header; production unchanged.",
+      "sourceSHA256": "ab8f739a4c02d9f5000e1efeb1444cdbded84e7c1c7f5ecb0d22492ce575549f",
+      "status": "fixture_crash"
+    },
+    {
+      "cause": "Frozen typed receipts are self-contained rather than split; existing65k cold replay refused.",
+      "executedFunctions": 44,
+      "issueCount": 7,
+      "path": ".build/nb02-original-body-and-dependencies-core-20261008-v4",
+      "repair": "Correct authentic receipt fixture and add a separate split raw-body proof; repair native replay through existing model/result owners.",
+      "sourceSHA256": "5b4fe48f409f41203d755d31bc689fe5ed05d25cf314db5b56de0ef4b1de6f51",
+      "status": "failed"
+    },
+    {
+      "cause": "Cold replay copied the >8MiB raw receipt.",
+      "path": ".build/nb02-native-contact-stage-20261008-v1",
+      "repair": "Bounded hash-bound model replay; preserve full original scenario.",
+      "sourceSHA256": "ace951e33acef0ae0e1867747c3948519306a0835e1d3af06647664e53240afc",
+      "stageReached": "replay after reopen",
+      "status": "failed"
+    },
+    {
+      "cause": "Full65k Undo still eagerly reads the raw receipt and full projections.",
+      "path": ".build/nb02-native-contact-stage-20261008-v2",
+      "repair": "Open GUI486 event/birth publication slice; no budget increase or scenario weakening.",
+      "sourceSHA256": "4c1884b4d6edad42e570a574af2f4a547157ffcb7964e852b2daba5586044249",
+      "stagePassed": [
+        "first acceptance",
+        "replay after reopen",
+        "exact authored body read"
+      ],
+      "stageReached": "undo",
+      "status": "failed",
+      "stillOpen": true
+    },
+    {
+      "cause": "New literal fixture caught the wrong parent reason; public model reader imposed native policy on a broader snapshot; old-schema fixture retained new recipe guards.",
+      "executedFunctions": 54,
+      "issueCount": 4,
+      "path": ".build/nb02-original-body-and-dependencies-core-20261008-v5",
+      "repair": "Keep outer refusal reason, move native policy to owning Panel callsite and bound only the model JSON value, remove current recipe guards/marker only in isolated old-schema fixture.",
+      "sourceSHA256": "b2c1a8ea4b304827870fd2f18bb2211edce0eb2e948e47ac3da05f621facd949",
+      "status": "failed"
+    },
+    {
+      "cause": "Exact clean common main f926 isolated stores: sourceComparison passed; old-schema recipe fixture and full65k scenario failed.",
+      "ephemeralWorktree": "archival requested after raw evidence preservation",
+      "executedCases": 3,
+      "executedFunctions": 3,
+      "failedCases": 2,
+      "passed": [
+        "sourceComparisonPreservesHumanContinuationWithoutRetainingTheOldSource"
+      ],
+      "path": ".build/nb02-exact-main-counterfactual-20261008-v1",
+      "repair": "Preserves causality: sourceComparison regression was introduced and repaired; the other two failures existed before this slice.",
+      "sourceSHA256": "7db3b40a307b1085133caed49ffcffa483258439d0f39e445b11aeb38113676e",
+      "status": "counterfactual_with_expected_failures"
+    },
+    {
+      "cause": "Final selected source slice.",
+      "executedCases": 99,
+      "executedFunctions": 54,
+      "failedCases": 0,
+      "path": ".build/nb02-original-body-and-dependencies-core-20261008-v6",
+      "repair": "",
+      "skippedCases": 0,
+      "sourceSHA256": "6abc100c49baa928714c87a318c8cd9f187e6f80255be301f1f50ff5263d8fb3",
+      "status": "passed"
+    },
+    {
+      "cause": "Strict TypeScript found a possibly undefined first receipt in the synthetic schema fixture.",
+      "executedNativeIPCCases": 0,
+      "path": ".build/nb02-original-body-mcp-20261008-v6",
+      "repair": "Assert the receipt exists before field access; Core production/tests unchanged.",
+      "sourceSHA256": "6abc100c49baa928714c87a318c8cd9f187e6f80255be301f1f50ff5263d8fb3",
+      "status": "typescript_fixture_failed"
+    },
+    {
+      "cause": "Final actual isolated IPC/SDK contract.",
+      "executedCases": 3,
+      "failedCases": 0,
+      "path": ".build/nb02-original-body-mcp-20261008-v7",
+      "repair": "",
+      "skippedCases": 0,
+      "sourceSHA256": "8a66b73e32aec6bf7351aa0e4d313937284c3c98715f0f4f61263e8be205119b",
+      "status": "passed"
+    }
+  ],
+  "format": 1
+}

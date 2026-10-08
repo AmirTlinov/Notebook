@@ -1,0 +1,20 @@
+{
+  "buildOrLiveStoreAccessByReviewer": false,
+  "format": 1,
+  "outsideScopePending": [
+    "Complete native65k Undo and action-event/birth migration",
+    "Physical/current-fleet and joint acceptance"
+  ],
+  "resolved": [
+    "Raw delivery hash preserves unknown source JSON",
+    "Original witness binds immutable source roots; canonical streaming stops at first mismatch",
+    "Short aliases, empty collection depth and unlisted member amplification bounded before allocation",
+    "Cold ink uses actual codec nodes; cached output still debits the parent cut",
+    "Nullable native replay authenticates the existing receipt-hash-bound model and returns the original immutable result",
+    "Native allowance policy remains at its Panel owner; point JSON ceiling only charges existing aggregate credit",
+    "Isolated old-schema fixture has consistent recipe guards/marker"
+  ],
+  "reviewer": "verification_registry",
+  "route": "independent source-only ownership/accounting/contract review",
+  "selectedScopeBlockers": []
+}

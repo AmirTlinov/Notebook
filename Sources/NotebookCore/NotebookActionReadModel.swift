@@ -188,12 +188,44 @@ extension NotebookStore {
   }
 
   public func actionReadModel(_ id: UUID) throws -> NotebookActionReadModel {
+    guard let model = try actionReadModelIfPresent(id) else {
+      throw CollaborationError("target_missing", "Ход не найден: \(id)")
+    }
+    return model
+  }
+
+  /// Replay needs the writer's hash-bound identity, not its authored source
+  /// body. A missing root is absence; an existing root without a valid model
+  /// remains a refusal and cannot authorize a second execution of the ID.
+  func actionReadModelIfPresent(_ id: UUID) throws -> NotebookActionReadModel? {
     try readTransaction { _ in
-      let address = "collaboration/actions/" + id.uuidString.lowercased() + ".json#"
-      guard let row = try currentSQL!.rows("SELECT m.value FROM records r LEFT JOIN action_read_models m ON r.address=m.address AND r.hash=m.receipt_hash WHERE r.address=?", [.text(address)]).first
-        else { throw CollaborationError("target_missing", "Ход не найден: \(id)") }
-      guard let data = row[0].blob else { throw NotebookStorageError.corruptRecord("action read model: " + address) }
-      return try JSONDecoder().decode(NotebookActionReadModel.self, from: data)
+      let database = currentSQL!, file = "collaboration/actions/" + id.uuidString.lowercased() + ".json"
+      let address = file + "#", refusal = NotebookStorageError.corruptRecord("action read model: " + address)
+      guard let row = try database.rows("""
+        SELECT CASE WHEN typeof(r.hash)='text' AND length(CAST(r.hash AS BLOB))=64 THEN r.hash END,
+          CASE WHEN typeof(m.receipt_hash)='text' AND length(CAST(m.receipt_hash AS BLOB))=64 THEN m.receipt_hash END,
+          CASE WHEN r.file=? AND r.parent IS NULL AND r.collection='' AND r.member=''
+            AND typeof(r.position)='integer' AND r.position=0
+            AND typeof(b.data)='blob' AND length(b.data) BETWEEN 1 AND 268435456 THEN 1 ELSE 0 END,
+          typeof(m.value),length(m.value)
+        FROM records r LEFT JOIN action_read_models m ON m.address=r.address
+          LEFT JOIN blobs b ON b.hash=r.hash WHERE r.address=?
+        """, [.text(file), .text(address)]).first else { return nil }
+      guard let hash = row[0].text, NotebookPageOrderRegister.validHash(hash), row[1].text == hash,
+        row[2].integer == 1, row[3].text == "blob", let byteCount = row[4].integer, byteCount > 0 else {
+        throw refusal
+      }
+      guard byteCount <= 8 * 1_024 * 1_024 else { throw NotebookStorageError.limitExceeded("action_read_model") }
+      guard let data = try database.rows("SELECT value FROM action_read_models WHERE address=? AND receipt_hash=?",
+        [.text(address), .text(hash)]).first?[0].blob, data.count == Int(byteCount) else { throw refusal }
+      try database.admitJSONDecode(data, maximumAllocationBytes: NotebookSQLReadAllowance.agentCommand.jsonDecodeBytes)
+      let model: NotebookActionReadModel
+      do { model = try JSONDecoder().decode(NotebookActionReadModel.self, from: data) }
+      catch is DecodingError { throw refusal }
+      guard model.id == id, NotebookPageOrderRegister.validHash(model.actionVersion),
+        model.requestFingerprint.map(NotebookPageOrderRegister.validHash) ?? true else { throw refusal }
+      try database.checkReadAllowance()
+      return model
     }
   }
 

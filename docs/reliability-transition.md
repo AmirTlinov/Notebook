@@ -35,11 +35,14 @@ from `change_log` and `received_transactions` in one existing readonly cut (max6
 `coverage.next` binds that workspace and read revision; first received acceptance
 invalidates it even when the material merge is unchanged. A point read uses
 `id: transactionID`, `revision: manifestSHA256` and optional `referenceID: receiptID`.
-Its bounded summaries describe the original manifest fragments. DB29 collection
-headers omit committed membership counts/hashes, so split receipts report
-`unprovenClosure` and incomplete coverage. Raw fragments remain internal; counters
-are exact decimal strings. Fleet sealing, full birth proof and Undo migration
-remain tracked in GUI-486.
+Its bounded summaries describe the original manifest fragments. A split receipt
+can report `completeOriginalBody` only when authenticated source-local original,
+model and result roots bind its action, workspace and raw delivery version, and
+every assembled fragment matches the canonical encoder's streamed output.
+Absent or mismatched witnesses retain `unprovenClosure`; current content and
+staging cannot fill gaps. The public summary carries only four witness hashes;
+raw fragments remain internal and counters are exact decimal strings. Fleet
+sealing, full birth proof and Undo migration remain tracked in GUI-486.
 
 ## Current ownership
 

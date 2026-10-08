@@ -1,6 +1,8 @@
 import CryptoKit
 import Foundation
 
+private enum NotebookActionHistoryClosureMismatch: Error { case unreferenced }
+
 /// The exact legacy receipt fragments declared by one accepted occurrence.
 /// Completeness describes the JSON body only; this is neither a birth proof
 /// nor a seal, causal cut, inverse or restoration authority.
@@ -20,11 +22,22 @@ struct NotebookActionHistoryObservation: Equatable, Sendable {
 
   enum Disposition: Equatable, Sendable {
     case completeSelfContained(JSONValue)
+    case completeOriginalBody(JSONValue, OriginalAnchor)
     case unprovenClosure(Reason)
   }
 
   enum Reason: String, Sendable {
     case originalRootAbsent, rootRemoved, externalizedMembership, unreferencedFragments
+    case originalAnchorUnavailable, originalAnchorMismatch
+  }
+
+  /// Source-local roots read in this observation's borrowed snapshot. These
+  /// authenticate the complete logical body, not its birth transaction/actor.
+  struct OriginalAnchor: Equatable, Sendable {
+    let originalVersion: String
+    let originalRootHash: String
+    let modelRootHash: String
+    let resultRootHash: String
   }
 
   struct Fragment: Equatable, Sendable {
@@ -101,8 +114,8 @@ extension NotebookStore {
       try collect(part.records, partHash: hash)
     }
     var receipts: [NotebookActionHistoryObservation.Receipt] = []
-    // Ink expansion uses its existing typed owner and the same aggregate read
-    // budget. Unproven split fragments retain references, without guessing a body.
+    // Only a source-local original witness admits split-body assembly. Ink
+    // expansion borrows its existing owner and one aggregate transaction limit.
     var remainingInkBytes: Int64 = 32 * 1_024 * 1_024
     for id in references.keys.sorted(by: { $0.uuidString < $1.uuidString }) {
       let file = "collaboration/actions/" + id.uuidString.lowercased() + ".json"
@@ -134,14 +147,14 @@ extension NotebookStore {
           throw NotebookStorageError.invalidTransaction("action history receipt identity")
         }
         if !root.collections.isEmpty {
-          // DB29 headers commit path/kind, never member count or hashes. Even
-          // an empty collection and a missing last child have identical headers.
-          disposition = .unprovenClosure(.externalizedMembership)
+          disposition = try originalActionHistoryBody(id: id, workspaceID: workspaceID,
+            file: file, fragments: fragments, database: database, remainingInkBytes: &remainingInkBytes)
         } else if fragments.count != 1 {
           disposition = .unprovenClosure(.unreferencedFragments)
         } else {
           let expanded = try database.decodedStoredFragment(from: rootPayload!,
             remainingBytes: &remainingInkBytes, budget: "action_history_fact_ink")
+          try database.admitNativeFragmentCodec([expanded])
           disposition = .completeSelfContained(try NotebookRecordCodec.decode([expanded], root: rootAddress))
         }
       } else {
@@ -152,6 +165,175 @@ extension NotebookStore {
     try database.checkReadAllowance()
     return .init(workspaceID: workspaceID, transactionID: transactionID, manifestHash: manifestHash,
       borrowedSnapshotID: snapshotID, manifestFormat: manifest.format, receipts: receipts)
+  }
+
+  private func originalActionHistoryBody(id: UUID, workspaceID: UUID, file: String,
+    fragments: [NotebookActionHistoryObservation.Fragment], database: NotebookSQLConnection,
+    remainingInkBytes: inout Int64) throws -> NotebookActionHistoryObservation.Disposition {
+    let anchor: NotebookActionHistoryObservation.OriginalAnchor
+    do {
+      let prefix = "local/action-results/" + id.uuidString.lowercased() + "/"
+      guard let original = try actionHistorySourceRoot(prefix + "original.json", database: database) else {
+        // No source witness: retain the existing DB29 membership ambiguity.
+        return .unprovenClosure(.externalizedMembership)
+      }
+      guard original.fragment.collections.isEmpty,
+        let version = original.fragment.value.string, NotebookPageOrderRegister.validHash(version) else {
+        return .unprovenClosure(.originalAnchorMismatch)
+      }
+      guard let model = try actionHistorySourceRoot(prefix + version + "/model.json", database: database),
+        let result = try actionHistorySourceRoot(prefix + version + "/result.json", database: database) else {
+        return .unprovenClosure(.originalAnchorUnavailable)
+      }
+      func protects(_ fragment: NotebookStoredFragment, _ paths: [[String]]) -> Bool {
+        !fragment.collections.contains { collection in
+          paths.contains { path in collection.path.starts(with: path) || path.starts(with: collection.path) }
+        }
+      }
+      guard protects(model.fragment, [["id"], ["actionVersion"], ["undo"]]),
+        protects(result.fragment, [["actionID"], ["actionVersion"], ["basis", "workspaceID"], ["undo"]]),
+        UUID(uuidString: model.fragment.value["id"]?.string ?? "") == id,
+        model.fragment.value["actionVersion"] == .string(version),
+        model.fragment.value["undo"] == nil || model.fragment.value["undo"] == .null,
+        UUID(uuidString: result.fragment.value["actionID"]?.string ?? "") == id,
+        result.fragment.value["actionVersion"] == .string(version),
+        UUID(uuidString: result.fragment.value["basis"]?["workspaceID"]?.string ?? "") == workspaceID,
+        result.fragment.value["undo"] == nil || result.fragment.value["undo"] == .null else {
+        return .unprovenClosure(.originalAnchorMismatch)
+      }
+      anchor = .init(originalVersion: version, originalRootHash: original.hash,
+        modelRootHash: model.hash, resultRootHash: result.hash)
+    } catch NotebookStorageError.blobMissing {
+      return .unprovenClosure(.originalAnchorUnavailable)
+    } catch is DecodingError {
+      return .unprovenClosure(.originalAnchorMismatch)
+    }
+    guard fragments.allSatisfy({ $0.rawPayload != nil }) else {
+      return .unprovenClosure(.unreferencedFragments)
+    }
+    try database.admitJSONAllocation(bytes: fragments.count * MemoryLayout<NotebookStoredFragment>.stride)
+    var expanded: [NotebookStoredFragment] = []
+    expanded.reserveCapacity(fragments.count)
+    for fragment in fragments {
+      try database.checkReadAllowance()
+      expanded.append(try database.decodedStoredFragment(from: fragment.rawPayload!,
+        remainingBytes: &remainingInkBytes, budget: "action_history_fact_ink"))
+    }
+    // Admit assembly bookkeeping and output before Codec makes a second tree.
+    try database.admitNativeFragmentCodec(expanded, copies: 2)
+    let byAddress = Dictionary(uniqueKeysWithValues: expanded.map { ($0.address, $0) })
+    guard try actionHistoryHasExactParents(expanded, root: file + "#", database: database) else {
+      return .unprovenClosure(.unreferencedFragments)
+    }
+    let body = try NotebookRecordCodec.decode(expanded, root: file + "#")
+    // Hash raw JSON, preserving every unknown field. This allocation charge
+    // also pays the subsequent exact Codec closure check, without encoding to
+    // measure a cost or renewing the enclosing SQL/JSON allowance.
+    try database.admitNativeJSONPhase(body, copies: 3)
+    guard body["undo"] == nil || body["undo"] == .null,
+      try notebookActionDeliveryVersion(body) == anchor.originalVersion else {
+      return .unprovenClosure(.originalAnchorMismatch)
+    }
+    var emitted = 0
+    do {
+      try NotebookRecordCodec.visitEncodedFragments(body, file: file) { row in
+        try database.checkReadAllowance()
+        guard byAddress[row.address] == row else { throw NotebookActionHistoryClosureMismatch.unreferenced }
+        emitted += 1
+      }
+    } catch NotebookActionHistoryClosureMismatch.unreferenced {
+      return .unprovenClosure(.unreferencedFragments)
+    }
+    guard emitted == expanded.count else { return .unprovenClosure(.unreferencedFragments) }
+    return .completeOriginalBody(body, anchor)
+  }
+
+  private func actionHistoryHasExactParents(_ rows: [NotebookStoredFragment], root: String,
+    database: NotebookSQLConnection) throws -> Bool {
+    let children = Dictionary(grouping: rows.filter { $0.parent != nil }, by: { $0.parent! })
+    guard let header = rows.first(where: { $0.address == root }) else { return false }
+    var pending: [(NotebookStoredFragment, Int)] = [(header, 0)], visited = 0
+    while let (row, depth) = pending.popLast() {
+      try database.checkReadAllowance()
+      visited += 1
+      var collections: [String: NotebookStoredCollection] = [:]
+      for collection in row.collections {
+        try database.checkReadAllowance()
+        guard !collection.path.isEmpty else { return false }
+        guard collection.path.count <= NotebookJSONAdmission.maximumDepth - depth else {
+          throw NotebookStorageError.limitExceeded("json_decode_depth")
+        }
+        guard let key = try boundedActionHistoryFieldKey(collection.path,
+          limit: 4_096 - row.address.utf8.count - 1, database: database) else { return false }
+        guard collections.updateValue(collection, forKey: key) == nil else { return false }
+      }
+      for child in children[row.address] ?? [] {
+        try database.checkReadAllowance()
+        guard let collection = collections[child.collection] else { return false }
+        let prefixBytes = row.address.utf8.count + 1 + child.collection.utf8.count
+        let expected: String
+        switch collection.kind {
+        case .array, .dictionary:
+          guard let member = try boundedActionHistoryFieldKey([child.member],
+            limit: 4_096 - prefixBytes - 2, database: database) else { return false }
+          expected = row.address + "/" + child.collection + "/@" + member
+        case .value, .pageInk:
+          guard prefixBytes <= 4_096 else { return false }
+          expected = row.address + "/" + child.collection
+        }
+        // A short alias must never make Codec create larger canonical address
+        // buffers than the admitted input. Check every component before joins.
+        guard child.address == expected else { return false }
+        let childDepth = depth + collection.path.count
+          + (collection.kind == .array || collection.kind == .dictionary ? 1 : 0)
+        guard childDepth <= NotebookJSONAdmission.maximumDepth else {
+          throw NotebookStorageError.limitExceeded("json_decode_depth")
+        }
+        // Each authenticated child's address is strictly below its parent;
+        // this traversal cannot cycle, and every input must be consumed once.
+        pending.append((child, childDepth))
+      }
+    }
+    return visited == rows.count
+  }
+
+  private func boundedActionHistoryFieldKey(_ parts: [String], limit: Int,
+    database: NotebookSQLConnection) throws -> String? {
+    guard limit >= 0 else { return nil }
+    var remaining = limit
+    for (partIndex, part) in parts.enumerated() {
+      try database.checkReadAllowance()
+      if partIndex > 0 {
+        guard remaining > 0 else { return nil }
+        remaining -= 1
+      }
+      for (byteIndex, byte) in part.utf8.enumerated() {
+        if byteIndex.isMultiple(of: 256) { try database.checkReadAllowance() }
+        let escapedBytes = byte == 47 || byte == 126 ? 2 : 1
+        guard escapedBytes <= remaining else { return nil }
+        remaining -= escapedBytes
+      }
+    }
+    return fieldKey(parts)
+  }
+
+  private func actionHistorySourceRoot(_ file: String, database: NotebookSQLConnection) throws
+    -> (hash: String, fragment: NotebookStoredFragment)? {
+    // Local original/model/result roots are never taken from an incoming
+    // manifest or the mutable action_read_models projection. Only this source
+    // replica's exact addressed roots under the same readonly cut can witness.
+    guard let row = try database.rows("""
+      SELECT CASE WHEN typeof(hash)='text' AND length(CAST(hash AS BLOB))=64 THEN hash END
+      FROM records WHERE address=?
+      """, [.text(file + "#")]).first else { return nil }
+    guard let hash = row[0].text, NotebookPageOrderRegister.validHash(hash) else {
+      throw NotebookStorageError.corruptRecord(file + "#")
+    }
+    let data = try authenticatedActionHistoryBlob(hash, database: database)
+    let fragment = try database.decodeFragmentEnvelope(data)
+    try validateActionHistoryFragment(fragment, address: file + "#", file: file)
+    _ = try fragment.inkBodyHashes
+    return (hash, fragment)
   }
 
   private func actionHistoryManifest(_ change: NotebookDurableChange, partHash: String? = nil) throws -> NotebookChangeManifest {

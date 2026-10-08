@@ -4,6 +4,68 @@ import Testing
 
 @Suite("Addressed output borrows the aggregate read allowance")
 struct NotebookReadOutputAllowanceTests {
+  @Test(arguments: [false, true])
+  func literalInkUsesItsActualNodesAndRepeatedRestorationCannotRenewTheCut(_ graph: Bool) throws {
+    let fixture = try NotebookItemLifecycleTests.Fixture(), store = fixture.store
+    let samples: [SpatialInkSample] = (0..<256).map { index in
+      let x = Double(index * index % 197), y = Double(index * 37 % 113)
+      return .init(point: .init(x: x, y: y), timeOffset: Double(index) / 128,
+        width: 4, opacity: 0.5, force: Double(index * 17 % 67) / 67, azimuth: -0.0, altitude: 1)
+    }
+    let left = InkSampleRelations.Sequence(block: .literal(.init(samples)))
+    let right = InkSampleRelations.Sequence(block: .literal(.init(Array(samples.reversed()))))
+    let root = graph ? InkSampleRelations.Sequence.pair(left, right) : left
+    let measurements = InkMeasurements(storage: .init(root), revision: UUID())
+    let portable = try measurements.encodedRelations(), text = portable.base64EncodedString()
+    let file = "ink-read-allowance.json"
+    let fragment = NotebookStoredFragment(address: file + "#", file: file, parent: nil,
+      collection: "", member: "", position: 0, value: .object(["measurements": .string(text)]), collections: [])
+    let envelope = try store.commandTransaction { try store.currentSQL!.encodedStoredFragment(fragment) }
+    let raw = try JSONDecoder().decode(NotebookStoredFragment.self, from: envelope)
+    let hash = try #require(raw.inkBodyHashes.first)
+    let physical = try store.sqlRead { try $0.blob(hash) }
+    #expect(physical.starts(with: Data((graph ? "NIB2" : "NIB1").utf8)))
+    let readCursor = try store.currentReadCursor(), deliveryCursor = try store.currentChangeCursor()
+    // Both budgets allow a literal payload and its real graph bookkeeping.
+    // The previous portableBytes/6 node estimate refused the first read.
+    let allowance = (graph ? 1_024 : 512) * 1_024
+    var admittedFirst = false, refusedRepeat = false
+    do {
+      try NotebookReadSession(store: store).observe { _ in
+        let database = try #require(store.currentSQL)
+        try database.limitReads(.init(rows: 128, bytes: 8 * 1_024 * 1_024,
+          valueBytes: 1_024 * 1_024, reason: "literal_ink_read", jsonDecodeBytes: allowance))
+        var remaining: Int64 = 8 * 1_024 * 1_024
+        let retained = try database.decodedStoredFragment(from: envelope, remainingBytes: &remaining,
+          budget: "literal_ink_output")
+        admittedFirst = retained.value["measurements"] == .string(text)
+        #expect(admittedFirst, "Cold restoration must preserve every portable byte")
+        for _ in 0..<8 {
+          do {
+            _ = try database.decodedStoredFragment(from: envelope, remainingBytes: &remaining,
+              budget: "literal_ink_output")
+          } catch NotebookStorageError.limitExceeded(let reason) {
+            #expect(reason == "agent_command_read", "The enclosing agent cut retains its refusal reason")
+            refusedRepeat = true
+            break
+          }
+        }
+        #expect(refusedRepeat, "A cached body still pays every output allocation in the same cut")
+        withExtendedLifetime(retained) { }
+      }
+      Issue.record("Catching restoration refusal must not reopen the enclosing read cut")
+    } catch NotebookStorageError.limitExceeded(let reason) {
+      #expect(reason == "agent_command_read")
+    }
+    #expect(admittedFirst && refusedRepeat)
+    #expect(try store.currentReadCursor() == readCursor)
+    #expect(try store.currentChangeCursor() == deliveryCursor)
+    let restored = try NotebookReadSession(store: store).observe { _ in
+      try store.currentSQL!.decodedStoredFragment(from: envelope)
+    }
+    #expect(restored.value["measurements"] == .string(text), "A new snapshot starts with its own allowance")
+  }
+
   @Test func repeatedCompressedInkCannotRenewFlattenedOutputAndCaughtRefusalClosesTheCut() throws {
     let fixture = try NotebookItemLifecycleTests.Fixture(), store = fixture.store
     let samples: [SpatialInkSample] = (0..<16).map { index in

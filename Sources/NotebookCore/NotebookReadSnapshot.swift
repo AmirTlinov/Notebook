@@ -84,7 +84,7 @@ extension NotebookStore {
     case .actionHistoryPreflight:
       if data["mode"] == .string("transaction") {
         return .init(complete: data["receipts"]?.array.allSatisfy {
-          $0["closure"] == .string("completeSelfContained")
+          $0["closure"] == .string("completeSelfContained") || $0["closure"] == .string("completeOriginalBody")
         } == true)
       }
       if let after = data["nextTransactionID"]?.string.flatMap(UUID.init(uuidString:)) {

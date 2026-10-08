@@ -12,6 +12,10 @@ transaction, so a failed page also rolls back prepared notebook creation.
 `PageInkDrawing` binds each UUID to measured points, tool, color and assigned order.
 An exact replay retains that order and cannot revive an undone contact.
 Different points under the same UUID or exhausted order fail.
+Panel command replay reads the existing receipt-hash-bound action model, checks
+the human actor/request fingerprint and returns its immutable original result.
+It neither decodes nor rewrites the authored receipt. A missing or stale model
+for an existing action refuses before execution; replay after Undo keeps its gate.
 `writeFragment` validates immutable material and the one causal visibility gate.
 Undo and its explicit inverse change `isActive` with a newer `stateStamp`, not
 points, color, targets, UUID or painter order. Native state writes compare the
@@ -39,6 +43,10 @@ existing graphic/group owner, outside local measurements. Full NIR2 relation
 snapshots retain their enclosing exact frames; a placed snapshot cannot silently
 be restored as an unplaced journal action. They also retain the visibility stamp;
 the reader still preserves existing NIR1 material without inventing a clock.
+
+Cold body reads use the physical header's actual node count before allocating
+graph buffers. Cached restoration still charges every portable/base64 output
+and copied ancestor container to the caller's remaining read allowance.
 
 Page reference identities hash the accepted header and immutable measurement
 row as separate contributions. A gate transition reads/writes only its bounded

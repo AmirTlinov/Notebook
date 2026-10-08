@@ -115,6 +115,108 @@ struct NotebookActionHistoryPreflightTests {
     }
   }
 
+  @Test func realFrozenSourceResultKeepsItsAuthenticSelfContainedBodyAndMetadataOnlySummary() throws {
+    try fixture { (store, workspaceID, _) throws -> Void in
+      _ = try store.initializeWorkspace(actor: UUID(), pageSize: .init(width: 834, height: 1194))
+      let action = CollaborationAction(summary: "Original source receipt", expected: [], operations: [])
+      let source: JSONValue = .object(["pageIDs": .array([.string(UUID().uuidString)]),
+        "future": .object(["records": .array([.object(["id": .string("unknown"),
+          "private": .string("authored receipt sentinel")])])])])
+      let field = CollaborationFieldChange(file: "workspace.json", path: [.field("historyFixture")],
+        before: .object(["pageIDs": .array([])]), after: source, beforeVersion: nil, afterVersion: nil)
+      let receipt = CollaborationReceipt(id: action.id, action: action, createdAt: Date(),
+        revisions: [], changes: [field], undo: nil)
+      let body = try JSONValue.encode(receipt), version = try receipt.deliveryVersion()
+      let file = "collaboration/actions/" + receipt.id.uuidString.lowercased() + ".json"
+      try store.commandTransaction {
+        try store.publishRecords(writes: [file: body])
+        try store.freezeActionResult(receipt, changed: [field])
+      }
+      let change = try #require(store.changeJournal(after: 0).last)
+      let cursor = try store.currentReadCursor(), journal = try store.currentChangeCursor()
+      let reader = NotebookReadSession(store: store)
+      var query = NotebookReadQuery(kind: .actionHistoryPreflight, id: change.transactionID, revision: change.manifestHash)
+      query.referenceID = receipt.id
+      let snapshot = try reader.observe { (cut) throws -> JSONValue in
+        let fact = try store.actionHistoryFact(transactionID: change.transactionID,
+          manifestHash: change.manifestHash, receiptID: receipt.id)
+        let evidence = try #require(fact.receipts.first)
+        #expect(evidence.disposition == .completeSelfContained(body))
+        if case .completeSelfContained(let original) = evidence.disposition {
+          let originalVersion = try notebookActionDeliveryVersion(original)
+          #expect(originalVersion == version)
+        }
+        let result = try cut.handle(NotebookReadCommand(request(query)))
+        return try #require(result.arrayValues.first)
+      }
+      let data = try #require(snapshot["data"])
+      let summary = try #require(data["receipts"]?.arrayValues.first)
+      // changes is an inline array. Its nested before/after pageIDs and records
+      // do not become addressed collections in the current typed receipt.
+      #expect(summary["closure"] == .string("completeSelfContained") && summary["reason"] == nil)
+      let fragmentCount = try #require(summary["fragmentCount"]).decode(Int.self)
+      #expect(fragmentCount == 1 && summary["originalAnchor"] == nil)
+      #expect(snapshot["coverage"]?["complete"] == .bool(true) && snapshot["coverage"]?["next"] == nil)
+      #expect(snapshot["basis"]?["owners"] == .array([]))
+      #expect(try data["cut"]?["workspaceID"]?.decode(UUID.self) == workspaceID)
+      let encoded = String(decoding: try JSONEncoder().encode(snapshot), as: UTF8.self)
+      #expect(!encoded.contains("authored receipt sentinel") && !encoded.contains("rawPayload") && !encoded.contains("body"))
+      #expect(try store.currentReadCursor() == cursor && store.currentChangeCursor() == journal)
+    }
+  }
+
+  @Test func aSourceBoundSplitLegacyBodyExposesOnlyItsOriginalAnchorMetadata() throws {
+    try fixture { (store, workspaceID, _) throws -> Void in
+      let action = CollaborationAction(summary: "Retained source-local legacy body", expected: [], operations: [])
+      let receipt = CollaborationReceipt(id: action.id, action: action, createdAt: Date(),
+        revisions: [], changes: [], undo: nil)
+      // A future root-level object is genuinely externalized. Preserve its raw
+      // unknown fields and bind the full body to this source's original roots;
+      // a typed roundtrip would discard the field and cannot supply its digest.
+      let body = try JSONValue.encode(receipt).setting("futureReceipt", .object(["records": .array([
+        .object(["id": .string("unknown"), "private": .string("legacy authored sentinel"),
+          "future": .object(["nullable": .null, "unicode": .string("🖋️/ё")])])])]))
+      let version = try notebookActionDeliveryVersion(body)
+      let prefix = "local/action-results/" + receipt.id.uuidString.lowercased() + "/"
+      let model = try JSONValue.encode(NotebookActionReadModel(receipt)).setting("actionVersion", .string(version))
+      let result: JSONValue = .object(["actionID": .string(receipt.id.uuidString), "actionVersion": .string(version),
+        "basis": .object(["workspaceID": .string(workspaceID.uuidString)])])
+      let file = "collaboration/actions/" + receipt.id.uuidString.lowercased() + ".json"
+      try store.publishRecords(writes: [file: body, prefix + "original.json": .string(version),
+        prefix + version + "/model.json": model, prefix + version + "/result.json": result])
+      let change = try #require(store.changeJournal(after: 0).last)
+      let cursor = try store.currentReadCursor(), journal = try store.currentChangeCursor()
+      var query = NotebookReadQuery(kind: .actionHistoryPreflight, id: change.transactionID, revision: change.manifestHash)
+      query.referenceID = receipt.id
+      let snapshot = try NotebookReadSession(store: store).observe { (cut) throws -> JSONValue in
+        let fact = try store.actionHistoryFact(transactionID: change.transactionID,
+          manifestHash: change.manifestHash, receiptID: receipt.id)
+        let evidence = try #require(fact.receipts.first)
+        guard case .completeOriginalBody(let original, let anchor) = evidence.disposition else {
+          Issue.record("The complete split legacy closure needs its exact source-local original witness")
+          return .null
+        }
+        #expect(original == body && anchor.originalVersion == version && evidence.fragments.count == 2)
+        let result = try cut.handle(NotebookReadCommand(request(query)))
+        let snapshot = try #require(result.arrayValues.first)
+        let summary = try #require(snapshot["data"]?["receipts"]?.arrayValues.first)
+        #expect(summary["closure"] == .string("completeOriginalBody") && summary["reason"] == nil)
+        #expect(summary["originalAnchor"] == .object(["originalVersion": .string(version),
+          "originalRootHash": .string(anchor.originalRootHash), "modelRootHash": .string(anchor.modelRootHash),
+          "resultRootHash": .string(anchor.resultRootHash)]))
+        let fragmentCount = try #require(summary["fragmentCount"]).decode(Int.self)
+        #expect(fragmentCount == 2)
+        return snapshot
+      }
+      #expect(snapshot["coverage"]?["complete"] == .bool(true) && snapshot["coverage"]?["next"] == nil)
+      #expect(snapshot["basis"]?["owners"] == .array([]))
+      #expect(try snapshot["data"]?["cut"]?["workspaceID"]?.decode(UUID.self) == workspaceID)
+      let encoded = String(decoding: try JSONEncoder().encode(snapshot), as: UTF8.self)
+      #expect(!encoded.contains("legacy authored sentinel") && !encoded.contains("rawPayload") && !encoded.contains("body"))
+      #expect(try store.currentReadCursor() == cursor && store.currentChangeCursor() == journal)
+    }
+  }
+
   @Test func preflightCannotRenewTheEnclosingReadAllowanceOrEnterTheWriter() throws {
     try fixture { (store, _, _) throws -> Void in
       let reader = NotebookReadSession(store: store), cursor = try store.currentReadCursor()

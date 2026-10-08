@@ -73,6 +73,38 @@ private extension JSONValue {
     default: throw NotebookStorageError.invalidTransaction("ink body path")
     }
   }
+  /// Replacing a leaf copies only its ancestor containers; retained sibling
+  /// values and Strings keep their immutable storage. Admit those buffers
+  /// before the recursive COW updates, without building a measuring tree.
+  func inkReplacementBytes(at path: [String]) throws -> Int {
+    guard path.count <= 512 else { throw NotebookStorageError.limitExceeded("ink body path") }
+    var value=self,bytes=0
+    func add(_ capacity:Int,_ stride:Int) throws {
+      let (payload,overflow)=capacity.multipliedReportingOverflow(by:stride)
+      let (withHeader,headerOverflow)=payload.addingReportingOverflow(128)
+      let (buffers,bufferOverflow)=withHeader.multipliedReportingOverflow(by:2)
+      let (total,totalOverflow)=bytes.addingReportingOverflow(buffers)
+      guard !overflow,!headerOverflow,!bufferOverflow,!totalOverflow else {
+        throw NotebookStorageError.limitExceeded("json_decode_memory")
+      }
+      bytes=total
+    }
+    for key in path {
+      switch value {
+      case .object(let fields):
+        guard let child=fields[key] else { throw NotebookStorageError.invalidTransaction("ink body path") }
+        try add(fields.capacity,MemoryLayout<String>.stride+MemoryLayout<JSONValue>.stride+32)
+        value=child
+      case .array(let values):
+        guard let index=Int(key),String(index) == key,values.indices.contains(index) else {
+          throw NotebookStorageError.invalidTransaction("ink body path")
+        }
+        try add(values.capacity,MemoryLayout<JSONValue>.stride);value=values[index]
+      default: throw NotebookStorageError.invalidTransaction("ink body path")
+      }
+    }
+    return bytes
+  }
 }
 
 extension NotebookSQLConnection {
@@ -143,28 +175,58 @@ extension NotebookSQLConnection {
       guard try JSONValue.encode(reference) == stored else { throw NotebookStorageError.invalidTransaction("ink body reference") }
       let accepted=inkDecoding.storedOutputBody(reference.inkBody)
       var root:Data?,graph=false
+      var coldFootprint:InkStoredBody.ReadFootprint?
       let portableBytes:Int
       if let accepted { portableBytes=accepted.count+20 }
       else {
         let info=try inkBlobInfo(reference.inkBody)
-        if info.signature == Data("NIB1".utf8) { portableBytes=info.count+16 }
-        else {
+        if info.header.starts(with:Data("NIB1".utf8)) {
+          coldFootprint=try InkStoredBody.readFootprint(info.header,storedBytes:info.count)
+        } else {
           root=try inkBlob(reference.inkBody);graph=true
-          portableBytes=try InkStoredBody.portableByteCount(root!)
+          coldFootprint=try InkStoredBody.readFootprint(root!,storedBytes:info.count)
         }
+        portableBytes=coldFootprint!.portableBytes
       }
       // Each referenced body is one bounded value, just like its inline
       // fragment. A receipt may name before/after/request bodies together:
       // it is not one larger measurement. The total command lease still pays
       // EVERY expansion, even repeated references already in this cache.
-      let expanded=Int64((portableBytes+2)/3*4)
+      let (rounded,roundOverflow)=portableBytes.addingReportingOverflow(2)
+      let (base64Bytes,base64Overflow)=(rounded/3).multipliedReportingOverflow(by:4)
+      let (valueBytes,valueOverflow)=data.count.addingReportingOverflow(base64Bytes)
+      guard portableBytes >= 0,!roundOverflow,!base64Overflow,!valueOverflow else {
+        throw NotebookStorageError.limitExceeded(budget)
+      }
+      let expanded=Int64(base64Bytes)
       guard expanded <= remainingBytes else { throw NotebookStorageError.limitExceeded(budget) }
       remainingBytes -= expanded
-      try admitExpandedRead(bytes:expandingInk ? Int(expanded) : 0,valueBytes:data.count+Int(expanded))
+      try admitExpandedRead(bytes:expandingInk ? base64Bytes : 0,valueBytes:valueBytes)
       // Provenance visits need authenticated record envelopes, not another
       // base64 copy of paint. Still validate cold bodies with the same codec;
       // only this connection's already accepted graph may skip that work.
       if !expandingInk,accepted != nil { continue }
+      // Cold work retains physical parts, portable output, decoded literal or
+      // field payloads and cache keys. Pay actual codec nodes separately from
+      // those binary buffers. A validated warm body only restores its revision;
+      // it creates neither graph parts nor another measurement tree.
+      func allocation(_ bytes:Int,_ multiplier:Int,_ overhead:Int) throws -> Int {
+        let (scaled,scaleOverflow)=bytes.multipliedReportingOverflow(by:multiplier)
+        let (total,totalOverflow)=scaled.addingReportingOverflow(overhead)
+        guard bytes >= 0,!scaleOverflow,!totalOverflow else {
+          throw NotebookStorageError.limitExceeded("json_decode_memory")
+        }
+        return total
+      }
+      let nodes=try allocation(coldFootprint?.nodeCount ?? 0,InkStoredBody.decodingNodeBytes,2_048)
+      try admitJSONAllocation(bytes:allocation(portableBytes,accepted == nil ? 8 : 2,nodes))
+      if expandingInk {
+        // Local base64/bridged String buffers and their growth; this owner does
+        // not JSON-encode or slash-escape output. A later typed/codec phase
+        // pays its own actual output through the same remaining allowance.
+        try admitJSONAllocation(bytes:allocation(base64Bytes,8,512+192+512+16))
+        try admitJSONAllocation(bytes:value.inkReplacementBytes(at:path))
+      }
       let encoded:Data
       if let accepted { encoded=InkStoredBody.restoringRevision(reference.revision,body:accepted) }
       else {
@@ -180,20 +242,22 @@ extension NotebookSQLConnection {
     return expandingInk ? raw.replacing(value:value) : raw
   }
 
-  private func inkBlobInfo(_ hash: String) throws -> (count:Int,signature:Data) {
-    let count:Int,signature:Data
-    if let cached=inkDecoding.storedBody(hash) { count=cached.count;signature=cached.prefix(4) }
+  private func inkBlobInfo(_ hash: String) throws -> (count:Int,header:Data) {
+    let count:Int,header:Data
+    if let cached=inkDecoding.storedBody(hash) { count=cached.count;header=cached.prefix(InkStoredBody.readHeaderBytes) }
     else {
-      guard let row=try rows("SELECT length(data),substr(data,1,4) FROM blobs WHERE hash=?",[.text(hash)]).first else {
+      guard let row=try rows("SELECT length(data),substr(data,1,?) FROM blobs WHERE hash=?",
+        [.integer(Int64(InkStoredBody.readHeaderBytes)),.text(hash)]).first else {
         throw NotebookStorageError.blobMissing(hash)
       }
-      count=Int(row[0].integer!);signature=row[1].blob!
+      count=Int(row[0].integer!);header=row[1].blob!
     }
+    let signature=header.prefix(4)
     let valid=signature == Data("NIB1".utf8) ? (4...InkStoredBody.maximumBytes-16).contains(count)
       : signature == Data("NIB2".utf8) ? count == 74
       : signature == Data("NIN1".utf8) && (6...32_768).contains(count)
     guard valid else { throw NotebookStorageError.invalidTransaction("ink body signature or size") }
-    return (count,signature)
+    return (count,header)
   }
 
   func inkBlob(_ hash: String) throws -> Data {
@@ -274,13 +338,5 @@ extension NotebookStore {
       try database.run("INSERT INTO manifest_ink_discovery VALUES(?)",[.text(manifestHash)])
     }
     return try missingInkBodyDependencies(manifestHash:manifestHash,limit:limit)
-  }
-
-  func visitInkBodyDependencies(manifestHash: String, _ visit: (String) throws -> Void) throws {
-    var after=""
-    while let hash=try currentSQL!.rows("SELECT hash FROM manifest_ink_bodies WHERE manifest_hash=? AND hash>? ORDER BY hash LIMIT 1",
-      [.text(manifestHash),.text(after)]).first?[0].text {
-      try visit(hash);after=hash
-    }
   }
 }

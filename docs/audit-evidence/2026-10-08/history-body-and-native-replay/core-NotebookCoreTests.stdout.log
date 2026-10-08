@@ -1,0 +1,191 @@
+◇ Test run started.
+↳ Testing Library Version: 2084
+↳ Target Platform: arm64e-apple-macos14.0
+◇ Suite "Current-fleet history preflight uses the existing readonly command cut" started.
+◇ Suite "Legacy acceptance inventory borrows one bounded read cut" started.
+◇ Suite "Large action history does not reload its source or inverse" started.
+◇ Suite InkRelationCodecTests started.
+◇ Suite "Accepted legacy receipts preserve original fragments in one bounded read cut" started.
+◇ Suite "Lifecycle inverse blobs are an admitted receipt dependency" started.
+◇ Suite "Program publications retain a complete immutable dependency closure" started.
+◇ Test pointHashMismatchAndUnboundDirectorySeekRefuseBeforeReturningEvidence() started.
+◇ Test preflightCannotRenewTheEnclosingReadAllowanceOrEnterTheWriter() started.
+◇ Test realFrozenSourceResultKeepsItsAuthenticSelfContainedBodyAndMetadataOnlySummary() started.
+◇ Test aSourceBoundSplitLegacyBodyExposesOnlyItsOriginalAnchorMetadata() started.
+◇ Suite "Panel replay uses the saved command identity and original result" started.
+◇ Suite "Addressed output borrows the aggregate read allowance" started.
+◇ Suite "SQLite owns atomic addressed publication" started.
+◇ Test closedDocumentMetadataAndDeliveryFitAnAddressedReadWithoutItsFourteenMiBReceipt() started.
+◇ Test exactAcceptedTransactionReportsMissingSelectedReceiptWithoutAuthorContent() started.
+◇ Suite "Native inverse allocation belongs to one transaction" started.
+◇ Test physicalGraphPreservesExactPostorderAliasesAndIndependentEqualLeaves() started.
+◇ Test metadataDirectoryContinuesWithoutCurrentContentOrBlobDecoding() started.
+◇ Test newAcceptedJournalWriteInvalidatesTheDirectoryContinuation() started.
+◇ Test derivativeFilesPayAggregateSourceDecodeAndProjectionBeforeReturningRepeatedReceipts() started.
+◇ Test literalInkUsesItsActualNodesAndRepeatedRestorationCannotRenewTheCut(_:) started.
+◇ Test repeatedCompressedInkCannotRenewFlattenedOutputAndCaughtRefusalClosesTheCut() started.
+◇ Test relayedJournalAndFirstReceivedCoalesceWithoutInventingDuplicateSourceMappings() started.
+◇ Test malformedHeadersRefuseBeforeCopyingUnboundedScalars(corruption:) started.
+◇ Test observationalOutputAdmissionDoesNotWithdrawAnAcceptedNativeWriter() started.
+◇ Test paginationKeepsItsSnapshotAcrossPeerCommitsAndRejectsAnotherReadCut() started.
+◇ Test differentAcceptedManifestHashesForOneTransactionRefuseBeforeReturningAPage() started.
+◇ Test keysetPagesPreserveDistinctAcceptedTransactionsSharingTheSamePayload() started.
+◇ Test withheldLastPartCannotPublishOrAdvanceCursorThenColdReplicaReadsAcrossParts() started.
+◇ Test aHundredThousandMarkersKeepKeysetWorkInsideTheEnclosingSQLLease() started.
+◇ Test admissionRequiresTheCallerWorkspaceAndDoesNotRenewAnExhaustedBudget() started.
+◇ Test localAndMaterialNoOpIncomingAreEnumeratedWhileStagedManifestsAreExcluded() started.
+◇ Test transientJSONPreservesTypedContentAndCanonicalDurableEnvelopes() started.
+◇ Test missingRemovedAndUnreferencedRootsPreserveDeclarations(_:) started.
+◇ Test oversizedOriginalBlobRefusesBeforeAnyBodyColumnIsCopied() started.
+◇ Test anOriginalDigestCannotBlessExtraOrAmbiguousFragmentMembership(_:) started.
+◇ Test typedOrCurrentProjectionAndOriginalDigestCannotCertifyDifferentRawBodies(_:) started.
+◇ Test sourceOriginalDigestDistinguishesCompleteEmptyAndOmittedMembership(_:) started.
+◇ Test conflictingAndUnavailableOriginalProofRefuses(_:) started.
+◇ Test originalPartsAndSourceWitnessPreserveUnknownJSONAndDistinctAcceptedOccurrences() started.
+◇ Test enclosingCancellationAndJSONAndSQLBudgetsCannotBeRenewed() started.
+◇ Test emptyAndMissingLastCollectionMembersRemainUnprovenEvenWhenCodecRoundTrips(_:) started.
+◇ Test theCodecCollectorKeepsItsOrderedFragmentsAndVisitorStopsAtTheFirstThrow() started.
+◇ Test pointAndSemanticSeekShareAcceptanceMarkersAndTheBorrowedCut() started.
+◇ Test originalManifestPartsSupplySelfContainedReceipts() started.
+◇ Test exactAndSeekAdmissionDoNotHideMalformedAcceptedMarkers(_:) started.
+◇ Test stagedOnlyAndAChangedAcceptedManifestHaveNoFactAuthority() started.
+◇ Test unavailableAndAlteredSourceAnchorsStayExplicitlyUnproven(_:) started.
+◇ Test localAndReceivedOnlyFactsKeepRawUnknownFieldsAndIgnoreCurrentAndStagingIndexes() started.
+◇ Test unlistedInlineMembersStopBeforeAmplifiedOutputOrALaterMalformedSubtree() started.
+◇ Test aTightenedJSONLeaseRefusesBeforeColdPortableInkValidationOrExpansion(_:) started.
+◇ Test shortAliasesRefuseBeforeLongCanonicalAddressesOrBodyCopiesConsumeCredit() started.
+◇ Test anEmptyCollectionCannotAssemblePastTheLogicalDepthAllowance() started.
+◇ Test case passing 1 argument graph → false to literalInkUsesItsActualNodesAndRepeatedRestorationCannotRenewTheCut(_:) started.
+◇ Test case passing 1 argument graph → true to literalInkUsesItsActualNodesAndRepeatedRestorationCannotRenewTheCut(_:) started.
+◇ Test case passing 1 argument corruption → .nullKey to malformedHeadersRefuseBeforeCopyingUnboundedScalars(corruption:) started.
+◇ Test case passing 1 argument corruption → .emptyKey to malformedHeadersRefuseBeforeCopyingUnboundedScalars(corruption:) started.
+◇ Test case passing 1 argument corruption → .oversizedKey to malformedHeadersRefuseBeforeCopyingUnboundedScalars(corruption:) started.
+◇ Test case passing 1 argument corruption → .oversizedHash to malformedHeadersRefuseBeforeCopyingUnboundedScalars(corruption:) started.
+◇ Test case passing 1 argument corruption → .invalidHash to malformedHeadersRefuseBeforeCopyingUnboundedScalars(corruption:) started.
+◇ Test case passing 1 argument corruption → .oversizedSource to malformedHeadersRefuseBeforeCopyingUnboundedScalars(corruption:) started.
+◇ Test case passing 1 argument corruption → .nonintegerSequence to malformedHeadersRefuseBeforeCopyingUnboundedScalars(corruption:) started.
+✔ Test physicalGraphPreservesExactPostorderAliasesAndIndependentEqualLeaves() passed after 0.182 seconds.
+✔ Test admissionRequiresTheCallerWorkspaceAndDoesNotRenewAnExhaustedBudget() passed after 0.181 seconds.
+✔ Test relayedJournalAndFirstReceivedCoalesceWithoutInventingDuplicateSourceMappings() passed after 0.182 seconds.
+◇ Test historicalInkBodyIsRequiredBeforeAckAndIncludedInCloudClosure() started.
+◇ Test case passing 1 argument kind → "originalRootAbsent" to missingRemovedAndUnreferencedRootsPreserveDeclarations(_:) started.
+◇ Test case passing 1 argument kind → "rootRemoved" to missingRemovedAndUnreferencedRootsPreserveDeclarations(_:) started.
+◇ Test case passing 1 argument kind → "unreferencedFragments" to missingRemovedAndUnreferencedRootsPreserveDeclarations(_:) started.
+◇ Test case passing 1 argument kind → "orphan" to anOriginalDigestCannotBlessExtraOrAmbiguousFragmentMembership(_:) started.
+◇ Test case passing 1 argument kind → "ignored" to anOriginalDigestCannotBlessExtraOrAmbiguousFragmentMembership(_:) started.
+◇ Test case passing 1 argument kind → "duplicateMember" to anOriginalDigestCannotBlessExtraOrAmbiguousFragmentMembership(_:) started.
+◇ Test case passing 1 argument kind → "duplicateCollection" to anOriginalDigestCannotBlessExtraOrAmbiguousFragmentMembership(_:) started.
+◇ Test case passing 1 argument kind → "removed" to anOriginalDigestCannotBlessExtraOrAmbiguousFragmentMembership(_:) started.
+◇ Test case passing 1 argument kind → "missingUnknownChild" to typedOrCurrentProjectionAndOriginalDigestCannotCertifyDifferentRawBodies(_:) started.
+◇ Test case passing 1 argument kind → "sourceDigestDroppedUnknownField" to typedOrCurrentProjectionAndOriginalDigestCannotCertifyDifferentRawBodies(_:) started.
+◇ Test case passing 1 argument kind → "undoVariant" to typedOrCurrentProjectionAndOriginalDigestCannotCertifyDifferentRawBodies(_:) started.
+◇ Test case passing 1 argument kind → "full" to sourceOriginalDigestDistinguishesCompleteEmptyAndOmittedMembership(_:) started.
+◇ Test case passing 1 argument kind → "originalEmpty" to sourceOriginalDigestDistinguishesCompleteEmptyAndOmittedMembership(_:) started.
+◇ Test case passing 1 argument kind → "missingLast" to sourceOriginalDigestDistinguishesCompleteEmptyAndOmittedMembership(_:) started.
+◇ Test case passing 1 argument kind → "missingAll" to sourceOriginalDigestDistinguishesCompleteEmptyAndOmittedMembership(_:) started.
+◇ Test case passing 1 argument kind → "differentAcceptedHash" to conflictingAndUnavailableOriginalProofRefuses(_:) started.
+◇ Test case passing 1 argument kind → "missingPart" to conflictingAndUnavailableOriginalProofRefuses(_:) started.
+◇ Test case passing 1 argument kind → "wrongPartTransaction" to conflictingAndUnavailableOriginalProofRefuses(_:) started.
+◇ Test case passing 1 argument kind → "duplicateFragment" to conflictingAndUnavailableOriginalProofRefuses(_:) started.
+◇ Test case passing 1 argument kind → "missingFragment" to conflictingAndUnavailableOriginalProofRefuses(_:) started.
+◇ Test case passing 1 argument kind → "corruptFragment" to conflictingAndUnavailableOriginalProofRefuses(_:) started.
+◇ Test case passing 1 argument kind → "corruptManifest" to conflictingAndUnavailableOriginalProofRefuses(_:) started.
+◇ Test case passing 1 argument childCount → 0 to emptyAndMissingLastCollectionMembersRemainUnprovenEvenWhenCodecRoundTrips(_:) started.
+◇ Test case passing 1 argument childCount → 1 to emptyAndMissingLastCollectionMembersRemainUnprovenEvenWhenCodecRoundTrips(_:) started.
+◇ Test case passing 1 argument childCount → 2 to emptyAndMissingLastCollectionMembersRemainUnprovenEvenWhenCodecRoundTrips(_:) started.
+◇ Test case passing 1 argument kind → "empty" to exactAndSeekAdmissionDoNotHideMalformedAcceptedMarkers(_:) started.
+◇ Test case passing 1 argument kind → "null" to exactAndSeekAdmissionDoNotHideMalformedAcceptedMarkers(_:) started.
+◇ Test case passing 1 argument kind → "malformedHash" to exactAndSeekAdmissionDoNotHideMalformedAcceptedMarkers(_:) started.
+◇ Test case passing 1 argument kind → "missingOriginal" to unavailableAndAlteredSourceAnchorsStayExplicitlyUnproven(_:) started.
+◇ Test case passing 1 argument kind → "missingModel" to unavailableAndAlteredSourceAnchorsStayExplicitlyUnproven(_:) started.
+◇ Test case passing 1 argument kind → "missingResult" to unavailableAndAlteredSourceAnchorsStayExplicitlyUnproven(_:) started.
+◇ Test case passing 1 argument kind → "pointerVersion" to unavailableAndAlteredSourceAnchorsStayExplicitlyUnproven(_:) started.
+◇ Test case passing 1 argument kind → "pointerType" to unavailableAndAlteredSourceAnchorsStayExplicitlyUnproven(_:) started.
+◇ Test case passing 1 argument kind → "modelID" to unavailableAndAlteredSourceAnchorsStayExplicitlyUnproven(_:) started.
+◇ Test case passing 1 argument kind → "modelVersion" to unavailableAndAlteredSourceAnchorsStayExplicitlyUnproven(_:) started.
+◇ Test case passing 1 argument kind → "modelUndo" to unavailableAndAlteredSourceAnchorsStayExplicitlyUnproven(_:) started.
+◇ Test case passing 1 argument kind → "resultID" to unavailableAndAlteredSourceAnchorsStayExplicitlyUnproven(_:) started.
+◇ Test case passing 1 argument kind → "resultVersion" to unavailableAndAlteredSourceAnchorsStayExplicitlyUnproven(_:) started.
+◇ Test case passing 1 argument kind → "workspace" to unavailableAndAlteredSourceAnchorsStayExplicitlyUnproven(_:) started.
+◇ Test case passing 1 argument kind → "resultUndo" to unavailableAndAlteredSourceAnchorsStayExplicitlyUnproven(_:) started.
+◇ Test case passing 1 argument expanding → false to aTightenedJSONLeaseRefusesBeforeColdPortableInkValidationOrExpansion(_:) started.
+◇ Test case passing 1 argument expanding → true to aTightenedJSONLeaseRefusesBeforeColdPortableInkValidationOrExpansion(_:) started.
+✔ Test differentAcceptedManifestHashesForOneTransactionRefuseBeforeReturningAPage() passed after 0.375 seconds.
+✔ Test paginationKeepsItsSnapshotAcrossPeerCommitsAndRejectsAnotherReadCut() passed after 0.375 seconds.
+✔ Test localAndMaterialNoOpIncomingAreEnumeratedWhileStagedManifestsAreExcluded() passed after 0.375 seconds.
+✔ Test malformedHeadersRefuseBeforeCopyingUnboundedScalars(corruption:) with 7 test cases passed after 0.375 seconds.
+◇ Test aFullMeasuredContactReplaysAfterReopenWithoutReadingOrRewritingItsReceipt() started.
+◇ Test aNestedReplayIdentityReadCannotRenewTheCallersExhaustedJSONCredit() started.
+◇ Test aMissingOrInvalidSavedModelRefusesInsteadOfReexecutingTheAcceptedID(_:) started.
+◇ Test replayAfterAnOrdinaryUndoReturnsTheOriginalResultAndKeepsTheUndoneReceipt() started.
+✔ Test metadataDirectoryContinuesWithoutCurrentContentOrBlobDecoding() passed after 0.376 seconds.
+✔ Test newAcceptedJournalWriteInvalidatesTheDirectoryContinuation() passed after 0.376 seconds.
+✔ Test preflightCannotRenewTheEnclosingReadAllowanceOrEnterTheWriter() passed after 0.376 seconds.
+✔ Test exactAcceptedTransactionReportsMissingSelectedReceiptWithoutAuthorContent() passed after 0.376 seconds.
+◇ Test rootAndPartsShareAdmissionAndCaughtExhaustionRollsBackTheWholeCommand() started.
+✔ Test pointHashMismatchAndUnboundDirectorySeekRefuseBeforeReturningEvidence() passed after 0.380 seconds.
+✔ Test aSourceBoundSplitLegacyBodyExposesOnlyItsOriginalAnchorMetadata() passed after 0.380 seconds.
+✔ Test missingRemovedAndUnreferencedRootsPreserveDeclarations(_:) with 3 test cases passed after 0.349 seconds.
+✔ Test realFrozenSourceResultKeepsItsAuthenticSelfContainedBodyAndMetadataOnlySummary() passed after 0.381 seconds.
+✔ Test anOriginalDigestCannotBlessExtraOrAmbiguousFragmentMembership(_:) with 5 test cases passed after 0.349 seconds.
+✔ Test literalInkUsesItsActualNodesAndRepeatedRestorationCannotRenewTheCut(_:) with 2 test cases passed after 0.381 seconds.
+✔ Test observationalOutputAdmissionDoesNotWithdrawAnAcceptedNativeWriter() passed after 0.381 seconds.
+✔ Test keysetPagesPreserveDistinctAcceptedTransactionsSharingTheSamePayload() passed after 0.381 seconds.
+✔ Test typedOrCurrentProjectionAndOriginalDigestCannotCertifyDifferentRawBodies(_:) with 3 test cases passed after 0.350 seconds.
+✔ Test conflictingAndUnavailableOriginalProofRefuses(_:) with 7 test cases passed after 0.352 seconds.
+✔ Test sourceOriginalDigestDistinguishesCompleteEmptyAndOmittedMembership(_:) with 4 test cases passed after 0.352 seconds.
+✔ Test transientJSONPreservesTypedContentAndCanonicalDurableEnvelopes() passed after 0.383 seconds.
+✔ Test theCodecCollectorKeepsItsOrderedFragmentsAndVisitorStopsAtTheFirstThrow() passed after 0.350 seconds.
+✔ Test enclosingCancellationAndJSONAndSQLBudgetsCannotBeRenewed() passed after 0.350 seconds.
+✔ Test emptyAndMissingLastCollectionMembersRemainUnprovenEvenWhenCodecRoundTrips(_:) with 3 test cases passed after 0.350 seconds.
+✔ Test originalManifestPartsSupplySelfContainedReceipts() passed after 0.350 seconds.
+✔ Test originalPartsAndSourceWitnessPreserveUnknownJSONAndDistinctAcceptedOccurrences() passed after 0.351 seconds.
+✔ Test pointAndSemanticSeekShareAcceptanceMarkersAndTheBorrowedCut() passed after 0.350 seconds.
+✔ Test stagedOnlyAndAChangedAcceptedManifestHaveNoFactAuthority() passed after 0.350 seconds.
+◇ Test case passing 1 argument kind → "missing" to aMissingOrInvalidSavedModelRefusesInsteadOfReexecutingTheAcceptedID(_:) started.
+◇ Test case passing 1 argument kind → "stale" to aMissingOrInvalidSavedModelRefusesInsteadOfReexecutingTheAcceptedID(_:) started.
+◇ Test case passing 1 argument kind → "wrongID" to aMissingOrInvalidSavedModelRefusesInsteadOfReexecutingTheAcceptedID(_:) started.
+◇ Test case passing 1 argument kind → "oversized" to aMissingOrInvalidSavedModelRefusesInsteadOfReexecutingTheAcceptedID(_:) started.
+◇ Test case passing 1 argument kind → "malformedJSON" to aMissingOrInvalidSavedModelRefusesInsteadOfReexecutingTheAcceptedID(_:) started.
+◇ Test case passing 1 argument kind → "malformedHash" to aMissingOrInvalidSavedModelRefusesInsteadOfReexecutingTheAcceptedID(_:) started.
+✔ Suite InkRelationCodecTests passed after 0.531 seconds.
+✔ Test unavailableAndAlteredSourceAnchorsStayExplicitlyUnproven(_:) with 12 test cases passed after 0.496 seconds.
+✔ Test aTightenedJSONLeaseRefusesBeforeColdPortableInkValidationOrExpansion(_:) with 2 test cases passed after 0.495 seconds.
+✔ Test localAndReceivedOnlyFactsKeepRawUnknownFieldsAndIgnoreCurrentAndStagingIndexes() passed after 0.496 seconds.
+✔ Test anEmptyCollectionCannotAssemblePastTheLogicalDepthAllowance() passed after 0.495 seconds.
+✔ Test exactAndSeekAdmissionDoNotHideMalformedAcceptedMarkers(_:) with 3 test cases passed after 0.496 seconds.
+✔ Test shortAliasesRefuseBeforeLongCanonicalAddressesOrBodyCopiesConsumeCredit() passed after 0.495 seconds.
+✔ Suite "Current-fleet history preflight uses the existing readonly command cut" passed after 0.531 seconds.
+✔ Test rootAndPartsShareAdmissionAndCaughtExhaustionRollsBackTheWholeCommand() passed after 0.155 seconds.
+✔ Suite "SQLite owns atomic addressed publication" passed after 0.531 seconds.
+◇ Test oldFormatPartStaysReadableAndATightenedNativeCutRefusesWithoutTruncation() started.
+✔ Test aNestedReplayIdentityReadCannotRenewTheCallersExhaustedJSONCredit() passed after 0.156 seconds.
+✔ Test oversizedOriginalBlobRefusesBeforeAnyBodyColumnIsCopied() passed after 0.511 seconds.
+✔ Test unlistedInlineMembersStopBeforeAmplifiedOutputOrALaterMalformedSubtree() passed after 0.521 seconds.
+✔ Suite "Accepted legacy receipts preserve original fragments in one bounded read cut" passed after 0.557 seconds.
+✔ Test repeatedCompressedInkCannotRenewFlattenedOutputAndCaughtRefusalClosesTheCut() passed after 0.562 seconds.
+✔ Test replayAfterAnOrdinaryUndoReturnsTheOriginalResultAndKeepsTheUndoneReceipt() passed after 0.233 seconds.
+✔ Test aMissingOrInvalidSavedModelRefusesInsteadOfReexecutingTheAcceptedID(_:) with 6 test cases passed after 0.266 seconds.
+✔ Test oldFormatPartStaysReadableAndATightenedNativeCutRefusesWithoutTruncation() passed after 0.257 seconds.
+✔ Suite "Native inverse allocation belongs to one transaction" passed after 0.789 seconds.
+✔ Test historicalInkBodyIsRequiredBeforeAckAndIncludedInCloudClosure() passed after 0.670 seconds.
+◇ Test restorationBodiesAreIndependentDependenciesUnderTheSameActionIdentity() started.
+✔ Test withheldLastPartCannotPublishOrAdvanceCursorThenColdReplicaReadsAcrossParts() passed after 0.856 seconds.
+✔ Suite "Program publications retain a complete immutable dependency closure" passed after 0.856 seconds.
+✔ Test restorationBodiesAreIndependentDependenciesUnderTheSameActionIdentity() passed after 0.206 seconds.
+✔ Suite "Lifecycle inverse blobs are an admitted receipt dependency" passed after 1.059 seconds.
+✔ Test derivativeFilesPayAggregateSourceDecodeAndProjectionBeforeReturningRepeatedReceipts() passed after 1.160 seconds.
+✔ Suite "Addressed output borrows the aggregate read allowance" passed after 1.161 seconds.
+✔ Test aHundredThousandMarkersKeepKeysetWorkInsideTheEnclosingSQLLease() passed after 1.861 seconds.
+✔ Suite "Legacy acceptance inventory borrows one bounded read cut" passed after 1.862 seconds.
+✔ Test closedDocumentMetadataAndDeliveryFitAnAddressedReadWithoutItsFourteenMiBReceipt() passed after 3.061 seconds.
+◇ Test sourceComparisonPreservesHumanContinuationWithoutRetainingTheOldSource() started.
+✔ Test sourceComparisonPreservesHumanContinuationWithoutRetainingTheOldSource() passed after 3.253 seconds.
+◇ Test schemaAdmissionRebuildsOnlyDerivedDescriptionsAndPreservesAcceptedRecords() started.
+✔ Test aFullMeasuredContactReplaysAfterReopenWithoutReadingOrRewritingItsReceipt() passed after 8.281 seconds.
+✔ Suite "Panel replay uses the saved command identity and original result" passed after 8.657 seconds.
+✔ Test schemaAdmissionRebuildsOnlyDerivedDescriptionsAndPreservesAcceptedRecords() passed after 3.998 seconds.
+◇ Test staleDescriptionCannotPublishDeliveryOrMasqueradeAsAnAbsentAction() started.
+✔ Test staleDescriptionCannotPublishDeliveryOrMasqueradeAsAnAbsentAction() passed after 1.951 seconds.
+✔ Suite "Large action history does not reload its source or inverse" passed after 12.265 seconds.
+✔ Test run with 54 tests in 11 suites passed after 12.265 seconds.

@@ -70,10 +70,15 @@ final class NotebookSQLConnection {
 
   /// Direct receipt/inverse decoders borrow the same aggregate transaction
   /// allowance as fragment envelopes. A helper cannot renew consumed capacity.
-  func admitJSONDecode(_ data: Data) throws {
+  func admitJSONDecode(_ data: Data, maximumAllocationBytes: Int? = nil) throws {
     try checkReadAllowance()
-    if let remaining = remainingJSONDecodeBytes {
-      do { try admitJSONAllocation(bytes: NotebookJSONAdmission.allocationCost(data, maximumBytes: remaining,
+    // A point reader can bound its own value without imposing a new policy
+    // on the rest of a borrowed snapshot. Existing aggregate credit still
+    // pays the allocation and can only tighten this per-value ceiling.
+    let maximum = maximumAllocationBytes.map { min($0, remainingJSONDecodeBytes ?? $0) }
+      ?? remainingJSONDecodeBytes
+    if let maximum {
+      do { try admitJSONAllocation(bytes: NotebookJSONAdmission.allocationCost(data, maximumBytes: maximum,
         observesCancellation: !writable)) }
       catch { readRefusal = readAllowance?.reason ?? "json_decode_memory"; throw error }
     }
@@ -447,6 +452,16 @@ struct NotebookRecordCodec {
   static func encode(_ value: JSONValue, file: String, address: String? = nil,
     parent: String? = nil, collection: String = "", member: String = "", position: Int = 0) throws -> [NotebookStoredFragment] {
     var rows: [NotebookStoredFragment] = []
+    try visitEncodedFragments(value, file: file, address: address, parent: parent,
+      collection: collection, member: member, position: position) { rows.append($0) }
+    return rows
+  }
+
+  /// The one encoding walk emits in the same child-before-parent order used
+  /// by the collector. A bounded proof can stop at its first unmatched row.
+  static func visitEncodedFragments(_ value: JSONValue, file: String, address: String? = nil,
+    parent: String? = nil, collection: String = "", member: String = "", position: Int = 0,
+    emit: (NotebookStoredFragment) throws -> Void) throws {
     func make(_ original: JSONValue, address: String, parent: String?, collection: String, member: String, position: Int) throws {
       var collections: [NotebookStoredCollection] = []
       func strip(_ value: JSONValue, path: [String]) throws -> JSONValue {
@@ -496,11 +511,10 @@ struct NotebookRecordCodec {
         return .object(output)
       }
       let stripped = try strip(original, path: [])
-      rows.append(.init(address: address, file: file, parent: parent, collection: collection,
+      try emit(.init(address: address, file: file, parent: parent, collection: collection,
         member: member, position: position, value: stripped, collections: collections))
     }
     try make(value, address: address ?? file + "#", parent: parent, collection: collection, member: member, position: position)
-    return rows
   }
 
   static func decode(_ rows: [NotebookStoredFragment], root: String) throws -> JSONValue {

@@ -714,17 +714,29 @@ unchanged source `ffa5ec39410fb1b8f5abe1ee45285c6122b6f9ffaaba38a392c0b0cb1197f8
 [Evidence](audit-evidence/2026-10-08/received-acceptance-read-cut/results.json).
 DB29/wire44/manifest26 and the installed pair are unchanged. Physical acceptance remains pending.
 
-## 2026-10-08: NB02 accepted history preflight
+## 2026-10-08: accepted history bodies and bounded native replay
 
-The existing readonly command cut now exposes bounded accepted-marker pages and
-authenticated original receipt-fragment summaries. Split membership and absent
-roots retain incomplete coverage; current content never fills their gaps.
-Core: 23 functions / 41 cases PASS, including100000 accepted markers,
-source `8b7895e142b894df606b3e293fb51032accd7b2fa6f6690e9a0a02e161c63a98` / 1725 files.
-Final native IPC/script-declaration checks: 2 cases PASS, strict TypeScript and
-generated resources PASS, source `7db3b40a307b1085133caed49ffcffa483258439d0f39e445b11aeb38113676e` / 1725 files.
-Only the new MCP test and two generated ScriptHost resources changed after Core;
-Core production/tests remained exact. Source and toolchain match within each run.
-[Scope, source intersection and attempts](audit-evidence/2026-10-08/action-history-preflight/results.json).
+Original-body closure binds source-local original/model/result roots to the raw
+delivery version, preserves unknown fields and compares every canonical fragment
+through the existing streaming encoder. Missing or mismatched proof retains
+incomplete coverage. Metadata summaries expose four witness hashes.
+Cold ink pays actual codec nodes; cached restoration pays each output allocation.
+Native replay uses the existing hash-bound model and immutable original result,
+without copying authored receipts. Its allowance stays with the Panel writer.
+DC05 removes three unused dependency visitors; live discovery/validators remain.
+
+Selected Core: 54 functions / 99 cases PASS; isolated native IPC: 3 cases PASS;
+strict TypeScript and generated declarations PASS. Core source
+`6abc100c49baa928714c87a318c8cd9f187e6f80255be301f1f50ff5263d8fb3`, final MCP
+`8a66b73e32aec6bf7351aa0e4d313937284c3c98715f0f4f61263e8be205119b` / 1726 files.
+Only a TypeScript fixture existence assertion changed after Core; Core production
+and tests stayed exact. Source and toolchain match within each run.
+[Scope, attempts and known failures](audit-evidence/2026-10-08/history-body-and-native-replay/results.json);
+[earlier preflight baseline](audit-evidence/2026-10-08/action-history-preflight/results.json).
+
+The stage-v2 full65k diagnostic passed acceptance, cold replay and exact body read,
+then refused at Undo. The original full scenario remains outside the final PASS
+scope; clean common main f926 reproduces its earlier failure.
+Full Undo needs immutable birth/event publication and exact measurement binding.
 DB29/wire44/manifest26 and installed260 are unchanged. Fleet seal, birth proof,
 Undo conversion and physical/joint acceptance remain open in GUI-486.

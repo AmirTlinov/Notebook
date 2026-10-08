@@ -1,0 +1,15 @@
+◇ Test run started.
+↳ Testing Library Version: 2084
+↳ Target Platform: arm64e-apple-macos14.0
+◇ Suite "Panel pen contacts use native causal actions" started.
+◇ Test fullMeasuredContactFitsTheNativeLeaseAndRetriesAfterReopen() started.
+Native 65536-point contact: first acceptance
+Native 65536-point contact: replay after reopen
+Native 65536-point contact: exact authored body read
+Native 65536-point contact: undo
+✘ Test fullMeasuredContactFitsTheNativeLeaseAndRetriesAfterReopen() recorded an issue at NotebookPanelInkTests.swift:119:4: Caught error: .limitExceeded("native_command_read")
+✘ Test fullMeasuredContactFitsTheNativeLeaseAndRetriesAfterReopen() failed after 6.728 seconds with 1 issue.
+✘ Suite "Panel pen contacts use native causal actions" failed after 6.728 seconds with 1 issue.
+✘ Test run with 1 test in 1 suite failed after 6.728 seconds with 1 issue.
+Note: Some test targets reported failures:
+  - NotebookCoreTests (Swift Testing)

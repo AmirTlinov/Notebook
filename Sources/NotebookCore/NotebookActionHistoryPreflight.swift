@@ -29,6 +29,11 @@ extension NotebookStore {
         switch receipt.disposition {
         case .completeSelfContained:
           fields["closure"] = .string("completeSelfContained")
+        case .completeOriginalBody(_, let anchor):
+          fields["closure"] = .string("completeOriginalBody")
+          fields["originalAnchor"] = .object(["originalVersion": .string(anchor.originalVersion),
+            "originalRootHash": .string(anchor.originalRootHash), "modelRootHash": .string(anchor.modelRootHash),
+            "resultRootHash": .string(anchor.resultRootHash)])
         case .unprovenClosure(let reason):
           fields["closure"] = .string("unprovenClosure")
           fields["reason"] = .string(reason.rawValue)

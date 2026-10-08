@@ -1,0 +1,15 @@
+{
+  "executed": [
+    "MCP/test/action-history-preflight.test.ts:14:1:generated script declarations type history evidence without exposing authored payloads or migration authority",
+    "MCP/test/action-history-preflight.test.ts:58:1:history body proof summary accepts only bounded source-root hashes and preserves explicit missing evidence",
+    "MCP/test/action-history-preflight.test.ts:82:1:native history preflight retains exact cuts and reports missing original roots through the SDK contract"
+  ],
+  "failed": [],
+  "format": 1,
+  "planned": [
+    "MCP/test/action-history-preflight.test.ts:14:1:generated script declarations type history evidence without exposing authored payloads or migration authority",
+    "MCP/test/action-history-preflight.test.ts:58:1:history body proof summary accepts only bounded source-root hashes and preserves explicit missing evidence",
+    "MCP/test/action-history-preflight.test.ts:82:1:native history preflight retains exact cuts and reports missing original roots through the SDK contract"
+  ],
+  "skipped": []
+}

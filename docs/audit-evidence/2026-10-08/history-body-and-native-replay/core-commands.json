@@ -1,0 +1,86 @@
+[
+  {
+    "argv": [
+      "/opt/homebrew/opt/python@3.14/bin/python3.14",
+      "--version"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "toolchain-python"
+  },
+  {
+    "argv": [
+      "swift",
+      "--version"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "toolchain-swift"
+  },
+  {
+    "argv": [
+      "swift",
+      "package",
+      "describe",
+      "--type",
+      "json"
+    ],
+    "cwd": "/Users/amir/Documents/projects/Notebook",
+    "exitCode": 0,
+    "label": "core-package"
+  },
+  {
+    "argv": [
+      "swift",
+      "test",
+      "list",
+      "--disable-xctest",
+      "--test-product",
+      "NotebookCoreTests",
+      "--event-stream-output-path",
+      "/Users/amir/Documents/projects/Notebook/.build/nb02-original-body-and-dependencies-core-20261008-v6/core-NotebookCoreTests-inventory.jsonl",
+      "--event-stream-version",
+      "6.4"
+    ],
+    "cwd": "/Users/amir/Documents/projects/Notebook",
+    "exitCode": 0,
+    "label": "core-inventory-NotebookCoreTests"
+  },
+  {
+    "argv": [
+      "swift",
+      "test",
+      "--disable-xctest",
+      "--skip-build",
+      "--test-product",
+      "NotebookCoreTests",
+      "--filter",
+      "^(?:NotebookCoreTests\\.InkRelationCodecTests/physicalGraphPreservesExactPostorderAliasesAndIndependentEqualLeaves\\(\\)/InkRelationCodecTests\\.swift:8:4|NotebookCoreTests\\.NotebookActionHistoryFactResolverTests/aTightenedJSONLeaseRefusesBeforeColdPortableInkValidationOrExpansion\\(_:\\)/NotebookActionHistoryFactResolverTests\\.swift:682:4|NotebookCoreTests\\.NotebookActionHistoryFactResolverTests/anEmptyCollectionCannotAssemblePastTheLogicalDepthAllowance\\(\\)/NotebookActionHistoryFactResolverTests\\.swift:450:4|NotebookCoreTests\\.NotebookActionHistoryFactResolverTests/anOriginalDigestCannotBlessExtraOrAmbiguousFragmentMembership\\(_:\\)/NotebookActionHistoryFactResolverTests\\.swift:373:4|NotebookCoreTests\\.NotebookActionHistoryFactResolverTests/conflictingAndUnavailableOriginalProofRefuses\\(_:\\)/NotebookActionHistoryFactResolverTests\\.swift:546:4|NotebookCoreTests\\.NotebookActionHistoryFactResolverTests/emptyAndMissingLastCollectionMembersRemainUnprovenEvenWhenCodecRoundTrips\\(_:\\)/NotebookActionHistoryFactResolverTests\\.swift:166:4|NotebookCoreTests\\.NotebookActionHistoryFactResolverTests/enclosingCancellationAndJSONAndSQLBudgetsCannotBeRenewed\\(\\)/NotebookActionHistoryFactResolverTests\\.swift:652:4|NotebookCoreTests\\.NotebookActionHistoryFactResolverTests/exactAndSeekAdmissionDoNotHideMalformedAcceptedMarkers\\(_:\\)/NotebookActionHistoryFactResolverTests\\.swift:625:4|NotebookCoreTests\\.NotebookActionHistoryFactResolverTests/localAndReceivedOnlyFactsKeepRawUnknownFieldsAndIgnoreCurrentAndStagingIndexes\\(\\)/NotebookActionHistoryFactResolverTests\\.swift:106:4|NotebookCoreTests\\.NotebookActionHistoryFactResolverTests/missingRemovedAndUnreferencedRootsPreserveDeclarations\\(_:\\)/NotebookActionHistoryFactResolverTests\\.swift:196:4|NotebookCoreTests\\.NotebookActionHistoryFactResolverTests/originalManifestPartsSupplySelfContainedReceipts\\(\\)/NotebookActionHistoryFactResolverTests\\.swift:222:4|NotebookCoreTests\\.NotebookActionHistoryFactResolverTests/originalPartsAndSourceWitnessPreserveUnknownJSONAndDistinctAcceptedOccurrences\\(\\)/NotebookActionHistoryFactResolverTests\\.swift:273:4|NotebookCoreTests\\.NotebookActionHistoryFactResolverTests/oversizedOriginalBlobRefusesBeforeAnyBodyColumnIsCopied\\(\\)/NotebookActionHistoryFactResolverTests\\.swift:730:4|NotebookCoreTests\\.NotebookActionHistoryFactResolverTests/pointAndSemanticSeekShareAcceptanceMarkersAndTheBorrowedCut\\(\\)/NotebookActionHistoryFactResolverTests\\.swift:590:4|NotebookCoreTests\\.NotebookActionHistoryFactResolverTests/shortAliasesRefuseBeforeLongCanonicalAddressesOrBodyCopiesConsumeCredit\\(\\)/NotebookActionHistoryFactResolverTests\\.swift:408:4|NotebookCoreTests\\.NotebookActionHistoryFactResolverTests/sourceOriginalDigestDistinguishesCompleteEmptyAndOmittedMembership\\(_:\\)/NotebookActionHistoryFactResolverTests\\.swift:239:4|NotebookCoreTests\\.NotebookActionHistoryFactResolverTests/stagedOnlyAndAChangedAcceptedManifestHaveNoFactAuthority\\(\\)/NotebookActionHistoryFactResolverTests\\.swift:142:4|NotebookCoreTests\\.NotebookActionHistoryFactResolverTests/theCodecCollectorKeepsItsOrderedFragmentsAndVisitorStopsAtTheFirstThrow\\(\\)/NotebookActionHistoryFactResolverTests\\.swift:517:4|NotebookCoreTests\\.NotebookActionHistoryFactResolverTests/typedOrCurrentProjectionAndOriginalDigestCannotCertifyDifferentRawBodies\\(_:\\)/NotebookActionHistoryFactResolverTests\\.swift:303:4|NotebookCoreTests\\.NotebookActionHistoryFactResolverTests/unavailableAndAlteredSourceAnchorsStayExplicitlyUnproven\\(_:\\)/NotebookActionHistoryFactResolverTests\\.swift:328:4|NotebookCoreTests\\.NotebookActionHistoryFactResolverTests/unlistedInlineMembersStopBeforeAmplifiedOutputOrALaterMalformedSubtree\\(\\)/NotebookActionHistoryFactResolverTests\\.swift:476:4|NotebookCoreTests\\.NotebookActionHistoryInventoryTests/aHundredThousandMarkersKeepKeysetWorkInsideTheEnclosingSQLLease\\(\\)/NotebookActionHistoryInventoryTests\\.swift:202:4|NotebookCoreTests\\.NotebookActionHistoryInventoryTests/admissionRequiresTheCallerWorkspaceAndDoesNotRenewAnExhaustedBudget\\(\\)/NotebookActionHistoryInventoryTests\\.swift:287:4|NotebookCoreTests\\.NotebookActionHistoryInventoryTests/differentAcceptedManifestHashesForOneTransactionRefuseBeforeReturningAPage\\(\\)/NotebookActionHistoryInventoryTests\\.swift:133:4|NotebookCoreTests\\.NotebookActionHistoryInventoryTests/keysetPagesPreserveDistinctAcceptedTransactionsSharingTheSamePayload\\(\\)/NotebookActionHistoryInventoryTests\\.swift:150:4|NotebookCoreTests\\.NotebookActionHistoryInventoryTests/localAndMaterialNoOpIncomingAreEnumeratedWhileStagedManifestsAreExcluded\\(\\)/NotebookActionHistoryInventoryTests\\.swift:77:4|NotebookCoreTests\\.NotebookActionHistoryInventoryTests/malformedHeadersRefuseBeforeCopyingUnboundedScalars\\(corruption:\\)/NotebookActionHistoryInventoryTests\\.swift:259:4|NotebookCoreTests\\.NotebookActionHistoryInventoryTests/paginationKeepsItsSnapshotAcrossPeerCommitsAndRejectsAnotherReadCut\\(\\)/NotebookActionHistoryInventoryTests\\.swift:175:4|NotebookCoreTests\\.NotebookActionHistoryInventoryTests/relayedJournalAndFirstReceivedCoalesceWithoutInventingDuplicateSourceMappings\\(\\)/NotebookActionHistoryInventoryTests\\.swift:113:4|NotebookCoreTests\\.NotebookActionHistoryPreflightTests/aSourceBoundSplitLegacyBodyExposesOnlyItsOriginalAnchorMetadata\\(\\)/NotebookActionHistoryPreflightTests\\.swift:168:4|NotebookCoreTests\\.NotebookActionHistoryPreflightTests/exactAcceptedTransactionReportsMissingSelectedReceiptWithoutAuthorContent\\(\\)/NotebookActionHistoryPreflightTests\\.swift:81:4|NotebookCoreTests\\.NotebookActionHistoryPreflightTests/metadataDirectoryContinuesWithoutCurrentContentOrBlobDecoding\\(\\)/NotebookActionHistoryPreflightTests\\.swift:34:4|NotebookCoreTests\\.NotebookActionHistoryPreflightTests/newAcceptedJournalWriteInvalidatesTheDirectoryContinuation\\(\\)/NotebookActionHistoryPreflightTests\\.swift:68:4|NotebookCoreTests\\.NotebookActionHistoryPreflightTests/pointHashMismatchAndUnboundDirectorySeekRefuseBeforeReturningEvidence\\(\\)/NotebookActionHistoryPreflightTests\\.swift:103:4|NotebookCoreTests\\.NotebookActionHistoryPreflightTests/preflightCannotRenewTheEnclosingReadAllowanceOrEnterTheWriter\\(\\)/NotebookActionHistoryPreflightTests\\.swift:220:4|NotebookCoreTests\\.NotebookActionHistoryPreflightTests/realFrozenSourceResultKeepsItsAuthenticSelfContainedBodyAndMetadataOnlySummary\\(\\)/NotebookActionHistoryPreflightTests\\.swift:118:4|NotebookCoreTests\\.NotebookActionInverseTests/historicalInkBodyIsRequiredBeforeAckAndIncludedInCloudClosure\\(\\)/NotebookActionInverseTests\\.swift:86:4|NotebookCoreTests\\.NotebookActionInverseTests/restorationBodiesAreIndependentDependenciesUnderTheSameActionIdentity\\(\\)/NotebookActionInverseTests\\.swift:173:4|NotebookCoreTests\\.NotebookActionReadModelTests/closedDocumentMetadataAndDeliveryFitAnAddressedReadWithoutItsFourteenMiBReceipt\\(\\)/NotebookActionReadModelTests\\.swift:25:4|NotebookCoreTests\\.NotebookActionReadModelTests/schemaAdmissionRebuildsOnlyDerivedDescriptionsAndPreservesAcceptedRecords\\(\\)/NotebookActionReadModelTests\\.swift:70:4|NotebookCoreTests\\.NotebookActionReadModelTests/sourceComparisonPreservesHumanContinuationWithoutRetainingTheOldSource\\(\\)/NotebookActionReadModelTests\\.swift:50:4|NotebookCoreTests\\.NotebookActionReadModelTests/staleDescriptionCannotPublishDeliveryOrMasqueradeAsAnAbsentAction\\(\\)/NotebookActionReadModelTests\\.swift:102:4|NotebookCoreTests\\.NotebookNativeWriteAllowanceTests/oldFormatPartStaysReadableAndATightenedNativeCutRefusesWithoutTruncation\\(\\)/NotebookNativeWriteAllowanceTests\\.swift:68:4|NotebookCoreTests\\.NotebookNativeWriteAllowanceTests/rootAndPartsShareAdmissionAndCaughtExhaustionRollsBackTheWholeCommand\\(\\)/NotebookNativeWriteAllowanceTests\\.swift:22:4|NotebookCoreTests\\.NotebookPanelReplayTests/aFullMeasuredContactReplaysAfterReopenWithoutReadingOrRewritingItsReceipt\\(\\)/NotebookPanelReplayTests\\.swift:90:4|NotebookCoreTests\\.NotebookPanelReplayTests/aMissingOrInvalidSavedModelRefusesInsteadOfReexecutingTheAcceptedID\\(_:\\)/NotebookPanelReplayTests\\.swift:130:4|NotebookCoreTests\\.NotebookPanelReplayTests/aNestedReplayIdentityReadCannotRenewTheCallersExhaustedJSONCredit\\(\\)/NotebookPanelReplayTests\\.swift:168:4|NotebookCoreTests\\.NotebookPanelReplayTests/replayAfterAnOrdinaryUndoReturnsTheOriginalResultAndKeepsTheUndoneReceipt\\(\\)/NotebookPanelReplayTests\\.swift:114:4|NotebookCoreTests\\.NotebookProgramDeliveryTests/withheldLastPartCannotPublishOrAdvanceCursorThenColdReplicaReadsAcrossParts\\(\\)/NotebookProgramDeliveryTests\\.swift:83:4|NotebookCoreTests\\.NotebookReadOutputAllowanceTests/derivativeFilesPayAggregateSourceDecodeAndProjectionBeforeReturningRepeatedReceipts\\(\\)/NotebookReadOutputAllowanceTests\\.swift:118:4|NotebookCoreTests\\.NotebookReadOutputAllowanceTests/literalInkUsesItsActualNodesAndRepeatedRestorationCannotRenewTheCut\\(_:\\)/NotebookReadOutputAllowanceTests\\.swift:7:4|NotebookCoreTests\\.NotebookReadOutputAllowanceTests/observationalOutputAdmissionDoesNotWithdrawAnAcceptedNativeWriter\\(\\)/NotebookReadOutputAllowanceTests\\.swift:159:4|NotebookCoreTests\\.NotebookReadOutputAllowanceTests/repeatedCompressedInkCannotRenewFlattenedOutputAndCaughtRefusalClosesTheCut\\(\\)/NotebookReadOutputAllowanceTests\\.swift:69:4|NotebookCoreTests\\.NotebookSQLiteTests/transientJSONPreservesTypedContentAndCanonicalDurableEnvelopes\\(\\)/NotebookSQLiteTests\\.swift:104:4)$",
+      "--event-stream-output-path",
+      "/Users/amir/Documents/projects/Notebook/.build/nb02-original-body-and-dependencies-core-20261008-v6/core-NotebookCoreTests-events.jsonl",
+      "--event-stream-version",
+      "6.4"
+    ],
+    "cwd": "/Users/amir/Documents/projects/Notebook",
+    "exitCode": 0,
+    "label": "core-NotebookCoreTests"
+  },
+  {
+    "argv": [
+      "/opt/homebrew/opt/python@3.14/bin/python3.14",
+      "--version"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "toolchain-after-python"
+  },
+  {
+    "argv": [
+      "swift",
+      "--version"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "toolchain-after-swift"
+  }
+]

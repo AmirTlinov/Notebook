@@ -1,0 +1,62 @@
+{
+  "core": {
+    "cases": 99,
+    "failed": 0,
+    "functions": 54,
+    "skipped": 0,
+    "sourceSHA256": "6abc100c49baa928714c87a318c8cd9f187e6f80255be301f1f50ff5263d8fb3"
+  },
+  "coreProductionAndTestsUnchangedToMCP": true,
+  "format": 1,
+  "formats": {
+    "database": 29,
+    "manifest": 26,
+    "wire": 44
+  },
+  "installedPairChanged": false,
+  "issues": [
+    "GUI-486",
+    "GUI-494",
+    "GUI-505"
+  ],
+  "knownOpenFullNativeScenario": {
+    "includedInFinalPassScope": false,
+    "originalScenarioRetained": true,
+    "requiredOwner": "GUI486 birth/event publication with exact measurement binding, actor/head guards and atomic material+Undo result",
+    "selector": "NotebookCoreTests/NotebookPanelInkTests/fullMeasuredContactFitsTheNativeLeaseAndRetriesAfterReopen",
+    "stageEvidence": ".build/nb02-native-contact-stage-20261008-v2",
+    "status": "failed at65k Undo in stage-v2 diagnostic"
+  },
+  "mcp": {
+    "cases": 3,
+    "failed": 0,
+    "generatedScriptResources": "passed",
+    "node": "v24.21.0",
+    "skipped": 0,
+    "sourceSHA256": "8a66b73e32aec6bf7351aa0e4d313937284c3c98715f0f4f61263e8be205119b",
+    "typescript": "passed"
+  },
+  "physicalAcceptance": false,
+  "rawEvidence": [
+    ".build/nb02-original-body-and-dependencies-core-20261008-v6",
+    ".build/nb02-original-body-mcp-20261008-v7",
+    ".build/nb02-exact-main-counterfactual-20261008-v1",
+    ".build/nb02-native-contact-stage-20261008-v1",
+    ".build/nb02-native-contact-stage-20261008-v2"
+  ],
+  "remaining": [
+    "Fleet seal and full immutable birth proof",
+    "Undo/Redo event conversion and agreed format writer/reader cutover",
+    "Actual current-fleet corpus, physical host/iPad and joint acceptance"
+  ],
+  "scope": [
+    "Source-bound original body closure with unknown JSON and exact streamed membership",
+    "Metadata-only four-hash summary and SDK union; no birth/actor/Undo migration authority",
+    "One bounded borrowed readonly cut with sticky cancellation/SQL/JSON refusal",
+    "Actual-node cold ink admission and charged warm portable/base64/COW output",
+    "Existing hash-bound action model/original result owner for cold native replay without authored receipt copies",
+    "DC05 three unused dependency visitors removed; live discovery/validators preserved"
+  ],
+  "sourceFileCount": 1726,
+  "status": "verified current-format history-body and bounded native replay slice"
+}

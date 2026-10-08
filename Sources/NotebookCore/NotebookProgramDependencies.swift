@@ -123,17 +123,6 @@ extension NotebookStore {
     }
     return []
   }
-
-  func visitProgramDependencyHashes(manifestHash: String, _ visit: (String) throws -> Void) throws {
-    let db = currentSQL!
-    var after = ""
-    while true {
-      try Task.checkCancellation()
-      let hashes = try db.rows("SELECT hash FROM manifest_program_roots WHERE manifest_hash=? AND hash>? UNION SELECT hash FROM manifest_program_parts WHERE manifest_hash=? AND hash>? ORDER BY hash LIMIT 64", [.text(manifestHash), .text(after), .text(manifestHash), .text(after)]).compactMap { $0[0].text }
-      guard let last = hashes.last else { break }
-      for hash in hashes { try visit(hash) }; after = last
-    }
-  }
 }
 
 extension NotebookStore {

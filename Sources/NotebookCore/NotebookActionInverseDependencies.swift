@@ -179,18 +179,6 @@ extension NotebookStore {
     }
   }
 
-  func visitLifecycleInverseDependencyHashes(manifestHash: String, _ visit: (String) throws -> Void) throws {
-    let database = currentSQL!
-    var after = ""
-    while true {
-      try Task.checkCancellation()
-      let hashes = try database.rows("SELECT root_hash AS hash FROM manifest_inverse_roots WHERE manifest_hash=? AND root_hash>? UNION SELECT hash FROM manifest_inverse_parts WHERE manifest_hash=? AND hash>? UNION SELECT hash FROM manifest_inverse_blobs WHERE manifest_hash=? AND hash>? ORDER BY hash LIMIT 64",
-        [.text(manifestHash), .text(after), .text(manifestHash), .text(after), .text(manifestHash), .text(after)]).compactMap { $0[0].text }
-      guard let last = hashes.last else { break }
-      for hash in hashes { try visit(hash) }; after = last
-    }
-  }
-
   func validateStoredLifecycleInverses() throws {
     let database = currentSQL!
     var after = "collaboration/actions/"

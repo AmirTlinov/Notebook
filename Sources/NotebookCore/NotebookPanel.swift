@@ -364,8 +364,9 @@ extension NotebookStore {
       let fingerprint = SHA256.hash(data: try encoder.encode(Fingerprint(actor: actor, request: request))).map { String(format: "%02x", $0) }.joined()
       // A response loss attaches to its exact saved native command. Stale
       // preconditions never turn the same gesture into another write.
-      if let saved = try collaborationActionIfPresent(request.actionID) {
-        guard saved.author == .human, saved.requestFingerprint == fingerprint else {
+      try currentSQL!.limitReads(NotebookNativeWriteAllowance().readAllowance())
+      if let saved = try actionReadModelIfPresent(request.actionID) {
+        guard saved.id == request.actionID, saved.author == .human, saved.requestFingerprint == fingerprint else {
           throw CollaborationError("action_id_conflict", "Этот ID уже принадлежит другому действию.")
         }
         guard let original = try savedActionResult(saved.id) else { throw CollaborationError("action_version_unavailable", "Исходный результат действия недоступен.") }

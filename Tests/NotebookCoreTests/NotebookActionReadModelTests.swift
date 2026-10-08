@@ -76,8 +76,15 @@ struct NotebookActionReadModelTests {
       }
       let version = try receipt.deliveryVersion()
       try store.commandTransaction(advancesReadRevision: false) {
-        try store.currentSQL!.run("DROP TABLE action_read_models")
-        try store.currentSQL!.run("PRAGMA user_version=3")
+        let database = store.currentSQL!
+        try database.run("DROP TABLE action_read_models")
+        // A pre-recipe database has neither the recipe guards nor its marker.
+        // Keep authored records intact while reproducing that derived schema.
+        for event in ["insert", "update", "delete"] {
+          try database.run("DROP TRIGGER search_recipe_" + event)
+        }
+        try database.run("DELETE FROM metadata WHERE key='search_recipe'")
+        try database.run("PRAGMA user_version=3")
       }
       let reopened = NotebookStore(root: store.root)
       try reopened.prepare()

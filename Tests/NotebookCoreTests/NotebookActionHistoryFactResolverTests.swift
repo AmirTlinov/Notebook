@@ -59,6 +59,24 @@ struct NotebookActionHistoryFactResolverTests {
           [.text(record.address), .text(file), record.blobHash.map(NotebookSQLValue.text) ?? .null])
       }
     }
+    func originalAnchor(_ id: UUID, body: JSONValue, original: JSONValue? = nil,
+      model: JSONValue? = nil, result: JSONValue? = nil) throws -> NotebookActionHistoryObservation.OriginalAnchor {
+      let version = try notebookActionDeliveryVersion(body)
+      let prefix = "local/action-results/" + id.uuidString.lowercased() + "/"
+      let roots: [(String, JSONValue)] = [
+        (prefix + "original.json", original ?? .string(version)),
+        (prefix + version + "/model.json", model ?? .object(["id": .string(id.uuidString), "actionVersion": .string(version)])),
+        (prefix + version + "/result.json", result ?? .object(["actionID": .string(id.uuidString),
+          "actionVersion": .string(version), "basis": .object(["workspaceID": .string(workspaceID.uuidString)])]))]
+      var hashes: [String] = []
+      for (file, value) in roots {
+        let payload = try records(NotebookRecordCodec.encode(value, file: file))
+        try current(payload.records, file: file)
+        let root = try #require(payload.records.first { $0.address == file + "#" })
+        hashes.append(try #require(root.blobHash))
+      }
+      return .init(originalVersion: version, originalRootHash: hashes[0], modelRootHash: hashes[1], resultRootHash: hashes[2])
+    }
     func read<T>(cancellation: NotebookReadCancellation? = nil, _ body: (NotebookSQLConnection) throws -> T) throws -> T {
       let reader = try NotebookSQLConnection(url: store.databaseURL, writable: false)
       return try store.readTransaction(using: reader, cancellation: cancellation) { _ in try body(reader) }
@@ -218,6 +236,313 @@ struct NotebookActionHistoryFactResolverTests {
     }
   }
 
+  @Test(arguments: ["full", "originalEmpty", "missingLast", "missingAll"])
+  func sourceOriginalDigestDistinguishesCompleteEmptyAndOmittedMembership(_ kind: String) throws {
+    try fixture { f in
+      let id = UUID(), transactionID = UUID(), file = f.file(id)
+      let pages: [JSONValue] = kind == "originalEmpty" ? [] : [.string(UUID().uuidString), .string(UUID().uuidString)]
+      let body = f.value(id).setting("before", .object(["pageIDs": .array(pages)]))
+      let full = try NotebookRecordCodec.encode(body, file: file)
+      let rootCandidate = full.first { $0.parent == nil }
+      let root = try #require(rootCandidate)
+      let children = full.filter { $0.parent != nil }.sorted { $0.position < $1.position }
+      let count = kind == "missingAll" ? 0 : kind == "missingLast" ? 1 : children.count
+      let payload = try f.records([root] + Array(children.prefix(count)), unknownEnvelope: true)
+      let manifest = try f.manifest(transactionID, records: payload.records)
+      try f.journal(transactionID, manifest, sequence: 1)
+      let anchor = try f.originalAnchor(id, body: body)
+      // Today's complete receipt must not fill an omitted original member.
+      let current = try f.records(full)
+      try f.current(current.records, file: file)
+      try f.read { database in
+        let fact = try f.store.actionHistoryFact(transactionID: transactionID, manifestHash: manifest.hash)
+        let receipt = try #require(fact.receipts.first)
+        #expect(fact.borrowedSnapshotID == database.readSnapshotIdentity && fact.transactionID == transactionID)
+        if kind == "full" || kind == "originalEmpty" {
+          #expect(receipt.disposition == .completeOriginalBody(body, anchor))
+        } else {
+          #expect(receipt.disposition == .unprovenClosure(.originalAnchorMismatch))
+        }
+        #expect(receipt.fragments.count == count + 1)
+        for fragment in receipt.fragments { #expect(fragment.rawPayload == payload.payloads[fragment.address]) }
+        #expect(sqlite3_total_changes64(database.handle) == 0)
+      }
+    }
+  }
+
+  @Test func originalPartsAndSourceWitnessPreserveUnknownJSONAndDistinctAcceptedOccurrences() throws {
+    try fixture { f in
+      let id = UUID(), localID = UUID(), incomingID = UUID(), file = f.file(id)
+      let body = f.value(id).setting("future", .object(["records": .array([
+        .object(["id": .string("one"), "unknown": .object(["nullable": .null, "unicode": .string("🖋️/ё")])]),
+        .object(["id": .string("two"), "unknown": .array([.number(7), .bool(true)])])])]))
+      let rows = try NotebookRecordCodec.encode(body, file: file), payload = try f.records(rows, unknownEnvelope: true)
+      let anchor = try f.originalAnchor(id, body: body)
+      func accepted(_ transactionID: UUID) throws -> Manifest {
+        let parts = try payload.records.map { try f.manifest(transactionID, records: [$0]).hash }
+        return try f.manifest(transactionID, records: [], parts: parts)
+      }
+      let local = try accepted(localID), incoming = try accepted(incomingID)
+      try f.journal(localID, local, sequence: 71)
+      try f.received(incomingID, incoming, source: .init(deviceID: UUID(), generation: UUID()), sequence: 13)
+      try f.read { database in
+        let a = try f.store.actionHistoryFact(transactionID: localID, manifestHash: local.hash)
+        let b = try f.store.actionHistoryFact(transactionID: incomingID, manifestHash: incoming.hash)
+        #expect(a.transactionID != b.transactionID && a.manifestHash != b.manifestHash)
+        #expect(a.borrowedSnapshotID == b.borrowedSnapshotID && a.borrowedSnapshotID == database.readSnapshotIdentity)
+        for fact in [a, b] {
+          let receipt = try #require(fact.receipts.first)
+          #expect(receipt.disposition == .completeOriginalBody(body, anchor))
+          #expect(receipt.fragments.count == rows.count && receipt.fragments.allSatisfy { $0.manifestPartHash != nil })
+          for fragment in receipt.fragments { #expect(fragment.rawPayload == payload.payloads[fragment.address]) }
+        }
+      }
+    }
+  }
+
+  @Test(arguments: ["missingUnknownChild", "sourceDigestDroppedUnknownField", "undoVariant"])
+  func typedOrCurrentProjectionAndOriginalDigestCannotCertifyDifferentRawBodies(_ kind: String) throws {
+    try fixture { f in
+      let id = UUID(), transactionID = UUID(), file = f.file(id)
+      let original = f.value(id).setting("future", .object(["records": .array([
+        .object(["id": .string("known"), "unexpected": .string("author's future bytes")])])]))
+      let observed = kind == "undoVariant" ? original.setting("undo", .object(["restored": .number(0),
+        "preserved": .array([]), "completedAt": .number(123)])) : original
+      var rows = try NotebookRecordCodec.encode(observed, file: file)
+      if kind == "missingUnknownChild" { rows.removeAll { $0.collection == "future/records" } }
+      let payload = try f.records(rows), manifest = try f.manifest(transactionID, records: payload.records)
+      try f.journal(transactionID, manifest, sequence: 1)
+      let sourceBody = kind == "sourceDigestDroppedUnknownField" ? original.setting("future", nil) : original
+      _ = try f.originalAnchor(id, body: sourceBody)
+      let current = try f.records(NotebookRecordCodec.encode(original, file: file))
+      try f.current(current.records, file: file)
+      try f.read { _ in
+        let fact = try f.store.actionHistoryFact(transactionID: transactionID, manifestHash: manifest.hash)
+        let receipt = try #require(fact.receipts.first)
+        #expect(receipt.disposition == .unprovenClosure(.originalAnchorMismatch))
+        #expect(receipt.fragments.count == rows.count)
+      }
+    }
+  }
+
+  @Test(arguments: ["missingOriginal", "missingModel", "missingResult", "pointerVersion", "pointerType",
+    "modelID", "modelVersion", "modelUndo", "resultID", "resultVersion", "workspace", "resultUndo"])
+  func unavailableAndAlteredSourceAnchorsStayExplicitlyUnproven(_ kind: String) throws {
+    try fixture { f in
+      let id = UUID(), transactionID = UUID(), file = f.file(id)
+      let body = f.value(id).setting("before", .object(["pageIDs": .array([.string(UUID().uuidString)])]))
+      let payload = try f.records(NotebookRecordCodec.encode(body, file: file)), manifest = try f.manifest(transactionID, records: payload.records)
+      try f.journal(transactionID, manifest, sequence: 1)
+      let version = try notebookActionDeliveryVersion(body), other = String(repeating: "a", count: 64)
+      var original: JSONValue = .string(version)
+      var model: JSONValue = .object(["id": .string(id.uuidString), "actionVersion": .string(version)])
+      var result: JSONValue = .object(["actionID": .string(id.uuidString), "actionVersion": .string(version),
+        "basis": .object(["workspaceID": .string(f.workspaceID.uuidString)])])
+      switch kind {
+      case "pointerVersion": original = .string(other)
+      case "pointerType": original = .object(["version": .string(version)])
+      case "modelID": model = model.setting("id", .string(UUID().uuidString))
+      case "modelVersion": model = model.setting("actionVersion", .string(other))
+      case "modelUndo": model = model.setting("undo", .object(["restored": .number(0)]))
+      case "resultID": result = result.setting("actionID", .string(UUID().uuidString))
+      case "resultVersion": result = result.setting("actionVersion", .string(other))
+      case "workspace": result = result.setting("basis", .object(["workspaceID": .string(UUID().uuidString)]))
+      case "resultUndo": result = result.setting("undo", .object(["restored": .number(0)]))
+      default: break
+      }
+      _ = try f.originalAnchor(id, body: body, original: original, model: model, result: result)
+      if kind.hasPrefix("missing") {
+        let prefix = "local/action-results/" + id.uuidString.lowercased() + "/"
+        let missing = kind == "missingOriginal" ? prefix + "original.json"
+          : prefix + version + (kind == "missingModel" ? "/model.json" : "/result.json")
+        try f.writer.run("DELETE FROM records WHERE address=?", [.text(missing + "#")])
+      }
+      // A fully current receipt and a saved model/result without original.json
+      // cannot invoke actionVersionModel's mutable projection fallback.
+      try f.current(payload.records, file: file)
+      let reason: NotebookActionHistoryObservation.Reason = kind == "missingOriginal" ? .externalizedMembership
+        : ["missingModel", "missingResult", "pointerVersion"].contains(kind) ? .originalAnchorUnavailable : .originalAnchorMismatch
+      try f.read { _ in
+        let fact = try f.store.actionHistoryFact(transactionID: transactionID, manifestHash: manifest.hash)
+        let receipt = try #require(fact.receipts.first)
+        #expect(receipt.disposition == .unprovenClosure(reason))
+      }
+    }
+  }
+
+  @Test(arguments: ["orphan", "ignored", "duplicateMember", "duplicateCollection", "removed"])
+  func anOriginalDigestCannotBlessExtraOrAmbiguousFragmentMembership(_ kind: String) throws {
+    try fixture { f in
+      let id = UUID(), transactionID = UUID(), file = f.file(id)
+      let body = f.value(id).setting("before", .object(["pageIDs": .array([.string("a"), .string("b")])]))
+      var rows = try NotebookRecordCodec.encode(body, file: file)
+      if kind == "orphan" || kind == "ignored" {
+        let parent = kind == "orphan" ? file + "#/unlisted" : file + "#"
+        rows.append(.init(address: parent + "/other/@extra", file: file, parent: parent,
+          collection: "other", member: "extra", position: 0, value: .string("extra"), collections: []))
+      } else if kind == "duplicateMember" {
+        let candidate = rows.firstIndex { $0.member == "b" }
+        let index = try #require(candidate), row = rows[index]
+        rows[index] = .init(address: row.address, file: row.file, parent: row.parent, collection: row.collection,
+          member: "a", position: row.position, value: row.value, collections: row.collections)
+      } else if kind == "duplicateCollection" {
+        let candidate = rows.firstIndex { $0.parent == nil }
+        let index = try #require(candidate), row = rows[index]
+        rows[index] = row.replacing(value: row.value, collections: row.collections + row.collections)
+      }
+      let payload = try f.records(rows)
+      var records = payload.records
+      if kind == "removed" { records.append(.init(address: file + "#/other/@removed", blobHash: nil)) }
+      let manifest = try f.manifest(transactionID, records: records)
+      try f.journal(transactionID, manifest, sequence: 1)
+      _ = try f.originalAnchor(id, body: body)
+      try f.read { _ in
+        let fact = try f.store.actionHistoryFact(transactionID: transactionID, manifestHash: manifest.hash)
+        let receipt = try #require(fact.receipts.first)
+        #expect(receipt.disposition == .unprovenClosure(.unreferencedFragments))
+        #expect(receipt.fragments.count == records.count)
+      }
+    }
+  }
+
+  @Test func shortAliasesRefuseBeforeLongCanonicalAddressesOrBodyCopiesConsumeCredit() throws {
+    try fixture { f in
+      let id = UUID(), transactionID = UUID(), file = f.file(id)
+      var nested: JSONValue = .object(["records": .array([.object(["id": .string("leaf"),
+        "authored": .string(String(repeating: "x", count: 100 * 1_024))])])])
+      for index in (0..<9).reversed() {
+        nested = .object(["wrapper-\(index)-~/" + String(repeating: "w", count: 500): nested])
+      }
+      let body = f.value(id).setting("future", nested)
+      let canonical = try NotebookRecordCodec.encode(body, file: file)
+      let aliases = canonical.map { row -> NotebookStoredFragment in
+        guard row.parent != nil else { return row }
+        return .init(address: file + "#/alias/@" + row.member, file: file, parent: row.parent,
+          collection: row.collection, member: row.member, position: row.position, value: row.value, collections: row.collections)
+      }
+      #expect(canonical.contains { $0.address.utf8.count > 4_096 })
+      #expect(aliases.allSatisfy { $0.address.utf8.count <= 4_096 })
+      let decodedAlias = try NotebookRecordCodec.decode(aliases, root: file + "#")
+      #expect(decodedAlias == body, "Codec accepts these aliases and only its later re-encoding exposes the larger addresses")
+      let payload = try f.records(aliases), manifest = try f.manifest(transactionID, records: payload.records)
+      try f.journal(transactionID, manifest, sequence: 1)
+      let anchor = try f.originalAnchor(id, body: body)
+      try f.read { database in
+        try database.limitReads(.agentCommand)
+        // Warm the existing envelope cache under the same finite owner/cut.
+        // Tighten what remains; neither the resolver nor its nested helpers
+        // may renew it. Inputs fit, while body+hash copies would exhaust it.
+        let hashes = payload.records.compactMap(\.blobHash)
+          + [anchor.originalRootHash, anchor.modelRootHash, anchor.resultRootHash]
+        for hash in hashes { _ = try database.decodeFragmentEnvelope(database.blob(hash)) }
+        #expect(database.decodedFragmentCount == hashes.count)
+        try database.limitReads(.init(rows: 65_536, bytes: 32 * 1_024 * 1_024, valueBytes: 8 * 1_024 * 1_024,
+          reason: "alias_assembly_credit", jsonDecodeBytes: 3 * 1_024 * 1_024))
+        let fact = try f.store.actionHistoryFact(transactionID: transactionID, manifestHash: manifest.hash)
+        let receipt = try #require(fact.receipts.first)
+        #expect(receipt.disposition == .unprovenClosure(.unreferencedFragments))
+        #expect(receipt.fragments.count == aliases.count && fact.borrowedSnapshotID == database.readSnapshotIdentity)
+        #expect(sqlite3_total_changes64(database.handle) == 0)
+      }
+    }
+  }
+
+  @Test func anEmptyCollectionCannotAssemblePastTheLogicalDepthAllowance() throws {
+    try fixture { f in
+      let id = UUID(), transactionID = UUID(), file = f.file(id)
+      let path = ["future"] + Array(repeating: "", count: NotebookJSONAdmission.maximumDepth - 1) + ["records"]
+      #expect(path.count == NotebookJSONAdmission.maximumDepth + 1 && fieldKey(path).utf8.count < 4_096)
+      // The physical envelope stays shallow. Codec would invent the omitted
+      // object wrappers while restoring this empty collection, despite having
+      // no children on which the member-depth guard could run.
+      let header = NotebookStoredFragment(address: file + "#", file: file, parent: nil,
+        collection: "", member: "", position: 0, value: f.value(id), collections: [.init(path: path, kind: .array)])
+      // A malformed accepted header must refuse before reconstructing a body;
+      // its valid source witness stays within the authored JSON contract.
+      _ = try f.originalAnchor(id, body: f.value(id))
+      let payload = try f.records([header]), manifest = try f.manifest(transactionID, records: payload.records)
+      try f.journal(transactionID, manifest, sequence: 1)
+      let writerChanges = sqlite3_total_changes64(f.writer.handle)
+      #expect(throws: NotebookStorageError.limitExceeded("json_decode_depth")) {
+        _ = try f.read { database in
+          defer { #expect(sqlite3_total_changes64(database.handle) == 0) }
+          return try f.store.actionHistoryFact(transactionID: transactionID, manifestHash: manifest.hash)
+        }
+      }
+      #expect(sqlite3_total_changes64(f.writer.handle) == writerChanges)
+    }
+  }
+
+  @Test func unlistedInlineMembersStopBeforeAmplifiedOutputOrALaterMalformedSubtree() throws {
+    try fixture { f in
+      let id = UUID(), transactionID = UUID(), file = f.file(id)
+      let leaves: [JSONValue] = (0..<512).map { .object(["id": .string("leaf-\($0)"), "kept": .bool(true)]) }
+      var nested: JSONValue = .object(["items": .array(leaves)])
+      for index in (0..<60).reversed() {
+        nested = .object(["wrapper-\(index)-~/" + String(repeating: "w", count: 500): nested])
+      }
+      let duplicate: JSONValue = .object(["records": .array([
+        .object(["id": .string("duplicate")]), .object(["id": .string("duplicate")])])])
+      let body = f.value(id).setting("before", .object(["pageIDs": .array([])]))
+        .setting("future", nested).setting("zLate", duplicate)
+      // All inline data is authenticated by the source digest, but no member
+      // of future.items occurs in the accepted manifest. A full collector
+      // would first retain 512 addresses of about 30 KiB each, then reach the
+      // later duplicate subtree. Neither step proves the original closure.
+      let header = NotebookStoredFragment(address: file + "#", file: file, parent: nil,
+        collection: "", member: "", position: 0, value: body.setting("before", .object([:])),
+        collections: [.init(path: ["before", "pageIDs"], kind: .array)])
+      let payload = try f.records([header]), manifest = try f.manifest(transactionID, records: payload.records)
+      try f.journal(transactionID, manifest, sequence: 1)
+      let anchor = try f.originalAnchor(id, body: body)
+      let changes = sqlite3_total_changes64(f.writer.handle)
+      try f.read { database in
+        try database.limitReads(.agentCommand)
+        for hash in payload.records.compactMap(\.blobHash)
+          + [anchor.originalRootHash, anchor.modelRootHash, anchor.resultRootHash] {
+          _ = try database.decodeFragmentEnvelope(database.blob(hash))
+        }
+        try database.limitReads(.init(rows: 65_536, bytes: 32 * 1_024 * 1_024, valueBytes: 8 * 1_024 * 1_024,
+          reason: "inline_closure_credit", jsonDecodeBytes: 24 * 1_024 * 1_024))
+        let fact = try f.store.actionHistoryFact(transactionID: transactionID, manifestHash: manifest.hash)
+        let receipt = try #require(fact.receipts.first)
+        #expect(receipt.disposition == .unprovenClosure(.unreferencedFragments))
+        #expect(receipt.fragments.count == 1 && receipt.fragments.first?.rawPayload == payload.payloads[file + "#"])
+        #expect(fact.borrowedSnapshotID == database.readSnapshotIdentity && sqlite3_total_changes64(database.handle) == 0)
+      }
+      #expect(sqlite3_total_changes64(f.writer.handle) == changes)
+    }
+  }
+
+  @Test func theCodecCollectorKeepsItsOrderedFragmentsAndVisitorStopsAtTheFirstThrow() throws {
+    let file = "example.json", root = file + "#"
+    let first: JSONValue = .object(["id": .string("a"), "value": .number(1)])
+    let second: JSONValue = .object(["id": .string("b"), "value": .number(2)])
+    let body: JSONValue = .object(["records": .array([first, second]), "title": .string("kept")])
+    let expected: [NotebookStoredFragment] = [
+      .init(address: root + "/records/@a", file: file, parent: root, collection: "records",
+        member: "a", position: 0, value: first, collections: []),
+      .init(address: root + "/records/@b", file: file, parent: root, collection: "records",
+        member: "b", position: 1, value: second, collections: []),
+      .init(address: root, file: file, parent: nil, collection: "", member: "", position: 0,
+        value: .object(["title": .string("kept")]), collections: [.init(path: ["records"], kind: .array)])]
+    let collected = try NotebookRecordCodec.encode(body, file: file)
+    var visited: [NotebookStoredFragment] = []
+    try NotebookRecordCodec.visitEncodedFragments(body, file: file) { visited.append($0) }
+    #expect(collected == expected && visited == expected)
+    enum Stop: Error, Equatable { case expected }
+    let laterMalformed = body.setting("zLate", .object(["records": .array([first, first])]))
+    var emissions = 0
+    #expect(throws: Stop.expected) {
+      try NotebookRecordCodec.visitEncodedFragments(laterMalformed, file: file) { fragment in
+        emissions += 1
+        #expect(fragment == expected[0])
+        throw Stop.expected
+      }
+    }
+    #expect(emissions == 1, "The visitor's refusal must precede the later duplicate-ID error")
+  }
+
   @Test(arguments: ["differentAcceptedHash", "missingPart", "wrongPartTransaction", "duplicateFragment", "missingFragment", "corruptFragment", "corruptManifest"])
   func conflictingAndUnavailableOriginalProofRefuses(_ kind: String) throws {
     try fixture { f in
@@ -351,6 +676,54 @@ struct NotebookActionHistoryFactResolverTests {
           return try f.store.actionHistoryFact(transactionID: transactionID, manifestHash: manifest.hash)
         }
       }
+    }
+  }
+
+  @Test(arguments: [false, true])
+  func aTightenedJSONLeaseRefusesBeforeColdPortableInkValidationOrExpansion(_ expanding: Bool) throws {
+    try fixture { f in
+      let samples: [SpatialInkSample] = (0..<64).map { (index: Int) -> SpatialInkSample in
+        let x = Double(index * index % 197), y = Double(index * 37 % 113)
+        let timeOffset = Double(index) / 128, force = Double(index * 17 % 67) / 67
+        return SpatialInkSample(point: .init(x: x, y: y), timeOffset: timeOffset,
+          width: 4, opacity: 0.5, force: force, azimuth: 0, altitude: 1)
+      }
+      let portable = try InkMeasurements(samples, revision: UUID()).encodedRelations()
+      let id = UUID(), file = f.file(id)
+      let body = f.value(id).setting("before", .object(["pageIDs": .array([]),
+        "measurements": .string(portable.base64EncodedString())]))
+      let payload = try f.records(NotebookRecordCodec.encode(body, file: file))
+      let rootData = try #require(payload.payloads[file + "#"])
+      let raw = try JSONDecoder().decode(NotebookStoredFragment.self, from: rootData)
+      let inkHash = try #require(raw.inkBodyHashes.first), stored = try f.writer.blob(inkHash)
+      #expect(stored.starts(with: Data("NIB1".utf8)) && stored.count > 1_024)
+      #expect(rootData.count + portable.count * 4 / 3 + 4 < 8 * 1_024 * 1_024,
+        "The SQL value ceiling must allow this body, isolating JSON admission")
+      let envelopeCost = try NotebookJSONAdmission.allocationCost(rootData, maximumBytes: Int.max)
+      final class Trace { var bodyCopies = 0 }
+      let trace = Trace()
+      #expect(throws: NotebookStorageError.limitExceeded("ink_json_before_copy")) {
+        try f.read { database in
+          try database.limitReads(.init(rows: 100, bytes: 1_048_576, valueBytes: 8 * 1_024 * 1_024,
+            reason: "ink_json_before_copy", jsonDecodeBytes: envelopeCost))
+          let decoding = database.inkDecoding
+          sqlite3_trace_v2(database.handle, UInt32(SQLITE_TRACE_ROW), { _, raw, pointer, _ in
+            let trace = Unmanaged<Trace>.fromOpaque(raw!).takeUnretainedValue(), statement = OpaquePointer(pointer!)
+            if sqlite3_column_count(statement) == 1, sqlite3_column_type(statement, 0) == SQLITE_BLOB,
+              sqlite3_column_bytes(statement, 0) > 1_024 { trace.bodyCopies += 1 }
+            return 0
+          }, Unmanaged.passUnretained(trace).toOpaque())
+          defer {
+            _ = withExtendedLifetime(trace) { sqlite3_trace_v2(database.handle, 0, nil, nil) }
+            #expect(decoding.entryCount == 0 && decoding.retainedBytes == 0)
+            #expect(decoding.storedOutputBody(inkHash) == nil && decoding.storedBody(inkHash) == nil)
+          }
+          var remaining: Int64 = 32 * 1_024 * 1_024
+          _ = try database.decodedStoredFragment(from: rootData, remainingBytes: &remaining,
+            budget: "history_ink_expansion", expandingInk: expanding)
+        }
+      }
+      #expect(trace.bodyCopies == 0)
     }
   }
 

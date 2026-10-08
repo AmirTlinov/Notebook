@@ -1,0 +1,117 @@
+{
+  "baseCommit": "f9268c79de9f226c4c4e9e213b0db070833a849d",
+  "coreProductionAndTestsUnchangedToFinal": true,
+  "coreSHA256": "6abc100c49baa928714c87a318c8cd9f187e6f80255be301f1f50ff5263d8fb3",
+  "delta": [
+    {
+      "executable": false,
+      "path": "MCP/src/sdk-contracts.ts",
+      "sha256": "a343d814ebe7f341887e3583299a6e57968513e0fd4b5fff548f39e0f6805fd3"
+    },
+    {
+      "executable": false,
+      "path": "MCP/src/sdk-results.ts",
+      "sha256": "e62d1dfb951563a79bfe0138f1e06cda80918e26c8441881ea68c2b956370ca7"
+    },
+    {
+      "executable": false,
+      "path": "MCP/test/action-history-preflight.test.ts",
+      "sha256": "19892deaf2da229ff695985deda95d6e0a1ede0669a2264bf34832b30939f3c1"
+    },
+    {
+      "executable": false,
+      "path": "Sources/NotebookCore/InkRelationCodec.swift",
+      "sha256": "a3db1c204043eb37f36eed5e3df74e6eb2c33350d3287f0f2235ed4972d60c4b"
+    },
+    {
+      "executable": false,
+      "path": "Sources/NotebookCore/NotebookActionDelivery.swift",
+      "sha256": "100c8fc460f7e5133837052e70201b5c76758eadf558b4d0909bded1d0b08d7d"
+    },
+    {
+      "executable": false,
+      "path": "Sources/NotebookCore/NotebookActionHistoryFactResolver.swift",
+      "sha256": "8752ea3a954cec1c71fafc86e750bea8894d1c421e79f675c3faf9aa8fd3fa1a"
+    },
+    {
+      "executable": false,
+      "path": "Sources/NotebookCore/NotebookActionHistoryPreflight.swift",
+      "sha256": "84a12d46f8173c0f006cab10f36b49af6cac0c61bac98ea22d6cb7fa97f8305f"
+    },
+    {
+      "executable": false,
+      "path": "Sources/NotebookCore/NotebookActionInverseDependencies.swift",
+      "sha256": "f4cfd6a175d674350fd89b0d247472083a320cc0397a2828baca6bcb0d8bcfd1"
+    },
+    {
+      "executable": false,
+      "path": "Sources/NotebookCore/NotebookActionReadModel.swift",
+      "sha256": "ed048f8448bda29379f3563ec1dafccf17ebcd77ce4da3798ba0d6b4865c7c8c"
+    },
+    {
+      "executable": false,
+      "path": "Sources/NotebookCore/NotebookInkBodies.swift",
+      "sha256": "7d8c158acc01e056cbddddba7442ce0fde8bc2f1b2aea41e22a3197371820eb6"
+    },
+    {
+      "executable": false,
+      "path": "Sources/NotebookCore/NotebookPanel.swift",
+      "sha256": "cc363851dfecf539a6f316bb776f29a588907450c104ceadb93529a92b539f4b"
+    },
+    {
+      "executable": false,
+      "path": "Sources/NotebookCore/NotebookProgramDependencies.swift",
+      "sha256": "9ef1db00350b0daf43a66b432c5f520d8544ce11d8e380f582bbdf9efb6a1e2b"
+    },
+    {
+      "executable": false,
+      "path": "Sources/NotebookCore/NotebookReadSnapshot.swift",
+      "sha256": "9fa82f2ea7d9aaffd617b121b7850f085d77f3c13bd1a4d9779f62a645b9714e"
+    },
+    {
+      "executable": false,
+      "path": "Sources/NotebookCore/NotebookSQLite.swift",
+      "sha256": "4b7222973669f0cddd8684a5ce517f0f9b8c7edfd5a01ea91663367c166c8cf4"
+    },
+    {
+      "executable": false,
+      "path": "Sources/NotebookScriptHost/Resources/notebook-sdk.d.ts",
+      "sha256": "5958fca1ed942357edb6cf0b59d5a78dc096861326fb23265ce4416b73cde66d"
+    },
+    {
+      "executable": false,
+      "path": "Sources/NotebookScriptHost/Resources/sdk-reference.json",
+      "sha256": "bbfe420ae4adc2d41714ee932f1cbfb448bc15d1dee512f04f94317147bd850b"
+    },
+    {
+      "executable": false,
+      "path": "Tests/NotebookCoreTests/NotebookActionHistoryFactResolverTests.swift",
+      "sha256": "a751524d2abcb0ae605908e1bc07dcec1d9a80c0bc6c798c5aad68cc78a437d1"
+    },
+    {
+      "executable": false,
+      "path": "Tests/NotebookCoreTests/NotebookActionHistoryPreflightTests.swift",
+      "sha256": "239ed89eec7f15d4be3bd286df977419f4777bbcf25caad36e8d85f3caab8c51"
+    },
+    {
+      "executable": false,
+      "path": "Tests/NotebookCoreTests/NotebookActionReadModelTests.swift",
+      "sha256": "c6aa7452a58f7e7619c073e3b886a8dc1ce9feeeaf963662c6b8226890ddce77"
+    },
+    {
+      "executable": false,
+      "path": "Tests/NotebookCoreTests/NotebookPanelReplayTests.swift",
+      "sha256": "a353686d531a8e8d578f20949b66774c430d4ab30f567b31e89c2f1e9e65ee9f"
+    },
+    {
+      "executable": false,
+      "path": "Tests/NotebookCoreTests/NotebookReadOutputAllowanceTests.swift",
+      "sha256": "d315c59b5cf989472ced2e1974a25a8d89da2090b5f885a57f802ac4f21a5393"
+    }
+  ],
+  "finalSHA256": "8a66b73e32aec6bf7351aa0e4d313937284c3c98715f0f4f61263e8be205119b",
+  "format": 1,
+  "sourceFileCount": 1726,
+  "sourceStableWithinEachRun": true,
+  "toolchainStableWithinEachRun": true
+}

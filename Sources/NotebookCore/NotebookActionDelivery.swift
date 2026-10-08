@@ -1,12 +1,18 @@
 import Foundation
 
+/// The same framing applies to an untouched raw historical body. Decoding it
+/// as a typed receipt first would discard unknown authored JSON fields.
+func notebookActionDeliveryVersion(_ receipt: JSONValue) throws -> String {
+  try collaborationHash(JSONValue.object(["domain": .string("notebook.action-delivery.v1"),
+    "receipt": receipt]))
+}
+
 extension CollaborationReceipt {
   /// Identity of the saved effect, not a reconstruction of the raw request.
   /// The canonical receipt includes undo metadata even when both effects have
   /// no revised targets. Compute on the storage worker, never per camera frame.
   public func deliveryVersion() throws -> String {
-    try collaborationHash(JSONValue.object(["domain": .string("notebook.action-delivery.v1"),
-      "receipt": try .encode(self)]))
+    try notebookActionDeliveryVersion(.encode(self))
   }
 }
 

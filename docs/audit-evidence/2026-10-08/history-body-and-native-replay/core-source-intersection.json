@@ -1,0 +1,9 @@
+{
+  "changeReason": "TypeScript fixture asserts its first receipt exists before field access; Core inputs unchanged",
+  "changedAfterCore": [
+    "MCP/test/action-history-preflight.test.ts"
+  ],
+  "coreProductionAndTestsUnchanged": true,
+  "coreSHA256": "6abc100c49baa928714c87a318c8cd9f187e6f80255be301f1f50ff5263d8fb3",
+  "finalSHA256": "8a66b73e32aec6bf7351aa0e4d313937284c3c98715f0f4f61263e8be205119b"
+}

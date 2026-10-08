@@ -455,7 +455,47 @@ private struct InkRelationReader {
 /// not silently change the portable description. No measurement is expanded.
 struct InkStoredBody {
   static let maximumNodes=65_536,maximumBytes=128*1024*1024
+  static let readHeaderBytes=74
   private static let inline=Data("NIB1".utf8),graph=Data("NIB2".utf8),node=Data("NIN1".utf8)
+  struct ReadFootprint {
+    let portableBytes: Int
+    let nodeCount: Int
+  }
+  // Two node/summary lifetimes cover a pending-node replacement. The other
+  // terms cover graph parts, growing node/depth arrays, used IDs and bases.
+  // Literal/field payloads and Data buffers are paid by portableBytes.
+  static var decodingNodeBytes: Int {
+    let tree=2*(MemoryLayout<InkSampleRelations.Sequence.Content>.stride
+      + MemoryLayout<InkSampleRelations.Geometry>.stride
+      + 3*MemoryLayout<InkSampleRelations.Lattice?>.stride + 192)
+    let parts=MemoryLayout<(String,Data,Int)?>.stride
+      + 2*(MemoryLayout<InkSampleRelations.Sequence>.stride+MemoryLayout<Int>.stride)
+    let identities=2*(MemoryLayout<(UUID,InkRepeatStep)>.stride
+      + MemoryLayout<InkSampleRelations.Sequence.Basis>.stride + 64)
+      + MemoryLayout<InkRepeatStep>.stride+MemoryLayout<UUID>.stride+128
+    return tree+parts+identities
+  }
+  /// The physical prefix owns the codec's actual node count. A literal-heavy
+  /// body must not be mistaken for portableBytes/6 independently allocated
+  /// nodes. No measurement tree or complete inline body is read here.
+  static func readFootprint(_ header: Data,storedBytes: Int) throws -> ReadFootprint {
+    guard (38...maximumBytes-16).contains(storedBytes),
+      header.count == min(storedBytes,readHeaderBytes) else {
+      throw InkSampleRelations.CodingError.invalidSource
+    }
+    if header.starts(with:inline) {
+      var reader=InkRelationReader(data:header,offset:4)
+      _=try reader.step()
+      let count=Int(try reader.integer(UInt32.self)),portableBytes=storedBytes+16
+      guard (1...maximumNodes).contains(count),portableBytes >= 54+count*6 else {
+        throw InkSampleRelations.CodingError.invalidSource
+      }
+      return .init(portableBytes:portableBytes,nodeCount:count)
+    }
+    guard storedBytes == readHeaderBytes else { throw InkSampleRelations.CodingError.invalidSource }
+    let root=try Root(header)
+    return .init(portableBytes:root.portableBytes,nodeCount:root.count)
+  }
   private struct Position { let range: Range<Int>;let children: [Int] }
   struct Plan {
     let revision: UUID

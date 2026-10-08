@@ -152,8 +152,12 @@ const historyCut=z.object({workspaceID:id,snapshotID:id,readCursor:historySequen
 const historyReceiptBase={id,fragmentCount:storageCount,fragmentBytes:storageCount};
 const historyReceipt=z.discriminatedUnion("closure",[
   z.object({...historyReceiptBase,closure:z.literal("completeSelfContained")}).strict(),
+  z.object({...historyReceiptBase,closure:z.literal("completeOriginalBody"),
+    originalAnchor:z.object({originalVersion:historyHash,originalRootHash:historyHash,
+      modelRootHash:historyHash,resultRootHash:historyHash}).strict()}).strict(),
   z.object({...historyReceiptBase,closure:z.literal("unprovenClosure"),
-    reason:z.enum(["originalRootAbsent","rootRemoved","externalizedMembership","unreferencedFragments"])}).strict(),
+    reason:z.enum(["originalRootAbsent","rootRemoved","externalizedMembership","unreferencedFragments",
+      "originalAnchorUnavailable","originalAnchorMismatch"])}).strict(),
 ]);
 const actionHistoryPreflight=z.discriminatedUnion("mode",[
   z.object({mode:z.literal("inventory"),cut:historyCut,

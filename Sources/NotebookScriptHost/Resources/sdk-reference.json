@@ -3046,7 +3046,7 @@
           }
         }
       },
-      "returns": "actionHistoryPreflight without id reads up to 64 accepted transaction markers (default 32); coverage.next is bound to the accepted read cut. With id=transaction UUID and revision=exact manifest SHA-256, it reports receipt closure evidence from that original manifest; referenceID optionally selects one receipt. unprovenClosure keeps coverage incomplete. Snapshot IDs are ephemeral, counters are exact decimal strings, and the report grants no migration/Undo authority. storageUsage reports bounded metadata from the current SQLite read cut: unique blobs, current records, all retained history, pending incoming indexes and up to 64 known outgoing peers. Categories deduplicate internally and can overlap. DB/WAL/SHM lengths are physical samples with a separate sampleStatus; coverage.complete is false for changed/incomplete samples or a truncated peer list. reachability is partial: unclassifiedBlobs are not proven orphans. This read never creates, migrates, cleans, checkpoints or vacuums storage. Its basis has no content owners and grants no write authority. documentProgram with document id, instanceID and programPath reads the pure executable sourceBasis, initialState and saved state/stateVersion without executing or staging code. Use that exact sourceBasis with setDocumentProgramState. pageInkActions with a page id returns a metadata directory (default 32, max 64) without sample/raster bodies; coverage.next continues UUID order, while sequence retains authored contact order. baseline reports an existing raster source, not editable strokes or OCR. pageInkAction with page id + elementID (stroke UUID) reads exactly one bounded measured source or null; both provide the same-snapshot page content/ink basis. Active pen/eraser source records are not final visible pixels: use pageMap/pageImage/regions for appearance. itemLifecycle with an item id returns its complete stored extent without loading page/document bodies, plus frozen workspace, actual parent and lifecycle basis. bodyRecordCount counts page/document/state records only, not a total deletion cost or mutation authority. Unseen source, ink, state, membership or child-board causal changes invalidate that extent; ordinary itemHeader does not provide it. selection returns known/unknown session identity, generation, physical surface and typed choice from the existing UI owner; its basis has no owners and grants no authority. Snapshot<T> selected by query.kind. data is one object or collection, never values[0]. basis contains exact owner versions from the SAME native snapshot, not mutation permissions. coverage.complete is explicit; next can be passed with the same kind to read. Stale continuation fails, without a hidden full rescan.",
+      "returns": "actionHistoryPreflight without id reads up to 64 accepted transaction markers (default 32); coverage.next is bound to the accepted read cut. With id=transaction UUID and revision=exact manifest SHA-256, it reports receipt closure evidence from that original manifest; referenceID optionally selects one receipt. completeOriginalBody authenticates the full raw JSON against this source replica's immutable original version in the SAME read cut and reports originalAnchor version plus original/model/result root hashes. Authored bodies stay private to Core. This proves logical body completeness; it does not identify a birth transaction or actor. Missing source anchors retain externalizedMembership; incomplete/mismatched anchors stay unprovenClosure and keep coverage incomplete. Snapshot IDs are ephemeral, counters are exact decimal strings, and the report grants no migration/Undo authority. storageUsage reports bounded metadata from the current SQLite read cut: unique blobs, current records, all retained history, pending incoming indexes and up to 64 known outgoing peers. Categories deduplicate internally and can overlap. DB/WAL/SHM lengths are physical samples with a separate sampleStatus; coverage.complete is false for changed/incomplete samples or a truncated peer list. reachability is partial: unclassifiedBlobs are not proven orphans. This read never creates, migrates, cleans, checkpoints or vacuums storage. Its basis has no content owners and grants no write authority. documentProgram with document id, instanceID and programPath reads the pure executable sourceBasis, initialState and saved state/stateVersion without executing or staging code. Use that exact sourceBasis with setDocumentProgramState. pageInkActions with a page id returns a metadata directory (default 32, max 64) without sample/raster bodies; coverage.next continues UUID order, while sequence retains authored contact order. baseline reports an existing raster source, not editable strokes or OCR. pageInkAction with page id + elementID (stroke UUID) reads exactly one bounded measured source or null; both provide the same-snapshot page content/ink basis. Active pen/eraser source records are not final visible pixels: use pageMap/pageImage/regions for appearance. itemLifecycle with an item id returns its complete stored extent without loading page/document bodies, plus frozen workspace, actual parent and lifecycle basis. bodyRecordCount counts page/document/state records only, not a total deletion cost or mutation authority. Unseen source, ink, state, membership or child-board causal changes invalidate that extent; ordinary itemHeader does not provide it. selection returns known/unknown session identity, generation, physical surface and typed choice from the existing UI owner; its basis has no owners and grants no authority. Snapshot<T> selected by query.kind. data is one object or collection, never values[0]. basis contains exact owner versions from the SAME native snapshot, not mutation permissions. coverage.complete is explicit; next can be passed with the same kind to read. Stale continuation fails, without a hidden full rescan.",
       "example": "const s=await nb.read({kind:'pageElement',id:args.pageID,elementID:args.elementID}); await emit(s.data);",
       "output": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -8092,6 +8092,56 @@
                   },
                   "closure": {
                     "type": "string",
+                    "const": "completeOriginalBody"
+                  },
+                  "originalAnchor": {
+                    "type": "object",
+                    "properties": {
+                      "originalVersion": {
+                        "$ref": "#/$defs/__schema93"
+                      },
+                      "originalRootHash": {
+                        "$ref": "#/$defs/__schema93"
+                      },
+                      "modelRootHash": {
+                        "$ref": "#/$defs/__schema93"
+                      },
+                      "resultRootHash": {
+                        "$ref": "#/$defs/__schema93"
+                      }
+                    },
+                    "required": [
+                      "originalVersion",
+                      "originalRootHash",
+                      "modelRootHash",
+                      "resultRootHash"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "id",
+                  "fragmentCount",
+                  "fragmentBytes",
+                  "closure",
+                  "originalAnchor"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "$ref": "#/$defs/__schema7"
+                  },
+                  "fragmentCount": {
+                    "$ref": "#/$defs/__schema86"
+                  },
+                  "fragmentBytes": {
+                    "$ref": "#/$defs/__schema86"
+                  },
+                  "closure": {
+                    "type": "string",
                     "const": "unprovenClosure"
                   },
                   "reason": {
@@ -8100,7 +8150,9 @@
                       "originalRootAbsent",
                       "rootRemoved",
                       "externalizedMembership",
-                      "unreferencedFragments"
+                      "unreferencedFragments",
+                      "originalAnchorUnavailable",
+                      "originalAnchorMismatch"
                     ]
                   }
                 },
@@ -13738,6 +13790,56 @@
                   },
                   "closure": {
                     "type": "string",
+                    "const": "completeOriginalBody"
+                  },
+                  "originalAnchor": {
+                    "type": "object",
+                    "properties": {
+                      "originalVersion": {
+                        "$ref": "#/$defs/__schema93"
+                      },
+                      "originalRootHash": {
+                        "$ref": "#/$defs/__schema93"
+                      },
+                      "modelRootHash": {
+                        "$ref": "#/$defs/__schema93"
+                      },
+                      "resultRootHash": {
+                        "$ref": "#/$defs/__schema93"
+                      }
+                    },
+                    "required": [
+                      "originalVersion",
+                      "originalRootHash",
+                      "modelRootHash",
+                      "resultRootHash"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "id",
+                  "fragmentCount",
+                  "fragmentBytes",
+                  "closure",
+                  "originalAnchor"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "$ref": "#/$defs/__schema7"
+                  },
+                  "fragmentCount": {
+                    "$ref": "#/$defs/__schema86"
+                  },
+                  "fragmentBytes": {
+                    "$ref": "#/$defs/__schema86"
+                  },
+                  "closure": {
+                    "type": "string",
                     "const": "unprovenClosure"
                   },
                   "reason": {
@@ -13746,7 +13848,9 @@
                       "originalRootAbsent",
                       "rootRemoved",
                       "externalizedMembership",
-                      "unreferencedFragments"
+                      "unreferencedFragments",
+                      "originalAnchorUnavailable",
+                      "originalAnchorMismatch"
                     ]
                   }
                 },
@@ -52079,6 +52183,56 @@
                 },
                 "closure": {
                   "type": "string",
+                  "const": "completeOriginalBody"
+                },
+                "originalAnchor": {
+                  "type": "object",
+                  "properties": {
+                    "originalVersion": {
+                      "$ref": "#/$defs/__schema4"
+                    },
+                    "originalRootHash": {
+                      "$ref": "#/$defs/__schema4"
+                    },
+                    "modelRootHash": {
+                      "$ref": "#/$defs/__schema4"
+                    },
+                    "resultRootHash": {
+                      "$ref": "#/$defs/__schema4"
+                    }
+                  },
+                  "required": [
+                    "originalVersion",
+                    "originalRootHash",
+                    "modelRootHash",
+                    "resultRootHash"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "id",
+                "fragmentCount",
+                "fragmentBytes",
+                "closure",
+                "originalAnchor"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "$ref": "#/$defs/__schema1"
+                },
+                "fragmentCount": {
+                  "$ref": "#/$defs/__schema5"
+                },
+                "fragmentBytes": {
+                  "$ref": "#/$defs/__schema5"
+                },
+                "closure": {
+                  "type": "string",
                   "const": "unprovenClosure"
                 },
                 "reason": {
@@ -52087,7 +52241,9 @@
                     "originalRootAbsent",
                     "rootRemoved",
                     "externalizedMembership",
-                    "unreferencedFragments"
+                    "unreferencedFragments",
+                    "originalAnchorUnavailable",
+                    "originalAnchorMismatch"
                   ]
                 }
               },
