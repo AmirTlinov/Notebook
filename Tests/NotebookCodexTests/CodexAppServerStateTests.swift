@@ -5,8 +5,9 @@ import NotebookCore
 
 @Suite("Native events and paged hydration")
 struct CodexAppServerStateTests {
-  func event(_ method: String, _ fields: [String: JSONValue], request: JSONValue? = nil) -> JSONValue {
-    var frame: [String: JSONValue] = ["method": .string(method), "params": .object(fields.merging(["threadId": .string("thread")]) { _, v in v })]
+  func event(_ method: String, _ fields: [String: JSONValue], request: JSONValue? = nil,
+    threadID: String = "thread") -> JSONValue {
+    var frame: [String: JSONValue] = ["method": .string(method), "params": .object(fields.merging(["threadId": .string(threadID)]) { _, v in v })]
     frame["id"] = request; return .object(frame)
   }
   @Test func nativeItemsStreamWithoutDuplicateRowsOrHiddenReasoning() throws {
@@ -156,6 +157,133 @@ struct CodexAppServerStateTests {
     #expect(before.text == prefix+" конец🙂"); #expect(!before.isTruncated); #expect(before.contentRevision != nil)
     try state.accept(event("thread/status/changed",["status":.object(["type":.string("idle")])]))
     #expect(state.view.messages.first == before)
+  }
+
+  @Test(arguments: [false, true])
+  func quietThreadTerminalAndApprovalSurviveHotThreadWhileConsumerIsPaused(_ approval: Bool) async throws {
+    let server = CodexAppServer(installation: .init(binary: URL(fileURLWithPath: "/unused-codex"),
+      node: URL(fileURLWithPath: "/unused-node")))
+    let a = UUID().uuidString, b = UUID().uuidString
+    var hot = CodexAppServerState(threadID: a), quiet = CodexAppServerState(threadID: b)
+    try hot.hydrate(thread: .object(["id": .string(a)]), history: [], turns: [])
+    try quiet.hydrate(thread: .object(["id": .string(b)]), history: [], turns: [])
+    try quiet.accept(event("turn/started", ["turn": .object(["id": .string("quiet-turn"),
+      "status": .string("inProgress")])], threadID: b))
+    if approval {
+      try quiet.accept(event("item/permissions/requestApproval", ["turnId": .string("quiet-turn"),
+        "permissions": .object([:])], request: .number(17), threadID: b))
+    } else {
+      try quiet.accept(event("turn/completed", ["turn": .object(["id": .string("quiet-turn"),
+        "status": .string("completed")])], threadID: b))
+    }
+    var consumer = server.events.makeAsyncIterator()
+    await server.publishConversation(quiet)
+    try hot.accept(event("item/started", ["turnId": .string("hot-turn"),
+      "item": .object(["id": .string("answer"), "type": .string("agentMessage"), "text": .string("")])], threadID: a))
+    // The consumer is paused throughout more than the old global 16-event cap.
+    for _ in 0..<64 {
+      try hot.accept(event("item/agentMessage/delta", ["turnId": .string("hot-turn"),
+        "itemId": .string("answer"), "delta": .string("x")], threadID: a))
+      await server.publishConversation(hot)
+    }
+    let wake: Void? = await consumer.next()
+    #expect(wake != nil)
+    let pending = await server.drainEvents()
+    var byThread: [String: CodexConversation] = [:]
+    for case .conversation(let state) in pending { byThread[state.threadID] = state }
+    #expect(pending.count == 2)
+    let received = try #require(byThread[b])
+    #expect(received.generation == quiet.generation); #expect(received.revision == quiet.revision)
+    if approval { #expect(received.requests.map(\.nativeID) == [.number(17)]) }
+    else { #expect(!received.busy); #expect(received.turnStatuses["quiet-turn"] == "completed") }
+    #expect(byThread[a]?.messages.first?.text == String(repeating: "x", count: 64))
+    let drained = await server.drainEvents()
+    #expect(drained.isEmpty)
+    await server.close()
+  }
+
+  @Test func publicationBetweenEmptyDrainAndAwaitRetainsTheWakeAndLatestState() async throws {
+    let server = CodexAppServer(installation: .init(binary: URL(fileURLWithPath: "/unused-codex"),
+      node: URL(fileURLWithPath: "/unused-node")))
+    let thread = UUID().uuidString
+    var state = CodexAppServerState(threadID: thread)
+    try state.hydrate(thread: .object(["id": .string(thread)]), history: [], turns: [])
+    try state.accept(event("item/started", ["turnId": .string("turn"),
+      "item": .object(["id": .string("answer"), "type": .string("agentMessage"), "text": .string("before")])], threadID: thread))
+    var consumer = server.events.makeAsyncIterator()
+    await server.publishConversation(state)
+    let firstWake: Void? = await consumer.next()
+    #expect(firstWake != nil)
+    _ = await server.drainEvents()
+    let empty = await server.drainEvents()
+    #expect(empty.isEmpty)
+    // Force exactly the drain/next gap; there is no poll, timer or next event.
+    try state.accept(event("item/agentMessage/delta", ["turnId": .string("turn"),
+      "itemId": .string("answer"), "delta": .string(" after")], threadID: thread))
+    await server.publishConversation(state)
+    let nextWake: Void? = await consumer.next()
+    #expect(nextWake != nil)
+    let pending = await server.drainEvents()
+    #expect(pending.count == 1)
+    guard case .conversation(let latest) = try #require(pending.first) else {
+      Issue.record("The buffered wake did not identify its authoritative conversation"); return
+    }
+    #expect(latest.revision == state.revision)
+    #expect(latest.messages.first?.text == "before after")
+    await server.close()
+  }
+
+  @Test func detachingKeepsApprovalWhileRemovalAndDisconnectPruneOldGenerations() async throws {
+    let server = CodexAppServer(installation: .init(binary: URL(fileURLWithPath: "/unused-codex"),
+      node: URL(fileURLWithPath: "/unused-node")))
+    let a = UUID().uuidString, b = UUID().uuidString, workspace = UUID(), observation = UUID()
+    var idle = CodexAppServerState(threadID: a), approving = CodexAppServerState(threadID: b)
+    try idle.hydrate(thread: .object(["id": .string(a)]), history: [], turns: [])
+    try approving.hydrate(thread: .object(["id": .string(b)]), history: [], turns: [])
+    await server.publishConversation(idle); await server.publishConversation(approving)
+    try await server.attach(threadID: b, observationID: observation)
+    try approving.accept(event("item/permissions/requestApproval", ["turnId": .string("turn"),
+      "permissions": .object([:])], request: .number(23), threadID: b))
+    await server.publishConversation(approving)
+    await server.detach(threadID: b, observationID: observation)
+    try await server.bindWorkspace(workspace, threadID: a)
+    try await server.unregisterWorkspace(workspace)
+    let detached = await server.drainEvents()
+    #expect(detached.count == 1)
+    guard case .conversation(let preserved) = try #require(detached.first) else {
+      Issue.record("Detaching a view discarded its still-owned native approval"); return
+    }
+    #expect(preserved.threadID == b); #expect(preserved.requests.count == 1)
+    #expect(await server.snapshot(threadID: a) == nil)
+
+    // A queued old state must not cross the actual close/connection boundary.
+    await server.publishConversation(approving)
+    await server.close()
+    var fresh = CodexAppServerState(threadID: b), hot = CodexAppServerState(threadID: a)
+    try fresh.hydrate(thread: .object(["id": .string(b)]), history: [], turns: [])
+    try hot.hydrate(thread: .object(["id": .string(a)]), history: [], turns: [])
+    await server.publishConversation(fresh)
+    for _ in 0..<32 {
+      try hot.accept(event("thread/status/changed", ["status": .object(["type": .string("idle")])], threadID: a))
+      await server.publishConversation(hot)
+    }
+    let reconnected = await server.drainEvents()
+    guard case .unavailable(let error) = try #require(reconnected.first) else {
+      Issue.record("Fresh state overtook or evicted the disconnect barrier"); return
+    }
+    #expect(error == .disconnected)
+    var current: [String: CodexConversation] = [:]
+    for case .conversation(let value) in reconnected { current[value.threadID] = value }
+    #expect(reconnected.count == 3); #expect(current.count == 2)
+    #expect(current[b]?.generation == fresh.generation)
+    #expect(current[b]?.generation != approving.generation)
+    #expect(current[b]?.requests.isEmpty == true)
+    await server.publishConversation(fresh)
+    await server.invalidateAccountPresentation()
+    let invalidated = await server.drainEvents()
+    #expect(invalidated.isEmpty)
+    #expect(await server.snapshot(threadID: b) == nil)
+    await server.close()
   }
 
 }

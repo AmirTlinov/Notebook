@@ -25,6 +25,8 @@ final class NotebookCodexHost {
     self.discoverInstallation = discoverInstallation
   }
 
+  deinit { events?.cancel() }
+
   #if DEBUG
     /// Native acceptance installs a concrete already owned route. It uses the
     /// real sidecar/file worker and never starts an external Codex process.
@@ -63,9 +65,13 @@ final class NotebookCodexHost {
     }
     if events == nil, let owner = server {
       events = Task { [weak self] in
-        for await event in owner.events {
-          guard let self, !Task.isCancelled else { break }
-          for route in routes.values { route.sidecar.receiveEvent(event) }
+        for await _ in owner.events {
+          guard let self, !Task.isCancelled, server === owner else { break }
+          let pending = await owner.drainEvents()
+          guard !Task.isCancelled, server === owner else { break }
+          for event in pending {
+            for route in routes.values { route.sidecar.receiveEvent(event) }
+          }
         }
       }
     }

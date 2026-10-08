@@ -103,6 +103,11 @@ at most eight tasks at a time. Chats and Projects retain independent cursors,
 expanded folders, pages and drafts. Actual project/worktree membership comes from
 Codex; an unknown project is not guessed from a similar path.
 
+`CodexAppServer` retains pending conversation IDs and their state generation;
+one wakeup tells the runtime host to drain the latest authoritative states.
+Updates from one thread cannot evict another thread's completion or approval.
+Disconnect precedes fresh connection states; removal prunes pending old IDs.
+
 Conversation events coalesce over 100 ms and bind to subscription, trusted computer
 and connection generation. A ten-second control read recovers a missed final event.
 They use a lower-priority transport lane than delivery receipts and input.

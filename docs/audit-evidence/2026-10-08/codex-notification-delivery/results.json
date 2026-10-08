@@ -1,0 +1,93 @@
+{
+  "format": 1,
+  "issue": "GUI-498",
+  "positions": [
+    "NB32"
+  ],
+  "status": "selected-core-and-native-regressions-passed",
+  "baseCommit": "1c6b7ca211c59b1a23a18cc0f9b66249c3cdf959",
+  "owner": "CodexAppServer authoritative states and sole NotebookCodexHost consumer",
+  "change": "Pending dirty thread IDs and state generations precede a lossy Void wake; atomic drain projects current states and a latched disconnect barrier. View detach preserves task ownership.",
+  "productionFiles": {
+    "Sources/NotebookCodex/CodexAppServer.swift": "d206b1d5c82ef5e678acdd0a58a3281e18ca73ec836eb329bd26ee610afe522b",
+    "Applications/Mac/NotebookCodexHost.swift": "b03b66a70cc7cb9f296edf7efeac44ce02db1a6f1fcfffa70e1828e14521b108"
+  },
+  "checks": [
+    {
+      "scope": "SwiftPM CodexAppServerStateTests and CodexConnectionTests",
+      "status": "passed",
+      "functions": 29,
+      "cases": 34,
+      "failed": 0,
+      "skipped": 0,
+      "source": {
+        "sha256": "30412f31610d91c8dc59f3d2f38a8da0e7f4253e657e56d90e94de32cd46ab9f",
+        "files": 1690,
+        "unchanged": true
+      },
+      "evidence": ".build/gui498-nb32-core-20261008-v1",
+      "receiptSHA256": "3a97016a855f4959c9520dd8d72fd18a9d00693bc4b171ff8da62ef77f26e17e",
+      "compilerWarnings": 3,
+      "subsequentDelta": "Only explicit Void? annotations in three new test locals; production notification delivery code unchanged."
+    },
+    {
+      "scope": "Repeat only three new NB32 regression methods after type annotations",
+      "status": "passed",
+      "functions": 3,
+      "cases": 4,
+      "failed": 0,
+      "skipped": 0,
+      "compilerWarnings": 0,
+      "source": {
+        "sha256": "2af89c63ffc60211f6e9e1b881a08a6531e8a414dfaabc8b52edd14c6dca90a0",
+        "files": 418,
+        "unchanged": true,
+        "scope": "Package.swift, Package.resolved if present, Sources and NotebookCodexTests; native application sources excluded"
+      },
+      "evidence": ".build/gui498-nb32-warning-repeat-20261008-v2",
+      "receiptSHA256": "2bf171094ce8e5f5e8b6f442d15f12bec5d7a8230fc713329aa3d103232030d4"
+    },
+    {
+      "scope": "Native Mac Host compile and affected sidecar detach lifecycle",
+      "status": "passed",
+      "functions": 1,
+      "failed": 0,
+      "skipped": 0,
+      "source": {
+        "sha256": "f05e86a69413087977ef76ed97ed0b7ba8a8da7ce92f56ed0097cf50724efd78",
+        "files": 1690,
+        "unchanged": true
+      },
+      "evidence": ".build/gui498-nb32-mac-20261008-v3",
+      "receiptSHA256": "f65b6a31dd6a623af25aafef64bbb69e0368cc04f3d7ba8ec2b8b203a1622259",
+      "compilerDiagnostics": {
+        "warningsInUnchangedFilesOutsideNB32": [
+          "/Users/amir/Documents/projects/Notebook/Applications/MacTests/NotebookGraphicRenderingTests.swift:198:7: warning: no calls to throwing functions occur within 'try' expression [#UnnecessaryEffectMarker]",
+          "/Users/amir/Documents/projects/Notebook/Applications/MacTests/NotebookGraphicRenderingTests.swift:337:11: warning: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]",
+          "/Users/amir/Documents/projects/Notebook/Applications/MacTests/NotebookGraphicRenderingTests.swift:337:7: warning: no calls to throwing functions occur within 'try' expression [#UnnecessaryEffectMarker]",
+          "/Users/amir/Documents/projects/Notebook/Applications/MacTests/NotebookGraphicRenderingTests.swift:428:14: warning: no calls to throwing functions occur within 'try' expression [#UnnecessaryEffectMarker]",
+          "/Users/amir/Documents/projects/Notebook/Applications/Shared/AgentWebElementView.swift:1080:11: warning: consider using asynchronous alternative function",
+          "/Users/amir/Documents/projects/Notebook/Applications/Shared/AgentWebElementView.swift:1093:11: warning: consider using asynchronous alternative function",
+          "/Users/amir/Documents/projects/Notebook/Applications/Shared/NotebookApplicationLaunch.swift:585:7: warning: expression of type 'NotebookPeerRetirement' is unused [#NoUsage]",
+          "/Users/amir/Documents/projects/Notebook/Applications/Shared/NotebookAttentionProjection.swift:120:12: warning: value 'strokeID' was defined but never used; consider replacing with boolean test [#NoUsage]",
+          "/Users/amir/Documents/projects/Notebook/Applications/TestSupport/ProgramStateTransferTests.swift:257:14: warning: weak variable 'retained' was never mutated; consider changing to 'let' constant [#VariableNeverMutated::WeakMutability]"
+        ],
+        "xcodeExitZeroDiagnosticMessages": 3,
+        "buildAndSelectedTestExitCode": 0,
+        "warningsInNB32Files": 0
+      }
+    }
+  ],
+  "nativeHostCompilation": "passed",
+  "installation": {
+    "changed": false,
+    "currentPair": "265 / 0.3.195"
+  },
+  "physicalAcceptance": false,
+  "open": [
+    "NB28 body budgets",
+    "DP16 addressed deltas",
+    "Other GUI-498 criteria and full104 acceptance"
+  ],
+  "scopeNote": "The two production NB32 files are unchanged across all checks. Native link work in the same working tree is outside these notification-delivery results and is not accepted here."
+}

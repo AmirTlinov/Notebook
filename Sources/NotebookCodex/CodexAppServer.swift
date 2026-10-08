@@ -8,8 +8,12 @@ public enum CodexBridgeEvent: Sendable {
 
 /// The Mac's persistent client of Codex's executor. The server arbitrates the cross-process writer lease.
 public actor CodexAppServer {
-  public nonisolated let events: AsyncStream<CodexBridgeEvent>
-  private let output: AsyncStream<CodexBridgeEvent>.Continuation
+  /// The one runtime host consumes wakeups, then atomically pulls current
+  /// states. A hot thread cannot evict another thread's pending change.
+  public nonisolated let events: AsyncStream<Void>
+  private let output: AsyncStream<Void>.Continuation
+  private var dirtyThreads: [String: UUID] = [:]
+  private var pendingUnavailable: CodexBridgeError?
   private let installation: CodexRuntimeInstallation
   let runtimeScope: CodexRuntimeScope?
   private var rpc: CodexRPC?
@@ -52,7 +56,7 @@ public actor CodexAppServer {
     let threads = threadWorkspaces.filter { $0.value == workspace }.map(\.key)
     for thread in threads {
       if states[thread] != nil, let rpc { _ = try await rpc.request("thread/unsubscribe", params: .object(["threadId": .string(thread)])) }
-      states.removeValue(forKey: thread); selections.removeValue(forKey: thread); threadWorkspaces.removeValue(forKey: thread)
+      removeConversation(threadID: thread); selections.removeValue(forKey: thread); threadWorkspaces.removeValue(forKey: thread)
     }
     workspaceTools.removeValue(forKey: workspace)
   }
@@ -79,7 +83,7 @@ public actor CodexAppServer {
   public init(installation: CodexRuntimeInstallation, scope: CodexRuntimeScope? = nil) {
     self.installation = installation
     runtimeScope = scope
-    let stream = AsyncStream<CodexBridgeEvent>.makeStream(bufferingPolicy: .bufferingNewest(16))
+    let stream = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
     events = stream.stream; output = stream.continuation
   }
   deinit {
@@ -92,6 +96,46 @@ public actor CodexAppServer {
     try await body(connect())
   }
   public func snapshot(threadID: String) -> CodexConversation? { states[threadID]?.view }
+
+  /// Only IDs and their current state generation wait in the mailbox. Payloads
+  /// are projected from the existing authoritative states at the actual drain.
+  /// No await separates clearing dirty keys and taking their latest snapshots.
+  public func drainEvents() -> [CodexBridgeEvent] {
+    var result: [CodexBridgeEvent] = []
+    if let error = pendingUnavailable {
+      result.append(.unavailable(error)); pendingUnavailable = nil
+    }
+    for threadID in dirtyThreads.keys.sorted() {
+      if let state = states[threadID], state.generation == dirtyThreads[threadID] {
+        result.append(.conversation(state.view))
+      }
+    }
+    dirtyThreads.removeAll(keepingCapacity: true)
+    return result
+  }
+
+  // Both loaded history and accepted native events publish through this owner.
+  // Admission still belongs to load; dirty keys are a subset of retained states.
+  func publishConversation(_ state: CodexAppServerState) {
+    states[state.threadID] = state
+    dirtyThreads[state.threadID] = state.generation
+    output.yield(())
+  }
+
+  private func removeConversation(threadID: String) {
+    states.removeValue(forKey: threadID); dirtyThreads.removeValue(forKey: threadID)
+  }
+
+  private func invalidateConversations(unavailable error: CodexBridgeError? = nil) {
+    states.removeAll(); dirtyThreads.removeAll(keepingCapacity: true)
+    selections.removeAll(); answeringRequests.removeAll(); threadWorkspaces.removeAll()
+    if let error {
+      // This lifecycle barrier survives a full wake buffer and precedes any
+      // subsequently loaded state from the new connection generation.
+      pendingUnavailable = error
+      output.yield(())
+    }
+  }
 
   public func attach(threadID: String, observationID: UUID) async throws {
     guard !accountSession.changing else { throw CodexBridgeError.busy }
@@ -110,7 +154,7 @@ public actor CodexAppServer {
     catch {
       detach(threadID: threadID, observationID: observationID)
       if attaching[threadID]?.id == entry.id {
-        attaching.removeValue(forKey: threadID); states.removeValue(forKey: threadID)
+        attaching.removeValue(forKey: threadID); removeConversation(threadID: threadID)
       }
       throw error
     }
@@ -136,7 +180,7 @@ public actor CodexAppServer {
       guard let idle = states.keys.sorted().first(where: { selections[$0]?.isEmpty != false && !(voice?.threadID == $0 && voice?.phase != .ended) && states[$0]?.view.busy == false && states[$0]?.requests.isEmpty == true }) else { throw CodexBridgeError.busy }
       _ = try await rpc.request("thread/unsubscribe", params: .object(["threadId": .string(idle)]))
       guard epoch == generation else { throw CodexBridgeError.disconnected }
-      states.removeValue(forKey: idle); threadWorkspaces.removeValue(forKey: idle)
+      removeConversation(threadID: idle); threadWorkspaces.removeValue(forKey: idle)
     }
     // No settings overrides, stale-turn inference or force takeover. A foreign active writer is a refusal.
     states[threadID] = CodexAppServerState(threadID: threadID)
@@ -169,7 +213,7 @@ public actor CodexAppServer {
       "threadId": .string(threadID), "limit": .number(64), "sortDirection": .string("desc"), "itemsView": .string("notLoaded")]))
     guard epoch == generation, var state = states[threadID], let rows = turns["data"]?.array, rows.count <= 64 else { throw CodexBridgeError.disconnected }
     try state.hydrate(thread: thread, history: history.messages, turns: rows)
-    states[threadID] = state; output.yield(.conversation(state.view))
+    publishConversation(state)
   }
 
   static let notebookRuntimeContext: JSONValue = .object([
@@ -325,7 +369,7 @@ public actor CodexAppServer {
 
   func invalidateAccountPresentation() {
     for entry in attaching.values { entry.task.cancel() }; attaching.removeAll()
-    states.removeAll(); selections.removeAll(); answeringRequests.removeAll(); threadWorkspaces.removeAll()
+    invalidateConversations()
   }
 
   public func hasActiveWork() -> Bool {
@@ -340,7 +384,7 @@ public actor CodexAppServer {
     connection?.cancel(); connection = nil
     accountRead?.task.cancel(); accountRead = nil; accountSession.revision = UUID()
     for entry in attaching.values { entry.task.cancel() }; attaching.removeAll()
-    states.removeAll(); selections.removeAll(); answeringRequests.removeAll(); threadWorkspaces.removeAll()
+    invalidateConversations(unavailable: .disconnected)
     await rpc?.stop()
     let outputs = processes.values.map(\.output)
     await interruptProcesses()
@@ -579,12 +623,11 @@ public actor CodexAppServer {
       if frame["id"] != nil { throw CodexBridgeError.unsupportedRequest }; return
     }
     if try state.accept(frame) {
-      states[id] = state
+      publishConversation(state)
       if frame["method"] == .string("serverRequest/resolved") {
         let live = Set(state.requests.map { id + "/" + $0.id })
         answeringRequests = answeringRequests.filter { !$0.hasPrefix(id + "/") || live.contains($0) }
       }
-      output.yield(.conversation(state.view))
     }
   }
   private func disconnected(_ error: CodexBridgeError, epoch: UUID) async {
@@ -594,8 +637,7 @@ public actor CodexAppServer {
     connection?.cancel(); connection = nil
     accountRead?.task.cancel(); accountRead = nil; accountSession.revision = UUID()
     for entry in attaching.values { entry.task.cancel() }; attaching.removeAll()
-    states.removeAll(); selections.removeAll(); answeringRequests.removeAll(); threadWorkspaces.removeAll()
-    output.yield(.unavailable(error))
+    invalidateConversations(unavailable: error)
     await interruptProcesses()
   }
 }
