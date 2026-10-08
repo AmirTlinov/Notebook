@@ -1,0 +1,30 @@
+{
+  "baseCommit": "4f8d03f83d5dd6dc4b326de87cb1577408fb6069",
+  "changedFiles": [
+    "Applications/Shared/NotebookAppModel.swift",
+    "Applications/Shared/SceneCompositionRenderer.swift",
+    "Applications/iPad/PencilCanvasView.swift"
+  ],
+  "checks": {
+    "commands": [],
+    "core": [],
+    "ipad": [],
+    "mac": [
+      "NotebookMacTests/MacSceneCompositionTests/testStaticSourceRetainsPixelsThroughoutZoomRefinement",
+      "NotebookMacTests/NotebookItemCreationTests/testColdCoverUndoAndParentRedoReachTheSameCommittedBirthForEveryKind"
+    ]
+  },
+  "codexRuntimeStage": "/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a",
+  "format": 2,
+  "manualSelection": true,
+  "optimized": false,
+  "profiles": [],
+  "selectionMode": "explicit-only",
+  "sourceRoot": "/Users/amir/Documents/projects/Notebook",
+  "typesetterRuntime": "/Users/amir/Documents/projects/Notebook/.build/notebook-typesetter-runtime",
+  "unclassified": [
+    "Applications/Shared/NotebookAppModel.swift",
+    "Applications/Shared/SceneCompositionRenderer.swift",
+    "Applications/iPad/PencilCanvasView.swift"
+  ]
+}

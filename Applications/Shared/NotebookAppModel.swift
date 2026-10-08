@@ -6198,12 +6198,6 @@ final class NotebookAppModel {
     _ = acceptCollaborationHistory(id, redo: false, actionID: UUID(), after: collaborationHistoryTask)
   }
 
-  func redoCollaboration(_ id: UUID) {
-    guard inputGate.permitsNewContact, !inputGate.hasActivePencil,
-      selectionSession.manipulation == nil else { return }
-    _ = acceptCollaborationHistory(id, redo: true, actionID: UUID(), after: collaborationHistoryTask)
-  }
-
   /// Admission happened at the input owner. Reserve this exact inverse now;
   /// its preparation joins only the preceding history receipt and source action.
   private func acceptCollaborationHistory(_ id: UUID, redo: Bool, actionID: UUID,
@@ -6721,10 +6715,6 @@ final class NotebookAppModel {
     deviceActionReceipts = delivery
   }
 
-  private func scheduleSave(_ page: PageDocument) {
-    persistence.enqueue(owner: .page(page.id)) { try $0.savePage(page) != page }
-  }
-
   @discardableResult
   private func scheduleSpatialInkSave(_ command: NotebookSpatialInkCommand,
     reservation admitted: NotebookPersistenceAdmission.Reservation? = nil,
@@ -6768,13 +6758,6 @@ final class NotebookAppModel {
     guard let before = boardHierarchy else { return }
     boardHierarchy = board
     persistence.enqueueBoardEdit(before: before, after: board)
-  }
-
-  @discardableResult
-  private func persistMerged(_ page: PageDocument) -> PageDocument {
-    pages[page.id] = page
-    scheduleSave(page)
-    return page
   }
 
   private func enqueueStoreWrite(owner: NotebookPersistenceQueue.Owner? = nil,

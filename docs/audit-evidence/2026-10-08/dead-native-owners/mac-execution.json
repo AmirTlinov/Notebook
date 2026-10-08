@@ -1,0 +1,13 @@
+{
+  "executed": [
+    "NotebookMacTests/MacSceneCompositionTests/testStaticSourceRetainsPixelsThroughoutZoomRefinement",
+    "NotebookMacTests/NotebookItemCreationTests/testColdCoverUndoAndParentRedoReachTheSameCommittedBirthForEveryKind"
+  ],
+  "failed": [],
+  "format": 1,
+  "planned": [
+    "NotebookMacTests/MacSceneCompositionTests/testStaticSourceRetainsPixelsThroughoutZoomRefinement",
+    "NotebookMacTests/NotebookItemCreationTests/testColdCoverUndoAndParentRedoReachTheSameCommittedBirthForEveryKind"
+  ],
+  "skipped": []
+}

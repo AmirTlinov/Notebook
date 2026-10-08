@@ -1,0 +1,58 @@
+{
+  "NOTEBOOK_SWIFT": "/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/.build/toolchains/swift-6.4.0/swift-6.4.0-RELEASE-osx-package.pkg/Payload/usr/bin/swift",
+  "appPath": "/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/b12ca6d0c0574691/ipad/Build/Products/Debug-iphoneos/Notebook.app",
+  "buildStatus": "passed",
+  "executed": [],
+  "executedCount": 0,
+  "format": 1,
+  "head": "4f8d03f83d5dd6dc4b326de87cb1577408fb6069",
+  "installed": false,
+  "offlineInventoryError": "Xcode inventory содержит ошибки.",
+  "offlineInventoryErrors": [
+    "Cannot test target “NotebookTests” on “Any iOS Device”: Tests must be run on a concrete device"
+  ],
+  "offlineInventoryStatus": "unavailable",
+  "physicalAcceptance": "pending",
+  "physicalBuild": {
+    "CFBundleIdentifier": "com.amirtlinov.notebook.native-test",
+    "CFBundleShortVersionString": "0.3.190",
+    "CFBundleSupportedPlatforms": [
+      "iPhoneOS"
+    ],
+    "CFBundleVersion": "260",
+    "DTPlatformName": "iphoneos",
+    "DTSDKName": "iphoneos27.0",
+    "MinimumOSVersion": "27.0"
+  },
+  "planned": [
+    "NotebookTests/NotebookDrawingToolsTests/testAuthoredToolsPersistOnPageBoardAndCoverThroughOneUndoQueue",
+    "NotebookTests/SceneCompositionTests/testGeometryPublishesBeforeItsSourceAndThenRetainsTheReadyPixels",
+    "NotebookTests/NotebookDrawingToolsTests/testMarkerRunsThroughMeasuredPageInputWithoutPressureOrQuickShape"
+  ],
+  "plannedCount": 3,
+  "route": "physical-ipad-build-for-testing-only",
+  "runnerReleased": true,
+  "signature": {
+    "admittedPhysicalUDID": "00008103-001E059934D9001E",
+    "cdhash": "b1f59333c3ddc2b80f561a884ee26c75ad8ff10d",
+    "identifier": "com.amirtlinov.notebook.native-test",
+    "profileUUID": "00d2537d-07c4-450a-91d9-7dc280d5dda0",
+    "team": "M94V58FCVP"
+  },
+  "sourceAfter": {
+    "count": 1726,
+    "sha256": "0cbc76282b8ac8cd6e2bc4bc746386c412e5d6c53020a91c0ca8a445906f9604"
+  },
+  "sourceBefore": {
+    "count": 1726,
+    "sha256": "0cbc76282b8ac8cd6e2bc4bc746386c412e5d6c53020a91c0ca8a445906f9604"
+  },
+  "sourceRoot": "/Users/amir/Documents/projects/Notebook",
+  "sourceUnchanged": true,
+  "status": "build-prepared-tests-pending",
+  "testStatus": "not-executed-device-passcode-required",
+  "xctestrun": {
+    "path": "/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/b12ca6d0c0574691/ipad/Build/Products/Notebook_iphoneos27.0-arm64.xctestrun",
+    "sha256": "acdf25dce0126c77c7824067e2d331345ecb6ac1b0445ce997d0feacf4929157"
+  }
+}

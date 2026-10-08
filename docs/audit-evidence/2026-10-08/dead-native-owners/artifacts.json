@@ -1,0 +1,105 @@
+{
+  "format": 1,
+  "artifacts": [
+    {
+      "path": "attempts.json",
+      "bytes": 520,
+      "sha256": "140a05d4bb6a45d29e374ea26651b4d14bb0d4af12c332879ba1bf16efa94a09"
+    },
+    {
+      "path": "commands.json",
+      "bytes": 15042,
+      "sha256": "1d539914886f2513937b9e6ba2d0871b855dd654ea9ed87330dfa8ad8f231e0d"
+    },
+    {
+      "path": "completed.json",
+      "bytes": 630,
+      "sha256": "273b75c6e78a3c9d92bac1ad28d1481cdafc9ec75d9c2e525d69a84a7fb6b815"
+    },
+    {
+      "path": "ipad-build-preparation.json",
+      "bytes": 2545,
+      "sha256": "d1aea4bf171a6fdf094b263d845c9175033b54bf427f126ffa7a02c9809a6eaa"
+    },
+    {
+      "path": "ipad-commands.json",
+      "bytes": 2605,
+      "sha256": "254a278f09471c595be2c682d1b056757b05ce64a427f5ed3ad22afb7512a5fe"
+    },
+    {
+      "path": "ipad-offline-inventory.json",
+      "bytes": 324,
+      "sha256": "8f24c5c59312e5940986d2bafa86e9b8ce0c0754f72ea6411be1bdff523eaffd"
+    },
+    {
+      "path": "ipad-selection.json",
+      "bytes": 1289,
+      "sha256": "4f339e26ee2e5f565bc43885e478fc1c93f29631dcaa015e0dae8979a8d6fdb0"
+    },
+    {
+      "path": "ipad-signature.json",
+      "bytes": 250,
+      "sha256": "4e331f329b8e89771084bc289c673aaaccf566adfab650a0c298dc40053bd929"
+    },
+    {
+      "path": "mac-execution.json",
+      "bytes": 534,
+      "sha256": "ac7ae26b426295b6bf1e7726343659eec3a2a6dd841f4406c530190de4a5f20c"
+    },
+    {
+      "path": "mac-native-signature.json",
+      "bytes": 260,
+      "sha256": "5c4c80a1756b22b44f2454d4b1647a7c1bd92306efeb1756e255fe245daf1998"
+    },
+    {
+      "path": "mac-summary.json",
+      "bytes": 941,
+      "sha256": "03aa456eddd20b3d20936f1eb75cc2fbfc1095927b79f99e99d5ce00415d1923"
+    },
+    {
+      "path": "mac-tests.json",
+      "bytes": 2632,
+      "sha256": "1008b97435146cfbcc831b05efb1aada2d99448b55eafafe353463289c0eafb9"
+    },
+    {
+      "path": "mac-timings.json",
+      "bytes": 508,
+      "sha256": "497024b3e43716319b3c37bd910296866810ea5f9d8f8f6baa83569cd32ca581"
+    },
+    {
+      "path": "mac.stderr.log",
+      "bytes": 368,
+      "sha256": "b963d07b3d77e64f17e835e08efd50f1ffc6b2fa0833407b446f16ef47635561"
+    },
+    {
+      "path": "mac.stdout.log",
+      "bytes": 144,
+      "sha256": "0d02fd24777b14f9362081c4298653eed9cb11f9c78d7bc1552fc695382f4806"
+    },
+    {
+      "path": "results.json",
+      "bytes": 2177,
+      "sha256": "611e5cae6450d0fb3d3ba321adffcfa459c670c661e8de811afadf13a21f0c3f"
+    },
+    {
+      "path": "review.json",
+      "bytes": 816,
+      "sha256": "05fbe06b618864a4c462663fa30eba7fbd58149aa04a37b95a838606e38d9813"
+    },
+    {
+      "path": "selection.json",
+      "bytes": 1178,
+      "sha256": "cd69bf2a33f6b95b29460afd6079e301e4917dd9f496b56663824f8d97cbc727"
+    },
+    {
+      "path": "source-scope.json",
+      "bytes": 1027,
+      "sha256": "246f5c210fa268e4a664ee3d4adb6139aca31b9bbea3b9003867c7b7b044efb2"
+    },
+    {
+      "path": "toolchain.json",
+      "bytes": 318,
+      "sha256": "5d490c0c11042b67180f7aa900961d34b44c362ca4c89bf657ef438ebc8a7027"
+    }
+  ]
+}

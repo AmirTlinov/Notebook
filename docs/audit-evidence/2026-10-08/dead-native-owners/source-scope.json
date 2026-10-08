@@ -1,0 +1,27 @@
+{
+  "format": 1,
+  "baseCommit": "4f8d03f83d5dd6dc4b326de87cb1577408fb6069",
+  "sourceSHA256": "0cbc76282b8ac8cd6e2bc4bc746386c412e5d6c53020a91c0ca8a445906f9604",
+  "sourceFileCount": 1726,
+  "beforeEqualsAfter": true,
+  "changes": [
+    {
+      "path": "Applications/Shared/NotebookAppModel.swift",
+      "sha256": "922c0d381422d393fa3af13618b2adb8067db0ec36944a786ccd617fb121193a",
+      "bytes": 394180
+    },
+    {
+      "path": "Applications/Shared/SceneCompositionRenderer.swift",
+      "sha256": "8c67d88a7e75afffe353aeaaef06009a80625315931567eae8f98309f94f0721",
+      "bytes": 59953
+    },
+    {
+      "path": "Applications/iPad/PencilCanvasView.swift",
+      "sha256": "187f6eec3da2bee817e9cc7ce644592b2c4828a2ccadecfb1663e99d380f83ad",
+      "bytes": 58538
+    }
+  ],
+  "rawMacEvidence": ".build/dead-native-owners-mac-20261008-v2",
+  "rawReceiptSHA256": "96cd3c28fbf6003ebcffbf9941e7dae51ec92c742f9bedd1c9bbb0518e1a50b5",
+  "rawInventorySHA256": "942148610b2a5add5be69b50cf7b0edbb4f399a055c4a4136397b4acf0f8789f"
+}

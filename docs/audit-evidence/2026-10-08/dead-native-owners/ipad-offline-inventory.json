@@ -1,0 +1,18 @@
+{
+  "errors" : [
+    "Cannot test target “NotebookTests” on “Any iOS Device”: Tests must be run on a concrete device"
+  ],
+  "values" : [
+    {
+      "disabledTests" : [
+
+      ],
+      "enabledTests" : [
+        {
+          "identifier" : "NotebookTests"
+        }
+      ],
+      "testPlan" : "Notebook"
+    }
+  ]
+}

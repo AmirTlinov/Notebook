@@ -1462,15 +1462,3 @@ final class PaperInputView: UIView {
     accessibilityValue = "\(drawing.actionCount) действий пера"
   }
 }
-
-extension PenStyle {
-  fileprivate func uiColor(alpha: Double) -> UIColor {
-    let components = color.components
-    return UIColor(
-      red: CGFloat(components.red),
-      green: CGFloat(components.green),
-      blue: CGFloat(components.blue),
-      alpha: CGFloat(alpha)
-    )
-  }
-}

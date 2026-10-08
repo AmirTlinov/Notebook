@@ -959,29 +959,6 @@ final class SceneCompositionRenderer {
     return requests
   }
 
-  /// Exclusion from static bands is not readiness. Cache hits already borrowed
-  /// by the candidate keep their exact entry across every asynchronous step.
-  func prepareLiveRasters(_ requests: [LiveRasterRequest],
-    retained: [SceneCompositionLiveOwner: RasterLease]) async throws -> [SceneCompositionLiveOwner: RasterLease] {
-    var rasters = retained
-    do {
-      for request in requests {
-        try checkPreparation()
-        if let hit = rasters[request.owner] {
-          guard hit.image(for: request.demand.rasterSource, minimumScale: request.requestedScale) != nil else {
-            throw SceneRenderError.snapshotPending("live_raster_lease")
-          }
-        } else {
-          rasters[request.owner] = try await prepareRaster(request.source, requestedScale: request.requestedScale, region: request.demand.region)
-        }
-      }
-      return rasters
-    } catch {
-      for raster in rasters.values { raster.release() }
-      throw error
-    }
-  }
-
   private func prepareRaster(_ element: AgentElement, requestedScale: Double, region: PageRect? = nil) async throws -> RasterLease {
     try checkPreparation()
     let source: SceneRasterSource = region.map { .agentRegion(element, $0) } ?? .agent(element)

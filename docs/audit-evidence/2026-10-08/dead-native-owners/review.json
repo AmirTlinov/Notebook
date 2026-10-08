@@ -1,0 +1,25 @@
+{
+  "format": 1,
+  "reviewer": "verification_registry",
+  "kind": "independent source-only review",
+  "status": "ready",
+  "findings": [],
+  "removed": [
+    "DC01 private scheduleSave/persistMerged",
+    "DC02 prepareLiveRasters",
+    "DC07 private redoCollaboration",
+    "DC08 file-private PenStyle.uiColor(alpha:)"
+  ],
+  "diff": {
+    "files": 3,
+    "added": 0,
+    "deleted": 52
+  },
+  "preserved": [
+    "addressed page ink and element publication",
+    "redoLastSurfaceAction and shared history engine",
+    "liveRasterRequests and prepareRaster via compositor scheduler",
+    "Pencil sample creation, PenColor.components and live inkColor"
+  ],
+  "selectionRationale": "Mac cold Undo/Redo and static zoom; iPad page/board/cover persistence, geometry-to-pixels and measured marker; no algorithm changed."
+}

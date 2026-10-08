@@ -1,0 +1,70 @@
+{
+  "devices": [
+    {
+      "architecture": "arm64",
+      "deviceId": "00006050-001650DA01F9401C",
+      "deviceName": "My Mac",
+      "modelName": "MacBook Pro",
+      "osBuildNumber": "26A434",
+      "osVersion": "27.0.1",
+      "platform": "macOS"
+    }
+  ],
+  "testNodes": [
+    {
+      "children": [
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "duration": "1 с",
+                  "durationInSeconds": 1.7835639715194702,
+                  "name": "testStaticSourceRetainsPixelsThroughoutZoomRefinement()",
+                  "nodeIdentifier": "MacSceneCompositionTests/testStaticSourceRetainsPixelsThroughoutZoomRefinement()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/MacSceneCompositionTests/testStaticSourceRetainsPixelsThroughoutZoomRefinement",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                }
+              ],
+              "name": "MacSceneCompositionTests",
+              "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/MacSceneCompositionTests",
+              "nodeType": "Test Suite",
+              "result": "Passed"
+            },
+            {
+              "children": [
+                {
+                  "duration": "6 с",
+                  "durationInSeconds": 6.459305047988892,
+                  "name": "testColdCoverUndoAndParentRedoReachTheSameCommittedBirthForEveryKind()",
+                  "nodeIdentifier": "NotebookItemCreationTests/testColdCoverUndoAndParentRedoReachTheSameCommittedBirthForEveryKind()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookItemCreationTests/testColdCoverUndoAndParentRedoReachTheSameCommittedBirthForEveryKind",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                }
+              ],
+              "name": "NotebookItemCreationTests",
+              "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookItemCreationTests",
+              "nodeType": "Test Suite",
+              "result": "Passed"
+            }
+          ],
+          "name": "NotebookMacTests",
+          "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests",
+          "nodeType": "Unit test bundle",
+          "result": "Passed"
+        }
+      ],
+      "name": "NotebookRuntime",
+      "nodeType": "Test Plan",
+      "result": "Passed"
+    }
+  ],
+  "testPlanConfigurations": [
+    {
+      "configurationId": "1",
+      "configurationName": "Test Scheme Action"
+    }
+  ]
+}

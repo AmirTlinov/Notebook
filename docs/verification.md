@@ -740,3 +740,15 @@ scope; clean common main f926 reproduces its earlier failure.
 Full Undo needs immutable birth/event publication and exact measurement binding.
 DB29/wire44/manifest26 and installed260 are unchanged. Fleet seal, birth proof,
 Undo conversion and physical/joint acceptance remain open in GUI-486.
+
+## 2026-10-08: declaration-only native wrappers
+
+GUI-505 DC01/DC02/DC07/DC08: removed private page-save, immediate raster, Redo
+and color wrappers; live publication, history, scheduler and Pencil owners remain.
+Independent source review READY; 3 files, 0 additions / 52 deletions.
+Selected Mac: 2 PASS, 0 failures/skips/runtime warnings. Physical iPad
+build-for-testing PASS, signed for the designated device; 3 planned / 0 executed,
+not installed. Xcode requires a concrete unlocked device for native inventory.
+Both builds have identical source `0cbc76282b8ac8cd6e2bc4bc746386c412e5d6c53020a91c0ca8a445906f9604`
+/ 1726 files, unchanged within each route. Installed260 and physical acceptance
+remain unchanged. [Scope and pending checks](audit-evidence/2026-10-08/dead-native-owners/results.json).

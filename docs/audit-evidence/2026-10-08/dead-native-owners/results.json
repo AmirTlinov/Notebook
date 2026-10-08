@@ -1,0 +1,54 @@
+{
+  "format": 1,
+  "issue": "GUI-505",
+  "positions": [
+    "DC01",
+    "DC02",
+    "DC07",
+    "DC08"
+  ],
+  "change": "Remove four declaration-only private wrappers in three existing native owners. Live writers, history engine, raster scheduler and Pencil rendering retain their paths.",
+  "sourceSHA256": "0cbc76282b8ac8cd6e2bc4bc746386c412e5d6c53020a91c0ca8a445906f9604",
+  "sourceFiles": 1726,
+  "diff": {
+    "files": 3,
+    "added": 0,
+    "deleted": 52
+  },
+  "independentSourceReview": "ready",
+  "mac": {
+    "status": "passed",
+    "planned": [
+      "NotebookMacTests/MacSceneCompositionTests/testStaticSourceRetainsPixelsThroughoutZoomRefinement",
+      "NotebookMacTests/NotebookItemCreationTests/testColdCoverUndoAndParentRedoReachTheSameCommittedBirthForEveryKind"
+    ],
+    "executed": [
+      "NotebookMacTests/MacSceneCompositionTests/testStaticSourceRetainsPixelsThroughoutZoomRefinement",
+      "NotebookMacTests/NotebookItemCreationTests/testColdCoverUndoAndParentRedoReachTheSameCommittedBirthForEveryKind"
+    ],
+    "failed": [],
+    "skipped": [],
+    "runtimeWarnings": []
+  },
+  "ipad": {
+    "buildStatus": "passed",
+    "physicalBuild": true,
+    "planned": [
+      "NotebookTests/NotebookDrawingToolsTests/testAuthoredToolsPersistOnPageBoardAndCoverThroughOneUndoQueue",
+      "NotebookTests/SceneCompositionTests/testGeometryPublishesBeforeItsSourceAndThenRetainsTheReadyPixels",
+      "NotebookTests/NotebookDrawingToolsTests/testMarkerRunsThroughMeasuredPageInputWithoutPressureOrQuickShape"
+    ],
+    "executed": [],
+    "installed": false,
+    "offlineInventory": "unavailable: Xcode requires a concrete device",
+    "execution": "pending: device passcode required"
+  },
+  "physicalAcceptance": false,
+  "installedPairChanged": false,
+  "remainingGUI505": [
+    "Execute affected iPad gestures and three native selectors after device unlock.",
+    "NB26: replace the test-only page raster cache proof before deleting its production shell.",
+    "DC03: move fairness/pinning proof to live resource admission before deleting the test-only APIs.",
+    "DC04/DC06: deleted in prior shared commits; live gesture acceptance remains open."
+  ]
+}

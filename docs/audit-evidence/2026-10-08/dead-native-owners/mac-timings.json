@@ -1,0 +1,20 @@
+{
+  "slowest": [
+    {
+      "seconds": 6.459305047988892,
+      "target": "NotebookMacTests",
+      "test": "NotebookItemCreationTests/testColdCoverUndoAndParentRedoReachTheSameCommittedBirthForEveryKind()"
+    },
+    {
+      "seconds": 1.7835639715194702,
+      "target": "NotebookMacTests",
+      "test": "MacSceneCompositionTests/testStaticSourceRetainsPixelsThroughoutZoomRefinement()"
+    }
+  ],
+  "targets": {
+    "NotebookMacTests": {
+      "seconds": 8.242869019508362,
+      "tests": 2
+    }
+  }
+}

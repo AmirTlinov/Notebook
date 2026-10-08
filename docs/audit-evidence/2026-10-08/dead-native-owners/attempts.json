@@ -1,0 +1,19 @@
+{
+  "format": 1,
+  "attempts": [
+    {
+      "path": ".build/dead-native-owners-mac-20261008-v1",
+      "result": "prerequisite_failed",
+      "executed": 0,
+      "cause": "WASM preparer selected Apple Xcode Swift instead of official swift-6.4-RELEASE",
+      "correction": "NOTEBOOK_SWIFT points to official Swift 6.4 executable; no source changes"
+    },
+    {
+      "path": ".build/dead-native-owners-mac-20261008-v2",
+      "result": "passed",
+      "executed": 2,
+      "failed": 0,
+      "skipped": 0
+    }
+  ]
+}
