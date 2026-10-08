@@ -233,7 +233,23 @@
       ".build/gui535-installed-265/cold/summary.json": "b167ceb7c67225006b077bac60975e1ecba068e2bed455071883590f4dccc26a",
       ".build/gui535-installed-265/cold/startup.log": "13c46d9309a52859e681ccc0b19dc7995e01d3da1d203625f31e656cd8992abd",
       ".build/gui535-installed-265/warm1/summary.json": "1d82903e389ffb29aa5aaf876c9f4ca22857aac97bc7e6c77b081c7c846e758b",
-      ".build/gui535-installed-265/warm1/startup.log": "81435d551dd07be53bd50f5b39abd946747286dcf6a81bc8f35977d240976eef"
+      ".build/gui535-installed-265/warm1/startup.log": "81435d551dd07be53bd50f5b39abd946747286dcf6a81bc8f35977d240976eef",
+      ".build/gui535-installed265-ipad-relaunch.json": "78ccde4d4d6d058a146221a2b1ffe16771322837fdb6531664c91466cbde5ffd",
+      ".build/gui535-installed265-ipad-foreground-decoded.log": "aa9a87689138031e6e0b91dba6d5c62d2247d7a239e0884993d0bc6d699e01cc",
+      ".build/gui535-installed265-mac-network-startup.log": "99fc01f2e4da3acefa0ca9402e8d6de17a39f29a01d799d6f58756a62d5175bd",
+      ".build/gui535-installed-265/warm2/summary.json": "bedbca61504f79ca1a85d4b25e4f7de45e147d4316de471b8c4c63690ca9113c",
+      ".build/gui535-installed-265/warm3/summary.json": "c19ef27025448b8e50f5af262efb823d0b7745066d85e7cf3da3c1ca075766ca"
+    },
+    "resumeAttempt": {
+      "launchedAt": "2026-10-08T15:47:10.831Z",
+      "foregroundAt": "2026-10-08T15:47:11.724Z",
+      "noNetworkRouteAt": "2026-10-08T15:47:16.145Z",
+      "backgroundAt": "2026-10-08T15:47:18.289Z",
+      "suspendedAt": "2026-10-08T15:47:19.504Z",
+      "nextForegroundApplication": "com.amirtlinov.nofield",
+      "requestStarted": false,
+      "transportFinding": "No half-open slot leak: Session30s deadline, onStop removes peerless generations, fleet projects all sessions. No source repair justified by this attempt.",
+      "awaiting": "A two-to-three-minute actual foreground Notebook window on the physical iPad."
     }
   },
   "open": [
@@ -481,5 +497,12 @@
       "uniqueNativeFunctions": 14,
       "originalFailure": "v13 fixture error preserved; v14 repeats only that physical method and adds Mac5; remaining physical8 are unchanged."
     }
+  },
+  "acceptedFoundation": {
+    "commit": "a6f8b73ed8062f70a6161e6ee725ed64526ad63a",
+    "branch": "main",
+    "pushed": true,
+    "sourceSHA256": "0c2711bea4c4037b295dfd934f4e1c954feefc9fc01de73807a58dc174946c53",
+    "scope": "Selected implementation/regressions and signed pair265; installed joint report still pending."
   }
 }
