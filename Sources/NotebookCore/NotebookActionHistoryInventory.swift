@@ -3,40 +3,40 @@ import Foundation
 
 /// Acceptance markers only. A manifest's receipt fragments, full birth proof,
 /// historical membership and restoration authority belong to their typed owners.
-struct NotebookActionHistoryInventory {
-  struct Occurrence: Equatable, Sendable {
-    let workspaceID: UUID
-    let transactionID: UUID
-    let manifestHash: String
-    let localJournal: LocalJournal?
-    let firstReceived: FirstReceived?
+public struct NotebookActionHistoryInventory {
+  public struct Occurrence: Codable, Equatable, Sendable {
+    public let workspaceID: UUID
+    public let transactionID: UUID
+    public let manifestHash: String
+    public let localJournal: LocalJournal?
+    public let firstReceived: FirstReceived?
   }
 
-  struct LocalJournal: Equatable, Sendable {
+  public struct LocalJournal: Codable, Equatable, Sendable {
     /// This replica's journal position, including transactions it relayed.
-    let sequence: UInt64
-    let manifestByteCount: Int
+    public let sequence: UInt64
+    public let manifestByteCount: Int
   }
 
-  struct FirstReceived: Equatable, Sendable {
+  public struct FirstReceived: Codable, Equatable, Sendable {
     /// The first delivery route retained by DB29, not the action's author.
-    let source: NotebookReplicationSource
-    let senderSequence: UInt64
+    public let source: NotebookReplicationSource
+    public let senderSequence: UInt64
   }
 
-  struct Cursor: Equatable, Sendable {
+  public struct Cursor: Equatable, Sendable {
     fileprivate let workspaceID: UUID
     fileprivate let snapshotID: UUID
     fileprivate let transactionKey: String
   }
 
-  struct Page: Equatable, Sendable {
-    let workspaceID: UUID
+  public struct Page: Equatable, Sendable {
+    public let workspaceID: UUID
     /// Ephemeral identity of the caller's read transaction; never a durable seal.
-    let borrowedSnapshotID: UUID
-    let occurrences: [Occurrence]
+    public let borrowedSnapshotID: UUID
+    public let occurrences: [Occurrence]
     /// A full page offers another read; the final page may be empty.
-    let next: Cursor?
+    public let next: Cursor?
   }
 
   static func page(in database: NotebookSQLConnection, workspaceID: UUID,

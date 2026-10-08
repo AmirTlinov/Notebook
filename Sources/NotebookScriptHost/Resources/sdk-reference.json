@@ -2543,7 +2543,9 @@
               "codeFragment",
               "codeFragments",
               "storageUsage",
-              "actionHistoryPreflight"
+              "actionHistoryPreflight",
+              "historyPhysicalClosure",
+              "replicaInventory"
             ]
           },
           "scope": {
@@ -2716,6 +2718,15 @@
             "type": "integer",
             "exclusiveMinimum": 0,
             "maximum": 9007199254740991
+          },
+          "replicaSection": {
+            "type": "string",
+            "enum": [
+              "endpoints",
+              "cloudAccounts",
+              "cloudPending",
+              "cloudReceipts"
+            ]
           },
           "itemIDs": {
             "maxItems": 8,
@@ -3046,7 +3057,7 @@
           }
         }
       },
-      "returns": "actionHistoryPreflight without id reads up to 64 accepted transaction markers (default 32); coverage.next is bound to the accepted read cut. With id=transaction UUID and revision=exact manifest SHA-256, it reports receipt closure evidence from that original manifest; referenceID optionally selects one receipt. completeOriginalBody authenticates the full raw JSON against this source replica's immutable original version in the SAME read cut and reports originalAnchor version plus original/model/result root hashes. Authored bodies stay private to Core. This proves logical body completeness; it does not identify a birth transaction or actor. Missing source anchors retain externalizedMembership; incomplete/mismatched anchors stay unprovenClosure and keep coverage incomplete. Snapshot IDs are ephemeral, counters are exact decimal strings, and the report grants no migration/Undo authority. storageUsage reports bounded metadata from the current SQLite read cut: unique blobs, current records, all retained history, pending incoming indexes and up to 64 known outgoing peers. Categories deduplicate internally and can overlap. DB/WAL/SHM lengths are physical samples with a separate sampleStatus; coverage.complete is false for changed/incomplete samples or a truncated peer list. reachability is partial: unclassifiedBlobs are not proven orphans. This read never creates, migrates, cleans, checkpoints or vacuums storage. Its basis has no content owners and grants no write authority. documentProgram with document id, instanceID and programPath reads the pure executable sourceBasis, initialState and saved state/stateVersion without executing or staging code. Use that exact sourceBasis with setDocumentProgramState. pageInkActions with a page id returns a metadata directory (default 32, max 64) without sample/raster bodies; coverage.next continues UUID order, while sequence retains authored contact order. baseline reports an existing raster source, not editable strokes or OCR. pageInkAction with page id + elementID (stroke UUID) reads exactly one bounded measured source or null; both provide the same-snapshot page content/ink basis. Active pen/eraser source records are not final visible pixels: use pageMap/pageImage/regions for appearance. itemLifecycle with an item id returns its complete stored extent without loading page/document bodies, plus frozen workspace, actual parent and lifecycle basis. bodyRecordCount counts page/document/state records only, not a total deletion cost or mutation authority. Unseen source, ink, state, membership or child-board causal changes invalidate that extent; ordinary itemHeader does not provide it. selection returns known/unknown session identity, generation, physical surface and typed choice from the existing UI owner; its basis has no owners and grants no authority. Snapshot<T> selected by query.kind. data is one object or collection, never values[0]. basis contains exact owner versions from the SAME native snapshot, not mutation permissions. coverage.complete is explicit; next can be passed with the same kind to read. Stale continuation fails, without a hidden full rescan.",
+      "returns": "replicaInventory reads a bounded read-only cut or one native section (replicaSection: endpoints/cloudAccounts/cloudPending/cloudReceipts), at most 64 metadata rows. It exposes stored journal identity, current format, delivery floors and exact decimal cursors; complete covers only that section, jointReadiness is always false, and it grants no writer/admission authority. historyPhysicalClosure requires id=accepted transaction UUID and revision=its exact manifest SHA-256, optionally referenceID=receipt UUID. It hashes full declared raw closure through the same finite read cut without logical body or portable-ink expansion; physical completeness and logical binding/source-original status remain distinct. Snapshot IDs and received routes cannot identify birth or author. Neither read coordinates another replica; native notebook_history_readiness owns pair coordination. actionHistoryPreflight without id reads up to 64 accepted transaction markers (default 32); coverage.next is bound to the accepted read cut. With id=transaction UUID and revision=exact manifest SHA-256, it reports receipt closure evidence from that original manifest; referenceID optionally selects one receipt. completeOriginalBody authenticates the full raw JSON against this source replica's immutable original version in the SAME read cut and reports originalAnchor version plus original/model/result root hashes. Authored bodies stay private to Core. This proves logical body completeness; it does not identify a birth transaction or actor. Missing source anchors retain externalizedMembership; incomplete/mismatched anchors stay unprovenClosure and keep coverage incomplete. Snapshot IDs are ephemeral, counters are exact decimal strings, and the report grants no migration/Undo authority. storageUsage reports bounded metadata from the current SQLite read cut: unique blobs, current records, all retained history, pending incoming indexes and up to 64 known outgoing peers. Categories deduplicate internally and can overlap. DB/WAL/SHM lengths are physical samples with a separate sampleStatus; coverage.complete is false for changed/incomplete samples or a truncated peer list. reachability is partial: unclassifiedBlobs are not proven orphans. This read never creates, migrates, cleans, checkpoints or vacuums storage. Its basis has no content owners and grants no write authority. documentProgram with document id, instanceID and programPath reads the pure executable sourceBasis, initialState and saved state/stateVersion without executing or staging code. Use that exact sourceBasis with setDocumentProgramState. pageInkActions with a page id returns a metadata directory (default 32, max 64) without sample/raster bodies; coverage.next continues UUID order, while sequence retains authored contact order. baseline reports an existing raster source, not editable strokes or OCR. pageInkAction with page id + elementID (stroke UUID) reads exactly one bounded measured source or null; both provide the same-snapshot page content/ink basis. Active pen/eraser source records are not final visible pixels: use pageMap/pageImage/regions for appearance. itemLifecycle with an item id returns its complete stored extent without loading page/document bodies, plus frozen workspace, actual parent and lifecycle basis. bodyRecordCount counts page/document/state records only, not a total deletion cost or mutation authority. Unseen source, ink, state, membership or child-board causal changes invalidate that extent; ordinary itemHeader does not provide it. selection returns known/unknown session identity, generation, physical surface and typed choice from the existing UI owner; its basis has no owners and grants no authority. Snapshot<T> selected by query.kind. data is one object or collection, never values[0]. basis contains exact owner versions from the SAME native snapshot, not mutation permissions. coverage.complete is explicit; next can be passed with the same kind to read. Stale continuation fails, without a hidden full rescan.",
       "example": "const s=await nb.read({kind:'pageElement',id:args.pageID,elementID:args.elementID}); await emit(s.data);",
       "output": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -4956,6 +4967,228 @@
                     "additionalProperties": false
                   }
                 ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "cut": {
+                    "$ref": "#/$defs/__schema90"
+                  },
+                  "transactionID": {
+                    "$ref": "#/$defs/__schema7"
+                  },
+                  "manifestHash": {
+                    "$ref": "#/$defs/__schema93"
+                  },
+                  "proof": {
+                    "$ref": "#/$defs/__schema95"
+                  },
+                  "complete": {
+                    "type": "boolean"
+                  },
+                  "jointReadiness": {
+                    "type": "boolean",
+                    "const": false
+                  }
+                },
+                "required": [
+                  "cut",
+                  "transactionID",
+                  "manifestHash",
+                  "proof",
+                  "complete",
+                  "jointReadiness"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "cut",
+                      "endpoints",
+                      "cloudAccounts",
+                      "cloudPending",
+                      "cloudReceipts"
+                    ]
+                  },
+                  "cut": {
+                    "type": "object",
+                    "properties": {
+                      "workspaceID": {
+                        "$ref": "#/$defs/__schema7"
+                      },
+                      "borrowedSnapshotID": {
+                        "$ref": "#/$defs/__schema7"
+                      },
+                      "readRevision": {
+                        "$ref": "#/$defs/__schema91"
+                      },
+                      "readCursor": {
+                        "$ref": "#/$defs/__schema91"
+                      },
+                      "databaseVersion": {
+                        "$ref": "#/$defs/__schema86"
+                      },
+                      "wireVersion": {
+                        "$ref": "#/$defs/__schema86"
+                      },
+                      "manifestVersion": {
+                        "$ref": "#/$defs/__schema86"
+                      },
+                      "journalGenerationStatus": {
+                        "type": "string",
+                        "enum": [
+                          "stored",
+                          "missing",
+                          "invalid"
+                        ]
+                      },
+                      "journalGeneration": {
+                        "$ref": "#/$defs/__schema7"
+                      },
+                      "acceptedLocalPrefix": {
+                        "type": "object",
+                        "properties": {
+                          "sequence": {
+                            "$ref": "#/$defs/__schema91"
+                          },
+                          "transactionID": {
+                            "$ref": "#/$defs/__schema7"
+                          },
+                          "manifestHash": {
+                            "$ref": "#/$defs/__schema93"
+                          },
+                          "byteCount": {
+                            "$ref": "#/$defs/__schema86"
+                          }
+                        },
+                        "required": [
+                          "sequence",
+                          "transactionID",
+                          "manifestHash",
+                          "byteCount"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "deliveryFloors": {
+                        "type": "object",
+                        "properties": {
+                          "placement": {
+                            "$ref": "#/$defs/__schema91"
+                          },
+                          "ink": {
+                            "$ref": "#/$defs/__schema91"
+                          },
+                          "document": {
+                            "$ref": "#/$defs/__schema91"
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "cloud": {
+                        "type": "object",
+                        "properties": {
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "unconfigured",
+                              "ready",
+                              "invalid"
+                            ]
+                          },
+                          "account": {
+                            "maxLength": 512,
+                            "$ref": "#/$defs/__schema0"
+                          },
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "issue": {
+                            "type": "string",
+                            "enum": [
+                              "incompleteSchema",
+                              "invalidControl"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "status"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "controlObservation": {
+                        "type": "object",
+                        "properties": {
+                          "scope": {
+                            "type": "string",
+                            "const": "reusedReaderConnection"
+                          },
+                          "sqliteDataVersion": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          "fixedScalarHash": {
+                            "$ref": "#/$defs/__schema93"
+                          }
+                        },
+                        "required": [
+                          "scope",
+                          "sqliteDataVersion",
+                          "fixedScalarHash"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": [
+                      "workspaceID",
+                      "borrowedSnapshotID",
+                      "readRevision",
+                      "readCursor",
+                      "databaseVersion",
+                      "wireVersion",
+                      "manifestVersion",
+                      "journalGenerationStatus",
+                      "deliveryFloors",
+                      "cloud",
+                      "controlObservation"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "complete": {
+                    "type": "boolean"
+                  },
+                  "jointReadiness": {
+                    "type": "boolean",
+                    "const": false
+                  },
+                  "entries": {
+                    "maxItems": 64,
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/__schema96"
+                    }
+                  },
+                  "scalarWitnessHash": {
+                    "$ref": "#/$defs/__schema93"
+                  },
+                  "receiptCount": {
+                    "$ref": "#/$defs/__schema86"
+                  },
+                  "native": {
+                    "$ref": "#/$defs/__schema97"
+                  }
+                },
+                "required": [
+                  "mode",
+                  "cut",
+                  "complete",
+                  "jointReadiness"
+                ],
+                "additionalProperties": false
               }
             ]
           },
@@ -8166,6 +8399,99 @@
                 "additionalProperties": false
               }
             ]
+          },
+          "__schema95": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/__schema95"
+                }
+              },
+              {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "$ref": "#/$defs/__schema95"
+                }
+              }
+            ]
+          },
+          "__schema96": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/__schema96"
+                }
+              },
+              {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "$ref": "#/$defs/__schema96"
+                }
+              }
+            ]
+          },
+          "__schema97": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/__schema97"
+                }
+              },
+              {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "$ref": "#/$defs/__schema97"
+                }
+              }
+            ]
           }
         }
       }
@@ -8243,7 +8569,9 @@
                   "codeFragment",
                   "codeFragments",
                   "storageUsage",
-                  "actionHistoryPreflight"
+                  "actionHistoryPreflight",
+                  "historyPhysicalClosure",
+                  "replicaInventory"
                 ]
               },
               "scope": {
@@ -8416,6 +8744,15 @@
                 "type": "integer",
                 "exclusiveMinimum": 0,
                 "maximum": 9007199254740991
+              },
+              "replicaSection": {
+                "type": "string",
+                "enum": [
+                  "endpoints",
+                  "cloudAccounts",
+                  "cloudPending",
+                  "cloudReceipts"
+                ]
               },
               "itemIDs": {
                 "maxItems": 8,
@@ -10658,6 +10995,228 @@
                       "additionalProperties": false
                     }
                   ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "cut": {
+                      "$ref": "#/$defs/__schema90"
+                    },
+                    "transactionID": {
+                      "$ref": "#/$defs/__schema7"
+                    },
+                    "manifestHash": {
+                      "$ref": "#/$defs/__schema93"
+                    },
+                    "proof": {
+                      "$ref": "#/$defs/__schema95"
+                    },
+                    "complete": {
+                      "type": "boolean"
+                    },
+                    "jointReadiness": {
+                      "type": "boolean",
+                      "const": false
+                    }
+                  },
+                  "required": [
+                    "cut",
+                    "transactionID",
+                    "manifestHash",
+                    "proof",
+                    "complete",
+                    "jointReadiness"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "mode": {
+                      "type": "string",
+                      "enum": [
+                        "cut",
+                        "endpoints",
+                        "cloudAccounts",
+                        "cloudPending",
+                        "cloudReceipts"
+                      ]
+                    },
+                    "cut": {
+                      "type": "object",
+                      "properties": {
+                        "workspaceID": {
+                          "$ref": "#/$defs/__schema7"
+                        },
+                        "borrowedSnapshotID": {
+                          "$ref": "#/$defs/__schema7"
+                        },
+                        "readRevision": {
+                          "$ref": "#/$defs/__schema91"
+                        },
+                        "readCursor": {
+                          "$ref": "#/$defs/__schema91"
+                        },
+                        "databaseVersion": {
+                          "$ref": "#/$defs/__schema86"
+                        },
+                        "wireVersion": {
+                          "$ref": "#/$defs/__schema86"
+                        },
+                        "manifestVersion": {
+                          "$ref": "#/$defs/__schema86"
+                        },
+                        "journalGenerationStatus": {
+                          "type": "string",
+                          "enum": [
+                            "stored",
+                            "missing",
+                            "invalid"
+                          ]
+                        },
+                        "journalGeneration": {
+                          "$ref": "#/$defs/__schema7"
+                        },
+                        "acceptedLocalPrefix": {
+                          "type": "object",
+                          "properties": {
+                            "sequence": {
+                              "$ref": "#/$defs/__schema91"
+                            },
+                            "transactionID": {
+                              "$ref": "#/$defs/__schema7"
+                            },
+                            "manifestHash": {
+                              "$ref": "#/$defs/__schema93"
+                            },
+                            "byteCount": {
+                              "$ref": "#/$defs/__schema86"
+                            }
+                          },
+                          "required": [
+                            "sequence",
+                            "transactionID",
+                            "manifestHash",
+                            "byteCount"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "deliveryFloors": {
+                          "type": "object",
+                          "properties": {
+                            "placement": {
+                              "$ref": "#/$defs/__schema91"
+                            },
+                            "ink": {
+                              "$ref": "#/$defs/__schema91"
+                            },
+                            "document": {
+                              "$ref": "#/$defs/__schema91"
+                            }
+                          },
+                          "additionalProperties": false
+                        },
+                        "cloud": {
+                          "type": "object",
+                          "properties": {
+                            "status": {
+                              "type": "string",
+                              "enum": [
+                                "unconfigured",
+                                "ready",
+                                "invalid"
+                              ]
+                            },
+                            "account": {
+                              "maxLength": 512,
+                              "$ref": "#/$defs/__schema0"
+                            },
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "issue": {
+                              "type": "string",
+                              "enum": [
+                                "incompleteSchema",
+                                "invalidControl"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "status"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "controlObservation": {
+                          "type": "object",
+                          "properties": {
+                            "scope": {
+                              "type": "string",
+                              "const": "reusedReaderConnection"
+                            },
+                            "sqliteDataVersion": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            },
+                            "fixedScalarHash": {
+                              "$ref": "#/$defs/__schema93"
+                            }
+                          },
+                          "required": [
+                            "scope",
+                            "sqliteDataVersion",
+                            "fixedScalarHash"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "workspaceID",
+                        "borrowedSnapshotID",
+                        "readRevision",
+                        "readCursor",
+                        "databaseVersion",
+                        "wireVersion",
+                        "manifestVersion",
+                        "journalGenerationStatus",
+                        "deliveryFloors",
+                        "cloud",
+                        "controlObservation"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "complete": {
+                      "type": "boolean"
+                    },
+                    "jointReadiness": {
+                      "type": "boolean",
+                      "const": false
+                    },
+                    "entries": {
+                      "maxItems": 64,
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/__schema96"
+                      }
+                    },
+                    "scalarWitnessHash": {
+                      "$ref": "#/$defs/__schema93"
+                    },
+                    "receiptCount": {
+                      "$ref": "#/$defs/__schema86"
+                    },
+                    "native": {
+                      "$ref": "#/$defs/__schema97"
+                    }
+                  },
+                  "required": [
+                    "mode",
+                    "cut",
+                    "complete",
+                    "jointReadiness"
+                  ],
+                  "additionalProperties": false
                 }
               ]
             }
@@ -10683,7 +11242,7 @@
             "additionalProperties": false
           },
           "coverage": {
-            "$ref": "#/$defs/__schema95"
+            "$ref": "#/$defs/__schema98"
           },
           "cursor": {
             "$ref": "#/$defs/__schema0"
@@ -10691,7 +11250,7 @@
           "coverages": {
             "type": "array",
             "items": {
-              "$ref": "#/$defs/__schema95"
+              "$ref": "#/$defs/__schema98"
             }
           }
         },
@@ -13866,6 +14425,99 @@
             ]
           },
           "__schema95": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/__schema95"
+                }
+              },
+              {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "$ref": "#/$defs/__schema95"
+                }
+              }
+            ]
+          },
+          "__schema96": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/__schema96"
+                }
+              },
+              {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "$ref": "#/$defs/__schema96"
+                }
+              }
+            ]
+          },
+          "__schema97": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/__schema97"
+                }
+              },
+              {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "$ref": "#/$defs/__schema97"
+                }
+              }
+            ]
+          },
+          "__schema98": {
             "type": "object",
             "properties": {
               "complete": {
@@ -52255,6 +52907,369 @@
                 "reason"
               ],
               "additionalProperties": false
+            }
+          ]
+        }
+      }
+    },
+    "historyPhysicalClosure": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "cut": {
+          "type": "object",
+          "properties": {
+            "workspaceID": {
+              "$ref": "#/$defs/__schema0"
+            },
+            "snapshotID": {
+              "$ref": "#/$defs/__schema0"
+            },
+            "readCursor": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$"
+            }
+          },
+          "required": [
+            "workspaceID",
+            "snapshotID",
+            "readCursor"
+          ],
+          "additionalProperties": false
+        },
+        "transactionID": {
+          "$ref": "#/$defs/__schema0"
+        },
+        "manifestHash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "proof": {
+          "$ref": "#/$defs/__schema1"
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "jointReadiness": {
+          "type": "boolean",
+          "const": false
+        }
+      },
+      "required": [
+        "cut",
+        "transactionID",
+        "manifestHash",
+        "proof",
+        "complete",
+        "jointReadiness"
+      ],
+      "additionalProperties": false,
+      "$defs": {
+        "__schema0": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        },
+        "__schema1": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/__schema1"
+              }
+            },
+            {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "$ref": "#/$defs/__schema1"
+              }
+            }
+          ]
+        }
+      }
+    },
+    "replicaInventory": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "cut",
+            "endpoints",
+            "cloudAccounts",
+            "cloudPending",
+            "cloudReceipts"
+          ]
+        },
+        "cut": {
+          "type": "object",
+          "properties": {
+            "workspaceID": {
+              "$ref": "#/$defs/__schema0"
+            },
+            "borrowedSnapshotID": {
+              "$ref": "#/$defs/__schema0"
+            },
+            "readRevision": {
+              "$ref": "#/$defs/__schema1"
+            },
+            "readCursor": {
+              "$ref": "#/$defs/__schema1"
+            },
+            "databaseVersion": {
+              "$ref": "#/$defs/__schema2"
+            },
+            "wireVersion": {
+              "$ref": "#/$defs/__schema2"
+            },
+            "manifestVersion": {
+              "$ref": "#/$defs/__schema2"
+            },
+            "journalGenerationStatus": {
+              "type": "string",
+              "enum": [
+                "stored",
+                "missing",
+                "invalid"
+              ]
+            },
+            "journalGeneration": {
+              "$ref": "#/$defs/__schema0"
+            },
+            "acceptedLocalPrefix": {
+              "type": "object",
+              "properties": {
+                "sequence": {
+                  "$ref": "#/$defs/__schema1"
+                },
+                "transactionID": {
+                  "$ref": "#/$defs/__schema0"
+                },
+                "manifestHash": {
+                  "$ref": "#/$defs/__schema3"
+                },
+                "byteCount": {
+                  "$ref": "#/$defs/__schema2"
+                }
+              },
+              "required": [
+                "sequence",
+                "transactionID",
+                "manifestHash",
+                "byteCount"
+              ],
+              "additionalProperties": false
+            },
+            "deliveryFloors": {
+              "type": "object",
+              "properties": {
+                "placement": {
+                  "$ref": "#/$defs/__schema1"
+                },
+                "ink": {
+                  "$ref": "#/$defs/__schema1"
+                },
+                "document": {
+                  "$ref": "#/$defs/__schema1"
+                }
+              },
+              "additionalProperties": false
+            },
+            "cloud": {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "unconfigured",
+                    "ready",
+                    "invalid"
+                  ]
+                },
+                "account": {
+                  "type": "string",
+                  "maxLength": 512
+                },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "issue": {
+                  "type": "string",
+                  "enum": [
+                    "incompleteSchema",
+                    "invalidControl"
+                  ]
+                }
+              },
+              "required": [
+                "status"
+              ],
+              "additionalProperties": false
+            },
+            "controlObservation": {
+              "type": "object",
+              "properties": {
+                "scope": {
+                  "type": "string",
+                  "const": "reusedReaderConnection"
+                },
+                "sqliteDataVersion": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "fixedScalarHash": {
+                  "$ref": "#/$defs/__schema3"
+                }
+              },
+              "required": [
+                "scope",
+                "sqliteDataVersion",
+                "fixedScalarHash"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "workspaceID",
+            "borrowedSnapshotID",
+            "readRevision",
+            "readCursor",
+            "databaseVersion",
+            "wireVersion",
+            "manifestVersion",
+            "journalGenerationStatus",
+            "deliveryFloors",
+            "cloud",
+            "controlObservation"
+          ],
+          "additionalProperties": false
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "jointReadiness": {
+          "type": "boolean",
+          "const": false
+        },
+        "entries": {
+          "maxItems": 64,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema4"
+          }
+        },
+        "scalarWitnessHash": {
+          "$ref": "#/$defs/__schema3"
+        },
+        "receiptCount": {
+          "$ref": "#/$defs/__schema2"
+        },
+        "native": {
+          "$ref": "#/$defs/__schema5"
+        }
+      },
+      "required": [
+        "mode",
+        "cut",
+        "complete",
+        "jointReadiness"
+      ],
+      "additionalProperties": false,
+      "$defs": {
+        "__schema0": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        },
+        "__schema1": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$"
+        },
+        "__schema2": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "__schema3": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "__schema4": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/__schema4"
+              }
+            },
+            {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "$ref": "#/$defs/__schema4"
+              }
+            }
+          ]
+        },
+        "__schema5": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/__schema5"
+              }
+            },
+            {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "$ref": "#/$defs/__schema5"
+              }
             }
           ]
         }

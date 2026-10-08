@@ -168,6 +168,22 @@ const actionHistoryPreflight=z.discriminatedUnion("mode",[
   z.object({mode:z.literal("transaction"),cut:historyCut,transactionID:id,manifestHash:historyHash,
     manifestFormat:storageCount,receipts:z.array(historyReceipt).max(64)}).strict(),
 ]);
+const replicaInventory=z.object({
+  mode:z.enum(["cut","endpoints","cloudAccounts","cloudPending","cloudReceipts"]),
+  cut:z.object({workspaceID:id,borrowedSnapshotID:id,readRevision:historySequence,readCursor:historySequence,
+    databaseVersion:storageCount,wireVersion:storageCount,manifestVersion:storageCount,
+    journalGenerationStatus:z.enum(["stored","missing","invalid"]),journalGeneration:id.optional(),
+    acceptedLocalPrefix:z.object({sequence:historySequence,transactionID:id,manifestHash:historyHash,byteCount:storageCount}).strict().optional(),
+    deliveryFloors:z.object({placement:historySequence.optional(),ink:historySequence.optional(),document:historySequence.optional()}).strict(),
+    cloud:z.object({status:z.enum(["unconfigured","ready","invalid"]),account:text.max(512).optional(),
+      enabled:z.boolean().optional(),issue:z.enum(["incompleteSchema","invalidControl"]).optional()}).strict(),
+    controlObservation:z.object({scope:z.literal("reusedReaderConnection"),sqliteDataVersion:z.number().int(),
+      fixedScalarHash:historyHash}).strict()}).strict(),
+  complete:z.boolean(),jointReadiness:z.literal(false),entries:z.array(z.json()).max(64).optional(),
+  scalarWitnessHash:historyHash.optional(),receiptCount:storageCount.optional(),native:z.json().optional(),
+}).strict();
+const historyPhysicalClosure=z.object({cut:historyCut,transactionID:id,manifestHash:historyHash,
+  proof:z.json(),complete:z.boolean(),jointReadiness:z.literal(false)}).strict();
 export const readDataSchemas = {
   observation, workspaceHeader:header, itemHeaders:z.array(item), itemHeader:item.nullable(), itemLifecycle:object({item,target:coverTargetSchema,revision:text,bodyRecordCount:number.int().nonnegative()}).nullable(),
   workingSet:object({header,items:z.array(item),boards:z.array(board),pages:z.record(text,page),documents:z.record(text,document),states:z.record(text,documentState),ink}),
@@ -177,7 +193,7 @@ export const readDataSchemas = {
   notebookPages:object({header:directoryHeader,pages:z.array(object({position,document:page}))}),notebookDirectory:directory,notebookPosition:position.nullable(),
   spatialInk:ink,presence,selection,attentionEvidence:object({reference:referenceSchema,payload:json,image:object({sha256:text,pixelWidth:number,pixelHeight:number}).optional()}).nullable(),
   contexts,contextEntries,actions:z.array(receipt),currentViewReceipt:viewReceipt.nullable(),pageVisionReceipt:vision.nullable(),targetRenderReceipt:render.nullable(),
-  renderRequests:z.array(renderRequest),delivery:z.array(delivery),actionSnapshots:z.array(object({request:renderRequest,pngSHA256:text.optional(),diagnostics:renderDiagnostics.optional()})),runtime,codeFragment:code,codeFragments:z.array(codeFragment),storageUsage,actionHistoryPreflight,
+  renderRequests:z.array(renderRequest),delivery:z.array(delivery),actionSnapshots:z.array(object({request:renderRequest,pngSHA256:text.optional(),diagnostics:renderDiagnostics.optional()})),runtime,codeFragment:code,codeFragments:z.array(codeFragment),storageUsage,actionHistoryPreflight,historyPhysicalClosure,replicaInventory,
 };
 export const methodDataSchemas = {
   observe:observation,page:z.union([page,pageElement]),document:z.union([documentDirectory,documentFile,documentFileBytes]),documentStructure,documentCheck:render.extend({programs:documentProgramChecks,code:text.optional()}),board:scene,notebook:directory,context:z.union([contexts,contextEntries]),

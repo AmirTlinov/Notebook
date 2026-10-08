@@ -10,12 +10,12 @@ struct NotebookDictationButton: View {
       if dictation.needsAddressAuthorization {
         Button("Включить ожидание GPT", systemImage: "ear.badge.waveform") {
           dictation.setMicrophoneMuted(false)
-        }.accessibilityIdentifier("notebook-dictation-enable-address")
+        }.disabled(!chat.permitsNativeMutation()).accessibilityIdentifier("notebook-dictation-enable-address")
       }
       Button(dictation.microphoneMuted ? "Включить микрофон" : "Выключить микрофон",
         systemImage: dictation.microphoneMuted ? "mic" : "mic.slash") {
           dictation.setMicrophoneMuted(!dictation.microphoneMuted)
-        }.accessibilityIdentifier("notebook-microphone-mute")
+        }.disabled(dictation.microphoneMuted && !chat.permitsNativeMutation()).accessibilityIdentifier("notebook-microphone-mute")
     } label: {
       Image(systemName: dictation.microphoneMuted ? "mic.slash" : "mic")
         .font(NotebookChrome.iconFont)
@@ -24,10 +24,11 @@ struct NotebookDictationButton: View {
         }
         .frame(width: 44, height: 44).contentShape(Rectangle())
     } primaryAction: {
+      guard chat.permitsNativeMutation() else { return }
       if dictation.microphoneMuted { dictation.setMicrophoneMuted(false) }
       else { Task { await dictation.begin() } }
     }
-    .disabled(dictation.busy || chat.voice.capturing)
+    .disabled(dictation.busy || chat.voice.capturing || !chat.permitsNativeMutation())
     .accessibilityLabel(dictation.microphoneMuted ? "Включить микрофон" : "Диктовать сообщение")
     .accessibilityValue(dictation.status.isEmpty ? "Готова" : dictation.status)
     .accessibilityHint("Нажмите для диктовки с редактируемым черновиком. Удерживайте, чтобы выключить микрофон. Обращение GPT отправляется после паузы.")
@@ -93,7 +94,7 @@ struct NotebookDictationInput: View {
         Button { model.finishDictation(sending: false) } label: { symbol("stop.fill") }
           .accessibilityLabel("Остановить и редактировать").accessibilityIdentifier("notebook-dictation-review")
         Button { model.finishDictation(sending: true) } label: { symbol("arrow.up", send: true) }
-          .disabled(model.isSavingAgentQuestion || model.selectionSession.isResolvingContext || chat.continuationUnavailable)
+          .disabled(!chat.permitsNativeMutation() || model.isSavingAgentQuestion || model.selectionSession.isResolvingContext || chat.continuationUnavailable)
           .accessibilityLabel("Завершить диктовку и отправить").accessibilityIdentifier("notebook-dictation-send")
       } else {
         Text(dictation.status).font(.system(size: 12)).foregroundStyle(.secondary)
@@ -127,14 +128,14 @@ struct NotebookVoiceStartButton: View {
       Image(systemName: "waveform").font(NotebookChrome.iconFont)
         .frame(width: 44, height: 44).contentShape(Rectangle())
     }.accessibilityLabel(chat.voice.capturing ? "Управление голосом" : "Начать голосовой разговор")
-      .disabled(chat.dictation.busy)
+      .disabled(chat.dictation.busy || (!chat.voice.capturing && !chat.permitsNativeMutation()))
       .accessibilityHint("Нажмите и говорите. Удерживайте для настройки обращения к GPT.")
       .accessibilityIdentifier("notebook-chat-voice")
       .highPriorityGesture(LongPressGesture(minimumDuration: 0.6).onEnded { _ in showsSettings = true })
       .accessibilityAction(named: "Параметры голоса") { showsSettings = true }
       .popover(isPresented: $showsSettings) {
         NotebookVoiceSettings(voice: chat.voice, task: chat.taskTitle,
-          canStart: chat.connected && chat.threadID != nil && !chat.browsesChats && !chat.switchingComputer) { showsSettings = false }
+          canStart: chat.permitsNativeMutation() && chat.connected && chat.threadID != nil && !chat.browsesChats && !chat.switchingComputer) { showsSettings = false }
           .presentationCompactAdaptation(.popover).presentationBackground(NotebookChrome.surface)
       }
   }
@@ -185,7 +186,8 @@ struct NotebookVoiceControls: View {
         Text(voice.status).font(.caption).lineLimit(2)
         Spacer(minLength: 0)
         Button { Task { await voice.mute() } } label: { Image(systemName: voice.muted ? "mic.fill" : "mic.slash").frame(width: 44,height: 44).contentShape(Rectangle()) }
-          .accessibilityLabel(voice.muted ? "Включить микрофон" : "Выключить микрофон").disabled(voice.ending || voice.changingMute)
+          .accessibilityLabel(voice.muted ? "Включить микрофон" : "Выключить микрофон")
+          .disabled(voice.ending || voice.changingMute || (voice.muted && voice.chat?.permitsNativeMutation() != true))
         if voice.activeID != nil {
         Button { Task { await voice.toggleSpeaker() } } label: { Image(systemName: voice.speakerMuted ? "speaker.slash" : "speaker.wave.2").frame(width: 40, height: 44).contentShape(Rectangle()) }
           .accessibilityLabel(voice.speakerMuted ? "Включить звук GPT" : "Выключить звук GPT").disabled(voice.ending || voice.changingSpeaker)

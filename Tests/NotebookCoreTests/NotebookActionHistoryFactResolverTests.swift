@@ -750,4 +750,599 @@ struct NotebookActionHistoryFactResolverTests {
       #expect(trace.blobColumns == 0)
     }
   }
+
+  @Test func rawChunksAuthenticateLargeReceiptsWithoutAFullValueOrInkDecode() throws {
+    try fixture { f in
+      let id = UUID(), transactionID = UUID()
+      let body = f.value(id).setting("futureReceipt", .object(["unknownActor": .null,
+        "large": .string(String(repeating: "quoted \" } ] \\ 🖋️", count: 500_000))]))
+      let payload = try f.records(NotebookRecordCodec.encode(body, file: f.file(id)), unknownEnvelope: true)
+      let raw = try #require(payload.payloads[f.file(id) + "#"])
+      #expect(raw.count > 8 * 1_024 * 1_024)
+      let manifest = try f.manifest(transactionID, records: payload.records)
+      try f.received(transactionID, manifest, source: .init(deviceID: UUID(), generation: UUID()), sequence: 73)
+      let otherTransaction = UUID()
+      let secondManifest = try f.manifest(otherTransaction, records: payload.records)
+      try f.journal(otherTransaction, secondManifest, sequence: 19)
+      let anchor = try f.originalAnchor(id, body: body)
+      let later = try f.records(NotebookRecordCodec.encode(f.value(id), file: f.file(id)))
+      try f.current(later.records, file: f.file(id))
+      let writes = sqlite3_total_changes64(f.writer.handle)
+      final class Trace { var largestBlob = 0, chunks = 0 }
+      let trace = Trace()
+      try f.read { database in
+        try database.limitReads(.init(rows: 256, bytes: 32 * 1_024 * 1_024,
+          valueBytes: 1_024 * 1_024, reason: "raw_chunk_credit", jsonDecodeBytes: 2 * 1_024 * 1_024))
+        sqlite3_trace_v2(database.handle, UInt32(SQLITE_TRACE_ROW), { _, raw, pointer, _ in
+          let trace = Unmanaged<Trace>.fromOpaque(raw!).takeUnretainedValue(), statement = OpaquePointer(pointer!)
+          for column in 0..<sqlite3_column_count(statement) where sqlite3_column_type(statement, column) == SQLITE_BLOB {
+            let count = Int(sqlite3_column_bytes(statement, column))
+            trace.largestBlob = max(trace.largestBlob, count)
+            if count == 1_024 * 1_024 { trace.chunks += 1 }
+          }
+          return 0
+        }, Unmanaged.passUnretained(trace).toOpaque())
+        defer { _ = withExtendedLifetime(trace) { sqlite3_trace_v2(database.handle, 0, nil, nil) } }
+        let proof = try f.store.actionHistoryPhysicalClosure(workspaceID: f.workspaceID,
+          transactionID: transactionID, manifestHash: manifest.hash, receiptID: id)
+        let receipt = try #require(proof.receipts.first)
+        #expect(proof.borrowedSnapshotID == database.readSnapshotIdentity && proof.transactionID == transactionID)
+        #expect(receipt.status == .authenticatedDeclaredClosure && receipt.logicalBinding == .notEvaluated)
+        #expect(receipt.fragmentCount == 1 && receipt.fragmentBytes == Int64(raw.count) && receipt.fragmentSetHash != nil)
+        #expect(receipt.sourceOriginal.status == .authenticatedSourceLocalRoots)
+        #expect(receipt.sourceOriginal.originalVersion == anchor.originalVersion)
+        #expect(receipt.sourceOriginal.original?.hash == anchor.originalRootHash)
+        #expect(receipt.sourceOriginal.model?.hash == anchor.modelRootHash && receipt.sourceOriginal.result?.hash == anchor.resultRootHash)
+        #expect(database.decodedFragmentCount == 0 && database.inkDecoding.entryCount == 0)
+        let second = try f.store.actionHistoryPhysicalClosure(workspaceID: f.workspaceID,
+          transactionID: otherTransaction, manifestHash: secondManifest.hash, receiptID: id)
+        #expect(second.transactionID != proof.transactionID && second.borrowedSnapshotID == proof.borrowedSnapshotID)
+        #expect(second.receipts.first?.fragmentBytes == receipt.fragmentBytes
+          && second.receipts.first?.fragmentSetHash != receipt.fragmentSetHash,
+          "Equal raw bodies do not collapse different accepted occurrences")
+        let metadata = try NotebookStore.storageEncoder.encode(proof)
+        #expect(metadata.count < 16_384 && !String(decoding: metadata, as: UTF8.self).contains("unknownActor"))
+        #expect(sqlite3_total_changes64(database.handle) == 0)
+      }
+      #expect(trace.chunks >= 8 && trace.largestBlob == 1_024 * 1_024)
+      #expect(sqlite3_total_changes64(f.writer.handle) == writes)
+    }
+  }
+
+  @Test(arguments: [0, 1, 2])
+  func rawManifestMembershipNeverPromotesEmptyOrMissingLastToLogicalProof(_ childCount: Int) throws {
+    try fixture { f in
+      let id = UUID(), transactionID = UUID()
+      let body = f.value(id).setting("before", .object(["pageIDs": .array([
+        .string(UUID().uuidString), .string(UUID().uuidString)])]))
+      let full = try NotebookRecordCodec.encode(body, file: f.file(id))
+      let root = try #require(full.first { $0.parent == nil })
+      var children: [NotebookStoredFragment] = []
+      for fragment in full {
+        if fragment.parent != nil { children.append(fragment) }
+      }
+      let declared: [NotebookStoredFragment] = [root] + Array(children.sorted { $0.position < $1.position }.prefix(childCount))
+      let payload = try f.records(declared)
+      let part = try f.manifest(transactionID, records: payload.records, format: 25)
+      let manifest = try f.manifest(transactionID, records: [], parts: [part.hash], format: 25)
+      try f.journal(transactionID, manifest, sequence: 19)
+      try f.received(transactionID, manifest, source: .init(deviceID: UUID(), generation: UUID()), sequence: 73)
+      _ = try f.originalAnchor(id, body: body)
+      try f.read { database in
+        let proof = try f.store.actionHistoryPhysicalClosure(workspaceID: f.workspaceID,
+          transactionID: transactionID, manifestHash: manifest.hash)
+        let receipt = try #require(proof.receipts.first)
+        #expect(proof.manifestFormat == 25 && proof.manifestParts == [.init(hash: part.hash, byteCount: Int64(part.bytes))])
+        #expect(proof.receipts.count == 1 && receipt.fragmentCount == childCount + 1)
+        #expect(receipt.status == .authenticatedDeclaredClosure && receipt.fragmentSetHash != nil)
+        #expect(receipt.logicalBinding == .externalizedMembership,
+          "The exact declared set does not prove the original logical collection's missing last member")
+        #expect(receipt.sourceOriginal.status == .authenticatedSourceLocalRoots)
+        #expect(database.decodedFragmentCount == 0 && sqlite3_total_changes64(database.handle) == 0)
+      }
+    }
+  }
+
+  @Test(arguments: ["present", "missing", "tampered", "foreign"])
+  func rawInversePartsAndInkKeepTypedScopeWithoutPortableExpansion(_ condition: String) throws {
+    try fixture { f in
+      let id = UUID(), transactionID = UUID(), page = UUID(), file = pageFile(page)
+      let samples: [SpatialInkSample] = (0..<64).map { (index: Int) -> SpatialInkSample in
+        let x: Double = Double(index * index % 197)
+        let y: Double = Double(index * 37 % 113)
+        let timeOffset: Double = Double(index) / 128
+        let force: Double = Double(index * 17 % 67) / 67
+        return SpatialInkSample(point: .init(x: x, y: y), timeOffset: timeOffset,
+          width: 4, opacity: 0.5, force: force, azimuth: 0, altitude: 1)
+      }
+      let portable = try InkMeasurements(samples, revision: UUID()).encodedRelations()
+      let stroke = UUID().uuidString.lowercased(), address = file + "#/strokes/@" + stroke
+      let material = NotebookStoredFragment(address: address, file: file, parent: file + "#",
+        collection: "strokes", member: stroke, position: 0,
+        value: .object(["measurements": .string(portable.base64EncodedString())]), collections: [])
+      let materialRecords = try f.records([material])
+      let materialRaw = try #require(materialRecords.payloads[address])
+      let physical = try JSONDecoder().decode(NotebookStoredFragment.self, from: materialRaw)
+      let inkHash = try #require(physical.inkBodyHashes.first)
+      let part = NotebookLifecycleInversePart(format: 1,
+        workspaceID: condition == "foreign" ? UUID() : f.workspaceID, actionID: id, ordinal: 0,
+        records: [.init(address: address, beforeHash: materialRecords.records[0].blobHash, afterHash: nil)])
+      let partHash = try f.writer.putBlob(NotebookStore.storageEncoder.encode(part))
+      let inverse = NotebookLifecycleInverseRoot(format: 1, workspaceID: f.workspaceID,
+        actionID: id, recordCount: 1, parts: [partHash])
+      let inverseHash = try f.writer.putBlob(NotebookStore.storageEncoder.encode(inverse))
+      let body = f.value(id).setting("lifecycleInverse", try .encode(
+        NotebookLifecycleInverseReference(rootHash: inverseHash, recordCount: 1)))
+      let payload = try f.records(NotebookRecordCodec.encode(body, file: f.file(id)))
+      let manifest = try f.manifest(transactionID, records: payload.records)
+      try f.journal(transactionID, manifest, sequence: 1)
+      if condition == "missing" { try f.writer.run("DELETE FROM blobs WHERE hash=?", [.text(inkHash)]) }
+      if condition == "tampered" { try f.writer.run("UPDATE blobs SET data=x'0001' WHERE hash=?", [.text(inkHash)]) }
+      let writes = sqlite3_total_changes64(f.writer.handle)
+      if condition == "tampered" || condition == "foreign" {
+        let expected: NotebookStorageError = condition == "tampered" ? .blobHashMismatch : .invalidTransaction("lifecycle inverse part identity")
+        #expect(throws: expected) {
+          _ = try f.read { _ in try f.store.actionHistoryPhysicalClosure(workspaceID: f.workspaceID,
+            transactionID: transactionID, manifestHash: manifest.hash) }
+        }
+      } else {
+        try f.read { database in
+          let proof = try f.store.actionHistoryPhysicalClosure(workspaceID: f.workspaceID,
+            transactionID: transactionID, manifestHash: manifest.hash)
+          let receipt = try #require(proof.receipts.first)
+          if condition == "missing" {
+            #expect(receipt.status == .unproven(.missingBlob) && receipt.fragmentSetHash == nil && receipt.dependencySetHash == nil)
+          } else {
+            #expect(receipt.status == .authenticatedDeclaredClosure && receipt.dependencyCount == 4)
+            #expect(receipt.dependencyBytes > Int64(portable.count) && receipt.dependencySetHash != nil)
+          }
+          #expect(database.decodedFragmentCount == 0 && database.inkDecoding.entryCount == 0)
+          #expect(database.inkDecoding.storedBody(inkHash) == nil && sqlite3_total_changes64(database.handle) == 0)
+        }
+      }
+      #expect(sqlite3_total_changes64(f.writer.handle) == writes)
+    }
+  }
+
+  @Test(arguments: ["absent", "foreignID", "foreignWorkspace", "mixedVersion", "undo", "orphan"])
+  func rawSourceAnchorsKeepUnknownUnavailableAndForeignFactsExplicit(_ condition: String) throws {
+    try fixture { f in
+      let id = UUID(), transactionID = UUID(), body = f.value(id)
+      let payload = try f.records(NotebookRecordCodec.encode(body, file: f.file(id)))
+      let manifest = try f.manifest(transactionID, records: payload.records)
+      try f.received(transactionID, manifest, source: .init(deviceID: UUID(), generation: UUID()), sequence: 42)
+      // A valid current receipt is not a source-local immutable original root.
+      try f.current(payload.records, file: f.file(id))
+      let version = try notebookActionDeliveryVersion(body)
+      if condition != "absent" {
+        var model: JSONValue = .object(["id": .string(id.uuidString), "actionVersion": .string(version)])
+        if condition == "foreignID" { model = model.setting("id", .string(UUID().uuidString)) }
+        if condition == "mixedVersion" { model = model.setting("actionVersion", .string(String(repeating: "f", count: 64))) }
+        if condition == "undo" { model = model.setting("undo", .object(["restored": .number(0)])) }
+        let result: JSONValue = .object(["actionID": .string(id.uuidString), "actionVersion": .string(version),
+          "basis": .object(["workspaceID": .string((condition == "foreignWorkspace" ? UUID() : f.workspaceID).uuidString)])])
+        _ = try f.originalAnchor(id, body: body, model: model, result: result)
+        if condition == "orphan" {
+          let file = "local/action-results/" + id.uuidString.lowercased() + "/" + version + "/model.json"
+          let child = NotebookStoredFragment(address: file + "#/future/items/@extra", file: file,
+            parent: file + "#", collection: "future/items", member: "extra", position: 0, value: .null, collections: [])
+          try f.current(f.records([child]).records, file: file)
+        }
+      }
+      try f.read { database in
+        let proof = try f.store.actionHistoryPhysicalClosure(workspaceID: f.workspaceID,
+          transactionID: transactionID, manifestHash: manifest.hash)
+        let receipt = try #require(proof.receipts.first)
+        let reason: NotebookHistoryPhysicalClosure.Reason = condition == "absent" ? .originalAnchorUnavailable
+          : condition == "orphan" ? .orphanAnchor : .originalAnchorMismatch
+        #expect(receipt.status == .authenticatedDeclaredClosure && receipt.sourceOriginal.status == .unproven(reason))
+        #expect(receipt.logicalBinding == .notEvaluated && sqlite3_total_changes64(database.handle) == 0)
+      }
+    }
+  }
+
+  @Test func rawOccurrenceRefusalsBorrowTheCutAndCannotRenewItsCanceledOrExhaustedLease() throws {
+    try fixture { f in
+      let id = UUID(), transactionID = UUID()
+      let body = f.value(id).setting("large", .string(String(repeating: "x", count: 2 * 1_024 * 1_024)))
+      let payload = try f.records(NotebookRecordCodec.encode(body, file: f.file(id)))
+      let manifest = try f.manifest(transactionID, records: payload.records)
+      try f.writer.run("INSERT INTO manifests(hash,transaction_id) VALUES(?,?)", [.text(manifest.hash), .text(transactionID.uuidString.lowercased())])
+      #expect(throws: NotebookStorageError.invalidTransaction("unaccepted action history occurrence")) {
+        _ = try f.read { _ in try f.store.actionHistoryPhysicalClosure(workspaceID: f.workspaceID,
+          transactionID: transactionID, manifestHash: manifest.hash) }
+      }
+      try f.journal(transactionID, manifest, sequence: 1)
+      #expect(throws: NotebookStorageError.invalidTransaction("action history workspace changed")) {
+        _ = try f.read { _ in try f.store.actionHistoryPhysicalClosure(workspaceID: UUID(),
+          transactionID: transactionID, manifestHash: manifest.hash) }
+      }
+      let writes = sqlite3_total_changes64(f.writer.handle)
+      #expect(throws: NotebookStorageError.limitExceeded("raw_chunk_credit")) {
+        _ = try f.read { database in
+          try database.limitReads(.init(rows: 256, bytes: 1_024 * 1_024,
+            valueBytes: 1_024 * 1_024, reason: "raw_chunk_credit", jsonDecodeBytes: 2 * 1_024 * 1_024))
+          do {
+            _ = try f.store.actionHistoryPhysicalClosure(workspaceID: f.workspaceID,
+              transactionID: transactionID, manifestHash: manifest.hash)
+            Issue.record("An oversized cut unexpectedly completed")
+          } catch let error as NotebookStorageError { #expect(error == .limitExceeded("raw_chunk_credit")) }
+          #expect(database.decodedFragmentCount == 0 && sqlite3_total_changes64(database.handle) == 0)
+          try database.limitReads(.agentCommand)
+        }
+      }
+      let cancellation = NotebookReadCancellation()
+      final class Trace {
+        let cancellation: NotebookReadCancellation
+        init(_ cancellation: NotebookReadCancellation) { self.cancellation = cancellation }
+      }
+      let trace = Trace(cancellation)
+      #expect(throws: CancellationError.self) {
+        _ = try f.read(cancellation: cancellation) { database in
+          sqlite3_trace_v2(database.handle, UInt32(SQLITE_TRACE_ROW), { _, raw, pointer, _ in
+            let trace = Unmanaged<Trace>.fromOpaque(raw!).takeUnretainedValue(), statement = OpaquePointer(pointer!)
+            if sqlite3_column_count(statement) == 1, sqlite3_column_type(statement, 0) == SQLITE_BLOB,
+              sqlite3_column_bytes(statement, 0) == 1_024 * 1_024 { trace.cancellation.cancel() }
+            return 0
+          }, Unmanaged.passUnretained(trace).toOpaque())
+          defer { _ = withExtendedLifetime(trace) { sqlite3_trace_v2(database.handle, 0, nil, nil) } }
+          return try f.store.actionHistoryPhysicalClosure(workspaceID: f.workspaceID,
+            transactionID: transactionID, manifestHash: manifest.hash)
+        }
+      }
+      #expect(sqlite3_total_changes64(f.writer.handle) == writes)
+    }
+  }
+
+  @Test func rawReceiptHeadersBindTheExactAcceptedAddressBytes() throws {
+    try fixture { f in
+      let id = UUID(), transactionID = UUID(), file = f.file(id)
+      let composed = "\u{e9}", decomposed = "e\u{301}"
+      #expect(composed == decomposed && !composed.utf8.elementsEqual(decomposed.utf8))
+      // Codec externalizes owned records arrays by actual member identity;
+      // an arbitrary dictionary stays inline regardless of its authored size.
+      let body = f.value(id).setting("future", .object(["records": .array([
+        .object(["id": .string(composed), "value": .number(7)])])]))
+      let fragments = try NotebookRecordCodec.encode(body, file: file)
+      let root = try #require(fragments.first { $0.parent == nil })
+      let child = try #require(fragments.first { $0.parent != nil })
+      let foreign = NotebookStoredFragment(address: file + "#/future/records/@" + decomposed,
+        file: child.file, parent: child.parent, collection: child.collection, member: decomposed,
+        position: child.position, value: child.value, collections: child.collections)
+      let payload = try f.records([root, foreign])
+      let declared = [payload.records[0], NotebookRecordMutation(address: child.address, blobHash: payload.records[1].blobHash)]
+      let manifest = try f.manifest(transactionID, records: declared)
+      try f.journal(transactionID, manifest, sequence: 1)
+      let writes = sqlite3_total_changes64(f.writer.handle)
+      #expect(throws: NotebookStorageError.invalidTransaction("history physical fragment identity")) {
+        _ = try f.read { _ in try f.store.actionHistoryPhysicalClosure(workspaceID: f.workspaceID,
+          transactionID: transactionID, manifestHash: manifest.hash) }
+      }
+      #expect(sqlite3_total_changes64(f.writer.handle) == writes)
+    }
+  }
+
+  @Test(arguments: ["present", "missingResource", "tamperedResource"])
+  func rawDeclaredRecordsIncludeNonReceiptPayloadsRemovalsAndResourceClosure(_ condition: String) throws {
+    try fixture { f in
+      let transactionID = UUID(), page = UUID(), document = UUID()
+      let resourceBytes = Data("offline resource исходный 🖋️".utf8)
+      let resourceHash = try f.writer.putBlob(resourceBytes)
+      let resource = NotebookProgramPackage.File(path: "original.txt",
+        mimeType: NotebookProgramPackage.mimeType(for: "original.txt"), byteCount: Int64(resourceBytes.count),
+        parts: [.init(sha256: resourceHash, byteCount: resourceBytes.count)])
+      let pageRecords = try f.records(NotebookRecordCodec.encode(
+        .object(["source": .string("private unchanged <literal> 🖋️")]), file: pageFile(page)))
+      let file = "documents/" + document.uuidString.lowercased() + ".json"
+      let addressed = NotebookStoredFragment(address: file + "#/files/@original.txt", file: file,
+        parent: file + "#", collection: "files", member: "original.txt", position: 0,
+        value: .object(["resource": try .encode(resource)]), collections: [])
+      let fileRecords = try f.records([addressed])
+      let removal = NotebookRecordMutation(address: "obsolete-note.json#", blobHash: nil)
+      let firstPart = try f.manifest(transactionID, records: pageRecords.records)
+      let secondPart = try f.manifest(transactionID, records: fileRecords.records + [removal])
+      let manifest = try f.manifest(transactionID, records: [], parts: [firstPart.hash, secondPart.hash])
+      try f.journal(transactionID, manifest, sequence: 1)
+      if condition == "missingResource" { try f.writer.run("DELETE FROM blobs WHERE hash=?", [.text(resourceHash)]) }
+      if condition == "tamperedResource" { try f.writer.run("UPDATE blobs SET data=x'0001' WHERE hash=?", [.text(resourceHash)]) }
+      let writes = sqlite3_total_changes64(f.writer.handle)
+      if condition == "tamperedResource" {
+        #expect(throws: NotebookStorageError.blobHashMismatch) {
+          _ = try f.read { _ in try f.store.actionHistoryPhysicalClosure(workspaceID: f.workspaceID,
+            transactionID: transactionID, manifestHash: manifest.hash) }
+        }
+      } else {
+        try f.read { database in
+          let proof = try f.store.actionHistoryPhysicalClosure(workspaceID: f.workspaceID,
+            transactionID: transactionID, manifestHash: manifest.hash)
+          #expect(proof.receipts.isEmpty && proof.declaredRecords.recordCount == 3
+            && proof.declaredRecords.removalCount == 1)
+          let bytes = pageRecords.payloads.values.reduce(Int64(0)) { $0 + Int64($1.count) }
+            + fileRecords.payloads.values.reduce(Int64(0)) { $0 + Int64($1.count) }
+          #expect(proof.declaredRecords.payloadBytes == bytes)
+          if condition == "present" {
+            #expect(proof.declaredRecords.status == .authenticatedDeclaredClosure
+              && proof.declaredRecords.recordSetHash != nil && proof.declaredRecords.dependencySetHash != nil)
+            #expect(proof.declaredRecords.dependencyCount == 1
+              && proof.declaredRecords.dependencyBytes == Int64(resourceBytes.count))
+          } else {
+            #expect(proof.declaredRecords.status == .unproven(.missingBlob)
+              && proof.declaredRecords.recordSetHash == nil && proof.declaredRecords.dependencySetHash == nil)
+          }
+          let metadata = try NotebookStore.storageEncoder.encode(proof)
+          #expect(!String(decoding: metadata, as: UTF8.self).contains("private unchanged"))
+          #expect(database.decodedFragmentCount == 0 && database.inkDecoding.entryCount == 0
+            && sqlite3_total_changes64(database.handle) == 0)
+        }
+      }
+      #expect(sqlite3_total_changes64(f.writer.handle) == writes)
+    }
+  }
+
+  @Test(arguments: ["present", "missing", "tampered"])
+  func rawNonReceiptInkDependenciesCannotBeSkipped(_ condition: String) throws {
+    try fixture { f in
+      let transactionID = UUID(), page = UUID(), file = pageFile(page), stroke = UUID().uuidString.lowercased()
+      let samples: [SpatialInkSample] = (0..<64).map { (index: Int) -> SpatialInkSample in
+        let x: Double = Double(index * index % 197)
+        let y: Double = Double(index * 37 % 113)
+        let timeOffset: Double = Double(index) / 128
+        let force: Double = Double(index * 17 % 67) / 67
+        return SpatialInkSample(point: .init(x: x, y: y), timeOffset: timeOffset,
+          width: 4, opacity: 0.5, force: force, azimuth: 0, altitude: 1)
+      }
+      let portable = try InkMeasurements(samples, revision: UUID()).encodedRelations()
+      let material = NotebookStoredFragment(address: file + "#/strokes/@" + stroke, file: file, parent: file + "#",
+        collection: "strokes", member: stroke, position: 0,
+        value: .object(["measurements": .string(portable.base64EncodedString())]), collections: [])
+      let payload = try f.records([material])
+      let raw = try #require(payload.payloads[material.address])
+      let stored = try JSONDecoder().decode(NotebookStoredFragment.self, from: raw)
+      let inkHash = try #require(stored.inkBodyHashes.first)
+      let manifest = try f.manifest(transactionID, records: payload.records)
+      try f.journal(transactionID, manifest, sequence: 1)
+      if condition == "missing" { try f.writer.run("DELETE FROM blobs WHERE hash=?", [.text(inkHash)]) }
+      if condition == "tampered" { try f.writer.run("UPDATE blobs SET data=x'0001' WHERE hash=?", [.text(inkHash)]) }
+      let writes = sqlite3_total_changes64(f.writer.handle)
+      if condition == "tampered" {
+        #expect(throws: NotebookStorageError.blobHashMismatch) {
+          _ = try f.read { _ in try f.store.actionHistoryPhysicalClosure(workspaceID: f.workspaceID,
+            transactionID: transactionID, manifestHash: manifest.hash) }
+        }
+      } else {
+        try f.read { database in
+          let proof = try f.store.actionHistoryPhysicalClosure(workspaceID: f.workspaceID,
+            transactionID: transactionID, manifestHash: manifest.hash)
+          let status: NotebookHistoryPhysicalClosure.Status = condition == "present" ? .authenticatedDeclaredClosure
+            : .unproven(.missingBlob)
+          #expect(proof.receipts.isEmpty && proof.declaredRecords.status == status)
+          if condition == "present" {
+            #expect(proof.declaredRecords.dependencyCount == 1 && proof.declaredRecords.dependencyBytes > 0)
+          } else { #expect(proof.declaredRecords.recordSetHash == nil && proof.declaredRecords.dependencySetHash == nil) }
+          #expect(database.decodedFragmentCount == 0 && database.inkDecoding.entryCount == 0
+            && sqlite3_total_changes64(database.handle) == 0)
+        }
+      }
+      #expect(sqlite3_total_changes64(f.writer.handle) == writes)
+    }
+  }
+
+  @Test func rawNonReceiptChunkRefusalLatchesTheSameCutAndAFreshCutRecovers() throws {
+    try fixture { f in
+      let transactionID = UUID(), file = pageFile(UUID())
+      let payload = try f.records(NotebookRecordCodec.encode(
+        .object(["source": .string(String(repeating: "raw", count: 700_000))]), file: file))
+      let manifest = try f.manifest(transactionID, records: payload.records)
+      try f.journal(transactionID, manifest, sequence: 1)
+      let writes = sqlite3_total_changes64(f.writer.handle)
+      #expect(throws: NotebookStorageError.limitExceeded("declared_chunk_credit")) {
+        _ = try f.read { database in
+          try database.limitReads(.init(rows: 256, bytes: 128 * 1_024,
+            valueBytes: 1_024 * 1_024, reason: "declared_chunk_credit", jsonDecodeBytes: 2 * 1_024 * 1_024))
+          do {
+            _ = try f.store.actionHistoryPhysicalClosure(workspaceID: f.workspaceID,
+              transactionID: transactionID, manifestHash: manifest.hash)
+            Issue.record("An uncharged non-receipt payload completed")
+          } catch let error as NotebookStorageError { #expect(error == .limitExceeded("declared_chunk_credit")) }
+          try database.limitReads(.agentCommand)
+        }
+      }
+      try f.read { database in
+        let proof = try f.store.actionHistoryPhysicalClosure(workspaceID: f.workspaceID,
+          transactionID: transactionID, manifestHash: manifest.hash)
+        #expect(proof.declaredRecords.status == .authenticatedDeclaredClosure && proof.receipts.isEmpty)
+        #expect(database.decodedFragmentCount == 0 && sqlite3_total_changes64(database.handle) == 0)
+      }
+      #expect(sqlite3_total_changes64(f.writer.handle) == writes)
+    }
+  }
+
+  @Test(arguments: ["programs", "missingProgram", "resources", "missingResource", "plain", "noHeads", "nullHeads"])
+  func rawCausalProjectionChecksLosingAssetsAndSkipsTheLargeWinningAuthoredValue(_ condition: String) throws {
+    try fixture { f in
+      let transactionID = UUID(), isDocument = condition == "resources" || condition == "missingResource"
+      let file = isDocument ? "documents/" + UUID().uuidString.lowercased() + ".json" : pageFile(UUID())
+      let key = (isDocument ? "files" : "elements") + "/retained/content"
+      var values: [JSONValue] = [], assetHashes: [String] = []
+      for label in ["losing-a", "losing-b"] {
+        let bytes = Data(("<p>" + label + " исходный</p>").utf8)
+        let hash = try f.writer.putBlob(bytes); assetHashes.append(hash)
+        let resource = NotebookProgramPackage.File(path: "index.html", mimeType: "text/html", byteCount: Int64(bytes.count),
+          parts: [.init(sha256: hash, byteCount: bytes.count)])
+        if isDocument { values.append(.object(["resource": try .encode(resource)])) }
+        else {
+          let package = NotebookProgramPackage(html: "index.html", files: [resource])
+          let packageHash = try f.writer.putBlob(package.canonicalData())
+          values.append(.object(["programPackage": .string(packageHash)]))
+        }
+      }
+      let privateText = String(repeating: "private retained text 🖋️ ", count: 70_000)
+      let textValue = JSONValue.object(["source": .string(privateText)])
+      let firstValue = condition == "plain" ? textValue : values[0]
+      let secondValue = condition == "plain" ? textValue : values[1]
+      let first = ContentFieldVersion(stamp: .init(counter: 3, actor: UUID()), human: false).retainingValue(firstValue)
+      let second = ContentFieldVersion(stamp: .init(counter: 3, actor: UUID()), human: false).retainingValue(secondValue)
+      let winner = ContentFieldVersion(stamp: .init(counter: 3, actor: UUID()), human: true).retainingValue(textValue)
+      let joined = try first.joining(second).joining(winner)
+      var raw = try JSONValue.encode(joined)
+      if condition == "noHeads" || condition == "nullHeads" {
+        raw = try .encode(ContentFieldVersion(stamp: .init(counter: 4, actor: UUID()), human: true))
+        raw = raw.setting("futureAuthoredText", .string(privateText))
+        if condition == "nullHeads" { raw = raw.setting("heads", .null) }
+      }
+      let fragment = NotebookStoredFragment(address: file + "#/collaboration/fields/@" + fieldKey([key]),
+        file: file, parent: file + "#", collection: "collaboration/fields", member: key,
+        position: 0, value: raw, collections: [])
+      let payload = try f.records([fragment])
+      #expect(try #require(payload.payloads[fragment.address]).count > 1_024 * 1_024)
+      let manifest = try f.manifest(transactionID, records: payload.records)
+      try f.journal(transactionID, manifest, sequence: 1)
+      if condition == "missingProgram" || condition == "missingResource" {
+        try f.writer.run("DELETE FROM blobs WHERE hash=?", [.text(assetHashes[0])])
+      }
+      let writes = sqlite3_total_changes64(f.writer.handle)
+      try f.read { database in
+        try database.limitReads(.init(rows: 256, bytes: 16 * 1_024 * 1_024, valueBytes: 1_024 * 1_024,
+          reason: "causal_metadata_credit", jsonDecodeBytes: 2 * 1_024 * 1_024))
+        let proof = try f.store.actionHistoryPhysicalClosure(workspaceID: f.workspaceID,
+          transactionID: transactionID, manifestHash: manifest.hash)
+        #expect(proof.receipts.isEmpty && proof.declaredRecords.recordCount == 1)
+        if condition == "missingProgram" || condition == "missingResource" {
+          #expect(proof.declaredRecords.status == .unproven(.missingBlob)
+            && proof.declaredRecords.recordSetHash == nil && proof.declaredRecords.dependencySetHash == nil)
+        } else {
+          let expectedCount = condition == "programs" ? 4 : (condition == "resources" ? 2 : 0)
+          #expect(proof.declaredRecords.status == .authenticatedDeclaredClosure
+            && proof.declaredRecords.dependencyCount == expectedCount)
+          #expect(proof.declaredRecords.recordSetHash != nil && proof.declaredRecords.dependencySetHash != nil)
+        }
+        let encoded = try NotebookStore.storageEncoder.encode(proof)
+        #expect(!String(decoding: encoded, as: UTF8.self).contains("private retained text"))
+        #expect(database.decodedFragmentCount == 0 && database.inkDecoding.entryCount == 0
+          && sqlite3_total_changes64(database.handle) == 0)
+      }
+      #expect(sqlite3_total_changes64(f.writer.handle) == writes)
+    }
+  }
+
+  @Test(arguments: ["257", "object", "empty", "stamp", "human", "observed", "hasValue"])
+  func rawCausalProjectionRefusesMalformedMetadataAndUnseenExtraHeads(_ condition: String) throws {
+    try fixture { f in
+      let transactionID = UUID(), file = pageFile(UUID()), key = "elements/retained/content"
+      let version = ContentFieldVersion(stamp: .init(counter: 3, actor: UUID()), human: true)
+        .retainingValue(.object(["source": .string("ordinary text without assets")]))
+      var raw = try JSONValue.encode(version)
+      let head = try #require(raw["heads"]?.array.first)
+      switch condition {
+      case "257": raw = raw.setting("heads", .array(Array(repeating: head, count: 257)))
+      case "object": raw = raw.setting("heads", .object(["0": head, "unseen": head]))
+      case "empty": raw = raw.setting("heads", .array([]))
+      case "stamp": raw = raw.setting("stamp", .string("not a causal stamp"))
+      case "human": raw = raw.setting("human", .string("true"))
+      case "observed": raw = raw.setting("observed", .object(["foreign-actor": .number(3)]))
+      default: raw = raw.setting("heads", .array([head.setting("hasValue", .string("true"))]))
+      }
+      let fragment = NotebookStoredFragment(address: file + "#/collaboration/fields/@" + fieldKey([key]),
+        file: file, parent: file + "#", collection: "collaboration/fields", member: key,
+        position: 0, value: raw, collections: [])
+      let payload = try f.records([fragment]), manifest = try f.manifest(transactionID, records: payload.records)
+      try f.journal(transactionID, manifest, sequence: 1)
+      let writes = sqlite3_total_changes64(f.writer.handle)
+      #expect(throws: (any Error).self) {
+        _ = try f.read { _ in try f.store.actionHistoryPhysicalClosure(workspaceID: f.workspaceID,
+          transactionID: transactionID, manifestHash: manifest.hash) }
+      }
+      #expect(sqlite3_total_changes64(f.writer.handle) == writes)
+    }
+  }
+
+  @Test(arguments: ["maximum", "integralClock", "adjacentOutside", "fractionalClock", "fractionalObserved", "fractionalStamp"])
+  func rawCausalClocksReachTypedValidationWithoutDoubleRounding(_ condition: String) throws {
+    try fixture { f in
+      var values: [JSONValue] = []
+      for label in ["low", "high"] {
+        let bytes = Data(("<p>" + label + "</p>").utf8), hash = try f.writer.putBlob(bytes)
+        let resource = NotebookProgramPackage.File(path: "index.html", mimeType: "text/html", byteCount: Int64(bytes.count),
+          parts: [.init(sha256: hash, byteCount: bytes.count)])
+        let package = NotebookProgramPackage(html: "index.html", files: [resource])
+        values.append(.object(["programPackage": .string(try f.writer.putBlob(package.canonicalData()))]))
+      }
+      let maximum = VersionStamp.maximumCounter
+      let lowCounter: UInt64 = condition == "integralClock" ? 3 : (condition == "fractionalStamp" ? maximum - 2 : maximum - 1)
+      let highCounter: UInt64 = condition == "fractionalStamp" ? maximum - 1 : maximum
+      let low = ContentFieldVersion(stamp: .init(counter: lowCounter, actor: UUID()), human: false).retainingValue(values[0])
+      let high = ContentFieldVersion(stamp: .init(counter: highCounter, actor: UUID()), human: true).retainingValue(values[1])
+      let joined = try low.joining(high)
+      #expect(joined.isValid && joined.stamp.counter == highCounter)
+      // This legacy fixture starts with the typed integer encoder. An authored
+      // JSONValue fixture would erase the very fractional/high literals tested.
+      let encoded = try NotebookStore.storageEncoder.encode(joined)
+      var clock = String(decoding: encoded, as: UTF8.self)
+      if condition == "adjacentOutside" {
+        clock = clock.replacingOccurrences(of: String(maximum), with: "9007199254740993")
+          .replacingOccurrences(of: String(maximum - 1), with: "9007199254740992")
+      } else if condition == "integralClock" {
+        clock = clock.replacingOccurrences(of: "\"counter\":3", with: "\"counter\":30e-1")
+      } else if condition == "fractionalClock" {
+        clock = clock.replacingOccurrences(of: "\"counter\":" + String(lowCounter),
+          with: "\"counter\":9007199254740990.5")
+      } else if condition == "fractionalObserved" {
+        let key = "\"" + low.stamp.actor.uuidString.lowercased() + "\":"
+        clock = clock.replacingOccurrences(of: key + String(lowCounter), with: key + "9007199254740990.5")
+      } else if condition == "fractionalStamp" {
+        // With sorted keys the root stamp follows the retained head stamps.
+        let token = "\"counter\":" + String(highCounter)
+        let range = try #require(clock.range(of: token, options: .backwards))
+        clock.replaceSubrange(range, with: "\"counter\":9007199254740990.5")
+      }
+      let clockData = Data(clock.utf8)
+      if condition == "maximum" || condition == "integralClock" {
+        let exact = try JSONDecoder().decode(ContentFieldVersion.self, from: clockData)
+        #expect(exact.isValid && exact.observed[low.stamp.actor.uuidString.lowercased()] == lowCounter)
+      } else if condition == "adjacentOutside" {
+        let exact = try JSONDecoder().decode(ContentFieldVersion.self, from: clockData)
+        #expect(!exact.isValid && exact.stamp.counter == 9_007_199_254_740_993)
+      } else {
+        // Actual Foundation UInt64 decoding rounds these high fractions back
+        // into the valid original frontier. The raw guard must catch them.
+        let rounded = try JSONDecoder().decode(ContentFieldVersion.self, from: clockData)
+        #expect(rounded.isValid && rounded == joined)
+      }
+
+      let file = pageFile(UUID()), key = "elements/high-clock/content", marker = UUID().uuidString
+      let fragment = NotebookStoredFragment(address: file + "#/collaboration/fields/@" + fieldKey([key]),
+        file: file, parent: file + "#", collection: "collaboration/fields", member: key,
+        position: 0, value: .string(marker), collections: [])
+      var raw = try f.writer.encodedStoredFragment(fragment)
+      let markerData = try NotebookStore.storageEncoder.encode(marker)
+      let range = try #require(raw.range(of: markerData))
+      raw.replaceSubrange(range, with: clockData)
+      let transactionID = UUID(), record = NotebookRecordMutation(address: fragment.address, blobHash: try f.writer.putBlob(raw))
+      let manifest = try f.manifest(transactionID, records: [record])
+      try f.journal(transactionID, manifest, sequence: 1)
+      let writes = sqlite3_total_changes64(f.writer.handle)
+      if condition == "maximum" || condition == "integralClock" {
+        try f.read { database in
+          let proof = try f.store.actionHistoryPhysicalClosure(workspaceID: f.workspaceID,
+            transactionID: transactionID, manifestHash: manifest.hash)
+          #expect(proof.receipts.isEmpty && proof.declaredRecords.status == .authenticatedDeclaredClosure
+            && proof.declaredRecords.dependencyCount == 4)
+          #expect(database.decodedFragmentCount == 0 && database.inkDecoding.entryCount == 0
+            && sqlite3_total_changes64(database.handle) == 0)
+        }
+      } else if condition == "adjacentOutside" {
+        #expect(throws: (any Error).self) {
+          _ = try f.read { _ in try f.store.actionHistoryPhysicalClosure(workspaceID: f.workspaceID,
+            transactionID: transactionID, manifestHash: manifest.hash) }
+        }
+      } else {
+        #expect(throws: NotebookStorageError.corruptRecord("JSON unsigned integer")) {
+          _ = try f.read { _ in try f.store.actionHistoryPhysicalClosure(workspaceID: f.workspaceID,
+            transactionID: transactionID, manifestHash: manifest.hash) }
+        }
+      }
+      #expect(sqlite3_total_changes64(f.writer.handle) == writes)
+    }
+  }
+
 }

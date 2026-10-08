@@ -65,6 +65,10 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
   private var resuming = false
   private var resumeRetry: Task<Void, Never>?
   private var uploadPreparation: Task<NotebookCloudUploadPlan?, Error>?
+  private var historyPause: UUID?
+  private var engineStop: Flight?
+  private var delegateCallbacks = 0
+  private var delegateJoins: [CheckedContinuation<Void, Never>] = []
 
   init(store: NotebookStore, writer: NotebookPersistenceQueue, source: NotebookReplicationSource, workspaceID: UUID,
     apply: @escaping @Sendable (NotebookReplicationDelivery, String) async throws -> Void,
@@ -94,6 +98,7 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
   /// The sole engine also observes device metadata when content sync is off.
   /// No second engine or competing AppDelegate subscription owns this database.
   func observeAccount(_ expected: String, changed: @escaping @Sendable (Bool) async -> Void) async throws {
+    guard historyPause == nil else { throw NotebookTransportError.historyReadinessPending }
     let token = epoch, container = try container()
     guard try await currentAccount(container) == expected else { throw NotebookAccountError.changed }
     guard epoch == token else { throw CancellationError() }
@@ -121,8 +126,11 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
   /// First account enrollment enables normal sync. A saved user opt-out stays
   /// off, and a different account never receives this workspace implicitly.
   func connect(account verifiedAccount: String) async {
+    guard historyPause == nil else { return }
+    let token = epoch
     do {
       let configuration = try await writer.submit { try $0.cloudConfiguration() }
+      guard historyPause == nil, epoch == token else { return }
       guard configuration.account == nil || configuration.account == verifiedAccount else {
         await stop()
         await report(.init(enabled: false, message: NotebookAccountError.changed.localizedDescription))
@@ -135,6 +143,7 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
   }
 
   func enable(account expected: String) async {
+    guard historyPause == nil else { return }
     let token = await stopEngine()
     guard epoch == token else { return }
     stopped = false
@@ -152,6 +161,7 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
   }
 
   func resume() async {
+    guard historyPause == nil else { return }
     stopped = false
     guard engine == nil, !resuming else { return }
     resuming = true
@@ -212,6 +222,7 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
   }
 
   func disable() async {
+    guard historyPause == nil else { return }
     let token = await stopEngine()
     guard epoch == token else { return }
     do {
@@ -239,25 +250,61 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
 
   func stop() async { stopped = true; accountObserver = nil; _ = await stopEngine() }
 
+  /// This is a suspension of the existing engine, never a second sync owner.
+  /// Its request stays closed until the application's exact writer seal ends.
+  func pauseForHistory(_ requestID: UUID) async throws {
+    guard historyPause == nil || historyPause == requestID else {
+      throw NotebookTransportError.historyReadinessPending
+    }
+    historyPause = requestID
+    await stop()
+  }
+
+  func finishHistoryPause(_ requestID: UUID) throws {
+    guard historyPause == requestID else { throw NotebookTransportError.historyCutStale }
+    historyPause = nil
+  }
+
   private func stopEngine() async -> UUID {
-    let previous = invalidate(), files = Array(assets.values); assets.removeAll()
-    let joining = [inbound?.task, outbound?.task, inputWait?.task].compactMap { $0 }
-    let token = epoch
-    await previous?.cancelOperations()
-    for task in joining { await task.value }
-    for file in files { try? FileManager.default.removeItem(at: file) }
+    let (token, task) = beginEngineStop()
+    await task.value
     return token
   }
 
   private func stopFromDelegate() {
+    _ = beginEngineStop()
+  }
+
+  private func beginEngineStop() -> (UUID, Task<Void, Never>) {
+    let retry = resumeRetry, preparation = uploadPreparation, preceding = engineStop?.task
     let previous = invalidate(), files = Array(assets.values); assets.removeAll()
     let joining = [inbound?.task, outbound?.task, inputWait?.task].compactMap { $0 }
     // A delegate must return before waiting for its own operation to cancel.
-    Task {
+    let id = UUID(), token = epoch
+    let task = Task { [self] in
+      await preceding?.value
       await previous?.cancelOperations()
       for task in joining { await task.value }
+      _ = await preparation?.result
+      await retry?.value
+      await joinDelegateCallbacks()
       for file in files { try? FileManager.default.removeItem(at: file) }
+      if engineStop?.id == id { engineStop = nil }
     }
+    engineStop = .init(id: id, task: task)
+    return (token, task)
+  }
+
+  private func joinDelegateCallbacks() async {
+    guard delegateCallbacks != 0 else { return }
+    await withCheckedContinuation { delegateJoins.append($0) }
+  }
+
+  private func finishedDelegateCallback() {
+    delegateCallbacks -= 1
+    guard delegateCallbacks == 0 else { return }
+    let joining = delegateJoins; delegateJoins.removeAll()
+    for continuation in joining { continuation.resume() }
   }
 
   func notifyLocalChanges() async {
@@ -278,6 +325,7 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
   /// CloudKit adapter uses this same seam after authenticating its account;
   /// preparing a local outbox needs neither an engine nor a network session.
   func activateContent(account expected: String) async throws {
+    guard historyPause == nil else { throw NotebookTransportError.historyReadinessPending }
     let token = epoch
     let configuration = try await writer.submit { try $0.cloudConfiguration() }
     guard epoch == token else { throw CancellationError() }
@@ -580,6 +628,8 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
 
   func nextRecordZoneChangeBatch(_ context: CKSyncEngine.SendChangesContext, syncEngine: CKSyncEngine) async -> CKSyncEngine.RecordZoneChangeBatch? {
     guard contentEnabled, syncEngine === engine, let account else { return nil }
+    delegateCallbacks += 1
+    defer { finishedDelegateCallback() }
     let token = epoch
     do {
       // A changed account may never receive the previously bound outbox, even
@@ -618,6 +668,8 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
 
   func handleEvent(_ event: CKSyncEngine.Event, syncEngine: CKSyncEngine) async {
     guard syncEngine === engine, let account else { return }
+    delegateCallbacks += 1
+    defer { finishedDelegateCallback() }
     let token = epoch
     do {
       switch event {

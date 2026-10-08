@@ -174,6 +174,87 @@ final class DocumentProgramOwnerTests: XCTestCase {
     XCTAssertEqual(afterForeground, 1); XCTAssertTrue(web.isUserInteractionEnabled)
   }
 
+  func testHistoryAdmissionStopsForegroundResumeBeforeTheNextDocumentOwner() async throws {
+    let resources = SceneRenderResources(), readiness = NotebookHistoryReadiness()
+    func document() -> DocumentDocument {
+      DocumentTestFiles.document(actor: UUID(), contents: [.program(id: "program", html: "<output>Model</output>",
+        javaScript: """
+          window.resumes=0;window.resumePending=false;window.holdResume=true;window.nonce=crypto.randomUUID();
+          notebook.lifecycle({checkpoint(){return {phase:.5}},resume({signal}){
+            resumes++;if(!holdResume)return;
+            resumePending=true;
+            return new Promise(resolve=>{window.releaseResume=()=>{resumePending=false;resolve()};
+              signal.addEventListener('abort',window.releaseResume,{once:true});});
+          },dispose(){window.releaseResume?.()}});notebook.ready(Promise.resolve());
+        """, height: 100)])
+    }
+    let first = try ProgramFixture(document: document(), resources: resources, showsNeighbour: false)
+    defer { first.close() }
+    try await wait(message: { first.diagnostics }) { first.isPresented && first.web(block: "program") != nil }
+    let firstWeb = try XCTUnwrap(first.web(block: "program"))
+    let firstPause = try await DocumentPagePresentationOwner.pauseForAttention(documentID: first.document.id,
+      blockID: "program", resources: resources)
+    defer { firstPause.release() }
+    let second = try ProgramFixture(document: document(), resources: resources, showsNeighbour: false)
+    defer { second.close() }
+    try await wait(message: { second.diagnostics }) { second.isPresented && second.web(block: "program") != nil }
+    let webs = [firstWeb, try XCTUnwrap(second.web(block: "program"))]
+    let secondPause = try await DocumentPagePresentationOwner.pauseForAttention(documentID: second.document.id,
+      blockID: "program", resources: resources)
+    defer { secondPause.release() }
+    var nonces: [String?] = []
+    for web in webs {
+      let nonce = try await web.evaluateJavaScript("window.nonce") as? String
+      XCTAssertNotNil(nonce); nonces.append(nonce)
+    }
+    let saved = await DocumentPagePresentationOwner.checkpointPrograms(resources: resources, resume: false)
+    // The direct fixtures use the real native attention boundary, while the
+    // workspace's history boundary prevents release from becoming a resume.
+    firstPause.release(); secondPause.release()
+    XCTAssertTrue(saved); XCTAssertTrue(webs.allSatisfy { !$0.isUserInteractionEnabled })
+    let stillSaved = await DocumentPagePresentationOwner.checkpointPrograms(resources: resources, resume: false)
+    XCTAssertTrue(stillSaved)
+
+    let foreground = Task { @MainActor in
+      await DocumentPagePresentationOwner.resumePrograms(resources: resources, continuing: { readiness.permitsAuthorship })
+    }
+    defer { foreground.cancel() }
+    // The real owner registry chooses the first document; dictionary order is
+    // immaterial. Its authored lifecycle remains suspended at this await.
+    var heldIndex: Int?
+    let deadline = ContinuousClock.now + .seconds(3)
+    while heldIndex == nil, ContinuousClock.now < deadline {
+      for (index, web) in webs.enumerated() {
+        if try await web.evaluateJavaScript("window.resumePending") as? Bool == true { heldIndex = index; break }
+      }
+      if heldIndex == nil { try await Task.sleep(for: .milliseconds(10)) }
+    }
+    let held = try XCTUnwrap(heldIndex, "The existing foreground owner must enter the held JS lifecycle")
+    let next = 1 - held
+    let request = NotebookHistoryReadiness.Request(id: UUID(), workspaceID: UUID(), devices: [UUID(), UUID()], acceptedGeneration: 0)
+    try readiness.begin(request)
+    _ = try await webs[held].evaluateJavaScript("window.releaseResume();true")
+    await foreground.value
+    let heldResumes = try await webs[held].evaluateJavaScript("window.resumes") as? Int
+    let nextResumes = try await webs[next].evaluateJavaScript("window.resumes") as? Int
+    XCTAssertEqual(heldResumes, 1); XCTAssertEqual(nextResumes, 0)
+    XCTAssertFalse(webs[next].isUserInteractionEnabled)
+    XCTAssertFalse(readiness.permitsAuthorship)
+
+    try readiness.finish(request, releaseWriter: { _ in XCTFail("The draining request has no sealed writer") })
+    for web in webs { _ = try await web.evaluateJavaScript("window.holdResume=false;true") }
+    await DocumentPagePresentationOwner.resumePrograms(resources: resources, continuing: { readiness.permitsAuthorship })
+    for (index, web) in webs.enumerated() {
+      let resumes = try await web.evaluateJavaScript("window.resumes") as? Int
+      let nonce = try await web.evaluateJavaScript("window.nonce") as? String
+      XCTAssertEqual(resumes, 1); XCTAssertEqual(nonce, nonces[index])
+      XCTAssertTrue(web.isUserInteractionEnabled)
+    }
+    XCTAssertTrue(first.web(block: "program") === firstWeb)
+    XCTAssertTrue(second.web(block: "program") === webs[1])
+    XCTAssertTrue(first.preparationErrors.isEmpty && second.preparationErrors.isEmpty)
+  }
+
   func testLateCheckpointFailureCannotPoisonTheReplacementProgram() async throws {
     let document = DocumentTestFiles.document(actor: UUID(), contents: [.program(id: "program", html: "<input aria-label='Value'>",
       javaScript: "notebook.lifecycle({checkpoint:()=>({value:1})});notebook.ready(Promise.resolve());", height: 100)])

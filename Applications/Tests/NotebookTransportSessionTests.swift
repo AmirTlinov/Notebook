@@ -343,6 +343,438 @@ final class NotebookTransportSessionTests: XCTestCase {
     XCTAssertTrue(pair.server?.isReady == true); XCTAssertTrue(pair.client?.isReady == true)
   }
 
+  func testQuiescentHistoryControlJoinsTheExistingCallbackAndResumesTheSameTLSOwner() async throws {
+    let gate = NotebookTransportHistoryJournalGate()
+    let readStarted = expectation(description: "Actual journal callback is held")
+    await gate.setObserver { readStarted.fulfill() }
+    let ready = expectation(description: "Admitted existing TLS pair"); ready.expectedFulfillmentCount = 2
+    let pair = try NotebookTransportTestPair(serverJournalGeneration: UUID(), clientJournalGeneration: UUID(),
+      historyApplicationBuild: "history-tests", serverJournalGate: gate)
+    defer { pair.stop(); Task { await gate.release() } }
+    pair.onReady = { _, _ in ready.fulfill() }
+    try pair.start(); await fulfillment(of: [ready, readStarted], timeout: 10)
+    let server = try XCTUnwrap(pair.server), client = try XCTUnwrap(pair.client)
+    let serverGeneration = server.generation, clientGeneration = client.generation
+    let scope = try await prepareHistoryPair(pair)
+    try await admitHistoryPair(pair, scope: scope)
+    let joining = expectation(description: "Quiesce joins the actual held callback")
+    let first = Task<Void, Error> { joining.fulfill(); try await server.quiesceHistoryControl(scope) }
+    let second = Task<Void, Error> { try await client.quiesceHistoryControl(scope) }
+    await fulfillment(of: [joining], timeout: 5)
+    XCTAssertTrue(server.historyBoundaryObservation.hasStorageCallback)
+    XCTAssertFalse(server.isHistoryQuiescent); XCTAssertFalse(client.isHistoryQuiescent)
+    await gate.release()
+    try await first.value; try await second.value
+    XCTAssertTrue(server.isHistoryQuiescent); XCTAssertTrue(client.isHistoryQuiescent)
+    let serverBefore = await pair.serverStorage.historyActivity(), clientBefore = await pair.clientStorage.historyActivity()
+    let readsBefore = await gate.calls
+    let metadata = expectation(description: "Seventeen pages pass the actual credit window and the root follows")
+    var receivedPages: [NotebookHistoryControl.Page] = []
+    pair.onTransient = { _, _ in XCTFail("Quiescent generic callbacks cannot reach native owners") }
+    pair.onHistoryControl = { control, peer in
+      XCTAssertEqual(peer.deviceID, pair.clientIdentity.deviceID)
+      switch control {
+      case .page(let page):
+        XCTAssertEqual(page.ordinal, UInt64(receivedPages.count)); XCTAssertEqual(page.entries.count, 64)
+        XCTAssertEqual(page.previousPageHash, receivedPages.last?.hash); receivedPages.append(page)
+      case .root(let root):
+        XCTAssertEqual(receivedPages.count, 17); XCTAssertEqual(root.entryCount, 17 * 64); metadata.fulfill()
+      default: break
+      }
+    }
+    client.notifyDurableChanges(); server.notifyDurableChanges()
+    let contact = NotebookInputActivity(deviceID: pair.clientIdentity.deviceID, sessionID: UUID(), sequence: 1,
+      targets: [.init(kind: .page, id: UUID())])
+    client.sendTransient(.inputActivity(contact))
+    let source = try XCTUnwrap(client.historyBoundaryObservation.localSource)
+    var previous: String?
+    for ordinal in 0..<17 {
+      let page = try NotebookHistoryControl.Page(requestID: scope.requestID, workspaceID: scope.workspaceID,
+        source: source, stream: .acceptedTransactions, ordinal: UInt64(ordinal), previousPageHash: previous,
+        entries: (0..<64).map { _ in .init(transactionID: UUID(), hash: String(repeating: "a", count: 64), count: 1) },
+        isLast: ordinal == 16)
+      try client.sendHistoryControl(.page(page)); previous = page.hash
+    }
+    // Content authentication belongs to the readiness digest; transport carries
+    // this bounded opaque commitment, never claiming it proves authored bodies.
+    try client.sendHistoryControl(.root(.init(requestID: scope.requestID, workspaceID: scope.workspaceID,
+      source: source, stream: .acceptedTransactions, hash: String(repeating: "b", count: 64),
+      pageCount: 17, entryCount: 17 * 64)))
+    await fulfillment(of: [metadata], timeout: 10)
+    let serverAfter = await pair.serverStorage.historyActivity(), clientAfter = await pair.clientStorage.historyActivity()
+    let readsAfter = await gate.calls
+    XCTAssertEqual(serverBefore, serverAfter); XCTAssertEqual(clientBefore, clientAfter); XCTAssertEqual(readsBefore, readsAfter)
+    pair.onHistoryControl = nil
+    let resumed = expectation(description: "Ordinary callback resumes on the same authenticated generation")
+    pair.onTransient = { value, peer in
+      guard case .inputActivity = value else { return XCTFail("Expected the resumed contact lane") }
+      XCTAssertEqual(peer.deviceID, pair.clientIdentity.deviceID); resumed.fulfill()
+    }
+    let resumeFirst = Task<Void, Error> { try await server.resumeHistoryControl(scope) }
+    let resumeSecond = Task<Void, Error> { try await client.resumeHistoryControl(scope) }
+    try await resumeFirst.value; try await resumeSecond.value
+    XCTAssertEqual(server.generation, serverGeneration); XCTAssertEqual(client.generation, clientGeneration)
+    client.sendTransient(.inputActivity(contact))
+    await fulfillment(of: [resumed], timeout: 5)
+    await pair.stopAndJoin()
+  }
+
+  func testHistoryMetadataWaitsForDelayedTLSCreditWithoutDuplicatingTheHeldPage() async throws {
+    let ready = expectation(description: "Existing authenticated pair ready"); ready.expectedFulfillmentCount = 2
+    let pair = try NotebookTransportTestPair(serverJournalGeneration: UUID(), clientJournalGeneration: UUID(),
+      historyApplicationBuild: "history-tests")
+    defer { pair.stop() }
+    pair.onReady = { _, _ in ready.fulfill() }
+    pair.onFailure = { XCTFail("Delayed credit cannot retire the admitted pair: \($0)") }
+    try pair.start(); await fulfillment(of: [ready], timeout: 10)
+    let server = try XCTUnwrap(pair.server), client = try XCTUnwrap(pair.client)
+    let scope = try await prepareHistoryPair(pair)
+    try await admitHistoryPair(pair, scope: scope)
+    let first = Task<Void, Error> { try await server.quiesceHistoryControl(scope) }
+    let second = Task<Void, Error> { try await client.quiesceHistoryControl(scope) }
+    try await first.value; try await second.value
+    let connectionID = client.generation, source = try XCTUnwrap(client.historyBoundaryObservation.localSource)
+    let serverBefore = await pair.serverStorage.historyActivity(), clientBefore = await pair.clientStorage.historyActivity()
+    let pageCount = 48
+    let queued = expectation(description: "One sending frame and twenty pending frames occupy the existing owner")
+    let delivered = expectation(description: "The exact held page resumes after real TLS callbacks and the root follows")
+    let root = NotebookHistoryControl.Root(requestID: scope.requestID, workspaceID: scope.workspaceID,
+      source: source, stream: .acceptedTransactions, hash: String(repeating: "b", count: 64),
+      pageCount: UInt64(pageCount), entryCount: UInt64(pageCount * 64))
+    var enqueuedPages = 0, completed = false
+    var submittedPages: [NotebookHistoryControl.Page] = [], receivedPages: [NotebookHistoryControl.Page] = []
+    pair.onHistoryControl = { control, peer in
+      XCTAssertEqual(peer.deviceID, pair.clientIdentity.deviceID)
+      switch control {
+      case .page(let page):
+        XCTAssertEqual(page.ordinal, UInt64(receivedPages.count))
+        XCTAssertEqual(page.entries.count, 64)
+        XCTAssertEqual(page.previousPageHash, receivedPages.last?.hash)
+        receivedPages.append(page)
+      case .root(let actual):
+        XCTAssertEqual(actual, root); XCTAssertEqual(receivedPages, submittedPages)
+        XCTAssertEqual(receivedPages.count, pageCount); delivered.fulfill()
+      default: XCTFail("Only the source's pages and root may cross this cut")
+      }
+    }
+    // Suspend the pair's actual callback queue, not a substitute send window.
+    // The physical TLS connection stays alive and its credits remain delayed.
+    pair.holdNetworkCallbacks()
+    let sending = Task<Void, Error> {
+      var previous: String?
+      for ordinal in 0..<pageCount {
+        let page = try NotebookHistoryControl.Page(requestID: scope.requestID, workspaceID: scope.workspaceID,
+          source: source, stream: .acceptedTransactions, ordinal: UInt64(ordinal), previousPageHash: previous,
+          entries: (0..<64).map { _ in .init(transactionID: UUID(), hash: String(repeating: "a", count: 64), count: 1) },
+          isLast: ordinal == pageCount - 1)
+        submittedPages.append(page)
+        try await client.sendHistoryControlAwaitingCredit(.page(page), scope: scope)
+        enqueuedPages += 1; previous = page.hash
+        if enqueuedPages == 21 { queued.fulfill() }
+      }
+      try await client.sendHistoryControlAwaitingCredit(.root(root), scope: scope)
+      completed = true
+    }
+    defer { sending.cancel(); pair.releaseNetworkCallbacks() }
+    await fulfillment(of: [queued], timeout: 5)
+    XCTAssertEqual(enqueuedPages, 21); XCTAssertFalse(completed); XCTAssertTrue(receivedPages.isEmpty)
+    XCTAssertEqual(client.historyBoundaryObservation.pendingFrames, 20)
+    XCTAssertEqual(client.historyBoundaryObservation.unacknowledgedFrames, 1)
+    let otherScope = NotebookHistoryControlScope(requestID: UUID(), workspaceID: scope.workspaceID,
+      credentialID: scope.credentialID, applicationBuild: scope.applicationBuild, endpoints: scope.endpoints)
+    do { try await client.sendHistoryControlAwaitingCredit(.root(root), scope: otherScope); XCTFail("A foreign cut cannot borrow the held sender") }
+    catch { XCTAssertEqual(error as? NotebookTransportError, .historyCutStale) }
+    do { try await client.sendHistoryControlAwaitingCredit(.root(root), scope: scope); XCTFail("The same owner retains only one blocked control") }
+    catch { XCTAssertEqual(error as? NotebookTransportError, .historyReadinessPending) }
+    XCTAssertEqual(client.historyBoundaryObservation.pendingFrames, 20)
+    pair.releaseNetworkCallbacks()
+    await fulfillment(of: [delivered], timeout: 10)
+    try await sending.value
+    XCTAssertTrue(completed); XCTAssertEqual(enqueuedPages, pageCount)
+    XCTAssertEqual(client.generation, connectionID); XCTAssertTrue(client.isHistoryQuiescent)
+    let serverAfter = await pair.serverStorage.historyActivity(), clientAfter = await pair.clientStorage.historyActivity()
+    XCTAssertEqual(serverBefore, serverAfter); XCTAssertEqual(clientBefore, clientAfter)
+    pair.onHistoryControl = nil
+    await pair.stopAndJoin()
+  }
+
+  func testTerminalHistoryRefusalWaitsForCreditAndDrainsBothOrderedTailsOnTheSameTLSOwners() async throws {
+    let ready = expectation(description: "The existing pair is authenticated"); ready.expectedFulfillmentCount = 2
+    let pair = try NotebookTransportTestPair(serverJournalGeneration: UUID(), clientJournalGeneration: UUID(),
+      historyApplicationBuild: "history-tests")
+    defer { pair.stop() }
+    pair.onReady = { _, _ in ready.fulfill() }
+    pair.onFailure = { XCTFail("Terminal refusal must retain TLS while its actual window drains: \($0)") }
+    try pair.start(); await fulfillment(of: [ready], timeout: 10)
+    let server = try XCTUnwrap(pair.server), client = try XCTUnwrap(pair.client)
+    let scope = try await prepareHistoryPair(pair)
+    try await admitHistoryPair(pair, scope: scope)
+    let first = Task<Void, Error> { try await server.quiesceHistoryControl(scope) }
+    let second = Task<Void, Error> { try await client.quiesceHistoryControl(scope) }
+    try await first.value; try await second.value
+    let serverID = server.generation, clientID = client.generation
+    let serverSource = try XCTUnwrap(server.historyBoundaryObservation.localSource)
+    let clientSource = try XCTUnwrap(client.historyBoundaryObservation.localSource)
+    let refusal = NotebookHistoryControl.Refusal(origin: serverSource, code: .resourceLimit,
+      reason: .resourceLimit, stage: .reading, sourceSection: .acceptedPhysicalHistory, identifier: "read_sql_work")
+    let forged = NotebookHistoryControl.Refusal(origin: clientSource, code: .resourceLimit,
+      reason: .resourceLimit, stage: .reading)
+    do { try await server.resumeHistoryControl(scope, refusal: forged); XCTFail("A sender cannot attribute its refusal to its peer") }
+    catch { XCTAssertEqual(error as? NotebookTransportError, .identityMismatch) }
+    XCTAssertTrue(server.isHistoryQuiescent); XCTAssertTrue(client.isHistoryQuiescent)
+
+    var pages: [UUID: Int] = [:], terminal: Set<UUID> = [], receivedRefusal: NotebookHistoryControl.Refusal?
+    var resumingTailCount = 0
+    pair.onHistoryControl = { control, peer in
+      switch control {
+      case .page:
+        XCTAssertFalse(terminal.contains(peer.deviceID), "No page may follow this sender's terminal frame")
+        pages[peer.deviceID, default: 0] += 1
+        if !server.isHistoryQuiescent && !client.isHistoryQuiescent { resumingTailCount += 1 }
+      case .resume(_, let actual):
+        terminal.insert(peer.deviceID)
+        if peer.deviceID == serverSource.deviceID { receivedRefusal = actual; XCTAssertEqual(actual, refusal) }
+        else { XCTAssertNil(actual, "The recipient cannot reattribute and echo the peer's first refusal") }
+      case .resumed: break
+      default: XCTFail("Only already-sent pages and the ordered terminal handshake are expected")
+      }
+    }
+    pair.holdNetworkCallbacks()
+    for (owner, source) in [(server, serverSource), (client, clientSource)] {
+      var previous: String?
+      for ordinal in 0..<21 {
+        let page = try NotebookHistoryControl.Page(requestID: scope.requestID, workspaceID: scope.workspaceID,
+          source: source, stream: .acceptedTransactions, ordinal: UInt64(ordinal), previousPageHash: previous,
+          entries: [.init(transactionID: UUID(), hash: String(repeating: "a", count: 64), count: 1)], isLast: false)
+        try owner.sendHistoryControl(.page(page))
+        previous = page.hash
+      }
+      XCTAssertEqual(owner.historyBoundaryObservation.pendingFrames, 20)
+    }
+    let entered = expectation(description: "Both terminal senders retain the same full window"); entered.expectedFulfillmentCount = 2
+    var serverJoined = false, clientJoined = false
+    let serverResume = Task<Void, Error> {
+      entered.fulfill(); try await server.resumeHistoryControl(scope, refusal: refusal); serverJoined = true
+    }
+    let clientResume = Task<Void, Error> {
+      entered.fulfill(); try await client.resumeHistoryControl(scope); clientJoined = true
+    }
+    defer { serverResume.cancel(); clientResume.cancel(); pair.releaseNetworkCallbacks() }
+    await fulfillment(of: [entered], timeout: 5)
+    XCTAssertFalse(serverJoined); XCTAssertFalse(clientJoined)
+    XCTAssertTrue(server.isReady); XCTAssertTrue(client.isReady)
+    XCTAssertEqual(server.historyBoundaryObservation.pendingFrames, 20)
+    XCTAssertEqual(client.historyBoundaryObservation.pendingFrames, 20)
+    pair.releaseNetworkCallbacks()
+    try await serverResume.value; try await clientResume.value
+    XCTAssertEqual(receivedRefusal, refusal)
+    XCTAssertEqual(pages[serverSource.deviceID], 21); XCTAssertEqual(pages[clientSource.deviceID], 21)
+    XCTAssertGreaterThan(resumingTailCount, 0)
+    XCTAssertEqual(server.generation, serverID); XCTAssertEqual(client.generation, clientID)
+    XCTAssertTrue(server.isReady); XCTAssertTrue(client.isReady)
+    XCTAssertNil(server.historyControlScope); XCTAssertNil(client.historyControlScope)
+    pair.onHistoryControl = nil
+    await pair.stopAndJoin()
+  }
+
+  func testHistoryPreparationUsesTheAdvertisedHeadWhileOrdinaryDeliveryContinues() async throws {
+    let gate = NotebookTransportHistoryJournalGate()
+    let held = expectation(description: "Actual source head is not yet offered")
+    await gate.setObserver { held.fulfill() }
+    let ready = expectation(description: "Pair ready"); ready.expectedFulfillmentCount = 2
+    let pair = try NotebookTransportTestPair(withChange: true, contentBytes: 64,
+      serverJournalGeneration: UUID(), clientJournalGeneration: UUID(), historyApplicationBuild: "history-tests",
+      clientJournalGate: gate)
+    defer { pair.stop(); Task { await gate.release() } }
+    pair.onReady = { _, _ in ready.fulfill() }
+    try pair.start(); await fulfillment(of: [ready, held], timeout: 10)
+    let server = try XCTUnwrap(pair.server), client = try XCTUnwrap(pair.client)
+    let scope = try await prepareHistoryPair(pair, clientHead: pair.sampleChange)
+    XCTAssertEqual(server.historyBoundaryObservation.remoteOfferedThrough, 0)
+    XCTAssertEqual(server.historyBoundaryObservation.peerPrepared?.head, pair.sampleChange)
+    let guessed = NotebookHistoryControlScope(requestID: scope.requestID, workspaceID: scope.workspaceID,
+      credentialID: scope.credentialID, applicationBuild: scope.applicationBuild,
+      endpoints: scope.endpoints.map { .init(identity: $0.identity, journalGeneration: $0.journalGeneration, head: nil) })
+    for owner in [server, client] {
+      do { try owner.admitHistoryControl(guessed); XCTFail("Last offer zero is not the actual remote SQL head") }
+      catch { XCTAssertEqual(error as? NotebookTransportError, .historyNotDrained) }
+      XCTAssertNil(owner.historyControlScope); XCTAssertTrue(owner.isReady)
+    }
+    let committed = expectation(description: "The original draining request keeps actual delivery and durable ACK alive")
+    await pair.clientStorage.setAcknowledgementObserver { committed.fulfill() }
+    await gate.release(); await fulfillment(of: [committed], timeout: 10)
+    let applied = await pair.serverStorage.appliedCount, acknowledged = await pair.clientStorage.acknowledgedCursor
+    XCTAssertEqual(applied, 1); XCTAssertEqual(acknowledged, 1)
+    XCTAssertEqual(server.historyBoundaryObservation.incomingAcceptedThrough, 1)
+    XCTAssertEqual(client.historyBoundaryObservation.peerAcceptedThrough, 1)
+    let proposed = expectation(description: "Final scope reaches the native owner still awaiting its SQL cut")
+    let earlyQuiesced = expectation(description: "Exact peer acknowledgement is retained before native admission")
+    let newerRead = expectation(description: "The same advertised head can carry a newer read cut after peer admission")
+    pair.onHistoryControl = { control, peer in
+      switch control {
+      case .request(let value):
+        XCTAssertEqual(value, scope); XCTAssertEqual(peer.deviceID, pair.serverIdentity.deviceID)
+        XCTAssertNil(client.historyControlScope); proposed.fulfill()
+      case .quiesced(let value) where peer.deviceID == pair.serverIdentity.deviceID:
+        XCTAssertEqual(value, scope); XCTAssertNil(client.historyControlScope)
+        XCTAssertFalse(client.isHistoryQuiescent); earlyQuiesced.fulfill()
+      case .prepared(let value) where peer.deviceID == pair.clientIdentity.deviceID:
+        XCTAssertEqual(value.head, pair.sampleChange); XCTAssertEqual(value.readRevision, 1)
+        XCTAssertEqual(server.historyControlScope, scope); newerRead.fulfill()
+      default: break
+      }
+    }
+    try server.proposeHistoryControl(scope); try server.admitHistoryControl(scope)
+    let first = Task<Void, Error> { try await server.quiesceHistoryControl(scope) }
+    await fulfillment(of: [proposed, earlyQuiesced], timeout: 10)
+    XCTAssertTrue(client.isReady); XCTAssertNil(client.historyControlScope)
+    let page = try NotebookHistoryControl.Page(requestID: scope.requestID, workspaceID: scope.workspaceID,
+      source: try XCTUnwrap(client.historyBoundaryObservation.localSource), stream: .acceptedTransactions,
+      ordinal: 0, entries: [], isLast: true)
+    do { try client.sendHistoryControl(.page(page)); XCTFail("An early peer acknowledgement cannot admit local history emission") }
+    catch { XCTAssertEqual(error as? NotebookTransportError, .historyReadinessPending) }
+    try client.sendHistoryPrepared(.init(requestID: scope.requestID, workspaceID: scope.workspaceID,
+      source: try XCTUnwrap(client.historyBoundaryObservation.localSource), head: pair.sampleChange, readRevision: 1))
+    await fulfillment(of: [newerRead], timeout: 10)
+    try client.admitHistoryControl(scope)
+    let second = Task<Void, Error> { try await client.quiesceHistoryControl(scope) }
+    try await first.value; try await second.value
+    XCTAssertTrue(server.isHistoryQuiescent); XCTAssertTrue(client.isHistoryQuiescent)
+    XCTAssertEqual(server.historyBoundaryObservation.incomingAcceptedThrough, 1)
+    XCTAssertEqual(client.historyBoundaryObservation.peerAcceptedThrough, 1)
+    pair.onHistoryControl = nil
+    await pair.stopAndJoin()
+  }
+
+  func testQuiescentHistoryRefusesForeignMetadataAndLateContentWithoutStorageOrACK() async throws {
+    let ready = expectation(description: "Pair ready"); ready.expectedFulfillmentCount = 2
+    let pair = try NotebookTransportTestPair(serverJournalGeneration: UUID(), clientJournalGeneration: UUID(),
+      historyApplicationBuild: "history-tests")
+    defer { pair.stop() }
+    pair.onReady = { _, _ in ready.fulfill() }
+    try pair.start(); await fulfillment(of: [ready], timeout: 10)
+    let server = try XCTUnwrap(pair.server), client = try XCTUnwrap(pair.client)
+    let scope = try await prepareHistoryPair(pair)
+    try await admitHistoryPair(pair, scope: scope)
+    let first = Task<Void, Error> { try await server.quiesceHistoryControl(scope) }
+    let second = Task<Void, Error> { try await client.quiesceHistoryControl(scope) }
+    try await first.value; try await second.value
+    let before = await pair.serverStorage.historyActivity()
+    let source = try XCTUnwrap(client.historyBoundaryObservation.localSource)
+    let wrongPage = try NotebookHistoryControl.Page(requestID: scope.requestID, workspaceID: scope.workspaceID,
+      source: .init(deviceID: source.deviceID, generation: UUID()), stream: .acceptedTransactions,
+      ordinal: 0, entries: [], isLast: true)
+    do { try client.sendHistoryControl(.page(wrongPage)); XCTFail("A different source generation cannot enter the cut") }
+    catch { XCTAssertEqual(error as? NotebookTransportError, .identityMismatch) }
+    let wrongScope = NotebookHistoryControlScope(requestID: UUID(), workspaceID: scope.workspaceID,
+      credentialID: scope.credentialID, applicationBuild: scope.applicationBuild, endpoints: scope.endpoints)
+    do { try await server.resumeHistoryControl(wrongScope); XCTFail("Only the exact native request may resume") }
+    catch { XCTAssertEqual(error as? NotebookTransportError, .historyCutStale) }
+    do {
+      _ = try NotebookHistoryControl.Page(requestID: scope.requestID, workspaceID: scope.workspaceID,
+        source: source, stream: .acceptedTransactions, ordinal: 0,
+        entries: Array(repeating: .init(hash: String(repeating: "a", count: 64)), count: 65), isLast: true)
+      XCTFail("Metadata page must be bounded before encoding")
+    } catch { XCTAssertEqual(error as? NotebookTransportError, .invalidFrame) }
+    XCTAssertTrue(server.isHistoryQuiescent); XCTAssertTrue(client.isHistoryQuiescent)
+    var stale: [NotebookHistoryControl.StaleReason] = []
+    pair.onHistoryControl = { control, peer in
+      if case .stale(let request, let reason) = control, peer.deviceID == pair.clientIdentity.deviceID {
+        XCTAssertEqual(request, scope.requestID); stale.append(reason)
+      }
+    }
+    do { try await server.receive(.init(sequence: 1, message: .offer(pair.sampleChange))); XCTFail("Late content invalidates before any acceptance") }
+    catch { XCTAssertEqual(error as? NotebookTransportError, .historyCutStale) }
+    XCTAssertEqual(stale, [.lateContent]); XCTAssertFalse(server.isReady)
+    let after = await pair.serverStorage.historyActivity(), peerACK = await pair.clientStorage.acknowledgedCursor
+    XCTAssertEqual(before, after); XCTAssertEqual(peerACK, 0)
+    XCTAssertEqual(server.historyBoundaryObservation.incomingAcceptedThrough, 0)
+    await pair.stopAndJoin()
+  }
+
+  func testCanceledHistoryPreparationRequiresEachExactNativeOwnerToResume() async throws {
+    let ready = expectation(description: "Pair ready"); ready.expectedFulfillmentCount = 2
+    let pair = try NotebookTransportTestPair(serverJournalGeneration: UUID(), clientJournalGeneration: UUID(),
+      historyApplicationBuild: "history-tests")
+    defer { pair.stop() }
+    pair.onReady = { _, _ in ready.fulfill() }
+    try pair.start(); await fulfillment(of: [ready], timeout: 10)
+    let server = try XCTUnwrap(pair.server), client = try XCTUnwrap(pair.client)
+    let scope = try await prepareHistoryPair(pair), preparation = scope.preparation
+    let foreign = NotebookHistoryControlPreparation(requestID: UUID(), workspaceID: preparation.workspaceID,
+      credentialID: preparation.credentialID, applicationBuild: preparation.applicationBuild, endpoints: preparation.endpoints)
+    do { try server.resumeHistoryPreparation(foreign); XCTFail("A different native request cannot release preparation") }
+    catch { XCTAssertEqual(error as? NotebookTransportError, .historyCutStale) }
+    let cancelled = expectation(description: "Remote cancellation is a proposal to the native coordinator")
+    pair.onHistoryControl = { control, peer in
+      if case .stale(let request, let reason) = control {
+        XCTAssertEqual(peer.deviceID, pair.serverIdentity.deviceID)
+        XCTAssertEqual(request, preparation.requestID); XCTAssertEqual(reason, .cancelled)
+        XCTAssertEqual(client.historyControlPreparation, preparation, "The message itself cannot open native authorship")
+        cancelled.fulfill()
+      }
+    }
+    try server.resumeHistoryPreparation(preparation)
+    await fulfillment(of: [cancelled], timeout: 5)
+    XCTAssertNil(server.historyControlPreparation); XCTAssertEqual(client.historyControlPreparation, preparation)
+    try client.resumeHistoryPreparation(preparation)
+    XCTAssertTrue(server.isReady); XCTAssertTrue(client.isReady)
+    XCTAssertNil(client.historyControlPreparation)
+    // Explicitly admitted new UUIDs are not held by the canceled preparation;
+    // a delayed echo of the previous cancellation cannot affect this new phase.
+    try server.admitHistoryPreparation(foreign); try client.admitHistoryPreparation(foreign)
+    let contact = expectation(description: "Ordinary delivery remains on the same preparing connection")
+    pair.onTransient = { _, _ in contact.fulfill() }
+    server.sendTransient(.inputActivity(.init(deviceID: pair.serverIdentity.deviceID,
+      sessionID: UUID(), sequence: 1, targets: [])))
+    await fulfillment(of: [contact], timeout: 5)
+    XCTAssertEqual(server.historyControlPreparation, foreign); XCTAssertEqual(client.historyControlPreparation, foreign)
+    pair.onHistoryControl = nil
+    await pair.stopAndJoin()
+  }
+
+  private func prepareHistoryPair(_ pair: NotebookTransportTestPair,
+    serverHead: NotebookDurableChange? = nil, clientHead: NotebookDurableChange? = nil) async throws -> NotebookHistoryControlScope {
+    let server = try XCTUnwrap(pair.server), client = try XCTUnwrap(pair.client)
+    let scope = NotebookHistoryControlScope(requestID: UUID(), workspaceID: pair.serverIdentity.workspaceID,
+      credentialID: try XCTUnwrap(server.credentialID), applicationBuild: "history-tests",
+      endpoints: [.init(identity: pair.serverIdentity, journalGeneration: try XCTUnwrap(server.historyBoundaryObservation.localSource).generation, head: serverHead),
+        .init(identity: pair.clientIdentity, journalGeneration: try XCTUnwrap(client.historyBoundaryObservation.localSource).generation, head: clientHead)])
+    let prepared = expectation(description: "Both actual native head observations cross TLS"); prepared.expectedFulfillmentCount = 2
+    pair.onHistoryControl = { control, peer in
+      do {
+        switch control {
+        case .prepare(let proposal):
+          XCTAssertEqual(proposal, scope.preparation); XCTAssertEqual(peer.deviceID, pair.serverIdentity.deviceID)
+          try client.admitHistoryPreparation(proposal)
+          try client.sendHistoryPrepared(.init(requestID: scope.requestID, workspaceID: scope.workspaceID,
+            source: try XCTUnwrap(client.historyBoundaryObservation.localSource), head: clientHead, readRevision: 0))
+        case .prepared: prepared.fulfill()
+        default: break
+        }
+      } catch { XCTFail("Head negotiation failed: \(error)") }
+    }
+    try server.admitHistoryPreparation(scope.preparation); try server.proposeHistoryPreparation(scope.preparation)
+    try server.sendHistoryPrepared(.init(requestID: scope.requestID, workspaceID: scope.workspaceID,
+      source: try XCTUnwrap(server.historyBoundaryObservation.localSource), head: serverHead, readRevision: 0))
+    await fulfillment(of: [prepared], timeout: 10)
+    return scope
+  }
+
+  private func admitHistoryPair(_ pair: NotebookTransportTestPair, scope: NotebookHistoryControlScope) async throws {
+    let server = try XCTUnwrap(pair.server), client = try XCTUnwrap(pair.client)
+    let admitted = expectation(description: "The other native owner explicitly admits the exact scope")
+    pair.onHistoryControl = { control, _ in
+      if case .request(let proposed) = control {
+        do { XCTAssertEqual(proposed, scope); try client.admitHistoryControl(proposed); admitted.fulfill() }
+        catch { XCTFail("Exact scope admission failed: \(error)") }
+      }
+    }
+    try server.proposeHistoryControl(scope); try server.admitHistoryControl(scope)
+    await fulfillment(of: [admitted], timeout: 10)
+    pair.onHistoryControl = nil
+  }
+
   func testDisconnectSuppressesLateCommitCallbacksAndReconnectUsesCommittedCursor() async throws {
     let committing = expectation(description: "Old generation waits inside SQL")
     let finishedCommit = expectation(description: "SQL may complete after disconnection")
@@ -353,10 +785,16 @@ final class NotebookTransportSessionTests: XCTestCase {
     pair.onDurable = { _, _ in XCTFail("A disconnected generation cannot publish completion") }
     try pair.start()
     await fulfillment(of: [committing], timeout: 10)
-    let oldGeneration = try XCTUnwrap(pair.server).generation
+    let server = try XCTUnwrap(pair.server), oldGeneration = server.generation
     pair.stop()
+    let joined = Task {
+      await server.stopAndJoin()
+      let committed = await pair.serverStorage.appliedCount
+      XCTAssertEqual(committed, 1, "Joining delivery cannot finish before its accepted storage callback")
+    }
     await pair.serverStorage.releaseCommit()
     await fulfillment(of: [finishedCommit], timeout: 10)
+    await joined.value
     let ready = expectation(description: "Reconnect resumes after the committed transaction"); ready.expectedFulfillmentCount = 2
     let reconnect = try NotebookTransportTestPair(serverStorage: pair.serverStorage, clientStorage: pair.clientStorage,
       serverIdentity: pair.serverIdentity, clientIdentity: pair.clientIdentity)
@@ -386,6 +824,7 @@ final class NotebookTransportTestPair {
   var authorize: ((NotebookTransportIdentity) async throws -> Bool)?
   var onTransient: ((NotebookTransportTransient, NotebookTransportIdentity) -> Void)?
   var onDurable: ((NotebookDurableChange, NotebookTransportIdentity) -> Void)?
+  var onHistoryControl: ((NotebookHistoryControl, NotebookTransportIdentity) -> Void)?
   var onFailure: ((Error) -> Void)?
   var onStopped: ((NotebookTransportIdentity, Error?) -> Void)?
   private let authorized: Bool
@@ -399,13 +838,19 @@ final class NotebookTransportTestPair {
   private let relay: NotebookRelayRoute?
   private let serverAdapter: NotebookTransportStorage
   private let clientAdapter: NotebookTransportStorage
+  private let historyApplicationBuild: String?
   private var reportedFailure = false
   private var isStopped = false
+  private var networkCallbacksHeld = false
 
   init(wrongSecret: Bool = false, authorized: Bool = true, withChange: Bool = false, holdCommit: Bool = false,
     serverStorage: NotebookTransportMemoryStore? = nil, clientStorage: NotebookTransportMemoryStore? = nil,
     serverIdentity: NotebookTransportIdentity? = nil, clientIdentity: NotebookTransportIdentity? = nil, relay: NotebookRelayRoute? = nil, contentBytes: Int = 400_000, contentBlobCount: Int = 1,
-    serverAdapter: NotebookTransportStorage? = nil, clientAdapter: NotebookTransportStorage? = nil) throws {
+    serverAdapter: NotebookTransportStorage? = nil, clientAdapter: NotebookTransportStorage? = nil,
+    serverJournalGeneration: UUID? = nil, clientJournalGeneration: UUID? = nil,
+    historyApplicationBuild: String? = nil,
+    serverJournalGate: NotebookTransportHistoryJournalGate? = nil,
+    clientJournalGate: NotebookTransportHistoryJournalGate? = nil) throws {
     let workspaceID = serverIdentity?.workspaceID ?? UUID()
     self.serverIdentity = serverIdentity ?? .init(deviceID: UUID(), workspaceID: workspaceID, displayName: "Loopback Mac")
     self.clientIdentity = clientIdentity ?? .init(deviceID: UUID(), workspaceID: workspaceID, displayName: "Loopback iPad")
@@ -422,8 +867,19 @@ final class NotebookTransportTestPair {
     blobs[manifestHash] = manifest
     self.clientStorage = clientStorage ?? NotebookTransportMemoryStore(changes: withChange ? [sampleChange] : [],
       blobs: withChange ? blobs : [:])
-    self.serverAdapter = serverAdapter ?? self.serverStorage.adapter()
-    self.clientAdapter = clientAdapter ?? self.clientStorage.adapter()
+    var serverPort = serverAdapter ?? self.serverStorage.adapter(), clientPort = clientAdapter ?? self.clientStorage.adapter()
+    if let serverJournalGeneration { serverPort.journalGeneration = serverJournalGeneration }
+    if let clientJournalGeneration { clientPort.journalGeneration = clientJournalGeneration }
+    if let serverJournalGate {
+      let read = serverPort.changes
+      serverPort.changes = { cursor, limit in await serverJournalGate.enter(); return try await read(cursor, limit) }
+    }
+    if let clientJournalGate {
+      let read = clientPort.changes
+      clientPort.changes = { cursor, limit in await clientJournalGate.enter(); return try await read(cursor, limit) }
+    }
+    self.serverAdapter = serverPort; self.clientAdapter = clientPort
+    self.historyApplicationBuild = historyApplicationBuild ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
   }
 
   func start() throws {
@@ -434,7 +890,8 @@ final class NotebookTransportTestPair {
         guard let self, !self.isStopped else { connection.cancel(); return }
         do {
           let session = try NotebookTransportSession(connection: connection, identity: self.serverIdentity, credential: nil,
-            storage: self.serverAdapter, stagingRoot: self.root.appendingPathComponent("server"), queue: self.queue)
+            storage: self.serverAdapter, stagingRoot: self.root.appendingPathComponent("server"), queue: self.queue,
+            historyApplicationBuild: self.historyApplicationBuild)
           self.server = session
           session.resolveCredential = { hello in
             guard hello.identity == self.clientIdentity, hello.credentialID == self.credentialID else { throw NotebookTransportError.identityMismatch }
@@ -467,7 +924,8 @@ final class NotebookTransportTestPair {
                 using: try NotebookTransportTLS.parameters(keys: [credential.tlsKey], loopback: true))
             }
             let session = try NotebookTransportSession(connection: connection, identity: self.clientIdentity, credential: credential,
-              storage: self.clientAdapter, stagingRoot: self.root.appendingPathComponent("client"), queue: self.queue)
+              storage: self.clientAdapter, stagingRoot: self.root.appendingPathComponent("client"), queue: self.queue,
+              historyApplicationBuild: self.historyApplicationBuild)
             self.client = session; self.configure(session); session.start()
           } catch { self.failed(error) }
         case .failed(let error): self.failed(error)
@@ -478,8 +936,26 @@ final class NotebookTransportTestPair {
     listener.start(queue: queue)
   }
 
+  func holdNetworkCallbacks() {
+    precondition(!networkCallbacksHeld)
+    networkCallbacksHeld = true; queue.suspend()
+  }
+
+  func releaseNetworkCallbacks() {
+    guard networkCallbacksHeld else { return }
+    networkCallbacksHeld = false; queue.resume()
+  }
+
   func stop() {
+    releaseNetworkCallbacks()
     isStopped = true; listener?.cancel(); listener = nil; uplink?.stop(); uplink = nil; server?.stop(); client?.stop()
+    try? FileManager.default.removeItem(at: root)
+  }
+
+  func stopAndJoin() async {
+    releaseNetworkCallbacks()
+    isStopped = true; listener?.cancel(); listener = nil; uplink?.stop(); uplink = nil
+    for session in [server, client].compactMap({ $0 }) { await session.stopAndJoin() }
     try? FileManager.default.removeItem(at: root)
   }
 
@@ -494,6 +970,7 @@ final class NotebookTransportTestPair {
     session.onReady = { [weak self] identity in self?.onReady?(identity, generation) }
     session.onTransient = { [weak self] value, peer in self?.onTransient?(value, peer) }
     session.onDurableChange = { [weak self] change, peer in self?.onDurable?(change, peer) }
+    session.onHistoryControl = { [weak self] control, peer in self?.onHistoryControl?(control, peer) }
     session.onStop = { [weak self] peer, error in
       if let peer { self?.onStopped?(peer, error) }
       if let error { self?.failed(error) }
@@ -600,5 +1077,25 @@ actor NotebookTransportMemoryStore {
     return incomingCursor
   }
   func coverIncomingPrefix(through sequence: UInt64) { incomingCursor = max(incomingCursor, sequence) }
+  func historyActivity() -> [Int] {
+    [cursorReads, Int(acknowledgedCursor), appliedCount, stagedBatchSizes.count,
+      servedWindowSizes.count, requestedJournalCursors.count]
+  }
   private static func digest(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
+}
+
+actor NotebookTransportHistoryJournalGate {
+  private var first = true
+  private var released = false
+  private var continuation: CheckedContinuation<Void, Never>?
+  private var observer: (@Sendable () -> Void)?
+  private(set) var calls = 0
+  func setObserver(_ value: @escaping @Sendable () -> Void) { observer = value }
+  func enter() async {
+    calls += 1
+    guard first else { return }
+    first = false; observer?()
+    if !released { await withCheckedContinuation { continuation = $0 } }
+  }
+  func release() { released = true; continuation?.resume(); continuation = nil }
 }

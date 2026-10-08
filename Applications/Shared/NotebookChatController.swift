@@ -60,7 +60,7 @@ final class NotebookChatController {
     return .init(computer: computerID, thread: address)
   }
   var canSendDraft: Bool {
-    !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !dictation.busy && !saving && !switchingComputer
+    permitsNativeMutation() && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !dictation.busy && !saving && !switchingComputer
       && (browsesChats || (creationID == nil && (threadID == nil || !continuationUnavailable)))
       && (!voice.capturing || (!browsesChats && threadID != nil))
   }
@@ -71,7 +71,14 @@ final class NotebookChatController {
   private(set) var projectCursor: String?
   var selectedProject: CodexProject? { files.window.project }
   private(set) var activities: [String: CodexTaskActivity] = [:]
-  var draft: String = "" { didSet { persistPanel() } }
+  private var draftText = ""
+  var draft: String {
+    get { draftText }
+    set {
+      guard newValue != draftText, admitAuthoredMutation() else { return }
+      draftText = newValue; persistPanel(authored: true)
+    }
+  }
   private(set) var attachments: [CodexInputAttachment] = []
   private(set) var models: [CodexModelOption] = []
   private(set) var loadingModels = false
@@ -142,6 +149,27 @@ final class NotebookChatController {
   @ObservationIgnored private var savingInput: NotebookChatInput?
   @ObservationIgnored private var savingFirstMessage: NotebookChatFirstMessage?
 
+  var hasPendingAuthoredPreparation: Bool { saving || insertingDictation || files.hasPendingAuthoredPreparation }
+
+  func permitsNativeMutation() -> Bool {
+    guard !stopped else { return false }
+    do { try persistence.requireMutationAdmission(); return true }
+    catch { return false }
+  }
+
+  private func admitAuthoredMutation() -> Bool {
+    guard !stopped else { return false }
+    do { try persistence.requireMutationAdmission(); return true }
+    catch { self.error = error.localizedDescription; return false }
+  }
+
+  private func requiresAuthoredAdmission(_ action: NotebookChatAction) -> Bool {
+    switch action {
+    case .stop, .stopRun, .stopVoice: false
+    default: true
+    }
+  }
+
   init(persistence: NotebookPersistenceQueue, author: UUID, dictationCapture: (any NotebookDictationCapture)? = nil, preferences: UserDefaults = .standard, send: @escaping (NotebookChatEnvelope, UUID) -> Void) {
     self.persistence = persistence; self.author = author; self.send = send
     files = NotebookFileController(persistence: persistence, author: author)
@@ -157,7 +185,7 @@ final class NotebookChatController {
     do {
       let author = author
       let state = try await persistence.submit(writesStore: true) { store in try store.prepareChatComputers(author: author); return try store.chatPanel(author: author) }
-      threadID = state.threadID; draft = state.draft; attachments = state.attachments ?? []; readPosition = state.readPosition; peer = state.sidecarID
+      threadID = state.threadID; draftText = state.draft; attachments = state.attachments ?? []; readPosition = state.readPosition; peer = state.sidecarID
       creationID = state.creationID; browsesChats = state.browsesChats ?? (threadID == nil && creationID == nil)
       dictationReceipt = state.dictationReceipt
       let recordingDirectory = try await persistence.submit { $0.root.appendingPathComponent("runtime/dictation/" + author.uuidString, isDirectory: true) }
@@ -287,7 +315,7 @@ final class NotebookChatController {
         }
       }
       runs.detach(); queries.removeAll()
-      loaded = false; peer = id; threadID = restored.panel.threadID; draft = restored.panel.draft; attachments = restored.panel.attachments ?? []; readPosition = restored.panel.readPosition; revealedMessageID = nil; models = []; loadingModels = false; modelError = nil; loaded = true
+      loaded = false; peer = id; threadID = restored.panel.threadID; draftText = restored.panel.draft; attachments = restored.panel.attachments ?? []; readPosition = restored.panel.readPosition; revealedMessageID = nil; models = []; loadingModels = false; modelError = nil; loaded = true
       dictationReceipt = restored.panel.dictationReceipt
       transcriptGeneration = UUID(); catchUpBoundary = nil
       conversation = nil; messages = []; historyCursor = nil; historyLoaded = false; historyBoundary = nil; projects = []; catalogues = [:]; activities = [:]
@@ -480,7 +508,7 @@ final class NotebookChatController {
     return await submit(.updateProject(edit))
   }
   @discardableResult func beginDraft(project: CodexProject?) -> Bool {
-    guard !saving, !switchingComputer else { return false }
+    guard !saving, !switchingComputer, admitAuthoredMutation() else { return false }
     dictation.suspendWaiting()
     guard !dictation.busy else { error = "Завершите диктовку перед созданием другого чата."; return false }
     guard !voice.capturing else { error = "Завершите разговор с «\(voice.taskTitle)» перед созданием другой задачи."; return false }
@@ -488,14 +516,18 @@ final class NotebookChatController {
     conversationSubscription = nil; selectedTask = nil; creationID = nil; draftID = UUID()
     threadID = nil; conversation = nil; messages = []; readPosition = nil; companionReplies = []; revealedMessageID = nil
     historyCursor = nil; historyLoaded = false; historyBoundary = nil; loadingHistory = false; continuationUnavailable = false
-    files.chooseProject(project); browsesChats = false; expanded = true; error = nil; persistPanel()
+    files.chooseProject(project); browsesChats = false; expanded = true; error = nil; persistPanel(authored: true)
     return true
   }
   func attach(_ value: CodexInputAttachment) {
-    guard !switchingComputer, value.isValid, attachments.count < 16, !attachments.contains(where: { $0.id == value.id }) else { return }
-    attachments.append(value); persistPanel()
+    guard !switchingComputer, value.isValid, attachments.count < 16, !attachments.contains(where: { $0.id == value.id }),
+      admitAuthoredMutation() else { return }
+    attachments.append(value); persistPanel(authored: true)
   }
-  func removeAttachment(_ id: String) { attachments.removeAll { $0.id == id }; persistPanel() }
+  func removeAttachment(_ id: String) {
+    guard attachments.contains(where: { $0.id == id }), admitAuthoredMutation() else { return }
+    attachments.removeAll { $0.id == id }; persistPanel(authored: true)
+  }
   func readModels() async {
     guard !loadingModels, connected else { return }
     loadingModels = true; let computer = peer
@@ -554,16 +586,17 @@ final class NotebookChatController {
   func sendMessage(to destination: MessageDestination, text: String, context: String, attentionContextID: UUID? = nil, steeringTurnID: String? = nil, attachments submittedAttachments: [CodexInputAttachment] = [], dictationID: UUID? = nil) async -> Bool {
     guard !dictation.busy || dictationID == dictation.pending?.id && dictationID != nil else { return false }
     if case .newChat(let generation, let project) = destination {
-      guard steeringTurnID == nil, dictationID == nil, !voice.capturing, !saving else { return false }
+      guard steeringTurnID == nil, dictationID == nil, !voice.capturing, !saving,
+        admitAuthoredMutation() else { return false }
       let first = savingFirstMessage ?? NotebookChatFirstMessage(text: text, context: context,
         attentionContextID: attentionContextID, attachments: submittedAttachments.isEmpty ? nil : submittedAttachments)
       guard first.text == text, first.context == context, first.attentionContextID == attentionContextID,
         (first.attachments ?? []) == submittedAttachments else { return false }
       let id = savingInput?.id ?? UUID(), computer = peer
-      if draftID == generation { creationID = id; browsesChats = false; persistPanel() }
+      if draftID == generation { creationID = id; browsesChats = false; persistPanel(authored: true) }
       let saved = await submit(.create(title: "Занятие в Notebook", project: project), firstMessage: first, messageID: id)
       if saved, computer == peer, draftID == generation, draft == text {
-        let sent = Set(submittedAttachments.map(\.id)); attachments.removeAll { sent.contains($0.id) }; draft = ""
+        let sent = Set(submittedAttachments.map(\.id)); attachments.removeAll { sent.contains($0.id) }; draftText = ""; persistPanel()
       } else if !saved, creationID == id { creationID = nil; persistPanel() }
       return saved
     }
@@ -574,7 +607,7 @@ final class NotebookChatController {
     if await submit(action, attentionContextID: attentionContextID, attachments: submittedAttachments.isEmpty ? nil : submittedAttachments, messageID: dictationID) {
       if dictationID == nil, peer == computer, draft == text, threadID == submittedThread {
         let submitted = Set(submittedAttachments.map(\.id))
-        attachments.removeAll { submitted.contains($0.id) }; draft = ""
+        attachments.removeAll { submitted.contains($0.id) }; draftText = ""; persistPanel()
       }; return true
     }
     return false
@@ -627,6 +660,11 @@ final class NotebookChatController {
 
   private func submit(_ action: NotebookChatAction, attentionContextID: UUID? = nil, attachments: [CodexInputAttachment]? = nil, firstMessage: NotebookChatFirstMessage? = nil, messageID: UUID? = nil) async -> Bool {
     guard loaded, !stopped, !saving, !switchingComputer else { return false }
+    let authored = requiresAuthoredAdmission(action)
+    // A saved deterministic decision can be observed while authorship is
+    // closed. A fresh independent input needs admission before another ID.
+    if authored, messageID == nil, action.controlID(author: author) == nil,
+      !admitAuthoredMutation() { return false }
     saving = true; defer { saving = false }
     let computer = peer
     let controlID = messageID ?? action.controlID(author: author)
@@ -637,7 +675,10 @@ final class NotebookChatController {
           if action.controlID(author: author) != nil { return try store.savedChatControl(action, author: author, computer: computer) }
           return try store.chatJob(controlID)
         }) {
-          guard previous.input.action == action,
+          guard previous.input.id == controlID, previous.input.author == author,
+            previous.input.action == action, previous.input.attentionContextID == attentionContextID,
+            previous.input.attachments == attachments,
+            try await persistence.submit({ try $0.chatFirstMessage(controlID) }) == firstMessage,
             try await persistence.submit({ try $0.chatDestination(controlID) }) == computer else {
             error = "Для этого запроса уже сохранено другое решение."; return false
           }
@@ -648,10 +689,15 @@ final class NotebookChatController {
     if let savingInput, savingInput.action != action || savingInput.attentionContextID != attentionContextID || savingInput.attachments != attachments || savingFirstMessage != firstMessage || (messageID != nil && savingInput.id != messageID) {
       error = "Сначала завершите сохранение предыдущего сообщения."; return false
     }
+    guard !authored || admitAuthoredMutation() else { return false }
     let input = savingInput ?? NotebookChatInput(id: controlID ?? UUID(), author: author, action: action, attentionContextID: attentionContextID, attachments: attachments)
     savingInput = input; savingFirstMessage = firstMessage
     do {
-      _ = try await persistence.submit(writesStore: true) { try $0.saveChatSubmission(input, to: computer, firstMessage: firstMessage) }
+      if authored {
+        _ = try await persistence.submit(owner: .chatSubmission(input.id)) { try $0.saveChatSubmission(input, to: computer, firstMessage: firstMessage) }
+      } else {
+        _ = try await persistence.submit(writesStore: true) { try $0.saveChatSubmission(input, to: computer, firstMessage: firstMessage) }
+      }
       try await refreshJobs(); savingInput = nil; savingFirstMessage = nil; error = nil
       wake.continuation.yield(())
       if action.isInteractiveControl, connected, computer == peer,
@@ -693,20 +739,21 @@ final class NotebookChatController {
     select(task)
     draftID = generation
   }
-  private func persistPanel() {
+  private func persistPanel(authored: Bool = false) {
     guard loaded, !insertingDictation else { return }
     let state = NotebookChatPanelState(threadID: threadID, draft: draft, sidecarID: peer, attachments: attachments.isEmpty ? nil : attachments, readPosition: readPosition, dictationReceipt: dictationReceipt, creationID: creationID, browsesChats: browsesChats), author = author
-    persistence.enqueue(owner: .chatPanel(peer)) { try $0.saveChatPanel(state, author: author); return false }
+    persistence.enqueue(owner: authored ? .chatDraft(peer) : .chatPanel(peer)) { try $0.saveChatPanel(state, author: author); return false }
   }
   func insertDictation(_ text: String, id: UUID, thread: String, computer: UUID) async throws {
     guard peer == computer, threadID == thread, !stopped else { throw NotebookTransportError.disconnected }
+    try persistence.requireMutationAdmission()
     // Reads and attachment changes can arrive while the durable insertion is
     // suspended. Do not enqueue a stale draft after this ordering fence.
     insertingDictation = true
     defer { insertingDictation = false; persistPanel() }
     let author = author
-    let state = try await persistence.submit(writesStore: true) { try $0.insertChatDictation(text, id: id, thread: thread, computer: computer, author: author) }
-    dictationReceipt = state.dictationReceipt; draft = state.draft
+    let state = try await persistence.submit(owner: .chatDraft(computer)) { try $0.insertChatDictation(text, id: id, thread: thread, computer: computer, author: author) }
+    dictationReceipt = state.dictationReceipt; draftText = state.draft
   }
   func hasSavedDictation(_ id: UUID, thread: String, computer: UUID, text: String) async throws -> Bool {
     try await persistence.submit { store in
@@ -749,13 +796,29 @@ final class NotebookChatController {
   func sessionCommand(_ action: NotebookChatAction, id suppliedID: UUID? = nil, computer destination: UUID? = nil) async throws -> NotebookChatJob {
     guard loaded, !stopped, action.isRunCommand || action.isVoiceCommand else { throw NotebookTransportError.disconnected }
     guard let computer = destination ?? peer else { throw NotebookTransportError.disconnected }
-    let id = action.controlID(author: author) ?? suppliedID ?? UUID()
+    let authored = requiresAuthoredAdmission(action), controlID = action.controlID(author: author)
+    if authored, controlID == nil, suppliedID == nil { try persistence.requireMutationAdmission() }
+    let id = controlID ?? suppliedID ?? UUID()
     let existing = try await persistence.submit { try $0.chatJob(id) }
-    if let existing, existing.input.action != action { throw NotebookTransportError.invalidAcknowledgement }
+    if let existing {
+      guard existing.input.action == action, existing.input.author == author,
+        try await persistence.submit({ try $0.chatDestination(id) }) == computer else {
+        throw NotebookTransportError.invalidAcknowledgement
+      }
+      if existing.isTerminal { return existing }
+    }
+    if existing == nil, authored { try persistence.requireMutationAdmission() }
     let input = existing?.input ?? NotebookChatInput(id: id, author: author, action: action)
-    do { _ = try await persistence.submit(writesStore: true) { try $0.saveChatInput(input, to: computer) } }
-    catch {
-      guard try await persistence.submit({ try $0.chatJob(input.id)?.input == input && $0.chatDestination(input.id) == computer }) else { throw error }
+    if existing == nil {
+      do {
+        if authored {
+          _ = try await persistence.submit(owner: .chatSubmission(input.id)) { try $0.saveChatInput(input, to: computer) }
+        } else {
+          _ = try await persistence.submit(writesStore: true) { try $0.saveChatInput(input, to: computer) }
+        }
+      } catch {
+        guard try await persistence.submit({ try $0.chatJob(input.id)?.input == input && $0.chatDestination(input.id) == computer }) else { throw error }
+      }
     }
     try await refreshJobs()
     if !connected || computer != peer { return try await persistence.submit { try $0.chatJob(input.id)! } }

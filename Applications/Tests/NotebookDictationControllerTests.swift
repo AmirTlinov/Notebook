@@ -48,6 +48,89 @@ import NotebookCore
     func stop() { started = false }
     func append(data: Data, audio: NotebookAcousticUtterance.Sample) {}
   }
+  func testHistoryAdmissionRevokesLateAudioPreparationAndReopensTheSameWaitingOwner() async throws {
+    let fixture = try Fixture(fresh: true); await fixture.start()
+    let dictation = fixture.chat.dictation, readiness = NotebookHistoryReadiness()
+    fixture.queue.authoredAdmission = { readiness.authoredAdmissionError }
+    let workspaceID = try await fixture.queue.submit { try $0.workspaceHeader().workspaceID }
+    func request() -> NotebookHistoryReadiness.Request {
+      .init(id: UUID(), workspaceID: workspaceID, devices: [fixture.author, fixture.peer],
+        acceptedGeneration: fixture.queue.acceptedMutationGeneration)
+    }
+    var permission: CheckedContinuation<Bool, Never>?, prompts = 0
+    let recognizer = SuspendedAddress()
+    var activate: ((NotebookWakeActivation) -> Void)?
+    dictation.addressAuthorized = { false }
+    dictation.authorizeAddress = { prompts += 1; return await withCheckedContinuation { permission = $0 } }
+    dictation.makeAddressRecognizer = { _, _, action, _ in activate = action; return recognizer }
+    defer {
+      permission?.resume(returning: false); recognizer.continuation?.resume()
+      dictation.shutdown()
+    }
+    dictation.setForeground(true); dictation.setMicrophoneMuted(false)
+    try await wait { permission != nil }
+    let first = request(); try readiness.begin(first)
+    // No environment callback withdraws this attempt: the real post-await
+    // admission check must stop it before recognizer or microphone capture.
+    permission?.resume(returning: true); permission = nil
+    try await wait { dictation.phase == .idle }
+    XCTAssertNil(recognizer.continuation); XCTAssertFalse(recognizer.started)
+    XCTAssertEqual(fixture.capture.listens, 0); XCTAssertEqual(fixture.capture.starts, 0)
+    XCTAssertNil(dictation.pending)
+    let host = UIView(); fixture.chat.voice.host = host
+    for phase in 0..<3 {
+      let flushed = await fixture.queue.flush(); XCTAssertTrue(flushed)
+      if phase == 1 {
+        let seal = try XCTUnwrap(fixture.queue.sealWorkspaceSelection(expectedGeneration: fixture.queue.acceptedMutationGeneration))
+        try readiness.seal(first, writerSeal: seal)
+      } else if phase == 2 { try readiness.releaseWriterForResume(first, releaseWriter: fixture.queue.finishWorkspaceSelection) }
+      dictation.setMicrophoneMuted(true); dictation.setMicrophoneMuted(false)
+      dictation.environmentChanged(); await dictation.begin()
+      await fixture.chat.voice.begin(); await fixture.chat.voice.arm()
+      XCTAssertTrue(dictation.microphoneMuted)
+      XCTAssertEqual(prompts, 1); XCTAssertEqual(fixture.capture.starts, 0); XCTAssertEqual(fixture.capture.listens, 0)
+      XCTAssertNil(dictation.pending); XCTAssertFalse(fixture.chat.voice.capturing)
+      XCTAssertNil(fixture.chat.voice.state); XCTAssertNil(fixture.chat.voice.error)
+      XCTAssertEqual(fixture.chat.voice.phase, .off); XCTAssertTrue(host.subviews.isEmpty)
+      XCTAssertEqual(fixture.submitCount, 0); XCTAssertTrue(fixture.queries.isEmpty)
+      XCTAssertEqual(fixture.chat.draft, "Вопрос:")
+    }
+    try readiness.finish(first, releaseWriter: fixture.queue.finishWorkspaceSelection)
+    dictation.authorizeAddress = { prompts += 1; return true }; dictation.addressAuthorized = { true }
+    dictation.setMicrophoneMuted(false)
+    try await wait { recognizer.continuation != nil }
+    let second = request(); try readiness.begin(second)
+    let lateActivation = try XCTUnwrap(activate)
+    recognizer.continuation?.resume(); recognizer.continuation = nil
+    try await wait { dictation.phase == .idle }
+    XCTAssertFalse(recognizer.started); XCTAssertEqual(fixture.capture.listens, 0)
+    lateActivation(.init(frame: 0, hasRequest: true))
+    try await Task.sleep(for: .milliseconds(40))
+    XCTAssertEqual(fixture.capture.starts, 0); XCTAssertNil(dictation.pending)
+    try readiness.finish(second, releaseWriter: fixture.queue.finishWorkspaceSelection)
+    let currentRecognizer = Address()
+    dictation.makeAddressRecognizer = { _, _, action, _ in activate = action; return currentRecognizer }
+    dictation.environmentChanged(); try await wait { dictation.waiting }
+    XCTAssertTrue(fixture.capture.listening); XCTAssertTrue(currentRecognizer.started)
+    let third = request(); try readiness.begin(third)
+    activate?(.init(frame: 0, hasRequest: true))
+    try await wait { dictation.phase == .idle }
+    XCTAssertFalse(fixture.capture.listening); XCTAssertEqual(fixture.capture.starts, 0)
+    XCTAssertNil(dictation.pending); XCTAssertEqual(fixture.submitCount, 0)
+    try readiness.finish(third, releaseWriter: fixture.queue.finishWorkspaceSelection)
+    dictation.makeAddressRecognizer = { _, _, action, _ in activate = action; return Address() }
+    dictation.environmentChanged(); try await wait { dictation.waiting }
+    await dictation.begin(); XCTAssertTrue(dictation.recording)
+    let recording = try XCTUnwrap(dictation.pending?.id)
+    let fourth = request(); try readiness.begin(fourth)
+    dictation.cancel()
+    try await wait { fixture.queries.contains(.cancel(recording)) }
+    XCTAssertNil(dictation.pending); XCTAssertFalse(fixture.capture.listening)
+    XCTAssertEqual(dictation.phase, .idle); XCTAssertEqual(fixture.submitCount, 0)
+    XCTAssertEqual(fixture.chat.draft, "Вопрос:")
+    try readiness.finish(fourth, releaseWriter: fixture.queue.finishWorkspaceSelection)
+    await fixture.close()
+  }
   func testAddressSendsAfterSilenceThroughTheSameOutboxWithoutTouchingTheDraftOrCalling() async throws {
     let fixture = try Fixture(fresh: true); await fixture.start()
     let dictation = fixture.chat.dictation, recognizer = Address()

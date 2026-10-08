@@ -71,6 +71,19 @@ export function createServer(socketPath=defaultSocketPath(),options:{bootstrapRu
     await admit(deadline);
     return operation(deadline);
   },pending);
+  server.registerTool("notebook_history_readiness",{
+    title:"Compare accepted history on the admitted Notebook pair",
+    description:"Coordinate a reversible history observation on exactly two installed devices. start temporarily closes new authored work while accepted writes and delivery drain, compares bounded immutable metadata, and resumes the same owners. status and cancel attach to the original requestID. The report preserves unknown facts and grants no format activation or history cleanup.",
+    inputSchema:z.discriminatedUnion("operation",[
+      z.object({operation:z.literal("start"),requestID:z.uuid(),deviceIDs:z.array(z.uuid()).length(2)
+        .refine(values=>new Set(values.map(value=>value.toLowerCase())).size===2,"Two distinct devices are required")}).strict(),
+      z.object({operation:z.literal("status"),requestID:z.uuid()}).strict(),
+      z.object({operation:z.literal("cancel"),requestID:z.uuid()}).strict(),
+    ]),
+    outputSchema:contextOutput,
+    annotations:{readOnlyHint:false,destructiveHint:false,openWorldHint:false,idempotentHint:true},
+  },(input,ctx)=>admittedResponse(async deadline=>({value:{status:"ready",value:await runBridge<Value>(
+    socketPath,{command:"historyReadiness",historyReadiness:input},{deadline,signal:ctx.mcpReq.signal})}})));
   server.registerTool("notebook_workspaces",{
     title:"Manage personal Notebook workspaces",
     description:"List, create, select, rename or recover personal workspaces through the Notebook runtime owner, including when no workspace is selected. list takes no other fields; create and rename require id and name; select requires id; retry accepts an optional id to recover that exact workspace. Generate one UUID for create and reuse it with the same arguments after an uncertain response. Accepted content edits retain their original workspace owner. Returns runtime status, the current workspace catalog and any recovery or catalog error.",

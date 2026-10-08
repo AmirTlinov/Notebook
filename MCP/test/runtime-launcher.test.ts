@@ -16,7 +16,7 @@ function callTool(client:Client,...[input,...rest]:Parameters<Client['callTool']
 
 const status={kind:'notebookRuntime',ready:true,pid:1234,state:'workspaceRequired',protocolVersion:1,build:'248'};
 
-async function owner(t:TestContext, reply:(request:Record<string,unknown>)=>Record<string,unknown>|null, endpoint?:string) {
+async function owner(t:TestContext, reply:(request:Record<string,unknown>, connection:Socket)=>Record<string,unknown>|null|undefined, endpoint?:string) {
   const root=endpoint?dirname(endpoint):await mkdtemp('/tmp/notebook-launch-');
   await chmod(root,0o700);
   const socket=endpoint??join(root,'bridge.sock'), connections=new Set<Socket>();
@@ -27,7 +27,8 @@ async function owner(t:TestContext, reply:(request:Record<string,unknown>)=>Reco
       data=Buffer.concat([data,chunk]);
       if(data.length<4 || data.length<4+data.readUInt32BE(0)) return;
       const envelope=JSON.parse(data.subarray(4).toString('utf8'));
-      const response=reply(envelope.request);
+      const response=reply(envelope.request,connection);
+      if(response===undefined)return;
       if(response===null){connection.end();return;}
       const body=Buffer.from(JSON.stringify({version:1,id:envelope.id,...response}));
       const length=Buffer.alloc(4);length.writeUInt32BE(body.length);
@@ -147,15 +148,35 @@ test('startup summary counts retries without logging successful polls or private
 
 test('timeout retains the last owner refusal without tracing its message or private context',async t=>{
   const detail={code:'owner_unavailable',message:'Runtime is draining accepted work.',privateReply:'private-owner-context'};
-  const host=await owner(t,()=>({error:detail})),events:RuntimeStartupEvent[]=[];
+  let elapsed=0,polls=0;
+  t.mock.method(performance,'now',()=>elapsed);
+  t.mock.timers.enable({apis:['setTimeout']});
+  let firstClosed!:()=>void,heldRequest!:()=>void;
+  const refused=new Promise<void>(resolve=>{firstClosed=resolve;}),held=new Promise<void>(resolve=>{heldRequest=resolve;});
+  const host=await owner(t,(request,connection)=>{
+    assert.deepEqual(request,{command:'runtimeStatus'});
+    if(++polls===1){connection.once('close',firstClosed);return {error:detail};}
+    heldRequest();return undefined;
+  }),events:RuntimeStartupEvent[]=[];
   await host.start();
-  await assert.rejects(ensureRuntime('/runtime/NotebookRuntime.app',host.socket,status.build,
+  const rejected=assert.rejects(ensureRuntime('/runtime/NotebookRuntime.app',host.socket,status.build,
     {timeoutMilliseconds:150,launch:async()=>assert.fail('No second owner'),trace:event=>events.push(event)}),(error:Error)=>{
-    assert.match(error.message,/Last attempt: owner_unavailable: Runtime is draining accepted work/);
+    assert.match(error.message,/Last observed owner refusal: owner_unavailable: Runtime is draining accepted work/);
+    assert.match(error.message,/Last attempt: ipc_timeout\./);
+    assert(!error.message.includes(detail.privateReply));
     assert(error.cause instanceof BridgeError);assert.deepEqual(error.cause.detail,detail);return true;
   });
+  // Socket closure follows the parsed first reply. Advance only the existing
+  // retry/deadline timers; permission checks, framing and both IPC calls are real.
+  await refused;
+  elapsed=100;t.mock.timers.tick(100);
+  await held;
+  elapsed=150;t.mock.timers.tick(50);
+  await rejected;
+  assert.equal(polls,2);
   assert.deepEqual(events.map(value=>value.phase),['startup.begin','startup.failed']);
-  assert.equal(events[1]!.lastErrorCode,detail.code);
+  assert.equal(events[1]!.attempts,2);assert.equal(events[1]!.elapsedMilliseconds,150);
+  assert.equal(events[1]!.lastErrorCode,'ipc_timeout');assert.equal(events[1]!.lastOwnerRefusalCode,detail.code);
   assert(!JSON.stringify(events).includes(detail.privateReply));assert(!JSON.stringify(events).includes(detail.message));
 });
 

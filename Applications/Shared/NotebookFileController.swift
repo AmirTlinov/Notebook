@@ -19,6 +19,7 @@ final class NotebookFileController {
   private(set) var notice: String?
   private(set) var loading = false
   private(set) var saving = false
+  var hasPendingAuthoredPreparation: Bool { saving }
   var remoteAvailable: Bool { chat?.connected == true && document?.address.computer == chat?.computerID }
   let notes: NotebookCodeAnnotations
   private(set) var navigation: (id: UUID, file: NotebookFileAddress, range: NSRange)?
@@ -36,6 +37,18 @@ final class NotebookFileController {
   @ObservationIgnored private var directoryRetries: [NotebookFileAddress: (after: ContinuousClock.Instant, more: Bool)] = [:]
   @ObservationIgnored private var directoryReads: [NotebookFileAddress: ContinuousClock.Instant] = [:]
   @ObservationIgnored private var directoryPages: [NotebookFileAddress: Int] = [:]
+
+  func permitsNativeMutation() -> Bool {
+    guard !stopped else { return false }
+    do { try persistence.requireMutationAdmission(); return true }
+    catch { return false }
+  }
+
+  private func admitAuthoredMutation() -> Bool {
+    guard !stopped else { return false }
+    do { try persistence.requireMutationAdmission(); return true }
+    catch { self.error = error.localizedDescription; return false }
+  }
 
   init(persistence: NotebookPersistenceQueue, author: UUID) { self.persistence = persistence; self.author = author; notes = .init(persistence: persistence, author: author) }
   func start() async throws {
@@ -205,8 +218,10 @@ final class NotebookFileController {
   func edit(_ text: String, address: NotebookFileAddress, selection: Int, scroll: Double) {
     guard !stopped, notes.changingFile != address, !notes.contactActive, var value = document, value.address == address else { return }
     guard text.utf8.count <= NotebookFileVersion.maximumBytes else { error = "Черновик превышает 2 МиБ. Последний принятый текст сохранён."; return }
+    let changesText = value.text != text
+    guard !changesText || admitAuthoredMutation() else { return }
     value.text = text; value.selection = min(max(0, selection), text.utf16.count); value.scroll = max(0, scroll)
-    document = value; persistDocument()
+    document = value; persistDocument(authored: changesText)
   }
   func readPosition(address: NotebookFileAddress, selection: Int, scroll: Double) {
     guard !stopped, notes.changingFile != address, var value = document, value.address == address, scroll.isFinite else { return }
@@ -233,22 +248,25 @@ final class NotebookFileController {
       }
     } catch { if isCurrent() { self.error = error.localizedDescription } }
   }
-  func resolveUsingMac() { guard !notes.contactActive, let other = document?.other else { return }; document?.text = other; document?.base = other; document?.other = nil; document?.selection = 0; notice = nil; persistDocument() }
+  func resolveUsingMac() { guard !notes.contactActive, let other = document?.other, admitAuthoredMutation() else { return }; document?.text = other; document?.base = other; document?.other = nil; document?.selection = 0; notice = nil; persistDocument(authored: true) }
   /// The person deliberately keeps their edited resolution against this exact
   /// observed version. A newer Mac change still goes through the same merge.
-  func resolveUsingDraft() { guard !notes.contactActive, let other = document?.other else { return }; document?.base = other; document?.other = nil; notice = nil; persistDocument() }
+  func resolveUsingDraft() { guard !notes.contactActive, let other = document?.other, admitAuthoredMutation() else { return }; document?.base = other; document?.other = nil; notice = nil; persistDocument(authored: true) }
 
   func save() {
-    guard !stopped, !notes.contactActive, !saving, let value = document, value.pending == nil, value.rename == nil, value.other == nil, value.text != value.base else { return }
+    guard !stopped, !notes.contactActive, !saving, let value = document, value.pending == nil, value.rename == nil, value.other == nil, value.text != value.base,
+      admitAuthoredMutation() else { return }
     saving = true; error = nil
     upload = Task { [weak self] in
       guard let self else { return }; defer { saving = false; upload = nil }
       do {
+        try persistence.requireMutationAdmission()
         let id = UUID(), payload = try JSONEncoder().encode(NotebookFileEdit(address: value.address, base: value.base, text: value.text))
         let digest = NotebookFileVersion.hash(payload)
         var offset = 0
         while offset < payload.count {
           try Task.checkCancellation()
+          try persistence.requireMutationAdmission()
           let chunk = payload.subdata(in: offset..<min(payload.count, offset + NotebookFileVersion.chunkBytes))
           guard case .uploaded(let received) = try await query(.upload(.init(id: id, digest: digest, total: payload.count, offset: offset, data: chunk))), received == offset + chunk.count else { throw NotebookTransportError.invalidAcknowledgement }
           offset = received
@@ -256,10 +274,11 @@ final class NotebookFileController {
         try Task.checkCancellation()
         // Do not bind an older asynchronous save to a newly opened document.
         var draft = document?.address == value.address ? document! : try await persistence.submit { try $0.fileDraft(value.address) ?? value }
+        try persistence.requireMutationAdmission()
         draft.pending = id; draft.submitted = value.text
         let input = NotebookChatInput(id: id, author: author, action: .saveFile(value.address))
         let savedDraft = draft
-        _ = try await persistence.submit(writesStore: true) { try $0.saveFileSubmission(input, draft: savedDraft) }
+        _ = try await persistence.submit(owner: .fileSubmission(id)) { try $0.saveFileSubmission(input, draft: savedDraft) }
         if document?.address == value.address {
           // Text typed during the database wait is newer than savedDraft.
           document?.pending = id; document?.submitted = value.text; persistDocument()
@@ -269,12 +288,13 @@ final class NotebookFileController {
     }
   }
   func rename(to path: String) async {
-    guard !stopped, !notes.contactActive, !saving, let value = document, value.pending == nil, value.rename == nil, remoteAvailable else { return }
+    guard !stopped, !notes.contactActive, !saving, let value = document, value.pending == nil, value.rename == nil, remoteAvailable,
+      admitAuthoredMutation() else { return }
     saving = true; notes.changingFile = value.address
     defer { saving = false; notes.changingFile = document?.rename == nil ? nil : document?.address }
     let author = author, id = UUID()
     do {
-      try await persistence.submit(writesStore: true) { store in
+      try await persistence.submit(owner: .fileSubmission(id)) { store in
         let request = NotebookFileRename(address: value.address, path: path, version: .init(Data(value.base.utf8)), after: try store.currentChangeCursor())
         guard request.isValid else { throw CollaborationError("file_name", "Укажите другой относительный путь внутри проекта.") }
         var draft = value; draft.rename = id
@@ -296,7 +316,7 @@ final class NotebookFileController {
       guard let self else { return }; defer { integrating.remove(job.id) }
       do {
         let selected = document?.address == request.address
-        let moved = try await persistence.submit(publishesChanges: true) { try $0.acceptFileRename(job) }
+        let moved = try await persistence.submit(owner: .fileReceipt(request.address.id)) { try $0.acceptFileRename(job) }
         guard !stopped, selected, document?.address == request.address, let moved else { return }
         document = moved; window.selected = moved.address; navigation = nil; resetTree()
         error = job.error; notice = job.error ?? "Файл переименован на Mac; черновик и пометки сохранены"
@@ -345,9 +365,15 @@ final class NotebookFileController {
     guard let chat, value.address == nil || value.address?.computer == chat.computerID else { throw NotebookTransportError.disconnected }
     return try await chat.fileQuery(value)
   }
-  private func persistDocument() {
+  private func persistDocument(authored: Bool = false) {
     guard !stopped, let value = document else { return }
-    persistence.enqueue(owner: .fileDraft(value.address.id)) { try $0.saveFileDraft(value); return false }
+    if authored {
+      persistence.enqueue(owner: .fileDraft(value.address.id)) { try $0.saveFileDraft(value); return false }
+    } else {
+      // A read position or an accepted remote result updates the existing draft;
+      // it cannot admit another text edit through the authored phase.
+      persistence.enqueue(owner: .fileObservation(value.address.id)) { try $0.saveFileDraft(value); return false }
+    }
   }
   private func persistWindow() {
     guard !stopped, loaded else { return }

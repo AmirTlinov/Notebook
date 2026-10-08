@@ -8,7 +8,7 @@ public struct NotebookCommand: Codable, Sendable {
     case apply, admitAction, prepareAction, commitAction, undo, action, actions, continuations, search, contexts, point, delivery
     case referenceStatus, referenceStatuses, actionDetails, reference, placement, render, pageVision, read, artifact, presentation
     case script, scriptContext, scriptArtifact, importProgram, importDocument, importDocumentResource
-    case runtimeStatus, runtimeWorkspace
+    case runtimeStatus, runtimeWorkspace, historyReadiness
   }
   public var command: Kind
   public var query: String?
@@ -43,12 +43,13 @@ public struct NotebookCommand: Codable, Sendable {
   public var documentImport: NotebookDocumentImportRequest?
   public var documentResourceImport: NotebookDocumentResourceImportRequest?
   public var runtimeWorkspace: NotebookRuntimeWorkspaceRequest?
+  public var historyReadiness: NotebookHistoryReadinessRequest?
 
   enum CodingKeys: String, CodingKey, CaseIterable {
     case command, query, filters, next, limit, action, actionID, target, elementID, reference
     case expectedRevision, region, worldOrigin, pageIndex, placement, contextID
     case replyTo, references, queries, expectedCursor, artifact, presentation, cancel, fingerprint, script, scriptContext, actionPage, scriptEffect, readSnapshots, programImport, documentImport, documentResourceImport
-    case runtimeWorkspace
+    case runtimeWorkspace, historyReadiness
   }
 
   public init(command: Kind) { self.command = command }
@@ -85,7 +86,7 @@ public struct NotebookReadQuery: Codable, Sendable {
     case observation, workspaceHeader, itemHeaders, itemHeader, itemLifecycle, workingSet, sceneWindow, scenePaintOrder
     case page, pageHeader, pageElement, pageInkActions, pageInkAction, documentHeader, document, documentState, documentFile, documentFileBytes, documentDirectory, documentStructure, documentProgram, boardItem, boardElement, boardContentRevision, ownerBoard, notebookPages, notebookDirectory, notebookPosition, spatialInk, presence
     case attentionEvidence, contexts, contextEntries, actions, currentViewReceipt, pageVisionReceipt, targetRenderReceipt
-    case renderRequests, delivery, actionSnapshots, runtime, selection, codeFragment, codeFragments, storageUsage, actionHistoryPreflight
+    case renderRequests, delivery, actionSnapshots, runtime, selection, codeFragment, codeFragments, storageUsage, actionHistoryPreflight, historyPhysicalClosure, replicaInventory
   }
   public var kind: Kind
   public var scope: NotebookObservationScope?
@@ -117,6 +118,7 @@ public struct NotebookReadQuery: Codable, Sendable {
   public var sourceVersion: ContentFieldVersion?
   public var offset: Int64?
   public var maxBytes: Int?
+  public var replicaSection: NotebookReplicaInventoryCursor.Section?
   public init(kind: Kind, id: UUID? = nil, revision: String? = nil, limit: Int? = nil) {
     self.kind = kind; self.id = id; self.revision = revision; self.limit = limit
   }
@@ -129,6 +131,9 @@ public struct NotebookCommandDispatcher: Sendable {
   public init(store: NotebookStore) { self.store = store }
 
   public func handle(_ request: NotebookCommand) throws -> JSONValue {
+    if request.command == .historyReadiness {
+      throw invalid("native_owner_required", "Сверкой пары управляет установленный владелец Notebook.")
+    }
     if request.command == .runtimeStatus || request.command == .runtimeWorkspace {
       throw invalid("runtime_owner_required", "Запуском и пространствами управляет владелец Notebook runtime.")
     }
@@ -137,7 +142,7 @@ public struct NotebookCommandDispatcher: Sendable {
         return try store.commandTransaction(readAllowance: .agentCommand) { try execute(request) }
       }
       let requiresCurrentFormat = request.command == .read
-        && request.queries?.contains(where: { $0.kind == .storageUsage || $0.kind == .actionHistoryPreflight }) == true
+        && request.queries?.contains(where: { $0.kind == .storageUsage || $0.kind == .actionHistoryPreflight || $0.kind == .historyPhysicalClosure || $0.kind == .replicaInventory }) == true
       return try store.readTransaction(requiringCurrentFormat: requiresCurrentFormat) { snapshot in
         try snapshot.currentSQL!.limitReads(.agentCommand)
         return try NotebookCommandDispatcher(store: snapshot).execute(request)
@@ -171,7 +176,7 @@ public struct NotebookCommandDispatcher: Sendable {
 
   private func execute(_ request: NotebookCommand) throws -> JSONValue {
     switch request.command {
-    case .runtimeStatus, .runtimeWorkspace:
+    case .runtimeStatus, .runtimeWorkspace, .historyReadiness:
       throw invalid("runtime_owner_required", "Запуском и пространствами управляет владелец Notebook runtime.")
     case .script, .scriptContext, .importProgram, .importDocument, .importDocumentResource:
       throw invalid("script_owner_unavailable", "Программы обслуживает координатор установленного Mac-помощника.")
@@ -297,7 +302,8 @@ public struct NotebookCommandDispatcher: Sendable {
       guard queries.count <= 128 else { throw invalid("resource_limit", "Один запрос читает до 128 адресованных владельцев.") }
       guard queries.filter({ $0.kind == .contexts }).count <= 1,
         queries.filter({ $0.kind == .contextEntries }).count <= 1,
-        queries.filter({ $0.kind == .actionHistoryPreflight }).count <= 1 else {
+        queries.filter({ $0.kind == .actionHistoryPreflight || $0.kind == .historyPhysicalClosure }).count <= 1,
+        queries.filter({ $0.kind == .replicaInventory }).count <= 1 else {
         throw invalid("resource_limit", "Один срез читает один каталог фрагментов и одну страницу истории.")
       }
       let pages = Set(queries.flatMap { query in (query.kind == .page ? query.id.map { [$0] } ?? [] : []) + (query.pageIDs ?? []) })
@@ -330,6 +336,8 @@ public struct NotebookCommandDispatcher: Sendable {
 
   private func read(_ query: NotebookReadQuery) throws -> JSONValue {
     switch query.kind {
+    case .historyPhysicalClosure: return try store.historyPhysicalClosureRead(query)
+    case .replicaInventory: return try store.replicaInventoryRead(query)
     case .actionHistoryPreflight: return try store.actionHistoryPreflight(query)
     case .storageUsage: return try .encode(store.storageUsage())
     case .workspaceHeader: return try .encode(store.workspaceHeader())

@@ -135,11 +135,12 @@ final class DocumentRenderRegistry {
     #endif
   }
 
-  func resumePrograms() async {
+  func resumePrograms(continuing: @MainActor () -> Bool = { true }) async {
     #if os(iOS)
-      await DocumentPagePresentationOwner.resumePrograms()
+      await DocumentPagePresentationOwner.resumePrograms(continuing: continuing)
     #else
       for entry in Array(renderers.values) where entry.retiringValue == nil {
+        guard continuing() else { return }
         if let owner = entry.value, owner.resourceOwner === SceneRenderResources.shared, !owner.isInvalidated { await owner.resumePrograms() }
       }
     #endif

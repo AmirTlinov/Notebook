@@ -21,6 +21,61 @@ final class NotebookPersistenceQueueTests: XCTestCase {
   }
 
   @MainActor
+  func testHistoryReadinessRetainsAcceptedRetryAndAdmitsDeliveryBeforeTheFinalSeal() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), device = UUID(), peer = UUID()
+    let header = try store.initializeWorkspace(actor: device, pageSize: .init(width: 834, height: 1194))
+    let queue = NotebookPersistenceQueue(store: store), readiness = NotebookHistoryReadiness()
+    queue.authoredAdmission = { readiness.authoredAdmissionError }
+    let marker = root.appendingPathComponent("retry-ready"), transactionID = UUID()
+    let accepted = CompletionProbe<UUID>(), late = CompletionProbe<UUID>(), acknowledgement = CompletionProbe<Bool>()
+    queue.enqueueCommand(owner: .pageInk(UUID()), { store in
+      guard FileManager.default.fileExists(atPath: marker.path) else { throw StorageUnavailable.unavailable }
+      try store.publishRecords(writes: ["readiness-accepted.json": .string(transactionID.uuidString)])
+      return transactionID
+    }, completion: accepted.record)
+    let request = NotebookHistoryReadiness.Request(id: UUID(), workspaceID: header.workspaceID,
+      devices: [device, peer], acceptedGeneration: queue.acceptedMutationGeneration)
+    try readiness.begin(request)
+    queue.enqueueCommand(owner: .command(.admitAction), { _ in
+      XCTFail("A new authored intent entered the paused writer")
+      return UUID()
+    }, completion: late.record)
+    XCTAssertNil(queue.reserveWrite(.init(payloadBytes: 1, completionBytes: 1)))
+    queue.enqueueCommand(writesStore: true, { store in
+      try store.acknowledgePeer(peerID: peer, through: 0)
+      return true
+    }, completion: acknowledgement.record)
+    let blocked = await queue.flush()
+    XCTAssertFalse(blocked)
+    XCTAssertEqual(queue.pendingCount, 2, "Accepted content and delivery retain the original FIFO")
+    XCTAssertTrue(accepted.values.isEmpty)
+    XCTAssertTrue(acknowledgement.values.isEmpty)
+    guard case .failure(let error) = try XCTUnwrap(late.values.first),
+      let refusal = error as? CollaborationError else { return XCTFail("Late authorship was not refused") }
+    XCTAssertEqual(refusal.code, "history_readiness_pending")
+    try Data().write(to: marker)
+    queue.retry()
+    let saved = await queue.flush()
+    XCTAssertTrue(saved)
+    XCTAssertEqual(try accepted.values.first?.get(), transactionID)
+    XCTAssertEqual(try acknowledgement.values.first?.get(), true)
+    XCTAssertEqual(try store.storedValue("readiness-accepted.json"), .string(transactionID.uuidString))
+    let seal = try XCTUnwrap(queue.sealWorkspaceSelection(expectedGeneration: queue.acceptedMutationGeneration))
+    try readiness.seal(request, writerSeal: seal)
+    let afterSeal = CompletionProbe<Bool>()
+    queue.enqueueCommand(writesStore: true, { _ in XCTFail("Control write crossed the final seal"); return true },
+      completion: afterSeal.record)
+    XCTAssertThrowsError(try afterSeal.values.first?.get())
+    try readiness.finish(request, releaseWriter: queue.finishWorkspaceSelection)
+    XCTAssertTrue(readiness.permitsAuthorship)
+    XCTAssertTrue(queue.permitsNewWorkspaceMutation)
+    XCTAssertNil(queue.failure)
+    XCTAssertEqual(queue.pendingCount, 0)
+  }
+
+  @MainActor
   func testDomainRejectionWithoutAnObserverClosesOnlyItsAcceptedSlot() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }

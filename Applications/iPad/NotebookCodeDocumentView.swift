@@ -205,7 +205,8 @@ struct NotebookCodeEditor: UIViewRepresentable {
       files.readPosition(address: address, selection: view.selectedRange.location, scroll: max(0, view.contentOffset.y))
     }
     func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
-      !files.notes.contactActive && (textView.text as NSString).replacingCharacters(in: range, with: text).utf8.count <= NotebookFileVersion.maximumBytes
+      files.permitsNativeMutation() && !files.notes.contactActive
+        && (textView.text as NSString).replacingCharacters(in: range, with: text).utf8.count <= NotebookFileVersion.maximumBytes
     }
   }
 }

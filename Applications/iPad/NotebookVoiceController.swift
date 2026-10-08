@@ -71,23 +71,36 @@ import NotebookCore
   func dismissError() { error = nil }
   func begin() async { await prepare(waiting: false) }
   func arm() async { await prepare(waiting: true) }
+  private func preparationIsEligible(_ id: UUID) -> Bool {
+    guard captureID == id, !ending, !Task.isCancelled, host != nil, let chat else { return false }
+    return chat.permitsNativeMutation() && chat.connected && !chat.switchingComputer
+      && !chat.browsesChats && !chat.dictation.busy && chat.computerID == computer
+      && chat.threadID == state?.threadID
+  }
+  private func continuePreparation(_ id: UUID) async -> Bool {
+    guard captureID == id, !ending else { return false }
+    guard preparationIsEligible(id) else { await end(); return false }
+    return true
+  }
   private func prepare(waiting: Bool) async {
     guard captureID == nil else { return }
     guard let chat, host != nil else { error = "Голосовая поверхность ещё не готова. Попробуйте включить микрофон снова."; return }
+    guard chat.permitsNativeMutation(), !Task.isCancelled else { return }
     guard !chat.dictation.busy else { error = "Завершите диктовку или удалите запись перед голосовым разговором."; return }
     chat.dictation.suspendWaiting()
     guard !chat.switchingComputer else { error = "Дождитесь подключения выбранного Mac."; return }
     guard let thread = chat.threadID, !chat.browsesChats else { error = "Выберите чат для голосового разговора."; return }
-    guard chat.connected else { error = "Подключите Mac, чтобы начать голосовой разговор."; return }
+    guard chat.connected, let computer = chat.computerID else { error = "Подключите Mac, чтобы начать голосовой разговор."; return }
     let id = UUID(); captureID = id; activeID = waiting ? nil : id; state = .init(id: id, threadID: thread); taskTitle = chat.taskTitle; phase = .preparing; self.waiting = waiting; error = nil; muted = false; mediaReady = false; ending = false
     chat.dictation.setMicrophoneMuted(false)
-    computer = chat.computerID; submitted = false; appliedAnswer = false
+    self.computer = computer; submitted = false; appliedAnswer = false
     if waiting {
       do {
         let wake = try NotebookWakeRecognizer(language: language, address: address,
           activated: { [weak self] activation in
             Task { @MainActor [weak self] in
               guard let self, captureID == id, self.waiting, !ending, let web = self.web else { return }
+              guard await continuePreparation(id) else { return }
               self.waiting = false; self.wake = nil; activeID = id; phase = .processing
               startDeadline(id); await startOffer(web, id: id, start: activation.frame)
             }
@@ -98,19 +111,24 @@ import NotebookCore
             }
           })
         self.wake = wake
-        guard await NotebookWakeRecognizer.authorize() else { throw NotebookPersistenceQueue.Failure(message: "Для локального обращения разрешите распознавание речи в настройках iPad. Звук не передаётся в Apple.") }
-        guard captureID == id, !ending else { return }
+        let authorized = await NotebookWakeRecognizer.authorize()
+        guard await continuePreparation(id) else { return }
+        guard authorized else { throw NotebookPersistenceQueue.Failure(message: "Для локального обращения разрешите распознавание речи в настройках iPad. Звук не передаётся в Apple.") }
         acoustic = .init(); await wake.start()
+        guard await continuePreparation(id) else { await wake.stop(); return }
       } catch { if captureID == id { self.error = error.localizedDescription; await end() }; return }
     }
-    guard await AVCaptureDevice.requestAccess(for: .audio) else {
+    let authorized = await AVCaptureDevice.requestAccess(for: .audio)
+    guard await continuePreparation(id) else { return }
+    guard authorized else {
       if captureID == id { error = "Разрешите Notebook доступ к микрофону в настройках iPad."; await end() }; return
     }
-    guard captureID == id, !ending else { return }
     startDeadline(id)
     do {
       let acquired = try await SceneRenderResources.shared.acquireWebSurface(priority: .input, constructsView: true)
-      guard captureID == id, !ending, let host else { acquired.release(); return }
+      guard preparationIsEligible(id), let host else {
+        acquired.release(); _ = await continuePreparation(id); return
+      }
       lease = acquired
       let constructionBegan = ContinuousClock.now
       let configuration = WKWebViewConfiguration(); configuration.websiteDataStore = .nonPersistent()
@@ -136,11 +154,13 @@ import NotebookCore
   }
   private func startOffer(_ web: WKWebView, id: UUID, start: Int) async {
     do {
-      guard let sdp = try await web.callAsyncJavaScript("return await window.voiceOffer(start)", arguments: ["start": start], in: nil, contentWorld: .page) as? String,
-        activeID == id, !ending, let thread = state?.threadID, let chat, chat.connected else { throw NotebookTransportError.disconnected }
+      guard web === self.web, activeID == id, await continuePreparation(id) else { return }
+      let offer = try await web.callAsyncJavaScript("return await window.voiceOffer(start)", arguments: ["start": start], in: nil, contentWorld: .page)
+      guard await continuePreparation(id), web === self.web, activeID == id else { return }
+      guard let sdp = offer as? String, let thread = state?.threadID, let chat else { throw NotebookTransportError.disconnected }
       submitted = true
       let receipt = try await chat.sessionCommand(.startVoice(.init(threadID: thread, sdp: sdp)), id: id, computer: computer)
-      guard activeID == id, !ending else { return }
+      guard await continuePreparation(id), activeID == id else { return }
       guard receipt.state == .accepted else { throw NotebookPersistenceQueue.Failure(message: receipt.error ?? "Начало звонка ещё не подтверждено") }
       poll = Task { [weak self] in
         guard let self else { return }
@@ -165,8 +185,15 @@ import NotebookCore
     if activeID == nil { await end(); return }
     guard let web else { return }
     changingMute = true; defer { changingMute = false }
-    let id = captureID, value = !muted
-    do { _ = try await web.callAsyncJavaScript("await window.voiceMute(value)", arguments: ["value": value], in: nil, contentWorld: .page); guard captureID == id, !ending else { return }; muted = value; chat?.dictation.setMicrophoneMuted(value); phase = value ? .muted : .listening }
+    guard let id = captureID else { return }
+    let value = !muted
+    if !value { guard await continuePreparation(id) else { return } }
+    do {
+      _ = try await web.callAsyncJavaScript("await window.voiceMute(value)", arguments: ["value": value], in: nil, contentWorld: .page)
+      guard captureID == id, !ending else { return }
+      if !value { guard await continuePreparation(id) else { return } }
+      muted = value; chat?.dictation.setMicrophoneMuted(value); phase = value ? .muted : .listening
+    }
     catch { self.error = error.localizedDescription; await end() }
   }
   func connectionLost() {
@@ -232,8 +259,9 @@ extension NotebookVoiceController: WKNavigationDelegate, WKUIDelegate, WKScriptM
     let awaitsAddress = waiting
     Task {
       do {
+        guard await continuePreparation(id), webView === web else { return }
         _ = try await webView.callAsyncJavaScript("return await window.voicePrepare()", arguments: [:], in: nil, contentWorld: .page)
-        guard captureID == id, !ending else { return }
+        guard await continuePreparation(id), webView === web else { return }
         if awaitsAddress { if waiting { phase = .waiting; deadline?.cancel(); deadline = nil } }
         else if activeID == id { phase = .processing; await startOffer(webView, id: id, start: 0) }
       } catch { if captureID == id, !ending { self.error = error.localizedDescription; await end() } }
@@ -243,12 +271,14 @@ extension NotebookVoiceController: WKNavigationDelegate, WKUIDelegate, WKScriptM
     action.navigationType == .other && action.request.url?.lastPathComponent == "voice-shell.html" && action.request.url?.isFileURL == true ? .allow : .cancel
   }
   func webView(_ webView: WKWebView, decideMediaCapturePermissionsFor origin: WKSecurityOrigin, initiatedBy frame: WKFrameInfo, type: WKMediaCaptureType) async -> WKPermissionDecision {
-    webView === web && captureID != nil && !ending && frame.isMainFrame && type == .microphone
-      && AVCaptureDevice.authorizationStatus(for: .audio) == .authorized ? .grant : .deny
+    guard webView === web, let id = captureID, preparationIsEligible(id), frame.isMainFrame,
+      type == .microphone, AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else { return .deny }
+    return .grant
   }
   func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { if webView === web { connectionLost() } }
   func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
     guard message.webView === web, message.frameInfo.isMainFrame, captureID != nil, !ending, let body = message.body as? [String:Any] else { return }
+    if waiting, let id = captureID, !preparationIsEligible(id) { Task { _ = await continuePreparation(id) }; return }
     if body["type"] as? String == "level", let level = body["value"] as? Double, level.isFinite {
       inputLevel = muted ? 0 : min(1,max(0,level))
     } else if body["type"] as? String == "connection" {

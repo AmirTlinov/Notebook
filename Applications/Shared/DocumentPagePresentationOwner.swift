@@ -324,8 +324,10 @@ final class DocumentPagePresentationOwner {
     })
   }
 
-  static func resumePrograms(resources: SceneRenderResources = .shared) async {
+  static func resumePrograms(resources: SceneRenderResources = .shared,
+    continuing: @MainActor () -> Bool = { true }) async {
     for owner in owners.values.compactMap(\.value) where !owner.stopped && owner.resources === resources {
+      guard continuing() else { return }
       await owner.programOwner.resumeAll()
     }
   }

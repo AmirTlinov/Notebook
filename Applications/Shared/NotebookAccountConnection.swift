@@ -154,12 +154,16 @@ final class NotebookAccountConnection {
     guard active else { return }
     // Suspend direct access synchronously, before looking up the new account.
     // A late operation from the old account cannot publish or resume this owner.
-    epoch = UUID(); work?.cancel(); work = nil; retry?.cancel(); retry = nil
+    let previousWork = work, previousRetry = retry
+    epoch = UUID(); previousWork?.cancel(); work = nil; previousRetry?.cancel(); retry = nil
     sync.stop(); account = nil; spaces = []; status = .checking
     let token = epoch
     work = Task { [weak self] in
       guard let self else { return }
-      await self.service.stop(); await self.accountUnavailable()
+      await self.service.stop()
+      await previousWork?.value
+      await previousRetry?.value
+      await self.accountUnavailable()
       guard self.active, self.epoch == token else { return }
       self.work = nil; self.refresh()
     }
@@ -174,12 +178,24 @@ final class NotebookAccountConnection {
     }
   }
 
+  /// Read the complete private directory without enrolling, filtering blocked
+  /// peers, or substituting the last published list of spaces.
+  func historyDirectory() async throws -> NotebookAccountSnapshot? {
+    let token = epoch, bound = sync.savedTrust.account ?? account ?? initialBoundAccount
+    let snapshot = try await service.spaces(boundAccount: bound)
+    guard epoch == token, sync.savedTrust.account == bound || sync.savedTrust.account == nil,
+      snapshot?.account == bound || bound == nil else { throw NotebookAccountError.changed }
+    if let snapshot { try snapshot.directory.validate() }
+    return snapshot
+  }
+
   func stop() async {
     active = false; epoch = UUID(); again = false
-    let task = work; work = nil; task?.cancel()
-    retry?.cancel(); retry = nil; notifications?.cancel(); notifications = nil
+    let tasks = [work, retry, notifications].compactMap { $0 }
+    work = nil; retry = nil; notifications = nil
+    for task in tasks { task.cancel() }
     path?.cancel(); path = nil
     await service.stop()
-    await task?.value
+    for task in tasks { await task.value }
   }
 }

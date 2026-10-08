@@ -112,13 +112,36 @@ struct DocumentNativeSourceEditor: UIViewRepresentable {
       SourceSyntax.highlight(view.textStorage, around: range); applying = false
     }
     func textView(_ view: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
-      view.text.utf16.count - range.length + text.utf16.count <= session.maximumSourceLength
+      guard applying || session.permitsNativeMutation() else { return false }
+      return view.text.utf16.count - range.length + text.utf16.count <= session.maximumSourceLength
     }
   }
 }
 final class SourceTextView: UITextView, NotebookHistoryGestureTarget {
   var initialScroll: Double?
   var highlightedViewport: NSRange?
+  private var permitsSourceMutation: Bool {
+    (delegate as? DocumentNativeSourceEditor.Coordinator)?.session.permitsNativeMutation() == true
+  }
+  // UIKit's direct input methods also serve the accessory bar, completion and
+  // IME. They can bypass shouldChangeTextIn; read the same live admission before
+  // changing native text, rather than relying on a later session callback.
+  override func insertText(_ text: String) {
+    guard permitsSourceMutation else { return }
+    super.insertText(text)
+  }
+  override func deleteBackward() {
+    guard permitsSourceMutation else { return }
+    super.deleteBackward()
+  }
+  override func replace(_ range: UITextRange, withText text: String) {
+    guard permitsSourceMutation else { return }
+    super.replace(range, withText: text)
+  }
+  override func setMarkedText(_ markedText: String?, selectedRange: NSRange) {
+    guard permitsSourceMutation else { return }
+    super.setMarkedText(markedText, selectedRange: selectedRange)
+  }
   override func layoutSubviews() {
     super.layoutSubviews()
     if let scroll = initialScroll, bounds.height > 0, window != nil {
@@ -237,7 +260,10 @@ struct DocumentNativeSourceEditor: NSViewRepresentable {
       SourceSyntax.highlight(view.textStorage!, around: range); applying = false
     }
     func textView(_ view: NSTextView, shouldChangeTextIn range: NSRange, replacementString: String?) -> Bool {
-      view.string.utf16.count - range.length + (replacementString?.utf16.count ?? 0) <= session.maximumSourceLength
+      // AppKit uses nil for attributes only; source styling stays available.
+      guard let replacementString else { return true }
+      guard applying || session.permitsNativeMutation() else { return false }
+      return view.string.utf16.count - range.length + replacementString.utf16.count <= session.maximumSourceLength
     }
     func textView(_ textView: NSTextView, completions words: [String], forPartialWordRange range: NSRange, indexOfSelectedItem index: UnsafeMutablePointer<Int>?) -> [String] {
       let prefix = (textView.string as NSString).substring(with: range); index?.pointee = 0

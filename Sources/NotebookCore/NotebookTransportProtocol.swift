@@ -26,6 +26,7 @@ public enum NotebookTransportError: Error, Equatable, Sendable {
   case identityMismatch
   case invalidSequence, backpressure, invalidBlob, blobTooLarge, unexpectedBlob
   case disconnected, storageUnavailable, invalidAcknowledgement, resourceLimit
+  case historyNotDrained, historyCutStale, historyReadinessPending
 }
 
 public struct NotebookTransportIdentity: Codable, Equatable, Hashable, Sendable {
@@ -176,6 +177,7 @@ public enum NotebookTransportMessage: Codable, Equatable, Sendable {
   case committed(transactionID: UUID, cursor: UInt64)
   case contentUnavailable(NotebookTransportContentRequirement)
   case transient(NotebookTransportTransient)
+  case historyReadiness(NotebookHistoryControl)
 
   public var isControl: Bool {
     switch self {
@@ -196,6 +198,7 @@ public struct NotebookTransportPacket: Codable, Equatable, Sendable {
 
 public enum NotebookTransportFraming {
   public static func encode(_ packet: NotebookTransportPacket) throws -> Data {
+    if case .historyReadiness(let control) = packet.message { try control.validate() }
     // Base64 already bounds binary expansion to 4/3. Optional slash escaping
     // would double an allowed all-0xff chunk beyond the fixed frame budget.
     let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
@@ -227,6 +230,7 @@ public enum NotebookTransportFraming {
     catch { throw NotebookTransportError.invalidFrame }
     guard packet.version == NotebookTransportLimits.protocolVersion else { throw NotebookTransportError.unsupportedVersion }
     guard (packet.sequence == 0) == packet.message.isControl else { throw NotebookTransportError.invalidSequence }
+    if case .historyReadiness(let control) = packet.message { try control.validate() }
     return packet
   }
 
@@ -300,7 +304,7 @@ public enum NotebookTransportAuthentication {
 }
 
 /// Latest-state transients have one replaceable slot per priority. Addressed Codex
-/// requests and replies instead retain FIFO order in the same bounded send window,
+/// requests, replies and readonly history control retain FIFO order in the same bounded send window,
 /// beside sixteen durable offers and
 /// two outstanding blob-control/data slots. Bulk never consumes the last two
 /// transfer credits reserved for contact and camera. Credit is not a SQL ACK.
@@ -318,16 +322,17 @@ public struct NotebookTransportOutgoing: Sendable {
   private var controls: [Pending] = []
   private var credits: Set<UInt64> = []
   private var transients: [Int: Pending] = [:]
-  private var addressedTransients: [Int: [Pending]] = [:]
+  private var addressedMessages: [Int: [Pending]] = [:]
   private var offers: [Pending] = []
   private var blobs: [Pending] = []
   private var requests: [Pending] = []
   public private(set) var window = NotebookTransportSendWindow()
   public private(set) var pendingBytes = 0
   public init() {}
-  public var pendingCount: Int { controls.count + (credits.isEmpty ? 0 : 1) + transients.count + addressedTransients.values.reduce(0) { $0 + $1.count } + offers.count + blobs.count + requests.count }
+  public var pendingCount: Int { controls.count + (credits.isEmpty ? 0 : 1) + transients.count + addressedMessages.values.reduce(0) { $0 + $1.count } + offers.count + blobs.count + requests.count }
 
   public mutating func enqueue(_ message: NotebookTransportMessage) throws {
+    if case .historyReadiness(let control) = message { try control.validate() }
     if case .credit(let values) = message {
       guard !values.isEmpty, values.count <= 16, values.allSatisfy({ $0 > 0 }) else { throw NotebookTransportError.invalidAcknowledgement }
       let combined = credits.union(values)
@@ -345,9 +350,12 @@ public struct NotebookTransportOutgoing: Sendable {
     case .transient(let transient):
       if transient.isReplaceable { transients[transient.priority] = value }
       else {
-        guard addressedTransients.values.reduce(0, { $0 + $1.count }) < 20 else { throw NotebookTransportError.backpressure }
-        addressedTransients[transient.priority, default: []].append(value)
+        guard addressedMessages.values.reduce(0, { $0 + $1.count }) < 20 else { throw NotebookTransportError.backpressure }
+        addressedMessages[transient.priority, default: []].append(value)
       }
+    case .historyReadiness:
+      guard addressedMessages.values.reduce(0, { $0 + $1.count }) < 20 else { throw NotebookTransportError.backpressure }
+      addressedMessages[-2, default: []].append(value)
     case .offer: guard offers.count < 16 else { throw NotebookTransportError.backpressure }; offers.append(value)
     case .blobs: guard blobs.count < 2 else { throw NotebookTransportError.backpressure }; blobs.append(value)
     case .requestBlobs: guard requests.count < 2 else { throw NotebookTransportError.backpressure }; requests.append(value)
@@ -368,12 +376,12 @@ public struct NotebookTransportOutgoing: Sendable {
       return NotebookTransportPacket(sequence: 0, message: value.message)
     }
     guard window.hasCapacity else { return nil }
-    if let priority = (Array(transients.keys) + Array(addressedTransients.keys)).min(),
-      let value = addressedTransients[priority]?.first ?? transients[priority] {
+    if let priority = (Array(transients.keys) + Array(addressedMessages.keys)).min(),
+      let value = addressedMessages[priority]?.first ?? transients[priority] {
       guard value.bytes <= NotebookTransportLimits.maximumUnacknowledgedBytes - window.unacknowledgedBytes else { return nil }
-      if addressedTransients[priority]?.isEmpty == false {
-        addressedTransients[priority]?.removeFirst()
-        if addressedTransients[priority]?.isEmpty == true { addressedTransients.removeValue(forKey: priority) }
+      if addressedMessages[priority]?.isEmpty == false {
+        addressedMessages[priority]?.removeFirst()
+        if addressedMessages[priority]?.isEmpty == true { addressedMessages.removeValue(forKey: priority) }
       } else { transients.removeValue(forKey: priority) }
       pendingBytes -= value.bytes
       return NotebookTransportPacket(sequence: try window.reserve(bytes: value.bytes), message: value.message)

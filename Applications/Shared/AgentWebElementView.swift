@@ -1058,6 +1058,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
 
   @discardableResult
   private func resumeProgram() async -> Bool {
+    guard programOwner?.permitsAuthoredWork != false else { return false }
     guard frozenCheckpoint == nil, stateTransfer?.hasPendingCheckpoint != true, stateTransfer?.hasFailure != true else { return false }
     guard let web = attachedWebView, let token = loadToken else { return false }
     if restartsAfterBoundary, let element = loadedElement {
@@ -1066,11 +1067,13 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     }
     do {
       _ = try await NotebookProgramBridge.lifecycle("resume", controller: "notebookProgram", expectedToken: token, in: web)
-      guard accepts(token), attachedWebView === web else { return false }
+      guard accepts(token), attachedWebView === web,
+        programOwner?.permitsAuthoredWork != false else { return false }
       if commitsClosedBeforeReady {
         _ = try await NotebookProgramBridge.lifecycle("setCommitEnabled", controller: "notebookProgram",
           argument: .bool(allowsStateCommits), expectedToken: token, in: web)
-        guard accepts(token), attachedWebView === web else { return false }
+        guard accepts(token), attachedWebView === web,
+          programOwner?.permitsAuthoredWork != false else { return false }
         commitsClosedBeforeReady = false
       }
       resumeFailed = false; resumeRetry?.removeFromSuperview(); resumeRetry = nil

@@ -155,9 +155,14 @@ struct NotebookAcceptanceConfiguration: Codable, Equatable, Sendable {
 /// Substitutes only the unavailable CloudKit account directory in the isolated
 /// stand. The normal account connection, Keychain, TLS and delivery still run.
 /// These credentials cannot be admitted by a production bundle or another run.
-struct NotebookAcceptanceAccountService: NotebookAccountService {
+@MainActor final class NotebookAcceptanceAccountService: NotebookAccountService {
   let configuration: NotebookAcceptanceConfiguration
   let pair: NotebookAcceptanceConfiguration.Pair
+  private var observedSnapshot: NotebookAccountSnapshot?
+
+  init(configuration: NotebookAcceptanceConfiguration, pair: NotebookAcceptanceConfiguration.Pair) {
+    self.configuration = configuration; self.pair = pair
+  }
 
   func exchange(device: NotebookAccountDirectory.Device, boundAccount: String?,
     retained: [NotebookAccountDirectory.Pair], spaceName: String, publishName: Bool) async throws -> NotebookAccountSnapshot {
@@ -177,9 +182,21 @@ struct NotebookAcceptanceAccountService: NotebookAccountService {
         workspaceID: config.workspaceID, displayName: name), platform: platform, activation: nil)
       try directory.enroll(member, retained: [credential], spaceName: "Acceptance")
     }
-    return .init(account: account, directory: directory)
+    let snapshot = NotebookAccountSnapshot(account: account, directory: directory)
+    observedSnapshot = snapshot
+    return snapshot
   }
   func initialWorkspace(proposed: UUID) async throws -> UUID { configuration.workspaceID }
+  func spaces(boundAccount: String?) async throws -> NotebookAccountSnapshot? {
+    try Task.checkCancellation()
+    try configuration.validate(bundle: configuration.bundleID, enabled: true)
+    let account = "acceptance:" + configuration.runID.uuidString.lowercased()
+    guard configuration.pair == pair, boundAccount == nil || boundAccount == account else {
+      throw NotebookAccountError.changed
+    }
+    // No observed directory exists until the normal exchange has returned it.
+    return observedSnapshot
+  }
   func observe(changed: @escaping @Sendable (Bool) async -> Void) async throws {}
   func stop() async {}
 }

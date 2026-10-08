@@ -32,7 +32,8 @@ installed, admitted helper.
 - Content, addressed writes, delivery: `Sources/NotebookCore/`,
   [spatial replication](docs/spatial-replication-contract.md),
   [replication owner window](docs/replication-owner-window.md),
-  [transport](docs/transport-contract.md).
+  [transport](docs/transport-contract.md),
+  [history readiness](docs/history-readiness.md).
 - Ink, camera, composition, memory: `Applications/Shared/`,
   [native surface](docs/native-surface.md),
   [performance](docs/performance.md),

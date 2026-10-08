@@ -60,3 +60,42 @@ func fullBlobWindowFitsTheTransportFrame(byte: UInt8) throws {
     .init(hash: hash, offset: 0, totalBytes: Int64(bytes), data: Data(repeating: 1, count: bytes))
   }
 }
+
+@Suite struct NotebookHistoryResumeFramingTests {
+  @Test func terminalRefusalRoundTripsOnlyBoundedTypedMetadata() throws {
+    let source = NotebookReplicationSource(deviceID: UUID(), generation: UUID())
+    let refusal = NotebookHistoryControl.Refusal(origin: source, code: .resourceLimit, reason: .resourceLimit,
+      stage: .reading, sourceSection: .acceptedPhysicalHistory, transactionID: UUID(), identifier: "read_sql_work")
+    for failure in [nil, refusal] as [NotebookHistoryControl.Refusal?] {
+      let packet = NotebookTransportPacket(sequence: 3,
+        message: .historyReadiness(.resume(requestID: UUID(), refusal: failure)))
+      let frame = try NotebookTransportFraming.encode(packet)
+      #expect(frame.count < 2_048)
+      #expect(try NotebookTransportFraming.decode(Data(frame.dropFirst(4))) == packet)
+    }
+    let bytes = try JSONEncoder().encode(refusal)
+    var fields = try #require(JSONSerialization.jsonObject(with: bytes) as? [String: Any])
+    fields["reason"] = "arbitrary private context"
+    #expect(throws: DecodingError.self) {
+      _ = try JSONDecoder().decode(NotebookHistoryControl.Refusal.self,
+        from: JSONSerialization.data(withJSONObject: fields))
+    }
+  }
+
+  @Test func invalidRefusalContextAndIdentifiersCannotEnterTheTransportFrame() throws {
+    let source = NotebookReplicationSource(deviceID: UUID(), generation: UUID())
+    let invalid: [NotebookHistoryControl.Refusal] = [
+      .init(origin: source, code: .staleCut, reason: .readerChanged, stage: .resuming, transactionID: UUID()),
+      .init(origin: source, code: .staleCut, reason: .readerChanged, stage: .comparing, sourceSection: .finalReader),
+    ] + ["", "_limit", "9limit", "limit/secret", "private context", "é", String(repeating: "a", count: 81)].map {
+      .init(origin: source, code: .resourceLimit, reason: .resourceLimit, stage: .reading, identifier: $0)
+    }
+    for refusal in invalid {
+      let packet = NotebookTransportPacket(sequence: 3,
+        message: .historyReadiness(.resume(requestID: UUID(), refusal: refusal)))
+      #expect(throws: NotebookTransportError.invalidFrame) { _ = try NotebookTransportFraming.encode(packet) }
+      let unadmitted = try JSONEncoder().encode(packet)
+      #expect(throws: NotebookTransportError.invalidFrame) { _ = try NotebookTransportFraming.decode(unadmitted) }
+    }
+  }
+}

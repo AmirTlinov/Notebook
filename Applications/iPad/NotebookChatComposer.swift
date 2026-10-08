@@ -19,7 +19,7 @@ struct NotebookChatComposer: View {
         .font(.system(size: 15)).lineLimit(1...5).textFieldStyle(.plain)
         .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 4)
         .accessibilityIdentifier("notebook-chat-text")
-        .disabled(chat.dictation.busy && !chat.dictation.canRetry)
+        .disabled(!chat.permitsNativeMutation() || (chat.dictation.busy && !chat.dictation.canRetry))
       if let notice = chat.dictation.notice {
         NotebookDictationNotice(dictation: chat.dictation, message: notice)
           .padding(.horizontal, 10)

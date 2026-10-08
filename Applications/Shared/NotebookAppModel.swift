@@ -523,6 +523,186 @@ final class NotebookAppModel {
     return try await persistence.submit(publishesChanges: publishesChanges, writesStore: true, operation)
   }
 
+  func observeHistorySource<Value: Sendable>(
+    _ operation: @escaping @Sendable (NotebookQueryCut) throws -> Value
+  ) async throws -> NotebookCommandReader.Observation<Value> {
+    guard loadState == .ready, permitsExternalWork, let workspaceID = admittedWorkspaceID else {
+      throw CollaborationError("owner_unavailable", "Читатель рабочего пространства ещё не готов.")
+    }
+    let fence = persistence.captureReadFence()
+    try await fence.wait()
+    guard permitsExternalWork, admittedWorkspaceID == workspaceID else {
+      throw CollaborationError("workspace_changed", "Рабочее пространство изменилось.")
+    }
+    let observation = try await commandReader.observe(workspaceID: workspaceID, operation)
+    try Task.checkCancellation()
+    guard permitsExternalWork, admittedWorkspaceID == workspaceID else {
+      throw CollaborationError("workspace_changed", "Рабочее пространство изменилось.")
+    }
+    return observation
+  }
+
+  func observeHistoryFleet() async throws -> NotebookHistoryFleetObservation {
+    try await captureHistoryFleet().observation
+  }
+
+  func captureHistoryFleet() async throws -> NotebookHistoryFleetWitness {
+    guard permitsExternalWork, let connection = sync,
+      admittedWorkspaceID == connection.identity.workspaceID else {
+      throw CollaborationError("owner_unavailable", "Владелец подключений пространства ещё не готов.")
+    }
+    let trust = connection.savedTrust, owner = accountConnection, epoch = owner?.catalogGeneration
+    let directory: NotebookAccountSnapshot?
+    let status: NotebookHistoryFleetObservation.DirectoryStatus
+    do {
+      directory = try await owner?.historyDirectory()
+      status = directory == nil ? .missing : .verified
+    } catch NotebookAccountError.changed { throw NotebookAccountError.changed }
+    catch is CancellationError { throw CancellationError() }
+    catch { directory = nil; status = .unavailable }
+    guard permitsExternalWork, sync === connection, accountConnection === owner,
+      owner?.catalogGeneration == epoch, connection.savedTrust == trust else {
+      throw CollaborationError("stale_history_readiness", "Граница устройств или аккаунта изменилась.")
+    }
+    let observation = try connection.historyFleetObservation(directory: directory, directoryStatus: status)
+    return .init(observation: observation) { [weak self] in
+      guard let self, self.permitsExternalWork, self.sync === connection,
+        self.accountConnection === owner, owner?.catalogGeneration == epoch,
+        connection.savedTrust == trust,
+        try connection.historyFleetObservation(directory: directory, directoryStatus: status) == observation else {
+        throw CollaborationError("stale_history_readiness", "Граница устройств, аккаунта или подключения изменилась.")
+      }
+    }
+  }
+
+  func historyTransportOwner() throws -> NearbySync {
+    guard permitsExternalWork, let sync, admittedWorkspaceID == sync.identity.workspaceID else {
+      throw CollaborationError("owner_unavailable", "Владелец доставки пространства недоступен.")
+    }
+    return sync
+  }
+
+  private var hasPendingHistoryAuthoredPreparation: Bool {
+    if documentSourceEditor?.hasComposingInput == true
+      || documentImportOwner?.hasPendingAuthoredPreparation == true { return true }
+    #if os(iOS)
+      return chat?.hasPendingAuthoredPreparation == true || isSavingAgentQuestion
+        || chatSubmissionTask != nil || chat?.dictation.busy == true
+        || chat?.voice.capturing == true || chat?.files.notes.contactActive == true
+    #else
+      return false
+    #endif
+  }
+
+  func beginHistoryReadiness(_ preparation: NotebookHistoryControlPreparation) async throws -> NotebookHistoryReadiness.Request {
+    guard loadState == .ready, permitsAuthoredWork, !inputGate.isActive,
+      historyReadinessLifecycleIsBusy?() != true,
+      !hasPendingHistoryAuthoredPreparation,
+      automaticWorkspaceTransition == nil, !awaitingAccountContent,
+      admittedWorkspaceID == preparation.workspaceID,
+      preparation.endpoint(for: actorID) != nil else {
+      throw CollaborationError("input_active", "Завершите текущее действие перед сверкой истории.")
+    }
+    let contacts = inputGate.acceptedContactGeneration
+    guard await checkpointPrograms(resume: false), await finishPendingInteraction(boundary: .acceptedInput,
+      continuing: { self.permitsAuthoredWork && self.inputGate.acceptedContactGeneration == contacts
+        && self.historyReadinessLifecycleIsBusy?() != true }),
+      permitsAuthoredWork, !inputGate.isActive, inputGate.acceptedContactGeneration == contacts,
+      historyReadinessLifecycleIsBusy?() != true,
+      !hasPendingHistoryAuthoredPreparation, loadState == .ready,
+      automaticWorkspaceTransition == nil, !awaitingAccountContent,
+      admittedWorkspaceID == preparation.workspaceID else {
+      throw CollaborationError("input_active", "Источник изменился при подготовке сверки; завершите текущее действие.")
+    }
+    let request = NotebookHistoryReadiness.Request(id: preparation.requestID,
+      workspaceID: preparation.workspaceID, devices: Set(preparation.endpoints.map { $0.identity.deviceID }),
+      acceptedGeneration: persistence.acceptedMutationGeneration)
+    try historyReadiness.begin(request)
+    #if os(iOS)
+      chat?.dictation.suspendWaiting()
+    #endif
+    #if os(macOS)
+      previewPublisher?.suspendForInput()
+    #endif
+    try await cloudSync?.pauseForHistory(request.id)
+    await accountConnection?.stop()
+    accountContentTask?.cancel()
+    await accountContentTask?.value
+    accountContentTask = nil
+    guard historyReadiness.phase == .draining(request), permitsExternalWork,
+      await finishPendingPersistence(boundary: .quiescent,
+        continuing: { self.historyReadiness.phase == .draining(request) && self.permitsExternalWork }) else {
+      throw NotebookPersistenceQueue.Failure(message: "Принятая очередь ещё не сохранена; сверка истории остановлена.")
+    }
+    return request
+  }
+
+  func sealHistoryWriter(request: NotebookHistoryReadiness.Request, scope: NotebookHistoryControlScope) async throws -> UUID {
+    guard historyReadiness.phase == .draining(request), permitsExternalWork,
+      historyReadinessLifecycleIsBusy?() != true,
+      let sync, let peer = scope.endpoints.first(where: { $0.identity.deviceID != actorID }),
+      sync.historyBoundaryObservation(for: peer.identity.deviceID)?.isQuiescent == true,
+      await persistence.flush(), historyReadinessLifecycleIsBusy?() != true else { throw NotebookTransportError.historyNotDrained }
+    let actor = actorID, generation = persistence.acceptedMutationGeneration
+    _ = try await observeHistorySource { cut in
+      let metadata = try cut.replicaInventoryCut()
+      guard let local = scope.endpoint(for: actor), local.journalGeneration == metadata.journalGeneration,
+        local.head == metadata.acceptedLocalPrefix, metadata.workspaceID == scope.workspaceID else {
+        throw NotebookTransportError.historyCutStale
+      }
+      for endpoint in scope.endpoints where endpoint.identity.deviceID != actor {
+        if let head = endpoint.head, try !cut.hasAcceptedHistoryOccurrence(
+          transactionID: head.transactionID, manifestHash: head.manifestHash) {
+          throw NotebookTransportError.historyNotDrained
+        }
+      }
+      return metadata
+    }
+    guard historyReadiness.phase == .draining(request),
+      historyReadinessLifecycleIsBusy?() != true,
+      let seal = persistence.sealWorkspaceSelection(expectedGeneration: generation) else {
+      throw NotebookTransportError.historyNotDrained
+    }
+    do { try historyReadiness.seal(request, writerSeal: seal) }
+    catch { persistence.finishWorkspaceSelection(seal); throw error }
+    return seal
+  }
+
+  func ownsHistoryWriterSeal(request: NotebookHistoryReadiness.Request, seal: UUID) -> Bool {
+    historyReadiness.phase == .sealed(request, writerSeal: seal)
+      && persistence.ownsWorkspaceSelectionSeal(seal)
+      && admittedWorkspaceID == request.workspaceID && permitsExternalWork
+      && historyReadinessLifecycleIsBusy?() != true
+  }
+
+  func releaseHistoryWriter(request: NotebookHistoryReadiness.Request) throws {
+    try historyReadiness.releaseWriterForResume(request) { persistence.finishWorkspaceSelection($0) }
+  }
+
+  func finishHistoryReadiness(_ request: NotebookHistoryReadiness.Request) async throws {
+    try historyReadiness.finish(request) { persistence.finishWorkspaceSelection($0) }
+    try await cloudSync?.finishHistoryPause(request.id)
+    guard permitsExternalWork else { return }
+    #if os(iOS)
+      chat?.dictation.environmentChanged()
+    #endif
+    accountConnection?.start()
+    await resumeHistoryPrograms()
+  }
+
+  func resumeHistoryPrograms() async {
+    let continuing: @MainActor @Sendable () -> Bool = { [weak self] in
+      guard let self, self.permitsExternalWork, self.preparationIsForeground,
+        self.historyReadiness.permitsAuthorship else { return false }
+      if let current = self.historyReadiness.coordination, current.task != nil, current.state != "resuming" { return false }
+      return true
+    }
+    guard continuing() else { return }
+    await AgentWebCoordinator.resumePrograms(ownedBy: self)
+    guard continuing() else { return }
+    await DocumentRenderRegistry.shared.resumePrograms(continuing: continuing)
+  }
+
   /// Camera queries replace one pending address, never enqueue an archive
   /// read per frame. An old content revision cannot replace a newer scene.
   private func requestSceneCoverage(_ view: SessionPresence) {
@@ -724,7 +904,7 @@ final class NotebookAppModel {
   }
 
   func formatNativeText(_ reference: EditableElementReference, change: (inout NativeTextFormat) -> Void) {
-    guard selectionSession.element == reference, !selectionSession.isInteractive,
+    guard permitsAuthoredWork, selectionSession.element == reference, !selectionSession.isInteractive,
       var target = nativeTextTarget(reference) else { return }
     var format = target.style.format ?? .init(); change(&format); target.style.format = format
     target.style.runs = target.style.runs?.map { run in var run = run; change(&run.format); return run }
@@ -754,7 +934,7 @@ final class NotebookAppModel {
     return target.page == nil && target.spatial == nil
   }
   func prepareNativeTextEditing(_ target: NotebookNativeTextTarget) {
-    guard selectionSession.element == target.reference else { return }
+    guard permitsAuthoredWork, selectionSession.element == target.reference else { return }
     var target = target
     // Existing transformed text keeps its local layout width. Plain short
     // text can still open room for another character in the current camera.
@@ -1028,6 +1208,7 @@ final class NotebookAppModel {
   private var started = false
   @ObservationIgnored private var startupTask: Task<Void, Never>?
   @ObservationIgnored private let persistence: NotebookPersistenceQueue
+  @ObservationIgnored let historyReadiness = NotebookHistoryReadiness()
   private(set) var persistenceFailure: String?
   private var pendingDeletions: [UUID: Set<UUID>] = [:]
   private var completedDeletions: [UUID: UInt64] = [:]
@@ -1047,7 +1228,7 @@ final class NotebookAppModel {
     pendingDeletions.values.contains { $0.contains(id) }
   }
   private func surfaceAcceptsChanges(_ surface: SurfaceID) -> Bool {
-    guard let id = surface.ownerID else { return false }
+    guard permitsAuthoredWork, let id = surface.ownerID else { return false }
     switch surface.kind {
     case .codeFragment: return false
     case .board, .cover: return !isItemBeingDeleted(id)
@@ -1143,6 +1324,7 @@ final class NotebookAppModel {
   @ObservationIgnored var workspaceDeleted: (@MainActor () -> Void)?
   @ObservationIgnored var openWorkspaceLibrary: (@MainActor (NotebookWorkspaceTab) -> Void)?
   @ObservationIgnored var openDefaultAccountWorkspace: (@MainActor (UUID) -> Void)?
+  @ObservationIgnored var historyReadinessLifecycleIsBusy: (@MainActor () -> Bool)?
   private let requiresExistingAccountContent: Bool
   private(set) var awaitingAccountContent = false
   @ObservationIgnored private var accountContentTask: Task<Void, Never>?
@@ -1179,6 +1361,7 @@ final class NotebookAppModel {
   }
   private var isStopped: Bool { shutdownPhase == .draining || shutdownPhase == .stopped }
   var permitsExternalWork: Bool { shutdownPhase == .running && !workspaceTransitionIsFrozen }
+  var permitsAuthoredWork: Bool { permitsExternalWork && historyReadiness.permitsAuthorship }
   private var isClosing: Bool { !permitsExternalWork }
   private struct WeakScenePresentationOwner {
     weak var value: (any NotebookScenePresentationOwner)?
@@ -1311,8 +1494,9 @@ final class NotebookAppModel {
     #endif
     scenePublication.onPrepared = { [weak self] in self?.publishPreparedSceneIfPossible() }
     inputGate.bindNewContactAdmission { [weak self] in
-      self?.loadState == .ready && self?.permitsExternalWork == true
+      self?.loadState == .ready && self?.permitsAuthoredWork == true
     }
+    persistence.authoredAdmission = { [weak self] in self?.historyReadiness.authoredAdmissionError }
     peerPublication.onFailure = { [weak self] error in
       self?.publicationFailure = error.localizedDescription
       self?.persistenceFailure = error.localizedDescription
@@ -1452,6 +1636,7 @@ final class NotebookAppModel {
 
   func peerDisconnected(peerID: UUID, generation: UUID) {
     guard peerGenerations[peerID] == generation else { return }
+    historyReadiness.deliveryDisconnected(peerID: peerID, connectionID: generation)
     presentationRelay.disconnect(peerID)
     presentationPlayer.disconnected(peerID)
     #if os(iOS)
@@ -1551,6 +1736,13 @@ final class NotebookAppModel {
     connection.onDisconnect = { [weak self] peer, generation in self?.peerDisconnected(peerID: peer, generation: generation) }
     connection.onTransient = { [weak self] value, peer, generation in
       self?.receivePeerTransient(value, peerID: peer, generation: generation)
+    }
+    connection.onHistoryControl = { [weak self] control, peer, generation in
+      guard let self else { return }
+      self.historyReadiness.receive(control, peerID: peer, connectionID: generation, model: self)
+    }
+    connection.onHistoryProgress = { [weak self] _, peer, generation in
+      self?.historyReadiness.deliveryProgress(peerID: peer, connectionID: generation)
     }
     // The storage adapter publishes the committed scene in applyDurableDelivery.
     // A second transport callback must not schedule the same full read again.
@@ -1652,6 +1844,7 @@ final class NotebookAppModel {
 
   private func acceptCloudStatus(_ value: NotebookCloudStatus) { cloudStatus = value }
   func enableCloud() async {
+    guard permitsAuthoredWork else { return }
     if cloudSync == nil { await prepareCloudSync() }
     guard let account = accountConnection?.account else { return }
     await cloudSync?.enable(account: account)
@@ -1669,6 +1862,7 @@ final class NotebookAppModel {
   func deviceRouteTitle(_ id: UUID) -> String? { sync?.routeTitle(for: id) }
   func remoteAccessEnabled(_ id: UUID) -> Bool { sync?.remoteEnabled(for: id) ?? false }
   func configureRemoteAccess(_ id: UUID, route: NotebookRelayRoute?) async throws {
+    guard historyReadiness.permitsAuthorship else { throw NotebookTransportError.historyReadinessPending }
     guard let sync else { throw NotebookTransportError.disconnected }; try await sync.configureRelay(for: id, route: route)
   }
   func deviceIsConnected(_ id: UUID) -> Bool { peerGenerations[id] != nil }
@@ -1676,7 +1870,7 @@ final class NotebookAppModel {
   var canChangeDeviceConnections: Bool {
     switch accountConnection?.status {
     case .checking, .needsAccount, .accountChanged: false
-    default: !isClosing
+    default: permitsAuthoredWork
     }
   }
   func setDeviceAutomatic(_ id: UUID, allowed: Bool) async {
@@ -1696,7 +1890,7 @@ final class NotebookAppModel {
   /// the retained runtime owner.
   func prepareAutomaticWorkspaceSwitch() async -> AutomaticWorkspaceTransition? {
     guard let cursor = initialAccountWorkspaceCursor, let workspaceID = admittedWorkspaceID,
-      loadState == .ready, permitsExternalWork, automaticWorkspaceTransition == nil,
+      loadState == .ready, permitsAuthoredWork, automaticWorkspaceTransition == nil,
       !inputGate.isActive else { return nil }
     let transition = AutomaticWorkspaceTransition(id: UUID(), workspaceID: workspaceID, cursor: cursor,
       inputGeneration: inputGate.acceptedContactGeneration, mutationGeneration: persistence.acceptedMutationGeneration)
@@ -1721,7 +1915,8 @@ final class NotebookAppModel {
   }
 
   private func automaticWorkspaceInputIsUnchanged(_ transition: AutomaticWorkspaceTransition) -> Bool {
-    shutdownPhase == .running && loadState == .ready && admittedWorkspaceID == transition.workspaceID && !inputGate.isActive
+    shutdownPhase == .running && loadState == .ready && permitsAuthoredWork
+      && admittedWorkspaceID == transition.workspaceID && !inputGate.isActive
       && inputGate.acceptedContactGeneration == transition.inputGeneration
       && persistence.acceptedMutationGeneration == transition.mutationGeneration
   }
@@ -1758,7 +1953,7 @@ final class NotebookAppModel {
   /// Manual navigation closes new surface input while previously accepted
   /// workspace-bound external effects keep their original writer completion.
   func freezeManualWorkspaceSelection() -> UUID? {
-    guard shutdownPhase == .running, !workspaceTransitionIsFrozen, !inputGate.isActive else { return nil }
+    guard permitsAuthoredWork, !workspaceTransitionIsFrozen, !inputGate.isActive else { return nil }
     let seal = UUID(); manualWorkspaceSelectionSeal = seal; workspaceTransitionIsFrozen = true
     return seal
   }
@@ -2086,6 +2281,7 @@ final class NotebookAppModel {
       let order = workspace.notebookPageOrder(in: notebookID), order.root == expectedRoot, pageIndex >= 0, pageIndex <= order.count else { return nil }
     let pageID: UUID, createdPage: PageDocument?
     if pageIndex == order.count {
+      guard permitsAuthoredWork else { return nil }
       guard let selection = workspace.appendPage(in: notebookID, actor: actorID, pageSize: notebookPageSize),
         let page = selection.createdPage, let next = workspace.notebookPageOrder(in: notebookID) else { return nil }
       pageID = page.id; createdPage = page
@@ -2127,6 +2323,7 @@ final class NotebookAppModel {
   }
 
   func importDocumentFile(_ url: URL) async throws -> UUID {
+    if let error = historyReadiness.authoredAdmissionError { throw error }
     guard loadState == .ready, !isClosing, let header = workspaceHeader else {
       throw CollaborationError("owner_unavailable", "Хранилище Notebook ещё не открыто.")
     }
@@ -2163,6 +2360,7 @@ final class NotebookAppModel {
   /// Admission is synchronous, before IDs, body material, JSON or worker
   /// tasks. The accepted FIFO owns both its exact command and finite finish.
   func beginItemCreation(kind: NotebookNativeItemCreation.Kind, at center: WorldPoint) -> Task<UUID?, Never>? {
+    guard permitsAuthoredWork else { return nil }
     guard center.isValid, loadState == .ready, permitsExternalWork,
       let workspaceID = admittedWorkspaceID, let presence, !isItemBeingDeleted(presence.boardID) else { return nil }
     let budget = NotebookNativeItemCreation.cost(for: kind)
@@ -2381,6 +2579,7 @@ final class NotebookAppModel {
 
   @discardableResult
   func deleteItem(_ itemID: UUID) async -> Bool {
+    guard permitsAuthoredWork else { return false }
     // Resuming an actor continuation is not admission: another Pencil-down may
     // arrive before this task resumes. Reserve the target in the same actor
     // segment as the final contact check, before yielding to persistence.
@@ -4417,6 +4616,10 @@ final class NotebookAppModel {
     presentation:NotebookSelectionPresentation? = nil,
     batch:NotebookElementCommandBatch = .init(),
     reservation suppliedReservation:NotebookPersistenceAdmission.Reservation? = nil) -> NotebookElementCommandBatch? {
+    guard permitsAuthoredWork else {
+      if let suppliedReservation { persistence.releaseWriteReservation(suppliedReservation) }
+      return nil
+    }
     let cost:NotebookPersistenceAdmission.Cost
     if let ready {
       do {
@@ -4767,7 +4970,7 @@ final class NotebookAppModel {
   }
 
   func saveDocumentDraft(_ draft: DocumentEditingSession) {
-    guard !isItemBeingDeleted(draft.edit.documentID) else { return }
+    guard permitsAuthoredWork, !isItemBeingDeleted(draft.edit.documentID) else { return }
     if let previous = documentEditingSessions.first(where: { $0.id == draft.id }),
       previous.edit.sequence >= draft.edit.sequence { return }
     documentDraftEpoch &+= 1
@@ -4777,12 +4980,14 @@ final class NotebookAppModel {
   }
 
   func discardDocumentDraft(_ sessionID: UUID) {
+    guard permitsAuthoredWork else { return }
     documentDraftEpoch &+= 1
     documentEditingSessions.removeAll { $0.id == sessionID }
-    enqueueStoreWrite { try $0.discardDocumentDraft(sessionID) }
+    enqueueStoreWrite(owner: .documentDraft(sessionID)) { try $0.discardDocumentDraft(sessionID) }
   }
 
   func commitDocumentSource(edit: DocumentSourceEdit, onCommit: ((DocumentSourceCommitResult) -> Void)? = nil) async throws -> DocumentSourceCommitResult.Status {
+    if let error = historyReadiness.authoredAdmissionError { throw error }
     guard shutdownPhase == .running else {
       throw NotebookPersistenceQueue.Failure(message: "Notebook завершает работу; новый исходник не принят.")
     }
@@ -5182,6 +5387,17 @@ final class NotebookAppModel {
       guard loadState == .ready, permitsExternalWork else {
         throw CollaborationError("owner_unavailable", "Хранилище Notebook ещё не открыто.")
       }
+      if command.command == .historyReadiness {
+        guard let request = command.historyReadiness else {
+          throw CollaborationError("invalid_history_request", "Нужен запрос сверки истории.")
+        }
+        return try historyReadiness.handle(request, model: self)
+      }
+      if command.command == .read, command.queries?.contains(where: { $0.kind == .replicaInventory }) == true {
+        return try await historyReadiness.observeInventory(command, model: self)
+      }
+      if [.script, .importProgram, .importDocument, .importDocumentResource].contains(command.command),
+        let error = historyReadiness.authoredAdmissionError { throw error }
       if command.command == .script || command.command == .scriptContext {
         let coordinator = try scripts()
         if command.command == .script, let request = command.script {
@@ -5248,20 +5464,7 @@ final class NotebookAppModel {
 
     func readCommandCut<Value: Sendable>(
       _ operation: @escaping @Sendable (NotebookQueryCut) throws -> Value) async throws -> Value {
-      guard loadState == .ready, permitsExternalWork, let workspaceID = admittedWorkspaceID else {
-        throw CollaborationError("owner_unavailable", "Читатель рабочего пространства ещё не готов.")
-      }
-      let fence = persistence.captureReadFence()
-      try await fence.wait()
-      guard permitsExternalWork, admittedWorkspaceID == workspaceID else {
-        throw CollaborationError("owner_unavailable", "Чтение этого рабочего пространства завершено.")
-      }
-      let value = try await commandReader.read(workspaceID: workspaceID, operation)
-      try Task.checkCancellation()
-      guard permitsExternalWork, admittedWorkspaceID == workspaceID else {
-        throw CollaborationError("owner_unavailable", "Чтение этого рабочего пространства завершено.")
-      }
-      return value
+      try await observeHistorySource(operation).value
     }
 
     private func scripts() throws -> NotebookScriptCoordinator {
@@ -5502,6 +5705,7 @@ final class NotebookAppModel {
   }
 
   func selectSharedContext(_ id: UUID?) {
+    guard permitsAuthoredWork else { return }
     let actor = actorID
     let generation = replaceSelection(id == nil ? nil : .context, persistsDeselection: false)
     selectionSession.isResolvingContext = id != nil
@@ -5536,7 +5740,7 @@ final class NotebookAppModel {
     func finishDictation(sending: Bool) {
       guard let chat else { return }
       guard sending else { chat.dictation.finish(); return }
-      guard !isClosing, !isSavingAgentQuestion, !selectionSession.isResolvingContext else { return }
+      guard permitsAuthoredWork, !isSavingAgentQuestion, !selectionSession.isResolvingContext else { return }
       let thread = chat.threadID, computer = chat.computerID
       let context = captureChatSubmissionContext(chat)
       chat.dictation.finish { [weak self, weak chat] in
@@ -5555,7 +5759,7 @@ final class NotebookAppModel {
       case dictation(NotebookDictationController.Pending, String)
     }
     @discardableResult func sendChatMessage(steering: Bool = false, source: ChatMessageSource = .draft, context captured: ChatSubmissionContext? = nil, onSaved: (@MainActor (Bool) -> Void)? = nil) -> Task<Void, Never>? {
-      guard !isClosing, let chat, !isSavingAgentQuestion,
+      guard permitsAuthoredWork, let chat, !isSavingAgentQuestion,
         captured != nil || !selectionSession.isResolvingContext else { onSaved?(false); return nil }
       var submittedContext = captured
       if case .draft = source {
@@ -6363,8 +6567,7 @@ final class NotebookAppModel {
       _ = await prior?.value
       guard let self, !isStopped else { return true }
       if foreground {
-        await AgentWebCoordinator.resumePrograms(ownedBy: self)
-        await DocumentRenderRegistry.shared.resumePrograms(); return true
+        await resumeHistoryPrograms(); return true
       }
       let saved = await checkpointPrograms(resume: false)
       if !saved { showCue("Не удалось сохранить состояние программы") }
@@ -6715,7 +6918,7 @@ final class NotebookAppModel {
     createdPage: PageDocument?
   ) {
     // Creation is a fence: the following first stroke cannot overtake it.
-    persistence.enqueue { store in
+    persistence.enqueue(owner: createdPage.map { .page($0.id) } ?? .presence) { store in
       let accepted = try store.saveWorkspaceSelection(index: workspace, createdPage: createdPage)
       return accepted != workspace.notebookPageOrder(in: workspace.selectedItemID)?.root
     }
@@ -6726,7 +6929,7 @@ final class NotebookAppModel {
   }
 
   private func persistBoard(_ board: BoardHierarchy) {
-    guard let before = boardHierarchy else { return }
+    guard permitsAuthoredWork, let before = boardHierarchy else { return }
     boardHierarchy = board
     persistence.enqueueBoardEdit(before: before, after: board)
   }
@@ -6866,6 +7069,7 @@ final class NotebookAppModel {
     if shutdownPhase == .running { shutdownPhase = .closing }
     let task = Task { [self] in
       defer { shutdownTask = nil }
+      await historyReadiness.stopAndJoin()
       documentImportOwner?.stop()
       commandReader.stop()
       drawingTools.cancel()
@@ -6885,7 +7089,7 @@ final class NotebookAppModel {
       accountContentTask = nil
       await accountConnection?.stop()
       await cloudSync?.stop()
-      if let sync, !(await sync.stopAndDrainTrust()) { return false }
+      if let sync, !(await sync.stopAndDrain()) { return false }
       #if os(macOS)
         // The stopped transport retains persisted trust until the host joins
         // accepted Codex work. Closing admission does not revoke its authors.

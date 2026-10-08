@@ -50,69 +50,28 @@ struct NotebookActionHistoryObservation: Equatable, Sendable {
   }
 }
 
+/// Both logical reconstruction and raw physical authentication borrow this
+/// same acceptance/manifest owner. These references contain no authored body.
+struct NotebookActionHistoryReferences {
+  let workspaceID: UUID
+  let transactionID: UUID
+  let manifestHash: String
+  let borrowedSnapshotID: UUID
+  let manifestFormat: Int
+  let manifestByteCount: Int
+  let manifestParts: [String]
+  let receipts: [UUID: [NotebookActionHistoryObservation.Fragment]]
+}
+
 extension NotebookStore {
   /// Resolves one acceptance under the caller's existing readonly SQL snapshot.
   /// Current records, staging indexes and mutable delivery projections never
   /// fill gaps in the original manifest. All work tightens the enclosing lease.
   func actionHistoryFact(transactionID: UUID, manifestHash: String,
     receiptID: UUID? = nil) throws -> NotebookActionHistoryObservation {
-    guard let database = currentSQL, !database.writable,
-      let snapshotID = database.readSnapshotIdentity else { throw NotebookStorageError.readOnlyTransaction }
-    guard NotebookPageOrderRegister.validHash(manifestHash) else {
-      throw NotebookStorageError.invalidTransaction("action history manifest hash")
-    }
-    try database.limitReads(.agentCommand)
-    let workspace = try database.rows("""
-      SELECT CASE WHEN typeof(value)='text' AND length(CAST(value AS BLOB))=36
-        THEN value END FROM metadata WHERE key='workspace_id'
-      """).first?[0].text.flatMap(UUID.init(uuidString:))
-    guard let workspaceID = workspace else { throw NotebookStorageError.corruptRecord("action history inventory workspace") }
-    guard let accepted = try NotebookActionHistoryInventory.occurrence(in: database,
-      workspaceID: workspaceID, transactionID: transactionID) else {
-      throw NotebookStorageError.invalidTransaction("unaccepted action history occurrence")
-    }
-    guard accepted.manifestHash == manifestHash else { throw NotebookStorageError.transactionConflict }
-    let rootBytes = try admitActionHistoryManifest(hash: manifestHash,
-      byteCount: accepted.localJournal?.manifestByteCount, database: database)
-    let sequence = accepted.localJournal?.sequence ?? accepted.firstReceived!.senderSequence
-    let change = NotebookDurableChange(sequence: sequence, transactionID: transactionID,
-      manifestHash: manifestHash, byteCount: rootBytes)
-    let manifest = try actionHistoryManifest(change)
-    var references: [UUID: [NotebookActionHistoryObservation.Fragment]] = [:]
-    if let receiptID { references[receiptID] = [] }
-    var addresses = Set<String>()
-    func collect(_ records: [NotebookRecordMutation], partHash: String?) throws {
-      for (index, record) in records.enumerated() {
-        if index.isMultiple(of: 64) { try database.checkReadAllowance() }
-        guard record.address.hasPrefix("collaboration/actions/") else { continue }
-        guard record.address.utf8.count <= 4_096 else {
-          throw NotebookStorageError.limitExceeded("action_history_fact_fragments")
-        }
-        let file = String(record.address.split(separator: "#", maxSplits: 1)[0])
-        let key = String(file.dropFirst("collaboration/actions/".count).dropLast(".json".count))
-        guard let id = UUID(uuidString: key), key == id.uuidString.lowercased() else {
-          throw NotebookStorageError.invalidTransaction("action history receipt address")
-        }
-        if let receiptID, receiptID != id { continue }
-        guard addresses.count < 4_096 else {
-          throw NotebookStorageError.limitExceeded("action_history_fact_fragments")
-        }
-        guard addresses.insert(record.address).inserted else { throw NotebookStorageError.transactionConflict }
-        if references[id] == nil {
-          guard references.count < 64 else { throw NotebookStorageError.limitExceeded("action_history_fact_receipts") }
-          references[id] = []
-        }
-        references[id]!.append(.init(address: record.address, manifestPartHash: partHash,
-          blobHash: record.blobHash, rawPayload: nil))
-      }
-    }
-    try collect(manifest.records, partHash: nil)
-    for hash in manifest.parts {
-      _ = try admitActionHistoryManifest(hash: hash, byteCount: nil, database: database)
-      let part = try actionHistoryManifest(change, partHash: hash)
-      guard part.format == manifest.format else { throw NotebookStorageError.invalidTransaction("action history manifest part format") }
-      try collect(part.records, partHash: hash)
-    }
+    let declared = try actionHistoryReferences(transactionID: transactionID,
+      manifestHash: manifestHash, receiptID: receiptID)
+    let database = currentSQL!, workspaceID = declared.workspaceID, references = declared.receipts
     var receipts: [NotebookActionHistoryObservation.Receipt] = []
     // Only a source-local original witness admits split-body assembly. Ink
     // expansion borrows its existing owner and one aggregate transaction limit.
@@ -164,7 +123,86 @@ extension NotebookStore {
     }
     try database.checkReadAllowance()
     return .init(workspaceID: workspaceID, transactionID: transactionID, manifestHash: manifestHash,
-      borrowedSnapshotID: snapshotID, manifestFormat: manifest.format, receipts: receipts)
+      borrowedSnapshotID: declared.borrowedSnapshotID, manifestFormat: declared.manifestFormat, receipts: receipts)
+  }
+
+  func actionHistoryReferences(transactionID: UUID, manifestHash: String,
+    receiptID: UUID? = nil, workspaceID expectedWorkspaceID: UUID? = nil,
+    visitDeclaredRecord: ((NotebookRecordMutation, String?) throws -> Void)? = nil,
+    visitDeclaredOrderRoot: ((String) throws -> Void)? = nil) throws -> NotebookActionHistoryReferences {
+    guard let database = currentSQL, !database.writable,
+      let snapshotID = database.readSnapshotIdentity else { throw NotebookStorageError.readOnlyTransaction }
+    guard NotebookPageOrderRegister.validHash(manifestHash) else {
+      throw NotebookStorageError.invalidTransaction("action history manifest hash")
+    }
+    try database.limitReads(.agentCommand)
+    let workspace = try database.rows("""
+      SELECT CASE WHEN typeof(value)='text' AND length(CAST(value AS BLOB))=36
+        THEN value END FROM metadata WHERE key='workspace_id'
+      """).first?[0].text.flatMap(UUID.init(uuidString:))
+    guard let workspaceID = workspace else { throw NotebookStorageError.corruptRecord("action history inventory workspace") }
+    guard expectedWorkspaceID.map({ $0 == workspaceID }) ?? true else {
+      throw NotebookStorageError.invalidTransaction("action history workspace changed")
+    }
+    guard let accepted = try NotebookActionHistoryInventory.occurrence(in: database,
+      workspaceID: workspaceID, transactionID: transactionID) else {
+      throw NotebookStorageError.invalidTransaction("unaccepted action history occurrence")
+    }
+    guard accepted.manifestHash == manifestHash else { throw NotebookStorageError.transactionConflict }
+    let rootBytes = try admitActionHistoryManifest(hash: manifestHash,
+      byteCount: accepted.localJournal?.manifestByteCount, database: database)
+    let sequence = accepted.localJournal?.sequence ?? accepted.firstReceived!.senderSequence
+    let change = NotebookDurableChange(sequence: sequence, transactionID: transactionID,
+      manifestHash: manifestHash, byteCount: rootBytes)
+    let manifest = try actionHistoryManifest(change)
+    var references: [UUID: [NotebookActionHistoryObservation.Fragment]] = [:]
+    if let receiptID { references[receiptID] = [] }
+    var addresses = Set<String>()
+    func collect(_ records: [NotebookRecordMutation], partHash: String?) throws {
+      for (index, record) in records.enumerated() {
+        if index.isMultiple(of: 64) { try database.checkReadAllowance() }
+        // Raw physical authentication visits every immutable declaration in
+        // manifest order. Only the logical receipt resolver narrows its files.
+        if let visitDeclaredRecord {
+          guard record.address.utf8.count <= 4_096 else {
+            throw NotebookStorageError.limitExceeded("action_history_fact_fragments")
+          }
+          try visitDeclaredRecord(record, partHash)
+        }
+        guard record.address.hasPrefix("collaboration/actions/") else { continue }
+        guard record.address.utf8.count <= 4_096 else {
+          throw NotebookStorageError.limitExceeded("action_history_fact_fragments")
+        }
+        let file = String(record.address.split(separator: "#", maxSplits: 1)[0])
+        let key = String(file.dropFirst("collaboration/actions/".count).dropLast(".json".count))
+        guard let id = UUID(uuidString: key), key == id.uuidString.lowercased() else {
+          throw NotebookStorageError.invalidTransaction("action history receipt address")
+        }
+        if let receiptID, receiptID != id { continue }
+        guard addresses.count < 4_096 else {
+          throw NotebookStorageError.limitExceeded("action_history_fact_fragments")
+        }
+        guard addresses.insert(record.address).inserted else { throw NotebookStorageError.transactionConflict }
+        if references[id] == nil {
+          guard references.count < 64 else { throw NotebookStorageError.limitExceeded("action_history_fact_receipts") }
+          references[id] = []
+        }
+        references[id]!.append(.init(address: record.address, manifestPartHash: partHash,
+          blobHash: record.blobHash, rawPayload: nil))
+      }
+    }
+    try collect(manifest.records, partHash: nil)
+    for hash in manifest.parts {
+      _ = try admitActionHistoryManifest(hash: hash, byteCount: nil, database: database)
+      let part = try actionHistoryManifest(change, partHash: hash)
+      guard part.format == manifest.format else { throw NotebookStorageError.invalidTransaction("action history manifest part format") }
+      try collect(part.records, partHash: hash)
+    }
+    for hash in manifest.pageOrderRoots { try visitDeclaredOrderRoot?(hash) }
+    try database.checkReadAllowance()
+    return .init(workspaceID: workspaceID, transactionID: transactionID, manifestHash: manifestHash,
+      borrowedSnapshotID: snapshotID, manifestFormat: manifest.format, manifestByteCount: rootBytes,
+      manifestParts: manifest.parts, receipts: references)
   }
 
   private func originalActionHistoryBody(id: UUID, workspaceID: UUID, file: String,
@@ -248,7 +286,7 @@ extension NotebookStore {
     return .completeOriginalBody(body, anchor)
   }
 
-  private func actionHistoryHasExactParents(_ rows: [NotebookStoredFragment], root: String,
+  func actionHistoryHasExactParents(_ rows: [NotebookStoredFragment], root: String,
     database: NotebookSQLConnection) throws -> Bool {
     let children = Dictionary(grouping: rows.filter { $0.parent != nil }, by: { $0.parent! })
     guard let header = rows.first(where: { $0.address == root }) else { return false }
@@ -256,7 +294,7 @@ extension NotebookStore {
     while let (row, depth) = pending.popLast() {
       try database.checkReadAllowance()
       visited += 1
-      var collections: [String: NotebookStoredCollection] = [:]
+      var collections: [String: (key: String, value: NotebookStoredCollection)] = [:]
       for collection in row.collections {
         try database.checkReadAllowance()
         guard !collection.path.isEmpty else { return false }
@@ -265,11 +303,14 @@ extension NotebookStore {
         }
         guard let key = try boundedActionHistoryFieldKey(collection.path,
           limit: 4_096 - row.address.utf8.count - 1, database: database) else { return false }
-        guard collections.updateValue(collection, forKey: key) == nil else { return false }
+        guard collections.updateValue((key, collection), forKey: key) == nil else { return false }
       }
       for child in children[row.address] ?? [] {
         try database.checkReadAllowance()
-        guard let collection = collections[child.collection] else { return false }
+        guard let entry = collections[child.collection],
+          child.collection.utf8.elementsEqual(entry.key.utf8),
+          child.parent?.utf8.elementsEqual(row.address.utf8) == true else { return false }
+        let collection = entry.value
         let prefixBytes = row.address.utf8.count + 1 + child.collection.utf8.count
         let expected: String
         switch collection.kind {
@@ -283,7 +324,7 @@ extension NotebookStore {
         }
         // A short alias must never make Codec create larger canonical address
         // buffers than the admitted input. Check every component before joins.
-        guard child.address == expected else { return false }
+        guard child.address.utf8.elementsEqual(expected.utf8) else { return false }
         let childDepth = depth + collection.path.count
           + (collection.kind == .array || collection.kind == .dictionary ? 1 : 0)
         guard childDepth <= NotebookJSONAdmission.maximumDepth else {
@@ -363,7 +404,7 @@ extension NotebookStore {
     return data
   }
 
-  private func validateActionHistoryFragment(_ fragment: NotebookStoredFragment, address: String, file: String) throws {
+  func validateActionHistoryFragment(_ fragment: NotebookStoredFragment, address: String, file: String) throws {
     let root = file + "#"
     guard fragment.address == address, fragment.file == file,
       fragment.position >= 0, fragment.value.isValid else { throw NotebookStorageError.invalidTransaction("action history fragment identity") }

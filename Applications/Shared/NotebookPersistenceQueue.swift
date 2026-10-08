@@ -7,6 +7,8 @@ import NotebookCore
 final class NotebookPersistenceQueue {
   enum Owner: Hashable {
     case fileDraft(String), fileWindow(UUID?), chatPanel(UUID?), runCommand(String)
+    case fileObservation(String), fileSubmission(UUID), chatDraft(UUID?), chatSubmission(UUID)
+    case fileReceipt(String)
     case page(UUID), pageInk(UUID), document(UUID), documentState(UUID), documentDraft(UUID), documentReading(UUID)
     case board, spatialInk(UUID), presence, peerPresence(UUID), inputActivity(UUID)
     case elementState(UUID, String)
@@ -23,9 +25,10 @@ final class NotebookPersistenceQueue {
 
     var publishesDurableChanges: Bool {
       switch self {
-      case .page, .pageInk, .document, .documentState, .board, .spatialInk, .elementState: true
+      case .page, .pageInk, .document, .documentState, .board, .spatialInk, .elementState, .fileReceipt: true
       case .presence, .peerPresence, .inputActivity, .documentDraft, .documentReading,
-        .fileDraft, .fileWindow, .chatPanel, .runCommand, .peerSession: false
+        .fileDraft, .fileWindow, .fileObservation, .fileSubmission, .chatDraft, .chatSubmission,
+        .chatPanel, .runCommand, .peerSession: false
       case .command(let kind):
         switch kind {
         case .apply, .commitAction, .undo, .point: true
@@ -33,8 +36,18 @@ final class NotebookPersistenceQueue {
           .delivery, .referenceStatus, .referenceStatuses, .actionDetails, .reference,
           .placement, .render, .pageVision, .read, .artifact, .presentation,
           .script, .scriptContext, .scriptArtifact, .importProgram, .importDocument, .importDocumentResource,
-          .runtimeStatus, .runtimeWorkspace: false
+          .runtimeStatus, .runtimeWorkspace, .historyReadiness: false
         }
+      }
+    }
+
+    var admitsAuthoredWork: Bool {
+      if case .fileReceipt = self { return false }
+      if publishesDurableChanges { return true }
+      switch self {
+      case .documentDraft, .fileDraft, .fileSubmission, .chatDraft, .chatSubmission: return true
+      case .command(.admitAction): return true
+      default: return false
       }
     }
   }
@@ -128,6 +141,7 @@ final class NotebookPersistenceQueue {
   private(set) var acceptedMutationGeneration: UInt64 = 0
   private var workspaceSelectionSeal: UUID?
   var permitsNewWorkspaceMutation: Bool { workspaceSelectionSeal == nil }
+  var authoredAdmission: (@MainActor () -> CollaborationError?)?
 
   /// The source's actual FIFO, including old uncharged commands, determines
   /// quiescence. An observation or retained cache credit is not a mutation.
@@ -141,7 +155,9 @@ final class NotebookPersistenceQueue {
     guard workspaceSelectionSeal == seal else { return }
     workspaceSelectionSeal = nil
   }
-  func requireMutationAdmission() throws {
+  func ownsWorkspaceSelectionSeal(_ seal: UUID) -> Bool { workspaceSelectionSeal == seal }
+  func requireMutationAdmission(authored: Bool = true) throws {
+    if authored, let error = authoredAdmission?() { throw error }
     guard permitsNewWorkspaceMutation else {
       throw CollaborationError("workspace_selection_pending", "Выбор пространства ещё сохраняется. Текущее действие осталось в прежнем пространстве.")
     }
@@ -166,7 +182,8 @@ final class NotebookPersistenceQueue {
   var reservedContactCount: Int { admission.reservedContactCount }
 
   func reserveWrite(_ maximumCost: NotebookPersistenceAdmission.Cost) -> NotebookPersistenceAdmission.Reservation? {
-    admission.reserve(maximumCost)
+    guard authoredAdmission?() == nil else { return nil }
+    return admission.reserve(maximumCost)
   }
 
   func releaseWriteReservation(_ reservation: NotebookPersistenceAdmission.Reservation) {
@@ -224,6 +241,10 @@ final class NotebookPersistenceQueue {
     admissionCharge: UUID? = nil,
     onRejected: (@MainActor @Sendable (CollaborationError) -> Void)? = nil,
     _ operation: @escaping @Sendable (NotebookStore) throws -> Change) {
+    if owner?.admitsAuthoredWork ?? true, let error = authoredAdmission?() {
+      if let admissionCharge { admission.releaseCharge(admissionCharge) }
+      onRejected?(error); return
+    }
     guard permitsNewWorkspaceMutation else {
       if let admissionCharge { admission.releaseCharge(admissionCharge) }
       onRejected?(.init("workspace_selection_pending", "Выбор пространства ещё сохраняется.")); return
@@ -256,6 +277,7 @@ final class NotebookPersistenceQueue {
   /// Coalesced deltas keep the first unsaved baseline. Replacing that baseline
   /// with the next visible frame would lose an earlier insertion or deletion.
   func enqueueBoardEdit(before: BoardHierarchy, after: BoardHierarchy) {
+    guard authoredAdmission?() == nil else { return }
     guard permitsNewWorkspaceMutation else { return }
     acceptedMutationGeneration &+= 1
     let index = coalescingIndex(for: .board)
@@ -420,6 +442,10 @@ final class NotebookPersistenceQueue {
     admissionCharge:UUID? = nil,
     _ operation: @escaping @Sendable (NotebookStore) throws -> Value,
     completion: @escaping @Sendable (Result<Value, Error>) -> Void) {
+    if writesStore, owner?.admitsAuthoredWork ?? notifiesCommit, let error = authoredAdmission?() {
+      if let admissionCharge { admission.releaseCharge(admissionCharge) }
+      completion(.failure(error)); return
+    }
     if writesStore, !permitsNewWorkspaceMutation {
       if let admissionCharge { admission.releaseCharge(admissionCharge) }
       completion(.failure(CollaborationError("workspace_selection_pending", "Выбор пространства ещё сохраняется."))); return

@@ -20,6 +20,9 @@ public final class NotebookReadSession {
   public let cancellation: NotebookReadCancellation
   private var connection: NotebookSQLConnection?
   private var identity: FileIdentity?
+  /// Comparable only while this same idle SQL connection is retained. A failed
+  /// read or reconnect invalidates native metadata continuations.
+  public private(set) var connectionLifetimeID: UUID?
 
   public init(store: NotebookStore, cancellation: NotebookReadCancellation = .init()) {
     self.store = store; self.cancellation = cancellation
@@ -45,9 +48,10 @@ public final class NotebookReadSession {
         throw NotebookStorageError.invalidTransaction("database file identity changed")
       }
       let admitted = try store.prepareDatabase(reusing: connection, requiringCurrentFormat: true)
+      if connection !== admitted { connectionLifetimeID = UUID() }
       connection = admitted; identity = next
       return try store.readTransaction(using: admitted, cancellation: cancellation, operation)
-    } catch { connection = nil; throw error }
+    } catch { connection = nil; connectionLifetimeID = nil; throw error }
   }
 
   private struct FileIdentity: Equatable {

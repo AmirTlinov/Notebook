@@ -229,6 +229,14 @@ final class NotebookApplicationLaunch {
     #endif
   }
 
+  private var workspaceAuthoredAdmissionError: CollaborationError? {
+    ownedWorkspaceModels.lazy.compactMap { $0.historyReadiness.authoredAdmissionError }.first
+  }
+
+  private func requireWorkspaceAuthoredAdmission() throws {
+    if let error = workspaceAuthoredAdmissionError { throw error }
+  }
+
   #if os(macOS)
     func executeRuntimeCommand(_ command: NotebookCommand) async throws -> JSONValue {
       guard runtimeLease != nil, defaultCommandServer != nil else {
@@ -260,6 +268,10 @@ final class NotebookApplicationLaunch {
         guard archiveAdmitted || request.action == .retry else {
           throw CollaborationError("owner_unavailable", "Пространства доступны после допуска текущих данных.")
         }
+        switch request.action {
+        case .create, .select, .rename: try requireWorkspaceAuthoredAdmission()
+        case .list, .retry: break
+        }
         workspaceError = nil
         var error: String?
         var selectedModel: NotebookAppModel?
@@ -268,6 +280,7 @@ final class NotebookApplicationLaunch {
           case .list: await refreshWorkspaces()
           case .create:
             let id = request.id!, catalog = try await library.snapshot().catalog
+            try requireWorkspaceAuthoredAdmission()
             if catalog.entries.contains(where: { $0.id == id }) {
               await openWorkspace(id)
             } else {
@@ -285,6 +298,7 @@ final class NotebookApplicationLaunch {
                 throw CollaborationError("workspace_missing", "Выберите пространство из текущего списка.")
               }
             }
+            try requireWorkspaceAuthoredAdmission()
             if request.action == .select {
               await openWorkspace(id)
               selectedModel = workspaceModel(id)
@@ -301,9 +315,11 @@ final class NotebookApplicationLaunch {
                   selectedModel = model
                   break
                 }
+                try requireWorkspaceAuthoredAdmission()
                 guard mayAccessWorkspace, try await library.snapshot().catalog.entries.contains(where: { $0.id == id }) else {
                   throw CollaborationError("workspace_missing", "Выбранное пространство недоступно.")
                 }
+                try requireWorkspaceAuthoredAdmission()
                 await openWorkspace(id)
               }
               selectedModel = workspaceModel(id)
@@ -574,6 +590,7 @@ final class NotebookApplicationLaunch {
     if let makeModel {
       let model = try makeModel(store, pairingActivationID)
       if let expectedWorkspaceID { try model.admitWorkspaceIdentity(expectedWorkspaceID) }
+      bindHistoryReadinessLifecycle(model)
       return model
     }
     #if os(macOS)
@@ -597,6 +614,7 @@ final class NotebookApplicationLaunch {
     #if os(macOS)
       model.codexHost = codexHost
     #endif
+    bindHistoryReadinessLifecycle(model)
     return model
   }
 
@@ -632,8 +650,21 @@ final class NotebookApplicationLaunch {
     return await finishRetiringWorkspace()
   }
 
+  private func bindHistoryReadinessLifecycle(_ model: NotebookAppModel) {
+    model.historyReadinessLifecycleIsBusy = { [weak self, weak model] in
+      guard let self, let model, !self.isChecking, !self.readingCatalog, self.workspaceOpening == nil,
+        self.ownedWorkspaceModels.contains(where: { $0 === model }) else { return true }
+      #if os(macOS)
+        return self.runtimeIsStopping || self.runtimeNeedsRecovery
+      #else
+        return false
+      #endif
+    }
+  }
+
   private func installWorkspaceSelection() {
     guard let model else { return }
+    bindHistoryReadinessLifecycle(model)
     model.openWorkspaceLibrary = { [weak self] tab in self?.workspaceTab = tab; self?.showsWorkspaces = true }
     guard !isFixture else { return }
     if let id = model.admittedWorkspaceID, let entry = librarySnapshot?.catalog.entries.first(where: { $0.id == id }) {
@@ -690,6 +721,7 @@ final class NotebookApplicationLaunch {
   func openWorkspace(_ id: UUID, automatically: Bool = false, creatingName: String? = nil) async {
     guard mayAccessWorkspace, !isChecking else { return }
     guard workspaceOpening == nil else { return }
+    if let error = workspaceAuthoredAdmissionError { workspaceError = error.localizedDescription; return }
     let previous = model
     isChecking = true; catalogGeneration = UUID()
     var transition: NotebookAppModel.AutomaticWorkspaceTransition?
@@ -702,6 +734,7 @@ final class NotebookApplicationLaunch {
       guard try await library.snapshot().catalog.pendingCloudDeletion[id] == nil else {
         throw NotebookStorageError.invalidTransaction("Удаление этого пространства ещё не завершено.")
       }
+      try requireWorkspaceAuthoredAdmission()
       let currentID = previous?.admittedWorkspaceID
       guard currentID != id else { showsWorkspaces = false; return }
       if let previous, automatically {
@@ -712,10 +745,12 @@ final class NotebookApplicationLaunch {
       } else if let previous {
         guard await previous.finishPendingInteraction(boundary: .acceptedInput) else { throw NotebookTransportError.storageUnavailable }
       }
+      try requireWorkspaceAuthoredAdmission()
       #if os(macOS)
       if previous != nil, currentID != nil, retainedModels.count >= 7, retainedModels[id] == nil {
         var evicted = false
         for (candidate, retained) in retainedModels where !(await codexHost.hasActiveWork(workspace: candidate)) {
+          try requireWorkspaceAuthoredAdmission()
           guard await retained.shutdown() else { throw NotebookTransportError.storageUnavailable }
           try await codexHost.removeWorkspace(candidate)
           try await workspaceWriters.remove(root: retained.store.root)
@@ -724,7 +759,9 @@ final class NotebookApplicationLaunch {
         guard evicted else { throw NotebookTransportError.resourceLimit }
       }
       #endif
+      try requireWorkspaceAuthoredAdmission()
       let destination = try await library.prepare(id)
+      try requireWorkspaceAuthoredAdmission()
       #if os(macOS)
       let wasRetained = retainedModels[id] != nil
       let next = try retainedModels[id] ?? makeWorkspaceModel(store: NotebookStore(root: destination),
@@ -743,9 +780,11 @@ final class NotebookApplicationLaunch {
       // One retained startup task owns this selection through a storage fault.
       // The previous source stays live until the final synchronous commit.
       let task = Task { [self] in
-        await next.start(pageSize: NotebookAppModel.defaultPageSize)
-        await next.finishStartup()
         do {
+          try requireWorkspaceAuthoredAdmission()
+          await next.start(pageSize: NotebookAppModel.defaultPageSize)
+          await next.finishStartup()
+          try requireWorkspaceAuthoredAdmission()
           guard next.loadState == .ready || next.awaitingAccountContent else { throw NotebookTransportError.storageUnavailable }
           if let preparedTransition, let previous {
             #if os(macOS)
@@ -763,6 +802,7 @@ final class NotebookApplicationLaunch {
           // A retained manual request can finish while process recovery has
           // already retired its source. That lifecycle owns closed admission;
           // the admitted candidate still owns its exact selection and data.
+          try requireWorkspaceAuthoredAdmission()
           let ticket = try await library.prepareSelection(id, name: next.workspaceName,
             publishName: next.publishesWorkspaceName)
           workspaceOpening?.stage = .selecting(ticket)
@@ -1019,8 +1059,9 @@ final class NotebookApplicationLaunch {
   }
 
   @discardableResult func createWorkspace(name: String) async -> Bool {
-    workspaceError = nil
     do {
+      try requireWorkspaceAuthoredAdmission()
+      workspaceError = nil
       let name = try NotebookWorkspaceLibrary.name(name), id = UUID()
       await openWorkspace(id, creatingName: name)
       return selectedWorkspaceID == id
@@ -1029,6 +1070,7 @@ final class NotebookApplicationLaunch {
 
   @discardableResult func renameWorkspace(_ id: UUID, name: String) async -> Bool {
     guard mayAccessWorkspace, !isChecking else { return false }
+    if let error = workspaceAuthoredAdmissionError { workspaceError = error.localizedDescription; return false }
     isChecking = true; catalogGeneration = UUID(); workspaceError = nil
     let generation = catalogGeneration, source = model, sourceID = source?.admittedWorkspaceID
     let accountOwner = source?.accountConnection, accountGeneration = accountOwner?.catalogGeneration
@@ -1043,15 +1085,18 @@ final class NotebookApplicationLaunch {
       let name = try NotebookWorkspaceLibrary.name(name)
       let observed = try await library.snapshot()
       guard current() else { return false }
+      try requireWorkspaceAuthoredAdmission()
       let bound = observed.catalog.entries.contains(where: { $0.id == id })
         ? try await library.boundAccount(for: id, expectedRevision: observed.revision) : nil
       guard current() else { return false }
+      try requireWorkspaceAuthoredAdmission()
       let registered = workspaceList.first(where: { $0.id == id })?.remote == true || bound != nil
       if registered {
         guard let account = bound ?? catalogAccount else { throw NotebookAccountError.unavailable }
         try await catalogCloud.renameSpace(id, name: name, account: account)
       }
       guard current() else { return false }
+      try requireWorkspaceAuthoredAdmission()
       let updated = try await library.rename(id, name: name, publish: !registered, expectedRevision: observed.revision)
       guard current() else { return false }
       librarySnapshot = updated
@@ -1066,6 +1111,21 @@ final class NotebookApplicationLaunch {
       }
       return true
     } catch { if current() { workspaceError = "Не удалось переименовать пространство. \(error.localizedDescription)" }; return false }
+  }
+
+  func removeWorkspaceByUser(_ id: UUID, everywhere: Bool) async {
+    guard mayAccessWorkspace, !isChecking else { return }
+    do {
+      let observed = try await library.snapshot()
+      guard mayAccessWorkspace, !isChecking else { return }
+      if observed.catalog.pendingCloudDeletion[id] != nil {
+        // The durable confirmation owns this retry, including its cloud scope.
+        await removeWorkspace(id, everywhere: true, expectedRevision: observed.revision)
+      } else {
+        try requireWorkspaceAuthoredAdmission()
+        await removeWorkspace(id, everywhere: everywhere, expectedRevision: observed.revision)
+      }
+    } catch { workspaceError = error.localizedDescription }
   }
 
   func removeWorkspace(_ id: UUID, everywhere: Bool, expectedRevision: String? = nil) async {

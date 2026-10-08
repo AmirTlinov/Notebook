@@ -4,6 +4,108 @@ import XCTest
 
 @MainActor
 final class NotebookChatControllerTests: XCTestCase {
+  func testHistoryAdmissionRefusesNewChatDraftsMessagesAndDictationButKeepsSavedDecisions() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("chat-history-admission-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), author = UUID(), peer = UUID(), thread = UUID().uuidString
+    let header = try store.initializeWorkspace(actor: author, pageSize: .init(width: 834, height: 1194))
+    let attachment = CodexInputAttachment(kind: .skill, name: "Retained", path: "/fixture/SKILL.md")
+    try store.saveChatPanel(.init(threadID: thread, draft: "retained text", sidecarID: peer,
+      attachments: [attachment], browsesChats: false), author: author)
+    let queue = NotebookPersistenceQueue(store: store), readiness = NotebookHistoryReadiness()
+    queue.authoredAdmission = { readiness.authoredAdmissionError }
+    let chat = NotebookChatController(persistence: queue, author: author) { _, _ in XCTFail("An offline history cut cannot start remote work") }
+    await chat.start()
+    let decision = CodexUserRequest(nativeID: .number(7), method: "item/commandExecution/requestApproval",
+      turnID: UUID().uuidString, parameters: .object(["command": .string("read this file")]))
+    await chat.respond(decision, decision: .allowOnce, threadID: thread)
+    let originalJob = try XCTUnwrap(chat.decisionJob(decision, threadID: thread))
+    let initialSaved = await queue.flush(); XCTAssertTrue(initialSaved)
+    let originalPanel = try store.chatPanel(author: author, computer: peer)
+    let request = NotebookHistoryReadiness.Request(id: UUID(), workspaceID: header.workspaceID,
+      devices: [author, peer], acceptedGeneration: queue.acceptedMutationGeneration)
+    try readiness.begin(request)
+    for phase in 0..<3 {
+      if phase == 1 {
+        let seal = try XCTUnwrap(queue.sealWorkspaceSelection(expectedGeneration: queue.acceptedMutationGeneration))
+        try readiness.seal(request, writerSeal: seal)
+      } else if phase == 2 { try readiness.releaseWriterForResume(request, releaseWriter: queue.finishWorkspaceSelection) }
+      XCTAssertFalse(chat.permitsNativeMutation()); XCTAssertFalse(chat.canSendDraft)
+      let destination = chat.messageDestination
+      chat.draft = "late text"
+      chat.attach(.init(kind: .skill, name: "Late", path: "/fixture/LATE.md"))
+      chat.removeAttachment(attachment.id)
+      XCTAssertFalse(chat.beginDraft(project: .init(id: "late", name: "Late", roots: ["/late"])))
+      let sent = await chat.sendMessage(to: destination, text: "late send", context: "")
+      let steered = await chat.sendMessage(to: destination, text: "late steer", context: "", steeringTurnID: UUID().uuidString)
+      let created = await chat.sendMessage(to: .newChat(UUID(), nil), text: "late create", context: "")
+      XCTAssertFalse(sent); XCTAssertFalse(steered); XCTAssertFalse(created)
+      do {
+        try await chat.insertDictation("late dictation", id: UUID(), thread: thread, computer: peer)
+        XCTFail("An unaccepted transcript crossed the closed authored phase")
+      } catch let error as CollaborationError { XCTAssertEqual(error.code, "history_readiness_pending") }
+      let freshDecision = CodexUserRequest(nativeID: .number(8), method: decision.method,
+        turnID: decision.turnID, parameters: decision.parameters)
+      await chat.respond(freshDecision, decision: .allowOnce, threadID: thread)
+      XCTAssertNil(chat.decisionJob(freshDecision, threadID: thread))
+      // The same accepted decision is observed without saving or redelivering
+      // it; a different answer still cannot replace the original job.
+      await chat.respond(decision, decision: .allowOnce, threadID: thread)
+      XCTAssertEqual(chat.decisionJob(decision, threadID: thread), originalJob)
+      await chat.respond(decision, decision: .decline, threadID: thread)
+      XCTAssertEqual(chat.decisionJob(decision, threadID: thread), originalJob)
+      XCTAssertEqual(chat.draft, originalPanel.draft); XCTAssertEqual(chat.attachments, [attachment])
+      XCTAssertEqual(chat.messageDestination, destination)
+      XCTAssertFalse(chat.hasPendingAuthoredPreparation)
+      let saved = await queue.flush(); XCTAssertTrue(saved)
+      XCTAssertEqual(try store.chatPanel(author: author, computer: peer), originalPanel)
+      XCTAssertEqual(try store.routedChatJobs(author: author, computer: peer), [originalJob])
+    }
+    try readiness.finish(request, releaseWriter: queue.finishWorkspaceSelection)
+    chat.draft = "new accepted text"
+    let saved = await queue.flush(); XCTAssertTrue(saved)
+    XCTAssertEqual(try store.chatPanel(author: author, computer: peer).draft, "new accepted text")
+    await chat.stop(); _ = await queue.flush()
+  }
+
+  func testAcceptedChatSubmissionCompletesAfterHistoryAdmissionCloses() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("chat-accepted-history-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), author = UUID(), peer = UUID(), thread = UUID().uuidString
+    let header = try store.initializeWorkspace(actor: author, pageSize: .init(width: 834, height: 1194))
+    try store.saveChatPanel(.init(threadID: thread, draft: "accepted exact message", sidecarID: peer, browsesChats: false), author: author)
+    let queue = NotebookPersistenceQueue(store: store), readiness = NotebookHistoryReadiness()
+    queue.authoredAdmission = { readiness.authoredAdmissionError }
+    let chat = NotebookChatController(persistence: queue, author: author) { _, _ in XCTFail("The accepted local outbox does not need a remote connection") }
+    await chat.start()
+    let initialSaved = await queue.flush(); XCTAssertTrue(initialSaved)
+    let writer = DispatchSemaphore(value: 0)
+    defer { writer.signal() }
+    queue.enqueue(owner: .command(.read)) { _ in _ = writer.wait(timeout: .now() + 8); return false }
+    let before = queue.acceptedMutationGeneration
+    let sending = Task { await chat.sendMessage(to: .thread(thread), text: chat.draft, context: "exact frozen context") }
+    let deadline = ContinuousClock.now + .seconds(3)
+    while queue.acceptedMutationGeneration == before, .now < deadline { try await Task.sleep(for: .milliseconds(5)) }
+    XCTAssertGreaterThan(queue.acceptedMutationGeneration, before)
+    XCTAssertTrue(chat.hasPendingAuthoredPreparation)
+    let request = NotebookHistoryReadiness.Request(id: UUID(), workspaceID: header.workspaceID,
+      devices: [author, peer], acceptedGeneration: queue.acceptedMutationGeneration)
+    try readiness.begin(request)
+    chat.draft = "unaccepted successor"
+    XCTAssertEqual(chat.draft, "accepted exact message")
+    writer.signal()
+    let sent = await sending.value; XCTAssertTrue(sent)
+    XCTAssertFalse(chat.hasPendingAuthoredPreparation)
+    XCTAssertEqual(chat.draft, "", "Accepted completion can retire its original draft while authorship is closed")
+    let saved = await queue.flush(); XCTAssertTrue(saved)
+    let job = try XCTUnwrap(try store.routedChatJobs(author: author, computer: peer).first)
+    XCTAssertEqual(job.input.action, .send(threadID: thread, text: "accepted exact message", context: "exact frozen context"))
+    XCTAssertEqual(try store.chatPanel(author: author, computer: peer).draft, "")
+    XCTAssertEqual(try store.routedChatJobs(author: author, computer: peer).count, 1)
+    try readiness.finish(request, releaseWriter: queue.finishWorkspaceSelection)
+    await chat.stop(); _ = await queue.flush()
+  }
+
   func testLongMessageLoadsAutomaticallyRetriesAndKeepsBodyAcrossStatusUpdates() async throws {
     try await longMessageContent(replacingError:false)
     try await longMessageContent(replacingError:true)
@@ -156,8 +258,10 @@ final class NotebookChatControllerTests: XCTestCase {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("control-slot-" + UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let store = NotebookStore(root: root), author = UUID(), peer = UUID()
-    _ = try store.initializeWorkspace(actor: author, pageSize: .init(width: 834, height: 1194))
+    let header = try store.initializeWorkspace(actor: author, pageSize: .init(width: 834, height: 1194))
     let queue = NotebookPersistenceQueue(store: store)
+    let readiness = NotebookHistoryReadiness()
+    queue.authoredAdmission = { readiness.authoredAdmissionError }
     var chat: NotebookChatController!, held: NotebookChatEnvelope?
     let readStarted = expectation(description: "File read remains outstanding")
     let stopDelivered = expectation(description: "Stop admitted without waiting for file read")
@@ -183,13 +287,18 @@ final class NotebookChatControllerTests: XCTestCase {
     await chat.start(); await chat.connect(peer)
     let reading = Task { try? await chat.directQuery(.file(.directory(.init(computer: peer, project: "fixture", root: "/fixture", path: ""), after: nil))) }
     await fulfillment(of: [readStarted], timeout: 3)
+    let historyRequest = NotebookHistoryReadiness.Request(id: UUID(), workspaceID: header.workspaceID,
+      devices: [author, peer], acceptedGeneration: queue.acceptedMutationGeneration)
+    try readiness.begin(historyRequest)
     let thread = UUID().uuidString, turn = UUID().uuidString
     let stopping = Task { await chat.stopTurn(threadID: thread, turnID: turn) }
     await fulfillment(of: [stopDelivered], timeout: 1)
     await stopping.value
     XCTAssertEqual(control?.action, .stop(threadID: thread, turnID: turn))
     if let held { chat.receive(.init(id: held.id, body: .reply(.failure("Read intentionally interrupted"))), peerID: peer) }
-    _ = await reading.value; await chat.stop(); _ = await queue.flush()
+    _ = await reading.value
+    try readiness.finish(historyRequest, releaseWriter: queue.finishWorkspaceSelection)
+    await chat.stop(); _ = await queue.flush()
     XCTAssertEqual(try store.chatJob(XCTUnwrap(control?.id))?.state, .accepted)
   }
 

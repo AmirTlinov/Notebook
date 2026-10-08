@@ -1,28 +1,51 @@
 # Текущее состояние проверки Notebook
 
-**8 октября 2026, GUI-541.** Рабочая поверхность остаётся на нативном iPad;
-агент читает и меняет то же пространство через прямой MCP на Mac. Оба плагина,
-marketplace-регистрации, процессы, панель, браузерная отрисовка и Swift WASM
-адаптер удалены. Развитие панели и GUI-539 отменено.
+**8 октября 2026, GUI-535.** Установлена подписанная пара **265 / 0.3.195**,
+прямой MCP **0.3.43**. Рабочая поверхность — нативный iPad; Mac headless runtime
+читает и меняет то же пространство. Контейнеры, SQLite, identities и keys
+сохранены; DB29/wire44/manifest26 остаются текущими, вся авторская история
+сохраняется бессрочно.
 
-Установлена подписанная пара **262 / 0.3.192**, MCP **0.3.42**. Headless runtime
-находится в `~/Library/Application Support/NotebookRuntime/NotebookRuntime.app`;
-окон и Dock entry нет. Прежний владелец завершился штатно под writer lease.
-Контейнеры, SQLite, идентичности и ключи не переносились; каталог и выбранное
-пространство iPad совпали до/после установки.
+Выбранные проверки: **61 Core functions / 7 suites, 230 MCP cases, 30 physical
+iPad и 14 Mac scenarios PASS**, без skips и native runtime warnings. Core/MCP
+проверены до десяти последующих native-only правок. После physical iPad30/30
+изменены четыре строки одного Mac-only fixture; его повтор1/1PASS. Точные
+исходники, дельты и исходные отказы сохранены
+[в evidence](audit-evidence/2026-10-08/history-readiness/results.json).
 
-Прямой MCP публикует шесть доменных инструментов без UI/resources. После запуска
-физического iPad получены текущие native presence/session, `presentation: ready`
-и изображение страницы с совпавшей квитанцией. Первые cold calls получили
-`runtime_starting`/`owner_unavailable`; запуск владельца занял **9,14 с**.
-Повторные чтения завершились успешно без повторной установки и переподключения
-плагина. Закрытие MCP-клиента оставляет того же runtime владельцем.
+Повторная real-TLS проверка удерживает настоящий directory read responder до
+получения следующего peer frame: **physical iPad1/1 и Mac1/1 PASS** на исходниках
+264. Admission выполняется до первого await; teardown сохраняет первый отказ.
+Оба успешных сценария подтверждают12roots и возобновление тех же владельцев.
 
-Прицельные Core/Mac/physical-iPad, MCP и release проверки прошли. Реальная
-релизная сборка выявила sandbox-ошибку очистки NotebookTools: producer теперь
-собирает целый пакет в разрешённом временном каталоге и заменяет его с откатом.
-Проверены actual sandbox profile, старые остатки панели и подписанный Release.
-[Исходники, отказы, повторные проверки и установленная пара](audit-evidence/2026-10-08/plugin-removal/results.json).
+Installed MCP публикует семь инструментов без UI/resources. Подтверждены
+account directory двух устройств, selected trusted TLS session, текущие native
+presence/presentation и изображение iPad. Совместный history request
+`ea51b97e-0c97-4831-995b-fdb34e7d4a74` завершился отказом: системный журнал
+зафиксировал потерю маршрута awdl0 и TCP keepalive timeout. Cleanup вернул
+native admission в `open`; формат не изменялся.
+
+Live264 request `2121dec9-b34c-4c8b-8335-dd9af7d86ff6` дошёл до чтения истории,
+затем завершился `historyCutStale`. Selected TLS `B375A8C0…` остался тем же READY,
+revision и accepted prefix совпали до/после; native admission вернулся в `open`.
+Первичный отказ peer теряется в terminal resume и пока не восстановлен.
+Для265 существующий owner передаёт bounded typed refusal, сохраняет её источник
+и этап, завершает чтение без отмены TLS-credit waiter и дренирует отправленные
+страницы до peer resume. Публикация report требует успешного двустороннего join.
+**2 новых Core-контракта и14 native функций (iPad9/Mac5) PASS**; исходный отказ
+одной новой fixture исправлен через штатную очередь и проверен повторно.
+Runtime265 не менялся между этими прогонами; изменён только этот test method.
+Подписанная265 собрана и установлена из тех же исходников `0c2711be…`/1689.
+Первое холодное подключение застало owner в `opening`; повторное подтвердило
+готовый Mac runtime, семь direct MCP tools, phase `open` и directory обоих
+устройств. iPad presentation и selected TLS пока отсутствуют: устройство занято
+отдельным native-прогоном. Совместный запрос265 ещё не начат; двенадцать roots
+от установленной пары пока не получены. GUI-535 остаётся открытой.
+
+GUI-541 уже в общей `main`: плагины, marketplace-регистрации, панель, браузерная
+отрисовка и Swift WASM адаптер удалены; GUI-539 отменён. Историческая подписанная
+пара262 и sandbox repair сборщика описаны
+[в отдельном результате](audit-evidence/2026-10-08/plugin-removal/results.json).
 
 Полная приёмка GUI-190 остаётся открыта: десять повторений, 30 минут совместной
 работы, системные frame/CPU/GPU/memory и контрактные задержки. `saved`,

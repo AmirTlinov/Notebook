@@ -5,6 +5,10 @@ import NotebookCore
 /// Caller cancellation follows the synchronous SQL operation, including work
 /// before its first row. Closing joins that operation and releases the handle.
 actor NotebookCommandReader {
+  struct Observation<Value: Sendable>: Sendable {
+    let connectionLifetimeID: UUID
+    let value: Value
+  }
   private var session: NotebookReadSession?
   nonisolated private let cancellation: NotebookReadCancellation
   init(store: NotebookStore) {
@@ -14,6 +18,11 @@ actor NotebookCommandReader {
 
   func read<Value: Sendable>(workspaceID: UUID,
     _ operation: @Sendable (NotebookQueryCut) throws -> Value) throws -> Value {
+    try observe(workspaceID: workspaceID, operation).value
+  }
+
+  func observe<Value: Sendable>(workspaceID: UUID,
+    _ operation: @Sendable (NotebookQueryCut) throws -> Value) throws -> Observation<Value> {
     try Task.checkCancellation()
     guard let session else { throw CancellationError() }
     let value = try session.observe { cut in
@@ -23,7 +32,10 @@ actor NotebookCommandReader {
       return try operation(cut)
     }
     try Task.checkCancellation()
-    return value
+    guard let lifetime = session.connectionLifetimeID else {
+      throw CollaborationError("read_cut_expired", "Соединение читателя завершено.")
+    }
+    return .init(connectionLifetimeID: lifetime, value: value)
   }
 
   nonisolated func stop() { cancellation.cancel() }

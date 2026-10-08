@@ -285,7 +285,7 @@ final class NearbySyncTests: XCTestCase {
     await fulfillment(of: [saving], timeout: 2)
     var stopped = false
     let stopping = expectation(description: "Shutdown submitted")
-    let shutdown = Task { stopping.fulfill(); let result = await sync.stopAndDrainTrust(); stopped = true; return result }
+    let shutdown = Task { stopping.fulfill(); let result = await sync.stopAndDrain(); stopped = true; return result }
     await fulfillment(of: [stopping], timeout: 2)
     XCTAssertFalse(stopped, "Shutdown cannot complete before the admitted Keychain write")
     trust.releaseSave()

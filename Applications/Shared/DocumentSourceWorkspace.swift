@@ -90,12 +90,17 @@ final class DocumentSourceEditorSession {
     model.documentSourceEditor = self
   }
   var restoredScroll: Double { scroll }
+  var hasComposingInput: Bool { composing }
   private var edit: DocumentSourceEdit {
     .init(sessionID: sessionID, documentID: documentID, fileID: fileID, baseSource: base,
       baseVersion: version, source: text, sequence: sequence)
   }
+  /// Native delegates read the central phase at the input boundary; a paused
+  /// history cut does not publish a SwiftUI observation to disable this view.
+  func permitsNativeMutation() -> Bool { model?.permitsAuthoredWork == true }
   func input(_ value: String, selection: NSRange, composing: Bool, scroll: Double) {
     let changed = text != value, compositionEnded = self.composing && !composing
+    guard !changed || permitsNativeMutation() else { return }
     if changed, frozen == sessionID { sessionID = UUID(); sequence = 0 }
     text = value; self.selection = selection; self.composing = composing; self.scroll = max(0, scroll)
     guard changed || composing || compositionEnded else { return }
@@ -121,7 +126,7 @@ final class DocumentSourceEditorSession {
     commitTask = nil
   }
   private func commitInput() async {
-    guard !saving, !composing, !conflicted, text != base, let model else { return }
+    guard permitsNativeMutation(), !saving, !composing, !conflicted, text != base, let model else { return }
     pending = nil; persist()
     let submitted = edit
     frozen = submitted.sessionID; saving = true; notice = "Сохранение…"
@@ -186,7 +191,7 @@ final class DocumentSourceEditorSession {
   func checkpoint() async { if composing { persist() }; await save() }
   var maximumSourceLength: Int { DocumentFile.maximumSourceLength }
   func useCurrentDocument() {
-    guard !saving, let model, let document = model.documents[documentID], let current = source(in: document) else { return }
+    guard permitsNativeMutation(), !saving, let model, let document = model.documents[documentID], let current = source(in: document) else { return }
     model.discardDocumentDraft(sessionID)
     base = current.text; version = current.version; text = base
     sessionID = UUID(); sequence = 0; conflicted = false; notice = nil; navigate(0)
@@ -194,7 +199,7 @@ final class DocumentSourceEditorSession {
   /// Resolving a conflict is explicit. It creates a new draft against the
   /// displayed current source; the following normal CAS can still reject it.
   func rebaseDraft() {
-    guard !saving, let model, let document = model.documents[documentID], let current = source(in: document) else { return }
+    guard permitsNativeMutation(), !saving, let model, let document = model.documents[documentID], let current = source(in: document) else { return }
     let old = sessionID
     base = current.text; version = current.version
     sessionID = UUID(); sequence = 0; conflicted = false; persist(); model.discardDocumentDraft(old)

@@ -1,0 +1,485 @@
+{
+  "format": 1,
+  "status": "selected-regressions-and-installation265-passed-live-pair-observation-pending",
+  "issue": "GUI-535",
+  "baseCommit": "3d2aa654c66f56a00c84cc0a0d47feecdcd3567b",
+  "source": {
+    "sha256": "0c2711bea4c4037b295dfd934f4e1c954feefc9fc01de73807a58dc174946c53",
+    "files": 1689
+  },
+  "formats": {
+    "database": 29,
+    "wire": 44,
+    "manifest": 26
+  },
+  "retention": "all authored history indefinitely",
+  "devices": "this Mac and Elizabeth iPad",
+  "physicalAcceptance": false,
+  "checks": [
+    {
+      "scope": "Core",
+      "directory": ".build/gui535-combined-20261008-v6",
+      "sourceSHA256": "4bebb6718de7c50dc6449be9889893613d042dded29abfb5aa4f3aa3dbb32737",
+      "planned": 61,
+      "passed": 61,
+      "failed": 0,
+      "skipped": 0,
+      "aggregateRouteStatus": "failed-later-native-compilation",
+      "evidence": {
+        "source-before.json": "240b84930c28b2fe5b55f986b473ddbfd74866b2450063ac2ee47d5003202052",
+        "core-execution.json": "bda04885586e2c43b2f7fa38944e60b08c4b7b2126168c22e19ce1fe53143386"
+      }
+    },
+    {
+      "scope": "MCP",
+      "directory": ".build/gui535-combined-20261008-v6",
+      "sourceSHA256": "4bebb6718de7c50dc6449be9889893613d042dded29abfb5aa4f3aa3dbb32737",
+      "planned": 230,
+      "passed": 230,
+      "failed": 0,
+      "skipped": 0,
+      "aggregateRouteStatus": "failed-later-native-compilation",
+      "evidence": {
+        "source-before.json": "240b84930c28b2fe5b55f986b473ddbfd74866b2450063ac2ee47d5003202052",
+        "mcp-execution.json": "3dd7b11891cb35b77a1d61b6fbb614a26f914adf8cf64cd3a20c24889be60126"
+      }
+    },
+    {
+      "scope": "physical iPad",
+      "directory": ".build/gui535-native-20261008-v9",
+      "sourceSHA256": "cc1a88c20e9f9ae3dc434350bfbc0daef4bba218a324d73ec581ee10e538c3ad",
+      "planned": 30,
+      "passed": 30,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "aggregateRouteStatus": "failed-later-Mac-fixture",
+      "evidence": {
+        "source-before.json": "5b70919579ee5fddc83b853473506084104de4b9bbdb526b98f85e4038993d87",
+        "ipad-execution.json": "9d58b93a5cc266135e16ab7bd04b20b20c236dfbe9dc016c81c402f5971c390c"
+      }
+    },
+    {
+      "scope": "Mac",
+      "directory": ".build/gui535-native-20261008-v9",
+      "planned": 14,
+      "passed": 13,
+      "failed": 1,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "evidence": {
+        "source-before.json": "5b70919579ee5fddc83b853473506084104de4b9bbdb526b98f85e4038993d87",
+        "mac-summary.json": "5891ed674292ac048e3b28721d7bf1f7575f1637cb5ecc647c5ccd2f2c72f31b"
+      }
+    },
+    {
+      "scope": "Mac failed-catalog regression",
+      "directory": ".build/gui535-mac-catalog-20261008-v10",
+      "planned": 1,
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "routeStatus": "passed",
+      "evidence": {
+        "source-before.json": "b79cbe0301883df6037881534c5b1d2033e795c0f39e757d88152488627b0393",
+        "verification.json": "6539fb491bfd29d0485f0e183acf47582dc25f9b403ef39afec965f3488c165b",
+        "mac-execution.json": "401240c6ef6cf195d489fd86ef5741474623506f8a3b36f36784134316f3eb0f"
+      },
+      "sourceSHA256": "711c9b00464ae41250232069dacab42dcd0927c81db8edb536f858c7cf99971a"
+    },
+    {
+      "scope": "Mac + physical iPad real-TLS responder directory ordering and first-refusal retention",
+      "directory": ".build/gui535-coordination-20261008-v11",
+      "sourceSHA256": "b77eb28d2b64621e543216a978b5d8ac4a9a75e36afdbdb46223d289e468f7f3",
+      "planned": 2,
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "routeStatus": "passed",
+      "evidence": {
+        "source-before.json": "73c5c31db502d306c4adefdd4b11414040e23909e50e8512338ba29f5a433fee",
+        "source-after.json": "73c5c31db502d306c4adefdd4b11414040e23909e50e8512338ba29f5a433fee",
+        "verification.json": "309cb26e755239126777025080c1d465d240e8869a900169277e9dce325fab6b",
+        "ipad-execution.json": "e52e6a0fe1a90276c547b58ae0d0cad8153bc4f6be9ffdb21d2383d70ff5a4d7",
+        "mac-execution.json": "22551950516cd126bb6120cd821a26cf911f6f8a3a190f12168c705825800cd0"
+      }
+    },
+    {
+      "scope": "Typed terminal-refusal framing, strict bounded context and identifiers",
+      "directory": ".build/gui535-terminal-core-20261008-v12",
+      "sourceSHA256": "104bb424d57b30dcd04a2f535fe20c19963a84d48b628a2c07c31353225dac0c",
+      "planned": 2,
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0,
+      "routeStatus": "passed",
+      "evidence": {
+        "verification.json": "382e962ffbf2115022f1e01124f39076e251f64b7093fd428165b4aceae337e9",
+        "source-before.json": "699869cf3e5f9fb8e1e0a5e4ea074f23864d1b1051105408fbb74c3e52ada038",
+        "source-after.json": "699869cf3e5f9fb8e1e0a5e4ea074f23864d1b1051105408fbb74c3e52ada038",
+        "core-execution.json": "ff6c4647749eb1ddc8264b31c99d32fc63d21b6e5ae67e6d9fdcc41bce7c1448"
+      }
+    },
+    {
+      "scope": "Physical iPad terminal source refusal, full TLS window, ordered tails and source guards",
+      "directory": ".build/gui535-terminal-native-20261008-v13",
+      "sourceSHA256": "104bb424d57b30dcd04a2f535fe20c19963a84d48b628a2c07c31353225dac0c",
+      "planned": 9,
+      "passed": 8,
+      "failed": 1,
+      "skipped": 0,
+      "aggregateRouteStatus": "failed",
+      "failure": "New classification fixture required a journal UUID from an intentionally fresh startsNearbySync=false model; no actual journal had been admitted. Production terminal/TLS scenarios passed.",
+      "evidence": {
+        "source-before.json": "699869cf3e5f9fb8e1e0a5e4ea074f23864d1b1051105408fbb74c3e52ada038",
+        "ipad-summary.json": "9868f31b1c422f0d0ec052e89584f6ef95d6feeec1c95689e0d1039ebf12a3b6"
+      }
+    },
+    {
+      "scope": "Corrected physical iPad source-classification fixture; Mac real-TLS/first-refusal and all source cases",
+      "directory": ".build/gui535-terminal-native-20261008-v14",
+      "sourceSHA256": "0c2711bea4c4037b295dfd934f4e1c954feefc9fc01de73807a58dc174946c53",
+      "planned": 6,
+      "passed": 6,
+      "failed": 0,
+      "skipped": 0,
+      "routeStatus": "passed",
+      "evidence": {
+        "verification.json": "4ecf1154bd20aeda9c7700e46b82d03e99ce4cb2be5f958f974d6f49b93f429d",
+        "source-before.json": "0204271d835c6ebd0637819870fd578ccff4a173d442192e2b274f4ef0443792",
+        "source-after.json": "0204271d835c6ebd0637819870fd578ccff4a173d442192e2b274f4ef0443792",
+        "ipad-execution.json": "c42abae5f93c5e3adb4737a1ac762bc36d76c7cc7a850dbc62531ef141bcfb1e",
+        "mac-execution.json": "163529e4e52e7181372cce3ac827c1ad0c7ab1814bea4e1762d1fe8ef5d970e6"
+      }
+    }
+  ],
+  "failedAttempts": [
+    {
+      "version": "v1-v4",
+      "reason": "Core compile and fixture defects; original failed outputs retained."
+    },
+    {
+      "version": "v5",
+      "reason": "MCP science fixture hashes stale after SDK regeneration; runtime launcher lost prior native refusal behind final IPC timeout."
+    },
+    {
+      "version": "v6",
+      "reason": "Three native compilation errors."
+    },
+    {
+      "version": "v7",
+      "reason": "Native coordinator continuation inference and duplicate local name."
+    },
+    {
+      "version": "v8",
+      "scope": "physical iPad",
+      "passed": 26,
+      "failed": 4,
+      "reason": "Direct UIKit mutations bypassed delegate; two fixture waits; TLS request/quiesce and late-Prepared ordering."
+    },
+    {
+      "version": "v9",
+      "scope": "Mac",
+      "passed": 13,
+      "failed": 1,
+      "reason": "Mac-only fixture had never initialized the actual journal generation."
+    },
+    {
+      "version": "v13",
+      "reason": "New classification fixture required a journal UUID from an intentionally fresh startsNearbySync=false model; no actual journal had been admitted. Production terminal/TLS scenarios passed.",
+      "directory": ".build/gui535-terminal-native-20261008-v13"
+    }
+  ],
+  "release": {
+    "build": "265",
+    "version": "0.3.195",
+    "mcpVersion": "0.3.43",
+    "status": "installed",
+    "sourceSHA256": "0c2711bea4c4037b295dfd934f4e1c954feefc9fc01de73807a58dc174946c53",
+    "buildDirectory": ".build/releases/gui535-265-v1",
+    "installationDirectory": ".build/releases/gui535-265-install",
+    "evidence": {
+      ".build/releases/gui535-265-v1/build.json": "52ceaebd33f917800839b345c7637ae6e37a3f8b149b69deadf4a54a5c2b5fc6",
+      ".build/releases/gui535-265-v1/source-before.json": "0204271d835c6ebd0637819870fd578ccff4a173d442192e2b274f4ef0443792",
+      ".build/releases/gui535-265-v1/source-after.json": "0204271d835c6ebd0637819870fd578ccff4a173d442192e2b274f4ef0443792",
+      ".build/releases/gui535-265-install/installation.json": "55b6ea8df6450b85bea548040725c1edbbe28cbc8d4a1e4d4df301b4567e627e"
+    }
+  },
+  "live": {
+    "status": "warm-direct-native-reads-passed-ipad-presence-and-joint-request-pending",
+    "build": "265",
+    "tools": 7,
+    "runtimePID": 57661,
+    "observedDeviceIDs": [
+      "29DC77FE-8777-41EC-BE98-704F4668A2F4",
+      "FE3F4542-687E-4827-921B-7CF9D5659BA4"
+    ],
+    "nativePhase": "open",
+    "directoryStatus": "verified",
+    "connections": [],
+    "actualIPadPresentation": "unavailable",
+    "actualIPadImageCount": 0,
+    "formatTransitionAuthorized": false,
+    "requestID": null,
+    "coldAttempt": "Runtime launched and answered opening; first domain reads returned runtime_starting/owner_unavailable. Fresh warm connection passed all domain reads.",
+    "deferredReason": "Independent physical iPad XCTest runner active; do not overlap device work.",
+    "directories": [
+      ".build/gui535-installed-265/cold",
+      ".build/gui535-installed-265/warm1"
+    ],
+    "evidence": {
+      ".build/gui535-installed-265/cold/summary.json": "b167ceb7c67225006b077bac60975e1ecba068e2bed455071883590f4dccc26a",
+      ".build/gui535-installed-265/cold/startup.log": "13c46d9309a52859e681ccc0b19dc7995e01d3da1d203625f31e656cd8992abd",
+      ".build/gui535-installed-265/warm1/summary.json": "1d82903e389ffb29aa5aaf876c9f4ca22857aac97bc7e6c77b081c7c846e758b",
+      ".build/gui535-installed-265/warm1/startup.log": "81435d551dd07be53bd50f5b39abd946747286dcf6a81bc8f35977d240976eef"
+    }
+  },
+  "open": [
+    "Live installed pair report, including all twelve roots or explicit refusal/blockers.",
+    "GUI-536 immutable birth/event executor and canonical merge.",
+    "GUI-537 coordinated activation after the accepted material database admission.",
+    "Full system frame/CPU/GPU/memory, ten repetitions and 30-minute joint acceptance."
+  ],
+  "installed263Source": {
+    "sha256": "711c9b00464ae41250232069dacab42dcd0927c81db8edb536f858c7cf99971a",
+    "files": 1689
+  },
+  "sourceDeltaThrough263": {
+    "fromCoreMCP": [
+      "Applications/Shared/DocumentNativeSourceEditor.swift",
+      "Applications/Shared/NearbySync.swift",
+      "Applications/Shared/NotebookAcceptanceConfiguration.swift",
+      "Applications/Shared/NotebookAppModel.swift",
+      "Applications/Shared/NotebookHistoryReadiness+Coordination.swift",
+      "Applications/TestSupport/DocumentNativeSourceSessionTests.swift",
+      "Applications/TestSupport/NotebookArchiveLaunchTests.swift",
+      "Applications/Tests/DocumentProgramOwnerTests.swift",
+      "Applications/Tests/NotebookFileControllerTests.swift",
+      "Applications/Tests/NotebookTransportSessionTests.swift"
+    ],
+    "coreAndMCPIntersection": [],
+    "afterNativeV9": [
+      "Applications/TestSupport/NotebookArchiveLaunchTests.swift"
+    ],
+    "afterNativeV9ProductionIntersection": [],
+    "afterNativeV9PhysicalIPadIntersection": [],
+    "finalDeltaReason": "Four Mac-only fixture lines initialize the actual local journal through the existing Queue adapter before read-only observation."
+  },
+  "sourceDelta": {
+    "fromCoreMCP": [
+      "Applications/Shared/DocumentNativeSourceEditor.swift",
+      "Applications/Shared/NearbySync.swift",
+      "Applications/Shared/NotebookAcceptanceConfiguration.swift",
+      "Applications/Shared/NotebookAppModel.swift",
+      "Applications/Shared/NotebookHistoryReadiness+Coordination.swift",
+      "Applications/Shared/NotebookHistoryReadiness+Source.swift",
+      "Applications/TestSupport/DocumentNativeSourceSessionTests.swift",
+      "Applications/TestSupport/NotebookArchiveLaunchTests.swift",
+      "Applications/TestSupport/NotebookHistoryReadinessCoordinationTests.swift",
+      "Applications/TestSupport/NotebookHistoryReadinessSourceTests.swift",
+      "Applications/Tests/DocumentProgramOwnerTests.swift",
+      "Applications/Tests/NotebookFileControllerTests.swift",
+      "Applications/Tests/NotebookTransportSessionTests.swift",
+      "Applications/project.yml",
+      "Sources/NotebookCore/NotebookHistoryReadinessProtocol.swift",
+      "Tests/NotebookCoreTests/NotebookTransportFramingTests.swift"
+    ],
+    "fromNativeV9": [
+      "Applications/Shared/NearbySync.swift",
+      "Applications/Shared/NotebookHistoryReadiness+Coordination.swift",
+      "Applications/Shared/NotebookHistoryReadiness+Source.swift",
+      "Applications/TestSupport/NotebookArchiveLaunchTests.swift",
+      "Applications/TestSupport/NotebookHistoryReadinessCoordinationTests.swift",
+      "Applications/TestSupport/NotebookHistoryReadinessSourceTests.swift",
+      "Applications/Tests/NotebookTransportSessionTests.swift",
+      "Applications/project.yml",
+      "Sources/NotebookCore/NotebookHistoryReadinessProtocol.swift",
+      "Tests/NotebookCoreTests/NotebookTransportFramingTests.swift"
+    ],
+    "fromInstalled264": [
+      "Applications/Shared/NearbySync.swift",
+      "Applications/Shared/NotebookHistoryReadiness+Coordination.swift",
+      "Applications/Shared/NotebookHistoryReadiness+Source.swift",
+      "Applications/TestSupport/NotebookHistoryReadinessCoordinationTests.swift",
+      "Applications/TestSupport/NotebookHistoryReadinessSourceTests.swift",
+      "Applications/Tests/NotebookTransportSessionTests.swift",
+      "Applications/project.yml",
+      "Sources/NotebookCore/NotebookHistoryReadinessProtocol.swift",
+      "Tests/NotebookCoreTests/NotebookTransportFramingTests.swift"
+    ],
+    "fromCoreTerminalV12": [
+      "Applications/TestSupport/NotebookHistoryReadinessSourceTests.swift"
+    ],
+    "currentDeltaReason": "Typed refusal on the existing ordered resume, cooperative source stop, bounded terminal credit/drain and source cause context. Pair265. Runtime unchanged between Core2, physical8/9 and final native6; only the failed SourceTests method changed.",
+    "coreAndMCPIntersection": [
+      "Sources/NotebookCore/NotebookHistoryReadinessProtocol.swift",
+      "Tests/NotebookCoreTests/NotebookTransportFramingTests.swift"
+    ],
+    "mcpIntersection": []
+  },
+  "sourceDeltaThrough264": {
+    "fromCoreMCP": [
+      "Applications/Shared/DocumentNativeSourceEditor.swift",
+      "Applications/Shared/NearbySync.swift",
+      "Applications/Shared/NotebookAcceptanceConfiguration.swift",
+      "Applications/Shared/NotebookAppModel.swift",
+      "Applications/Shared/NotebookHistoryReadiness+Coordination.swift",
+      "Applications/TestSupport/DocumentNativeSourceSessionTests.swift",
+      "Applications/TestSupport/NotebookArchiveLaunchTests.swift",
+      "Applications/TestSupport/NotebookHistoryReadinessCoordinationTests.swift",
+      "Applications/Tests/DocumentProgramOwnerTests.swift",
+      "Applications/Tests/NotebookFileControllerTests.swift",
+      "Applications/Tests/NotebookTransportSessionTests.swift",
+      "Applications/project.yml"
+    ],
+    "coreAndMCPIntersection": [],
+    "fromNativeV9": [
+      "Applications/Shared/NotebookHistoryReadiness+Coordination.swift",
+      "Applications/TestSupport/NotebookArchiveLaunchTests.swift",
+      "Applications/TestSupport/NotebookHistoryReadinessCoordinationTests.swift",
+      "Applications/project.yml"
+    ],
+    "fromInstalled263": [
+      "Applications/Shared/NotebookHistoryReadiness+Coordination.swift",
+      "Applications/TestSupport/NotebookHistoryReadinessCoordinationTests.swift",
+      "Applications/project.yml"
+    ],
+    "currentDeltaReason": "Responder protocol admission precedes its actual awaited directory read; the first semantic refusal survives teardown. The same real TLS fixture holds that read and proves twelve roots, same owners and exact refusal. Pair version264."
+  },
+  "priorReleases": [
+    {
+      "build": "263",
+      "version": "0.3.193",
+      "mcpVersion": "0.3.43",
+      "status": "installed",
+      "buildDirectory": ".build/releases/gui535-263-v1",
+      "installationDirectory": ".build/releases/gui535-263-install"
+    },
+    {
+      "build": "264",
+      "version": "0.3.194",
+      "mcpVersion": "0.3.43",
+      "status": "installed",
+      "sourceSHA256": "b77eb28d2b64621e543216a978b5d8ac4a9a75e36afdbdb46223d289e468f7f3",
+      "buildDirectory": ".build/releases/gui535-264-v1",
+      "installationDirectory": ".build/releases/gui535-264-install",
+      "evidence": {
+        ".build/releases/gui535-264-v1/build.json": "5db224bddef0380d1d2835f8b8e7b0de23b9b91be6ea421dd4bf82e92b7a2ba6",
+        ".build/releases/gui535-264-install/installation.json": "d6c0bbfaead0ece645ea0a7fae35869f95359a047b1d3cbd7846d7bdfde8af0f"
+      }
+    }
+  ],
+  "priorLive": [
+    {
+      "status": "installed-read-passed-joint-observation-disconnected-and-resumed",
+      "tools": 7,
+      "build": "263",
+      "observedDeviceIDs": [
+        "29DC77FE-8777-41EC-BE98-704F4668A2F4",
+        "FE3F4542-687E-4827-921B-7CF9D5659BA4"
+      ],
+      "nativePhaseBefore": "open",
+      "nativePhaseAfter": "open",
+      "directoryStatus": "verified",
+      "selectedConnectionBefore": "1B3116C6-39E8-4E50-9A74-54F65822B99C",
+      "actualIPadPresentation": "ready",
+      "actualIPadImageCount": 1,
+      "formatTransitionAuthorized": false,
+      "requestID": "ea51b97e-0c97-4831-995b-fdb34e7d4a74",
+      "requestState": "failed",
+      "requestError": "NotebookTransportError.disconnected",
+      "networkEvidence": {
+        "route": "awdl0",
+        "unsatisfiedAt": "2026-10-08T14:27:04.705Z",
+        "timeoutAt": "2026-10-08T14:27:08.396Z",
+        "reason": "No network route; TCP dropping connection on keepalive timeout"
+      },
+      "directories": [
+        ".build/gui535-installed-263/warm2",
+        ".build/gui535-installed-263/history-ea51b97e-0c97-4831-995b-fdb34e7d4a74"
+      ],
+      "log": ".build/gui535-installed263-history-first-log.json",
+      "additionalSourceDefect": "Responder accepted the transport preparation only after awaiting the real account directory; an earlier peer Prepared could be rejected. Coordinator teardown could overwrite the first semantic failure."
+    },
+    {
+      "status": "installed-reads-passed-joint-reading-refused-and-resumed",
+      "build": "264",
+      "tools": 7,
+      "observedDeviceIDs": [
+        "29DC77FE-8777-41EC-BE98-704F4668A2F4",
+        "FE3F4542-687E-4827-921B-7CF9D5659BA4"
+      ],
+      "nativePhaseBefore": "open",
+      "nativePhaseAfter": "open",
+      "directoryStatus": "verified",
+      "selectedConnectionBefore": "B375A8C0-839D-43CA-9447-A15B0AE0B35F",
+      "selectedConnectionAfter": "B375A8C0-839D-43CA-9447-A15B0AE0B35F",
+      "selectedConnectionReadyBeforeAndAfter": true,
+      "actualIPadPresentation": "ready",
+      "actualIPadImageCount": 1,
+      "formatTransitionAuthorized": false,
+      "requestID": "2121dec9-b34c-4c8b-8335-dd9af7d86ff6",
+      "requestState": "failed",
+      "requestError": "NotebookTransportError.historyCutStale",
+      "firstCause": "unknown: terminal peer resume does not carry its original failure",
+      "observedReadingAt": "2026-10-08T14:51:14.959Z",
+      "observedFailedAt": "2026-10-08T14:51:33.013Z",
+      "directories": [
+        ".build/gui535-installed-264/warm1",
+        ".build/gui535-installed-264/history-2121dec9-b34c-4c8b-8335-dd9af7d86ff6"
+      ],
+      "evidence": {
+        ".build/gui535-installed-264/history-2121dec9-b34c-4c8b-8335-dd9af7d86ff6/request.json": "2caa1d8ed9e50c8ea6669f3a82abbfdc72408a6ea91185371f9676d68107ec6f",
+        ".build/gui535-installed-264/history-2121dec9-b34c-4c8b-8335-dd9af7d86ff6/states.json": "8a20ca309aa6ae1eb522c38e50788951378efc4f46ad9f2c2346167cdbc82429",
+        ".build/gui535-installed-264/history-2121dec9-b34c-4c8b-8335-dd9af7d86ff6/latest.json": "597ab2d6e8f90a2f278a0efc0acac4c4e102998161f274ef613fb857086d232e",
+        ".build/gui535-installed-264/history-2121dec9-b34c-4c8b-8335-dd9af7d86ff6/inventory-before.json": "3216af592679682a2930a6716f57780a017bf73694bcd38b1d1ef11b36ea8c3a",
+        ".build/gui535-installed-264/history-2121dec9-b34c-4c8b-8335-dd9af7d86ff6/inventory-after.json": "acd598ba5b83da295ce1d1234e988502dc59f2125ef4e6dd1b78b11b0e5f2f24"
+      },
+      "additionalSourceDefect": "Existing terminal resume drops peer refusal; an unfinished receiver synthesizes historyCutStale and cancels its reader. The first installed peer cause is not retained by current status. A typed bounded refusal through the existing control owner is in progress."
+    }
+  ],
+  "terminalRefusalRepair": {
+    "build": "265",
+    "version": "0.3.195",
+    "mcpVersion": "0.3.43",
+    "sourceSHA256": "0c2711bea4c4037b295dfd934f4e1c954feefc9fc01de73807a58dc174946c53",
+    "sourceInputs": 1689,
+    "status": "selected-core2-and-native14-passed-signed-pair265-installed",
+    "coreEvidence": ".build/gui535-terminal-core-20261008-v12",
+    "nativeEvidence": ".build/gui535-terminal-native-20261008-v14",
+    "changes": [
+      "Typed bounded local-origin first refusal in existing ordered resume; no remote cause echo.",
+      "Cooperative source abort between finite reads/pages; original TLS-credit waiter remains owned.",
+      "Terminal frames wait for existing credit; same operation, waiter and original deadline.",
+      "Previously sent metadata drains before peer terminal frame; no acceptance after that boundary.",
+      "Source error preserves named section, transaction, anchor mismatch and safe allowance identifier.",
+      "Provisional comparison report becomes visible only after successful bilateral resume."
+    ],
+    "sourceDeltaFrom264": [
+      "Applications/Shared/NearbySync.swift",
+      "Applications/Shared/NotebookHistoryReadiness+Coordination.swift",
+      "Applications/Shared/NotebookHistoryReadiness+Source.swift",
+      "Applications/TestSupport/NotebookHistoryReadinessCoordinationTests.swift",
+      "Applications/TestSupport/NotebookHistoryReadinessSourceTests.swift",
+      "Applications/Tests/NotebookTransportSessionTests.swift",
+      "Applications/project.yml",
+      "Sources/NotebookCore/NotebookHistoryReadinessProtocol.swift",
+      "Tests/NotebookCoreTests/NotebookTransportFramingTests.swift"
+    ],
+    "mcpSourceDelta": [],
+    "remainingProtocolScope": "Pre-quiescence stale/cancel retains coarse existing reason; detailed terminal refusal applies to admitted quiescent scope.",
+    "coreSourceSHA256": "104bb424d57b30dcd04a2f535fe20c19963a84d48b628a2c07c31353225dac0c",
+    "sourceDeltaFromCoreCheck": [
+      "Applications/TestSupport/NotebookHistoryReadinessSourceTests.swift"
+    ],
+    "fixtureRepair": "The failed method alone admits its actual transport journal through model.makeTransportStorage/sole Queue, creates an authored notebook, and observes its real accepted transaction; production and other tests unchanged.",
+    "nativeScope": {
+      "physicalIPad": 9,
+      "mac": 5,
+      "uniqueNativeFunctions": 14,
+      "originalFailure": "v13 fixture error preserved; v14 repeats only that physical method and adds Mac5; remaining physical8 are unchanged."
+    }
+  }
+}

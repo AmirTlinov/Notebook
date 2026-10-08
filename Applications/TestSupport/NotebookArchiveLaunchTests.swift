@@ -547,6 +547,158 @@ final class NotebookArchiveLaunchTests: XCTestCase {
       XCTAssertEqual(try String(contentsOf: accepted, encoding: .utf8), "first second")
     }
 
+    func testHistoryPhaseRefusesNewCatalogIntentAndKeepsAcceptedRuntimeRetry() async throws {
+      let base = URL(fileURLWithPath: "/tmp/nb-history-catalog-" + UUID().uuidString.lowercased(), isDirectory: true)
+      try FileManager.default.createDirectory(at: base, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+      let root = base.appendingPathComponent("Notebook"), socket = base.appendingPathComponent("bridge.sock")
+      let armed = base.appendingPathComponent("hold-catalog"), release = DispatchSemaphore(value: 0)
+      let renameArmed = base.appendingPathComponent("hold-rename")
+      let held = expectation(description: "The existing catalog actor holds an accepted selection read")
+      let renameHeld = expectation(description: "The catalog actor delays the admitted Launch rename")
+      let library = NotebookWorkspaceLibrary(originalRoot: root, fault: { point in
+        if point == .resolutionRead, FileManager.default.fileExists(atPath: renameArmed.path) {
+          renameHeld.fulfill()
+          guard release.wait(timeout: .now() + 10) == .success else { throw NotebookTransportError.storageUnavailable }
+          throw NotebookTransportError.storageUnavailable
+        }
+        if point == .resolutionRead, FileManager.default.fileExists(atPath: armed.path) {
+          held.fulfill()
+          guard release.wait(timeout: .now() + 10) == .success else { throw NotebookTransportError.storageUnavailable }
+        }
+      })
+      var owners: [NotebookAppModel] = []
+      let launch = NotebookApplicationLaunch(root: root, runtimeSocketURL: socket, libraryOwner: library) { store, _ in
+        let key = String(UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased().prefix(24))
+        let model = NotebookAppModel(store: store, startsNearbySync: false,
+          commandSocketURL: base.appendingPathComponent(key + ".sock"))
+        owners.append(model); return model
+      }
+      addTeardownBlock { @MainActor in
+        try? FileManager.default.removeItem(at: armed)
+        try? FileManager.default.removeItem(at: renameArmed)
+        release.signal()
+        _ = await launch.shutdown()
+        try FileManager.default.removeItem(at: base)
+      }
+      func send(_ request: NotebookRuntimeWorkspaceRequest) async throws -> NotebookRuntimeWorkspaceResponse {
+        var command = NotebookCommand(command: .runtimeWorkspace); command.runtimeWorkspace = request
+        return try await Task.detached { [command] in
+          try NotebookIPCClient(socketURL: socket).send(command).decode(NotebookRuntimeWorkspaceResponse.self)
+        }.value
+      }
+      await launch.start()
+      let original = try XCTUnwrap(launch.model)
+      await original.start(pageSize: NotebookAppModel.defaultPageSize)
+      let originalID = try XCTUnwrap(original.admittedWorkspaceID), selectedID = UUID()
+      let created = try await send(.init(action: .create, id: selectedID, name: "Selected"))
+      XCTAssertNil(created.error)
+      let selected = try XCTUnwrap(launch.model)
+      XCTAssertEqual(owners.count, 2)
+      await launch.refreshWorkspaces()
+      let before = try await library.snapshot(), originalName = selected.workspaceName
+      func request(for owner: NotebookAppModel) throws -> NotebookHistoryReadiness.Request {
+        .init(id: UUID(), workspaceID: try XCTUnwrap(owner.admittedWorkspaceID),
+          devices: [owner.actorID, UUID()], acceptedGeneration: 0)
+      }
+
+      // A catalog operation accepted by Launch must finish before the model
+      // closes history admission. Its busy state comes from that real owner.
+      // Sync is disabled in this fixture; its normal writer adapter admits the
+      // journal before the read-only readiness cut observes that generation.
+      let storage = try await selected.makeTransportStorage()
+      let observation = try await selected.observeHistorySource { try $0.replicaInventoryCut() }
+      XCTAssertEqual(observation.value.journalGeneration, try XCTUnwrap(storage.journalGeneration))
+      let preparation = NotebookHistoryControlPreparation(requestID: UUID(), workspaceID: selectedID,
+        credentialID: UUID(), applicationBuild: "catalog-tests", endpoints: [
+          .init(identity: .init(deviceID: selected.actorID, workspaceID: selectedID, displayName: "Local"),
+            journalGeneration: try XCTUnwrap(observation.value.journalGeneration)),
+          .init(identity: .init(deviceID: UUID(), workspaceID: selectedID, displayName: "Peer"), journalGeneration: UUID())])
+      let blockingTicket = try await library.prepareSelection(selectedID, name: originalName)
+      try Data().write(to: renameArmed)
+      let blockingRead = Task { await library.commitSelection(blockingTicket) }
+      await fulfillment(of: [renameHeld], timeout: 3)
+      let renameStarted = expectation(description: "Launch owns the delayed catalog rename")
+      let acceptedRename = Task { @MainActor in
+        renameStarted.fulfill()
+        return await launch.renameWorkspace(selectedID, name: originalName)
+      }
+      await fulfillment(of: [renameStarted], timeout: 3)
+      XCTAssertTrue(launch.isChecking)
+      do {
+        let unexpected = try await selected.beginHistoryReadiness(preparation)
+        try selected.historyReadiness.finish(unexpected) { _ in XCTFail("No writer seal was requested") }
+        XCTFail("Readiness overtook its Launch owner's admitted catalog operation")
+      } catch let error as CollaborationError { XCTAssertEqual(error.code, "input_active") }
+      XCTAssertEqual(selected.historyReadiness.phase, .open)
+      try FileManager.default.removeItem(at: renameArmed); release.signal()
+      guard case .rejected = await blockingRead.value else { XCTFail("The read-delay fixture must release its unused ticket"); return }
+      let renamedAfterJoin = await acceptedRename.value
+      XCTAssertTrue(renamedAfterJoin, launch.workspaceError ?? "The admitted rename must finish through its original owner")
+      XCTAssertFalse(launch.isChecking)
+      XCTAssertEqual(selected.historyReadinessLifecycleIsBusy?(), false)
+
+      // The selected and the retained addressed owners both participate in
+      // the same catalog. Neither closed phase permits a fresh catalog intent.
+      for owner in [selected, original] {
+        let boundary = try request(for: owner)
+        try owner.historyReadiness.begin(boundary)
+        for action in [NotebookRuntimeWorkspaceRequest(action: .rename, id: selectedID, name: "Refused"),
+          .init(action: .create, id: UUID(), name: "Refused"), .init(action: .select, id: originalID)] {
+          do { _ = try await send(action); XCTFail("A closed history phase admitted new catalog intent") }
+          catch let error as CollaborationError { XCTAssertEqual(error.code, "history_readiness_pending") }
+        }
+        let renamed = await launch.renameWorkspace(selectedID, name: "Refused directly")
+        let createdDirectly = await launch.createWorkspace(name: "Refused directly")
+        XCTAssertFalse(renamed); XCTAssertFalse(createdDirectly)
+        await launch.openWorkspace(originalID)
+        await launch.removeWorkspaceByUser(originalID, everywhere: false)
+        let listed = try await send(.init(action: .list))
+        XCTAssertEqual(listed.workspaces.count, 2)
+        let retried = try await send(.init(action: .retry, id: selectedID))
+        XCTAssertNil(retried.error, "Retry of the admitted owner remains available")
+        let freshRetry = try await send(.init(action: .retry, id: UUID()))
+        XCTAssertNotNil(freshRetry.error, "Retry cannot manufacture a fresh workspace intent")
+        XCTAssertTrue(launch.model === selected); XCTAssertEqual(owners.count, 2)
+        XCTAssertEqual(selected.workspaceName, originalName)
+        let unchanged = try await library.snapshot()
+        XCTAssertEqual(unchanged.revision, before.revision); XCTAssertEqual(unchanged.catalog, before.catalog)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: original.store.databaseURL.path))
+        try owner.historyReadiness.finish(boundary) { _ in XCTFail("The test never acquired a writer seal") }
+      }
+
+      // Pause the real catalog actor so this intent starts in an open phase,
+      // then close admission before its borrowed snapshot can return.
+      let ticket = try await library.prepareSelection(selectedID, name: originalName)
+      try Data().write(to: armed)
+      let publication = Task { await library.commitSelection(ticket) }
+      await fulfillment(of: [held], timeout: 3)
+      let attempting = expectation(description: "New runtime intent reaches the held catalog")
+      let candidateID = UUID()
+      var command = NotebookCommand(command: .runtimeWorkspace)
+      command.runtimeWorkspace = .init(action: .create, id: candidateID, name: "Late refusal")
+      let lateIntent = Task { @MainActor in
+        attempting.fulfill()
+        return try await launch.executeRuntimeCommand(command).decode(NotebookRuntimeWorkspaceResponse.self)
+      }
+      await fulfillment(of: [attempting], timeout: 3)
+      let boundary = try request(for: selected)
+      try selected.historyReadiness.begin(boundary)
+      try FileManager.default.removeItem(at: armed); release.signal()
+      guard case .committed = await publication.value else { XCTFail("The already accepted catalog selection failed"); return }
+      await library.finishSelection(ticket)
+      let refused = try await lateIntent.value
+      XCTAssertNotNil(refused.error)
+      XCTAssertTrue(launch.model === selected); XCTAssertEqual(owners.count, 2)
+      let destination = try await library.root(for: candidateID)
+      XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path), "A late refusal must precede root/model creation")
+      let unchanged = try await library.snapshot()
+      XCTAssertEqual(unchanged.catalog, before.catalog)
+      try selected.historyReadiness.finish(boundary) { _ in XCTFail("The test never acquired a writer seal") }
+      let renamed = try await send(.init(action: .rename, id: selectedID, name: "Resumed"))
+      XCTAssertNil(renamed.error); XCTAssertEqual(selected.workspaceName, "Resumed")
+      XCTAssertEqual(renamed.workspaces.first(where: { $0.id == selectedID })?.name, "Resumed")
+    }
+
     func testRuntimeCommandsCreateAndSelectThroughTheOwnerWithoutADesktopWindow() async {
       do { try await assertRuntimeWorkspaceCommands() }
       catch { XCTFail("Runtime workspace commands failed: \(error)") }

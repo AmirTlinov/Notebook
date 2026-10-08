@@ -90,6 +90,7 @@ import NotebookCore
     else { interruptCapture() }
   }
   func setMicrophoneMuted(_ muted: Bool) {
+    guard muted || chat?.permitsNativeMutation() != false else { suspendWaiting(); return }
     microphoneMuted = muted; preferences.set(muted, forKey: "notebook.microphone-muted")
     if muted { interruptCapture() }
     else { automaticError = false; environmentChanged(requestAuthorization: true) }
@@ -100,7 +101,7 @@ import NotebookCore
   private func environmentChanged(requestAuthorization: Bool) {
     guard !stopped else { return }
     guard foreground, !audioInterrupted, !microphoneMuted, let chat, chat.connected, chat.threadID != nil,
-      !chat.browsesChats, !chat.switchingComputer, !chat.voice.capturing else { suspendWaiting(); return }
+      chat.permitsNativeMutation(), !chat.browsesChats, !chat.switchingComputer, !chat.voice.capturing else { suspendWaiting(); return }
     if waiting, activationTarget?.thread != chat.threadID || activationTarget?.computer != chat.computerID { suspendWaiting() }
     guard !busy, !waiting, phase != .preparing, !automaticError, !chat.saving, !submissionInProgress() else { return }
     guard requestAuthorization || addressAuthorized() else { return }
@@ -162,11 +163,25 @@ import NotebookCore
 
   private func target() -> (thread: String, computer: UUID)? {
     guard let chat, let thread = chat.threadID, !chat.browsesChats else { error = "Выберите чат для диктовки."; return nil }
+    guard !stopped, chat.permitsNativeMutation() else { return nil }
     guard chat.connected, let computer = chat.computerID, !chat.switchingComputer else { error = "Подключите Mac, чтобы начать диктовку."; return nil }
     guard !chat.saving, !submissionInProgress() else { error = "Дождитесь сохранения текущего сообщения и начните диктовку."; return nil }
     guard !chat.voice.capturing else { error = "Завершите голосовой разговор перед диктовкой."; return nil }
     guard directory != nil else { error = "Хранилище записи ещё не готово."; return nil }
     return (thread, computer)
+  }
+  private func continuePreparation(epoch: UUID, target: (thread: String, computer: UUID), waiting: Bool) -> Bool {
+    guard generation == epoch else { return false }
+    guard !stopped, !Task.isCancelled, !audioInterrupted,
+      !waiting || foreground && !microphoneMuted,
+      let chat, chat.permitsNativeMutation(), chat.connected,
+      chat.threadID == target.thread, chat.computerID == target.computer,
+      !chat.browsesChats, !chat.switchingComputer, !chat.saving, !submissionInProgress(),
+      !chat.voice.capturing, directory != nil else {
+      if waiting { suspendWaiting() } else { interruptCapture() }
+      return false
+    }
+    return true
   }
   private func arm(requestAuthorization: Bool) async {
     guard foreground, !audioInterrupted, !microphoneMuted, !stopped, !automaticError, !busy, !waiting, phase != .preparing, let target = target(), let chat else { return }
@@ -175,10 +190,11 @@ import NotebookCore
     activationTarget = target; phase = .preparing; error = nil
     do {
       try await finishCancellation(on: target.computer)
-      guard generation == epoch else { return }
+      guard continuePreparation(epoch: epoch, target: target, waiting: true) else { return }
       let recognizer = try makeAddressRecognizer(chat.voice.language, chat.voice.address, { [weak self] activation in
         Task { @MainActor [weak self] in
           guard let self, generation == epoch, waiting else { return }
+          guard continuePreparation(epoch: epoch, target: target, waiting: true) else { return }
           operation = Task { [weak self] in await self?.begin(from: activation, wakeEpoch: epoch) }
         }
       }, { [weak self] message in
@@ -188,20 +204,24 @@ import NotebookCore
         }
       })
       wake = recognizer
-      if requestAuthorization, !(await authorizeAddress()) {
-        throw NotebookPersistenceQueue.Failure(message: "Для обращения GPT разрешите локальное распознавание в настройках iPad. Окружающая речь не отправляется.")
+      if requestAuthorization {
+        let authorized = await authorizeAddress()
+        guard continuePreparation(epoch: epoch, target: target, waiting: true) else { return }
+        guard authorized else {
+          throw NotebookPersistenceQueue.Failure(message: "Для обращения GPT разрешите локальное распознавание в настройках iPad. Окружающая речь не отправляется.")
+        }
       }
-      guard generation == epoch else { return }
+      guard continuePreparation(epoch: epoch, target: target, waiting: true) else { return }
       await recognizer.start()
-      guard generation == epoch, !Task.isCancelled else {
+      guard continuePreparation(epoch: epoch, target: target, waiting: true) else {
         await recognizer.stop(); return
       }
       try await capture.listen(pcm: { data, audio in await recognizer.append(data: data, audio: audio) },
         events: { [weak self] event in self?.receive(event, epoch: epoch) })
-      guard generation == epoch else { return }
+      guard continuePreparation(epoch: epoch, target: target, waiting: true) else { return }
       phase = .waiting; levels = []
     } catch {
-      guard generation == epoch else { return }
+      guard continuePreparation(epoch: epoch, target: target, waiting: true) else { return }
       automaticError = true; suspendWaiting(); self.error = error.localizedDescription
     }
   }
@@ -209,6 +229,7 @@ import NotebookCore
   func begin() async { await begin(from: nil, wakeEpoch: nil) }
   private func begin(from activation: NotebookWakeActivation?, wakeEpoch: UUID?) async {
     guard !busy else { return }
+    guard !stopped, chat?.permitsNativeMutation() == true else { suspendWaiting(); return }
     if let wakeEpoch { guard generation == wakeEpoch, waiting, !microphoneMuted else { return } }
     else {
       if phase == .preparing { suspendWaiting() }
@@ -231,13 +252,15 @@ import NotebookCore
       automaticError = true; suspendWaiting(); error = "Дождитесь подготовки выбранного материала и повторите обращение."; return
     }
     phase = .authorizing; maximumMeterDelay = 0
-    if let wake { await wake.stop() }; wake = nil
+    let previousWake = wake; wake = nil
+    if let previousWake { await previousWake.stop() }
+    guard continuePreparation(epoch: epoch, target: target, waiting: false) else { return }
     do { if frame == nil { try await finishCancellation(on: computer) } }
     catch {
-      guard generation == epoch else { return }
+      guard continuePreparation(epoch: epoch, target: target, waiting: false) else { return }
       phase = .idle; self.error = "Не удалось завершить отмену прежней диктовки на Mac. Повторите после восстановления связи."; return
     }
-    guard generation == epoch else { return }
+    guard continuePreparation(epoch: epoch, target: target, waiting: false) else { return }
     do {
       var recording = Pending(id: UUID(), thread: thread, computer: computer)
       if frame != nil, let chat { recording.activation = .init(language: chat.voice.language, address: chat.voice.address) }
@@ -245,6 +268,7 @@ import NotebookCore
       try await capture.start(at: audioURL(recording.id), id: recording.id, from: frame, hasRequest: activation?.hasRequest,
         events: { [weak self] event in self?.receive(event, epoch: epoch) })
       guard generation == epoch, phase == .authorizing, pending?.id == recording.id else { return }
+      guard continuePreparation(epoch: epoch, target: target, waiting: false) else { return }
       phase = .recording; elapsed = 0; level = 0; progress = 0
     } catch {
       guard generation == epoch else { return }

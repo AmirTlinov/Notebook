@@ -97,6 +97,85 @@ public struct NotebookQueryCut {
   public func currentChangeCursor() throws -> UInt64 {
     try requireActive(); return try store.currentChangeCursor()
   }
+  public func replicaInventoryCut() throws -> NotebookReplicaInventoryCut {
+    try requireActive(); return try NotebookReplicaInventory.cut(in: connection)
+  }
+  public func actionHistoryPhysicalClosure(transactionID: UUID, manifestHash: String,
+    receiptID: UUID? = nil) throws -> NotebookHistoryPhysicalClosure {
+    try requireActive()
+    return try store.actionHistoryPhysicalClosure(workspaceID: store.storedWorkspaceID(),
+      transactionID: transactionID, manifestHash: manifestHash, receiptID: receiptID)
+  }
+  public func actionHistoryReadinessMetadata(transactionID: UUID, manifestHash: String) throws
+    -> NotebookHistoryReadinessMetadata {
+    try requireActive()
+    let workspaceID = try store.storedWorkspaceID()
+    guard let accepted = try NotebookActionHistoryInventory.occurrence(in: connection,
+      workspaceID: workspaceID, transactionID: transactionID) else {
+      throw NotebookStorageError.invalidTransaction("unaccepted history readiness metadata")
+    }
+    guard accepted.manifestHash == manifestHash else { throw NotebookStorageError.transactionConflict }
+    let proof = try store.actionHistoryPhysicalClosure(workspaceID: workspaceID,
+      transactionID: transactionID, manifestHash: manifestHash, receiptID: nil)
+    try requireActive()
+    return try proof.historyReadinessMetadata(accepted: accepted, check: connection.checkReadAllowance)
+  }
+  public func hasAcceptedHistoryOccurrence(transactionID: UUID, manifestHash: String) throws -> Bool {
+    try requireActive()
+    let occurrence = try NotebookActionHistoryInventory.occurrence(in: connection,
+      workspaceID: store.storedWorkspaceID(), transactionID: transactionID)
+    return occurrence?.manifestHash == manifestHash
+  }
+  public func actionHistoryOccurrencePage(afterTransactionID: UUID? = nil,
+    limit: Int = 64) throws -> NotebookActionHistoryInventory.Page {
+    try requireActive()
+    return try NotebookActionHistoryInventory.page(in: connection,
+      workspaceID: store.storedWorkspaceID(), afterTransactionID: afterTransactionID, limit: limit)
+  }
+  public func replicaEndpointPage(in cut: NotebookReplicaInventoryCut,
+    after: NotebookReplicaInventoryCursor? = nil, limit: Int = 64) throws -> NotebookReplicaEndpointPage {
+    try requireActive()
+    return try NotebookReplicaInventory.endpoints(in: connection, cut: cut, after: after, limit: limit)
+  }
+  public func replicaEndpointPage(in cut: NotebookReplicaInventoryCut, resuming position: NotebookReplicaInventoryPosition,
+    expectedControlObservation: NotebookReplicaInventoryCut.ControlObservation, limit: Int = 64) throws -> NotebookReplicaEndpointPage {
+    try requireActive()
+    return try NotebookReplicaInventory.endpoints(in: connection, cut: cut, resuming: position,
+      expectedControlObservation: expectedControlObservation, limit: limit)
+  }
+  public func replicaCloudAccountPage(in cut: NotebookReplicaInventoryCut,
+    after: NotebookReplicaInventoryCursor? = nil, limit: Int = 64) throws -> NotebookReplicaCloudAccountPage {
+    try requireActive()
+    return try NotebookReplicaCloudInventory.accounts(in: connection, cut: cut, after: after, limit: limit)
+  }
+  public func replicaCloudAccountPage(in cut: NotebookReplicaInventoryCut, resuming position: NotebookReplicaInventoryPosition,
+    expectedControlObservation: NotebookReplicaInventoryCut.ControlObservation, limit: Int = 64) throws -> NotebookReplicaCloudAccountPage {
+    try requireActive()
+    return try NotebookReplicaCloudInventory.accounts(in: connection, cut: cut, resuming: position,
+      expectedControlObservation: expectedControlObservation, limit: limit)
+  }
+  public func replicaCloudPendingPage(in cut: NotebookReplicaInventoryCut,
+    after: NotebookReplicaInventoryCursor? = nil, limit: Int = 64) throws -> NotebookReplicaCloudPendingPage {
+    try requireActive()
+    return try NotebookReplicaCloudInventory.pending(in: connection, cut: cut, after: after, limit: limit)
+  }
+  public func replicaCloudPendingPage(in cut: NotebookReplicaInventoryCut, resuming position: NotebookReplicaInventoryPosition,
+    expectedControlObservation: NotebookReplicaInventoryCut.ControlObservation, limit: Int = 64) throws -> NotebookReplicaCloudPendingPage {
+    try requireActive()
+    return try NotebookReplicaCloudInventory.pending(in: connection, cut: cut, resuming: position,
+      expectedControlObservation: expectedControlObservation, limit: limit)
+  }
+  public func replicaCloudReceiptCachePage(in cut: NotebookReplicaInventoryCut,
+    after: NotebookReplicaInventoryCursor? = nil, limit: Int = 64) throws -> NotebookReplicaCloudReceiptCachePage {
+    try requireActive()
+    return try NotebookReplicaCloudInventory.receipts(in: connection, cut: cut, after: after, limit: limit)
+  }
+  public func replicaCloudReceiptCachePage(in cut: NotebookReplicaInventoryCut, resuming position: NotebookReplicaInventoryPosition,
+    expectedControlObservation: NotebookReplicaInventoryCut.ControlObservation, limit: Int = 64) throws -> NotebookReplicaCloudReceiptCachePage {
+    try requireActive()
+    return try NotebookReplicaCloudInventory.receipts(in: connection, cut: cut, resuming: position,
+      expectedControlObservation: expectedControlObservation, limit: limit)
+  }
   public func scriptExportJob(_ id: UUID) throws -> JSONValue? {
     try requireActive(); return try store.scriptExportJob(id)
   }

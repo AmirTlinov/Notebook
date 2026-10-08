@@ -101,7 +101,7 @@ struct NotebookWorkspacesView: View {
       .alert(removal?.everywhere == true ? "Удалить пространство везде?" : "Удалить с этого устройства?",
         isPresented: Binding(get: { removal != nil }, set: { if !$0 { removal = nil } }), presenting: removal) { value in
         Button("Удалить", role: .destructive) {
-          Task { await launch.removeWorkspace(value.space.id, everywhere: value.everywhere); await launch.refreshWorkspaces() }
+          Task { await launch.removeWorkspaceByUser(value.space.id, everywhere: value.everywhere); await launch.refreshWorkspaces() }
           removal = nil
         }
         Button("Отмена", role: .cancel) { removal = nil }

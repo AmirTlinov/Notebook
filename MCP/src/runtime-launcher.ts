@@ -22,6 +22,7 @@ export type RuntimeStartupEvent = {
   attempts:number;
   launched:boolean;
   lastErrorCode?:string;
+  lastOwnerRefusalCode?:string;
   runtimePID?:number;
   runtimeState?:RuntimeStatus["state"];
 };
@@ -47,10 +48,11 @@ export async function ensureRuntime(app: string, socket: string, expectedBuild: 
   const began = performance.now(), deadline = began + (options.timeoutMilliseconds ?? 10_000);
   const startedAt=new Date().toISOString();
   let launched = false;
-  let attempts = 0, lastError:BridgeError|undefined;
+  let attempts = 0, lastError:BridgeError|undefined, lastOwnerRefusal:BridgeError|undefined;
   const trace=(phase:RuntimeStartupEvent["phase"],status?:RuntimeStatus)=>{
     try { options.trace?.({phase,startedAt,elapsedMilliseconds:performance.now()-began,attempts,launched,
       ...(lastError?{lastErrorCode:String(lastError.detail.code)}:{}),
+      ...(lastOwnerRefusal?{lastOwnerRefusalCode:String(lastOwnerRefusal.detail.code)}:{}),
       ...(status?{runtimePID:status.pid,runtimeState:status.state}:{})}); } catch { /* Diagnostics never own admission. */ }
   };
   trace("startup.begin");
@@ -80,6 +82,7 @@ export async function ensureRuntime(app: string, socket: string, expectedBuild: 
       return status;
     } catch (error) {
       lastError=error instanceof BridgeError?error:undefined;
+      if (lastError?.detail.code === "owner_unavailable") lastOwnerRefusal=lastError;
       if (error instanceof BridgeError
         && ["ipc_unauthorized", "runtime_update_required"].includes(String(error.detail.code))) {
         trace("startup.failed");throw error;
@@ -103,10 +106,15 @@ export async function ensureRuntime(app: string, socket: string, expectedBuild: 
     if (remaining > 0) await new Promise(fulfill => setTimeout(fulfill, Math.min(100, remaining)));
   } while (performance.now() < deadline);
   trace("startup.failed");
-  throw new Error("The bundled Notebook runtime has not opened its IPC channel. "
+  throw new Error((lastOwnerRefusal
+    ? "The bundled Notebook runtime did not become available before its startup deadline. "
+    : "The bundled Notebook runtime has not opened its IPC channel. ")
     + "Retry the Notebook MCP call after resolving its startup error."
-    + (lastError?` Last attempt: ${String(lastError.detail.code)}: ${lastError.message.slice(0,512).replace(/[\r\n]/g," ")}`:""),
-    {cause:lastError});
+    + (lastOwnerRefusal
+      ? ` Last observed owner refusal: ${String(lastOwnerRefusal.detail.code)}: ${lastOwnerRefusal.message.slice(0,512).replace(/[\r\n]/g," ")}`
+        + (lastError?` Last attempt: ${String(lastError.detail.code)}.`:"")
+      : lastError?` Last attempt: ${String(lastError.detail.code)}: ${lastError.message.slice(0,512).replace(/[\r\n]/g," ")}`:""),
+    {cause:lastOwnerRefusal ?? lastError});
 }
 
 /** Bootstrap requests share one admission attempt. A later user retry starts

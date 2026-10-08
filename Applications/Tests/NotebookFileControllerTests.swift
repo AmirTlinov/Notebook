@@ -5,6 +5,111 @@ import NotebookCore
 
 @MainActor
 final class NotebookFileControllerTests: XCTestCase {
+  func testHistoryAdmissionKeepsTheFileDraftAndRefusesSaveAndRenameInEveryClosedPhase() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("file-history-admission-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), author = UUID(), peer = UUID()
+    let header = try store.initializeWorkspace(actor: author, pageSize: .init(width: 834, height: 1194))
+    try store.saveChatPanel(.init(sidecarID: peer), author: author)
+    let queue = NotebookPersistenceQueue(store: store), readiness = NotebookHistoryReadiness()
+    queue.authoredAdmission = { readiness.authoredAdmissionError }
+    let file = NotebookFileAddress(computer: peer, project: "fixture", root: "/fixture", path: "file.py")
+    var original = NotebookFileDraft(address: file, text: "original")
+    original.text = "accepted human draft"; original.selection = 3; original.scroll = 25
+    try store.saveFileDraft(original)
+    var chat: NotebookChatController!, mutationRequests = 0
+    chat = .init(persistence: queue, author: author) { packet, _ in
+      guard case .request(let query) = packet.body else { return }
+      let reply: NotebookChatReply
+      switch query {
+      case .catalogue: reply = .catalogue(.init(tasks: [], nextCursor: nil))
+      case .projects: reply = .projects(.init(projects: [], nextCursor: nil))
+      case .activity: reply = .activity([])
+      case .run: reply = .run(.init(record: nil))
+      case .file(.upload(let part)):
+        mutationRequests += 1; reply = .file(.uploaded(part.offset + part.data.count))
+      case .job(let input):
+        mutationRequests += 1; reply = .job(.init(input: input, state: .accepted, result: .acknowledged, revision: 2))
+      default: reply = .failure("No remote body is needed for the saved draft")
+      }
+      chat.receive(.init(id: packet.id, body: .reply(reply)), peerID: peer)
+    }
+    await chat.start(); await chat.connect(peer); await chat.files.open(file)
+    let initialSaved = await queue.flush(); XCTAssertTrue(initialSaved)
+    let request = NotebookHistoryReadiness.Request(id: UUID(), workspaceID: header.workspaceID,
+      devices: [author, peer], acceptedGeneration: queue.acceptedMutationGeneration)
+    try readiness.begin(request)
+    for phase in 0..<3 {
+      if phase == 1 {
+        let seal = try XCTUnwrap(queue.sealWorkspaceSelection(expectedGeneration: queue.acceptedMutationGeneration))
+        try readiness.seal(request, writerSeal: seal)
+      } else if phase == 2 { try readiness.releaseWriterForResume(request, releaseWriter: queue.finishWorkspaceSelection) }
+      XCTAssertFalse(chat.files.permitsNativeMutation())
+      chat.files.edit("late text", address: file, selection: 0, scroll: 0)
+      chat.files.save()
+      await chat.files.rename(to: "late.py")
+      XCTAssertFalse(chat.files.hasPendingAuthoredPreparation)
+      XCTAssertEqual(chat.files.document, original)
+      let saved = await queue.flush(); XCTAssertTrue(saved)
+      XCTAssertEqual(try store.fileDraft(file), original)
+      XCTAssertTrue(try store.routedChatJobs(author: author, computer: peer).isEmpty)
+      XCTAssertEqual(mutationRequests, 0)
+    }
+    try readiness.finish(request, releaseWriter: queue.finishWorkspaceSelection)
+    XCTAssertTrue(chat.files.permitsNativeMutation())
+    chat.files.edit("new accepted text", address: file, selection: 1, scroll: 30)
+    let saved = await queue.flush(); XCTAssertTrue(saved)
+    XCTAssertEqual(try store.fileDraft(file)?.text, "new accepted text")
+    await chat.stop(); _ = await queue.flush()
+  }
+
+  func testCompletedUploadNeedsFreshAdmissionBeforeCreatingItsFileSubmission() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("file-upload-admission-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), author = UUID(), peer = UUID()
+    let header = try store.initializeWorkspace(actor: author, pageSize: .init(width: 834, height: 1194))
+    try store.saveChatPanel(.init(sidecarID: peer), author: author)
+    let file = NotebookFileAddress(computer: peer, project: "fixture", root: "/fixture", path: "file.py")
+    var original = NotebookFileDraft(address: file, text: "original"); original.text = "human draft"
+    try store.saveFileDraft(original)
+    let queue = NotebookPersistenceQueue(store: store), readiness = NotebookHistoryReadiness()
+    queue.authoredAdmission = { readiness.authoredAdmissionError }
+    var chat: NotebookChatController!, held: (NotebookChatEnvelope, NotebookFileUpload)?
+    let uploading = expectation(description: "Actual file upload awaits its remote acknowledgement")
+    chat = .init(persistence: queue, author: author) { packet, _ in
+      guard case .request(let query) = packet.body else { return }
+      let reply: NotebookChatReply
+      switch query {
+      case .file(.upload(let part)):
+        held = (packet, part); uploading.fulfill(); return
+      case .catalogue: reply = .catalogue(.init(tasks: [], nextCursor: nil))
+      case .projects: reply = .projects(.init(projects: [], nextCursor: nil))
+      case .activity: reply = .activity([])
+      case .run: reply = .run(.init(record: nil))
+      default: reply = .failure("No new file submission may follow a revoked upload")
+      }
+      chat.receive(.init(id: packet.id, body: .reply(reply)), peerID: peer)
+    }
+    await chat.start(); await chat.connect(peer); await chat.files.open(file)
+    chat.files.save()
+    await fulfillment(of: [uploading], timeout: 3)
+    XCTAssertTrue(chat.files.hasPendingAuthoredPreparation)
+    let request = NotebookHistoryReadiness.Request(id: UUID(), workspaceID: header.workspaceID,
+      devices: [author, peer], acceptedGeneration: queue.acceptedMutationGeneration)
+    try readiness.begin(request)
+    let upload = try XCTUnwrap(held)
+    chat.receive(.init(id: upload.0.id, body: .reply(.file(.uploaded(upload.1.offset + upload.1.data.count)))), peerID: peer)
+    let deadline = ContinuousClock.now + .seconds(3)
+    while chat.files.hasPendingAuthoredPreparation, .now < deadline { try await Task.sleep(for: .milliseconds(5)) }
+    XCTAssertFalse(chat.files.hasPendingAuthoredPreparation)
+    let saved = await queue.flush(); XCTAssertTrue(saved)
+    XCTAssertEqual(chat.files.document, original)
+    XCTAssertEqual(try store.fileDraft(file), original)
+    XCTAssertTrue(try store.routedChatJobs(author: author, computer: peer).isEmpty)
+    try readiness.finish(request, releaseWriter: queue.finishWorkspaceSelection)
+    await chat.stop(); _ = await queue.flush()
+  }
+
   func testReselectCloseAndFileSwitchInvalidateLateReadsAndErrors() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let store = NotebookStore(root: root), author = UUID(), peer = UUID()
@@ -254,8 +359,12 @@ final class NotebookFileControllerTests: XCTestCase {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let store = NotebookStore(root: root), author = UUID(), computer = UUID()
-    _ = try store.initializeWorkspace(actor: author, pageSize: .init(width: 834, height: 1194))
+    let header = try store.initializeWorkspace(actor: author, pageSize: .init(width: 834, height: 1194))
     let queue = NotebookPersistenceQueue(store: store)
+    let readiness = NotebookHistoryReadiness()
+    queue.authoredAdmission = { readiness.authoredAdmissionError }
+    var receiptPublications = 0
+    queue.onCommit = { owner in if case .some(.fileReceipt(_)) = owner { receiptPublications += 1 } }
     let chat = NotebookChatController(persistence: queue, author: author) { _, _ in }
     await chat.start(); await chat.connect(computer)
     let file = NotebookFileAddress(computer: computer, project: "demo", root: "/project", path: "old.py")
@@ -273,14 +382,24 @@ final class NotebookFileControllerTests: XCTestCase {
     XCTAssertEqual(chat.files.document?.text, draft.text)
     await chat.files.rename(to: "second.py")
     XCTAssertEqual(chat.files.document?.rename, id)
+    let historyRequest = NotebookHistoryReadiness.Request(id: UUID(), workspaceID: header.workspaceID,
+      devices: [author, computer], acceptedGeneration: queue.acceptedMutationGeneration)
+    try readiness.begin(historyRequest)
     chat.files.receive(.init(input: job.input, state: .accepted, result: .renamed(request)))
     let deadline = ContinuousClock.now + .seconds(2)
-    while chat.files.document?.address != request.destination, .now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+    // The moved draft publishes before its notes finish their addressed read.
+    while chat.files.document?.address != request.destination || !chat.files.notes.ready,
+      .now < deadline { try await Task.sleep(for: .milliseconds(10)) }
     XCTAssertEqual(chat.files.document?.address, request.destination)
     XCTAssertEqual(chat.files.document?.text, draft.text); XCTAssertEqual(chat.files.document?.scroll, 120)
+    XCTAssertTrue(chat.files.notes.ready); XCTAssertNil(chat.files.notes.error)
+    XCTAssertEqual(chat.files.notes.fragments.map(\.id), [fragment.id])
     XCTAssertEqual(chat.files.notes.fragments.first?.currentFile, request.destination)
     XCTAssertEqual(chat.files.notes.fragments.first?.text, fragment.text)
     XCTAssertNil(try store.fileDraft(file))
+    let receiptSaved = await queue.flush(); XCTAssertTrue(receiptSaved)
+    XCTAssertEqual(receiptPublications, 1, "An accepted rename keeps its material publication while authorship is closed")
+    try readiness.finish(historyRequest, releaseWriter: queue.finishWorkspaceSelection)
     await chat.stop(); let saved = await queue.flush(); XCTAssertTrue(saved)
   }
   private func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }

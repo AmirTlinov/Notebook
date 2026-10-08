@@ -29,7 +29,7 @@ test("sidecar bundle initializes and exposes shared content tools without node_m
       child.stdin.write(JSON.stringify({jsonrpc:"2.0",id:2,method:"tools/list"})+"\n");
       const tools = JSON.parse((await iterator.next()).value!).result.tools as {name:string;_meta?:{ui?:{resourceUri?:string}}}[];
       const names = tools.map(tool=>tool.name);
-      assert.deepEqual(names.sort(),["notebook_context","notebook_execute","notebook_import_document","notebook_import_document_resource","notebook_import_program","notebook_workspaces"]);
+      assert.deepEqual(names.sort(),["notebook_context","notebook_execute","notebook_history_readiness","notebook_import_document","notebook_import_document_resource","notebook_import_program","notebook_workspaces"]);
       assert.ok(tools.every(tool=>tool._meta?.ui===undefined));
     } finally { child.stdin.end(); reader.close(); child.kill(); }
   } finally { await rm(root,{recursive:true,force:true}); }

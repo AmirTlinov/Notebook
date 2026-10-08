@@ -5,18 +5,9 @@ extension NotebookStore {
   /// in a program's state, source text, or an arbitrary nested JSON value.
   func programPackageHashes(in fragment: NotebookStoredFragment) throws -> Set<String> {
     var hashes: Set<String> = []
-    func add(_ value: JSONValue?) throws {
-      guard let value, value != .null else { return }
-      guard let hash = value.string, NotebookProgramPackage.validHash(hash) else {
-        throw NotebookStorageError.invalidTransaction("program package reference")
-      }
-      hashes.insert(hash)
-    }
     let isElement = (fragment.file.hasPrefix("pages/") && fragment.collection == "elements")
       || (fragment.file == "board.json" && fragment.collection == "board/elements")
-    if isElement {
-      try add(fragment.value["programPackage"])
-    }
+    if isElement, let hash = try programPackageHash(fragment.value["programPackage"]) { hashes.insert(hash) }
     let isCausal = (fragment.file.hasPrefix("pages/") || fragment.file.hasPrefix("documents/"))
       ? fragment.collection == "collaboration/fields"
       : fragment.file == "board.json" && fragment.collection == "board/collaboration/fields"
@@ -24,10 +15,28 @@ extension NotebookStore {
     let collection = "elements"
     if isCausal, key.count == 3, key[0] == collection, key[2] == "content" {
       let version = try fragment.value.decode(ContentFieldVersion.self)
-      guard version.isValid else { throw NotebookStorageError.invalidTransaction("program causal source") }
-      for value in version.retainedContentValues { try add(value["programPackage"]) }
+      hashes.formUnion(try programPackageHashes(in: version))
     }
     return hashes
+  }
+
+  /// Sparse history reads already own an exact, typed causal clock. Reuse the
+  /// same retained-value reference owner without converting that clock to Double.
+  func programPackageHashes(in version: ContentFieldVersion) throws -> Set<String> {
+    guard version.isValid else { throw NotebookStorageError.invalidTransaction("program causal source") }
+    var hashes: Set<String> = []
+    for value in version.retainedContentValues {
+      if let hash = try programPackageHash(value["programPackage"]) { hashes.insert(hash) }
+    }
+    return hashes
+  }
+
+  private func programPackageHash(_ value: JSONValue?) throws -> String? {
+    guard let value, value != .null else { return nil }
+    guard let hash = value.string, NotebookProgramPackage.validHash(hash) else {
+      throw NotebookStorageError.invalidTransaction("program package reference")
+    }
+    return hash
   }
 
   func validateProgramPackageClosure(_ hash: String) throws {
@@ -134,7 +143,15 @@ extension NotebookStore {
     if fragment.collection == "collaboration/fields", key.count == 3, key[0] == "files", key[2] == "content" {
       values += try fragment.value.decode(ContentFieldVersion.self).retainedContentValues.compactMap { $0["resource"] }
     }
-    return try values.filter { $0 != .null }.flatMap { value in
+    return try documentResourceParts(in: values)
+  }
+
+  func documentResourceParts(in version: ContentFieldVersion) throws -> [NotebookProgramPackage.Part] {
+    try documentResourceParts(in: version.retainedContentValues.compactMap { $0["resource"] })
+  }
+
+  private func documentResourceParts(in values: [JSONValue]) throws -> [NotebookProgramPackage.Part] {
+    try values.filter { $0 != .null }.flatMap { value in
       let file = try value.decode(NotebookProgramPackage.File.self)
       try file.validate(); return file.parts
     }
