@@ -1,0 +1,47 @@
+{
+  "core": {
+    "cases": 41,
+    "failed": 0,
+    "functions": 23,
+    "skipped": 0,
+    "sourceSHA256": "8b7895e142b894df606b3e293fb51032accd7b2fa6f6690e9a0a02e161c63a98"
+  },
+  "format": 1,
+  "formats": {
+    "database": 29,
+    "manifest": 26,
+    "wire": 44
+  },
+  "installedPairChanged": false,
+  "issue": "GUI-486",
+  "mcp": {
+    "cases": 2,
+    "failed": 0,
+    "generatedScriptResources": "passed",
+    "node": "v24.21.0",
+    "skipped": 0,
+    "sourceSHA256": "7db3b40a307b1085133caed49ffcffa483258439d0f39e445b11aeb38113676e",
+    "typescript": "passed"
+  },
+  "physicalAcceptance": false,
+  "rawEvidence": [
+    ".build/nb02-history-preflight-core-20261008-v2",
+    ".build/nb02-history-preflight-mcp-20261008-v2"
+  ],
+  "remaining": [
+    "Fleet seal and full birth proof",
+    "Undo/Redo event conversion and new-format writer/reader cutover",
+    "Actual current-fleet corpus and physical/joint acceptance"
+  ],
+  "scope": [
+    "bounded metadata directory from accepted local/received markers",
+    "one borrowed readonly snapshot and finite cancellation/SQL/JSON allowance",
+    "exact original manifest/part/blob authentication",
+    "raw unknown source fields and removal declarations preserved internally",
+    "unproven split membership/absent roots keep coverage incomplete",
+    "nbread2 bootstrap without current board/ink roots and stale-cut refusal",
+    "generated script types and actual isolated native IPC output"
+  ],
+  "sourceFileCount": 1725,
+  "status": "verified current-format readonly source slice"
+}

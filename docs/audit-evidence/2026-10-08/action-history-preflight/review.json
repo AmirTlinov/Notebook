@@ -1,0 +1,12 @@
+{
+  "buildOrLiveStoreAccessByReviewer": false,
+  "format": 1,
+  "remainingBlockers": [],
+  "resolved": [
+    "Metadata continuation borrows stored workspace identity",
+    "Observation type has distinct ownership from durable history fact",
+    "Native and SDK closure reason agree"
+  ],
+  "reviewer": "verification_registry",
+  "route": "source-only ownership/contract review"
+}

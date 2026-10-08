@@ -146,6 +146,24 @@ const storageUsage=z.object({
     pageCount:storageCount,freelistPages:storageCount,startedAt:number,finishedAt:number,
     sampleStatus:z.enum(["sampled","changed","incomplete"])}).strict(),
 }).strict();
+const historySequence=z.string().regex(/^(0|[1-9][0-9]{0,19})$/);
+const historyHash=z.string().regex(/^[a-f0-9]{64}$/);
+const historyCut=z.object({workspaceID:id,snapshotID:id,readCursor:historySequence}).strict();
+const historyReceiptBase={id,fragmentCount:storageCount,fragmentBytes:storageCount};
+const historyReceipt=z.discriminatedUnion("closure",[
+  z.object({...historyReceiptBase,closure:z.literal("completeSelfContained")}).strict(),
+  z.object({...historyReceiptBase,closure:z.literal("unprovenClosure"),
+    reason:z.enum(["originalRootAbsent","rootRemoved","externalizedMembership","unreferencedFragments"])}).strict(),
+]);
+const actionHistoryPreflight=z.discriminatedUnion("mode",[
+  z.object({mode:z.literal("inventory"),cut:historyCut,
+    transactions:z.array(z.object({transactionID:id,manifestHash:historyHash,
+      localJournal:z.object({sequence:historySequence,manifestByteCount:storageCount}).strict().optional(),
+      firstReceived:z.object({deviceID:id,generation:id,senderSequence:historySequence}).strict().optional()}).strict()).max(64),
+    nextTransactionID:id.optional()}).strict(),
+  z.object({mode:z.literal("transaction"),cut:historyCut,transactionID:id,manifestHash:historyHash,
+    manifestFormat:storageCount,receipts:z.array(historyReceipt).max(64)}).strict(),
+]);
 export const readDataSchemas = {
   observation, workspaceHeader:header, itemHeaders:z.array(item), itemHeader:item.nullable(), itemLifecycle:object({item,target:coverTargetSchema,revision:text,bodyRecordCount:number.int().nonnegative()}).nullable(),
   workingSet:object({header,items:z.array(item),boards:z.array(board),pages:z.record(text,page),documents:z.record(text,document),states:z.record(text,documentState),ink}),
@@ -155,7 +173,7 @@ export const readDataSchemas = {
   notebookPages:object({header:directoryHeader,pages:z.array(object({position,document:page}))}),notebookDirectory:directory,notebookPosition:position.nullable(),
   spatialInk:ink,presence,selection,attentionEvidence:object({reference:referenceSchema,payload:json,image:object({sha256:text,pixelWidth:number,pixelHeight:number}).optional()}).nullable(),
   contexts,contextEntries,actions:z.array(receipt),currentViewReceipt:viewReceipt.nullable(),pageVisionReceipt:vision.nullable(),targetRenderReceipt:render.nullable(),
-  renderRequests:z.array(renderRequest),delivery:z.array(delivery),actionSnapshots:z.array(object({request:renderRequest,pngSHA256:text.optional(),diagnostics:renderDiagnostics.optional()})),runtime,codeFragment:code,codeFragments:z.array(codeFragment),storageUsage,
+  renderRequests:z.array(renderRequest),delivery:z.array(delivery),actionSnapshots:z.array(object({request:renderRequest,pngSHA256:text.optional(),diagnostics:renderDiagnostics.optional()})),runtime,codeFragment:code,codeFragments:z.array(codeFragment),storageUsage,actionHistoryPreflight,
 };
 export const methodDataSchemas = {
   observe:observation,page:z.union([page,pageElement]),document:z.union([documentDirectory,documentFile,documentFileBytes]),documentStructure,documentCheck:render.extend({programs:documentProgramChecks,code:text.optional()}),board:scene,notebook:directory,context:z.union([contexts,contextEntries]),

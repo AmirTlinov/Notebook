@@ -1,0 +1,44 @@
+{
+  "baseCommit": "512f26917f075186493129b225c9cd7f4aa6e7da",
+  "changedFiles": [
+    "MCP/src/sdk-contracts.ts",
+    "MCP/src/sdk-results.ts",
+    "MCP/test/action-history-preflight.test.ts",
+    "Sources/NotebookCore/NotebookActionHistoryFactResolver.swift",
+    "Sources/NotebookCore/NotebookActionHistoryInventory.swift",
+    "Sources/NotebookCore/NotebookActionHistoryPreflight.swift",
+    "Sources/NotebookCore/NotebookCommandDispatcher.swift",
+    "Sources/NotebookCore/NotebookCommandRead.swift",
+    "Sources/NotebookCore/NotebookReadSnapshot.swift",
+    "Tests/NotebookCoreTests/NotebookActionHistoryFactResolverTests.swift",
+    "Tests/NotebookCoreTests/NotebookActionHistoryInventoryTests.swift",
+    "Tests/NotebookCoreTests/NotebookActionHistoryPreflightTests.swift"
+  ],
+  "checks": {
+    "commands": [],
+    "core": [
+      "NotebookCoreTests.NotebookActionHistoryFactResolverTests",
+      "NotebookCoreTests.NotebookActionHistoryInventoryTests",
+      "NotebookCoreTests.NotebookActionHistoryPreflightTests"
+    ],
+    "ipad": [],
+    "mac": []
+  },
+  "format": 2,
+  "manualSelection": true,
+  "optimized": false,
+  "profiles": [],
+  "selectionMode": "explicit-only",
+  "sourceRoot": "/Users/amir/Documents/projects/Notebook",
+  "unclassified": [
+    "Sources/NotebookCore/NotebookActionHistoryFactResolver.swift",
+    "Sources/NotebookCore/NotebookActionHistoryInventory.swift",
+    "Sources/NotebookCore/NotebookActionHistoryPreflight.swift",
+    "Sources/NotebookCore/NotebookCommandDispatcher.swift",
+    "Sources/NotebookCore/NotebookCommandRead.swift",
+    "Sources/NotebookCore/NotebookReadSnapshot.swift",
+    "Tests/NotebookCoreTests/NotebookActionHistoryFactResolverTests.swift",
+    "Tests/NotebookCoreTests/NotebookActionHistoryInventoryTests.swift",
+    "Tests/NotebookCoreTests/NotebookActionHistoryPreflightTests.swift"
+  ]
+}

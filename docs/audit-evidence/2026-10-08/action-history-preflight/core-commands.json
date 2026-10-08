@@ -1,0 +1,86 @@
+[
+  {
+    "argv": [
+      "/opt/homebrew/opt/python@3.14/bin/python3.14",
+      "--version"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "toolchain-python"
+  },
+  {
+    "argv": [
+      "swift",
+      "--version"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "toolchain-swift"
+  },
+  {
+    "argv": [
+      "swift",
+      "package",
+      "describe",
+      "--type",
+      "json"
+    ],
+    "cwd": "/Users/amir/Documents/projects/Notebook",
+    "exitCode": 0,
+    "label": "core-package"
+  },
+  {
+    "argv": [
+      "swift",
+      "test",
+      "list",
+      "--disable-xctest",
+      "--test-product",
+      "NotebookCoreTests",
+      "--event-stream-output-path",
+      "/Users/amir/Documents/projects/Notebook/.build/nb02-history-preflight-core-20261008-v2/core-NotebookCoreTests-inventory.jsonl",
+      "--event-stream-version",
+      "6.4"
+    ],
+    "cwd": "/Users/amir/Documents/projects/Notebook",
+    "exitCode": 0,
+    "label": "core-inventory-NotebookCoreTests"
+  },
+  {
+    "argv": [
+      "swift",
+      "test",
+      "--disable-xctest",
+      "--skip-build",
+      "--test-product",
+      "NotebookCoreTests",
+      "--filter",
+      "^(?:NotebookCoreTests\\.NotebookActionHistoryFactResolverTests/conflictingAndUnavailableOriginalProofRefuses\\(_:\\)/NotebookActionHistoryFactResolverTests\\.swift:221:4|NotebookCoreTests\\.NotebookActionHistoryFactResolverTests/emptyAndMissingLastCollectionMembersRemainUnprovenEvenWhenCodecRoundTrips\\(_:\\)/NotebookActionHistoryFactResolverTests\\.swift:148:4|NotebookCoreTests\\.NotebookActionHistoryFactResolverTests/enclosingCancellationAndJSONAndSQLBudgetsCannotBeRenewed\\(\\)/NotebookActionHistoryFactResolverTests\\.swift:327:4|NotebookCoreTests\\.NotebookActionHistoryFactResolverTests/exactAndSeekAdmissionDoNotHideMalformedAcceptedMarkers\\(_:\\)/NotebookActionHistoryFactResolverTests\\.swift:300:4|NotebookCoreTests\\.NotebookActionHistoryFactResolverTests/localAndReceivedOnlyFactsKeepRawUnknownFieldsAndIgnoreCurrentAndStagingIndexes\\(\\)/NotebookActionHistoryFactResolverTests\\.swift:88:4|NotebookCoreTests\\.NotebookActionHistoryFactResolverTests/missingRemovedAndUnreferencedRootsPreserveDeclarations\\(_:\\)/NotebookActionHistoryFactResolverTests\\.swift:178:4|NotebookCoreTests\\.NotebookActionHistoryFactResolverTests/originalManifestPartsSupplySelfContainedReceipts\\(\\)/NotebookActionHistoryFactResolverTests\\.swift:204:4|NotebookCoreTests\\.NotebookActionHistoryFactResolverTests/oversizedOriginalBlobRefusesBeforeAnyBodyColumnIsCopied\\(\\)/NotebookActionHistoryFactResolverTests\\.swift:357:4|NotebookCoreTests\\.NotebookActionHistoryFactResolverTests/pointAndSemanticSeekShareAcceptanceMarkersAndTheBorrowedCut\\(\\)/NotebookActionHistoryFactResolverTests\\.swift:265:4|NotebookCoreTests\\.NotebookActionHistoryFactResolverTests/stagedOnlyAndAChangedAcceptedManifestHaveNoFactAuthority\\(\\)/NotebookActionHistoryFactResolverTests\\.swift:124:4|NotebookCoreTests\\.NotebookActionHistoryInventoryTests/aHundredThousandMarkersKeepKeysetWorkInsideTheEnclosingSQLLease\\(\\)/NotebookActionHistoryInventoryTests\\.swift:202:4|NotebookCoreTests\\.NotebookActionHistoryInventoryTests/admissionRequiresTheCallerWorkspaceAndDoesNotRenewAnExhaustedBudget\\(\\)/NotebookActionHistoryInventoryTests\\.swift:287:4|NotebookCoreTests\\.NotebookActionHistoryInventoryTests/differentAcceptedManifestHashesForOneTransactionRefuseBeforeReturningAPage\\(\\)/NotebookActionHistoryInventoryTests\\.swift:133:4|NotebookCoreTests\\.NotebookActionHistoryInventoryTests/keysetPagesPreserveDistinctAcceptedTransactionsSharingTheSamePayload\\(\\)/NotebookActionHistoryInventoryTests\\.swift:150:4|NotebookCoreTests\\.NotebookActionHistoryInventoryTests/localAndMaterialNoOpIncomingAreEnumeratedWhileStagedManifestsAreExcluded\\(\\)/NotebookActionHistoryInventoryTests\\.swift:77:4|NotebookCoreTests\\.NotebookActionHistoryInventoryTests/malformedHeadersRefuseBeforeCopyingUnboundedScalars\\(corruption:\\)/NotebookActionHistoryInventoryTests\\.swift:259:4|NotebookCoreTests\\.NotebookActionHistoryInventoryTests/paginationKeepsItsSnapshotAcrossPeerCommitsAndRejectsAnotherReadCut\\(\\)/NotebookActionHistoryInventoryTests\\.swift:175:4|NotebookCoreTests\\.NotebookActionHistoryInventoryTests/relayedJournalAndFirstReceivedCoalesceWithoutInventingDuplicateSourceMappings\\(\\)/NotebookActionHistoryInventoryTests\\.swift:113:4|NotebookCoreTests\\.NotebookActionHistoryPreflightTests/exactAcceptedTransactionReportsMissingSelectedReceiptWithoutAuthorContent\\(\\)/NotebookActionHistoryPreflightTests\\.swift:81:4|NotebookCoreTests\\.NotebookActionHistoryPreflightTests/metadataDirectoryContinuesWithoutCurrentContentOrBlobDecoding\\(\\)/NotebookActionHistoryPreflightTests\\.swift:34:4|NotebookCoreTests\\.NotebookActionHistoryPreflightTests/newAcceptedJournalWriteInvalidatesTheDirectoryContinuation\\(\\)/NotebookActionHistoryPreflightTests\\.swift:68:4|NotebookCoreTests\\.NotebookActionHistoryPreflightTests/pointHashMismatchAndUnboundDirectorySeekRefuseBeforeReturningEvidence\\(\\)/NotebookActionHistoryPreflightTests\\.swift:103:4|NotebookCoreTests\\.NotebookActionHistoryPreflightTests/preflightCannotRenewTheEnclosingReadAllowanceOrEnterTheWriter\\(\\)/NotebookActionHistoryPreflightTests\\.swift:118:4)$",
+      "--event-stream-output-path",
+      "/Users/amir/Documents/projects/Notebook/.build/nb02-history-preflight-core-20261008-v2/core-NotebookCoreTests-events.jsonl",
+      "--event-stream-version",
+      "6.4"
+    ],
+    "cwd": "/Users/amir/Documents/projects/Notebook",
+    "exitCode": 0,
+    "label": "core-NotebookCoreTests"
+  },
+  {
+    "argv": [
+      "/opt/homebrew/opt/python@3.14/bin/python3.14",
+      "--version"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "toolchain-after-python"
+  },
+  {
+    "argv": [
+      "swift",
+      "--version"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "toolchain-after-swift"
+  }
+]

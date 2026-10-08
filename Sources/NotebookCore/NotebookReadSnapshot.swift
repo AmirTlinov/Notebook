@@ -4,9 +4,9 @@ extension NotebookStore {
   /// Called after the query in the SAME WAL snapshot. Reading metadata here
   /// cannot freshen content that the caller has already seen.
   func queryBasis(_ query: NotebookReadQuery, data: JSONValue) throws -> NotebookReadBasis {
-    if query.kind == .storageUsage {
+    if query.kind == .storageUsage || query.kind == .actionHistoryPreflight {
       guard let workspaceID = data["cut"]?["workspaceID"]?.string.flatMap(UUID.init(uuidString:)) else {
-        throw NotebookStorageError.corruptRecord("storage usage cut")
+        throw NotebookStorageError.corruptRecord("metadata observation cut")
       }
       return .init(workspaceID: workspaceID, owners: [])
     }
@@ -81,6 +81,15 @@ extension NotebookStore {
     next.next = nil
     var incomplete = false
     switch query.kind {
+    case .actionHistoryPreflight:
+      if data["mode"] == .string("transaction") {
+        return .init(complete: data["receipts"]?.array.allSatisfy {
+          $0["closure"] == .string("completeSelfContained")
+        } == true)
+      }
+      if let after = data["nextTransactionID"]?.string.flatMap(UUID.init(uuidString:)) {
+        incomplete = true; next.after = after; next.revision = data["cut"]?["readCursor"]?.string
+      }
     case .storageUsage:
       return .init(complete: data["outgoing"]?["truncated"] != .bool(true)
         && data["physical"]?["sampleStatus"] == .string("sampled"))
@@ -104,7 +113,8 @@ extension NotebookStore {
     default: break
     }
     guard incomplete else { return .init(complete: true) }
-    let token = try Self.storageEncoder.encode(ReadContinuation(workspaceID: workspaceHeader().workspaceID,
+    let workspaceID = query.kind == .actionHistoryPreflight ? try storedWorkspaceID() : try workspaceHeader().workspaceID
+    let token = try Self.storageEncoder.encode(ReadContinuation(workspaceID: workspaceID,
       cursor: String(currentReadCursor()), query: next)).base64EncodedString()
     return .init(complete: false, next: "nbread2:" + token)
   }
@@ -114,9 +124,10 @@ extension NotebookStore {
     guard let next = query.next else { return query }
     if query.kind == .observation { return query }
     guard next.hasPrefix("nbread2:") else { throw CollaborationError("invalid_cursor", "Нужно продолжение именно этого SDK-чтения.") }
+    let workspaceID = query.kind == .actionHistoryPreflight ? try storedWorkspaceID() : try workspaceHeader().workspaceID
     guard next.utf8.count < 262_144, let bytes = Data(base64Encoded: String(next.dropFirst(8))),
       let token = try? JSONDecoder().decode(ReadContinuation.self, from: bytes), token.query.kind == query.kind,
-      token.query.next == nil, token.workspaceID == (try workspaceHeader().workspaceID) else {
+      token.query.next == nil, token.workspaceID == workspaceID else {
       throw CollaborationError("read_cursor_mismatch", "Продолжение принадлежит другому чтению или пространству.")
     }
     guard token.cursor == String(try currentReadCursor()) else {

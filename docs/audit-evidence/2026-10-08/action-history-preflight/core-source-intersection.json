@@ -1,0 +1,10 @@
+{
+  "changedAfterCore": [
+    "MCP/test/action-history-preflight.test.ts",
+    "Sources/NotebookScriptHost/Resources/notebook-sdk.d.ts",
+    "Sources/NotebookScriptHost/Resources/sdk-reference.json"
+  ],
+  "coreProductionAndTestsUnchanged": true,
+  "coreSHA256": "8b7895e142b894df606b3e293fb51032accd7b2fa6f6690e9a0a02e161c63a98",
+  "finalSHA256": "7db3b40a307b1085133caed49ffcffa483258439d0f39e445b11aeb38113676e"
+}

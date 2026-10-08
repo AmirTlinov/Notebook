@@ -1,0 +1,31 @@
+{
+  "attempts": [
+    {
+      "cause": "Root test expected a later tightened allowance name; the initial command lease retains its reason",
+      "executedCases": 41,
+      "executedFunctions": 23,
+      "failedCases": 1,
+      "path": ".build/nb02-history-preflight-core-20261008-v1",
+      "repair": "Test expects existing agent_command_read; production unchanged.",
+      "status": "failed"
+    },
+    {
+      "cases": 41,
+      "path": ".build/nb02-history-preflight-core-20261008-v2",
+      "status": "passed"
+    },
+    {
+      "nativeIPCCases": 0,
+      "path": ".build/nb02-history-preflight-mcp-20261008-v1",
+      "repair": "Regenerated the canonical sdk-reference.json and notebook-sdk.d.ts.",
+      "status": "stale_generated_resources",
+      "typescript": "passed"
+    },
+    {
+      "cases": 2,
+      "path": ".build/nb02-history-preflight-mcp-20261008-v2",
+      "status": "passed"
+    }
+  ],
+  "format": 1
+}

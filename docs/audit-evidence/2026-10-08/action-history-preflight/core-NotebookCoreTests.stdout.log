@@ -1,0 +1,79 @@
+◇ Test run started.
+↳ Testing Library Version: 2084
+↳ Target Platform: arm64e-apple-macos14.0
+◇ Suite "Legacy acceptance inventory borrows one bounded read cut" started.
+◇ Suite "Accepted legacy receipts preserve original fragments in one bounded read cut" started.
+◇ Suite "Current-fleet history preflight uses the existing readonly command cut" started.
+◇ Test differentAcceptedManifestHashesForOneTransactionRefuseBeforeReturningAPage() started.
+◇ Test keysetPagesPreserveDistinctAcceptedTransactionsSharingTheSamePayload() started.
+◇ Test admissionRequiresTheCallerWorkspaceAndDoesNotRenewAnExhaustedBudget() started.
+◇ Test malformedHeadersRefuseBeforeCopyingUnboundedScalars(corruption:) started.
+◇ Test relayedJournalAndFirstReceivedCoalesceWithoutInventingDuplicateSourceMappings() started.
+◇ Test localAndMaterialNoOpIncomingAreEnumeratedWhileStagedManifestsAreExcluded() started.
+◇ Test pointAndSemanticSeekShareAcceptanceMarkersAndTheBorrowedCut() started.
+◇ Test conflictingAndUnavailableOriginalProofRefuses(_:) started.
+◇ Test oversizedOriginalBlobRefusesBeforeAnyBodyColumnIsCopied() started.
+◇ Test originalManifestPartsSupplySelfContainedReceipts() started.
+◇ Test stagedOnlyAndAChangedAcceptedManifestHaveNoFactAuthority() started.
+◇ Test aHundredThousandMarkersKeepKeysetWorkInsideTheEnclosingSQLLease() started.
+◇ Test paginationKeepsItsSnapshotAcrossPeerCommitsAndRejectsAnotherReadCut() started.
+◇ Test missingRemovedAndUnreferencedRootsPreserveDeclarations(_:) started.
+◇ Test localAndReceivedOnlyFactsKeepRawUnknownFieldsAndIgnoreCurrentAndStagingIndexes() started.
+◇ Test enclosingCancellationAndJSONAndSQLBudgetsCannotBeRenewed() started.
+◇ Test emptyAndMissingLastCollectionMembersRemainUnprovenEvenWhenCodecRoundTrips(_:) started.
+◇ Test exactAcceptedTransactionReportsMissingSelectedReceiptWithoutAuthorContent() started.
+◇ Test case passing 1 argument corruption → .nullKey to malformedHeadersRefuseBeforeCopyingUnboundedScalars(corruption:) started.
+◇ Test newAcceptedJournalWriteInvalidatesTheDirectoryContinuation() started.
+◇ Test case passing 1 argument corruption → .emptyKey to malformedHeadersRefuseBeforeCopyingUnboundedScalars(corruption:) started.
+◇ Test exactAndSeekAdmissionDoNotHideMalformedAcceptedMarkers(_:) started.
+◇ Test preflightCannotRenewTheEnclosingReadAllowanceOrEnterTheWriter() started.
+◇ Test pointHashMismatchAndUnboundDirectorySeekRefuseBeforeReturningEvidence() started.
+◇ Test case passing 1 argument corruption → .nonintegerSequence to malformedHeadersRefuseBeforeCopyingUnboundedScalars(corruption:) started.
+◇ Test case passing 1 argument corruption → .invalidHash to malformedHeadersRefuseBeforeCopyingUnboundedScalars(corruption:) started.
+◇ Test case passing 1 argument corruption → .oversizedKey to malformedHeadersRefuseBeforeCopyingUnboundedScalars(corruption:) started.
+◇ Test case passing 1 argument corruption → .oversizedSource to malformedHeadersRefuseBeforeCopyingUnboundedScalars(corruption:) started.
+◇ Test case passing 1 argument corruption → .oversizedHash to malformedHeadersRefuseBeforeCopyingUnboundedScalars(corruption:) started.
+◇ Test metadataDirectoryContinuesWithoutCurrentContentOrBlobDecoding() started.
+◇ Test case passing 1 argument kind → "differentAcceptedHash" to conflictingAndUnavailableOriginalProofRefuses(_:) started.
+◇ Test case passing 1 argument kind → "missingPart" to conflictingAndUnavailableOriginalProofRefuses(_:) started.
+◇ Test case passing 1 argument kind → "wrongPartTransaction" to conflictingAndUnavailableOriginalProofRefuses(_:) started.
+◇ Test case passing 1 argument kind → "duplicateFragment" to conflictingAndUnavailableOriginalProofRefuses(_:) started.
+◇ Test case passing 1 argument kind → "missingFragment" to conflictingAndUnavailableOriginalProofRefuses(_:) started.
+◇ Test case passing 1 argument kind → "corruptFragment" to conflictingAndUnavailableOriginalProofRefuses(_:) started.
+◇ Test case passing 1 argument kind → "corruptManifest" to conflictingAndUnavailableOriginalProofRefuses(_:) started.
+◇ Test case passing 1 argument kind → "originalRootAbsent" to missingRemovedAndUnreferencedRootsPreserveDeclarations(_:) started.
+◇ Test case passing 1 argument kind → "rootRemoved" to missingRemovedAndUnreferencedRootsPreserveDeclarations(_:) started.
+◇ Test case passing 1 argument kind → "unreferencedFragments" to missingRemovedAndUnreferencedRootsPreserveDeclarations(_:) started.
+◇ Test case passing 1 argument childCount → 0 to emptyAndMissingLastCollectionMembersRemainUnprovenEvenWhenCodecRoundTrips(_:) started.
+◇ Test case passing 1 argument childCount → 1 to emptyAndMissingLastCollectionMembersRemainUnprovenEvenWhenCodecRoundTrips(_:) started.
+◇ Test case passing 1 argument kind → "empty" to exactAndSeekAdmissionDoNotHideMalformedAcceptedMarkers(_:) started.
+◇ Test case passing 1 argument kind → "null" to exactAndSeekAdmissionDoNotHideMalformedAcceptedMarkers(_:) started.
+◇ Test case passing 1 argument childCount → 2 to emptyAndMissingLastCollectionMembersRemainUnprovenEvenWhenCodecRoundTrips(_:) started.
+◇ Test case passing 1 argument kind → "malformedHash" to exactAndSeekAdmissionDoNotHideMalformedAcceptedMarkers(_:) started.
+✔ Test admissionRequiresTheCallerWorkspaceAndDoesNotRenewAnExhaustedBudget() passed after 0.111 seconds.
+✔ Test originalManifestPartsSupplySelfContainedReceipts() passed after 0.111 seconds.
+✔ Test differentAcceptedManifestHashesForOneTransactionRefuseBeforeReturningAPage() passed after 0.111 seconds.
+✔ Test relayedJournalAndFirstReceivedCoalesceWithoutInventingDuplicateSourceMappings() passed after 0.111 seconds.
+✔ Test pointAndSemanticSeekShareAcceptanceMarkersAndTheBorrowedCut() passed after 0.111 seconds.
+✔ Test conflictingAndUnavailableOriginalProofRefuses(_:) with 7 test cases passed after 0.111 seconds.
+✔ Test localAndMaterialNoOpIncomingAreEnumeratedWhileStagedManifestsAreExcluded() passed after 0.111 seconds.
+✔ Test stagedOnlyAndAChangedAcceptedManifestHaveNoFactAuthority() passed after 0.111 seconds.
+✔ Test enclosingCancellationAndJSONAndSQLBudgetsCannotBeRenewed() passed after 0.111 seconds.
+✔ Test missingRemovedAndUnreferencedRootsPreserveDeclarations(_:) with 3 test cases passed after 0.111 seconds.
+✔ Test paginationKeepsItsSnapshotAcrossPeerCommitsAndRejectsAnotherReadCut() passed after 0.112 seconds.
+✔ Test localAndReceivedOnlyFactsKeepRawUnknownFieldsAndIgnoreCurrentAndStagingIndexes() passed after 0.112 seconds.
+✔ Test emptyAndMissingLastCollectionMembersRemainUnprovenEvenWhenCodecRoundTrips(_:) with 3 test cases passed after 0.117 seconds.
+✔ Test exactAcceptedTransactionReportsMissingSelectedReceiptWithoutAuthorContent() passed after 0.176 seconds.
+✔ Test exactAndSeekAdmissionDoNotHideMalformedAcceptedMarkers(_:) with 3 test cases passed after 0.187 seconds.
+✔ Test preflightCannotRenewTheEnclosingReadAllowanceOrEnterTheWriter() passed after 0.188 seconds.
+✔ Test pointHashMismatchAndUnboundDirectorySeekRefuseBeforeReturningEvidence() passed after 0.188 seconds.
+✔ Test malformedHeadersRefuseBeforeCopyingUnboundedScalars(corruption:) with 7 test cases passed after 0.189 seconds.
+✔ Test newAcceptedJournalWriteInvalidatesTheDirectoryContinuation() passed after 0.189 seconds.
+✔ Test metadataDirectoryContinuesWithoutCurrentContentOrBlobDecoding() passed after 0.190 seconds.
+✔ Suite "Current-fleet history preflight uses the existing readonly command cut" passed after 0.191 seconds.
+✔ Test keysetPagesPreserveDistinctAcceptedTransactionsSharingTheSamePayload() passed after 0.201 seconds.
+✔ Test oversizedOriginalBlobRefusesBeforeAnyBodyColumnIsCopied() passed after 0.212 seconds.
+✔ Suite "Accepted legacy receipts preserve original fragments in one bounded read cut" passed after 0.212 seconds.
+✔ Test aHundredThousandMarkersKeepKeysetWorkInsideTheEnclosingSQLLease() passed after 1.301 seconds.
+✔ Suite "Legacy acceptance inventory borrows one bounded read cut" passed after 1.302 seconds.
+✔ Test run with 23 tests in 3 suites passed after 1.302 seconds.

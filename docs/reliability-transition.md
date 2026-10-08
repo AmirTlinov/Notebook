@@ -30,6 +30,17 @@ The diagnostic neither creates nor migrates storage, checkpoints it or vacuums i
 Full cleanup still requires immutable action-event roots and complete typed proof
 of staging references and active leases, tracked in GUI-504 and its dependencies.
 
+`nb.read({kind:'actionHistoryPreflight',limit:32})` lists accepted transaction markers
+from `change_log` and `received_transactions` in one existing readonly cut (max64).
+`coverage.next` binds that workspace and read revision; first received acceptance
+invalidates it even when the material merge is unchanged. A point read uses
+`id: transactionID`, `revision: manifestSHA256` and optional `referenceID: receiptID`.
+Its bounded summaries describe the original manifest fragments. DB29 collection
+headers omit committed membership counts/hashes, so split receipts report
+`unprovenClosure` and incomplete coverage. Raw fragments remain internal; counters
+are exact decimal strings. Fleet sealing, full birth proof and Undo migration
+remain tracked in GUI-486.
+
 ## Current ownership
 
 | Behavior | Contract |

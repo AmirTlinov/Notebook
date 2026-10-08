@@ -713,3 +713,18 @@ Selected Core checks pass: 10 functions / 11 cases, zero failures or skips,
 unchanged source `ffa5ec39410fb1b8f5abe1ee45285c6122b6f9ffaaba38a392c0b0cb1197f8ef` / 1718 files.
 [Evidence](audit-evidence/2026-10-08/received-acceptance-read-cut/results.json).
 DB29/wire44/manifest26 and the installed pair are unchanged. Physical acceptance remains pending.
+
+## 2026-10-08: NB02 accepted history preflight
+
+The existing readonly command cut now exposes bounded accepted-marker pages and
+authenticated original receipt-fragment summaries. Split membership and absent
+roots retain incomplete coverage; current content never fills their gaps.
+Core: 23 functions / 41 cases PASS, including100000 accepted markers,
+source `8b7895e142b894df606b3e293fb51032accd7b2fa6f6690e9a0a02e161c63a98` / 1725 files.
+Final native IPC/script-declaration checks: 2 cases PASS, strict TypeScript and
+generated resources PASS, source `7db3b40a307b1085133caed49ffcffa483258439d0f39e445b11aeb38113676e` / 1725 files.
+Only the new MCP test and two generated ScriptHost resources changed after Core;
+Core production/tests remained exact. Source and toolchain match within each run.
+[Scope, source intersection and attempts](audit-evidence/2026-10-08/action-history-preflight/results.json).
+DB29/wire44/manifest26 and installed260 are unchanged. Fleet seal, birth proof,
+Undo conversion and physical/joint acceptance remain open in GUI-486.

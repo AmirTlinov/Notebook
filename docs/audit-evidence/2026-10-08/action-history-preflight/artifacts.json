@@ -1,0 +1,70 @@
+{
+  "artifacts": [
+    {
+      "bytes": 925,
+      "path": "attempts.json",
+      "sha256": "33e14a6692a18aef23984714065c64ab6a6020f05dadd3f0d7b96749984013d6"
+    },
+    {
+      "bytes": 8193,
+      "path": "core-NotebookCoreTests.stdout.log",
+      "sha256": "7ab587d11614ca1fe78f0bf0dd56f383884bdf32c380c07428023d592b330a33"
+    },
+    {
+      "bytes": 5937,
+      "path": "core-commands.json",
+      "sha256": "72f842855aa59d778f88e07a201e592aa7f38bc56578eae911c7594b1d5f1954"
+    },
+    {
+      "bytes": 12448,
+      "path": "core-execution.json",
+      "sha256": "b628298e20bebc01ae2d68fa5da2996276eb37237e80e4f594e5c325159b17e0"
+    },
+    {
+      "bytes": 417,
+      "path": "core-source-intersection.json",
+      "sha256": "506191805a599c04a0d15ebd922881d37e005aa4e2f63c6e9d8a55bae5228c40"
+    },
+    {
+      "bytes": 17057,
+      "path": "mcp-commands.json",
+      "sha256": "4ce73b680c5ee42730887a377bf89c17eb0f87a00991960e05978af81f38244e"
+    },
+    {
+      "bytes": 734,
+      "path": "mcp-execution.json",
+      "sha256": "ac3319a5392c06f74b1cb3f991f9a3ea59ab407fa24f7c477e170340613d1f97"
+    },
+    {
+      "bytes": 2595,
+      "path": "mcp-history.stdout.log",
+      "sha256": "aaf9e0a44917022e8c4f38fa9e6be6b5e3e7005b6f50cf554a703201392073b2"
+    },
+    {
+      "bytes": 1540,
+      "path": "results.json",
+      "sha256": "e6178c76dffaeec59e0ac1679e5a0a8c4771dc5d8b82dd76706be2e7a458acb5"
+    },
+    {
+      "bytes": 380,
+      "path": "review.json",
+      "sha256": "937d1d2496c928254c883d51754ba3c41fef9d10ba2039c5e8cf59b5e8506639"
+    },
+    {
+      "bytes": 1858,
+      "path": "selection.json",
+      "sha256": "f0c10fd125cab39d7b95e8027d12d8f90318cddce67b2884387a336b75e3868f"
+    },
+    {
+      "bytes": 3105,
+      "path": "source-scope.json",
+      "sha256": "dcec5df3fa974109ca781efc41fc740d6f7fa80a9f61b046d8c21e60eced2909"
+    },
+    {
+      "bytes": 171,
+      "path": "toolchain.json",
+      "sha256": "b3f65bce2aa1906cfea54d30230a4a48fd3ac4f6a4afce70fa73a936277cc08f"
+    }
+  ],
+  "format": 1
+}

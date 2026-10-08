@@ -27,7 +27,8 @@ public struct NotebookReadCommand: Sendable {
       let queries = request.queries ?? []
       guard queries.count <= 128,
         queries.filter({ $0.kind == .contexts }).count <= 1,
-        queries.filter({ $0.kind == .contextEntries }).count <= 1 else {
+        queries.filter({ $0.kind == .contextEntries }).count <= 1,
+        queries.filter({ $0.kind == .actionHistoryPreflight }).count <= 1 else {
         throw CollaborationError("resource_limit", "Один срез читает до 128 владельцев, один каталог фрагментов и одну страницу истории.")
       }
     case .action, .continuations, .delivery, .prepareAction:
