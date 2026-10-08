@@ -1,0 +1,41 @@
+{
+  "executed": [
+    "NotebookCoreTests.NotebookReceivedAcceptanceRevisionTests/exhaustedReadRevisionRefusesReceivedOnlyAcceptanceAtomically()/NotebookReceivedAcceptanceRevisionTests.swift:155:4",
+    "NotebookCoreTests.NotebookReceivedAcceptanceRevisionTests/firstAcceptanceFaultRollsBackMarkerCursorAndReadCut(phase:)/NotebookReceivedAcceptanceRevisionTests.swift:131:4",
+    "NotebookCoreTests.NotebookReceivedAcceptanceRevisionTests/firstReceivedOnlyAcceptanceStalesContinuationAndKnownRetriesStayStable()/NotebookReceivedAcceptanceRevisionTests.swift:97:4",
+    "NotebookCoreTests.NotebookReceivedAcceptanceRevisionTests/materialDeliveryUsesTheSameSingleRevisionIncrement()/NotebookReceivedAcceptanceRevisionTests.swift:167:4",
+    "NotebookCoreTests.NotebookReplicationInputTests/movingTheActiveCoverProtectsItsBasisEvenWhenItsMaterialIsUnchanged()/NotebookReplicationInputTests.swift:42:4",
+    "NotebookCoreTests.NotebookReplicationInputTests/pageContentDoesNotLockItsBoardOrCover()/NotebookReplicationInputTests.swift:7:4",
+    "NotebookCoreTests.NotebookReplicationInputTests/samePageRollsBackContentAndCursorThenAcceptsExactlyOnceAfterLift()/NotebookReplicationInputTests.swift:20:4",
+    "NotebookCoreTests.NotebookReplicationTests/anOldEchoCannotRegressTheFrontierOfRetainedPortalNodes()/NotebookReplicationTests.swift:74:4",
+    "NotebookCoreTests.NotebookReplicationTests/manifestCannotRetargetAnExistingWorkspace()/NotebookReplicationTests.swift:117:4",
+    "NotebookCoreTests.NotebookReplicationTests/twoCopiesConvergeAndEachPeerAcknowledgesTheSameCommittedTransaction()/NotebookReplicationTests.swift:131:4"
+  ],
+  "executions": {
+    "NotebookCoreTests.NotebookReceivedAcceptanceRevisionTests/exhaustedReadRevisionRefusesReceivedOnlyAcceptanceAtomically()/NotebookReceivedAcceptanceRevisionTests.swift:155:4": 1,
+    "NotebookCoreTests.NotebookReceivedAcceptanceRevisionTests/firstAcceptanceFaultRollsBackMarkerCursorAndReadCut(phase:)/NotebookReceivedAcceptanceRevisionTests.swift:131:4": 2,
+    "NotebookCoreTests.NotebookReceivedAcceptanceRevisionTests/firstReceivedOnlyAcceptanceStalesContinuationAndKnownRetriesStayStable()/NotebookReceivedAcceptanceRevisionTests.swift:97:4": 1,
+    "NotebookCoreTests.NotebookReceivedAcceptanceRevisionTests/materialDeliveryUsesTheSameSingleRevisionIncrement()/NotebookReceivedAcceptanceRevisionTests.swift:167:4": 1,
+    "NotebookCoreTests.NotebookReplicationInputTests/movingTheActiveCoverProtectsItsBasisEvenWhenItsMaterialIsUnchanged()/NotebookReplicationInputTests.swift:42:4": 1,
+    "NotebookCoreTests.NotebookReplicationInputTests/pageContentDoesNotLockItsBoardOrCover()/NotebookReplicationInputTests.swift:7:4": 1,
+    "NotebookCoreTests.NotebookReplicationInputTests/samePageRollsBackContentAndCursorThenAcceptsExactlyOnceAfterLift()/NotebookReplicationInputTests.swift:20:4": 1,
+    "NotebookCoreTests.NotebookReplicationTests/anOldEchoCannotRegressTheFrontierOfRetainedPortalNodes()/NotebookReplicationTests.swift:74:4": 1,
+    "NotebookCoreTests.NotebookReplicationTests/manifestCannotRetargetAnExistingWorkspace()/NotebookReplicationTests.swift:117:4": 1,
+    "NotebookCoreTests.NotebookReplicationTests/twoCopiesConvergeAndEachPeerAcknowledgesTheSameCommittedTransaction()/NotebookReplicationTests.swift:131:4": 1
+  },
+  "failed": [],
+  "format": 1,
+  "planned": [
+    "NotebookCoreTests.NotebookReceivedAcceptanceRevisionTests/exhaustedReadRevisionRefusesReceivedOnlyAcceptanceAtomically()/NotebookReceivedAcceptanceRevisionTests.swift:155:4",
+    "NotebookCoreTests.NotebookReceivedAcceptanceRevisionTests/firstAcceptanceFaultRollsBackMarkerCursorAndReadCut(phase:)/NotebookReceivedAcceptanceRevisionTests.swift:131:4",
+    "NotebookCoreTests.NotebookReceivedAcceptanceRevisionTests/firstReceivedOnlyAcceptanceStalesContinuationAndKnownRetriesStayStable()/NotebookReceivedAcceptanceRevisionTests.swift:97:4",
+    "NotebookCoreTests.NotebookReceivedAcceptanceRevisionTests/materialDeliveryUsesTheSameSingleRevisionIncrement()/NotebookReceivedAcceptanceRevisionTests.swift:167:4",
+    "NotebookCoreTests.NotebookReplicationInputTests/movingTheActiveCoverProtectsItsBasisEvenWhenItsMaterialIsUnchanged()/NotebookReplicationInputTests.swift:42:4",
+    "NotebookCoreTests.NotebookReplicationInputTests/pageContentDoesNotLockItsBoardOrCover()/NotebookReplicationInputTests.swift:7:4",
+    "NotebookCoreTests.NotebookReplicationInputTests/samePageRollsBackContentAndCursorThenAcceptsExactlyOnceAfterLift()/NotebookReplicationInputTests.swift:20:4",
+    "NotebookCoreTests.NotebookReplicationTests/anOldEchoCannotRegressTheFrontierOfRetainedPortalNodes()/NotebookReplicationTests.swift:74:4",
+    "NotebookCoreTests.NotebookReplicationTests/manifestCannotRetargetAnExistingWorkspace()/NotebookReplicationTests.swift:117:4",
+    "NotebookCoreTests.NotebookReplicationTests/twoCopiesConvergeAndEachPeerAcknowledgesTheSameCommittedTransaction()/NotebookReplicationTests.swift:131:4"
+  ],
+  "skipped": []
+}

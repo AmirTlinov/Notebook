@@ -1,0 +1,20 @@
+{
+  "baseCommit": "259b8d03b5e25a0d72dac9420ddf0b0028081793",
+  "delta": [
+    {
+      "executable": false,
+      "path": "Sources/NotebookCore/NotebookReplicationStore.swift",
+      "sha256": "cc5df17dadb9db27ed2f6964dc2382fc881bf3bb3e19415a919a678b3c1941a9"
+    },
+    {
+      "executable": false,
+      "path": "Tests/NotebookCoreTests/NotebookReceivedAcceptanceRevisionTests.swift",
+      "sha256": "c7c2e267778ec0d1f3e98f3c256159e51d12fe5412b94083934c1beb12460f81"
+    }
+  ],
+  "fileCount": 1718,
+  "format": 1,
+  "sha256": "ffa5ec39410fb1b8f5abe1ee45285c6122b6f9ffaaba38a392c0b0cb1197f8ef",
+  "sourceStable": true,
+  "toolchainStable": true
+}

@@ -1,0 +1,22 @@
+{
+  "executedCases": 11,
+  "executedFunctions": 10,
+  "failed": [],
+  "format": 1,
+  "installedPairChanged": false,
+  "physicalAcceptance": false,
+  "rawEvidence": ".build/received-acceptance-read-cut-20261008-v2",
+  "route": "./verify.sh --only",
+  "scope": [
+    "first received-only acceptance invalidates nbread2",
+    "known retries and relay ACK do not mint a second acceptance",
+    "rollback afterRecordWrites and beforeCommit",
+    "read revision exhaustion refuses atomically",
+    "ordinary material delivery increments once",
+    "input admission and existing two-copy convergence"
+  ],
+  "skipped": [],
+  "sourceFileCount": 1718,
+  "sourceSHA256": "ffa5ec39410fb1b8f5abe1ee45285c6122b6f9ffaaba38a392c0b0cb1197f8ef",
+  "status": "passed"
+}

@@ -703,3 +703,13 @@ changed between those runs; executable Core/iPad inputs are unchanged. Earlier
 [Exact sources, intersections and results](audit-evidence/2026-10-07/remediation-integration/results.json).
 DB29/wire44/manifest26: search admission changes derived data in one transaction.
 Birth/checkpoint WIP, a new integrated signed pair and joint acceptance remain pending.
+
+## 2026-10-08: first received acceptance and the read cut
+
+The existing commit owner advances `read_revision` once after the first accepted
+delivery, including a material no-op. Known retries and relay ACKs retain that cut;
+rollback and counter exhaustion preserve the marker, peer cursor and revision.
+Selected Core checks pass: 10 functions / 11 cases, zero failures or skips,
+unchanged source `ffa5ec39410fb1b8f5abe1ee45285c6122b6f9ffaaba38a392c0b0cb1197f8ef` / 1718 files.
+[Evidence](audit-evidence/2026-10-08/received-acceptance-read-cut/results.json).
+DB29/wire44/manifest26 and the installed pair are unchanged. Physical acceptance remains pending.

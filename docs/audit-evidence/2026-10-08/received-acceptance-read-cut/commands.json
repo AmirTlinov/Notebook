@@ -1,0 +1,86 @@
+[
+  {
+    "argv": [
+      "/opt/homebrew/opt/python@3.14/bin/python3.14",
+      "--version"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "toolchain-python"
+  },
+  {
+    "argv": [
+      "swift",
+      "--version"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "toolchain-swift"
+  },
+  {
+    "argv": [
+      "swift",
+      "package",
+      "describe",
+      "--type",
+      "json"
+    ],
+    "cwd": "/Users/amir/Documents/projects/Notebook",
+    "exitCode": 0,
+    "label": "core-package"
+  },
+  {
+    "argv": [
+      "swift",
+      "test",
+      "list",
+      "--disable-xctest",
+      "--test-product",
+      "NotebookCoreTests",
+      "--event-stream-output-path",
+      "/Users/amir/Documents/projects/Notebook/.build/received-acceptance-read-cut-20261008-v2/core-NotebookCoreTests-inventory.jsonl",
+      "--event-stream-version",
+      "6.4"
+    ],
+    "cwd": "/Users/amir/Documents/projects/Notebook",
+    "exitCode": 0,
+    "label": "core-inventory-NotebookCoreTests"
+  },
+  {
+    "argv": [
+      "swift",
+      "test",
+      "--disable-xctest",
+      "--skip-build",
+      "--test-product",
+      "NotebookCoreTests",
+      "--filter",
+      "^(?:NotebookCoreTests\\.NotebookReceivedAcceptanceRevisionTests/exhaustedReadRevisionRefusesReceivedOnlyAcceptanceAtomically\\(\\)/NotebookReceivedAcceptanceRevisionTests\\.swift:155:4|NotebookCoreTests\\.NotebookReceivedAcceptanceRevisionTests/firstAcceptanceFaultRollsBackMarkerCursorAndReadCut\\(phase:\\)/NotebookReceivedAcceptanceRevisionTests\\.swift:131:4|NotebookCoreTests\\.NotebookReceivedAcceptanceRevisionTests/firstReceivedOnlyAcceptanceStalesContinuationAndKnownRetriesStayStable\\(\\)/NotebookReceivedAcceptanceRevisionTests\\.swift:97:4|NotebookCoreTests\\.NotebookReceivedAcceptanceRevisionTests/materialDeliveryUsesTheSameSingleRevisionIncrement\\(\\)/NotebookReceivedAcceptanceRevisionTests\\.swift:167:4|NotebookCoreTests\\.NotebookReplicationInputTests/movingTheActiveCoverProtectsItsBasisEvenWhenItsMaterialIsUnchanged\\(\\)/NotebookReplicationInputTests\\.swift:42:4|NotebookCoreTests\\.NotebookReplicationInputTests/pageContentDoesNotLockItsBoardOrCover\\(\\)/NotebookReplicationInputTests\\.swift:7:4|NotebookCoreTests\\.NotebookReplicationInputTests/samePageRollsBackContentAndCursorThenAcceptsExactlyOnceAfterLift\\(\\)/NotebookReplicationInputTests\\.swift:20:4|NotebookCoreTests\\.NotebookReplicationTests/anOldEchoCannotRegressTheFrontierOfRetainedPortalNodes\\(\\)/NotebookReplicationTests\\.swift:74:4|NotebookCoreTests\\.NotebookReplicationTests/manifestCannotRetargetAnExistingWorkspace\\(\\)/NotebookReplicationTests\\.swift:117:4|NotebookCoreTests\\.NotebookReplicationTests/twoCopiesConvergeAndEachPeerAcknowledgesTheSameCommittedTransaction\\(\\)/NotebookReplicationTests\\.swift:131:4)$",
+      "--event-stream-output-path",
+      "/Users/amir/Documents/projects/Notebook/.build/received-acceptance-read-cut-20261008-v2/core-NotebookCoreTests-events.jsonl",
+      "--event-stream-version",
+      "6.4"
+    ],
+    "cwd": "/Users/amir/Documents/projects/Notebook",
+    "exitCode": 0,
+    "label": "core-NotebookCoreTests"
+  },
+  {
+    "argv": [
+      "/opt/homebrew/opt/python@3.14/bin/python3.14",
+      "--version"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "toolchain-after-python"
+  },
+  {
+    "argv": [
+      "swift",
+      "--version"
+    ],
+    "cwd": null,
+    "exitCode": 0,
+    "label": "toolchain-after-swift"
+  }
+]

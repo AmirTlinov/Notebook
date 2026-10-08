@@ -344,11 +344,12 @@ extension NotebookStore {
         throw CollaborationError("input_active", "Изменение затрагивает поверхность текущего касания.")
       }
       try coverReplicationPrefix(delivery)
-      // Source publication owns the material frontier. Receiving an old echo,
-      // validating dependencies or advancing a peer cursor does not change it.
-      if database.pendingChangeCount > 0 { database.acceptedWriteAdvancesReadRevision = true }
       database.receivedChange = change
       try database.run("INSERT INTO received_transactions(transaction_id,manifest_hash,peer_id,sequence) VALUES(?,?,?,?)", [.text(transaction), .text(change.manifestHash), .text(peer), .integer(Int64(change.sequence))])
+      // First acceptance changes the history cut even when material merge is
+      // a no-op. The existing commit owner increments once for history/material;
+      // known transactions returned above and never create another occurrence.
+      database.acceptedWriteAdvancesReadRevision = true
       try database.run("INSERT INTO peer_cursors(peer_id,direction,sequence) VALUES(?,'incoming',?) ON CONFLICT(peer_id,direction) DO UPDATE SET sequence=MAX(sequence,excluded.sequence)", [.text(peer), .integer(Int64(change.sequence))])
     }
     return try incomingCursor(source: source)

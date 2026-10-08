@@ -1,0 +1,29 @@
+{
+  "baseCommit": "259b8d03b5e25a0d72dac9420ddf0b0028081793",
+  "changedFiles": [
+    "Sources/NotebookCore/NotebookReplicationStore.swift",
+    "Tests/NotebookCoreTests/NotebookReceivedAcceptanceRevisionTests.swift"
+  ],
+  "checks": {
+    "commands": [],
+    "core": [
+      "NotebookCoreTests.NotebookReceivedAcceptanceRevisionTests",
+      "NotebookCoreTests.NotebookReplicationInputTests",
+      "NotebookCoreTests.NotebookReplicationTests/anOldEchoCannotRegressTheFrontierOfRetainedPortalNodes",
+      "NotebookCoreTests.NotebookReplicationTests/manifestCannotRetargetAnExistingWorkspace",
+      "NotebookCoreTests.NotebookReplicationTests/twoCopiesConvergeAndEachPeerAcknowledgesTheSameCommittedTransaction"
+    ],
+    "ipad": [],
+    "mac": []
+  },
+  "format": 2,
+  "manualSelection": true,
+  "optimized": false,
+  "profiles": [],
+  "selectionMode": "explicit-only",
+  "sourceRoot": "/Users/amir/Documents/projects/Notebook",
+  "unclassified": [
+    "Sources/NotebookCore/NotebookReplicationStore.swift",
+    "Tests/NotebookCoreTests/NotebookReceivedAcceptanceRevisionTests.swift"
+  ]
+}

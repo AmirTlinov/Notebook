@@ -1,0 +1,32 @@
+◇ Test run started.
+↳ Testing Library Version: 2084
+↳ Target Platform: arm64e-apple-macos14.0
+◇ Suite "Delivery protects only the admitted physical input owner" started.
+◇ Suite "SQL peer transactions" started.
+◇ Suite "First received acceptance owns its existing read cut" started.
+◇ Test samePageRollsBackContentAndCursorThenAcceptsExactlyOnceAfterLift() started.
+◇ Test movingTheActiveCoverProtectsItsBasisEvenWhenItsMaterialIsUnchanged() started.
+◇ Test pageContentDoesNotLockItsBoardOrCover() started.
+◇ Test manifestCannotRetargetAnExistingWorkspace() started.
+◇ Test anOldEchoCannotRegressTheFrontierOfRetainedPortalNodes() started.
+◇ Test twoCopiesConvergeAndEachPeerAcknowledgesTheSameCommittedTransaction() started.
+◇ Test firstReceivedOnlyAcceptanceStalesContinuationAndKnownRetriesStayStable() started.
+✔ Test manifestCannotRetargetAnExistingWorkspace() passed after 0.137 seconds.
+✔ Test firstReceivedOnlyAcceptanceStalesContinuationAndKnownRetriesStayStable() passed after 0.458 seconds.
+◇ Test firstAcceptanceFaultRollsBackMarkerCursorAndReadCut(phase:) started.
+◇ Test case passing 1 argument phase → .afterRecordWrites to firstAcceptanceFaultRollsBackMarkerCursorAndReadCut(phase:) started.
+✔ Test movingTheActiveCoverProtectsItsBasisEvenWhenItsMaterialIsUnchanged() passed after 0.554 seconds.
+✔ Test pageContentDoesNotLockItsBoardOrCover() passed after 0.628 seconds.
+✔ Test samePageRollsBackContentAndCursorThenAcceptsExactlyOnceAfterLift() passed after 0.652 seconds.
+✔ Suite "Delivery protects only the admitted physical input owner" passed after 0.652 seconds.
+✔ Test twoCopiesConvergeAndEachPeerAcknowledgesTheSameCommittedTransaction() passed after 0.676 seconds.
+◇ Test case passing 1 argument phase → .beforeCommit to firstAcceptanceFaultRollsBackMarkerCursorAndReadCut(phase:) started.
+✔ Test anOldEchoCannotRegressTheFrontierOfRetainedPortalNodes() passed after 0.913 seconds.
+✔ Suite "SQL peer transactions" passed after 0.914 seconds.
+✔ Test firstAcceptanceFaultRollsBackMarkerCursorAndReadCut(phase:) with 2 test cases passed after 0.465 seconds.
+◇ Test exhaustedReadRevisionRefusesReceivedOnlyAcceptanceAtomically() started.
+✔ Test exhaustedReadRevisionRefusesReceivedOnlyAcceptanceAtomically() passed after 0.126 seconds.
+◇ Test materialDeliveryUsesTheSameSingleRevisionIncrement() started.
+✔ Test materialDeliveryUsesTheSameSingleRevisionIncrement() passed after 0.142 seconds.
+✔ Suite "First received acceptance owns its existing read cut" passed after 1.193 seconds.
+✔ Test run with 10 tests in 3 suites passed after 1.193 seconds.

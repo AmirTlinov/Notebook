@@ -1,0 +1,17 @@
+{
+  "attempts": [
+    {
+      "cause": "Swift Testing try inside #expect did not infer a throwing commandTransaction closure",
+      "executedCases": 0,
+      "path": ".build/received-acceptance-read-cut-20261008-v1",
+      "repair": "Bind throwing values before expectations; production unchanged.",
+      "status": "inventory_compile_failed"
+    },
+    {
+      "executedCases": 11,
+      "path": ".build/received-acceptance-read-cut-20261008-v2",
+      "status": "passed"
+    }
+  ],
+  "format": 1
+}

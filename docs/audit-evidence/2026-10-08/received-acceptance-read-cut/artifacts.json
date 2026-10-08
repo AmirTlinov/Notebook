@@ -1,0 +1,45 @@
+{
+  "artifacts": [
+    {
+      "bytes": 501,
+      "path": "attempts.json",
+      "sha256": "52049e488b6b838f07ef7ee5fc9d012c97262de22b87002c4482d7e6c91f5c79"
+    },
+    {
+      "bytes": 3447,
+      "path": "commands.json",
+      "sha256": "6654e30e6967efb3693d0dce3e5475b1eef3ec265d18914b559078143feef812"
+    },
+    {
+      "bytes": 2637,
+      "path": "core-NotebookCoreTests.stdout.log",
+      "sha256": "d8e812941c24189c96c0bed9b24a126adc8a17fca0ce5f6360594de79762e986"
+    },
+    {
+      "bytes": 4972,
+      "path": "core-execution.json",
+      "sha256": "9976958e676c20727fcd1beb1e42178a56e19ff4927b377434da508d87670002"
+    },
+    {
+      "bytes": 752,
+      "path": "results.json",
+      "sha256": "c960f92e3173e7dc2ebd145208feb169a79f5fb24a9dd6d5e1753a78ee4e722e"
+    },
+    {
+      "bytes": 1094,
+      "path": "selection.json",
+      "sha256": "06f1f2aeaf710f5a735d9db2d5a95fb9425fb7313e9576acab05ab75b3b4fa54"
+    },
+    {
+      "bytes": 649,
+      "path": "source-scope.json",
+      "sha256": "d1cbb39d5f27eaa9c443f251f19dde1a9699fdf6e95e3081093e4163f93ba1e9"
+    },
+    {
+      "bytes": 145,
+      "path": "toolchain.json",
+      "sha256": "1942ce3eca3124cc54845493d9dafe4bee970e0569479a40724102bc9fdcdfab"
+    }
+  ],
+  "format": 1
+}
