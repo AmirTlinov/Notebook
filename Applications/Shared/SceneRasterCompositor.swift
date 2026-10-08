@@ -379,8 +379,8 @@ final class SceneRasterCompositor {
     #else
       let image = NSImage(cgImage: pixels, size: .init(width: pixels.width, height: pixels.height))
     #endif
-    guard resources.store(image, for: source, reservation: reservation),
-      let retained = resources.retainRaster(for: source) else { throw SceneRenderError.resourceLimit }
+    guard let retained = resources.storeAndRetain(image, for: source, reservation: reservation)
+    else { throw SceneRenderError.resourceLimit }
     isFinished = true
     return retained
   }

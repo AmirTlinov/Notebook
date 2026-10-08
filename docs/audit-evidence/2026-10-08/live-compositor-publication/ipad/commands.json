@@ -1,0 +1,527 @@
+[
+  {
+    "argv": [
+      "xcrun",
+      "devicectl",
+      "device",
+      "info",
+      "details",
+      "--device",
+      "9CF2C22D-1CC6-573F-B27D-7EB0C81D2DD9",
+      "--timeout",
+      "30",
+      "--json-output",
+      "/Users/amir/Documents/projects/Notebook/.build/nb505-live-publication-20261008-v1-ipad/physical-ipad.json",
+      "--omit-deprecated-fields-in-json"
+    ],
+    "cwd": "/Users/amir/Documents/projects/Notebook",
+    "exitCode": 0,
+    "label": "physical-ipad"
+  },
+  {
+    "argv": [
+      "xcrun",
+      "devicectl",
+      "device",
+      "info",
+      "lockState",
+      "--device",
+      "00008103-001E059934D9001E",
+      "--timeout",
+      "30",
+      "--json-output",
+      "/Users/amir/Documents/projects/Notebook/.build/nb505-live-publication-20261008-v1-ipad/physical-ipad-lock-state.json"
+    ],
+    "cwd": "/Users/amir/Documents/projects/Notebook",
+    "exitCode": 0,
+    "label": "unlocked-ipad"
+  },
+  {
+    "argv": [
+      "/opt/homebrew/opt/python@3.14/bin/python3.14",
+      "-B",
+      "/Users/amir/Documents/projects/Notebook/Applications/prepare_notebook_codex.py",
+      "--prepare",
+      "--stage-root",
+      "/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes"
+    ],
+    "cwd": "/Users/amir/Documents/projects/Notebook",
+    "exitCode": 0,
+    "label": "codex-resources"
+  },
+  {
+    "argv": [
+      "/opt/homebrew/opt/python@3.14/bin/python3.14",
+      "--version"
+    ],
+    "cwd": null,
+    "environment": {
+      "PATH": "/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/opt/homebrew/opt/python@3.14/bin:/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/.build/toolchains/swift-6.4.0/swift-6.4.0-RELEASE-osx-package.pkg/Payload/usr/bin:/Users/amir/.volta/bin:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:/Users/amir/.bun/bin:/Users/amir/.local/bin:/Users/amir/.local/state/fnm_multishells/57073_1791379822793/bin:/Users/amir/.cargo/bin:/Users/amir/Library/Python/3.9/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/Users/amir/.codex/tmp/arg0/codex-arg0c05irJ:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:/Users/amir/.lmstudio/bin:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Applications/ChatGPT.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS"
+    },
+    "exitCode": 0,
+    "label": "toolchain-python"
+  },
+  {
+    "argv": [
+      "/usr/bin/xcrun",
+      "xcodebuild",
+      "-version"
+    ],
+    "cwd": null,
+    "environment": {
+      "PATH": "/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/opt/homebrew/opt/python@3.14/bin:/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/.build/toolchains/swift-6.4.0/swift-6.4.0-RELEASE-osx-package.pkg/Payload/usr/bin:/Users/amir/.volta/bin:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:/Users/amir/.bun/bin:/Users/amir/.local/bin:/Users/amir/.local/state/fnm_multishells/57073_1791379822793/bin:/Users/amir/.cargo/bin:/Users/amir/Library/Python/3.9/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/Users/amir/.codex/tmp/arg0/codex-arg0c05irJ:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:/Users/amir/.lmstudio/bin:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Applications/ChatGPT.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS"
+    },
+    "exitCode": 0,
+    "label": "toolchain-xcode"
+  },
+  {
+    "argv": [
+      "/usr/bin/xcrun",
+      "swift",
+      "--version"
+    ],
+    "cwd": null,
+    "environment": {
+      "PATH": "/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/opt/homebrew/opt/python@3.14/bin:/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/.build/toolchains/swift-6.4.0/swift-6.4.0-RELEASE-osx-package.pkg/Payload/usr/bin:/Users/amir/.volta/bin:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:/Users/amir/.bun/bin:/Users/amir/.local/bin:/Users/amir/.local/state/fnm_multishells/57073_1791379822793/bin:/Users/amir/.cargo/bin:/Users/amir/Library/Python/3.9/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/Users/amir/.codex/tmp/arg0/codex-arg0c05irJ:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:/Users/amir/.lmstudio/bin:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Applications/ChatGPT.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS"
+    },
+    "exitCode": 0,
+    "label": "toolchain-swift"
+  },
+  {
+    "argv": [
+      "/usr/bin/xcrun",
+      "--sdk",
+      "iphoneos",
+      "--show-sdk-build-version"
+    ],
+    "cwd": null,
+    "environment": {
+      "PATH": "/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/opt/homebrew/opt/python@3.14/bin:/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/.build/toolchains/swift-6.4.0/swift-6.4.0-RELEASE-osx-package.pkg/Payload/usr/bin:/Users/amir/.volta/bin:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:/Users/amir/.bun/bin:/Users/amir/.local/bin:/Users/amir/.local/state/fnm_multishells/57073_1791379822793/bin:/Users/amir/.cargo/bin:/Users/amir/Library/Python/3.9/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/Users/amir/.codex/tmp/arg0/codex-arg0c05irJ:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:/Users/amir/.lmstudio/bin:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Applications/ChatGPT.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS"
+    },
+    "exitCode": 0,
+    "label": "toolchain-iphoneosSDK"
+  },
+  {
+    "argv": [
+      "/usr/bin/xcrun",
+      "--sdk",
+      "macosx",
+      "--show-sdk-build-version"
+    ],
+    "cwd": null,
+    "environment": {
+      "PATH": "/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/opt/homebrew/opt/python@3.14/bin:/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/.build/toolchains/swift-6.4.0/swift-6.4.0-RELEASE-osx-package.pkg/Payload/usr/bin:/Users/amir/.volta/bin:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:/Users/amir/.bun/bin:/Users/amir/.local/bin:/Users/amir/.local/state/fnm_multishells/57073_1791379822793/bin:/Users/amir/.cargo/bin:/Users/amir/Library/Python/3.9/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/Users/amir/.codex/tmp/arg0/codex-arg0c05irJ:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:/Users/amir/.lmstudio/bin:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Applications/ChatGPT.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS"
+    },
+    "exitCode": 0,
+    "label": "toolchain-macosSDK"
+  },
+  {
+    "argv": [
+      "/opt/homebrew/bin/xcodegen",
+      "--version"
+    ],
+    "cwd": null,
+    "environment": {
+      "PATH": "/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/opt/homebrew/opt/python@3.14/bin:/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/.build/toolchains/swift-6.4.0/swift-6.4.0-RELEASE-osx-package.pkg/Payload/usr/bin:/Users/amir/.volta/bin:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:/Users/amir/.bun/bin:/Users/amir/.local/bin:/Users/amir/.local/state/fnm_multishells/57073_1791379822793/bin:/Users/amir/.cargo/bin:/Users/amir/Library/Python/3.9/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/Users/amir/.codex/tmp/arg0/codex-arg0c05irJ:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:/Users/amir/.lmstudio/bin:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Applications/ChatGPT.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS"
+    },
+    "exitCode": 0,
+    "label": "toolchain-xcodegen"
+  },
+  {
+    "argv": [
+      "/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a/node",
+      "--version"
+    ],
+    "cwd": null,
+    "environment": {
+      "PATH": "/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/opt/homebrew/opt/python@3.14/bin:/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/.build/toolchains/swift-6.4.0/swift-6.4.0-RELEASE-osx-package.pkg/Payload/usr/bin:/Users/amir/.volta/bin:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:/Users/amir/.bun/bin:/Users/amir/.local/bin:/Users/amir/.local/state/fnm_multishells/57073_1791379822793/bin:/Users/amir/.cargo/bin:/Users/amir/Library/Python/3.9/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/Users/amir/.codex/tmp/arg0/codex-arg0c05irJ:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:/Users/amir/.lmstudio/bin:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Applications/ChatGPT.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS"
+    },
+    "exitCode": 0,
+    "label": "toolchain-node"
+  },
+  {
+    "argv": [
+      "/Users/amir/.volta/bin/npm",
+      "--version"
+    ],
+    "cwd": null,
+    "environment": {
+      "PATH": "/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/opt/homebrew/opt/python@3.14/bin:/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/.build/toolchains/swift-6.4.0/swift-6.4.0-RELEASE-osx-package.pkg/Payload/usr/bin:/Users/amir/.volta/bin:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:/Users/amir/.bun/bin:/Users/amir/.local/bin:/Users/amir/.local/state/fnm_multishells/57073_1791379822793/bin:/Users/amir/.cargo/bin:/Users/amir/Library/Python/3.9/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/Users/amir/.codex/tmp/arg0/codex-arg0c05irJ:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:/Users/amir/.lmstudio/bin:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Applications/ChatGPT.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS"
+    },
+    "exitCode": 0,
+    "label": "toolchain-npm"
+  },
+  {
+    "argv": [
+      "/opt/homebrew/opt/python@3.14/bin/python3.14",
+      "-B",
+      "-c",
+      "\nimport json\nimport subprocess\nimport sys\nimport time\n\ndevice, bundle = sys.argv[1:]\n\ndef installed():\n    result = subprocess.run([\n        \"xcrun\", \"devicectl\", \"device\", \"info\", \"apps\",\n        \"--device\", device, \"--include-all-apps\", \"--bundle-id\", bundle,\n        \"--timeout\", \"30\", \"--json-output\", \"-\",\n    ], capture_output=True, text=True)\n    if result.returncode:\n        sys.stderr.write(result.stderr)\n        raise SystemExit(result.returncode)\n    return [app for app in json.loads(result.stdout)[\"result\"][\"apps\"]\n            if app.get(\"bundleIdentifier\") == bundle]\n\nfound = installed()\nif found:\n    result = subprocess.run([\n        \"xcrun\", \"devicectl\", \"device\", \"uninstall\", \"app\",\n        \"--device\", device, bundle, \"--timeout\", \"60\",\n    ], capture_output=True, text=True)\n    if result.returncode:\n        sys.stderr.write(result.stderr)\n        raise SystemExit(result.returncode)\n    for _ in range(20):\n        if not installed():\n            break\n        time.sleep(0.1)\nif installed():\n    raise SystemExit(\"XCTest bundle остался на физическом iPad: \" + bundle)\nprint(json.dumps({\"bundleIdentifier\": bundle, \"removed\": bool(found)}, sort_keys=True))\n",
+      "00008103-001E059934D9001E",
+      "com.amirtlinov.notebook.native-test"
+    ],
+    "cwd": null,
+    "environment": {
+      "PATH": "/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/opt/homebrew/opt/python@3.14/bin:/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/.build/toolchains/swift-6.4.0/swift-6.4.0-RELEASE-osx-package.pkg/Payload/usr/bin:/Users/amir/.volta/bin:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:/Users/amir/.bun/bin:/Users/amir/.local/bin:/Users/amir/.local/state/fnm_multishells/57073_1791379822793/bin:/Users/amir/.cargo/bin:/Users/amir/Library/Python/3.9/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/Users/amir/.codex/tmp/arg0/codex-arg0c05irJ:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:/Users/amir/.lmstudio/bin:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Applications/ChatGPT.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS"
+    },
+    "exitCode": 0,
+    "label": "ipad-native-test-cleanup-before"
+  },
+  {
+    "argv": [
+      "xcodegen",
+      "generate",
+      "--spec",
+      "project.yml"
+    ],
+    "cwd": "/Users/amir/Documents/projects/Notebook/Applications",
+    "environment": {
+      "PATH": "/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/opt/homebrew/opt/python@3.14/bin:/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/.build/toolchains/swift-6.4.0/swift-6.4.0-RELEASE-osx-package.pkg/Payload/usr/bin:/Users/amir/.volta/bin:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:/Users/amir/.bun/bin:/Users/amir/.local/bin:/Users/amir/.local/state/fnm_multishells/57073_1791379822793/bin:/Users/amir/.cargo/bin:/Users/amir/Library/Python/3.9/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/Users/amir/.codex/tmp/arg0/codex-arg0c05irJ:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:/Users/amir/.lmstudio/bin:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Applications/ChatGPT.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS"
+    },
+    "exitCode": 0,
+    "label": "generate-project"
+  },
+  {
+    "argv": [
+      "/opt/homebrew/opt/python@3.14/bin/python3.14",
+      "-B",
+      "/Users/amir/Documents/projects/Notebook/Applications/prepare_notebook_typesetter.py",
+      "--prepare",
+      "--platform",
+      "iphoneos",
+      "--stage",
+      "/Users/amir/Documents/projects/Notebook/.build/notebook-typesetter-runtime"
+    ],
+    "cwd": "/Users/amir/Documents/projects/Notebook",
+    "environment": {
+      "PATH": "/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/opt/homebrew/opt/python@3.14/bin:/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/.build/toolchains/swift-6.4.0/swift-6.4.0-RELEASE-osx-package.pkg/Payload/usr/bin:/Users/amir/.volta/bin:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:/Users/amir/.bun/bin:/Users/amir/.local/bin:/Users/amir/.local/state/fnm_multishells/57073_1791379822793/bin:/Users/amir/.cargo/bin:/Users/amir/Library/Python/3.9/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/Users/amir/.codex/tmp/arg0/codex-arg0c05irJ:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:/Users/amir/.lmstudio/bin:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Applications/ChatGPT.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS"
+    },
+    "exitCode": 0,
+    "label": "typesetter-resources-iphoneos"
+  },
+  {
+    "argv": [
+      "xcrun",
+      "xcodebuild",
+      "-quiet",
+      "-project",
+      "Notebook.xcodeproj",
+      "-scheme",
+      "Notebook",
+      "-configuration",
+      "Debug",
+      "-destination",
+      "platform=iOS,id=00008103-001E059934D9001E",
+      "-derivedDataPath",
+      "/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/b12ca6d0c0574691/ipad",
+      "-parallel-testing-enabled",
+      "NO",
+      "-collect-test-diagnostics",
+      "never",
+      "build-for-testing",
+      "-allowProvisioningUpdates",
+      "CODE_SIGN_IDENTITY=Apple Development",
+      "CODE_SIGN_STYLE=Automatic",
+      "CODE_SIGNING_ALLOWED=YES",
+      "DEVELOPMENT_TEAM=M94V58FCVP",
+      "NOTEBOOK_BUNDLE_SUFFIX=.native-test",
+      "NOTEBOOK_TYPESETTER_RUNTIME=/Users/amir/Documents/projects/Notebook/.build/notebook-typesetter-runtime",
+      "-only-testing:NotebookTests/SceneRenderResourcesTests/testCompositorImageKeepsItsGrantedCapacityUntilItsFinalBorrowEnds",
+      "-only-testing:NotebookTests/SceneRenderResourcesTests/testCompositorOutputsKeepTheirActualSlotsThroughPublication",
+      "-only-testing:NotebookTests/SceneRenderResourcesTests/testDerivedReservationTransferAdmitsOnlyGrowthAndNeverDropsItsExistingCharge",
+      "-only-testing:NotebookTests/SceneRenderResourcesTests/testOptionalSynchronousAllocationsCannotPassAnAcceptedDerivedStage",
+      "-only-testing:NotebookTests/SceneRenderResourcesTests/testPublicationObserversCannotReclaimTheIncomingRetainedRaster"
+    ],
+    "cwd": "/Users/amir/Documents/projects/Notebook/Applications",
+    "environment": {
+      "PATH": "/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/opt/homebrew/opt/python@3.14/bin:/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/.build/toolchains/swift-6.4.0/swift-6.4.0-RELEASE-osx-package.pkg/Payload/usr/bin:/Users/amir/.volta/bin:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:/Users/amir/.bun/bin:/Users/amir/.local/bin:/Users/amir/.local/state/fnm_multishells/57073_1791379822793/bin:/Users/amir/.cargo/bin:/Users/amir/Library/Python/3.9/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/Users/amir/.codex/tmp/arg0/codex-arg0c05irJ:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:/Users/amir/.lmstudio/bin:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Applications/ChatGPT.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS"
+    },
+    "exitCode": 0,
+    "label": "ipad-build-for-testing"
+  },
+  {
+    "argv": [
+      "xcrun",
+      "devicectl",
+      "device",
+      "info",
+      "lockState",
+      "--device",
+      "00008103-001E059934D9001E",
+      "--timeout",
+      "30",
+      "--json-output",
+      "/Users/amir/Documents/projects/Notebook/.build/nb505-live-publication-20261008-v1-ipad/physical-ipad-lock-state-inventory.json"
+    ],
+    "cwd": "/Users/amir/Documents/projects/Notebook",
+    "environment": {
+      "PATH": "/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/opt/homebrew/opt/python@3.14/bin:/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/.build/toolchains/swift-6.4.0/swift-6.4.0-RELEASE-osx-package.pkg/Payload/usr/bin:/Users/amir/.volta/bin:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:/Users/amir/.bun/bin:/Users/amir/.local/bin:/Users/amir/.local/state/fnm_multishells/57073_1791379822793/bin:/Users/amir/.cargo/bin:/Users/amir/Library/Python/3.9/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/Users/amir/.codex/tmp/arg0/codex-arg0c05irJ:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:/Users/amir/.lmstudio/bin:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Applications/ChatGPT.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS"
+    },
+    "exitCode": 0,
+    "label": "unlocked-ipad-inventory"
+  },
+  {
+    "argv": [
+      "xcrun",
+      "xcodebuild",
+      "-quiet",
+      "-project",
+      "Notebook.xcodeproj",
+      "-scheme",
+      "Notebook",
+      "-configuration",
+      "Debug",
+      "-destination",
+      "platform=iOS,id=00008103-001E059934D9001E",
+      "-derivedDataPath",
+      "/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/b12ca6d0c0574691/ipad",
+      "-parallel-testing-enabled",
+      "NO",
+      "-collect-test-diagnostics",
+      "never",
+      "test-without-building",
+      "-allowProvisioningUpdates",
+      "CODE_SIGN_IDENTITY=Apple Development",
+      "CODE_SIGN_STYLE=Automatic",
+      "CODE_SIGNING_ALLOWED=YES",
+      "DEVELOPMENT_TEAM=M94V58FCVP",
+      "NOTEBOOK_BUNDLE_SUFFIX=.native-test",
+      "NOTEBOOK_TYPESETTER_RUNTIME=/Users/amir/Documents/projects/Notebook/.build/notebook-typesetter-runtime",
+      "-only-testing:NotebookTests/SceneRenderResourcesTests/testCompositorImageKeepsItsGrantedCapacityUntilItsFinalBorrowEnds",
+      "-only-testing:NotebookTests/SceneRenderResourcesTests/testCompositorOutputsKeepTheirActualSlotsThroughPublication",
+      "-only-testing:NotebookTests/SceneRenderResourcesTests/testDerivedReservationTransferAdmitsOnlyGrowthAndNeverDropsItsExistingCharge",
+      "-only-testing:NotebookTests/SceneRenderResourcesTests/testOptionalSynchronousAllocationsCannotPassAnAcceptedDerivedStage",
+      "-only-testing:NotebookTests/SceneRenderResourcesTests/testPublicationObserversCannotReclaimTheIncomingRetainedRaster",
+      "-enumerate-tests",
+      "-test-enumeration-style",
+      "flat",
+      "-test-enumeration-format",
+      "json",
+      "-test-enumeration-output-path",
+      "/Users/amir/Documents/projects/Notebook/.build/nb505-live-publication-20261008-v1-ipad/ipad-inventory.json"
+    ],
+    "cwd": "/Users/amir/Documents/projects/Notebook/Applications",
+    "environment": {
+      "PATH": "/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/opt/homebrew/opt/python@3.14/bin:/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/.build/toolchains/swift-6.4.0/swift-6.4.0-RELEASE-osx-package.pkg/Payload/usr/bin:/Users/amir/.volta/bin:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:/Users/amir/.bun/bin:/Users/amir/.local/bin:/Users/amir/.local/state/fnm_multishells/57073_1791379822793/bin:/Users/amir/.cargo/bin:/Users/amir/Library/Python/3.9/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/Users/amir/.codex/tmp/arg0/codex-arg0c05irJ:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:/Users/amir/.lmstudio/bin:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Applications/ChatGPT.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS"
+    },
+    "exitCode": 0,
+    "label": "ipad-inventory"
+  },
+  {
+    "argv": [
+      "xcrun",
+      "devicectl",
+      "device",
+      "info",
+      "lockState",
+      "--device",
+      "00008103-001E059934D9001E",
+      "--timeout",
+      "30",
+      "--json-output",
+      "/Users/amir/Documents/projects/Notebook/.build/nb505-live-publication-20261008-v1-ipad/physical-ipad-lock-state-execution.json"
+    ],
+    "cwd": "/Users/amir/Documents/projects/Notebook",
+    "environment": {
+      "PATH": "/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/opt/homebrew/opt/python@3.14/bin:/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/.build/toolchains/swift-6.4.0/swift-6.4.0-RELEASE-osx-package.pkg/Payload/usr/bin:/Users/amir/.volta/bin:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:/Users/amir/.bun/bin:/Users/amir/.local/bin:/Users/amir/.local/state/fnm_multishells/57073_1791379822793/bin:/Users/amir/.cargo/bin:/Users/amir/Library/Python/3.9/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/Users/amir/.codex/tmp/arg0/codex-arg0c05irJ:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:/Users/amir/.lmstudio/bin:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Applications/ChatGPT.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS"
+    },
+    "exitCode": 0,
+    "label": "unlocked-ipad-execution"
+  },
+  {
+    "argv": [
+      "xcrun",
+      "xcodebuild",
+      "-quiet",
+      "-project",
+      "Notebook.xcodeproj",
+      "-scheme",
+      "Notebook",
+      "-configuration",
+      "Debug",
+      "-destination",
+      "platform=iOS,id=00008103-001E059934D9001E",
+      "-derivedDataPath",
+      "/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/b12ca6d0c0574691/ipad",
+      "-parallel-testing-enabled",
+      "NO",
+      "-collect-test-diagnostics",
+      "never",
+      "test-without-building",
+      "-resultBundlePath",
+      "/Users/amir/Documents/projects/Notebook/.build/nb505-live-publication-20261008-v1-ipad/ipad.xcresult",
+      "-allowProvisioningUpdates",
+      "CODE_SIGN_IDENTITY=Apple Development",
+      "CODE_SIGN_STYLE=Automatic",
+      "CODE_SIGNING_ALLOWED=YES",
+      "DEVELOPMENT_TEAM=M94V58FCVP",
+      "NOTEBOOK_BUNDLE_SUFFIX=.native-test",
+      "NOTEBOOK_TYPESETTER_RUNTIME=/Users/amir/Documents/projects/Notebook/.build/notebook-typesetter-runtime",
+      "-only-testing:NotebookTests/SceneRenderResourcesTests/testCompositorImageKeepsItsGrantedCapacityUntilItsFinalBorrowEnds",
+      "-only-testing:NotebookTests/SceneRenderResourcesTests/testCompositorOutputsKeepTheirActualSlotsThroughPublication",
+      "-only-testing:NotebookTests/SceneRenderResourcesTests/testDerivedReservationTransferAdmitsOnlyGrowthAndNeverDropsItsExistingCharge",
+      "-only-testing:NotebookTests/SceneRenderResourcesTests/testOptionalSynchronousAllocationsCannotPassAnAcceptedDerivedStage",
+      "-only-testing:NotebookTests/SceneRenderResourcesTests/testPublicationObserversCannotReclaimTheIncomingRetainedRaster"
+    ],
+    "cwd": "/Users/amir/Documents/projects/Notebook/Applications",
+    "environment": {
+      "PATH": "/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/opt/homebrew/opt/python@3.14/bin:/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/.build/toolchains/swift-6.4.0/swift-6.4.0-RELEASE-osx-package.pkg/Payload/usr/bin:/Users/amir/.volta/bin:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:/Users/amir/.bun/bin:/Users/amir/.local/bin:/Users/amir/.local/state/fnm_multishells/57073_1791379822793/bin:/Users/amir/.cargo/bin:/Users/amir/Library/Python/3.9/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/Users/amir/.codex/tmp/arg0/codex-arg0c05irJ:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:/Users/amir/.lmstudio/bin:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Applications/ChatGPT.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS"
+    },
+    "exitCode": 0,
+    "label": "ipad"
+  },
+  {
+    "argv": [
+      "xcrun",
+      "xcresulttool",
+      "get",
+      "test-results",
+      "summary",
+      "--path",
+      "/Users/amir/Documents/projects/Notebook/.build/nb505-live-publication-20261008-v1-ipad/ipad.xcresult",
+      "--compact"
+    ],
+    "cwd": null,
+    "environment": {
+      "PATH": "/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/opt/homebrew/opt/python@3.14/bin:/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/.build/toolchains/swift-6.4.0/swift-6.4.0-RELEASE-osx-package.pkg/Payload/usr/bin:/Users/amir/.volta/bin:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:/Users/amir/.bun/bin:/Users/amir/.local/bin:/Users/amir/.local/state/fnm_multishells/57073_1791379822793/bin:/Users/amir/.cargo/bin:/Users/amir/Library/Python/3.9/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/Users/amir/.codex/tmp/arg0/codex-arg0c05irJ:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:/Users/amir/.lmstudio/bin:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Applications/ChatGPT.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS"
+    },
+    "exitCode": 0,
+    "label": "ipad-summary"
+  },
+  {
+    "argv": [
+      "xcrun",
+      "xcresulttool",
+      "get",
+      "test-results",
+      "tests",
+      "--path",
+      "/Users/amir/Documents/projects/Notebook/.build/nb505-live-publication-20261008-v1-ipad/ipad.xcresult",
+      "--compact"
+    ],
+    "cwd": null,
+    "environment": {
+      "PATH": "/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/opt/homebrew/opt/python@3.14/bin:/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/.build/toolchains/swift-6.4.0/swift-6.4.0-RELEASE-osx-package.pkg/Payload/usr/bin:/Users/amir/.volta/bin:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:/Users/amir/.bun/bin:/Users/amir/.local/bin:/Users/amir/.local/state/fnm_multishells/57073_1791379822793/bin:/Users/amir/.cargo/bin:/Users/amir/Library/Python/3.9/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/Users/amir/.codex/tmp/arg0/codex-arg0c05irJ:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:/Users/amir/.lmstudio/bin:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Applications/ChatGPT.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS"
+    },
+    "exitCode": 0,
+    "label": "ipad-tests"
+  },
+  {
+    "argv": [
+      "/opt/homebrew/opt/python@3.14/bin/python3.14",
+      "-B",
+      "-c",
+      "\nimport json\nimport subprocess\nimport sys\nimport time\n\ndevice, bundle = sys.argv[1:]\n\ndef installed():\n    result = subprocess.run([\n        \"xcrun\", \"devicectl\", \"device\", \"info\", \"apps\",\n        \"--device\", device, \"--include-all-apps\", \"--bundle-id\", bundle,\n        \"--timeout\", \"30\", \"--json-output\", \"-\",\n    ], capture_output=True, text=True)\n    if result.returncode:\n        sys.stderr.write(result.stderr)\n        raise SystemExit(result.returncode)\n    return [app for app in json.loads(result.stdout)[\"result\"][\"apps\"]\n            if app.get(\"bundleIdentifier\") == bundle]\n\nfound = installed()\nif found:\n    result = subprocess.run([\n        \"xcrun\", \"devicectl\", \"device\", \"uninstall\", \"app\",\n        \"--device\", device, bundle, \"--timeout\", \"60\",\n    ], capture_output=True, text=True)\n    if result.returncode:\n        sys.stderr.write(result.stderr)\n        raise SystemExit(result.returncode)\n    for _ in range(20):\n        if not installed():\n            break\n        time.sleep(0.1)\nif installed():\n    raise SystemExit(\"XCTest bundle остался на физическом iPad: \" + bundle)\nprint(json.dumps({\"bundleIdentifier\": bundle, \"removed\": bool(found)}, sort_keys=True))\n",
+      "00008103-001E059934D9001E",
+      "com.amirtlinov.notebook.native-test"
+    ],
+    "cwd": null,
+    "environment": {
+      "PATH": "/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/opt/homebrew/opt/python@3.14/bin:/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/.build/toolchains/swift-6.4.0/swift-6.4.0-RELEASE-osx-package.pkg/Payload/usr/bin:/Users/amir/.volta/bin:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:/Users/amir/.bun/bin:/Users/amir/.local/bin:/Users/amir/.local/state/fnm_multishells/57073_1791379822793/bin:/Users/amir/.cargo/bin:/Users/amir/Library/Python/3.9/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/Users/amir/.codex/tmp/arg0/codex-arg0c05irJ:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:/Users/amir/.lmstudio/bin:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Applications/ChatGPT.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS"
+    },
+    "exitCode": 0,
+    "label": "ipad-native-test-cleanup-after"
+  },
+  {
+    "argv": [
+      "/opt/homebrew/opt/python@3.14/bin/python3.14",
+      "--version"
+    ],
+    "cwd": null,
+    "environment": {
+      "PATH": "/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/opt/homebrew/opt/python@3.14/bin:/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/.build/toolchains/swift-6.4.0/swift-6.4.0-RELEASE-osx-package.pkg/Payload/usr/bin:/Users/amir/.volta/bin:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:/Users/amir/.bun/bin:/Users/amir/.local/bin:/Users/amir/.local/state/fnm_multishells/57073_1791379822793/bin:/Users/amir/.cargo/bin:/Users/amir/Library/Python/3.9/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/Users/amir/.codex/tmp/arg0/codex-arg0c05irJ:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:/Users/amir/.lmstudio/bin:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Applications/ChatGPT.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS"
+    },
+    "exitCode": 0,
+    "label": "toolchain-after-python"
+  },
+  {
+    "argv": [
+      "/usr/bin/xcrun",
+      "xcodebuild",
+      "-version"
+    ],
+    "cwd": null,
+    "environment": {
+      "PATH": "/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/opt/homebrew/opt/python@3.14/bin:/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/.build/toolchains/swift-6.4.0/swift-6.4.0-RELEASE-osx-package.pkg/Payload/usr/bin:/Users/amir/.volta/bin:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:/Users/amir/.bun/bin:/Users/amir/.local/bin:/Users/amir/.local/state/fnm_multishells/57073_1791379822793/bin:/Users/amir/.cargo/bin:/Users/amir/Library/Python/3.9/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/Users/amir/.codex/tmp/arg0/codex-arg0c05irJ:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:/Users/amir/.lmstudio/bin:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Applications/ChatGPT.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS"
+    },
+    "exitCode": 0,
+    "label": "toolchain-after-xcode"
+  },
+  {
+    "argv": [
+      "/usr/bin/xcrun",
+      "swift",
+      "--version"
+    ],
+    "cwd": null,
+    "environment": {
+      "PATH": "/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/opt/homebrew/opt/python@3.14/bin:/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/.build/toolchains/swift-6.4.0/swift-6.4.0-RELEASE-osx-package.pkg/Payload/usr/bin:/Users/amir/.volta/bin:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:/Users/amir/.bun/bin:/Users/amir/.local/bin:/Users/amir/.local/state/fnm_multishells/57073_1791379822793/bin:/Users/amir/.cargo/bin:/Users/amir/Library/Python/3.9/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/Users/amir/.codex/tmp/arg0/codex-arg0c05irJ:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:/Users/amir/.lmstudio/bin:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Applications/ChatGPT.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS"
+    },
+    "exitCode": 0,
+    "label": "toolchain-after-swift"
+  },
+  {
+    "argv": [
+      "/usr/bin/xcrun",
+      "--sdk",
+      "iphoneos",
+      "--show-sdk-build-version"
+    ],
+    "cwd": null,
+    "environment": {
+      "PATH": "/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/opt/homebrew/opt/python@3.14/bin:/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/.build/toolchains/swift-6.4.0/swift-6.4.0-RELEASE-osx-package.pkg/Payload/usr/bin:/Users/amir/.volta/bin:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:/Users/amir/.bun/bin:/Users/amir/.local/bin:/Users/amir/.local/state/fnm_multishells/57073_1791379822793/bin:/Users/amir/.cargo/bin:/Users/amir/Library/Python/3.9/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/Users/amir/.codex/tmp/arg0/codex-arg0c05irJ:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:/Users/amir/.lmstudio/bin:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Applications/ChatGPT.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS"
+    },
+    "exitCode": 0,
+    "label": "toolchain-after-iphoneosSDK"
+  },
+  {
+    "argv": [
+      "/usr/bin/xcrun",
+      "--sdk",
+      "macosx",
+      "--show-sdk-build-version"
+    ],
+    "cwd": null,
+    "environment": {
+      "PATH": "/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/opt/homebrew/opt/python@3.14/bin:/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/.build/toolchains/swift-6.4.0/swift-6.4.0-RELEASE-osx-package.pkg/Payload/usr/bin:/Users/amir/.volta/bin:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:/Users/amir/.bun/bin:/Users/amir/.local/bin:/Users/amir/.local/state/fnm_multishells/57073_1791379822793/bin:/Users/amir/.cargo/bin:/Users/amir/Library/Python/3.9/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/Users/amir/.codex/tmp/arg0/codex-arg0c05irJ:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:/Users/amir/.lmstudio/bin:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Applications/ChatGPT.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS"
+    },
+    "exitCode": 0,
+    "label": "toolchain-after-macosSDK"
+  },
+  {
+    "argv": [
+      "/opt/homebrew/bin/xcodegen",
+      "--version"
+    ],
+    "cwd": null,
+    "environment": {
+      "PATH": "/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/opt/homebrew/opt/python@3.14/bin:/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/.build/toolchains/swift-6.4.0/swift-6.4.0-RELEASE-osx-package.pkg/Payload/usr/bin:/Users/amir/.volta/bin:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:/Users/amir/.bun/bin:/Users/amir/.local/bin:/Users/amir/.local/state/fnm_multishells/57073_1791379822793/bin:/Users/amir/.cargo/bin:/Users/amir/Library/Python/3.9/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/Users/amir/.codex/tmp/arg0/codex-arg0c05irJ:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:/Users/amir/.lmstudio/bin:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Applications/ChatGPT.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS"
+    },
+    "exitCode": 0,
+    "label": "toolchain-after-xcodegen"
+  },
+  {
+    "argv": [
+      "/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a/node",
+      "--version"
+    ],
+    "cwd": null,
+    "environment": {
+      "PATH": "/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/opt/homebrew/opt/python@3.14/bin:/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/.build/toolchains/swift-6.4.0/swift-6.4.0-RELEASE-osx-package.pkg/Payload/usr/bin:/Users/amir/.volta/bin:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:/Users/amir/.bun/bin:/Users/amir/.local/bin:/Users/amir/.local/state/fnm_multishells/57073_1791379822793/bin:/Users/amir/.cargo/bin:/Users/amir/Library/Python/3.9/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/Users/amir/.codex/tmp/arg0/codex-arg0c05irJ:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:/Users/amir/.lmstudio/bin:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Applications/ChatGPT.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS"
+    },
+    "exitCode": 0,
+    "label": "toolchain-after-node"
+  },
+  {
+    "argv": [
+      "/Users/amir/.volta/bin/npm",
+      "--version"
+    ],
+    "cwd": null,
+    "environment": {
+      "PATH": "/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/opt/homebrew/opt/python@3.14/bin:/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a:/Users/amir/.codex/worktrees/notebook-consolidation-2180/Notebook/.build/toolchains/swift-6.4.0/swift-6.4.0-RELEASE-osx-package.pkg/Payload/usr/bin:/Users/amir/.volta/bin:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:/Users/amir/.bun/bin:/Users/amir/.local/bin:/Users/amir/.local/state/fnm_multishells/57073_1791379822793/bin:/Users/amir/.cargo/bin:/Users/amir/Library/Python/3.9/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/Users/amir/.codex/tmp/arg0/codex-arg0c05irJ:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:/Users/amir/.lmstudio/bin:/Users/amir/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Applications/ChatGPT.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS"
+    },
+    "exitCode": 0,
+    "label": "toolchain-after-npm"
+  }
+]

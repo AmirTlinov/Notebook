@@ -1,0 +1,103 @@
+{
+  "format": 1,
+  "status": "selected-native-contracts-passed",
+  "headBeforeCommit": "c53cf33b11bf468a90b9844d10f6666702d0e010",
+  "source": {
+    "sha256": "c651851853ad4e11826b78c2c536e85fef77ccd2b117f0283a3c8e5563790a5e",
+    "fileCount": 1730
+  },
+  "changedPaths": [
+    {
+      "path": "Applications/Mac/PageInkRasterCache.swift",
+      "change": "deleted",
+      "before": {
+        "bytes": 1899,
+        "sha256": "3a7ebd6a882133c3aa6607b20bf56a7464eb117134e0bd47076f631465e96fb2"
+      },
+      "after": null
+    },
+    {
+      "path": "Applications/MacTests/NotebookGraphicRenderingTests.swift",
+      "change": "modified",
+      "before": {
+        "bytes": 25590,
+        "sha256": "131aafdbbd8be5931c57fb266a829aadaf9fea94d36bfbdbd3712e84ca180e34"
+      },
+      "after": {
+        "bytes": 33116,
+        "sha256": "1b80d86fe71c1eef67fd47e5cb031da0e93c8589343831082ff30f27aea5d2a2"
+      }
+    },
+    {
+      "path": "Applications/Shared/SceneRasterCompositor.swift",
+      "change": "modified",
+      "before": {
+        "bytes": 32828,
+        "sha256": "6d956c7b156ce0ea4f0925769d039fdeb204aff3e17efb7134a2665852309fbe"
+      },
+      "after": {
+        "bytes": 32798,
+        "sha256": "125a451ff8886e53a2fcaf3833b2471e8eeeb17e439c898a7cc62c6d287ca4e4"
+      }
+    },
+    {
+      "path": "Applications/Shared/SceneRenderResources.swift",
+      "change": "modified",
+      "before": {
+        "bytes": 90568,
+        "sha256": "60a5f6107d24b77bffdd48433440b9afed0480efd9e88efacffa68a8d789fbd1"
+      },
+      "after": {
+        "bytes": 88060,
+        "sha256": "329ee62614012811a01fa8aa67611305a435aebecf267391b7beaf037ddc6a93"
+      }
+    },
+    {
+      "path": "Applications/Tests/SceneRenderResourcesTests.swift",
+      "change": "modified",
+      "before": {
+        "bytes": 77584,
+        "sha256": "f814d031afa3fb3edfb2f000627b607feadf7ec6f09089cfb08d952712549e81"
+      },
+      "after": {
+        "bytes": 80335,
+        "sha256": "9664a466877eb8e75555c144a5d198b24b52997d8159e6efc9dec6a116801eef"
+      }
+    }
+  ],
+  "routes": {
+    "mac": {
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "receipt": "mac/verification.json",
+      "caseResults": "mac/mac-tests.json",
+      "timings": "mac/mac-timings.json",
+      "sourceBeforeAfterExact": true,
+      "toolchainBeforeAfterExact": true
+    },
+    "ipad": {
+      "passed": 5,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "receipt": "ipad/verification.json",
+      "caseResults": "ipad/ipad-tests.json",
+      "timings": "ipad/ipad-timings.json",
+      "sourceBeforeAfterExact": true,
+      "toolchainBeforeAfterExact": true
+    }
+  },
+  "productionChange": "finishRaster pins the exact published entry through existing storeAndRetain before synchronous observers",
+  "removed": "Unused PageInkRasterCache and batch/split/transfer reservation APIs with exclusive helper; live resize remains",
+  "scope": "Actual native pixels, slots, consumer lifetimes, source-bound page-ink suppression, warm cache identity and pressure eviction",
+  "installedProductionPairUnchanged": true,
+  "physicalTestIdentitiesCleaned": true,
+  "fullPhysicalAcceptance": false,
+  "pending": [
+    "GUI-492 process and WebContent device-tier budgets",
+    "GUI-535/536/537 full history, birth/event Undo and coordinated format transition",
+    "GUI-506 system measurements, ten repetitions and 30-minute joint work"
+  ]
+}

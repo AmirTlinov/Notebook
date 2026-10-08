@@ -1057,20 +1057,6 @@ final class SceneRenderResources {
     return reserveAllocation(bytes: allocation.partialValue, rasterCount: 1, priority: priority, physicalOwner: nil)
   }
 
-  /// Paper, clipped programs and composition output are admitted together.
-  /// Every returned handle already owns both its bytes and its raster slot.
-  func reserveRasterBatch(_ sizes: [(width: Int, height: Int)]) -> [RasterReservation]? {
-    guard derivedWaiters.isEmpty, !sizes.isEmpty, sizes.count <= maximumRasterCount else { return nil }
-    var costs: [Int] = [], total = 0
-    for size in sizes {
-      guard let cost = Self.estimatedRasterBytes(pixelWidth: size.width, pixelHeight: size.height),
-        total <= Int.max - cost else { return nil }
-      costs.append(cost); total += cost
-    }
-    guard makeRoom(for: total, additionalEntry: true, priority: .passive, entryCount: sizes.count) else { return nil }
-    return costs.map { reserveAllocation(bytes: $0, rasterCount: 1, priority: .passive, physicalOwner: nil) }
-  }
-
   /// A scene estimate consults the same owner as its later real allocations.
   /// Disposable readers get their ordinary reclamation opportunity before a
   /// candidate is rejected. This grants no bytes across subsequent awaits.
@@ -1120,36 +1106,6 @@ final class SceneRenderResources {
     peakAccountedBytes = max(peakAccountedBytes, residentBytes + reservedBytes)
     if delta < 0 { scheduleAdmissionNotification(previous) }
     return true
-  }
-
-  /// Divide already admitted capacity without re-entering admission. Neither
-  /// a notification nor a competing waiter can observe these bytes as free.
-  func splitPassiveDerivedReservation(_ reservation: RasterReservation, bytes: Int) -> RasterReservation? {
-    guard isPassiveDerived(reservation), bytes > 0, bytes < reservation.byteCount else { return nil }
-    reservations[reservation.id]?.bytes -= bytes
-    reservation.byteCount -= bytes
-    reservedBytes -= bytes; passiveReservedBytes -= bytes
-    return reserveAllocation(bytes: bytes, rasterCount: 0, priority: .passive, physicalOwner: nil)
-  }
-
-  /// Move a stage's unused admission into a materialized value. The sum remains
-  /// constant, including when the donor is exhausted and its handle retires.
-  func transferPassiveDerivedReservation(_ donor: RasterReservation, to receiver: RasterReservation, bytes: Int) -> Bool {
-    guard donor !== receiver, isPassiveDerived(donor), isPassiveDerived(receiver),
-      bytes > 0, bytes <= donor.byteCount, receiver.byteCount <= Int.max - bytes else { return false }
-    reservations[receiver.id]?.bytes += bytes; receiver.byteCount += bytes
-    reservations[donor.id]?.bytes -= bytes; donor.byteCount -= bytes
-    if donor.byteCount == 0 {
-      reservations[donor.id] = nil
-      donor.release()
-    }
-    return true
-  }
-
-  private func isPassiveDerived(_ reservation: RasterReservation) -> Bool {
-    guard reservation.resources === self, !reservation.isReleased,
-      let allocation = reservations[reservation.id] else { return false }
-    return allocation.rasterCount == 0 && allocation.physicalOwner == nil && allocation.priority == .passive
   }
 
   /// Required document work waits for the existing pool instead of poisoning

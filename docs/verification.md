@@ -787,3 +787,16 @@ All other checkout commits already belong to common main; this task's worktrees
 are archived. Production pair 260 is unchanged. Process/WebContent budgets,
 compositor publication cleanup, birth/Undo transition and full joint acceptance
 remain open in Linear.
+
+## 2026-10-08: compositor publication and current ink cache
+
+`finishRaster` pins its new entry before synchronous publication observers.
+Unused `PageInkRasterCache` and batch/split/transfer reservation APIs are removed;
+live resize remains. Existing checks now use real compositor outputs and the
+accepted page-ink material cache, preserving exact measured samples.
+Mac2 and physical iPad5 passed with no failures, skips or runtime warnings.
+Source `c651851853ad4e11826b78c2c536e85fef77ccd2b117f0283a3c8e5563790a5e`
+/ 1730 files and toolchains stayed exact in both routes; test identities were
+cleaned, production pair 260 is unchanged. [Cases and receipts](audit-evidence/2026-10-08/live-compositor-publication/results.json).
+GUI-505's dead paths are removed. Process/WebContent budgets, birth/event Undo,
+the coordinated format transition and full joint acceptance remain open.

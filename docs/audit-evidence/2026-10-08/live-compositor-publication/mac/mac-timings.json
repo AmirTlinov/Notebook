@@ -1,0 +1,20 @@
+{
+  "slowest": [
+    {
+      "seconds": 0.09132897853851318,
+      "target": "NotebookMacTests",
+      "test": "NotebookGraphicRenderingTests/testInkRasterIdentityIncludesPresentationWithoutChangingTheMeasurementVersion()"
+    },
+    {
+      "seconds": 0.014564990997314453,
+      "target": "NotebookMacTests",
+      "test": "RasterEncodedRepresentationTests/testLayerBorrowTransfersChargeThroughEvictionAndWithOrder()"
+    }
+  ],
+  "targets": {
+    "NotebookMacTests": {
+      "seconds": 0.10589396953582764,
+      "tests": 2
+    }
+  }
+}

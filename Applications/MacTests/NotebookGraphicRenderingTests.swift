@@ -351,23 +351,138 @@ import XCTest
   }
 
   func testInkRasterIdentityIncludesPresentationWithoutChangingTheMeasurementVersion() async throws {
-    let actor = UUID(), id = UUID()
+    let actor = UUID()
     let stroke = PageInkAction(tool: .pen, samples: [20.0, 100.0].map {
       .init(point: .init(x: $0, y: 30), timeOffset: 0, width: 5, opacity: 1, force: 1, azimuth: 0, altitude: 1)
     })
-    let raw = PageDocument(id: id, size: .init(width: 180, height: 180), actor: actor,
-      drawingData: try PageInkDrawing(actions: [stroke]).dataRepresentation())
-    var converted = raw
-    converted.replaceElements([.init(id: "circle", kind: .graphic,
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("ink-material-\(UUID())")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root)
+    let (workspace, pages) = try store.loadOrCreate(actor: actor, pageSize: .init(width: 180, height: 180))
+    let pageID = try XCTUnwrap(workspace.selectedPageID), target = CollaborationTarget(kind: .page, id: pageID)
+    var authored = try XCTUnwrap(pages[pageID])
+    XCTAssertTrue(authored.replaceDrawing(try PageInkDrawing(actions: [stroke]).dataRepresentation(), actor: actor))
+    try store.savePage(authored)
+    func capture() throws -> (page: PageDocument, workspaceID: UUID, revision: String) {
+      try store.readTransaction { reader in
+        (try reader.loadPage(pageID), try reader.storedWorkspaceID(), try reader.referenceRevision(target: target))
+      }
+    }
+    let raw = try capture()
+    var converted = raw.page
+    XCTAssertTrue(converted.replaceElements([.init(id: "circle", kind: .graphic,
       frame: .init(x: 20, y: 20, width: 100, height: 100), source: "", html: "",
-      graphic: .init(sourceInkIDs: [stroke.id]))], actor: actor)
-    let cache = PageInkRasterCache()
-    await cache.prepare(raw)
-    let original = try XCTUnwrap(cache.image(for: raw))
-    XCTAssertNil(cache.image(for: converted))
-    await cache.prepare(converted)
-    XCTAssertFalse(try XCTUnwrap(cache.image(for: converted)) === original)
-    XCTAssertTrue(cache.image(for: raw) === original)
-    XCTAssertEqual(raw.drawingStamp, converted.drawingStamp)
+      graphic: .init(shape: .ellipse, sourceInkIDs: [stroke.id]))], actor: actor))
+    try store.savePage(converted)
+    let current = try capture()
+    XCTAssertEqual(raw.workspaceID, current.workspaceID)
+    XCTAssertNotEqual(raw.revision, current.revision)
+    XCTAssertEqual(raw.page.drawingStamp, current.page.drawingStamp)
+    XCTAssertEqual(raw.page.drawingData, current.page.drawingData)
+    XCTAssertEqual(try XCTUnwrap(raw.page.inkDrawing().actions.first).samples, stroke.samples)
+    XCTAssertEqual(try XCTUnwrap(current.page.inkDrawing().actions.first).samples, stroke.samples)
+    XCTAssertTrue(raw.page.graphicPresentation.suppressedInkIDs.isEmpty)
+    XCTAssertEqual(current.page.graphicPresentation.suppressedInkIDs, [stroke.id])
+    XCTAssertNil(current.page.element(id: "circle")?.graphic?.sourceInkContactID)
+
+    let resources = SceneRenderResources(byteLimit: 64 * 1024 * 1024, profile: .headless, maximumRasterCount: 16)
+    let region = PageRect(x: 0, y: 0, width: 180, height: 180), density = 2.0
+    let originalKey = try SceneMaterialKey(workspaceID: raw.workspaceID, target: target,
+      revision: raw.revision, role: "page-ink", frame: region, density: density)
+    let currentKey = try SceneMaterialKey(workspaceID: current.workspaceID, target: target,
+      revision: current.revision, role: "page-ink", frame: region, density: density)
+    XCTAssertNotEqual(originalKey, currentKey)
+    var originalPreparation: PageCompositionRenderer.MaterialPreparation?, currentPreparation: PageCompositionRenderer.MaterialPreparation?
+    var original: RasterLease?, changed: RasterLease?, warm: RasterLease?
+    defer {
+      warm?.release(); original?.release(); changed?.release()
+      originalPreparation = nil; currentPreparation = nil
+    }
+    let originalGraph = raw.page.graphicGraph(), currentGraph = current.page.graphicGraph()
+    originalGraph.prepareVisibility(on: .page(pageID)); currentGraph.prepareVisibility(on: .page(pageID))
+    let unexpectedRaster: @MainActor (AgentElement) async throws -> RasterLease = { _ in
+      XCTFail("Measured native ink material must not acquire WebKit")
+      throw SceneRenderError.snapshotPending("unexpected_webkit")
+    }
+    originalPreparation = try await PageCompositionRenderer.prepareMaterial(raw.page, graph: originalGraph,
+      region: CGRect(x: 0, y: 0, width: 180, height: 180), scale: density, resources: resources,
+      permitsPreparation: { true })
+    original = try await PageCompositionRenderer.renderMaterial(raw.page, ids: nil, region: region,
+      scale: density, key: originalKey, preparation: XCTUnwrap(originalPreparation), resources: resources,
+      permitsPreparation: { true }, raster: unexpectedRaster)
+    resources.cacheComposition(try XCTUnwrap(original), receipts: [:], sources: [:])
+    XCTAssertNil(resources.retainMaterial(currentKey))
+    currentPreparation = try await PageCompositionRenderer.prepareMaterial(current.page, graph: currentGraph,
+      region: CGRect(x: 0, y: 0, width: 180, height: 180), scale: density, resources: resources,
+      permitsPreparation: { true })
+    changed = try await PageCompositionRenderer.renderMaterial(current.page, ids: nil, region: region,
+      scale: density, key: currentKey, preparation: XCTUnwrap(currentPreparation), resources: resources,
+      permitsPreparation: { true }, raster: unexpectedRaster)
+    resources.cacheComposition(try XCTUnwrap(changed), receipts: [:], sources: [:])
+    let originalID = try XCTUnwrap(original).entryID, currentID = try XCTUnwrap(changed).entryID
+    XCTAssertNotEqual(originalID, currentID)
+    XCTAssertFalse(try XCTUnwrap(original).image === XCTUnwrap(changed).image)
+    func inkAlpha(_ raster: RasterLease) throws -> CGFloat {
+      let image = try XCTUnwrap(raster.sampledImage(for: .init(width: 360, height: 360)))
+      let bitmap = NSBitmapImageRep(cgImage: image)
+      return try XCTUnwrap(bitmap.colorAt(x: 120, y: 60)).alphaComponent
+    }
+    XCTAssertGreaterThan(try inkAlpha(XCTUnwrap(original)), 0.9)
+    XCTAssertEqual(try inkAlpha(XCTUnwrap(changed)), 0, accuracy: 1.0 / 255)
+    XCTAssertEqual(resources.rasterCount, 2)
+    XCTAssertEqual(resources.rasterAdmission.pinnedCount, 2)
+    let residentBeforeWarm = resources.residentBytes, reservedBeforeWarm = resources.reservedBytes
+    warm = try XCTUnwrap(resources.retainMaterial(currentKey))
+    XCTAssertEqual(warm?.entryID, currentID)
+    XCTAssertTrue(try XCTUnwrap(warm).image === XCTUnwrap(changed).image)
+    XCTAssertEqual(warm?.accountedByteCount, changed?.accountedByteCount)
+    XCTAssertEqual(resources.residentBytes, residentBeforeWarm)
+    XCTAssertEqual(resources.reservedBytes, reservedBeforeWarm)
+    XCTAssertEqual(resources.rasterCount, 2)
+    XCTAssertEqual(resources.rasterAdmission.reservedCount, 0)
+    let priorWarm = try XCTUnwrap(resources.retainMaterial(originalKey))
+    XCTAssertEqual(priorWarm.entryID, originalID)
+    XCTAssertTrue(priorWarm.image === (try XCTUnwrap(original)).image)
+    priorWarm.release()
+    original?.release(); original = nil
+    var removedOriginal = false
+    let observer = NotificationCenter.default.addObserver(forName: SceneRenderResources.didChange,
+      object: nil, queue: .main) { note in
+        let key = note.object as? SceneMaterialKey
+        MainActor.assumeIsolated {
+          guard key == originalKey, resources.image(for: .material(originalKey)) == nil else { return }
+          removedOriginal = true
+        }
+      }
+    defer { NotificationCenter.default.removeObserver(observer) }
+    resources.handleMemoryPressure(.warning)
+    let evictionDeadline = ContinuousClock.now + .seconds(2)
+    while !removedOriginal, ContinuousClock.now < evictionDeadline { try await Task.sleep(for: .milliseconds(1)) }
+    XCTAssertTrue(removedOriginal, "Pressure must retire the real unpinned prior material")
+    XCTAssertNil(resources.retainMaterial(originalKey))
+    XCTAssertEqual(resources.rasterCount, 1)
+    XCTAssertEqual(resources.rasterAdmission.pinnedCount, 1)
+    XCTAssertEqual(warm?.entryID, currentID)
+    XCTAssertEqual(changed?.entryID, currentID)
+    XCTAssertEqual(resources.residentBytes, changed?.accountedByteCount)
+    XCTAssertEqual(try inkAlpha(XCTUnwrap(warm)), 0, accuracy: 1.0 / 255)
+    let currentAfterPressure = try XCTUnwrap(resources.retainMaterial(currentKey))
+    XCTAssertEqual(currentAfterPressure.entryID, currentID)
+    XCTAssertTrue(currentAfterPressure.image === (try XCTUnwrap(changed)).image)
+    currentAfterPressure.release()
+    warm?.release(); warm = nil
+    changed?.release(); changed = nil
+    originalPreparation = nil; currentPreparation = nil
+    resources.handleMemoryPressure(.warning)
+    let cleanupDeadline = ContinuousClock.now + .seconds(2)
+    while resources.residentBytes != 0 || resources.reservedBytes != 0, ContinuousClock.now < cleanupDeadline {
+      try await Task.sleep(for: .milliseconds(1))
+    }
+    XCTAssertEqual(resources.residentBytes, 0)
+    XCTAssertEqual(resources.reservedBytes, 0)
+    XCTAssertEqual(resources.rasterAdmission.pinnedCount, 0)
+    XCTAssertEqual(resources.rasterAdmission.reservedCount, 0)
+    XCTAssertEqual(resources.pendingDerivedRequestCount, 0)
+    XCTAssertEqual(resources.activeWebSurfaceCount, 0)
   }
 }

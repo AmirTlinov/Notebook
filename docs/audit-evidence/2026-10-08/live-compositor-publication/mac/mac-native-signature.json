@@ -1,0 +1,9 @@
+{
+  "identity": {
+    "cdhash": "e100665b8f081f1bd6b1a57927ecec9b627a09b6",
+    "identifier": "com.amirtlinov.notebook.mac.acceptance",
+    "team": "M94V58FCVP"
+  },
+  "scope": "isolated stateless native-test workers",
+  "workerBundleSuffix": ".native-test"
+}

@@ -126,7 +126,6 @@ final class SceneRenderResourcesTests: XCTestCase {
     try await waitUntil { resources.pendingDerivedRequestCount == 1 }
     XCTAssertNil(resources.reserveDerivedBytes(500, priority: .passive))
     XCTAssertNil(resources.reserveRaster(pixelWidth: 1, pixelHeight: 1))
-    XCTAssertNil(resources.reserveRasterBatch([(1, 1)]))
     held.release()
     let granted = try await waiting.value
     granted.release()
@@ -134,48 +133,91 @@ final class SceneRenderResourcesTests: XCTestCase {
   }
 
   @MainActor
-  func testCompleteRasterCaptureKeepsEveryGrantedSlotThroughPublication() async throws {
-    let image = image(), cost = try byteCost(image)
+  func testCompositorOutputsKeepTheirActualSlotsThroughPublication() async throws {
+    let size = CGSize(width: 16, height: 16), frame = CGRect(origin: .zero, size: size)
+    let cost = try XCTUnwrap(SceneRenderResources.estimatedRasterBytes(pixelWidth: 16, pixelHeight: 16))
     let resources = SceneRenderResources(byteLimit: cost * 3, profile: .headless, maximumRasterCount: 3)
-    let grants = try XCTUnwrap(resources.reserveRasterBatch([(16, 16), (16, 16), (16, 16)]))
-    defer { grants.forEach { $0.release() } }
+    var compositors: [SceneRasterCompositor] = [], rasters: [RasterLease] = []
+    defer { rasters.forEach { $0.release() }; compositors.removeAll() }
+    for _ in 0..<3 {
+      let compositor = try await SceneRasterCompositor.create(size: size, scale: 1, resources: resources)
+      try await compositor.drawPaper(size: size, in: frame)
+      compositors.append(compositor)
+    }
     XCTAssertEqual(resources.rasterAdmission.reservedCount, 3)
     XCTAssertEqual(resources.reservedBytes, cost * 3)
     XCTAssertNil(resources.reserveRaster(pixelWidth: 1, pixelHeight: 1))
     let waiting = Task { try await resources.acquirePassiveDerivedBytes(cost) }
     defer { waiting.cancel() }
     try await waitUntil { resources.pendingDerivedRequestCount == 1 }
-    var rasters: [RasterLease] = []
-    defer { rasters.forEach { $0.release() } }
-    for (index, grant) in grants.enumerated() {
-      let source = SceneRasterSource.document(id: UUID(), token: "granted-\(index)")
-      rasters.append(try XCTUnwrap(resources.storeAndRetain(image, for: source, reservation: grant)))
+    let sources = (0..<3).map { SceneRasterSource.document(id: UUID(), token: "compositor-\($0)") }
+    for (compositor, source) in zip(compositors, sources) {
+      let raster = try await compositor.finishRaster(for: source)
+      rasters.append(raster)
+      XCTAssertEqual(raster.accountedByteCount, cost)
+      try assertOpaquePaper(try XCTUnwrap(raster.image.cgImage))
       XCTAssertEqual(resources.rasterAdmission.heldBytes, cost * 3)
       XCTAssertEqual(resources.rasterAdmission.pinnedCount + resources.rasterAdmission.reservedCount, 3)
+      XCTAssertEqual(resources.pendingDerivedRequestCount, 1)
     }
+    compositors.removeAll()
+    let entryIDs = rasters.map(\.entryID)
+    XCTAssertEqual(Set(entryIDs).count, 3)
+    XCTAssertEqual(resources.rasterAdmission.pinnedCount, 3)
+    XCTAssertEqual(resources.rasterAdmission.reservedCount, 0)
     XCTAssertEqual(resources.pendingDerivedRequestCount, 1)
     rasters.removeLast().release()
     let stage = try await waiting.value
+    XCTAssertNil(resources.image(for: sources[2]))
+    XCTAssertEqual(resources.residentBytes, cost * 2)
+    XCTAssertEqual(resources.reservedBytes, cost)
+    XCTAssertEqual(resources.rasterAdmission.pinnedCount, 2)
+    for (index, raster) in rasters.enumerated() {
+      let warm = try XCTUnwrap(resources.retainRaster(for: sources[index]))
+      XCTAssertEqual(warm.entryID, entryIDs[index])
+      XCTAssertTrue(warm.image === raster.image)
+      try assertOpaquePaper(try XCTUnwrap(warm.image.cgImage))
+      warm.release()
+    }
     stage.release()
+    rasters.forEach { $0.release() }; rasters.removeAll()
+    resources.handleMemoryPressure(.warning)
+    try await waitUntil { resources.residentBytes == 0 }
+    XCTAssertEqual(resources.reservedBytes, 0)
+    XCTAssertEqual(resources.rasterAdmission.pinnedCount, 0)
+    XCTAssertEqual(resources.rasterAdmission.reservedCount, 0)
+    XCTAssertEqual(resources.pendingDerivedRequestCount, 0)
+    XCTAssertEqual(resources.peakAccountedBytes, cost * 3)
   }
 
   @MainActor
-  func testPublicationObserversCannotReclaimTheIncomingRetainedRaster() throws {
-    let image = image(), cost = try byteCost(image)
+  func testPublicationObserversCannotReclaimTheIncomingRetainedRaster() async throws {
+    let size = CGSize(width: 16, height: 16)
+    let cost = try XCTUnwrap(SceneRenderResources.estimatedRasterBytes(pixelWidth: 16, pixelHeight: 16))
     let resources = SceneRenderResources(byteLimit: cost, profile: .headless, maximumRasterCount: 1)
-    let source = SceneRasterSource.document(id: UUID(), token: "publication")
-    let grant = try XCTUnwrap(resources.reserveRaster(pixelWidth: 16, pixelHeight: 16))
+    let documentID = UUID(), source = SceneRasterSource.document(id: documentID, token: "publication")
+    let compositor = try await SceneRasterCompositor.create(size: size, scale: 1, resources: resources)
+    try await compositor.drawPaper(size: size, in: CGRect(origin: .zero, size: size))
+    var observedPublication = false
     let observer = NotificationCenter.default.addObserver(forName: SceneRenderResources.didChange,
-      object: nil, queue: .main) { _ in
+      object: nil, queue: .main) { note in
+        let changedID = note.object as? UUID
         MainActor.assumeIsolated {
+          guard changedID == documentID, !observedPublication else { return }
+          observedPublication = true
           XCTAssertNil(resources.reserveRaster(pixelWidth: 16, pixelHeight: 16),
             "Publication already owns the returned image, even before observers return")
         }
       }
-    defer { NotificationCenter.default.removeObserver(observer); grant.release() }
-    let raster = try XCTUnwrap(resources.storeAndRetain(image, for: source, reservation: grant))
+    defer { NotificationCenter.default.removeObserver(observer) }
+    let raster = try await compositor.finishRaster(for: source)
     defer { raster.release() }
+    XCTAssertTrue(observedPublication)
+    XCTAssertEqual(raster.accountedByteCount, cost)
+    try assertOpaquePaper(try XCTUnwrap(raster.image.cgImage))
     XCTAssertEqual(resources.rasterAdmission.pinnedBytes, cost)
+    XCTAssertEqual(resources.rasterAdmission.pinnedCount, 1)
+    XCTAssertEqual(resources.rasterAdmission.reservedCount, 0)
   }
 
   @MainActor
@@ -445,52 +487,46 @@ final class SceneRenderResourcesTests: XCTestCase {
   }
 
   @MainActor
-  func testStageAdmissionTransfersWithoutLettingAQueuedConsumerTakeItsCapacity() async throws {
-    let resources = SceneRenderResources(byteLimit: 1_000, profile: .interactive)
-    let admitted = try XCTUnwrap(resources.reserveDerivedBytes(500, priority: .passive))
+  func testCompositorImageKeepsItsGrantedCapacityUntilItsFinalBorrowEnds() async throws {
+    let size = CGSize(width: 16, height: 16)
+    let cost = try XCTUnwrap(SceneRenderResources.estimatedRasterBytes(pixelWidth: 16, pixelHeight: 16))
+    let resources = SceneRenderResources(byteLimit: cost, profile: .headless, maximumRasterCount: 1)
+    var compositor: SceneRasterCompositor? = try await SceneRasterCompositor.create(size: size, scale: 1, resources: resources)
+    try await XCTUnwrap(compositor).drawPaper(size: size, in: CGRect(origin: .zero, size: size))
+    var first: SceneRasterImage?, second: SceneRasterImage?
     var competitorStarted = false
     let competitor = Task { @MainActor in
-      let reservation = try await resources.acquirePassiveDerivedBytes(100)
+      let reservation = try await resources.acquirePassiveDerivedBytes(cost)
       competitorStarted = true; return reservation
     }
-    defer { competitor.cancel(); admitted.release() }
+    defer { competitor.cancel(); first = nil; second = nil; compositor = nil }
     try await waitUntil { resources.pendingDerivedRequestCount == 1 }
-    let stage = try XCTUnwrap(resources.splitPassiveDerivedReservation(admitted, bytes: 200))
-    defer { stage.release() }
-    XCTAssertEqual(admitted.byteCount, 300)
-    XCTAssertEqual(resources.reservedBytes, 500)
-    XCTAssertTrue(resources.transferPassiveDerivedReservation(admitted, to: stage, bytes: 300))
-    XCTAssertTrue(admitted.isReleased)
-    XCTAssertEqual(stage.byteCount, 500)
-    for _ in 0..<20 { await Task.yield() }
+    first = try await XCTUnwrap(compositor).finishImage()
+    second = first
+    compositor = nil
+    XCTAssertTrue(first === second)
+    XCTAssertEqual(try XCTUnwrap(first).image.bytesPerRow * XCTUnwrap(first).image.height * 2, cost)
+    try assertOpaquePaper(try XCTUnwrap(first).image)
     XCTAssertFalse(competitorStarted, "Handoff must never publish its admitted bytes as available")
     XCTAssertEqual(resources.pendingDerivedRequestCount, 1)
-    XCTAssertEqual(resources.reservedBytes, 500)
-    XCTAssertEqual(resources.peakAccountedBytes, 500)
-    stage.release()
+    XCTAssertEqual(resources.reservedBytes, cost)
+    XCTAssertEqual(resources.rasterAdmission.reservedCount, 1)
+    first = nil
+    await Task.yield()
+    XCTAssertFalse(competitorStarted, "A second consumer still owns the physical output")
+    XCTAssertEqual(resources.reservedBytes, cost)
+    try assertOpaquePaper(try XCTUnwrap(second).image)
+    second = nil
     let next = try await competitor.value
     XCTAssertTrue(competitorStarted)
-    XCTAssertEqual(resources.reservedBytes, 100)
-    next.release(); admitted.release(); stage.release()
+    XCTAssertEqual(resources.reservedBytes, cost)
+    XCTAssertEqual(resources.rasterAdmission.reservedCount, 0)
+    XCTAssertEqual(resources.peakAccountedBytes, cost)
+    next.release()
     XCTAssertEqual(resources.reservedBytes, 0)
+    XCTAssertEqual(resources.residentBytes, 0)
+    XCTAssertEqual(resources.rasterAdmission.pinnedCount, 0)
     XCTAssertEqual(resources.pendingDerivedRequestCount, 0)
-  }
-
-  @MainActor
-  func testStageTransferRejectsForeignReleasedAndSelfReservationsWithoutChangingEitherPool() throws {
-    let resources = SceneRenderResources(byteLimit: 1_000, profile: .interactive)
-    let other = SceneRenderResources(byteLimit: 1_000, profile: .interactive)
-    let donor = try XCTUnwrap(resources.reserveDerivedBytes(300, priority: .passive))
-    let receiver = try XCTUnwrap(other.reserveDerivedBytes(200, priority: .passive))
-    defer { donor.release(); receiver.release() }
-    XCTAssertFalse(resources.transferPassiveDerivedReservation(donor, to: receiver, bytes: 100))
-    XCTAssertNil(resources.splitPassiveDerivedReservation(donor, bytes: 301))
-    XCTAssertFalse(resources.transferPassiveDerivedReservation(donor, to: donor, bytes: 100))
-    XCTAssertEqual(resources.reservedBytes, 300)
-    XCTAssertEqual(other.reservedBytes, 200)
-    receiver.release()
-    XCTAssertFalse(resources.transferPassiveDerivedReservation(donor, to: receiver, bytes: 100))
-    XCTAssertEqual(donor.byteCount, 300)
   }
 
   @MainActor
@@ -1432,6 +1468,18 @@ final class SceneRenderResourcesTests: XCTestCase {
   private func byteCost(_ image: UIImage) throws -> Int {
     let cgImage = try XCTUnwrap(image.cgImage)
     return cgImage.bytesPerRow * cgImage.height * 2
+  }
+  private func assertOpaquePaper(_ image: CGImage, file: StaticString = #filePath, line: UInt = #line) throws {
+    XCTAssertEqual(image.width, 16, file: file, line: line)
+    XCTAssertEqual(image.height, 16, file: file, line: line)
+    XCTAssertEqual(image.bitsPerPixel, 32, file: file, line: line)
+    let data = try XCTUnwrap(image.dataProvider?.data, file: file, line: line)
+    let bytes = try XCTUnwrap(CFDataGetBytePtr(data), file: file, line: line)
+    let middle = 8 * image.bytesPerRow + 8 * 4
+    XCTAssertGreaterThan(bytes[middle], 200, file: file, line: line)
+    XCTAssertGreaterThan(bytes[middle + 1], 200, file: file, line: line)
+    XCTAssertGreaterThan(bytes[middle + 2], 200, file: file, line: line)
+    XCTAssertEqual(bytes[middle + 3], 255, file: file, line: line)
   }
   @MainActor
   private func waitUntil(_ condition: () -> Bool) async throws {

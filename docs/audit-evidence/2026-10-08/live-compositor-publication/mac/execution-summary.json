@@ -1,0 +1,53 @@
+{
+  "rawSHA256": "261913bf97742e0fa1451fcbbdaab0cb849c2a75e83eab1d2c64ef94aa25b69c",
+  "rawBytes": 1554,
+  "summary": {
+    "actual": {
+      "receipt": "verification.json",
+      "sha256": "9a0e9ca9e7aa7ddb439ed8784d70421a6bdb40d8c0ff89b81403032fe4fccbf5"
+    },
+    "counts": {
+      "failed": 0,
+      "passed": 2,
+      "skipped": 0
+    },
+    "outcomes": {
+      "NotebookMacTests/NotebookGraphicRenderingTests/testInkRasterIdentityIncludesPresentationWithoutChangingTheMeasurementVersion": "Passed",
+      "NotebookMacTests/RasterEncodedRepresentationTests/testLayerBorrowTransfersChargeThroughEvictionAndWithOrder": "Passed"
+    },
+    "runnerReleased": true,
+    "runtimeWarnings": [],
+    "scope": "GUI505 Mac2 only",
+    "source": {
+      "count": 1730,
+      "sha256": "c651851853ad4e11826b78c2c536e85fef77ccd2b117f0283a3c8e5563790a5e"
+    },
+    "sourceUnchanged": true,
+    "status": "passed",
+    "timings": {
+      "slowest": [
+        {
+          "seconds": 0.09132897853851318,
+          "target": "NotebookMacTests",
+          "test": "NotebookGraphicRenderingTests/testInkRasterIdentityIncludesPresentationWithoutChangingTheMeasurementVersion()"
+        },
+        {
+          "seconds": 0.014564990997314453,
+          "target": "NotebookMacTests",
+          "test": "RasterEncodedRepresentationTests/testLayerBorrowTransfersChargeThroughEvictionAndWithOrder()"
+        }
+      ],
+      "targets": {
+        "NotebookMacTests": {
+          "seconds": 0.10589396953582764,
+          "tests": 2
+        }
+      }
+    },
+    "toolchainUnchanged": true,
+    "validated": true,
+    "validator": "Applications/notebook_verification.py:validate_selected",
+    "verificationSHA256": "9a0e9ca9e7aa7ddb439ed8784d70421a6bdb40d8c0ff89b81403032fe4fccbf5"
+  },
+  "compactSourceInventory": true
+}

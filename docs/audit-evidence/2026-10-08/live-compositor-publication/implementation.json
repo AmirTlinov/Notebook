@@ -1,0 +1,114 @@
+{
+  "status": "FROZEN source-only; awaiting independent review and Root-selected checks",
+  "issue": "GUI505 / NB26 / DC03",
+  "createdUTC": "2026-10-08T08:22:54.961693+00:00",
+  "head": "c53cf33b11bf468a90b9844d10f6666702d0e010",
+  "inputs": [
+    {
+      "path": "Applications/Mac/PageInkRasterCache.swift",
+      "change": "deleted",
+      "before": {
+        "bytes": 1899,
+        "sha256": "3a7ebd6a882133c3aa6607b20bf56a7464eb117134e0bd47076f631465e96fb2"
+      },
+      "after": null
+    },
+    {
+      "path": "Applications/MacTests/NotebookGraphicRenderingTests.swift",
+      "change": "modified",
+      "before": {
+        "bytes": 25590,
+        "sha256": "131aafdbbd8be5931c57fb266a829aadaf9fea94d36bfbdbd3712e84ca180e34"
+      },
+      "after": {
+        "bytes": 33116,
+        "sha256": "1b80d86fe71c1eef67fd47e5cb031da0e93c8589343831082ff30f27aea5d2a2"
+      }
+    },
+    {
+      "path": "Applications/Shared/SceneRasterCompositor.swift",
+      "change": "modified",
+      "before": {
+        "bytes": 32828,
+        "sha256": "6d956c7b156ce0ea4f0925769d039fdeb204aff3e17efb7134a2665852309fbe"
+      },
+      "after": {
+        "bytes": 32798,
+        "sha256": "125a451ff8886e53a2fcaf3833b2471e8eeeb17e439c898a7cc62c6d287ca4e4"
+      }
+    },
+    {
+      "path": "Applications/Shared/SceneRenderResources.swift",
+      "change": "modified",
+      "before": {
+        "bytes": 90568,
+        "sha256": "60a5f6107d24b77bffdd48433440b9afed0480efd9e88efacffa68a8d789fbd1"
+      },
+      "after": {
+        "bytes": 88060,
+        "sha256": "329ee62614012811a01fa8aa67611305a435aebecf267391b7beaf037ddc6a93"
+      }
+    },
+    {
+      "path": "Applications/Tests/SceneRenderResourcesTests.swift",
+      "change": "modified",
+      "before": {
+        "bytes": 77584,
+        "sha256": "f814d031afa3fb3edfb2f000627b607feadf7ec6f09089cfb08d952712549e81"
+      },
+      "after": {
+        "bytes": 80335,
+        "sha256": "9664a466877eb8e75555c144a5d198b24b52997d8159e6efc9dec6a116801eef"
+      }
+    }
+  ],
+  "changedPathCount": 5,
+  "retainedChangedInputCount": 4,
+  "diffStat": "Applications/Mac/PageInkRasterCache.swift          |  47 -------\n .../MacTests/NotebookGraphicRenderingTests.swift   | 143 +++++++++++++++++--\n Applications/Shared/SceneRasterCompositor.swift    |   4 +-\n Applications/Shared/SceneRenderResources.swift     |  44 ------\n Applications/Tests/SceneRenderResourcesTests.swift | 152 ++++++++++++++-------\n 5 files changed, 231 insertions(+), 159 deletions(-)",
+  "patch": {
+    "path": "/Users/amir/Documents/projects/Notebook/.build/nb505-remaining-dead-owners-20261008/implementation.patch",
+    "bytes": 29138,
+    "sha256": "90c702af8499d524fa21b0b4fddc690aeda664b7a3bf6cf218ee3f717479298e"
+  },
+  "production": [
+    "finishRaster publishes the already-held output through existing storeAndRetain; its first lease is pinned before synchronous observers.",
+    "Deleted unused PageInkRasterCache singleton/worker and reserveRasterBatch/splitPassiveDerivedReservation/transferPassiveDerivedReservation/isPassiveDerived.",
+    "resizePassiveDerivedReservation and its PNG/document preparation callers remain unchanged."
+  ],
+  "meaningfulOracles": [
+    "Three real 16x16 compositor outputs keep actual 2048-byte grants and raster slots through publication. Queued required work gets only the released output; two other exact entry IDs and opaque native pixels remain pinned.",
+    "finishImage output retains the same grant after producer release and the first consumer release. Only its last SceneRasterImage reference admits the competing required consumer; no completed image-returning Task or bare retained CGImage is used.",
+    "A one-shot source-filtered synchronous publication observer attempts the original reserveRaster(16,16); it cannot reclaim the incoming pinned compositor image.",
+    "Mac fixture saves real measured contact and native ellipse presentation in an isolated NotebookStore, captures page/workspace/revision under one read cut, and keeps exact drawing bytes/stamp/samples while suppression changes actual accepted material identity.",
+    "Existing PageCompositionRenderer and cacheComposition establish real ink pixels and warm same-entry reuse. Pressure removes only prior unpinned material via actual notification; current cached entry stays pinned/reusable. Preparations and final raster consumers retire before zero-ledger checks.",
+    "Accepted derived waiter fairness and existing resize growth/refusal/shrink control retain their original assertions."
+  ],
+  "selectors": {
+    "physicalIPad": [
+      "NotebookTests/SceneRenderResourcesTests/testCompositorOutputsKeepTheirActualSlotsThroughPublication",
+      "NotebookTests/SceneRenderResourcesTests/testCompositorImageKeepsItsGrantedCapacityUntilItsFinalBorrowEnds",
+      "NotebookTests/SceneRenderResourcesTests/testPublicationObserversCannotReclaimTheIncomingRetainedRaster",
+      "NotebookTests/SceneRenderResourcesTests/testOptionalSynchronousAllocationsCannotPassAnAcceptedDerivedStage",
+      "NotebookTests/SceneRenderResourcesTests/testDerivedReservationTransferAdmitsOnlyGrowthAndNeverDropsItsExistingCharge"
+    ],
+    "mac": [
+      "NotebookMacTests/NotebookGraphicRenderingTests/testInkRasterIdentityIncludesPresentationWithoutChangingTheMeasurementVersion",
+      "NotebookMacTests/RasterEncodedRepresentationTests/testLayerBorrowTransfersChargeThroughEvictionAndWithOrder"
+    ]
+  },
+  "checks": {
+    "diffCheck": "PASS",
+    "sourceReferenceReadback": "removed APIs have zero Swift callers; live resize callers retained"
+  },
+  "execution": {
+    "tests": 0,
+    "parse": 0,
+    "build": 0,
+    "generators": 0,
+    "liveData": false,
+    "commit": false,
+    "push": false,
+    "gitIndex": false
+  },
+  "remaining": "Selected native compile/runtime/pixel/accounting checks are owned by Root; this handoff makes no runtime PASS claim."
+}

@@ -1,0 +1,68 @@
+{
+  "rawSHA256": "e36ca645cba081ae8bbd7f47cd7925a1c8079ab3ba0d651986a2c22f0916b8a6",
+  "rawBytes": 2396,
+  "summary": {
+    "cleanup": true,
+    "counts": {
+      "failed": 0,
+      "passed": 5,
+      "skipped": 0
+    },
+    "outcomes": {
+      "NotebookTests/SceneRenderResourcesTests/testCompositorImageKeepsItsGrantedCapacityUntilItsFinalBorrowEnds": "Passed",
+      "NotebookTests/SceneRenderResourcesTests/testCompositorOutputsKeepTheirActualSlotsThroughPublication": "Passed",
+      "NotebookTests/SceneRenderResourcesTests/testDerivedReservationTransferAdmitsOnlyGrowthAndNeverDropsItsExistingCharge": "Passed",
+      "NotebookTests/SceneRenderResourcesTests/testOptionalSynchronousAllocationsCannotPassAnAcceptedDerivedStage": "Passed",
+      "NotebookTests/SceneRenderResourcesTests/testPublicationObserversCannotReclaimTheIncomingRetainedRaster": "Passed"
+    },
+    "runnerReleased": true,
+    "runtimeWarnings": [],
+    "scope": "GUI505 physical iPad5 only",
+    "source": {
+      "count": 1730,
+      "sha256": "c651851853ad4e11826b78c2c536e85fef77ccd2b117f0283a3c8e5563790a5e"
+    },
+    "sourceUnchanged": true,
+    "status": "passed",
+    "timings": {
+      "slowest": [
+        {
+          "seconds": 0.006476998329162598,
+          "target": "NotebookTests",
+          "test": "SceneRenderResourcesTests/testCompositorImageKeepsItsGrantedCapacityUntilItsFinalBorrowEnds()"
+        },
+        {
+          "seconds": 0.0057260990142822266,
+          "target": "NotebookTests",
+          "test": "SceneRenderResourcesTests/testCompositorOutputsKeepTheirActualSlotsThroughPublication()"
+        },
+        {
+          "seconds": 0.0027850866317749023,
+          "target": "NotebookTests",
+          "test": "SceneRenderResourcesTests/testOptionalSynchronousAllocationsCannotPassAnAcceptedDerivedStage()"
+        },
+        {
+          "seconds": 0.001004934310913086,
+          "target": "NotebookTests",
+          "test": "SceneRenderResourcesTests/testPublicationObserversCannotReclaimTheIncomingRetainedRaster()"
+        },
+        {
+          "seconds": 0.0006040334701538086,
+          "target": "NotebookTests",
+          "test": "SceneRenderResourcesTests/testDerivedReservationTransferAdmitsOnlyGrowthAndNeverDropsItsExistingCharge()"
+        }
+      ],
+      "targets": {
+        "NotebookTests": {
+          "seconds": 0.01659715175628662,
+          "tests": 5
+        }
+      }
+    },
+    "toolchainUnchanged": true,
+    "validated": true,
+    "validator": "Applications/notebook_verification.py:validate_selected",
+    "verificationSHA256": "0268047940f382451b6c01a711a2933f146290acc9f5099b48fe1716d09090e5"
+  },
+  "compactSourceInventory": true
+}

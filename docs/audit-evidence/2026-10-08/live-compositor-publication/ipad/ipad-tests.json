@@ -1,0 +1,89 @@
+{
+  "devices": [
+    {
+      "architecture": "arm64",
+      "deviceId": "00008103-001E059934D9001E",
+      "deviceName": "iPad (Елизавета)",
+      "modelName": "iPad Pro (11-inch) (3rd generation)",
+      "osBuildNumber": "24A435",
+      "osVersion": "27.0",
+      "platform": "iOS"
+    }
+  ],
+  "testNodes": [
+    {
+      "children": [
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "duration": "0,0065s",
+                  "durationInSeconds": 0.006476998329162598,
+                  "name": "testCompositorImageKeepsItsGrantedCapacityUntilItsFinalBorrowEnds()",
+                  "nodeIdentifier": "SceneRenderResourcesTests/testCompositorImageKeepsItsGrantedCapacityUntilItsFinalBorrowEnds()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/SceneRenderResourcesTests/testCompositorImageKeepsItsGrantedCapacityUntilItsFinalBorrowEnds",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,0057s",
+                  "durationInSeconds": 0.0057260990142822266,
+                  "name": "testCompositorOutputsKeepTheirActualSlotsThroughPublication()",
+                  "nodeIdentifier": "SceneRenderResourcesTests/testCompositorOutputsKeepTheirActualSlotsThroughPublication()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/SceneRenderResourcesTests/testCompositorOutputsKeepTheirActualSlotsThroughPublication",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,0006s",
+                  "durationInSeconds": 0.0006040334701538086,
+                  "name": "testDerivedReservationTransferAdmitsOnlyGrowthAndNeverDropsItsExistingCharge()",
+                  "nodeIdentifier": "SceneRenderResourcesTests/testDerivedReservationTransferAdmitsOnlyGrowthAndNeverDropsItsExistingCharge()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/SceneRenderResourcesTests/testDerivedReservationTransferAdmitsOnlyGrowthAndNeverDropsItsExistingCharge",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,0028s",
+                  "durationInSeconds": 0.0027850866317749023,
+                  "name": "testOptionalSynchronousAllocationsCannotPassAnAcceptedDerivedStage()",
+                  "nodeIdentifier": "SceneRenderResourcesTests/testOptionalSynchronousAllocationsCannotPassAnAcceptedDerivedStage()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/SceneRenderResourcesTests/testOptionalSynchronousAllocationsCannotPassAnAcceptedDerivedStage",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,001s",
+                  "durationInSeconds": 0.001004934310913086,
+                  "name": "testPublicationObserversCannotReclaimTheIncomingRetainedRaster()",
+                  "nodeIdentifier": "SceneRenderResourcesTests/testPublicationObserversCannotReclaimTheIncomingRetainedRaster()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/SceneRenderResourcesTests/testPublicationObserversCannotReclaimTheIncomingRetainedRaster",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                }
+              ],
+              "name": "SceneRenderResourcesTests",
+              "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/SceneRenderResourcesTests",
+              "nodeType": "Test Suite",
+              "result": "Passed"
+            }
+          ],
+          "name": "NotebookTests",
+          "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests",
+          "nodeType": "Unit test bundle",
+          "result": "Passed"
+        }
+      ],
+      "name": "Notebook",
+      "nodeType": "Test Plan",
+      "result": "Passed"
+    }
+  ],
+  "testPlanConfigurations": [
+    {
+      "configurationId": "1",
+      "configurationName": "Test Scheme Action"
+    }
+  ]
+}

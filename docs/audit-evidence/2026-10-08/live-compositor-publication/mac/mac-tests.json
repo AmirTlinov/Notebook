@@ -1,0 +1,70 @@
+{
+  "devices": [
+    {
+      "architecture": "arm64",
+      "deviceId": "00006050-001650DA01F9401C",
+      "deviceName": "My Mac",
+      "modelName": "MacBook Pro",
+      "osBuildNumber": "26A434",
+      "osVersion": "27.0.1",
+      "platform": "macOS"
+    }
+  ],
+  "testNodes": [
+    {
+      "children": [
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "duration": "0,091s",
+                  "durationInSeconds": 0.09132897853851318,
+                  "name": "testInkRasterIdentityIncludesPresentationWithoutChangingTheMeasurementVersion()",
+                  "nodeIdentifier": "NotebookGraphicRenderingTests/testInkRasterIdentityIncludesPresentationWithoutChangingTheMeasurementVersion()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookGraphicRenderingTests/testInkRasterIdentityIncludesPresentationWithoutChangingTheMeasurementVersion",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                }
+              ],
+              "name": "NotebookGraphicRenderingTests",
+              "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/NotebookGraphicRenderingTests",
+              "nodeType": "Test Suite",
+              "result": "Passed"
+            },
+            {
+              "children": [
+                {
+                  "duration": "0,015s",
+                  "durationInSeconds": 0.014564990997314453,
+                  "name": "testLayerBorrowTransfersChargeThroughEvictionAndWithOrder()",
+                  "nodeIdentifier": "RasterEncodedRepresentationTests/testLayerBorrowTransfersChargeThroughEvictionAndWithOrder()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/RasterEncodedRepresentationTests/testLayerBorrowTransfersChargeThroughEvictionAndWithOrder",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                }
+              ],
+              "name": "RasterEncodedRepresentationTests",
+              "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/RasterEncodedRepresentationTests",
+              "nodeType": "Test Suite",
+              "result": "Passed"
+            }
+          ],
+          "name": "NotebookMacTests",
+          "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests",
+          "nodeType": "Unit test bundle",
+          "result": "Passed"
+        }
+      ],
+      "name": "NotebookRuntime",
+      "nodeType": "Test Plan",
+      "result": "Passed"
+    }
+  ],
+  "testPlanConfigurations": [
+    {
+      "configurationId": "1",
+      "configurationName": "Test Scheme Action"
+    }
+  ]
+}

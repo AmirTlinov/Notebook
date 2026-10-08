@@ -1,0 +1,24 @@
+{
+  "checks": {
+    "ipad": {
+      "executed": [
+        "NotebookTests/SceneRenderResourcesTests/testCompositorImageKeepsItsGrantedCapacityUntilItsFinalBorrowEnds",
+        "NotebookTests/SceneRenderResourcesTests/testCompositorOutputsKeepTheirActualSlotsThroughPublication",
+        "NotebookTests/SceneRenderResourcesTests/testDerivedReservationTransferAdmitsOnlyGrowthAndNeverDropsItsExistingCharge",
+        "NotebookTests/SceneRenderResourcesTests/testOptionalSynchronousAllocationsCannotPassAnAcceptedDerivedStage",
+        "NotebookTests/SceneRenderResourcesTests/testPublicationObserversCannotReclaimTheIncomingRetainedRaster"
+      ],
+      "failed": [],
+      "format": 1,
+      "planned": [
+        "NotebookTests/SceneRenderResourcesTests/testCompositorImageKeepsItsGrantedCapacityUntilItsFinalBorrowEnds",
+        "NotebookTests/SceneRenderResourcesTests/testCompositorOutputsKeepTheirActualSlotsThroughPublication",
+        "NotebookTests/SceneRenderResourcesTests/testDerivedReservationTransferAdmitsOnlyGrowthAndNeverDropsItsExistingCharge",
+        "NotebookTests/SceneRenderResourcesTests/testOptionalSynchronousAllocationsCannotPassAnAcceptedDerivedStage",
+        "NotebookTests/SceneRenderResourcesTests/testPublicationObserversCannotReclaimTheIncomingRetainedRaster"
+      ],
+      "skipped": []
+    }
+  },
+  "format": 2
+}

@@ -1,0 +1,1961 @@
+{
+  "errors" : [
+
+  ],
+  "values" : [
+    {
+      "disabledTests" : [
+        {
+          "identifier" : "NotebookMacTests/AddressedTargetRenderTests/testAnotherRenderingRecipeIsRefusedBeforeReadingOrPublishingTheTarget()"
+        },
+        {
+          "identifier" : "NotebookMacTests/AddressedTargetRenderTests/testPortalCoverRendersItsSavedChildAndChangesIdentityWithIt()"
+        },
+        {
+          "identifier" : "NotebookMacTests/AddressedTargetRenderTests/testSavedLetterCoverUsesItsOwnPaperWithoutLoadingDocumentPrograms()"
+        },
+        {
+          "identifier" : "NotebookMacTests/AddressedTargetRenderTests/testTargetInkProofIncludesAMovedContactOutsideItsOriginalRawWindow()"
+        },
+        {
+          "identifier" : "NotebookMacTests/AddressedTargetRenderTests/testTargetPageInkProofUsesTheMovedContactAndItsCutsNotTheSuppressedRawPosition()"
+        },
+        {
+          "identifier" : "NotebookMacTests/AddressedTargetRenderTests/testTargetUsesSavedPageWithoutLoadingTheArchiveIntoTheAppModel()"
+        },
+        {
+          "identifier" : "NotebookMacTests/AgentInkRenderingTests/testAgentPenReachesNativeCompositeAndUndoWithoutMovingCamera()"
+        },
+        {
+          "identifier" : "NotebookMacTests/AgentStateTests/testAcceptedInteractiveInputIsNotDiscardedByNavigation()"
+        },
+        {
+          "identifier" : "NotebookMacTests/AgentStateTests/testAcceptedPageStateAfterEvictionKeepsEveryRevisionWithoutReopeningPaper()"
+        },
+        {
+          "identifier" : "NotebookMacTests/AgentStateTests/testDocumentSourceAndInteractiveStatePersistThroughTheirOwners()"
+        },
+        {
+          "identifier" : "NotebookMacTests/AgentStateTests/testNativeCoverTextKeepsOneDurableEditingLifecycle()"
+        },
+        {
+          "identifier" : "NotebookMacTests/AgentStateTests/testRemoteDocumentCatalogWaitsForAllDependencies()"
+        },
+        {
+          "identifier" : "NotebookMacTests/AgentStateTests/testRemoteDocumentDeletionRemovesItsDurableOwners()"
+        },
+        {
+          "identifier" : "NotebookMacTests/AgentStateTests/testTextCompletionAfterNavigationKeepsItsOriginalBoard()"
+        },
+        {
+          "identifier" : "NotebookMacTests/AgentStateTests/testWarmPageNoOpCannotAdoptStoredSourceABAOrANewerState()"
+        },
+        {
+          "identifier" : "NotebookMacTests/CollaborationVisionTests/testRegionalReferenceIgnoresOutsideInkAndFollowsItsPhysicalOwner()"
+        },
+        {
+          "identifier" : "NotebookMacTests/CollaborationVisionTests/testSharedMetalGeometryErasesFinalPixels()"
+        },
+        {
+          "identifier" : "NotebookMacTests/CollaborationVisionTests/testTargetPageCompositeKeepsCameraAndReportsRuntimeDiagnostics()"
+        },
+        {
+          "identifier" : "NotebookMacTests/CollaborationVisionTests/testTargetPageLargerThanTheRasterCachePublishesOneOrderedResult()"
+        },
+        {
+          "identifier" : "NotebookMacTests/CompactInkRenderingTests/testDistantLODIsBoundedAndZoomRestoresOriginalGPUData()"
+        },
+        {
+          "identifier" : "NotebookMacTests/CompactInkRenderingTests/testGPUContourPressureCapsEraserAndAffineMatchCanonicalPixels()"
+        },
+        {
+          "identifier" : "NotebookMacTests/CompactInkRenderingTests/testMeasureOneHundredThousandNodesOnActualDevice()"
+        },
+        {
+          "identifier" : "NotebookMacTests/CompactInkRenderingTests/testOrderedSelectionRequestAndCancelledWaiterReuseTheSameRendererResources()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentCanonicalExportTests/testComposerKeepsRotatedVectorTextLinksAndProgramCropInOneGeometry()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentCanonicalExportTests/testLargeQuartzPDFStreamsThroughPartsAndPublishesWithoutBinaryIPC()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentCanonicalExportTests/testPDFVectorReplacementsFollowCanonicalFragmentsWithoutRasterUnderlays()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentCanonicalExportTests/testPortableExportPreservesAnEditableDraftWithAMissingEntrypointWithoutExecution()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentCanonicalExportTests/testPresentedFrozenModelUsesTheSameExporterAcrossFormats()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentCanonicalExportTests/testPresentedPNGPublishesTheFrozenPixelsWithoutExecutingOrChangingTheDocument()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentCanonicalExportTests/testProgramExportFreezesOnlyItsRegionAndKeepsVectorTextAndLinks()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentCanonicalExportTests/testRasterExportWaitsForTheExactAuthoredStateAndRefusesUnknownFrames()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentCanonicalExportTests/testRenderedFormatsUseOneArtifactForPreflightAndTheActualPublication()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentCanonicalExportTests/testScientificSoundVideoKeepsItsAuthoredModelAndComposition()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentCanonicalExportTests/testStandaloneHTMLReopensTheRealSoundModelOfflineAtItsSavedPhase()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentCanonicalExportTests/testStaticExportReusesTheExactPDFAndItsSourceMapWithoutTypesettingAgain()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentCanonicalExportTests/testStaticPNGKeepsCanonicalInkAndRejectsAMissingPage()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentCanonicalExportTests/testVideoUsesExplicitSavedTimelineAndDecodesTheRequestedFrames()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentCanonicalPrintTests/testAllEditableStarterTemplatesCompileWithTheirIncludedFiles()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentCanonicalPrintTests/testCancelledQueuedRasterDoesNotCancelItsSourceOrLeakTheParserAndAdmission()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentCanonicalPrintTests/testCancelledSourceSubscriberLeavesSharedPreparationWithoutWaitingForItsOtherReader()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentCanonicalPrintTests/testCancellingLastSourceReaderReleasesAdmissionWithoutAWebKit()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentCanonicalPrintTests/testExactAuthoredSourcesAndFileAwareSyncTeXSurviveCompilationAndCache()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentCanonicalPrintTests/testImportedPrecompiledDocumentReopensWithoutTeXResourcesOrProgramExecution()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentCanonicalPrintTests/testIndividualPDFPageGeometryIsNotReplacedByA4()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentCanonicalPrintTests/testPDFLandscapeProjectsSourceAndProgramToTheVisiblePixels()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentCanonicalPrintTests/testPaperRasterUsesTheWholePhysicalPageAtEveryPixelDensity()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentCanonicalPrintTests/testPrintCacheDirectoryBelongsToTheRunningApplicationBundle()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentCanonicalPrintTests/testPrintCacheSaveAndEvictionCannotReachAnotherApplicationOrTheLegacyDirectory()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentCanonicalPrintTests/testReadingBookmarksUseAuthoredFileOffsets()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentCanonicalPrintTests/testSourceAndPrintedLineUseExactAddressesOnUserDefinedPaper()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentCanonicalPrintTests/testUnchangedPrintReusesItsParsedMaterialAndRebindsTheCausalReceipt()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentCutOriginTests/testAContinuationNamesItsSourceCutNotOnlyThePaperRectangle()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentCutOriginTests/testARejectedNeighborCannotReplaceTheAcceptedSourceLayout()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentCutOriginTests/testAnOriginCannotBeMissingNegativeNonfiniteOrAnUnrepresentablePhysicalAddress()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentCutOriginTests/testChangingOnlyTheSourceOriginChangesTheWholeLayoutIdentity()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentCutOriginTests/testPageReceiptCannotRescaleThePDFGeometryOrItsProgramCut()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentLargeSourceTests/testLargeIllustratedBookKeepsOnePrintArtifactAndRastersOnlyRequestedPages()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentLayoutIndexTests/testProgramViewportLookupStaysAddressedAcross100000FragmentsAndSourceRebinding()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentLinkNavigationTests/testLinkIndexRejectsInvalidAddressesAndCannotBeReplacedByADifferentSourceLayout()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentLinkNavigationTests/testMeasuredReadingAddressKeepsTheSameTextAfterPrecedingSourceInsertion()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentLinkNavigationTests/testOnlyTheCurrentCanonicalFragmentCanRequestNavigation()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentLinkNavigationTests/testPrintedLinksComeFromTheSamePDFAndKeepTheirPhysicalDestinations()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentNativeSourceSessionTests/testComposingDraftRestoresExactSelectionWithoutPublishingHalfInput()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentNativeSourceSessionTests/testConcurrentAgentEditPreservesDraftAndNeedsExplicitResolution()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentNativeSourceSessionTests/testInputDuringSaveUsesTheAcceptedVersionAndCommonUndo()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentNativeSourceSessionTests/testMessageSelectionFreezesABoundedDraftWithoutSavingOrOpeningChat()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentNativeSourceSessionTests/testNewFileUsesCommonUndoRatherThanASeparateEditorHistory()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentNativeSourceSessionTests/testRapidSourceUndoAndRedoKeepTheirAcceptedDocumentAcrossAWriteBarrier()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentPacketAdmissionTests/testAcceptedProgramPathsPublishIncrementallyAndKeepInstanceIdentity()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentPacketAdmissionTests/testSharedLayoutRetainsItsAllocationUntilItsLastReaderLeaves()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentPresentationWaitTests/testCancellingOneReaderDoesNotCancelAnotherReadersRequest()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentPresentationWaitTests/testNativeCanonicalReceiptCompletesTheExactRequest()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentPresentationWaitTests/testNativeFailureCompletesTheWaitWithItsDefinedError()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentPresentationWaitTests/testSourceReplacementCancelsTheOldVersionRatherThanWaitingForTheNewOne()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentPresentationWaitTests/testUnconfirmedAdmittedSurfaceKeepsTheCoordinatorsExecutionDeadline()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentPrintAdmissionTests/testCoalescedCurrentReaderPromotesAnAlreadyQueuedSourceWithoutReplacingItsJob()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentPrintAdmissionTests/testCurrentPrintYieldsTheActualVMAndSharedReadersKeepIndependentCancellation()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentPrintAdmissionTests/testCurrentRequestPassesFourSpeculativeJobsAndJoinsMaterializationBeforeStarting()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentPrintAdmissionTests/testJoinedExportProtectsSpeculativeProducerWhileCurrentWorkWaits()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentPrintImageTests/testPNGJPEGAndVectorPDFRemainActualAddressedFilesInThePrintedArtifact()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentProgramIdentityTests/testCausalRoundTripCannotReviveAnOldProgramIdentity()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentProgramIdentityTests/testExecutableFileReplacementChangesIdentityButPaperDoesNot()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentProgramIdentityTests/testMaximumFileSnapshotDoesNotCreateAnExecutorBeforeCompilation()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentProgramSourceTests/testFileBytesPreserveUTF8AndBinaryResourcesStayExplicit()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentProgramSourceTests/testProgramFileUsesTheSameEditableNativeSourceAndWriter()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentReadingIndexTests/testContentAddressSurvivesInsertionReflowAndDefinedDeletionFallback()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentReadingPublicationTests/testReplayedDocumentLandingDoesNotInvalidateIdleNavigation()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentReadingPublicationTests/testReplayedLandingDuringScrollDoesNotPublishAnIntermediateReadingPosition()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentRenderSessionTests/testAPageReceiptCannotCreateAFullLayoutOrNameAnAbsentPage()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentRenderSessionTests/testClosedMultiPageProgramExportSharesOnePDFSyncTeXPreparation()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentRenderSessionTests/testEqualMaxSourceStampDoesNotAliasDifferentContentOrChangeTheOldNeighbor()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentRenderSessionTests/testEqualMaxStateStampDoesNotAliasDifferentRecordsOrRewriteTheOldSnapshot()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentRenderSessionTests/testFourPagesShareExactlyOneImmutableSourceAndStateEncodingWithoutAllocatingWebKit()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentRenderSessionTests/testLayoutAcceptanceRejectsAnInconsistentNeighborWithoutReplacingTheFirstRecord()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentRenderSessionTests/testSessionAndUnreferencedSnapshotsAreNotASecondPermanentDocumentHistory()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentRenderSessionTests/testStateProjectionSharesUnchangedProgramsAcrossJournalVersions()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentRuntimeTests/testAgentStateAndPlacementKeepProgramFocusAndUncommittedInput()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentRuntimeTests/testAnOffPageStateChangeKeepsTheActualPaperFrameAndItsCompositeKey()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentRuntimeTests/testCausalSourceABAReplacesTheRuntimeEvenWhenBytesReturnToOriginal()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentRuntimeTests/testCheckpointWriterRetryRetainsItsFrozenSnapshotAndDoesNotRepeatTransfer()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentRuntimeTests/testCoalescedSourceReplacementCannotReuseThePreviousProgramContext()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentRuntimeTests/testCodeModeStopsTheSameProgramUntilItsCheckpointIsDurable()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentRuntimeTests/testDocumentBoundarySavesTheAnimatedModelAndResumesTheSamePrograms()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentRuntimeTests/testDocumentDismantleKeepsItsBrowserUntilTheWriterAcceptsCheckpoint()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentRuntimeTests/testFailedDrainDeadlineKeepsItsHeapUntilExplicitRetry()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentRuntimeTests/testFittedDocumentKeepsWebKitInScreenPointsWithoutChangingItsCSSViewport()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentRuntimeTests/testFourRealPageWebKitsShareInputsAndOneAcceptedLayoutWithoutAnotherWebSurface()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentRuntimeTests/testHeadlessDocumentCompletesActualLayoutWithoutAnimationFrameSubstitution()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentRuntimeTests/testHiddenCurrentPaperKeepsLastGoodPDFThroughInvalidSourceAndRepair()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentRuntimeTests/testInitialProgramBuffersPrecedeBootCommitCreditUnderPressure()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentRuntimeTests/testInteractionLayerLeavesTheNativePrintedPaperVisible()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentRuntimeTests/testLayoutHistoryCannotSurviveAsAVisibleReceipt()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentRuntimeTests/testMacDocumentHostKeepsCanonicalPaperWhenTheHelperWindowChangesSize()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentRuntimeTests/testOneFailedProgramLeavesPrintedTextAndTheHealthyExecutorUsable()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentRuntimeTests/testPrewarmExecutesOnlyProgramsOnItsPhysicalPage()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentRuntimeTests/testProjectedReadingCompositionKeepsWebKitOutOfScaledAncestors()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentRuntimeTests/testQueuedPreparationKeepsItsSourceBeyondTheExecutionDeadline()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentRuntimeTests/testReadinessFailureKeepsAcceptedStateUntilDurableWithoutRestartingAuthor()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentRuntimeTests/testReadingPanKeepsTheFullWebKitViewportAndContentOnThePaper()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentRuntimeTests/testRegistryBorrowsLayoutFromLiveSourceThenItsRasterAndReleasesAfterEviction()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentRuntimeTests/testRepeatedRendererMountDoesNotInvalidateObservation()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentRuntimeTests/testSpatialCheckpointKeepsItsOwnerOnWriterRefusalAndCapturesTheAcceptedState()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentRuntimeTests/testStateEchoAndUnrelatedSourceKeepTheSameInteractiveBrowsingContext()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentRuntimeTests/testStatePublicationDuringCameraContactKeepsThePreparedWebKitScale()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentRuntimeTests/testTallProgramContinuesWithExactPixelsAndOneBrowsingContext()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentRuntimeTests/testTallProgramUsesMeasuredContinuationAfterTextWithoutResizingItsViewport()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentRuntimeTests/testThumbnailBorrowsTheLivePagePixelsWithoutStartingAnotherProgram()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentRuntimeTests/testTransportRetryKeepsBothAcceptedCommitsAndTheSameAuthorHeap()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentRuntimeTests/testTwoSynchronousGenerationsKeepTheLatestUnfinishedProgramBounded()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentRuntimeTests/testUnreadyProgramRetirementJoinsItsAcceptedStateWithoutCallingAuthorCheckpoint()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentSnapshotTests/testAgentSnapshotBelongsToExactElementSourceAndState()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentSnapshotTests/testSnapshotBelongsToExactContentAndStateRevisions()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentSnapshotTests/testSnapshotBelongsToTheSelectedPhysicalPage()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentTargetSnapshotPreparationTests/testAccessoryWithoutAnOwnVisibleWindowPreparesThePublicCounter()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentTargetSnapshotPreparationTests/testActualBrokenImageReturnsItsRenderFailureRatherThanReaderCancellation()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentTargetSnapshotPreparationTests/testActualNewDocumentPreparesItsOwnRequestedRasterWithoutASeededCache()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentTargetSnapshotPreparationTests/testBorrowedProducerRevokesOptionalCaptureButPreservesItsJoinedRequiredReader()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentTargetSnapshotPreparationTests/testCancellationRetiresQueuedPreparationWithoutAWebKitOrLateImage()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentTargetSnapshotPreparationTests/testCapturePressureKeepsTheSameProducerUntilItsWholeRasterFits()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentTargetSnapshotPreparationTests/testExtendedColorSnapshotFitsItsGrantBeforePublication()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentTargetSnapshotPreparationTests/testHeadlessPressureWithdrawsOptionalQueueButKeepsRequiredPreparation()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentTargetSnapshotPreparationTests/testImpossibleCaptureDoesNotCreateAPermanentAdmissionWaiter()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentTargetSnapshotPreparationTests/testMemoryPressureCancelsAutomaticReadButKeepsDurableTargetAndPanelUntilNormalResumes()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentTargetSnapshotPreparationTests/testPressureWithdrawsQueuedOptionalPaperAndKeepsItsPromotedDerivedAdmission()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentTargetSnapshotPreparationTests/testPublicCollaborationCounterSourcePreparesItsOwnRaster()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentTargetSnapshotPreparationTests/testQueuedDocumentPreparationSurvivesRealBackgroundCapacityRelease()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentTargetSnapshotPreparationTests/testQueuedTargetRequestHasNoTerminalReceiptAndPublishesAfterCapacityReturns()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentTargetSnapshotPreparationTests/testStoppingAProducerCancelsItsPendingCaptureBeforeCapacityReturns()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentTargetSnapshotPreparationTests/testTerminalWebFailureDuringCaptureAdmissionKeepsItsActualError()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentTypesetterBoundaryTests/testARealTinyGzipWithManyIgnoredLinesUsesSmallProjectionCreditAndPreservesUnicodeSource()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentTypesetterBoundaryTests/testBreakableRequiresSingleColumnFlowButWholeAndBoxedProgramsRemainValid()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentTypesetterBoundaryTests/testCompilerCannotReadHostFilesOrSilentlyDropExternalSVGContent()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentTypesetterBoundaryTests/testCorruptedSourceMapCacheIsRecompiledRatherThanUsedForEditing()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentTypesetterBoundaryTests/testMalformedSourceKeepsTheLastSuccessfulArtifactAndReportsItsFile()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentTypesetterBoundaryTests/testMalformedTinyGzipWithSixteenMiBISIZERefusesCreditBeforeInputOrInflate()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentTypesetterBoundaryTests/testPathOnlySVGDoesNotOpenTheTeXDistributionOrFormat()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentTypesetterBoundaryTests/testPrintReadSetReusesUnchangedPaperAndInvalidatesNegativeProbes()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentTypesetterBoundaryTests/testQuartzPDFSinkRefusesWritesBeyondItsAdmittedBudget()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentTypesetterBoundaryTests/testSVGTextStillUsesPinnedFontsRatherThanSilentlyOmittingThem()"
+        },
+        {
+          "identifier" : "NotebookMacTests/DocumentTypesetterBoundaryTests/testTenCancelledCompilationsRecoverWithoutRestartOrASecondEngine()"
+        },
+        {
+          "identifier" : "NotebookMacTests/GroupGraphicRenderingTests/testBoardBasisWaitsForItsPublicationAndDoesNotMixMembershipCuts()"
+        },
+        {
+          "identifier" : "NotebookMacTests/GroupGraphicRenderingTests/testBoardIndexAndBothCompositorsUseTheWholeTiledOrigin()"
+        },
+        {
+          "identifier" : "NotebookMacTests/GroupGraphicRenderingTests/testConnectorEndpointAndBodyDragUseTheSameNestedBasis()"
+        },
+        {
+          "identifier" : "NotebookMacTests/GroupGraphicRenderingTests/testCoverWholePoseInvalidatesItsContainingBoardTile()"
+        },
+        {
+          "identifier" : "NotebookMacTests/GroupGraphicRenderingTests/testElementSelectionUsesDisplayedBoundsAndDoesNotSelectTheGroupDescriptor()"
+        },
+        {
+          "identifier" : "NotebookMacTests/GroupGraphicRenderingTests/testHeldBoardWholePublishesLiveAndPassiveMembersAtOnePose()"
+        },
+        {
+          "identifier" : "NotebookMacTests/GroupGraphicRenderingTests/testHeldMemberEditsItsOwnBasisAndKeepsItsOriginalBodyThroughSaveAndUndo()"
+        },
+        {
+          "identifier" : "NotebookMacTests/GroupGraphicRenderingTests/testMaskCacheKeepsWholeTranslationButNotANewLocalBasis()"
+        },
+        {
+          "identifier" : "NotebookMacTests/GroupGraphicRenderingTests/testMeasuredEraserCapturesTheModelsWholeBasisNotTheLocalFrame()"
+        },
+        {
+          "identifier" : "NotebookMacTests/GroupGraphicRenderingTests/testMixedBodiesSharePlacementButRetainLocalLayoutAndPixels()"
+        },
+        {
+          "identifier" : "NotebookMacTests/GroupGraphicRenderingTests/testMixedWholeMovesAndScalesWithoutRelayoutOrRestartingItsProgram()"
+        },
+        {
+          "identifier" : "NotebookMacTests/GroupGraphicRenderingTests/testNativeCameraChangesTheGraphicCandidatesWithoutRepublishingTheirSource()"
+        },
+        {
+          "identifier" : "NotebookMacTests/GroupGraphicRenderingTests/testNativeTextEraserCapturesFullLocalBodyAndFollowsTheWholeInExport()"
+        },
+        {
+          "identifier" : "NotebookMacTests/GroupGraphicRenderingTests/testPageViewportSkipsHiddenMembersAndKeepsTheSameVisiblePixelsDuringAWholeDrag()"
+        },
+        {
+          "identifier" : "NotebookMacTests/GroupGraphicRenderingTests/testPlacedTextTypingAndFormattingKeepItsLocalAxes()"
+        },
+        {
+          "identifier" : "NotebookMacTests/GroupGraphicRenderingTests/testRotatedLargeSourceCropAndReceiptUseInverseBodyCoordinates()"
+        },
+        {
+          "identifier" : "NotebookMacTests/GroupGraphicRenderingTests/testSelectionCreatesAndManipulatesOneWholeWithoutRewritingItsMembers()"
+        },
+        {
+          "identifier" : "NotebookMacTests/GroupGraphicRenderingTests/testTextMeasurementFitsTheCompleteSnapshotAtDifferentWidths()"
+        },
+        {
+          "identifier" : "NotebookMacTests/GroupGraphicRenderingTests/testTextWidthGripsFollowLocalAxesAndReflowWithoutStretching()"
+        },
+        {
+          "identifier" : "NotebookMacTests/GroupGraphicRenderingTests/testUncommittedWholePoseMovesPassiveTilesWithoutMovingStoredChildren()"
+        },
+        {
+          "identifier" : "NotebookMacTests/GroupGraphicRenderingTests/testWholeBasisTransformsStrokeAndSavedCutInTheNativeExport()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkContactTests/testContactSealsOnlyBoundedBlocksAndRetainsExactSnapshotAfterTailReplacement()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkContactTests/testRangeBoundsUseVerifiedFieldsWithoutLosingInteriorWidthOrBends()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkContactTests/testSpanAddressesRemainDistinctAndPredictionsCannotEnterAcceptedSource()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkContactTests/testStreamedWorldContactUsesTheSameProjectionAsSettledSource()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkMaterialCanvasTests/testMaterialReadinessRequiresEveryExactVisibleSource()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkMaterialCanvasTests/testNativeMaterialKeepsItsBuffersAcrossCameraAndStopsWhenDetached()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkMaterialCanvasTests/testReadyNativeMaterialTransfersToANewRecipientWithoutRedrawing()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkNormalizationTests/testChangedMiddleInvalidatesGeometryWhenExitDoesNotChange()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkNormalizationTests/testDeferredLocalPreparationRetainsInputAndRevision()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkNormalizationTests/testExpensiveCascadeIsExplicitAndUnsupportedEditDoesNotPublishPartialData()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkNormalizationTests/testIncrementalEditsAndSuffixChangesMatchFullOrderedExecutionAndUndo()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkNormalizationTests/testLocalRewriteCostOnMillionEventRepeat()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkNormalizationTests/testLocalRulesPreserveEventsPhaseAndStrictlyReduceRepresentation()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkNormalizationTests/testPendingNormalizationTerminatesAcrossUncomposableFrameScopes()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkRelationTests/testBitExactRoundTripAddressedEditAndUndo()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkRelationTests/testExactDomainOrderedFramesAndUnprovenEquality()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkRelationTests/testMeasureFullPreparationAndRasterBudget()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkRelationTests/testPrivateMeasuredSourceRoundTripAndGPU()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkRelationTests/testRegularAndMeasuredGeometryUseActualGPUAndExport()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkRelationTests/testWholeFrameUsesSameSourceAndPreservesOrderThroughGPU()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkRepeatTests/testChangedExitPropagatesAndRepeatedLocalEditsStayIndexed()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkRepeatTests/testRangeBoundsEncloseActualMiterAndFloatProjection()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkRepeatTests/testRepeatJumpRangeEditAndGPUAt100kAndMillion()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkRepeatTests/testRepeatNestedEmptyOverflowAndExactDomainAdmission()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkSourceIntegrationTests/testAcknowledgedDeviceWithANewIncomingJournalMigratesAndKeepsItsInkRaster()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkSourceIntegrationTests/testColdDecodeSharingCostFor100000ShortBodiesAndUniqueControl()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkSourceIntegrationTests/testColdLassoQueriesMillionEventSourceWithoutPreparingAllFragments()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkSourceIntegrationTests/testLassoRetainsMillionEventWholeAndRasterizesOnlyItsVisibleCrop()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkSourceIntegrationTests/testLocalMeasuredEditReopensWithSharedPartsAndExactRaster()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkSourceIntegrationTests/testPageExportBudgetsVisibleRelationsAndStillRefusesOverlappingWork()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkSourceIntegrationTests/testPageReloadAndExportUseTheRelationPathWithoutChangingAcceptedEvents()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkSourceIntegrationTests/testProjectionNeverSkipsCoincidentMeasuredSamples()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkSourceIntegrationTests/testReopenedCopiesShareOneBodyThroughEditAndRaster()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkSourceIntegrationTests/testStoredMillionEventBodyReopensIntoTheNativeVisibleRangeAndGPU()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkSourceIntegrationTests/testWorldAndRegionalProjectionKeepSourceBitsAndMatchUnreducedGeometry()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkVisibleRangeTests/testAggregateRailKeepsSubpixelBoundaryUnderExtremeAnisotropy()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkVisibleRangeTests/testAggregateStripAndItsEditedMiddleKeepAffinePaintAndEraserOrder()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkVisibleRangeTests/testCoalescingAmbiguityPaysForTheExistingNormalizerInsteadOfChangingItsState()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkVisibleRangeTests/testDistantCurveKeepsCoverageAcrossSubpixelRasterPhase()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkVisibleRangeTests/testEarlyCurveDetailAgainstFullRasterAtContourSamplePhases()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkVisibleRangeTests/testEarlyCurveDetailPreservesBendsThicknessAndAffineCoverage()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkVisibleRangeTests/testEarlyCurveSourceAndReopenReachGPUWithoutExpandingVisibleRepeats()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkVisibleRangeTests/testHundredThousandSmallStrokesPackIntoTheExistingChunkIndex()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkVisibleRangeTests/testIncompressibleCanonicalLiteralsShareOneImmutableBuffer()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkVisibleRangeTests/testLazyVisiblePenEraserAndAffineRastersMatchUnreducedSource()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkVisibleRangeTests/testLocalBendKeepsExactRasterWithoutExpandingStraightNeighbours()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkVisibleRangeTests/testMillionEventRepeatBuildsOnlyVisibleNeighbourhoodBeforeGPU()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkVisibleRangeTests/testSampleFreeRepeatKeepsSourceCompactThroughFreehandRaster()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkVisibleRangeTests/testSampleFreeSubpixelBoundsAgainstFullRaster()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkVisibleRangeTests/testStationaryRepeatUsesTheLastMeasurementWithoutUnboundedNormalization()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkVisibleRangeTests/testUnreducibleCurvePreparationKeepsTheFullRaster()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkVisibleRangeTests/testWholeStraightRepeatRasterCostIncludesQueryAndPreparation()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkVisibleRangeTests/testWholeWorldStripUsesFourNodesAndKeepsAffinePixels()"
+        },
+        {
+          "identifier" : "NotebookMacTests/InkVisibleRangeTests/testWorldRangeBoundsStayRelativeAcrossTiles()"
+        },
+        {
+          "identifier" : "NotebookMacTests/MacModelLifecycleTests/testAtomicIncomingCatalogPreservesIndependentLocalBoardAndPortalEdits()"
+        },
+        {
+          "identifier" : "NotebookMacTests/MacModelLifecycleTests/testCoherentIPCReadsDoNotCreateDurableChanges()"
+        },
+        {
+          "identifier" : "NotebookMacTests/MacModelLifecycleTests/testCommandServiceStartupFailureKeepsTheAcceptedWorkspaceWritable()"
+        },
+        {
+          "identifier" : "NotebookMacTests/MacModelLifecycleTests/testIPCCommitReloadsWithoutAMountedWindow()"
+        },
+        {
+          "identifier" : "NotebookMacTests/MacModelLifecycleTests/testIPCDocumentBundleAndPatchPreserveHumanSelectionWithoutAMountedWindow()"
+        },
+        {
+          "identifier" : "NotebookMacTests/MacModelLifecycleTests/testPersonCanMoveAndRemoveIPCAuthoredElements()"
+        },
+        {
+          "identifier" : "NotebookMacTests/MacModelLifecycleTests/testPortalReturnPreservesAnIndependentIPCBoardEdit()"
+        },
+        {
+          "identifier" : "NotebookMacTests/MacModelLifecycleTests/testSelectionSessionReplacesElementAndRejectsPreviousDrag()"
+        },
+        {
+          "identifier" : "NotebookMacTests/MacModelLifecycleTests/testSettledPageReadoutUsesTheVerifiedPageRaster()"
+        },
+        {
+          "identifier" : "NotebookMacTests/MacModelLifecycleTests/testVisualReadoutPublishesIPCChangesWithoutAMountedWindow()"
+        },
+        {
+          "identifier" : "NotebookMacTests/MacModelLifecycleTests/testVisualReadoutReachesFinalPageAfterAnIPCInkBurst()"
+        },
+        {
+          "identifier" : "NotebookMacTests/MacSceneCompositionTests/testStaticSourceRetainsPixelsThroughoutZoomRefinement()"
+        },
+        {
+          "identifier" : "NotebookMacTests/MacSceneCompositionTests/testVisibleProgramsHaveOneInteractiveOwnerBeforeAnyClick()"
+        },
+        {
+          "identifier" : "NotebookMacTests/MacShutdownTests/testAcceptedInkSurvivesWriteFailureRefusedShutdownAndExplicitRetry()"
+        },
+        {
+          "identifier" : "NotebookMacTests/MacShutdownTests/testReadPublicationFailureCanBeRepairedAfterARefusedShutdown()"
+        },
+        {
+          "identifier" : "NotebookMacTests/MacShutdownTests/testSceneRegistrationIsWeakAndALateOwnerReceivesTheTerminalBoundary()"
+        },
+        {
+          "identifier" : "NotebookMacTests/MacShutdownTests/testShutdownClosesNewContactsBeforeItWaitsForTheMeasuredPencil()"
+        },
+        {
+          "identifier" : "NotebookMacTests/MacShutdownTests/testShutdownRetiresCachedAppKitRasterWithoutRevokingAnotherBorrower()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookAcceptanceLaunchTests/testAcceptanceBundleRequiresManifestEvenIfBuildFlagIsMissing()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookAcceptanceLaunchTests/testAcceptancePairMustMatchTheAdmittedActorAndRole()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookAcceptanceLaunchTests/testDistinctCheckoutBundlesCannotAdmitEachOthersManifest()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookAcceptanceLaunchTests/testIsolatedAccountUsesOneCredentialThroughTheNormalDirectoryContract()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookAcceptanceLaunchTests/testPortableDeviceRootAndUniqueBundleRemainInsidePrivateRun()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookAcceptanceLaunchTests/testPreferencesAndActorBelongToTheInjectedRun()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookAcceptanceLaunchTests/testProductionBundleCannotAdmitAcceptanceManifest()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookAcceptanceLaunchTests/testProductionStorageAndSocketCannotBeSelected()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookAcceptanceLaunchTests/testRejectedLaunchNeverFallsBackToTheDefaultWorkspace()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookAccountConnectionTests/testAccountReadyRechecksActualEpochAfterHeldNameCallbackBeforeConnectingCloud()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookAccountConnectionTests/testDifferentAccountCannotReceiveRetainedCredentialsOrRestartDiscovery()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookAccountConnectionTests/testFreshDeviceOpensTheAccountSpaceInsteadOfRegisteringAnotherEmptySpace()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookAccountConnectionTests/testInputDuringAccountLookupKeepsTheLocalSpaceInsteadOfSwitchingIt()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookAccountConnectionTests/testInstalledCloudBindingProtectsKeysBeforeTheirFirstDirectoryEnrollment()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookAccountConnectionTests/testOneCloudEngineKeepsAccountDiscoveryWhenContentSyncIsOff()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookAccountConnectionTests/testStopRejectsAnEnrollmentThatFinishesAfterCancellation()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookAccountConnectionTests/testTwoOwnDevicesEnrollWithoutUIAndPersistTheSameCredential()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookAccountWorkspaceTests/testAcceptedLocalWorkCancelsAutomaticSelectionAndKeepsInputOpen()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookAccountWorkspaceTests/testContactDuringAutomaticPreparationCancelsOnlyItsOwnTransition()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookAccountWorkspaceTests/testJoinedPageVisionWorkerCannotAdmitAfterAutomaticCutAndSameOwnerResumesOnRollback()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookAccountWorkspaceTests/testOpeningAccountSpaceWaitsForItsRealMaterialInsteadOfCreatingAnotherNotebook()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookAccountWorkspaceTests/testPendingAuthoredImportVetoesAutomaticSealBeforeItHasAWriterSlot()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookAccountWorkspaceTests/testReadFencePreservesAutomaticCutButAcceptedNoOpMutationCancelsIt()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookAccountWorkspaceTests/testWaitingForAccountMaterialCanShutDownWithoutHangingOrCreatingContent()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookAccountWorkspaceTests/testWorkspaceSealUsesUnchargedAcceptedFIFOAndRefusesNewMutationsBeforeAnActorHop()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookArchiveLaunchTests/testAutomaticOpeningRollsBackNewSourceWorkAndRetryCannotCreateASuccessor()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookArchiveLaunchTests/testDamagedPayloadCannotConstructTheDefaultModel()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookArchiveLaunchTests/testExplicitPeerRetirementIsCheckedBeforeConstructingTheSelectedModel()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookArchiveLaunchTests/testNewActivationHasIndependentDeviceTrustWithoutChangingIdentity()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookArchiveLaunchTests/testNoModelOrDesktopRegistrationBeforeBothActivations()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookArchiveLaunchTests/testRuntimeAdmissionRefusesLegacySocketAndConcurrentLauncherBeforeWorkspaceAccess()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookArchiveLaunchTests/testRuntimeBootstrapAndCreateRetryKeepTheAcceptedOwnerAndWorkspaceAddress()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookArchiveLaunchTests/testRuntimeCommandsCreateAndSelectThroughTheOwnerWithoutADesktopWindow()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookArchiveLaunchTests/testRuntimeRetriesRetainedAcceptedWritesWithoutQuitOrWorkspaceSwitch()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookArchiveLaunchTests/testRuntimeRetryCoalescesCodexAdmissionAfterDiscoveryFailure()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookArchiveLaunchTests/testRuntimeRetryDrainsRetainedAcceptedWritesBeforeReplacingWorkspaceOwners()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookArchiveLaunchTests/testRuntimeShutdownReturnsBlockedAndRetriesTheAcceptedIPCMutationBeforeRetiringItsOwner()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookArchiveLaunchTests/testRuntimeStatusRemainsAvailableAfterArchiveFailureAndWorkspaceCommandsStayClosed()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookArchiveLaunchTests/testUnitFixtureDoesNotEnterProductionBootstrap()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookChatRenderingTests/testOfflineMarkdownMathAndUntrustedTextShareOneDocument()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookClipboardSourceTests/testAuthoritativeNativeAndRecognizableStructuredContentNeverFlattenIntoText()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookClipboardSourceTests/testCancellationOfAnOptionalProviderDoesNotProceedToItsPlainText()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookClipboardSourceTests/testCanonicalImageKeepsResolutionAndExactPixelsBeyondTheOldThumbnailBoundary()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookClipboardSourceTests/testCanonicalImagePreservesTransparencyAndSixteenBitSamples()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookClipboardSourceTests/testEveryExifOrientationKeepsTheSourcePixelPermutationAndClearsPrivateMetadata()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookClipboardSourceTests/testImageFinishCapacityRefusesInsteadOfChangingQuality()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookClipboardSourceTests/testOversizedStructuredUtf16AndJSONPrefixesRefuseThePlainTextAlternative()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookClipboardSourceTests/testUnreadableAndOversizedOptionalHTMLCanUseThePlainTextRepresentation()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookClipboardWriterTests/testClipboardFragmentUsesNativeBoardWriterAndOneUndo()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookClipboardWriterTests/testCopyPasteCarriesAProgramsBinaryClosureThroughTheOrdinaryWriterAndUndo()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookCloudWireTests/testActualCloudActorLeavesIdleSpoolPathUntouchedAndResumesAfterALocalEdit()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookCloudWireTests/testDisabledCloudNeverNeedsContainerEntitlementsOrAnAccount()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookCloudWireTests/testDownloadedAssetMustHaveExactlyTheDeclaredContent()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookCloudWireTests/testEnvelopeRecordNameCommitsToSourceGenerationAndSnapshotBoundary()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookCloudWireTests/testExistingAssetMetadataDoesNotRequireAnotherDownloadToDeduplicate()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookCloudWireTests/testHeldCloudSourceAllowsIndependentSourceAndOutgoingPlanThenStopRevokesItsIdleWait()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookCloudWireTests/testOverflowedDeferredGenerationsReachHealthySourceAndKeepTheirInputWakeWithoutAnIdleLoop()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookCloudWireTests/testSemanticCloudSourceKeepsItsCursorWithoutStoppingOtherSourcesOrOutgoingWork()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookCloudWireTests/testStoppedEpochJoinsAcceptedCloudBeginBeforeReleasingItsSpoolAndRetryUsesTheSameFIFO()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookCodexRuntimeTests/testLocalRuntimeUsesHostJournalForRealCodeCheckAndNotebookMaterial()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookCodexSidecarTests/testAccessChangeReconcilesNativeStateWithoutRepeatingTheGrant()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookCodexSidecarTests/testActualConversationLifetimeChangesRevokeMessageTransfers()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookCodexSidecarTests/testBusyTaskQueuesWithoutSteeringAndUnknownAcceptanceReconcilesHistory()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookCodexSidecarTests/testClearedRetiringCandidateRetriesItsSamePublishedFileAfterLateStorageFailure()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookCodexSidecarTests/testCloseDuringNativeAttachCannotReleaseTheReplacementView()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookCodexSidecarTests/testCloseDuringPreparationCannotResurrectObservation()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookCodexSidecarTests/testClosingSwitchingRevokingAndDetachingReleaseExactObservations()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookCodexSidecarTests/testCreatedNativeIDSurvivesFailureOfAdditionalSetup()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookCodexSidecarTests/testDefinitiveObserveFailureRejectsSavedMessageWithoutNativeDispatch()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookCodexSidecarTests/testDetachDuringInitialUnsubscribedMessageReadCannotRestoreTransfer()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookCodexSidecarTests/testDetachingViewDoesNotStopAnAdmittedTaskAndSlowCreationDoesNotBlockAnotherThread()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookCodexSidecarTests/testExplicitSteeringBypassesQueuedMessageButKeepsTheExpectedTurn()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookCodexSidecarTests/testFileQueriesUseCurrentProjectAndExistingDurableQueueWithoutAModel()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookCodexSidecarTests/testIdleWorkerWakesForControlWithoutPollingInterval()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookCodexSidecarTests/testInitialConversationPreservesAnUnsubscribedSameThreadMessageRead()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookCodexSidecarTests/testLargeRequestsStayAddressableAndEachDecisionExecutesOnce()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookCodexSidecarTests/testLaserEvidenceIsResolvedOnlyForItsOneNativeMessage()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookCodexSidecarTests/testMessageReadEnvelopeIdentityIsPeerScopedAndRevokedWithItsOwner()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookCodexSidecarTests/testMissingDefaultAccountRejectsCreationBeforeDispatchAndKeepsCodexAsLoginOwner()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookCodexSidecarTests/testModelChangeAndMentionedInputKeepTheirNativeIdentityAfterUnknownReplies()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookCodexSidecarTests/testNativeIdleEventWakesAQueuedNextMessage()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookCodexSidecarTests/testNativeProjectEditReconcilesLostReplyWithoutEditingOrStartingTwice()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookCodexSidecarTests/testNewlyAdmittedMessageWakesTheNativeWorkerWithoutThePollingSecond()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookCodexSidecarTests/testOneLongNativeMessageReadsInBoundedPartsAndCloseRevokesTransfer()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookCodexSidecarTests/testProcessDrainRetriesTheSamePublishedFileAfterItsModelAlreadyStopped()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookCodexSidecarTests/testPublishedFileWorkVetoesAutomaticSelectionAndManualSelectionKeepsItsOriginalCompletion()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookCodexSidecarTests/testRepeatedInitialMessageEnvelopeKeepsExactTransferAcrossNativeGrowth()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookCodexSidecarTests/testRepeatedTransportRequestExecutesOneNativeMessageAndKeepsSameThread()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookCodexSidecarTests/testRestartWithoutAcceptanceProofCannotRepeatAttemptOrApproveAnything()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookCodexSidecarTests/testRetainedWorkspaceIndependentHostKeepsItsFileDrainAcrossLateStorageFailure()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookCodexSidecarTests/testRevocationBeforeAdmissionRejectsRunAndVoiceButDoesNotUndoAcceptedWork()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookCodexSidecarTests/testRevocationRejectsSavedInputBeforeItCanSurviveRestart()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookCodexSidecarTests/testSameThreadRefreshRetainsObservationAndExactMessageTransfer()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookCodexSidecarTests/testStartupStorageFailureRetriesRecoveryWithoutAnotherUserEvent()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookCodexSidecarTests/testTurnFinishedOnMacRejectsStopWithoutAnUnknownOrRepeatedInterruption()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookCodexSidecarTests/testUncertainSettingsCannotStarveNarrowerAccessOrStop()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookCommandReaderTests/testBorrowedPixelValidationRejectsAChangedSourceWithoutBlockingWrites()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookCommandReaderTests/testCancellingAReadFenceLeavesTheAcceptedHeadAndItsResultIntact()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookCommandReaderTests/testPanelReadRefusalAndCancellationKeepTheAcceptedWriteTailUsable()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookCommandReaderTests/testReadFenceCapturesTheAcceptedPrefixAndTheReaderDoesNotBlockLaterWrites()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookCommandReaderTests/testStopClosesAdmissionAndCloseJoinsTheActualBorrowedCut()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookCommandReaderTests/testTheReaderRefusesAWrongWorkspaceAndAReplacementDatabaseBeforeTheOperation()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookDeviceTrustTests/testASettingsActionCannotRestartTransportAfterAccountSuspension()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookDeviceTrustTests/testAccountEnrollmentIsSavedBeforeDeviceDiscoveryAndKeepsExistingKey()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookDeviceTrustTests/testCloudDirectoryMustUseEncryptedPrivateZoneField()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookDeviceTrustTests/testDisconnectedDeviceIsNotReauthorizedByDirectoryRefresh()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookDeviceTrustTests/testInstalledCredentialUpgradePreservesOnlyEstablishedKeys()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookDeviceTrustTests/testKeychainReadbackPersistsAccountBlockAndExactCredential()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookDeviceTrustTests/testNewAccountAdmittedActivationReplacesAStaleLocalKey()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookDeviceTrustTests/testOpeningAnotherSpaceKeepsTheOriginalDatabaseAndSelection()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookDeviceTrustTests/testRetiredPeerCannotReconnectOrBeRevivedBySettingsAndKeepsOtherKeys()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookDictationTests/testCancelCannotPublishLateTextAndNewCaptureCannotReplaceRunningAudio()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookDictationTests/testChunkReplayLostFinishReceiptAndForeignDeviceCannotDuplicateOrStealTranscription()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookDictationTests/testFailedAudioIsRetainedAndOnlyExplicitRetryStartsAnotherRecognition()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookDurableNotificationTests/testCoalescingCannotCrossTypedPeerOrCommandFences()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookDurableNotificationTests/testLoadedProgramStateNotifiesItsRealWriteButNotTheIdenticalReceipt()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookDurableNotificationTests/testPeerDisconnectRetiresLocalBarriersWithoutWakingDurableDelivery()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookDurableNotificationTests/testRealCommandEffectsNotifyOnlyForSharedContent()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookGraphicRenderingTests/testBoundArcsAndNineArrowheadsRenderAsNativeGeometryWithoutWebKit()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookGraphicRenderingTests/testDenseBoardPreviewAndCompositionTilesKeepMainActorResponsive()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookGraphicRenderingTests/testDenseRoundEraserExportPreparesItsMaskWithoutBlockingTheMainActor()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookGraphicRenderingTests/testDetachedLassoConnectorKeepsTheActuallyRenderedContour()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookGraphicRenderingTests/testNativeCompositeAndInkMapShareReversiblePresentationWithoutWebKit()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookGraphicRenderingTests/testPartialEraserUnionsOverlapsAndMovesWithEveryNativeFigure()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookGraphicRenderingTests/testRectangleAndPlusPaintTheirOwnContoursRatherThanEllipses()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookGraphicRenderingTests/testRetainedPressureInkAndNativePageTextUseTheNativeExportPlane()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookGraphicRenderingTests/testRoundEraserTurnLeavesNoPenMiterInSavedPixels()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookGraphicRenderingTests/testRoundedPolygonPaintUsesTheSharedContour()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookItemCreationTests/testByteAndCountRefusalPrecedeEveryKindOfSourceTaskAndPresenceChange()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookItemCreationTests/testColdCoverUndoAndParentRedoReachTheSameCommittedBirthForEveryKind()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookItemCreationTests/testLostCommitKeepsTheSamePendingBirthAcrossAPeerMoveAndUserRetry()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookItemCreationTests/testParentRetiredAfterAdmissionCannotLeaveANewOwnerOrSelection()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookItemCreationTests/testThreeRapidCreatesSelectOnlyCommittedIdentitiesAndRetainOneActionPerBirth()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookItemCreationTests/testTwoRapidBirthsWaitForMenuLiftAndOnlyTheLatestMayPresentItsCover()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookItemDeletionTests/testDeleteAfterPendingMoveCanUndoImmediatelyAndRepeatAfterReopen()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookItemDeletionTests/testStaleVisiblePlacementRejectsDeletionAndDoesNotBlockTheNextItem()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookItemDeletionTests/testStorageFailureRetainsDeletionAndItsQueuedUndoWithoutRepeatingDestruction()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookItemPlacementTests/testDropChainsUseOneSavedSourceAndColdUndoRedoPerLift()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookItemPlacementTests/testRejectedOldContactRetractsOnlyItsDraftAndDoesNotStopAnotherItem()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookItemPlacementTests/testStorageFailureRetainsThePoseAndItsDependentDropWithoutDuplicateHistory()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookLiveScenePublicationTests/testAcceptedProgramStateInvalidatesAReadBeforeItsWriterCompletes()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookLiveScenePublicationTests/testAcceptedTextContentAndQueuedMovesPublishTheExactHumanContext()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookLiveScenePublicationTests/testBooleanResultDoesNotRevertWhileItsInsertionCohortIsRetained()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookLiveScenePublicationTests/testCoverElementAndItsPaperShareTheAcceptedPlacementBeforeAnyNewCohort()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookLiveScenePublicationTests/testCurrentStackFanNeverWaitsForUnadmittedPeersOrWholeAreaProof()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookLiveScenePublicationTests/testDismissedPendingTextCaptureSavesHistoryWithoutReopeningSelection()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookLiveScenePublicationTests/testFrozenAcceptedCaptureCannotSilentlyAdvanceToALaterTextEdit()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookLiveScenePublicationTests/testLateSQLSceneCannotReplaceTwoAcceptedMovesBeforeTheyAreSaved()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookLiveScenePublicationTests/testNewModelElementCannotBorrowAnotherCohortsAdmission()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookLiveScenePublicationTests/testReadyCaptureRegistersItsFenceBeforeTheNextAcceptedContact()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookLiveScenePublicationTests/testTwoMovesResizeAndDeleteUseAcceptedGeometryWhileTheCohortStaysOld()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookLiveScenePublicationTests/testUnadmittedGraphicCannotCommitAnInvisibleMoveOrResize()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookLiveScenePublicationTests/testWholeBoardAndCoverCapturesSealImmediatelyAfterAcceptedGeometryWhileCohortStaysOld()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookMacWorkspaceTests/testOpeningExistingNotebookAdmitsItsColdPage()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookMacWorkspaceTests/testPeerCameraDoesNotMoveLocalPresenceAndIPCStillObservesIPad()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookMacWorkspaceTests/testSwiftUIMaterialReceivesPointerButEmptyPlanePassesThrough()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPanelDensityTests/testMagnifiedNativeCoverKeepsScreenDensityAndReusesLocalCells()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPanelMaterialTests/testBudgetDemotedCoverCellsNeverAllocateIndependentMaterialPixels()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPanelMaterialTests/testBudgetDemotedElementBodiesNeverCreateDiscardedMaterialRasters()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPanelMaterialTests/testLocalEditAndTranslationReuseUnchangedPixelsWhileTextAndSizeRefresh()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPanelMaterialTests/testMeasuredErasureAndUndoRefreshOnlyTheAffectedBody()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPanelMaterialTests/testMovingBoundEndpointRefreshesConnectorWithoutChangingItsAuthoredSource()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPanelMaterialTests/testProgramStateChangesItsPixelsWithoutRepaintingItsNeighbor()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPanelMaterialTests/testTranslatedRotatedTextKeepsPixelsAndChangingBasisRefreshesThem()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPanelMaterialTests/testWarmPanelMaterialKeepsItsActualLeafWitnessAndRefreshesForSameSourcePixels()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPanelObservationTests/testCancellationAndStopDrainObserversWithoutStoppingTheWorkspaceReader()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPanelObservationTests/testCommitBeforeWaitRegistrationIsFoundByItsFirstFreshCut()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPanelObservationTests/testDeadlineDuringAnUnchangedReadDoesNotInventAnInvalidation()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPanelObservationTests/testDeadlineEndsWithInvalidationWhenAnEventArrivesDuringItsRead()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPanelObservationTests/testDeletingTheObservedPageInvalidatesSceneWithoutReportingTransportFailure()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPanelObservationTests/testExpiredWitnessAndRuntimeEpochReturnReset()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPanelObservationTests/testInstalledCommandOwnerWakesPanelOnlyAfterHumanEditCommits()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPanelObservationTests/testUnrelatedCommitUsesShortMetadataAndReturnsUnchangedWithoutPainting()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPanelObservationTests/testWarmPageRegionsDoNotInheritOtherRegionsProgramWitnesses()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPanelOccupancyTests/testEmptyInkWitnessRejectsNewPaintAndClaimedContactKeepsItsMovedCell()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPanelOccupancyTests/testHundredThousandDistantContactsAndElementsDoNotAllocateEmptyInkCells()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPanelOccupancyTests/testNonseparatedStackCardsKeepNativeGeometryAndPainterOrder()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPanelOccupancyTests/testOverviewKeepsNineCoversAtRequestedDensityThroughZoomAndReturn()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPanelPageAdmissionTests/testClippedPageBudgetPreservesVisibleSubjectPainterBandsAndRequestedDensity()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPanelPageAdmissionTests/testHeadlessPanelRetainsWarmSourceWithoutAdmittingANativePage()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPanelPageAdmissionTests/testHundredThousandDistantPageSubjectsUseTheSameBoundedAdmission()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPanelPageAdmissionTests/testHundredThousandPagePaintCandidatesKeepResolvedCrossingsAndGlobalClaims()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPanelPageAdmissionTests/testPageSkipsDistantBodiesAndPrioritizesVisibleSeventeenthOverPrefetch()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPanelPageAdmissionTests/testPageWindowDisclosesOverflowTextAndNewlyExposedBodies()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPanelPageAdmissionTests/testPanelSourceWindowReclaimsIdleCreditAndRefusesOptionalRetentionWithoutLosingReadyPixels()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPanelPageAdmissionTests/testPanelSourceWindowSharesExactNativeAliasAndDrainsCancelledOrReplacedBorrow()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPanelPageAdmissionTests/testPrefetchBoundaryKeepsWholeBodiesAndExistingSemanticExclusions()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPanelPageAdmissionTests/testPressurePulseDrainsRequiredSourceBorrowWithoutRestoringOptionalRetention()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPanelPageContentTests/testPagePublicationRefreshesPresenceAndMembershipChangedDuringNativePreparation()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPanelPageContentTests/testPagePublicationRejectsSourceChangedDuringNativePreparation()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPanelPresentationTests/testCanonicalBoardMaterialsSplitSubjectsBeforeFirstDragAndJoinCachedRequests()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPanelPresentationTests/testForegroundPanelSurvivesPeerInputDuringQueuedCaptureAndKeepsLocalFence()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPanelPresentationTests/testNotebookCardFirstPageOpensNativePixelsAndNavigationWithoutMovingPresence()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPanelPresentationTests/testRegionalMaterialPreparationPreservesOrderedCutsAndBaselineAcrossRegionsAndReleasesGeometry()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPanelPresentationTests/testRepeatingGridKeepsNativePhaseAndOpaqueBackgroundAcrossCameraTilesAndZoomSteps()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPanelPresentationTests/testStoppingTheOwnerCompletesQueuedPanelReadBeforeCapacityReturns()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPersistenceAdmissionTests/testAReservationCannotBeTransferredTwiceOrUsedByAnotherWriter()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPersistenceAdmissionTests/testElementAdmissionChargesAFrozenGraphOnceAndOnlyAsRetainedContent()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPersistenceAdmissionTests/testElementAdmissionCountsSemanticStateInsteadOfOnlyItsWireTokens()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPersistenceAdmissionTests/testItemAndHistoryAdmissionRejectBeforeDraftDeletionOrSourceWork()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPersistenceAdmissionTests/testLiveInkWorstLiteralBodyFitsItsFinishReserveAndRejectsTheNextMeasurement()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPersistenceAdmissionTests/testPlacementReserveBoundsActualSuccessorAndCodecAndShrinksOnlyAfterPreparation()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPersistenceAdmissionTests/testPreparationGrowthKeepsOneSlotAndCannotRenewAcceptedCredit()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPersistenceAdmissionTests/testPreparationShrinksItsCreditWhileBlockedAndKeepsTheResultAcrossRetry()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPersistenceAdmissionTests/testStorageFailureReachesABytePlateauAndRetryReleasesEachAcceptedBody()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPersistenceAdmissionTests/testWorldContactAndEraserMetadataShareARealDecodeAndFinishBudget()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPersistenceQueueTests/testCancellingPreparedResultWaitDoesNotDiscardItsResultOrDependentWrite()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPersistenceQueueTests/testCoalescingAndDiscardCannotReplaceAnAlreadyAttemptedAcceptedHead()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPersistenceQueueTests/testDeterministicLimitRefusalDoesNotBecomeAnInfiniteStorageRetry()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPersistenceQueueTests/testDomainRejectionWithoutAnObserverClosesOnlyItsAcceptedSlot()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPersistenceQueueTests/testMutatingCommandRetainsItsCompletionAndFIFOAcrossStorageRetry()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPersistenceQueueTests/testNonpublishingScriptAdmissionReturnsItsOriginalResultAfterUnknownCommitAndRetry()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPersistenceQueueTests/testPreparedCommandKeepsOneAcceptedInstanceAndExactResultAfterUnknownCommitAndPeer()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPersistenceQueueTests/testPublishingSubmitKeepsTheSameWaiterUntilItsStorageRetryFinishes()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPersistenceQueueTests/testStorageErrorBridgeRetainsTheHeadEvenWhenARejectionObserverExists()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPersistenceQueueTests/testTypedAndPreparedNoopResultsDoNotPublishAndUnknownCommitKeepsTheOriginalEffect()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPersistenceQueueTests/testTypedCompletionAndItsCreditStayPendingUntilTheOuterCommitOutcomeIsKnown()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPersistenceQueueTests/testTypedEffectKeepsNonpublishingMutationAndReleasesReadObserver()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPortableDocumentImportOwnerTests/testByteAndCountRefusalPrecedeAnyFileWorker()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPortableDocumentImportOwnerTests/testFailedWriterBurstPlateausAndRetryPreservesAcceptedImportOrder()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPortableDocumentImportOwnerTests/testUsefulCommitReturnsWhileCacheActorIsBlockedAndCloseJoinsItsCredit()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPresentationRelayTests/testActualIPCReadsUnavailablePresentationWithoutWritingOrMovingStoredCamera()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPresentationRelayTests/testDisconnectAndHumanMotionInvalidatePresentationCapability()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPresentationRelayTests/testRetryReadsReceiptAndNeverRepeatsCameraOrSVG()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPreviewPublicationTests/testPartialFilePublicationRetriesTheExactAdmittedBytesAfterRevocation()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPreviewPublicationTests/testRevocationBeforeAdmissionDoesNotBlockLaterAcceptedWork()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPreviewPublicationTests/testStaleReceiptRefusesOnlyItsOwnSlotAndPreservesTheAcceptedTail()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookPreviewPublicationTests/testTargetReceiptRetriesItsAdmittedFingerprintAfterPartialPublication()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookProjectFilesTests/testBlockedFileAccessDoesNotHoldPersistenceOrSpawnAnotherWorkerAndCannotWriteAfterStop()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookProjectFilesTests/testCloseJoinsPublishedFilesystemWorkAfterItsObserverHasAlreadyBeenWithdrawn()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookProjectFilesTests/testFileVersionCacheIsAcceptedWhileReadingAnExistingVersionIsObservation()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookProjectFilesTests/testInterruptedRenameIsReconciledByIdentityNotBySimilarTextOrAnotherMove()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookProjectFilesTests/testLostCompletionCommitRetainsThePublishedFileWorkerAcrossStopAndRetry()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookProjectFilesTests/testPreparedUnknownWriteOnlyReconcilesTheObservedHash()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookProjectFilesTests/testRealFileMergeConflictPermissionsAndRecoveryNeverRepeatWrites()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookProjectFilesTests/testRealRenameKeepsNotesAndNeverReplacesAnotherFileOrRepeatsTheMove()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookProjectFilesTests/testRenameRejectsChangedContentEscapesAndRevokedRoot()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookProjectFilesTests/testStopAfterActualRenameCompletesTheOriginalJournalAndColdReadbackKeepsItsIdentity()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookProjectFilesTests/testSymlinkEscapeRevokedRootAndDirectoryPagination()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookProjectFilesTests/testWaitingNativeFilePresenterDoesNotHoldTheNotebookWriterAndStopCancelsCoordination()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookProjectRunsTests/testIdenticalProjectRootsKeepTheAdmittedWorkspaceIdentity()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookProjectRunsTests/testReplayLostInputAcknowledgementAndMacRestartNeverExecuteTwice()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookProjectRunsTests/testRestartWaitsForPreviousExitAndIdenticalPathsOnOtherMacAreRejected()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookScenePublicationTests/testDurableResultSurvivesFailedRefreshThenDependentEditAndUndo()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookScenePublicationTests/testEquivalentReadInstallKeepsConcurrentReadAdmittedAndActualEditInvalidatesIt()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookScenePublicationTests/testNewerPreparedCutSurvivesOldWorkerAndWaitsForInputAdmission()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookScenePublicationTests/testNewerWindowCursorCannotRetireUnobservedOutputAndPinnedTombstoneCan()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookScenePublicationTests/testWarmRequestsCoalesceAndCancelBeforeDeliveryJoinsTheDispatchedWorker()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookScriptServiceTests/testActualPDFJobOutlivesItsUserRunAndPublishesThroughTheNativeOwner()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookScriptServiceTests/testAddressedGraphReflowAndUndoCrossTheRealSandboxedSDK()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookScriptServiceTests/testAddressedObservationAndPageReadCrossTheRealSandboxedSDK()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookScriptServiceTests/testCancelAndShutdownOwnAdmissionEvenWhenTheNativeReplyArrivesLate()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookScriptServiceTests/testCancelStopsAwaitWithoutInventingAnEffectAndMarkupRefusesSource()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookScriptServiceTests/testCancellationDuringTypeScriptPreparationNeverStartsJavaScript()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookScriptServiceTests/testCancellationPreservesAnAlreadyAcceptedNativeCommit()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookScriptServiceTests/testDocumentFilesStructureAndUndoCrossTheRealSandboxedSDK()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookScriptServiceTests/testEquivalentTypedAndJavaScriptProgramsUseTheSameDomainWriterAndNeverReplay()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookScriptServiceTests/testExplicitConflictDeltaContinuationPreservesTheHumanLabel()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookScriptServiceTests/testExportFreezesStateAtAdmissionAndRejectsALaterEditWithoutReplay()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookScriptServiceTests/testHostDeadlineIncludesXPCLaunchAndTheAwaitedWorker()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookScriptServiceTests/testHumanPageInkDiscoveryConversionAndUndoCrossTheRealSDK()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookScriptServiceTests/testIncrementalGeometryCrossesTheRealSandboxedSDK()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookScriptServiceTests/testJSAndTypeScriptAtomicallyCreateABoundGraphAndUndoIt()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookScriptServiceTests/testLifecycleRefusalAndRestoredAppendUndoCrossTheRealSDK()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookScriptServiceTests/testLoopsErrorsAndOutputQuotaTerminateOnlyTheWorker()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookScriptServiceTests/testLostCommitAndUndoRepliesPreserveOriginalResultsAndNeverRepeatEffects()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookScriptServiceTests/testPinnedTypeScriptCLICompilesInsideTheSignedSandboxBeforePublicAdmission()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookScriptServiceTests/testPublicPlacementAndAtomicOperationDiagnosticsCrossTheRealSDK()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookScriptServiceTests/testSDKCancellationWinsBeforeTheFinalExportFenceAndNeverReplays()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookScriptServiceTests/testSDKPNGExportsTheCanonicalMixedPageAtRequestedResolution()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookScriptServiceTests/testSDKV2LabelBasisAndEarlyEmitReturnOneImmutableResult()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookScriptServiceTests/testSandboxedServiceAwaitsFiftyReadsAndHasNoAmbientCapabilities()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookScriptServiceTests/testSearchContinuationAndAddressedHitCrossTheRealSDK()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookScriptServiceTests/testStartupRecoversJobsBeforeTheFirstContextReadWithoutReplayingCode()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookScriptServiceTests/testTldrawSelectionCompositionAndUndoCrossTheTypedSandboxedSDK()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookScriptServiceTests/testTrustedMarkupCanCompleteWhileTheUserInterpreterAwaitsTransaction()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookScriptServiceTests/testTypeScriptEditsThePublishedSelectionBeyondThePreviewWindow()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookScriptServiceTests/testTypeScriptPreparationCoexistsWithMarkupAndPDFConnections()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookScriptServiceTests/testTypeScriptRuntimeStackNamesTheOriginalSource()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookScriptServiceTests/testTypeScriptTypeFailurePreventsEvenEarlierNativeEffects()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookSelectionPublicationTests/testAuthenticatedSelectionUsesWriterAndIPCAndRetiredConnectionsCannotResurrectIt()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookSelectionPublicationTests/testIPadContextReachesAgentIPCWithin100msWithoutMovingOrRenderingTheMac()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookVoiceTests/testAcceptedVoiceReplySurvivesLostJournalCommitAndCallerCancellationWithoutAnotherRPC()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookVoiceTests/testVoiceHasOneJournalIdentityAndCannotBeReadOrStoppedByAnotherPeer()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookWorkspaceLibraryTests/testCleanupFailureCannotUndoKnownPublicationOrReplaceItsExactSnapshot()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookWorkspaceLibraryTests/testFailureBeforePublicationRejectsWithoutChangingSelectionOrBlockingItsSuccessor()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookWorkspaceLibraryTests/testFirstSelectionUsesTheCutAfterItsOwnedRootPreparation()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookWorkspaceLibraryTests/testHeldCatalogPublicationSealsNewSourceWorkAndUnknownRetryRetainsBothModels()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookWorkspaceLibraryTests/testLocalLifecycleKeepsIndependentDataAndDoesNotRecreateTheDeletedLastSpace()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookWorkspaceLibraryTests/testSelectionDataUpgradeAndInterruptedRemovalHaveOneDurableOwner()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookWorkspaceLibraryTests/testStaleNameAndDeletionRepliesCannotRebaseAndRefreshCannotRepointSelection()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookWorkspaceLibraryTests/testUnknownPublicationRetainsTheSameBytesAndTicketThroughReadFailureAndConflict()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookWorkspaceWritersTests/testCanonicalAliasesShareAcceptedWriteOrder()"
+        },
+        {
+          "identifier" : "NotebookMacTests/NotebookWorkspaceWritersTests/testFailedRetirementRetainsTheWriterAndAcceptedTailForRetry()"
+        },
+        {
+          "identifier" : "NotebookMacTests/PageInkProjectionTests/testNativeCameraNotifiesThePageWithoutRepublishingItsContent()"
+        },
+        {
+          "identifier" : "NotebookMacTests/PageInkProjectionTests/testPageCropTracksPhysicalScaleWithoutGrowingWholePageBacking()"
+        },
+        {
+          "identifier" : "NotebookMacTests/PageInkProjectionTests/testPagePoolResizesWithoutRunningTheMetalKitDrawCycle()"
+        },
+        {
+          "identifier" : "NotebookMacTests/PageTurnSurfaceTests/testMacPreparesOnlyTheRequestedPageWithoutNavigationCallbacks()"
+        },
+        {
+          "identifier" : "NotebookMacTests/PageVisionDemandTests/testArchivePreparesOnlySelectedAndExplicitlyRequestedInkPages()"
+        },
+        {
+          "identifier" : "NotebookMacTests/PageVisionDemandTests/testBoardSelectionUpdatesReceiptWithoutRewritingTheSamePixels()"
+        },
+        {
+          "identifier" : "NotebookMacTests/PageVisionDemandTests/testCapturedInkRequestCannotPublishTheNextDrawingUnderTheOldIdentity()"
+        },
+        {
+          "identifier" : "NotebookMacTests/PageVisionDemandTests/testQueuedCurrentViewDoesNotPublishAfterCameraChanges()"
+        },
+        {
+          "identifier" : "NotebookMacTests/PageVisionDemandTests/testQueuedCurrentViewDoesNotPublishAfterPublisherCancellation()"
+        },
+        {
+          "identifier" : "NotebookMacTests/PageVisionDemandTests/testQueuedCurrentViewDoesNotPublishDuringNewInput()"
+        },
+        {
+          "identifier" : "NotebookMacTests/PageVisionDemandTests/testRevokedMetadataRefreshRetriesTheSameSelectionAfterInputEnds()"
+        },
+        {
+          "identifier" : "NotebookMacTests/PageVisionDemandTests/testShutdownDrainsPublisherAndIgnoresLateSnapshotNotifications()"
+        },
+        {
+          "identifier" : "NotebookMacTests/PageVisionPreviewTests/testBlankRevisionRemovesPreviousRegionArtifacts()"
+        },
+        {
+          "identifier" : "NotebookMacTests/PageVisionPreviewTests/testCorruptedArtifactCannotHideBehindAValidatedRevision()"
+        },
+        {
+          "identifier" : "NotebookMacTests/PageVisionPreviewTests/testErasedPixelsDoNotCreateGhostRegions()"
+        },
+        {
+          "identifier" : "NotebookMacTests/PageVisionPreviewTests/testLargeConnectedSketchBecomesReadableDetailWindows()"
+        },
+        {
+          "identifier" : "NotebookMacTests/PageVisionPreviewTests/testReadingContrastMakesLightNativeInkVisibleAndKeepsTheMap()"
+        },
+        {
+          "identifier" : "NotebookMacTests/PageVisionPreviewTests/testReceiptBindsVisibleRegionsToExactPNGs()"
+        },
+        {
+          "identifier" : "NotebookMacTests/PortalRenderingTests/testIndependentMergeRepublishesPNGWithTheSameHierarchyClock()"
+        },
+        {
+          "identifier" : "NotebookMacTests/PortalRenderingTests/testMinimumZoomPortalReturnPersistsTheSameCamera()"
+        },
+        {
+          "identifier" : "NotebookMacTests/PortalRenderingTests/testPortalAndActiveBoardRenderTheSameContentAtHandoff()"
+        },
+        {
+          "identifier" : "NotebookMacTests/PortalRenderingTests/testSequentialCompositionKeepsOverlapsCoversAndNestedPortals()"
+        },
+        {
+          "identifier" : "NotebookMacTests/ProgramAssetTests/testColdBoardPackageRunsModulesWorkerImagesMediaAndRangesOffline()"
+        },
+        {
+          "identifier" : "NotebookMacTests/ProgramAssetTests/testCompiledTypeScriptPackageRunsOfflineAndCheckpointsInBothExistingOwners()"
+        },
+        {
+          "identifier" : "NotebookMacTests/ProgramAssetTests/testDenseSignalPackageUsesOfflinePlotMathJaxRangesAndLatestCheckpoint()"
+        },
+        {
+          "identifier" : "NotebookMacTests/ProgramAssetTests/testDocumentIframePackageUsesExistingParentStateAndLifecycleOwner()"
+        },
+        {
+          "identifier" : "NotebookMacTests/ProgramAssetTests/testPassiveRasterPreparationReadsTheSamePackageWithoutKeepingAnExecutor()"
+        },
+        {
+          "identifier" : "NotebookMacTests/ProgramAssetTests/testPortableArchiveImportsRealScientificResourcesWithoutExecutingBeforeOpen()"
+        },
+        {
+          "identifier" : "NotebookMacTests/ProgramAssetTests/testRangesNamespacesAndRevocationUseBoundedReads()"
+        },
+        {
+          "identifier" : "NotebookMacTests/ProgramAssetTests/testSavedPDFExportsACompiledAssetPackageWithoutAProgramStoreFallback()"
+        },
+        {
+          "identifier" : "NotebookMacTests/ProgramAssetTests/testScientificRasterExportsRenderSavedModelsAtRequestedScaleWithoutLiveCommits()"
+        },
+        {
+          "identifier" : "NotebookMacTests/ProgramAssetTests/testSignalExportsTheExactSavedSampleWindowAsOfflineVectors()"
+        },
+        {
+          "identifier" : "NotebookMacTests/ProgramAssetTests/testSixInlineScientificRecipesCheckpointTheirExplicitModelThroughTheExistingOwner()"
+        },
+        {
+          "identifier" : "NotebookMacTests/ProgramAssetTests/testThreeDimensionalFailuresRetryAndDisposalStayLocal()"
+        },
+        {
+          "identifier" : "NotebookMacTests/ProgramAssetTests/testThreeDimensionalPackageOwnsOfflineResourcesContextRecoveryAndCheckpoint()"
+        },
+        {
+          "identifier" : "NotebookMacTests/ProgramAssetTests/testUnrestrictedControlConfirmsWorkerDataFetchIsNotAFalsePositiveFromCORSOrNetwork()"
+        },
+        {
+          "identifier" : "NotebookMacTests/ProgramAssetTests/testWaveWorkerBackpressureCancellationAndMediaCheckpointOffline()"
+        },
+        {
+          "identifier" : "NotebookMacTests/ProgramImportTests/testCancelBeforeReadingDoesNotAdmitTheManifestAndRetryUsesTheSameIdentity()"
+        },
+        {
+          "identifier" : "NotebookMacTests/ProgramImportTests/testLargeFileImportYieldsToTheExistingWriterAndSurvivesColdStatus()"
+        },
+        {
+          "identifier" : "NotebookMacTests/ProgramStateTransferTests/testAdmittedReadCannotAdoptAReplacementPageProgramBeforeItsWriterCallback()"
+        },
+        {
+          "identifier" : "NotebookMacTests/ProgramStateTransferTests/testCheckpointReadRetryKeepsItsWindowsAndAdmissionUntilSnapshotOwnershipTransfers()"
+        },
+        {
+          "identifier" : "NotebookMacTests/ProgramStateTransferTests/testCheckpointRetainsItsAdditionalAdmissionThroughPersistence()"
+        },
+        {
+          "identifier" : "NotebookMacTests/ProgramStateTransferTests/testCheckpointRevocationRetainsReadAdmissionUntilTheLateWindowReturns()"
+        },
+        {
+          "identifier" : "NotebookMacTests/ProgramStateTransferTests/testEveryJSONRootTraversesTheSameAdmittedStateOwner()"
+        },
+        {
+          "identifier" : "NotebookMacTests/ProgramStateTransferTests/testNativeDeadlineRejectsALateBrowserReplyWithoutWaitingForItsPromise()"
+        },
+        {
+          "identifier" : "NotebookMacTests/ProgramStateTransferTests/testOldDescriptorCannotReadAcknowledgeOrCreditANewContextInTheSameWebView()"
+        },
+        {
+          "identifier" : "NotebookMacTests/ProgramStateTransferTests/testPassivePreparationDoesNotConsumeItsInitialStateBudgetAsUnusedWriteCredit()"
+        },
+        {
+          "identifier" : "NotebookMacTests/ProgramStateTransferTests/testProgramWriterQueueKeepsEveryAcceptedRevisionAndCreditFenceAcrossDiskRetry()"
+        },
+        {
+          "identifier" : "NotebookMacTests/ProgramStateTransferTests/testReadAndLostACKRetryResumeOnlyTheirFailedFIFOStage()"
+        },
+        {
+          "identifier" : "NotebookMacTests/ProgramStateTransferTests/testRealWebKitPullPreservesUnicodeAcrossTheWindowBeyondFourMiB()"
+        },
+        {
+          "identifier" : "NotebookMacTests/ProgramStateTransferTests/testRevokedCheckpointLeavesTheMemoryQueueWithoutWaitingForCapacity()"
+        },
+        {
+          "identifier" : "NotebookMacTests/ProgramStateTransferTests/testSourceRevocationJoinsAnEnteredWriterButDoesNotRunItsQueuedSuccessor()"
+        },
+        {
+          "identifier" : "NotebookMacTests/ProgramStateTransferTests/testThreeLargeAcceptedSnapshotsKeepFIFOAndTheirOwnerThroughRetirement()"
+        },
+        {
+          "identifier" : "NotebookMacTests/ProgramStateTransferTests/testUnreadyHeapRetirementClosesAdmissionAndJoinsDelayedPullBeforeDurability()"
+        },
+        {
+          "identifier" : "NotebookMacTests/RasterEncodedRepresentationTests/testCompetingBorrowersCoalesceAndCancellationPreservesTheirPeer()"
+        },
+        {
+          "identifier" : "NotebookMacTests/RasterEncodedRepresentationTests/testImmediateReborrowRetiresTheLastCancelledFlightBeforeEncodingAgain()"
+        },
+        {
+          "identifier" : "NotebookMacTests/RasterEncodedRepresentationTests/testImmutableEntryMemoizesPNGAndSHAWithColdWarmMeasurements()"
+        },
+        {
+          "identifier" : "NotebookMacTests/RasterEncodedRepresentationTests/testLastCancelledBorrowerReturnsItsChargeAfterEncoderCompletion()"
+        },
+        {
+          "identifier" : "NotebookMacTests/RasterEncodedRepresentationTests/testNearPixelLimitCompressibleCohortStillDeliversAll2048Layers()"
+        },
+        {
+          "identifier" : "NotebookMacTests/RasterEncodedRepresentationTests/testOutputAdmissionRefusalLeaksNothingAndRetryPreservesPixels()"
+        },
+        {
+          "identifier" : "NotebookMacTests/SceneCameraPlaneTests/testNativeCameraConversionKeepsOneHostedRootAndPhysicalBounds()"
+        },
+        {
+          "identifier" : "NotebookMacTests/SceneCameraPlaneTests/testRasterTileKeepsItsProjectedFrameAcrossZoomAndPublication()"
+        },
+        {
+          "identifier" : "NotebookMacTests/SceneCameraPlaneTests/testRebasePublishesMountedBodyBeforeNewBounds()"
+        },
+        {
+          "identifier" : "NotebookMacTests/SceneCameraPlaneTests/testSplitPaneResizeKeepsOneCameraScaleInEitherSwiftUILayoutOrder()"
+        },
+        {
+          "identifier" : "NotebookMacTests/SceneCameraPlaneTests/testWheelPanSettlementKeepsThePreparedPaperAndItsNativeProjection()"
+        },
+        {
+          "identifier" : "NotebookMacTests/SceneCameraPlaneTests/testZoomOutRevealsPreparedContentOutsideTheAnchorViewport()"
+        },
+        {
+          "identifier" : "NotebookMacTests/SceneLeafRasterWitnessTests/testFallbackWaitsForTheExactSourceCropAndRequiredDensity()"
+        },
+        {
+          "identifier" : "NotebookMacTests/SceneLeafRasterWitnessTests/testOnlyNewPixelsOfTheUsedLeafInvalidateAfterCompositionAndEviction()"
+        },
+        {
+          "identifier" : "NotebookMacTests/SceneLeafRasterWitnessTests/testPublicationBeforeBorrowRemainsVisibleAfterEvictionAndJournalOverflowRejects()"
+        },
+        {
+          "identifier" : "NotebookMacTests/SceneRasterCompositionTests/testActualWebSourcesReleaseEachExecutorBeforeTheNextSource()"
+        },
+        {
+          "identifier" : "NotebookMacTests/SceneRasterCompositionTests/testArtworkContextPreservesFractionalPlacementAxesAndTransparency()"
+        },
+        {
+          "identifier" : "NotebookMacTests/SceneRasterCompositionTests/testBoardCompositionStreamsMoreSourcePixelsThanItsBudget()"
+        },
+        {
+          "identifier" : "NotebookMacTests/SceneRasterCompositionTests/testBoardGridPiecesPreserveNativeDotsAtFractionalPlacement()"
+        },
+        {
+          "identifier" : "NotebookMacTests/SceneRasterCompositionTests/testInkTilesKeepTheWholeMetalRasterAtFractionalProjectionAndEraserSeams()"
+        },
+        {
+          "identifier" : "NotebookMacTests/SceneRasterCompositionTests/testInputInterruptionCannotPublishPartialComposition()"
+        },
+        {
+          "identifier" : "NotebookMacTests/SceneRasterCompositionTests/testLargeNativeInkRegionUsesOneOutputAndKeepsEraserAcrossTileEdges()"
+        },
+        {
+          "identifier" : "NotebookMacTests/SceneRasterCompositionTests/testManyUniqueSourcesExceedTheBudgetInTotalButNotWhileComposing()"
+        },
+        {
+          "identifier" : "NotebookMacTests/SceneRasterCompositionTests/testPageCompositionKeepsItsPNGIdentityAcrossOtherSizesAndScales()"
+        },
+        {
+          "identifier" : "NotebookMacTests/SceneRasterCompositionTests/testPageCompositionRetainsItsPNGIdentityDuringParallelVisionEncoding()"
+        },
+        {
+          "identifier" : "NotebookMacTests/SceneRasterCompositionTests/testPainterOrderAlphaClippingAndTopLeftCoordinates()"
+        },
+        {
+          "identifier" : "NotebookMacTests/SceneRasterCompositionTests/testRegionalInkProofKeepsTheWholeRendererPNGIdentity()"
+        },
+        {
+          "identifier" : "NotebookMacTests/SceneRasterCompositionTests/testWholeLargeBoardStreamsItsBackgroundAndInkWithinTheSameBudget()"
+        },
+        {
+          "identifier" : "NotebookMacTests/SnapshotLeaseBindingTests/testDocumentCompositionReadsItsLeaseAfterALateSameSourceCapture()"
+        },
+        {
+          "identifier" : "NotebookMacTests/SnapshotLeaseBindingTests/testPageCompositionKeepsInkAboveArtifactsButElementOnlyReadDoesNotExposeInk()"
+        },
+        {
+          "identifier" : "NotebookMacTests/SnapshotLeaseBindingTests/testPageCompositionReadsTheBorrowedEntryAfterALateSameSourceCapture()"
+        },
+        {
+          "identifier" : "NotebookMacTests/SnapshotLeaseBindingTests/testRetainedSourceDoesNotFollowANewerOrEvictedAlias()"
+        },
+        {
+          "identifier" : "NotebookMacTests/StaticSVGRasterTests/testNativeVectorPixelsMatchThePreviousBrowserProjection()"
+        },
+        {
+          "identifier" : "NotebookMacTests/StaticSVGRasterTests/testNativeVectorsDoNotBorrowBrowserLayoutOrFontSemantics()"
+        },
+        {
+          "identifier" : "NotebookMacTests/StaticSVGRasterTests/testVectorPaintAndCropRemainExactWithoutAnyWebExecutor()"
+        },
+        {
+          "identifier" : "NotebookMacTests/VectorInkRenderingTests/testIndexedCroppedRasterMatchesWholeVectorSourceAfterShear()"
+        },
+        {
+          "identifier" : "NotebookMacTests/VectorInkRenderingTests/testMeasureWholePoseEditWithoutReadingRetainedVertices()"
+        },
+        {
+          "identifier" : "NotebookMacTests/VectorPathEditingTests/testCopiedBodyLocalReplacementAndDecodeKeepIndependentValidity()"
+        },
+        {
+          "identifier" : "NotebookMacTests/VectorPathEditingTests/testMeasureColdAdmissionAndWarmPoseWithoutChangingTheContour()"
+        },
+        {
+          "identifier" : "NotebookMacTests/VectorPathEditingTests/testValidationRetainsContourAndNumericBoundaries()"
+        },
+        {
+          "identifier" : "NotebookMacTests/WorkspaceAppearanceTests/testCameraAndTitleChangesReuseMaterialAndShadowPixels()"
+        },
+        {
+          "identifier" : "NotebookMacTests/WorkspaceAppearanceTests/testClosedCoverHasNoPaperOutsideItsContour()"
+        },
+        {
+          "identifier" : "NotebookMacTests/WorkspaceAppearanceTests/testCoverMaterialsKeepStableIdentityAndReadablePencil()"
+        },
+        {
+          "identifier" : "NotebookMacTests/WorkspaceAppearanceTests/testDocumentModelRestoresTheCompiledPaperFitAfterWindowRotation()"
+        },
+        {
+          "identifier" : "NotebookMacTests/WorkspaceAppearanceTests/testDocumentTitlePagesKeepPaperProportionsAndReadableLongTitles()"
+        },
+        {
+          "identifier" : "NotebookMacTests/WorkspaceAppearanceTests/testFolderHasOneTabNoSpineAndOnlyTheNonemptyVariantShowsASheet()"
+        }
+      ],
+      "enabledTests" : [
+        {
+          "identifier" : "NotebookMacTests/NotebookGraphicRenderingTests/testInkRasterIdentityIncludesPresentationWithoutChangingTheMeasurementVersion()"
+        },
+        {
+          "identifier" : "NotebookMacTests/RasterEncodedRepresentationTests/testLayerBorrowTransfersChargeThroughEvictionAndWithOrder()"
+        }
+      ],
+      "testPlan" : "NotebookRuntime"
+    }
+  ]
+}

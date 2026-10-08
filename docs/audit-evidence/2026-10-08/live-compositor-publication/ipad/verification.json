@@ -1,0 +1,590 @@
+{
+  "rawSHA256": "0268047940f382451b6c01a711a2933f146290acc9f5099b48fe1716d09090e5",
+  "rawBytes": 368402,
+  "summary": {
+    "artifacts": [
+      {
+        "bytes": 0,
+        "path": "codex-resources.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 582,
+        "path": "codex-resources.stdout.log",
+        "sha256": "701d6620ab6042b832faac58053f89a7a3f9da853eeee118725f8451f648ec14"
+      },
+      {
+        "bytes": 55381,
+        "path": "commands.json",
+        "sha256": "42f19e2818b66c22ad223cfb269b8dee7bc3b4b50658c1492e3f8255af8361be"
+      },
+      {
+        "bytes": 1347,
+        "path": "completed.json",
+        "sha256": "25e35e2a9e57d6f7e6e22cc1b8fffc5ffc6e01b7887fadc3e6431902b360a8a2"
+      },
+      {
+        "bytes": 0,
+        "path": "generate-project.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 177,
+        "path": "generate-project.stdout.log",
+        "sha256": "83ff91fd67f392e6d25df2e78150ac8274b0f4eea0a8894c6ebdc1c05a5f3bfb"
+      },
+      {
+        "bytes": 0,
+        "path": "ipad-build-for-testing.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 22003,
+        "path": "ipad-build-for-testing.stdout.log",
+        "sha256": "a99a5ccce6e8d8116e5500a6097f004bd5041261ed20b9c97b85202929d4616f"
+      },
+      {
+        "bytes": 1226,
+        "path": "ipad-execution.json",
+        "sha256": "f7d5177f42a75fa5c2f12a643ffd7283b381e7e178ae1ba2d67fafe7e6b091e5"
+      },
+      {
+        "bytes": 277751,
+        "path": "ipad-inventory.json",
+        "sha256": "c81e75b1def010c5a7f77b6a42f57f9ad1df60c9d1935c28306dbd51024df31a"
+      },
+      {
+        "bytes": 0,
+        "path": "ipad-inventory.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 0,
+        "path": "ipad-inventory.stdout.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 0,
+        "path": "ipad-native-test-cleanup-after.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 77,
+        "path": "ipad-native-test-cleanup-after.stdout.log",
+        "sha256": "400b9b6e5dd2b81955c55a4a017fa5beafb08a9655663266daa1ec5f7b103de8"
+      },
+      {
+        "bytes": 0,
+        "path": "ipad-native-test-cleanup-before.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 78,
+        "path": "ipad-native-test-cleanup-before.stdout.log",
+        "sha256": "dd6cc41d24dd69f7bbd6f9642f03003de020ef59f1e121e304047c9829a11711"
+      },
+      {
+        "bytes": 966,
+        "path": "ipad-summary.json",
+        "sha256": "2a3432e7130999e3e9d552d868570d5d4c355e8c40d4adeaef52a00429298bb4"
+      },
+      {
+        "bytes": 0,
+        "path": "ipad-summary.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 740,
+        "path": "ipad-summary.stdout.log",
+        "sha256": "75ebbf213f190e38f616270f3671766476d9eae60bb30bb032496c42161cc592"
+      },
+      {
+        "bytes": 4279,
+        "path": "ipad-tests.json",
+        "sha256": "33c39c7ab151c76eda440dc7314a6d0d0b7e54accfa2a9dd01a8d0864113ea95"
+      },
+      {
+        "bytes": 0,
+        "path": "ipad-tests.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 3036,
+        "path": "ipad-tests.stdout.log",
+        "sha256": "a6878444f05d001710e526c9f9fba69c4725ef0899d882b0518da7b111943b48"
+      },
+      {
+        "bytes": 1107,
+        "path": "ipad-timings.json",
+        "sha256": "1860e5db6b2e15d20393b4a6b842c34a7f19763af3feee1d2e185cc7791e8fb0"
+      },
+      {
+        "bytes": 368,
+        "path": "ipad.stderr.log",
+        "sha256": "be83791697d1a5193f2cd18dd29501c35d6fa72e28c79a8d6b4a341bc9f86bbd"
+      },
+      {
+        "bytes": 150,
+        "path": "ipad.stdout.log",
+        "sha256": "b2a8c1ad6c15806e064ae6e96524bd187b7206fd607e75ffd1122d9e4ce382ed"
+      },
+      {
+        "bytes": 107,
+        "path": "ipad.xcresult/Data/data.0~3onceAGwyVaWo2QE0cUD2Qe7SHxfwTOJjv-oi-wppf5KCRvAXI9-PYh7-m1FWX2LgRzQm4v1Pz6aAlY0liAMEw==",
+        "sha256": "e94f40ba3d13e5f5673a5ab1de62604bfee56379e4bc17ec5adf129803811911"
+      },
+      {
+        "bytes": 7937,
+        "path": "ipad.xcresult/Data/data.0~5EBB5ZsOUo9e3SQj2Cg5Zrf3MpNGVgXKREn3BT_a6Y6YfvRftmaa7ejgLv_gZDCzGZPyNS-JUGtUYqUq10XRiA==",
+        "sha256": "da4410fac2cc85b75ba75e3d0231c83b3226293d29700c32ddf9f1f6dacd0a30"
+      },
+      {
+        "bytes": 115,
+        "path": "ipad.xcresult/Data/data.0~82rSfZTHQwE_zm9WeJ1MdSn3KoqW6gvaqmvUM7O7r9JUt1kdd55lftoiwHxprppRkkGRePbeWK3W3pOXyVHB0w==",
+        "sha256": "06b7d23b430260024a78485c232a3e9143a236739cc3637cbbb7a14bb273a3ca"
+      },
+      {
+        "bytes": 423,
+        "path": "ipad.xcresult/Data/data.0~8njsmS_XcvrDef9R5Y5AQRta2kI6PxTgvlMAKe5olemksQN5hkJxttbiZh5mR7US0fIq8LB0_agrkFWKkNiVjw==",
+        "sha256": "6207812b2733e66c3ea4be8827868c20887c01a68c7f8a99864345b37fb25da2"
+      },
+      {
+        "bytes": 295,
+        "path": "ipad.xcresult/Data/data.0~9S7VFM94AB6OGE36BW5SRT-zjP6ZFgOh0TjCWn-P9mRIG3303xEL1KzxHFOJh0pSU4bBmvSye5YqOE0xrFfyIw==",
+        "sha256": "c2e754766b4e49ae9f51f49dcfbf47d8e6e8545f7b398084a7127a7e3ae8afb7"
+      },
+      {
+        "bytes": 38,
+        "path": "ipad.xcresult/Data/data.0~Bo7lVh1AI5dluXqMtAWqPo-B84Q8uwT8317-kTxQE0NNAQ7KJBggKUFwQG13F9w6bI1995Tal9Fg2kWF_Uc-Zg==",
+        "sha256": "0a3e38a7ee2f4a7971fb4853eb1fdbd6acbeae91d43fcf4a6e70f65e3371434d"
+      },
+      {
+        "bytes": 430,
+        "path": "ipad.xcresult/Data/data.0~IKvapF-E1-zCkklbgrhNYapVhj9yJXzgM-J53EoH_qLfcqSMLq8CmJAzgztynRrsxLIiWOWvgDS3Gyu_9-3KVw==",
+        "sha256": "b18c87d6e7c6118c23b0aeb58d7e4d03ee4782333b9d8b13da9bac3740362068"
+      },
+      {
+        "bytes": 419,
+        "path": "ipad.xcresult/Data/data.0~Q6yIZEVGKLfIkBRv0YF32zJXit8azCSIV4wbXR0IT3wAq1TqfjDOFicJA0aEL8M2ZheiLTi_juUAPK4OPqzv-Q==",
+        "sha256": "6b910eee0d5ddcef955d9dc848928432e4d1e0e781164528109d58ff4893130b"
+      },
+      {
+        "bytes": 557,
+        "path": "ipad.xcresult/Data/data.0~RQPkcGYx0eL3jsDs2uOezuQ3dOeUSn5L5ydnHredV_5C6HAWAgbCO5Egztxn_DSPa0n5s5qPhM0cuyOWx73wTg==",
+        "sha256": "534e37c1687be2a9e3e53d00bf0e43a52023208fd88504d4e2e031fe385fb170"
+      },
+      {
+        "bytes": 1754,
+        "path": "ipad.xcresult/Data/data.0~S7R1apLdsrwHvSKKoTJB38FNdMTUPPgbcXYX5_syG8xLmWxr-4Bh_bp0Yil4C9D4tZ5vJkKTjVVn3zue2ydJKA==",
+        "sha256": "6d0f6ceab10ff49ada319b0961e00e4a4abe875b5fe3ca128795932c7c2c832c"
+      },
+      {
+        "bytes": 419,
+        "path": "ipad.xcresult/Data/data.0~Wx060SG-bE1nccbaNKwqmEVcCtOD7i7hZcEga0J2XBPJnHj3HJD_jl-vWPDi7bJZwy6Hnyj51THs8NAF45fm0Q==",
+        "sha256": "1d20c040d3caa8ba00fe0b7ab1952df0363e5fc19d85b9f8f8187d7c7b76ac50"
+      },
+      {
+        "bytes": 1646,
+        "path": "ipad.xcresult/Data/data.0~_7aMd3vt5wnyhWdMTfniZMhERQ0FYqX0lTrKDxFJHttLsLzHLvNvIGY0zOLsSR_i4ZmhXG3VdBpVsbMOZ09tRw==",
+        "sha256": "98a46cd3a58872eb6622798d6d7168dc5f9ecbc03112cffa5fc0b2041dd23189"
+      },
+      {
+        "bytes": 178,
+        "path": "ipad.xcresult/Data/data.0~gEzf0nFT0N3CgfSTy8lIN26r2vOlddJ-Ugo2yyma7tiyXn4vRyUiCsI3wOZL_zuZvy_JacBV4v4R5VFMj9zqtg==",
+        "sha256": "8ca596472e4b8a0484ca887986c9a70d8508b0010d083a8d22b83602b1d161ea"
+      },
+      {
+        "bytes": 305,
+        "path": "ipad.xcresult/Data/data.0~mmrtRkS376GSFlEpPry1_E7R2kH-9_1LFeeYkLZMImOaD4iMARI7QTeAbNJhhv_kLbrKghlpaZtmhNVrT1C0dA==",
+        "sha256": "d73f24f7a1fa5cd4665cc982a27c3d67a2a4e4b40d7f59bf7049a4724c8f6c0c"
+      },
+      {
+        "bytes": 423,
+        "path": "ipad.xcresult/Data/data.0~rSheMl6WUkJ0LkzSYwumN-J3g570WYsrnILpR300qK-3b9veZ_jNcKSPEUZlov0PUA6y_Q-bMnEu2hWu6iUlKg==",
+        "sha256": "fcf749a1082d63da9817487523e7e9fba3e6b260500a4e293e1974856021f298"
+      },
+      {
+        "bytes": 3912,
+        "path": "ipad.xcresult/Data/data.0~utZZDEoeTKH8u_RgM1PnI63PpTVxIeHyo5XkpaXxODjL3SjRqejLmuLiBnM9cZALIkQMFVwCIiYPGFx3CJCaNA==",
+        "sha256": "db09876c6417988930ae91af1976cc1f2d0d5e46adff05d7d0ac59f8efcc4544"
+      },
+      {
+        "bytes": 795,
+        "path": "ipad.xcresult/Data/data.0~zEpF13Dk_vqSkTf4HK82tNNE_1cOtvUFQjurqAQjcpetsi-2oh4Zmqu9F9LxumoO5q08miTitjGgF5SolS-8ZQ==",
+        "sha256": "1f31c7ba79156c9a909671fb92862bcb4d03e1b864a2c5a5627dc56103a8f0bc"
+      },
+      {
+        "bytes": 133,
+        "path": "ipad.xcresult/Data/refs.0~3onceAGwyVaWo2QE0cUD2Qe7SHxfwTOJjv-oi-wppf5KCRvAXI9-PYh7-m1FWX2LgRzQm4v1Pz6aAlY0liAMEw==",
+        "sha256": "0df7462c8ca72d38c2a66eaf5029f96954bac1b48f0ac2cc48a415c4212fd2ac"
+      },
+      {
+        "bytes": 1,
+        "path": "ipad.xcresult/Data/refs.0~5EBB5ZsOUo9e3SQj2Cg5Zrf3MpNGVgXKREn3BT_a6Y6YfvRftmaa7ejgLv_gZDCzGZPyNS-JUGtUYqUq10XRiA==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 133,
+        "path": "ipad.xcresult/Data/refs.0~82rSfZTHQwE_zm9WeJ1MdSn3KoqW6gvaqmvUM7O7r9JUt1kdd55lftoiwHxprppRkkGRePbeWK3W3pOXyVHB0w==",
+        "sha256": "aaa4bd2d345e7e7f6fe87b6ffaf52400fa63579c4bd45773b3e1a2d7e891e111"
+      },
+      {
+        "bytes": 1,
+        "path": "ipad.xcresult/Data/refs.0~8njsmS_XcvrDef9R5Y5AQRta2kI6PxTgvlMAKe5olemksQN5hkJxttbiZh5mR7US0fIq8LB0_agrkFWKkNiVjw==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 1,
+        "path": "ipad.xcresult/Data/refs.0~9S7VFM94AB6OGE36BW5SRT-zjP6ZFgOh0TjCWn-P9mRIG3303xEL1KzxHFOJh0pSU4bBmvSye5YqOE0xrFfyIw==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 67,
+        "path": "ipad.xcresult/Data/refs.0~Bo7lVh1AI5dluXqMtAWqPo-B84Q8uwT8317-kTxQE0NNAQ7KJBggKUFwQG13F9w6bI1995Tal9Fg2kWF_Uc-Zg==",
+        "sha256": "9c718050ed4051fa4163f56a4a457e51333070cdaa31dddffe49bdc50147b94b"
+      },
+      {
+        "bytes": 1,
+        "path": "ipad.xcresult/Data/refs.0~IKvapF-E1-zCkklbgrhNYapVhj9yJXzgM-J53EoH_qLfcqSMLq8CmJAzgztynRrsxLIiWOWvgDS3Gyu_9-3KVw==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 1,
+        "path": "ipad.xcresult/Data/refs.0~Q6yIZEVGKLfIkBRv0YF32zJXit8azCSIV4wbXR0IT3wAq1TqfjDOFicJA0aEL8M2ZheiLTi_juUAPK4OPqzv-Q==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 1,
+        "path": "ipad.xcresult/Data/refs.0~RQPkcGYx0eL3jsDs2uOezuQ3dOeUSn5L5ydnHredV_5C6HAWAgbCO5Egztxn_DSPa0n5s5qPhM0cuyOWx73wTg==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 265,
+        "path": "ipad.xcresult/Data/refs.0~S7R1apLdsrwHvSKKoTJB38FNdMTUPPgbcXYX5_syG8xLmWxr-4Bh_bp0Yil4C9D4tZ5vJkKTjVVn3zue2ydJKA==",
+        "sha256": "5cf0180bb398cb52bab8ccb49a09a52aa5410d1ab70be30c4ffc094469c8ad95"
+      },
+      {
+        "bytes": 1,
+        "path": "ipad.xcresult/Data/refs.0~Wx060SG-bE1nccbaNKwqmEVcCtOD7i7hZcEga0J2XBPJnHj3HJD_jl-vWPDi7bJZwy6Hnyj51THs8NAF45fm0Q==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 331,
+        "path": "ipad.xcresult/Data/refs.0~_7aMd3vt5wnyhWdMTfniZMhERQ0FYqX0lTrKDxFJHttLsLzHLvNvIGY0zOLsSR_i4ZmhXG3VdBpVsbMOZ09tRw==",
+        "sha256": "9b0f063432ff664725782e9b81cfad5c39894f5b7721d53e0858fd2d1d2ea3da"
+      },
+      {
+        "bytes": 133,
+        "path": "ipad.xcresult/Data/refs.0~gEzf0nFT0N3CgfSTy8lIN26r2vOlddJ-Ugo2yyma7tiyXn4vRyUiCsI3wOZL_zuZvy_JacBV4v4R5VFMj9zqtg==",
+        "sha256": "5b2c7562e130153e9dd4c02da649442828bc16e7804cac8310dab922ec398b90"
+      },
+      {
+        "bytes": 1,
+        "path": "ipad.xcresult/Data/refs.0~mmrtRkS376GSFlEpPry1_E7R2kH-9_1LFeeYkLZMImOaD4iMARI7QTeAbNJhhv_kLbrKghlpaZtmhNVrT1C0dA==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 1,
+        "path": "ipad.xcresult/Data/refs.0~rSheMl6WUkJ0LkzSYwumN-J3g570WYsrnILpR300qK-3b9veZ_jNcKSPEUZlov0PUA6y_Q-bMnEu2hWu6iUlKg==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 1,
+        "path": "ipad.xcresult/Data/refs.0~utZZDEoeTKH8u_RgM1PnI63PpTVxIeHyo5XkpaXxODjL3SjRqejLmuLiBnM9cZALIkQMFVwCIiYPGFx3CJCaNA==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 1,
+        "path": "ipad.xcresult/Data/refs.0~zEpF13Dk_vqSkTf4HK82tNNE_1cOtvUFQjurqAQjcpetsi-2oh4Zmqu9F9LxumoO5q08miTitjGgF5SolS-8ZQ==",
+        "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "bytes": 776,
+        "path": "ipad.xcresult/Info.plist",
+        "sha256": "71adee7a4d9d7bbbe1b51d77b0374d52dd45fcc678617c161ae3f1e357375aa3"
+      },
+      {
+        "bytes": 245760,
+        "path": "ipad.xcresult/database.sqlite3",
+        "sha256": "2f298ad021e6fb7980a8496316b6a497c8d4b55e34aa351746f703e131b53c08"
+      },
+      {
+        "bytes": 687,
+        "path": "physical-ipad-lock-state-execution.json",
+        "sha256": "964360aa4e7846485dd083b28d3bde4a14fd26c809fbf81cf657a72c4ea2161e"
+      },
+      {
+        "bytes": 687,
+        "path": "physical-ipad-lock-state-inventory.json",
+        "sha256": "ae1f305c35a46937118f9b9c075fded1590876ed084a668562f5a8675bf8179e"
+      },
+      {
+        "bytes": 677,
+        "path": "physical-ipad-lock-state.json",
+        "sha256": "f6bee72961e2ea0fd7f86fb5e094272c7f421b0538a130291fc5ab5e637fa11a"
+      },
+      {
+        "bytes": 12852,
+        "path": "physical-ipad.json",
+        "sha256": "17cbcf881e32ba0b942c024a07061d2221e2083adced8a6f4c894bee579a568e"
+      },
+      {
+        "bytes": 0,
+        "path": "physical-ipad.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 6538,
+        "path": "physical-ipad.stdout.log",
+        "sha256": "d2c119bf7a38524420c0e3bedd4f6843e0cac0f273ed1470ae43d2d8acb1b265"
+      },
+      {
+        "bytes": 1603,
+        "path": "selection.json",
+        "sha256": "5ac5e0d7859957166826f9ef8437355f68ac92447ea20932881d4592b40022c8"
+      },
+      {
+        "bytes": 329551,
+        "path": "source-after.json",
+        "sha256": "89c8decd7540c01ba83a49b37051e0fb91a3753d59137117198fd8644b379ba4"
+      },
+      {
+        "bytes": 329551,
+        "path": "source-before.json",
+        "sha256": "89c8decd7540c01ba83a49b37051e0fb91a3753d59137117198fd8644b379ba4"
+      },
+      {
+        "bytes": 0,
+        "path": "toolchain-after-iphoneosSDK.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 7,
+        "path": "toolchain-after-iphoneosSDK.stdout.log",
+        "sha256": "62cbab419e9a35d0a85cc03b9d4bb98e5dae96591632655688ac714805d333be"
+      },
+      {
+        "bytes": 0,
+        "path": "toolchain-after-macosSDK.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 7,
+        "path": "toolchain-after-macosSDK.stdout.log",
+        "sha256": "8e78a5c0c20fa1f07a154dbd8319d52d2bc1c38974a5b30047e300e8d0ec8a23"
+      },
+      {
+        "bytes": 0,
+        "path": "toolchain-after-node.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 9,
+        "path": "toolchain-after-node.stdout.log",
+        "sha256": "f2ec568164f99546161909b0189b57bb5be3e80f8e2ccd8a51a4aed8c4055a04"
+      },
+      {
+        "bytes": 0,
+        "path": "toolchain-after-npm.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 7,
+        "path": "toolchain-after-npm.stdout.log",
+        "sha256": "3feff640caf45a44b1f043aee65d8fdfec6379d905d9efc1a2ba8b51a9f23652"
+      },
+      {
+        "bytes": 0,
+        "path": "toolchain-after-python.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 14,
+        "path": "toolchain-after-python.stdout.log",
+        "sha256": "917601090ffb73a030e3eaa8b7a01c41400cad4b61366b4218d7756a5733b66c"
+      },
+      {
+        "bytes": 30,
+        "path": "toolchain-after-swift.stderr.log",
+        "sha256": "bbc8b176d3c74d4c5a7fd00b40280f98168e116d5272273bfe8e71407625540e"
+      },
+      {
+        "bytes": 98,
+        "path": "toolchain-after-swift.stdout.log",
+        "sha256": "04630ab8fa201f57c63c59730e638135e32584a97e16e004a417eb8ed283dc83"
+      },
+      {
+        "bytes": 0,
+        "path": "toolchain-after-xcode.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 33,
+        "path": "toolchain-after-xcode.stdout.log",
+        "sha256": "694b44731d0b415c5b11d844151e466d7f5e200a95627efda377f232f1a6ab77"
+      },
+      {
+        "bytes": 0,
+        "path": "toolchain-after-xcodegen.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 16,
+        "path": "toolchain-after-xcodegen.stdout.log",
+        "sha256": "bf8aa757345fcd22d1fd26e760aa058f02991e2d930686b8eaf750cd6e5f8532"
+      },
+      {
+        "bytes": 318,
+        "path": "toolchain-after.json",
+        "sha256": "5d490c0c11042b67180f7aa900961d34b44c362ca4c89bf657ef438ebc8a7027"
+      },
+      {
+        "bytes": 0,
+        "path": "toolchain-iphoneosSDK.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 7,
+        "path": "toolchain-iphoneosSDK.stdout.log",
+        "sha256": "62cbab419e9a35d0a85cc03b9d4bb98e5dae96591632655688ac714805d333be"
+      },
+      {
+        "bytes": 0,
+        "path": "toolchain-macosSDK.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 7,
+        "path": "toolchain-macosSDK.stdout.log",
+        "sha256": "8e78a5c0c20fa1f07a154dbd8319d52d2bc1c38974a5b30047e300e8d0ec8a23"
+      },
+      {
+        "bytes": 0,
+        "path": "toolchain-node.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 9,
+        "path": "toolchain-node.stdout.log",
+        "sha256": "f2ec568164f99546161909b0189b57bb5be3e80f8e2ccd8a51a4aed8c4055a04"
+      },
+      {
+        "bytes": 0,
+        "path": "toolchain-npm.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 7,
+        "path": "toolchain-npm.stdout.log",
+        "sha256": "3feff640caf45a44b1f043aee65d8fdfec6379d905d9efc1a2ba8b51a9f23652"
+      },
+      {
+        "bytes": 0,
+        "path": "toolchain-python.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 14,
+        "path": "toolchain-python.stdout.log",
+        "sha256": "917601090ffb73a030e3eaa8b7a01c41400cad4b61366b4218d7756a5733b66c"
+      },
+      {
+        "bytes": 30,
+        "path": "toolchain-swift.stderr.log",
+        "sha256": "bbc8b176d3c74d4c5a7fd00b40280f98168e116d5272273bfe8e71407625540e"
+      },
+      {
+        "bytes": 98,
+        "path": "toolchain-swift.stdout.log",
+        "sha256": "04630ab8fa201f57c63c59730e638135e32584a97e16e004a417eb8ed283dc83"
+      },
+      {
+        "bytes": 0,
+        "path": "toolchain-xcode.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 33,
+        "path": "toolchain-xcode.stdout.log",
+        "sha256": "694b44731d0b415c5b11d844151e466d7f5e200a95627efda377f232f1a6ab77"
+      },
+      {
+        "bytes": 0,
+        "path": "toolchain-xcodegen.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 16,
+        "path": "toolchain-xcodegen.stdout.log",
+        "sha256": "bf8aa757345fcd22d1fd26e760aa058f02991e2d930686b8eaf750cd6e5f8532"
+      },
+      {
+        "bytes": 318,
+        "path": "toolchain.json",
+        "sha256": "5d490c0c11042b67180f7aa900961d34b44c362ca4c89bf657ef438ebc8a7027"
+      },
+      {
+        "bytes": 0,
+        "path": "typesetter-resources-iphoneos.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 75,
+        "path": "typesetter-resources-iphoneos.stdout.log",
+        "sha256": "03f34ea7cd00d599964b795b0bfc521418a4746804a4e1338eb48439b5758498"
+      },
+      {
+        "bytes": 0,
+        "path": "unlocked-ipad-execution.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 142,
+        "path": "unlocked-ipad-execution.stdout.log",
+        "sha256": "89c90ba92bc3c0a805b5b68c335045693646604753da9d0ab87e560a55961a27"
+      },
+      {
+        "bytes": 0,
+        "path": "unlocked-ipad-inventory.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 142,
+        "path": "unlocked-ipad-inventory.stdout.log",
+        "sha256": "89c90ba92bc3c0a805b5b68c335045693646604753da9d0ab87e560a55961a27"
+      },
+      {
+        "bytes": 0,
+        "path": "unlocked-ipad.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "bytes": 142,
+        "path": "unlocked-ipad.stdout.log",
+        "sha256": "89c90ba92bc3c0a805b5b68c335045693646604753da9d0ab87e560a55961a27"
+      }
+    ],
+    "codexRuntime": {
+      "architecture": "arm64",
+      "archiveSHA256": {
+        "codex": "b1411ec00ac410467e05cf8fb5b063cf83632613530201cd4724ef8dd0e9c33f",
+        "node": "bed7eea5325e1108f32ce5228ddd6a5f0f08a499ee42aa7442aea583702f6057"
+      },
+      "codex": "0.155.0",
+      "format": 2,
+      "manifestSHA256": "2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a",
+      "node": "v24.21.0"
+    },
+    "format": 2,
+    "physicalAcceptance": false,
+    "route": "./verify.sh:selected",
+    "scope": "registry-contracts",
+    "source": {
+      "format": 2,
+      "sha256": "c651851853ad4e11826b78c2c536e85fef77ccd2b117f0283a3c8e5563790a5e",
+      "fileCount": 1730
+    },
+    "status": "passed"
+  },
+  "compactSourceInventory": true
+}

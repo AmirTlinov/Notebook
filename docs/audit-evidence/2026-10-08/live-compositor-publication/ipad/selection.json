@@ -1,0 +1,34 @@
+{
+  "baseCommit": "c53cf33b11bf468a90b9844d10f6666702d0e010",
+  "changedFiles": [
+    "Applications/Mac/PageInkRasterCache.swift",
+    "Applications/MacTests/NotebookGraphicRenderingTests.swift",
+    "Applications/Shared/SceneRasterCompositor.swift",
+    "Applications/Shared/SceneRenderResources.swift",
+    "Applications/Tests/SceneRenderResourcesTests.swift"
+  ],
+  "checks": {
+    "commands": [],
+    "core": [],
+    "ipad": [
+      "NotebookTests/SceneRenderResourcesTests/testCompositorImageKeepsItsGrantedCapacityUntilItsFinalBorrowEnds",
+      "NotebookTests/SceneRenderResourcesTests/testCompositorOutputsKeepTheirActualSlotsThroughPublication",
+      "NotebookTests/SceneRenderResourcesTests/testDerivedReservationTransferAdmitsOnlyGrowthAndNeverDropsItsExistingCharge",
+      "NotebookTests/SceneRenderResourcesTests/testOptionalSynchronousAllocationsCannotPassAnAcceptedDerivedStage",
+      "NotebookTests/SceneRenderResourcesTests/testPublicationObserversCannotReclaimTheIncomingRetainedRaster"
+    ],
+    "mac": []
+  },
+  "codexRuntimeStage": "/Users/amir/Documents/projects/Notebook/.build/notebook-codex-runtimes/2f689f53d7a4ae7cb02648226d490b891f0c0ed5b790fc56e6bc847b282c593a",
+  "format": 2,
+  "manualSelection": true,
+  "optimized": false,
+  "profiles": [],
+  "selectionMode": "explicit-only",
+  "sourceRoot": "/Users/amir/Documents/projects/Notebook",
+  "typesetterRuntime": "/Users/amir/Documents/projects/Notebook/.build/notebook-typesetter-runtime",
+  "unclassified": [
+    "Applications/Mac/PageInkRasterCache.swift",
+    "Applications/Shared/SceneRasterCompositor.swift"
+  ]
+}

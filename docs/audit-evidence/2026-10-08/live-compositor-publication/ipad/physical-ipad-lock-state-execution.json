@@ -1,0 +1,28 @@
+{
+  "info" : {
+    "arguments" : [
+      "devicectl",
+      "device",
+      "info",
+      "lockState",
+      "--device",
+      "00008103-001E059934D9001E",
+      "--timeout",
+      "30",
+      "--json-output",
+      "/Users/amir/Documents/projects/Notebook/.build/nb505-live-publication-20261008-v1-ipad/physical-ipad-lock-state-execution.json"
+    ],
+    "commandType" : "devicectl.device.info.lockState",
+    "environment" : {
+      "TERM" : "dumb"
+    },
+    "jsonVersion" : 5,
+    "outcome" : "success",
+    "version" : "642.16"
+  },
+  "result" : {
+    "deviceIdentifier" : "9CF2C22D-1CC6-573F-B27D-7EB0C81D2DD9",
+    "passcodeRequired" : false,
+    "unlockedSinceBoot" : true
+  }
+}
