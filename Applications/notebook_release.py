@@ -17,6 +17,7 @@ import socket
 import subprocess
 import sys
 import stat
+import struct
 import tempfile
 import time
 import prepare_notebook_typesetter as notebook_typesetter
@@ -493,6 +494,97 @@ def prepare_typescript_runtime(source, command, stage_root=None):
     value = json.loads(output)
     require(value.get("status") == "ready" and Path(value.get("stage", "")).is_absolute(), "TypeScript resources are not ready.")
     return Path(value["stage"])
+
+
+def compact_dsym_local_aliases(path):
+    """Remove duplicate local nlist aliases, preserving every DWARF byte.
+
+    Apple's strip cannot rewrite MH_DSYM's nonterminal string table. A dSYM
+    has no dynamic symbol indices or relocations; compacting its standalone
+    nlist table in place preserves all section offsets, UUID and debug data.
+    """
+    path = Path(path)
+    data = bytearray(path.read_bytes())
+    require(len(data) >= 32, "Неполный dSYM Mach-O.")
+    magic, cpu, _, kind, commands, size, _, _ = struct.unpack_from("<8I", data)
+    require((magic, cpu, kind) == (0xfeedfacf, 0x100000c, 0xa) and 32 + size <= len(data),
+            "Ожидался отдельный arm64 MH_DSYM.")
+    offset, table = 32, None
+    for _ in range(commands):
+        require(offset + 8 <= 32 + size, "Неполная load command dSYM.")
+        command, length = struct.unpack_from("<II", data, offset)
+        require(length >= 8 and offset + length <= 32 + size and command != 0xb,
+                "dSYM содержит неполную command или зависимые symbol indices.")
+        if command == 2:
+            require(length == 24 and table is None, "Неоднозначная symbol table dSYM.")
+            table = offset
+        if command == 0x19:
+            require(length >= 72, "Неполный segment dSYM.")
+            sections = struct.unpack_from("<I", data, offset + 64)[0]
+            require(length == 72 + 80 * sections and all(
+                struct.unpack_from("<I", data, offset + 72 + 80 * index + 60)[0] == 0
+                for index in range(sections)), "dSYM содержит relocations.")
+        offset += length
+    require(offset == 32 + size and table is not None, "Нет законченной symbol table dSYM.")
+    start, count, strings, string_size = struct.unpack_from("<4I", data, table + 8)
+    require(offset <= start and start + 16 * count <= strings and strings + string_size <= len(data),
+            "Symbol table выходит за границы dSYM.")
+    kept, seen = bytearray(), set()
+    for index in range(count):
+        entry = start + 16 * index
+        name, kind, section, _, address = struct.unpack_from("<IBBHQ", data, entry)
+        require(name < string_size, "Имя символа выходит за границы dSYM.")
+        if kind <= 0x1f and kind & 0xe == 0xe and not kind & 1 and section:
+            key = (section, address)
+            if key in seen:
+                continue
+            seen.add(key)
+        kept.extend(data[entry:entry + 16])
+    data[start:start + 16 * count] = kept + bytes(16 * count - len(kept))
+    struct.pack_into("<I", data, table + 12, len(kept) // 16)
+    path.write_bytes(data)
+    return {"before": count, "after": len(kept) // 16}
+
+
+def prepare_native_test_symbols(app, symbols, command, *, signing_identity):
+    """Keep source diagnostics in matching dSYMs and external testable exports.
+
+    The typesetter has hundreds of thousands of folded local cold aliases.
+    CoreSymbolication inserts these at one address while XCTest records an
+    issue, making an ordinary failure appear hung. -x removes local aliases;
+    -S alone only removes debug-map entries and leaves this collision intact.
+    """
+    app, symbols = Path(app).resolve(), Path(symbols).resolve()
+    require(not below(app, CANONICAL_MAC.resolve()), "Нельзя изменять символы установленного рабочего Mac.")
+    info = plistlib.loads((app / "Contents/Info.plist").read_bytes())
+    require(info.get("CFBundleIdentifier") == MAC_BUNDLE + ".acceptance",
+            "Ожидался изолированный native-test Mac bundle.")
+    bundles = (app, app / "Contents/PlugIns/NotebookMacTests.xctest")
+    targets = []
+    # Validate both companions before changing either signed executable.
+    for bundle in bundles:
+        info = plistlib.loads((bundle / "Contents/Info.plist").read_bytes())
+        name = info.get("CFBundleExecutable")
+        require(isinstance(name, str) and name == Path(name).name, "Нет имени тестового executable.")
+        executable, companion = bundle / "Contents/MacOS" / name, bundle.parent / (bundle.name + ".dSYM")
+        require(executable.is_file() and companion.is_dir(), "Нет native executable или полного dSYM.")
+        identities = []
+        for label, path in (("binary", executable), ("dsym", companion)):
+            output = command("native-symbols-" + name + "-" + label,
+                ["/usr/bin/xcrun", "dwarfdump", "--uuid", path], read_output=True)[0].decode()
+            identities.append(set(re.findall(r"UUID: ([0-9A-Fa-f-]{36}) \(([^)]+)\)", output)))
+        require(identities[0] and identities[0] == identities[1], "Native executable и dSYM имеют разные UUID.")
+        targets.append((name, bundle, executable, companion))
+    summaries = {}
+    for name, bundle, executable, companion in targets:
+        summaries[name] = compact_dsym_local_aliases(companion / "Contents/Resources/DWARF" / name)
+        shutil.copytree(companion, symbols / companion.name)
+        command("native-symbols-" + name + "-strip", ["/usr/bin/xcrun", "strip", "-x", executable])
+        if bundle != app:
+            command("native-symbols-" + name + "-reseal", ["/usr/bin/codesign", "--force", "--sign", signing_identity,
+                "--timestamp=none", "--preserve-metadata=identifier,entitlements,flags,runtime", bundle])
+    # The existing worker-entitlement stage reseals and verifies the outer app.
+    return summaries
 
 
 def restrict_test_script_services(app, source, command, *, bundle_identifier, signing_identity="-"):

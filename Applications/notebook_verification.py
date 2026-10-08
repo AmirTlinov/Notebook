@@ -621,7 +621,8 @@ def native_arguments(root, evidence, plan, platform, selectors, action, typescri
         argv.extend(native_mac_signing_settings() if platform == "mac" else native_ipad_signing_settings())
         argv.append("NOTEBOOK_TYPESETTER_RUNTIME=" + str(prepared_typesetter_stage(plan)))
         if platform == "mac":
-            argv.extend(("NOTEBOOK_TYPESCRIPT_RUNTIME=" + str(typescript),
+            argv.extend(("DEBUG_INFORMATION_FORMAT=dwarf-with-dsym",
+                         "NOTEBOOK_TYPESCRIPT_RUNTIME=" + str(typescript),
                          "NOTEBOOK_CODEX_RUNTIME=" + str(prepared_codex_stage(plan))))
     argv.extend("-only-testing:" + selector for selector in selectors)
     return argv
@@ -923,8 +924,10 @@ def run_selected(root, plan, evidence):
                 app = derived / "mac/Build/Products/Debug/NotebookRuntime.app"
                 display = command("mac-native-signer", ["/usr/bin/codesign", "--display", "--verbose=4", app], read_output=True)
                 signer, identity = release.development_signer(b"\n".join(display).decode(), release.MAC_BUNDLE + ".acceptance")
+                symbols = release.prepare_native_test_symbols(app, evidence / "mac-symbols", command, signing_identity=signer)
                 release.restrict_test_script_services(app, root, command, bundle_identifier=release.MAC_BUNDLE + ".acceptance", signing_identity=signer)
                 release.write_json(evidence / "mac-native-signature.json", {"identity": identity,
+                    "debugSymbols": symbols,
                     "workerBundleSuffix": ".native-test", "scope": "isolated stateless native-test workers"})
             elif ipad_ui:
                 configured = install_native_ipad_ui_artifacts(derived / "ipad/Build/Products", evidence, command)

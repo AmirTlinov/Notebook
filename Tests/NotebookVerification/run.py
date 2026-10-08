@@ -212,6 +212,7 @@ class CodexReceiptTests(unittest.TestCase):
         self.plan["typesetterRuntime"] = str(self.root / "typesetter")
         argv = verify.native_arguments(self.root, self.evidence, self.plan, "mac", [], "build-for-testing")
         self.assertIn("NOTEBOOK_CODEX_RUNTIME=" + str(self.stage), argv)
+        self.assertIn("DEBUG_INFORMATION_FORMAT=dwarf-with-dsym", argv)
 
     def test_forged_report_cannot_pass_even_when_all_generic_evidence_hashes_are_recomputed(self):
         receipt = release.finish_verification(self.root, self.evidence)
@@ -362,6 +363,60 @@ class SelectionTests(unittest.TestCase):
             with self.assertRaisesRegex(release.ReleaseError, "ровно два"):
                 release.restrict_test_script_services(app, ROOT, command, bundle_identifier=acceptance.MAC_BUNDLE)
             command.assert_not_called()
+
+    def test_native_symbol_preparation_refuses_stale_dsym_before_stripping_either_product(self):
+        with tempfile.TemporaryDirectory() as directory:
+            app, symbols = Path(directory) / "NotebookRuntime.app", Path(directory) / "symbols"
+            bundles = (app, app / "Contents/PlugIns/NotebookMacTests.xctest")
+            for bundle in bundles:
+                name = bundle.stem
+                (bundle / "Contents/MacOS").mkdir(parents=True)
+                (bundle / "Contents/MacOS" / name).write_bytes(b"signed executable with local symbols")
+                (bundle / "Contents/Info.plist").write_bytes(plistlib.dumps({
+                    "CFBundleIdentifier": release.MAC_BUNDLE + ".acceptance", "CFBundleExecutable": name}))
+                (bundle.parent / (bundle.name + ".dSYM")).mkdir(parents=True)
+            identity = str(uuid.uuid4()).upper()
+            calls = []
+            def command(label, argv, **options):
+                calls.append(label)
+                value = str(uuid.uuid4()).upper() if label == "native-symbols-NotebookMacTests-dsym" else identity
+                return (("UUID: " + value + " (arm64) binary\n").encode(), b"")
+            with self.assertRaisesRegex(release.ReleaseError, "разные UUID"):
+                release.prepare_native_test_symbols(app, symbols, command, signing_identity="-")
+            self.assertEqual(len(calls), 4)
+            self.assertTrue(all(label.endswith(("-binary", "-dsym")) for label in calls))
+            for bundle in bundles:
+                self.assertEqual((bundle / "Contents/MacOS" / bundle.stem).read_bytes(), b"signed executable with local symbols")
+
+    def test_dsym_compaction_keeps_external_aliases_uuid_and_all_debug_bytes(self):
+        names, debug = b"\0a\0b\0c\0d\0e\0", b"DWARF source lines and types remain byte-identical"
+        entries = [(1, 14, 1, 0, 0x1000), (3, 14, 1, 0, 0x1000),
+                   (5, 15, 1, 0, 0x1000), (7, 15, 1, 0, 0x1000), (9, 14, 1, 0, 0x1010)]
+        table = b"".join(struct.pack("<IBBHQ", *entry) for entry in entries)
+        start, strings = 32 + 24 + 24 + 152, 32 + 24 + 24 + 152 + len(table)
+        debug_start = strings + len(names)
+        header = struct.pack("<8I", 0xfeedfacf, 0x100000c, 0, 0xa, 3, start - 32, 0, 0)
+        identity = struct.pack("<II", 0x1b, 24) + uuid.uuid4().bytes
+        symtab = struct.pack("<6I", 2, 24, start, len(entries), strings, len(names))
+        segment = struct.pack("<II16sQQQQIIII", 0x19, 152, b"__DWARF", 0, len(debug), debug_start, len(debug), 0, 0, 1, 0)
+        section = struct.pack("<16s16sQQIIIIIIII", b"__debug_info", b"__DWARF", 0, len(debug), debug_start, 0, 0, 0, 0, 0, 0, 0)
+        original = header + identity + symtab + segment + section + table + names + debug
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "symbols"
+            path.write_bytes(original)
+            self.assertEqual(release.compact_dsym_local_aliases(path), {"before": 5, "after": 4})
+            compacted = path.read_bytes()
+            self.assertEqual(len(compacted), len(original))
+            self.assertEqual(compacted[32:56], identity)
+            self.assertEqual(compacted[strings:], original[strings:])
+            self.assertEqual([struct.unpack_from("<IBBHQ", compacted, start + 16 * index) for index in range(4)],
+                             [entries[index] for index in (0, 2, 3, 4)])
+            executable = bytearray(original)
+            struct.pack_into("<I", executable, 12, 2)
+            path.write_bytes(executable)
+            with self.assertRaisesRegex(release.ReleaseError, "MH_DSYM"):
+                release.compact_dsym_local_aliases(path)
+            self.assertEqual(path.read_bytes(), executable)
 
     def test_acceptance_locks_actual_devices_not_all_xcode_runners(self):
         simulator = str(uuid.uuid4())
