@@ -62,6 +62,18 @@ selection. **18 DOM + 3 bundled MathJax cases PASS**, 0 failures/skips; 70 вх�
 относится к DOM и локальным engine/assets. Native Coordinator recovery и physical
 iPad ещё не приняты; установленная пара265 сохранена.
 
+**8 октября, GUI-498/NB28, DP15, DP17:** общий native cache ограничен 48 МиБ,
+одна беседа 16 МиБ; transfer и WebKit удерживают credits до последнего фактического
+borrower. Чтение истории сохраняет обе границы окна; старый attach отзывает только
+свою попытку. **40 SwiftPM функций / 45 случаев, затем 5 прицельных функций и 6 Mac
+scenarios PASS**, без failures/skips. В отдельном96-message прогоне RSS достиг
+167788544 B, phys_footprint 135299936 B; после закрытия body counter 0. Это измерение
+Swift process projection. iPad production и все test sources **скомпилированы**;
+на устройстве выполнено 0 тестов. Проверки actual WK death, reading anchor, callback
+credits и bundled MathJax подготовлены; physical acceptance остаётся открытой.
+[Результаты, исходные отказы и дельты](audit-evidence/2026-10-08/codex-body-window/results.json).
+Установленная пара 265 сохранена; DP16 и полная GUI-498 остаются открытыми.
+
 GUI-541 уже в общей `main`: плагины, marketplace-регистрации, панель, браузерная
 отрисовка и Swift WASM адаптер удалены; GUI-539 отменён. Историческая подписанная
 пара262 и sandbox repair сборщика описаны

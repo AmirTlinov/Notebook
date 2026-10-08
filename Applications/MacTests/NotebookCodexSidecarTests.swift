@@ -68,6 +68,12 @@ private actor NativeOwner: NotebookCodexConversationOwner, NotebookCodexCatalogu
       messages: accepted, requests: pendingRequests, acceptedMessages: [:], turnStatuses: [:],
       access: .init(profileID: accessMode.rawValue, approvalPolicy: .string(accessMode.approvalPolicy), available: CodexAccessMode.allCases), model: model)
   }
+  func prepareMessage(_ read: CodexMessageRead, peer: UUID) async throws -> CodexAuthoritativeMessageRead {
+    guard let value = await snapshot(threadID: read.threadID)?.messages.first(where: {
+      $0.id == read.messageID && $0.turnID == read.turnID
+    }) else { throw CodexBridgeError.invalidResponse }
+    return .transfer(try CodexMessageTransfer(threadID: read.threadID, message: value))
+  }
   func send(threadID: String, clientMessageID: UUID, text: String, context: String?, attachments: [CodexInputAttachment]) throws -> String {
     submittedAttachments = attachments
     sent.append(clientMessageID)
@@ -519,6 +525,53 @@ final class NotebookCodexSidecarTests: XCTestCase {
         transferID:assembly.transferID,offset:0)
       let response = await service.receive(.init(body:.request(.message(retired))),peerID:peer)
       guard case .reply(.failure) = response?.body else { return XCTFail("Detached reading cannot retain the old transfer") }
+      await service.stop()
+    }
+  }
+
+  func testMessageTransferRetiresOnAccountChangeAndNativeDisconnect() async throws {
+    try await fixture { store,queue,native,peer in
+      let message = CodexMessage(id:"account-body",turnID:native.turn,clientID:nil,role:.assistant,
+        text:String(repeating:"Exact native body🙂",count:8_000)).identifyingContent()
+      await native.setMessages([message])
+      let service = try sidecar(store,queue,native)
+      var account = UUID()
+      service.accountAdmission = { account }
+      let read = CodexMessageRead(threadID:native.thread,turnID:native.turn,messageID:message.id)
+      let initial = await service.receive(.init(body:.request(.message(read))),peerID:peer)
+      guard case .reply(.message(.part(let old))) = initial?.body else { return XCTFail("Missing initial native body") }
+      account = UUID()
+      let stale = await service.receive(.init(body:.request(.message(.init(threadID:native.thread,
+        turnID:native.turn,messageID:message.id,transferID:old.transferID,offset:old.data.count)))),peerID:peer)
+      guard case .reply(.failure) = stale?.body else { return XCTFail("An old account transfer survived its admission generation") }
+      let fresh = await service.receive(.init(body:.request(.message(read))),peerID:peer)
+      guard case .reply(.message(.part(let current))) = fresh?.body else { return XCTFail("Fresh account could not read the authoritative body") }
+      XCTAssertNotEqual(current.transferID,old.transferID)
+      service.receiveEvent(.unavailable(.disconnected))
+      let disconnected = await service.receive(.init(body:.request(.message(.init(threadID:native.thread,
+        turnID:native.turn,messageID:message.id,transferID:current.transferID,offset:current.data.count)))),peerID:peer)
+      guard case .reply(.failure) = disconnected?.body else { return XCTFail("Disconnect retained an addressable old body transfer") }
+      await service.stop()
+    }
+  }
+
+  func testHistoryAndMessageBindWorkspaceBeforeTheFirstConversation() async throws {
+    try await fixture { store,queue,native,peer in
+      let message = CodexMessage(id:"before-conversation",turnID:native.turn,clientID:nil,role:.assistant,text:"Exact body").identifyingContent()
+      await native.setMessages([message])
+      let service = try sidecar(store,queue,native)
+      var prepared: [String] = []
+      service.prepareThread = { prepared.append($0) }
+      _ = await service.receive(.init(body:.request(.history(threadID:native.thread,cursor:nil))),peerID:peer)
+      let initial = await service.receive(.init(body:.request(.message(.init(threadID:native.thread,
+        turnID:native.turn,messageID:message.id)))),peerID:peer)
+      guard case .reply(.message(.part(let part))) = initial?.body else { return XCTFail("Initial message read failed") }
+      XCTAssertEqual(prepared,[native.thread,native.thread])
+      _ = await service.receive(.init(body:.request(.conversation(threadID:native.thread))),peerID:peer)
+      let retained = await service.receive(.init(body:.request(.message(.init(threadID:native.thread,
+        turnID:native.turn,messageID:message.id,transferID:part.transferID,offset:0)))),peerID:peer)
+      guard case .reply(.message(.part(let same))) = retained?.body else { return XCTFail("Ordinary first attach invalidated the same workspace read") }
+      XCTAssertEqual(same,part)
       await service.stop()
     }
   }

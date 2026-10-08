@@ -6,24 +6,35 @@ import NotebookCore
 struct CodexFrames {
   var buffer = Data()
   var partialSince: ContinuousClock.Instant?
+  private var scannedBytes = 0
 
   mutating func append(_ data: Data) throws -> [JSONValue] {
     if buffer.isEmpty, !data.isEmpty { partialSince = .now }
     buffer.append(data)
     var messages: [JSONValue] = []
     while !buffer.isEmpty {
-      guard let end = buffer.firstIndex(of: 10) else {
+      // A partial frame can span hundreds of reads. Its old prefix has no
+      // delimiter; scan only the new bytes until this frame is consumed.
+      let length: Int? = buffer.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) in
+        guard scannedBytes < bytes.count, let start = bytes.baseAddress,
+          let end = memchr(start.advanced(by: scannedBytes), 10, bytes.count - scannedBytes) else { return nil }
+        return start.distance(to: UnsafeRawPointer(end))
+      }
+      guard let length else {
+        scannedBytes = buffer.count
         guard buffer.count <= CodexProtocol.frameLimit else { throw CodexBridgeError.invalidFrame }
         return messages
       }
-      let length = buffer.distance(from: buffer.startIndex, to: end)
       guard length > 0, length <= CodexProtocol.frameLimit else { throw CodexBridgeError.invalidFrame }
       let body = Data(buffer.prefix(length)), consumed = length + 1
+      do { _ = try NotebookJSONAdmission.allocationCost(body, maximumBytes: 128 * 1_048_576) }
+      catch { throw CodexBridgeError.invalidFrame }
       guard let value = try? JSONDecoder().decode(JSONValue.self, from: body), value.object != nil else {
         throw CodexBridgeError.invalidFrame
       }
       messages.append(value)
       buffer = Data(buffer.dropFirst(consumed))
+      scannedBytes = 0
       partialSince = buffer.isEmpty ? nil : .now
     }
     return messages

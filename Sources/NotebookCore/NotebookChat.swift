@@ -147,10 +147,23 @@ public struct CodexConversation: Codable, Equatable, Sendable {
 
 }
 
+public struct CodexHistoryPosition: Codable, Equatable, Sendable {
+  public let readCursor: String
+  public let olderCursor: String?, newerCursor: String?
+  public init(readCursor: String, olderCursor: String?, newerCursor: String?) {
+    self.readCursor = readCursor; self.olderCursor = olderCursor; self.newerCursor = newerCursor
+  }
+}
+
 public struct CodexHistoryPage: Codable, Equatable, Sendable {
   public let messages: [CodexMessage]
   public let nextCursor: String?
-  public init(messages: [CodexMessage], nextCursor: String?) { self.messages = messages; self.nextCursor = nextCursor }
+  public let newerCursor: String?
+  /// Exact native page locators, scoped by the adapter. They contain no bodies.
+  public let positions: [String: CodexHistoryPosition]?
+  public init(messages: [CodexMessage], nextCursor: String?, newerCursor: String? = nil, positions: [String: CodexHistoryPosition]? = nil) {
+    self.messages = messages; self.nextCursor = nextCursor; self.newerCursor = newerCursor; self.positions = positions
+  }
 
 }
 

@@ -4,6 +4,160 @@ import XCTest
 
 @MainActor
 final class NotebookChatControllerTests: XCTestCase {
+  func testReadingWindowKeepsBothActualEdgesAfterOlderAndNewerTrims() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("chat-window-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at:root) }
+    let store = NotebookStore(root:root), author = UUID(), peer = UUID(), thread = UUID().uuidString
+    _ = try store.initializeWorkspace(actor:author,pageSize:.init(width:834,height:1194))
+    try store.saveChatPanel(.init(threadID:thread,draft:"",sidecarID:peer,browsesChats:false),author:author)
+    let queue = NotebookPersistenceQueue(store:store)
+    var chat: NotebookChatController!, queries: [String?] = [], subscription: UUID?
+    var generation = UUID(), historyHead = 1001, liveHead = 1001, nativeRevision = 1
+    func message(_ i: Int) -> CodexMessage { .init(id:"m\(i)",turnID:"turn",clientID:nil,role:.assistant,text:"Message \(i)") }
+    func page(_ lower: Int, _ upper: Int) -> CodexHistoryPage {
+      var rows: [CodexMessage] = [], positions: [String:CodexHistoryPosition] = [:]
+      for i in lower...upper {
+        let value = message(i); rows.append(value)
+        positions[value.id] = .init(readCursor:"at:\(i)",olderCursor:i == 1 ? nil : "older:\(i)",
+          newerCursor:i == historyHead ? nil : "newer:\(i)")
+      }
+      return .init(messages:rows,nextCursor:lower == 1 ? nil : "older:\(lower)",
+        newerCursor:upper == historyHead ? nil : "newer:\(upper)",positions:positions)
+    }
+    func conversation(_ revision: Int, last: Int) -> CodexConversation {
+      .init(threadID:thread,generation:generation,revision:revision,title:"Window",ready:true,busy:false,
+        activeTurnID:nil,messages:[message(last)],requests:[],acceptedMessages:[:],turnStatuses:[:])
+    }
+    chat = .init(persistence:queue,author:author) { envelope,_ in
+      guard case .request(let query) = envelope.body else { return }
+      let reply: NotebookChatReply
+      switch query {
+      case .projects: reply = .projects(.init(projects:[],nextCursor:nil))
+      case .catalogue: reply = .catalogue(.init(tasks:[],nextCursor:nil))
+      case .run: reply = .run(.init(record:nil))
+      case .activity(let ids): reply = .activity(ids.map { .init(id:$0,status:.idle) })
+      case .conversation: subscription = envelope.id; reply = .conversation(conversation(nativeRevision,last:liveHead))
+      case .history(_,let cursor):
+        queries.append(cursor)
+        if let cursor {
+          let fields = cursor.split(separator:":")
+          guard fields.count == 2, let edge = Int(fields[1]) else { return XCTFail("Unexpected window cursor") }
+          reply = fields[0] == "older" ? .history(page(max(1,edge-32),edge-1))
+            : .history(page(edge+1,min(historyHead,edge+32)))
+        } else { reply = .history(page(historyHead-31,historyHead)) }
+      default: return XCTFail("Window navigation must not dispatch authored work")
+      }
+      chat.receive(.init(id:envelope.id,body:.reply(reply)),peerID:peer)
+    }
+    func wait(_ condition: () -> Bool) async throws {
+      let deadline = ContinuousClock.now + .seconds(8)
+      while !condition(), .now < deadline { try await Task.sleep(for:.milliseconds(10)) }
+      XCTAssertTrue(condition())
+    }
+    await chat.start(); await chat.connect(peer)
+    try await wait { chat.messages.count == 32 && !chat.loadingHistory && subscription != nil }
+    for count in 2...8 {
+      chat.loadEarlier()
+      try await wait { chat.messages.count == count * 32 && !chat.loadingHistory }
+    }
+    XCTAssertEqual(chat.messages.first?.id,"m746"); XCTAssertEqual(chat.messages.last?.id,"m1001")
+    chat.loadEarlier(); try await wait { chat.messages.first?.id == "m714" && !chat.loadingHistory }
+    XCTAssertEqual(chat.messages.count,256); XCTAssertEqual(chat.messages.last?.id,"m969")
+    XCTAssertEqual(chat.newerHistoryCursor,"newer:969")
+    liveHead = 1002; nativeRevision = 2
+    if let subscription { chat.receive(.init(body:.event(subscriptionID:subscription,conversation:conversation(2,last:1002))),peerID:peer) }
+    XCTAssertEqual(chat.messages.first?.id,"m714"); XCTAssertFalse(chat.messages.contains { $0.id == "m1002" })
+    chat.loadNewer(); try await wait { chat.messages.last?.id == "m1002" && !chat.loadingHistory }
+    XCTAssertEqual(queries.last!,"newer:969")
+    XCTAssertEqual(chat.historyCursor,"older:747")
+    chat.loadEarlier(); try await wait { chat.messages.first?.id == "m715" && !chat.loadingHistory }
+    XCTAssertEqual(queries.last!,"older:747")
+    XCTAssertEqual(chat.messages.count,256); XCTAssertEqual(chat.newerHistoryCursor,"newer:970")
+    // The official server reopens under another actual native generation. Its
+    // new head is farther away than the whole bounded catch-up/window.
+    generation = UUID(); historyHead = 1600; liveHead = 1600; nativeRevision = 1
+    let readsBefore = queries.count
+    if let subscription { chat.receive(.init(body:.event(subscriptionID:subscription,conversation:conversation(1,last:1600))),peerID:peer) }
+    XCTAssertEqual(chat.messages.first?.id,"m715","The historical reading anchor stays in place")
+    XCTAssertFalse(chat.canLoadEarlier); XCTAssertNil(chat.newerHistoryCursor); XCTAssertTrue(chat.canLoadNewer)
+    chat.synchronizeVisibleIfDue(now:.now + .seconds(20))
+    chat.loadNewer()
+    try await wait { chat.messages.last?.id == "m1600" && !chat.loadingHistory }
+    XCTAssertEqual(queries.count,readsBefore+1,"A stale cut is not repaired by scanning all prior history")
+    XCTAssertNil(queries.last!)
+    XCTAssertEqual(chat.historyCursor,"older:1569")
+    chat.loadEarlier(); try await wait { chat.messages.first?.id == "m1537" && !chat.loadingHistory }
+    XCTAssertEqual(queries.last!,"older:1569")
+    await chat.stop(); let saved = await queue.flush(); XCTAssertTrue(saved)
+  }
+
+  func testFullBodiesWaitForThePriorPublicationAndEvictionDoesNotAutomaticallyReloadThem() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("chat-body-window-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at:root) }
+    let store = NotebookStore(root:root), author = UUID(), peer = UUID(), thread = UUID().uuidString
+    _ = try store.initializeWorkspace(actor:author,pageSize:.init(width:834,height:1194))
+    try store.saveChatPanel(.init(threadID:thread,draft:"",sidecarID:peer,browsesChats:false),author:author)
+    let queue = NotebookPersistenceQueue(store:store), generation = UUID()
+    var chat: NotebookChatController!, subscription: UUID?, reads: [String:Int] = [:]
+    var transfer: CodexMessageTransfer?, publication: [NotebookChatBodyWindow.Credit] = []
+    defer { publication.removeAll() }
+    let headers = (1...3).map { CodexMessage(id:"m\($0)",turnID:"turn",clientID:nil,role:.assistant,
+      text:"Preview \($0)",isTruncated:true,contentRevision:"revision-\($0)") }
+    func conversation(_ revision: Int) -> CodexConversation {
+      .init(threadID:thread,generation:generation,revision:revision,title:"Bodies",ready:true,busy:false,activeTurnID:nil,
+        messages:headers,requests:[],acceptedMessages:[:],turnStatuses:[:])
+    }
+    chat = .init(persistence:queue,author:author) { envelope,_ in
+      guard case .request(let query) = envelope.body else { return }
+      let reply: NotebookChatReply
+      switch query {
+      case .projects: reply = .projects(.init(projects:[],nextCursor:nil))
+      case .catalogue: reply = .catalogue(.init(tasks:[],nextCursor:nil))
+      case .run: reply = .run(.init(record:nil))
+      case .activity(let ids): reply = .activity(ids.map { .init(id:$0,status:.idle) })
+      case .history: reply = .history(.init(messages:[],nextCursor:nil))
+      case .conversation: subscription = envelope.id; reply = .conversation(conversation(1))
+      case .message(let read):
+        do {
+          if read.transferID == nil {
+            reads[read.messageID,default:0] += 1
+            let digit = String(read.messageID.suffix(1))
+            let body = CodexMessage(id:read.messageID,turnID:"turn",clientID:nil,role:.assistant,
+              text:String(repeating:digit,count:7 * 1_048_576),contentRevision:"revision-" + digit)
+            transfer = try CodexMessageTransfer(threadID:thread,message:body)
+          }
+          let current = try XCTUnwrap(transfer)
+          XCTAssertTrue(read.transferID == nil || read.transferID == current.id)
+          reply = .message(.part(try current.part(offset:read.offset)))
+        } catch { return XCTFail("Exact body fixture failed: \(error)") }
+      default: return XCTFail("Body reading must not dispatch authored work")
+      }
+      chat.receive(.init(id:envelope.id,body:.reply(reply)),peerID:peer)
+    }
+    func wait(_ condition: () -> Bool) async throws {
+      let deadline = ContinuousClock.now + .seconds(8)
+      while !condition(), .now < deadline { try await Task.sleep(for:.milliseconds(10)) }
+      XCTAssertTrue(condition())
+    }
+    await chat.start(); await chat.connect(peer)
+    try await wait { chat.messages.first(where: { $0.id == "m3" })?.isTruncated == false }
+    chat.retryMessageContent("m2")
+    try await wait { chat.messages.first(where: { $0.id == "m2" })?.isTruncated == false }
+    publication = chat.presentationBodyCredits
+    XCTAssertGreaterThan(chat.retainedMessageBodyBytes,14 * 1_048_576)
+    chat.retryMessageContent("m1")
+    try await wait { reads["m1"] == 1 && chat.messages.allSatisfy(\.isTruncated) }
+    XCTAssertGreaterThan(chat.retainedMessageBodyBytes,14 * 1_048_576,"The physical prior publication still owns its bodies")
+    XCTAssertLessThanOrEqual(chat.retainedMessageBodyBytes,16 * 1_048_576)
+    publication.removeAll()
+    try await wait { chat.messages.first(where: { $0.id == "m1" })?.isTruncated == false }
+    XCTAssertTrue(chat.messages.first?.text == String(repeating:"1",count:7 * 1_048_576))
+    if let subscription { chat.receive(.init(body:.event(subscriptionID:subscription,conversation:conversation(2))),peerID:peer) }
+    XCTAssertEqual(reads,["m3":1,"m2":1,"m1":1],"An evicted revision is read only after a fresh explicit demand")
+    XCTAssertLessThanOrEqual(chat.retainedMessageBodyBytes,16 * 1_048_576)
+    await chat.stop(); let saved = await queue.flush(); XCTAssertTrue(saved)
+  }
+
   func testHistoryAdmissionRefusesNewChatDraftsMessagesAndDictationButKeepsSavedDecisions() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("chat-history-admission-" + UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }

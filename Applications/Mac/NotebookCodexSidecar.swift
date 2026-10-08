@@ -7,6 +7,7 @@ protocol NotebookCodexConversationOwner: Sendable {
   func attach(threadID: String, observationID: UUID) async throws
   func detach(threadID: String, observationID: UUID) async
   func snapshot(threadID: String) async -> CodexConversation?
+  func prepareMessage(_ read: CodexMessageRead, peer: UUID) async throws -> CodexAuthoritativeMessageRead
   func send(threadID: String, clientMessageID: UUID, text: String, context: String?, attachments: [CodexInputAttachment]) async throws -> String
   func steer(threadID: String, turnID: String, clientMessageID: UUID, text: String, context: String?, attachments: [CodexInputAttachment]) async throws -> String
   func interrupt(threadID: String, turnID: String) async throws
@@ -55,6 +56,7 @@ final class NotebookCodexSidecar {
     let id = UUID() // async admission lifetime, distinct from wire retransmission identity
     let requestID: UUID
     let request: CodexMessageRead
+    let account: UUID?
     var thread: String { request.threadID }
     var transfer: CodexMessageTransfer?
   }
@@ -99,6 +101,7 @@ final class NotebookCodexSidecar {
     guard !stopped else { return }
     executionAfter.removeAll(); wakeups.continuation.yield(())
     if case .unavailable(let error) = event {
+      messageReads.removeAll()
       publishEvents?.cancel(); publishEvents = nil; pendingEvents.removeAll()
       for (peer, subscription) in subscriptions {
         publish?(.init(body: .unavailable(subscriptionID: subscription.id, threadID: subscription.thread, reason: Self.message(error))), peer)
@@ -348,10 +351,13 @@ final class NotebookCodexSidecar {
         if ids.isEmpty { removeSubscription(peerID) }
         reply = .activity(try await bridge.activities(threadIDs: ids))
       case .message(let read):
+        try await prepareThread?(read.threadID)
         reply = .message(try await readMessage(read, requestID:envelope.id, peer:peerID))
       case .history(let thread, let cursor):
+        try await prepareThread?(thread)
         let page = try await metadata.history(threadID: thread, cursor: cursor, turnID: nil)
-        reply = .history(.init(messages: CodexMessage.transportPage(page.messages), nextCursor: page.nextCursor))
+        reply = .history(.init(messages: CodexMessage.transportPage(page.messages), nextCursor: page.nextCursor,
+          newerCursor: page.newerCursor, positions: page.positions))
       case .conversation(let thread):
         let observationID: UUID
         if let current = subscriptions[peerID], current.thread == thread {
@@ -579,11 +585,15 @@ final class NotebookCodexSidecar {
 
   private func readMessage(_ read: CodexMessageRead, requestID: UUID, peer: UUID) async throws -> CodexMessageReadReply {
     guard read.isValid else { throw CodexBridgeError.invalidInput }
+    let account = try authorization(peer).account
+    if let previous = messageReads[peer], previous.account != account { messageReads.removeValue(forKey: peer) }
     if let id = read.transferID {
-      guard let transfer = messageReads[peer]?.transfer, transfer.id == id,
+      guard let current = messageReads[peer], let transfer = current.transfer, transfer.id == id,
         transfer.threadID == read.threadID, transfer.turnID == read.turnID, transfer.messageID == read.messageID else {
         throw CodexBridgeError.staleRequest
       }
+      try await transfer.requireCurrentOwner()
+      guard messageReads[peer]?.id == current.id, try authorization(peer).account == account else { throw CodexBridgeError.staleRequest }
       return .part(try transfer.part(offset:read.offset))
     }
     // A response and an already-sent retry can cross. Replaying the same
@@ -591,40 +601,31 @@ final class NotebookCodexSidecar {
     // A new envelope still deliberately replaces this peer's one transfer.
     if let current = messageReads[peer], current.requestID == requestID {
       guard current.request == read else { throw CodexBridgeError.invalidInput }
-      if let transfer = current.transfer { return .part(try transfer.part(offset:0)) }
+      if let transfer = current.transfer {
+        try await transfer.requireCurrentOwner()
+        guard messageReads[peer]?.id == current.id, try authorization(peer).account == account else { throw CodexBridgeError.staleRequest }
+        return .part(try transfer.part(offset:0))
+      }
     }
-    let admission = MessageRead(requestID:requestID,request:read); messageReads[peer] = admission
+    let admission = MessageRead(requestID:requestID,request:read,account:account); messageReads[peer] = admission
     let generation = peerGenerations[peer,default:0]
-    var message = await bridge.snapshot(threadID:read.threadID)?.messages.first {
-      $0.id == read.messageID && $0.turnID == read.turnID
-    }
-    var nextCursor: String?
-    if message == nil {
-      let page = try await metadata.history(threadID:read.threadID,cursor:read.cursor,turnID:read.turnID)
-      message = page.messages.first { $0.id == read.messageID && $0.turnID == read.turnID }
-      nextCursor = page.nextCursor
-    }
+    let prepared = try await bridge.prepareMessage(read, peer: peer)
     guard !stopped, !revokedPeers.contains(peer), authorizePeer(peer),
       peerGenerations[peer,default:0] == generation, messageReads[peer]?.id == admission.id else {
       throw CodexBridgeError.unavailable
     }
-    guard let message else {
-      guard let nextCursor, nextCursor != read.cursor else { throw CodexBridgeError.invalidResponse }
-      return .searching(nextCursor:nextCursor)
+    guard try authorization(peer).account == account else { throw CodexBridgeError.unavailable }
+    switch prepared {
+    case .searching(let nextCursor): return .searching(nextCursor: nextCursor)
+    case .transfer(let transfer):
+      try await transfer.requireCurrentOwner()
+      guard !stopped, messageReads[peer]?.id == admission.id,
+        peerGenerations[peer,default:0] == generation, try authorization(peer).account == account else {
+        throw CodexBridgeError.unavailable
+      }
+      messageReads[peer]?.transfer = transfer
+      return .part(try transfer.part(offset:0))
     }
-    let worker = Task.detached(priority:.utility) {
-      try Task.checkCancellation()
-      let transfer = try CodexMessageTransfer(threadID:read.threadID,message:message)
-      try Task.checkCancellation()
-      return transfer
-    }
-    let transfer = try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
-    guard !stopped, !revokedPeers.contains(peer), authorizePeer(peer),
-      peerGenerations[peer,default:0] == generation, messageReads[peer]?.id == admission.id else {
-      throw CodexBridgeError.unavailable
-    }
-    messageReads[peer]?.transfer = transfer
-    return .part(try transfer.part(offset:0))
   }
 
   private static func transport(_ state: CodexConversation) -> CodexConversation {

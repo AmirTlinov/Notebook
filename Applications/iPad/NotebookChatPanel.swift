@@ -1,5 +1,6 @@
 import SwiftUI
 import WebKit
+import CryptoKit
 import NotebookCore
 
 /// The panel has one fixed composer and one scrolling reading surface. Keyboard
@@ -221,7 +222,11 @@ struct NotebookChatPanel: View {
         }.frame(maxWidth: .infinity, alignment: .leading).padding(20)
           .accessibilityIdentifier("notebook-chat-first-message")
       }
-      NotebookChatTranscript(messages: chat.presentationMessages, work: chat.workStatus, turnStatuses: chat.conversation?.turnStatuses ?? [:], conversationID: chat.threadID, revealMessageID: chat.revealedMessageID,
+      if chat.canLoadNewer {
+        Button("Новые сообщения", action: chat.loadNewer)
+          .font(.caption).accessibilityIdentifier("notebook-chat-newer-messages")
+      }
+      NotebookChatTranscript(messages: chat.presentationMessages, bodyCredits: chat.presentationBodyCredits, work: chat.workStatus, turnStatuses: chat.conversation?.turnStatuses ?? [:], conversationID: chat.threadID, revealMessageID: chat.revealedMessageID,
         canLoadEarlier: chat.canLoadEarlier && !chat.loadingHistory, loadEarlier: chat.loadEarlier, loadMessage: chat.retryMessageContent,
         openLink: model.openNotebookLink, saveExplanation: { [thread = chat.threadID, computer = chat.computerID] message in
           if let thread, let computer { model.saveChatExplanation(message, thread: thread, computer: computer) }
@@ -354,6 +359,7 @@ private struct NotebookProjectSettings: View {
 /// one browser per message, reload the document, or touch the canvas hierarchy.
 struct NotebookChatTranscript: UIViewRepresentable {
   let messages: [CodexMessage]
+  var bodyCredits: [NotebookChatBodyWindow.Credit] = []
   var work: NotebookChatWorkStatus? = nil
   var turnStatuses: [String: String] = [:]
   var conversationID: String? = nil
@@ -372,22 +378,89 @@ struct NotebookChatTranscript: UIViewRepresentable {
   func updateUIView(_ container: UIView, context: Context) {
     context.coordinator.openLink = openLink; context.coordinator.saveExplanation = saveExplanation
     context.coordinator.loadEarlier = loadEarlier; context.coordinator.loadMessage = loadMessage; context.coordinator.canLoadEarlier = canLoadEarlier
-    context.coordinator.update(messages: messages, work: work, turnStatuses: turnStatuses, conversationID: conversationID, revealMessageID: revealMessageID)
+    context.coordinator.update(messages: messages, bodyCredits: bodyCredits, work: work, turnStatuses: turnStatuses, conversationID: conversationID, revealMessageID: revealMessageID)
   }
   static func dismantleUIView(_ container: UIView, coordinator: Coordinator) { coordinator.close() }
   @MainActor final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler, UIScrollViewDelegate {
     var ready = false, closed = false
-    private struct Presentation: Equatable {
-      var messages: [CodexMessage], work: NotebookChatWorkStatus?, turnStatuses: [String: String]
-      var conversation: String, focus: String?
+    private struct MessageBasis: Equatable {
+      let header: CodexMessage
+      let textBytes: Int, detailBytes: Int
+      let hasExpandedAttachments: Bool
+      init(_ value: CodexMessage) {
+        // Native body revision owns exact full bytes. Small display excerpts
+        // also participate; ACK state never retains the former full body.
+        let excerpt = value.isTruncated ? value.preview() : value
+        let revision = value.contentRevision ?? Self.digest(value)
+        textBytes = value.text.utf8.count; detailBytes = value.activity?.detail?.utf8.count ?? 0
+        hasExpandedAttachments = value.attachments != excerpt.attachments
+        header = .init(id: value.id, turnID: value.turnID, clientID: value.clientID, role: value.role,
+          text: value.isTruncated ? excerpt.text : "", isTruncated: value.isTruncated, contentRevision: revision,
+          activity: value.activity.map { .init(kind: $0.kind, status: $0.status,
+            detail: value.isTruncated ? excerpt.activity?.detail : nil) },
+          attachments: value.isTruncated ? excerpt.attachments : nil, phase: value.phase)
+      }
+      private static func digest(_ value: CodexMessage) -> String {
+        var hash = SHA256()
+        func field(_ text: String?) {
+          guard let text else { hash.update(data: Data([0])); return }
+          hash.update(data: Data([1])); var count = UInt64(text.utf8.count).bigEndian
+          withUnsafeBytes(of: &count) { hash.update(data: Data($0)) }
+          var bytes = text.utf8[...]
+          while !bytes.isEmpty {
+            let chunk = Data(bytes.prefix(64 * 1024)); hash.update(data: chunk); bytes = bytes.dropFirst(chunk.count)
+          }
+        }
+        field(value.text); field(value.activity?.detail)
+        for name in value.attachments ?? [] { field(name) }
+        return hash.finalize().map { String(format: "%02x", $0) }.joined()
+      }
+    }
+    private struct Acknowledgement: Equatable {
+      let messages: [String: MessageBasis], order: [String]
+      let work: NotebookChatWorkStatus?, turnStatuses: [String: String], conversation: String, focus: String?
+    }
+    private struct Presentation {
+      let messages: [CodexMessage], credits: [NotebookChatBodyWindow.Credit]
+      let basis: Acknowledgement
+      init(messages: [CodexMessage], credits: [NotebookChatBodyWindow.Credit] = [], work: NotebookChatWorkStatus?,
+        turnStatuses: [String: String], conversation: String, focus: String?) {
+        self.messages = messages; self.credits = credits
+        basis = .init(messages: Dictionary(messages.map { ($0.id, MessageBasis($0)) }, uniquingKeysWith: { _, last in last }),
+          order: messages.map(\.id), work: work, turnStatuses: turnStatuses, conversation: conversation, focus: focus)
+      }
     }
     private struct Update: Encodable {
       let reset: Bool, conversation: String, order: [String], upserts: [CodexMessage], removed: [String]
       let work: NotebookChatWorkStatus?, turnStatuses: [String: String], focus: String?
     }
     private var desired = Presentation(messages: [], work: nil, turnStatuses: [:], conversation: "", focus: nil)
-    private var sent: Presentation?
+    private var sent: Acknowledgement?
+    private var publishedCredits: [NotebookChatBodyWindow.Credit] = []
+    private var needsFullPublication = false
     private var publication: Task<Void, Never>?
+    private var publicationID: UUID?
+    private(set) var navigation: WKNavigation?
+    var publicationIsPending: Bool { publicationID != nil }
+    private enum RetryKind { case publication, document }
+    private var retryKind: RetryKind?
+    private var automaticRecoveryUsed = false
+    private var recoveringProcess = false
+    private weak var container: UIView?
+    private var retryBanner: UIStackView?
+    private var sizeObservation: NSKeyValueObservation?
+    private struct ReadingPosition {
+      let basis: Acknowledgement, width: CGFloat, offset: CGFloat, followsTail: Bool
+    }
+    private struct ReadingLayout {
+      let basis: Acknowledgement, height: CGFloat, restoring: ReadingPosition?
+    }
+    private var reading: ReadingPosition?
+    private var readingLayout: ReadingLayout?
+    var settledReadingOffset: CGFloat? {
+      guard let reading, let sent, reading.basis == sent, sent == desired.basis, readingLayout == nil else { return nil }
+      return reading.offset
+    }
     var web: WKWebView?
     var lease: WebSurfaceLease?
     var preparation: Task<Void, Never>?
@@ -397,6 +470,7 @@ struct NotebookChatTranscript: UIViewRepresentable {
     var openLink: (URL) -> Void = { _ in }
     var saveExplanation: (CodexMessage) -> Void = { _ in }
     func mount(_ container: UIView) {
+      self.container = container
       container.backgroundColor = UIColor(NotebookChrome.surface)
       preparation = Task { [weak self, weak container] in
         do {
@@ -411,51 +485,192 @@ struct NotebookChatTranscript: UIViewRepresentable {
           web.autoresizingMask = [.flexibleWidth, .flexibleHeight]
           web.isOpaque = true; web.backgroundColor = UIColor(NotebookChrome.surface); web.scrollView.backgroundColor = UIColor(NotebookChrome.surface)
           web.navigationDelegate = self; web.scrollView.delegate = self; self.web = web; container.addSubview(web)
-          if let root = Bundle.main.url(forResource: "WebResources", withExtension: nil) {
-            web.loadFileURL(root.appendingPathComponent("chat-shell.html"), allowingReadAccessTo: root)
+          sizeObservation = web.scrollView.observe(\.contentSize, options: [.new]) { [weak self, weak web] _, _ in
+            MainActor.assumeIsolated {
+              guard let self, let web else { return }
+              self.finishReadingLayout(in: web)
+            }
           }
-        } catch { }
-      }
-    }
-    func close() {
-      closed = true; preparation?.cancel(); preparation = nil; publication?.cancel(); publication = nil
-      web?.configuration.userContentController.removeScriptMessageHandler(forName: "notebookChat")
-      web?.stopLoading(); web?.navigationDelegate = nil; web?.scrollView.delegate = nil; web?.removeFromSuperview(); web = nil
-      lease?.release(); lease = nil
-    }
-    func update(messages: [CodexMessage], work: NotebookChatWorkStatus? = nil, turnStatuses: [String: String] = [:], conversationID: String? = nil, revealMessageID: String? = nil) {
-      desired = .init(messages: messages, work: work, turnStatuses: turnStatuses,
-        conversation: conversationID ?? "", focus: revealMessageID)
-      if let web { publish(web) }
-    }
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { ready = true; sent = nil; publish(webView) }
-    func publish(_ web: WKWebView) {
-      guard ready, !closed, publication == nil, desired != sent else { return }
-      publication = Task { [weak self, weak web] in
-        guard let self, let web else { return }
-        defer { publication = nil }
-        while !closed, !Task.isCancelled, desired != sent {
-          let next = desired, reset = sent?.conversation != desired.conversation
-          let previous = reset ? [:] : Dictionary(uniqueKeysWithValues: (sent?.messages ?? []).map { ($0.id, $0) })
-          let ids = Set(next.messages.map(\.id))
-          let update = Update(reset: reset, conversation: next.conversation, order: next.messages.map(\.id),
-            upserts: next.messages.filter { previous[$0.id] != $0 }, removed: previous.keys.filter { !ids.contains($0) },
-            work: next.work, turnStatuses: next.turnStatuses, focus: reset || sent?.focus != next.focus ? next.focus : nil)
-          do {
-            let json = String(decoding: try JSONEncoder().encode(update), as: UTF8.self)
-            _ = try await web.callAsyncJavaScript("await window.updateMessages(JSON.parse(json))",
-              arguments: ["json": json], in: nil, contentWorld: .page)
-            sent = next
-          } catch { sent = nil; return }
+          loadDocument(in: web)
+        } catch {
+          guard let self, !closed, !Task.isCancelled else { return }
+          showRetry(.document)
         }
       }
     }
+    func close() {
+      closed = true; ready = false; preparation?.cancel(); preparation = nil; retirePublication(); navigation = nil
+      desired = .init(messages: [], work: nil, turnStatuses: [:], conversation: "", focus: nil); sent = nil; publishedCredits = []; needsFullPublication = false
+      reading = nil; readingLayout = nil; sizeObservation?.invalidate(); sizeObservation = nil; removeRetry()
+      web?.configuration.userContentController.removeScriptMessageHandler(forName: "notebookChat")
+      web?.stopLoading(); web?.navigationDelegate = nil; web?.scrollView.delegate = nil; web?.removeFromSuperview(); web = nil
+      lease?.release(); lease = nil; container = nil
+    }
+    func update(messages: [CodexMessage], bodyCredits: [NotebookChatBodyWindow.Credit] = [], work: NotebookChatWorkStatus? = nil, turnStatuses: [String: String] = [:], conversationID: String? = nil, revealMessageID: String? = nil) {
+      if desired.basis.conversation != (conversationID ?? "") { automaticRecoveryUsed = false }
+      desired = .init(messages: messages, credits: bodyCredits, work: work, turnStatuses: turnStatuses,
+        conversation: conversationID ?? "", focus: revealMessageID)
+      if let web { publish(web) }
+    }
+    private func retirePublication() {
+      publicationID = nil; publication?.cancel(); publication = nil
+    }
+    private func loadDocument(in web: WKWebView) {
+      guard !closed, self.web === web else { return }
+      ready = false; navigation = nil; retirePublication(); sent = nil; readingLayout = nil; needsFullPublication = false
+      removeRetry(); web.stopLoading()
+      guard let root = Bundle.main.url(forResource: "WebResources", withExtension: nil),
+        let next = web.loadFileURL(root.appendingPathComponent("chat-shell.html"), allowingReadAccessTo: root) else {
+        showRetry(.document); return
+      }
+      navigation = next
+    }
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+      guard !closed, self.web === webView, let navigation, self.navigation === navigation, !ready else { return }
+      ready = true; recoveringProcess = false; removeRetry(); publish(webView)
+    }
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+      guard !closed, self.web === webView, let navigation, self.navigation === navigation else { return }
+      publishedCredits = []
+    }
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+      navigationFailed(in: webView, navigation: navigation)
+    }
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+      navigationFailed(in: webView, navigation: navigation)
+    }
+    private func navigationFailed(in web: WKWebView, navigation: WKNavigation?) {
+      guard !closed, self.web === web, let navigation, self.navigation === navigation, !ready else { return }
+      recoveringProcess = false; showRetry(.document)
+    }
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+      recoverUnavailableProcess(in: webView)
+    }
+    private func recoverUnavailableProcess(in web: WKWebView) {
+      guard !closed, self.web === web, !recoveringProcess else { return }
+      ready = false; retirePublication(); sent = nil; readingLayout = nil; publishedCredits = []; needsFullPublication = false
+      if automaticRecoveryUsed { showRetry(.document); return }
+      automaticRecoveryUsed = true; recoveringProcess = true; loadDocument(in: web)
+    }
+    private func showRetry(_ kind: RetryKind) {
+      retryKind = kind
+      guard retryBanner == nil, let container else { return }
+      let label = UILabel(); label.numberOfLines = 0; label.textAlignment = .center
+      label.font = .preferredFont(forTextStyle: .caption1); label.adjustsFontForContentSizeCategory = true
+      label.text = "Не удалось отобразить беседу."
+      let button = UIButton(configuration: .bordered(), primaryAction: UIAction(title: "Повторить") { [weak self] _ in self?.retry() })
+      button.accessibilityIdentifier = "notebook-chat-retry"
+      let banner = UIStackView(arrangedSubviews: [label, button]); banner.axis = .vertical; banner.spacing = 8
+      banner.isLayoutMarginsRelativeArrangement = true; banner.layoutMargins = .init(top: 12, left: 12, bottom: 12, right: 12)
+      banner.backgroundColor = .secondarySystemBackground; banner.layer.cornerRadius = 12
+      banner.translatesAutoresizingMaskIntoConstraints = false; container.addSubview(banner); retryBanner = banner
+      NSLayoutConstraint.activate([banner.topAnchor.constraint(equalTo: container.safeAreaLayoutGuide.topAnchor, constant: 12),
+        banner.centerXAnchor.constraint(equalTo: container.centerXAnchor), banner.widthAnchor.constraint(lessThanOrEqualToConstant: 320),
+        banner.widthAnchor.constraint(lessThanOrEqualTo: container.widthAnchor, constant: -24)])
+    }
+    private func removeRetry() { retryKind = nil; retryBanner?.removeFromSuperview(); retryBanner = nil }
+    private func retry() {
+      guard !closed, let kind = retryKind else { return }
+      automaticRecoveryUsed = false; removeRetry()
+      guard let web else {
+        if let container { preparation?.cancel(); mount(container) }
+        return
+      }
+      if kind == .publication, ready { publish(web) }
+      else { recoveringProcess = false; loadDocument(in: web) }
+    }
+    func publish(_ web: WKWebView) {
+      guard ready, !closed, self.web === web, retryKind == nil, publicationID == nil,
+        let navigation, desired.basis != sent || needsFullPublication else { return }
+      let attempt = UUID(); publicationID = attempt
+      publication = Task { [weak self, weak web] in
+        guard let self, let web else { return }
+        defer {
+          if publicationID == attempt { publicationID = nil; publication = nil }
+        }
+        while publicationIsCurrent(attempt, navigation: navigation, in: web), !Task.isCancelled,
+          desired.basis != sent || needsFullPublication {
+          let previousPublishedCredits = publishedCredits
+          let next = desired, reset = sent?.conversation != desired.basis.conversation
+          let previous = reset ? [:] : sent?.messages ?? [:]
+          let ids = Set(next.basis.order)
+          let update = Update(reset: reset, conversation: next.basis.conversation, order: next.basis.order,
+            upserts: needsFullPublication ? next.messages : next.messages.filter { previous[$0.id] != next.basis.messages[$0.id] },
+            removed: previous.keys.filter { !ids.contains($0) },
+            work: next.basis.work, turnStatuses: next.basis.turnStatuses,
+            focus: reset || sent?.focus != next.basis.focus ? next.basis.focus : nil)
+          do {
+            guard let lease else { return }
+            let borrow = try lease.borrow()
+            let json = String(decoding: try JSONEncoder().encode(update), as: UTF8.self)
+            let height: Double = try await withCheckedThrowingContinuation { continuation in
+              web.callAsyncJavaScript("await window.updateMessages(JSON.parse(json)); return document.documentElement.scrollHeight;",
+                arguments: ["json": json], in: nil, in: .page) { [next, previousPublishedCredits, borrow] result in
+                  // Cancellation retires the logical attempt. The real WebKit
+                  // callback alone returns its body credits and physical borrow.
+                  defer {
+                    borrow.release(); withExtendedLifetime(next.credits) {}; withExtendedLifetime(previousPublishedCredits) {}
+                  }
+                  continuation.resume(with: result.map { ($0 as? Double) ?? 0 })
+                }
+            }
+            guard publicationIsCurrent(attempt, navigation: navigation, in: web), !Task.isCancelled else { return }
+            sent = next.basis; publishedCredits = next.credits; needsFullPublication = false
+            if height.isFinite, height > 0 {
+              readingLayout = .init(basis: next.basis, height: CGFloat(height), restoring: reset ? reading : nil)
+              finishReadingLayout(in: web)
+            }
+          } catch {
+            guard publicationIsCurrent(attempt, navigation: navigation, in: web), !Task.isCancelled else { return }
+            let failure = error as NSError
+            if failure.domain == WKError.errorDomain, failure.code == WKError.Code.webContentProcessTerminated.rawValue {
+              recoverUnavailableProcess(in: web)
+            } else {
+              // A script can throw after changing some articles. Until a
+              // successful delta or realm retirement, either body may be live.
+              var held = Set(publishedCredits.map(ObjectIdentifier.init))
+              publishedCredits.append(contentsOf: next.credits.filter { held.insert(ObjectIdentifier($0)).inserted })
+              needsFullPublication = true
+              showRetry(.publication)
+            }
+            return
+          }
+        }
+      }
+    }
+    private func publicationIsCurrent(_ attempt: UUID, navigation: WKNavigation, in web: WKWebView) -> Bool {
+      !closed && ready && self.web === web && self.navigation === navigation && publicationID == attempt
+    }
+    private func finishReadingLayout(in web: WKWebView) {
+      guard !closed, ready, self.web === web, let layout = readingLayout,
+        sent == layout.basis, desired.basis == layout.basis else { return }
+      let scroll = web.scrollView, tolerance = 1 / (web.window?.screen.scale ?? 1)
+      guard scroll.contentSize.height + tolerance >= layout.height else { return }
+      readingLayout = nil
+      if let saved = layout.restoring, saved.basis == layout.basis,
+        abs(saved.width - web.bounds.width) <= tolerance {
+        let bottom = max(-scroll.adjustedContentInset.top, scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom)
+        let offset = saved.followsTail ? bottom : min(bottom, max(-scroll.adjustedContentInset.top, saved.offset))
+        scroll.setContentOffset(.init(x: scroll.contentOffset.x, y: offset), animated: false)
+      }
+      rememberReading(in: scroll)
+    }
+    private func rememberReading(in scroll: UIScrollView) {
+      guard !closed, ready, let web, web.scrollView === scroll, let sent, sent == desired.basis,
+        readingLayout == nil, scroll.contentSize.height > 0 else { return }
+      let bottom = max(-scroll.adjustedContentInset.top, scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom)
+      reading = .init(basis: sent, width: web.bounds.width, offset: scroll.contentOffset.y,
+        followsTail: bottom - scroll.contentOffset.y <= 60)
+    }
+    func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) { rememberReading(in: scrollView) }
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
+      if scrollView.isDragging || scrollView.isDecelerating { rememberReading(in: scrollView) }
       guard !closed, canLoadEarlier, scrollView.isDragging || scrollView.isDecelerating,
         scrollView.contentOffset.y <= 120 else { return }
       canLoadEarlier = false; loadEarlier()
     }
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction) async -> WKNavigationActionPolicy {
+      guard !closed, web === webView else { return .cancel }
       if action.navigationType == .linkActivated, let url = action.request.url, NotebookCodeLink(url: url) != nil {
         openLink(url); return .cancel
       }

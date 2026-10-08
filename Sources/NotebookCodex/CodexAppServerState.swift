@@ -3,6 +3,9 @@ import NotebookCore
 
 /// A bounded view of native items, not a second stored transcript. Hidden reasoning is never retained.
 struct CodexAppServerState: Sendable {
+  // A complete 64 KiB native question can use two-byte String storage plus
+  // bounded container capacity; dense token arrays have their own retained cap.
+  static let maximumRequestPayloadBytes = 256 * 1024
   let threadID: String
   let generation = UUID()
   var title = "Codex"
@@ -13,6 +16,27 @@ struct CodexAppServerState: Sendable {
   // Exact full-transfer bytes, not the smaller presentation excerpt. This
   // accounting belongs to the same bounded native item window as its bodies.
   private var messageBytes: [String: Int] = [:]
+  private var bodyAllowance = 16 * 1_048_576
+  var retainedBodyBytes: Int {
+    messages.reduce(0) { $0 + ($1.isTruncated ? 0 : messageBytes[$1.id, default: 0]) }
+  }
+  var protectedBodyID: String? {
+    messages.last { $0.turnID == activeTurnID && $0.activity == nil && !$0.isTruncated }?.id
+  }
+  var presentation: CodexConversation {
+    let value = view
+    return .init(threadID: value.threadID, generation: value.generation, revision: value.revision, title: value.title,
+      ready: value.ready, busy: value.busy, activeTurnID: value.activeTurnID,
+      messages: value.messages.map { $0.preview() }, requests: value.requests, acceptedMessages: value.acceptedMessages,
+      turnStatuses: value.turnStatuses, access: value.access, model: value.model, contextUsage: value.contextUsage)
+  }
+
+  mutating func evictBodies(to bytes: Int, keeping id: String? = nil, protectingActive: Bool = false) {
+    let active = protectingActive ? protectedBodyID : nil
+    for index in messages.indices where retainedBodyBytes > max(0, bytes) {
+      if messages[index].id != id, messages[index].id != active, !messages[index].isTruncated { messages[index] = messages[index].preview(evicted: true) }
+    }
+  }
   var requests: [CodexUserRequest] = []
   var turnStatuses: [String: String] = [:]
   var runtimeActive = false
@@ -33,16 +57,19 @@ struct CodexAppServerState: Sendable {
 
   mutating func hydrate(thread: JSONValue, history: [CodexMessage], turns: [JSONValue]) throws {
     guard thread["id"] == .string(threadID) else { throw CodexBridgeError.invalidResponse }
-    title = String((thread["name"]?.string ?? thread["preview"]?.string ?? "Codex").prefix(256))
+    title = CodexMessageTransfer.textPrefix(thread["name"]?.string ?? thread["preview"]?.string ?? "Codex", maximumBytes: 256)
     for message in history { try acceptMessageID(message) }
     let known = Set(messages.map(\.id))
-    var admitted: [CodexMessage] = []
-    for message in history where !known.contains(message.id) { admitted.append(try admitMessage(message)) }
-    messages = Array((admitted + messages).suffix(64))
+    let live = messages
+    messages = []
+    for message in history where !known.contains(message.id) { try upsert(message) }
+    for message in live { try upsert(message) }
     let retainedIDs = Set(messages.map(\.id))
     messageBytes = messageBytes.filter { retainedIDs.contains($0.key) }
     for turn in turns {
-      guard let id = turn["id"]?.string, let status = turn["status"]?.string else { throw CodexBridgeError.invalidResponse }
+      guard let id = turn["id"]?.string, let status = turn["status"]?.string,
+      CodexMessageTransfer.encodedTextBytes(id, within: 256) != nil,
+      CodexMessageTransfer.encodedTextBytes(status, within: 128) != nil else { throw CodexBridgeError.invalidResponse }
       // Events received during the read own their newer status. A runtime
       // activity event must not discard unrelated historical terminal states.
       if turnStatuses[id] == nil { turnStatuses[id] = status }
@@ -55,13 +82,14 @@ struct CodexAppServerState: Sendable {
     ready = true; revision += 1
   }
 
-  @discardableResult mutating func accept(_ frame: JSONValue) throws -> Bool {
+  @discardableResult mutating func accept(_ frame: JSONValue, bodyAllowance: Int = 16 * 1_048_576) throws -> Bool {
+    self.bodyAllowance = max(0, bodyAllowance)
     guard let method = frame["method"]?.string, let params = frame["params"],
       params["threadId"] == .string(threadID) else { return false }
     if let id = frame["id"] {
       guard id.string != nil || id.integer != nil, requests.count < 32,
-        try JSONEncoder().encode(id).count <= 512, method.utf8.count <= 256,
-        try JSONEncoder().encode(params).count <= 65_536,
+        CodexProjectionBytes.json(id, maximumBytes: 512) != nil, method.utf8.count <= 256,
+        params.retainedPayloadBytes <= Self.maximumRequestPayloadBytes, CodexProjectionBytes.json(params, maximumBytes: 65_536) != nil,
         let turn = params["turnId"]?.string ?? activeTurnID, turn.utf8.count <= 256 else { throw CodexBridgeError.unsupportedRequest }
       let request = CodexUserRequest(nativeID: id, generation: generation, method: method, turnID: turn, parameters: params)
       if let prior = requests.first(where: { $0.nativeID == id }) {
@@ -73,11 +101,13 @@ struct CodexAppServerState: Sendable {
       case "thread/settings/updated":
         guard let settings = params["threadSettings"], let policy = settings["approvalPolicy"] else { throw CodexBridgeError.invalidResponse }
         if let name = settings["model"]?.string {
+          guard CodexModelSelection(model:name,effort:settings["effort"]?.string).isValid else { throw CodexBridgeError.invalidResponse }
           if model?.model != name { contextUsage = nil }
           model = .init(model: name, effort: settings["effort"]?.string)
         }
+        guard (settings["cwd"]?.string?.utf8.count ?? 0) <= 4096 else { throw CodexBridgeError.invalidResponse }
         cwd = settings["cwd"]?.string ?? cwd
-        access = CodexAccess(profileID: settings["activePermissionProfile"]?["id"]?.string,
+        access = try Self.boundedAccess(profileID: settings["activePermissionProfile"]?["id"]?.string,
           approvalPolicy: policy, available: access?.available ?? [])
       case "thread/tokenUsage/updated":
         guard let usage = params["tokenUsage"], let used = usage["last"]?["totalTokens"]?.integer, used >= 0 else { throw CodexBridgeError.invalidResponse }
@@ -90,7 +120,7 @@ struct CodexAppServerState: Sendable {
         receivedRuntimeState = true
         runtimeActive = params["status"]?["type"] == .string("active")
       case "thread/name/updated":
-        title = String((params["threadName"]?.string ?? title).prefix(256))
+        title = CodexMessageTransfer.textPrefix(params["threadName"]?.string ?? title, maximumBytes: 256)
       case "turn/started", "turn/completed":
         receivedRuntimeState = true
         guard let turn = params["turn"] else { throw CodexBridgeError.invalidResponse }
@@ -104,12 +134,27 @@ struct CodexAppServerState: Sendable {
         let prior = messages[index]
         // Once this native item is unavailable, further deltas are neither
         // retained nor published. Only an authoritative item can restore it.
-        guard let bytes = messageBytes[id] else { return false }
-        if let addition = Self.encodedTextBytes(delta, within: CodexMessageTransfer.maximumBytes - bytes) {
-          messageBytes[id] = bytes + addition
-          messages[index] = CodexMessage(id: prior.id, turnID: prior.turnID, clientID: prior.clientID, role: prior.role,
-            text: prior.text + delta, contentRevision: generation.uuidString + ":" + String(revision + 1),
+        guard let bytes = messageBytes[id] else {
+          if prior.activity?.kind == .error { return false }
+          messages[index] = .init(id: prior.id, turnID: prior.turnID, clientID: prior.clientID, role: prior.role,
+            text: prior.text, isTruncated: true, contentRevision: generation.uuidString + ":" + String(revision + 1),
             activity: prior.activity, attachments: prior.attachments, phase: prior.phase)
+          revision += 1; return true
+        }
+        if let addition = Self.encodedTextBytes(delta, within: CodexMessageTransfer.maximumBytes - bytes) {
+          evictBodies(to: self.bodyAllowance - addition, keeping: id, protectingActive: true)
+          let fits = bytes + addition <= self.bodyAllowance - retainedBodyBytes + (prior.isTruncated ? 0 : bytes)
+          messageBytes[id] = bytes + addition
+          if !prior.isTruncated, fits {
+            messages[index] = CodexMessage(id: prior.id, turnID: prior.turnID, clientID: prior.clientID, role: prior.role,
+              text: prior.text + delta, contentRevision: generation.uuidString + ":" + String(revision + 1),
+              activity: prior.activity, attachments: prior.attachments, phase: prior.phase)
+          } else {
+            let preview = prior.preview(evicted: true)
+            messages[index] = .init(id: prior.id, turnID: prior.turnID, clientID: prior.clientID, role: prior.role,
+              text: preview.text, isTruncated: true, contentRevision: generation.uuidString + ":" + String(revision + 1),
+              activity: preview.activity, attachments: preview.attachments, phase: prior.phase)
+          }
         } else {
           messageBytes.removeValue(forKey: id)
           messages[index] = unavailableMessage(prior)
@@ -121,8 +166,28 @@ struct CodexAppServerState: Sendable {
     return true
   }
 
+  func additionalBodyBytes(for frame: JSONValue) -> Int {
+    let params = frame["params"]
+    switch frame["method"]?.string {
+    case "item/agentMessage/delta":
+      guard let id = params?["itemId"]?.string, let delta = params?["delta"]?.string,
+        let prior = messages.first(where: { $0.id == id }), !prior.isTruncated,
+        let bytes = messageBytes[id],
+        let addition = Self.encodedTextBytes(delta, within: CodexMessageTransfer.maximumBytes - bytes) else { return 0 }
+      return addition
+    case "item/started", "item/completed":
+      let previous = params?["item"]?["id"]?.string.flatMap { id in
+        messages.first { $0.id == id && !$0.isTruncated }.flatMap { messageBytes[$0.id] }
+      } ?? 0
+      return CodexMessageTransfer.maximumBytes - previous
+    default: return 0
+    }
+  }
+
   private mutating func acceptTurn(_ turn: JSONValue) throws {
-    guard let id = turn["id"]?.string, let status = turn["status"]?.string else { throw CodexBridgeError.invalidResponse }
+    guard let id = turn["id"]?.string, let status = turn["status"]?.string,
+      CodexMessageTransfer.encodedTextBytes(id, within: 256) != nil,
+      CodexMessageTransfer.encodedTextBytes(status, within: 128) != nil else { throw CodexBridgeError.invalidResponse }
     turnStatuses[id] = status
     if status == "inProgress" { activeTurnID = id; runtimeActive = true }
     else if activeTurnID == id { activeTurnID = nil; runtimeActive = false; requests.removeAll { $0.turnID == id } }
@@ -141,18 +206,13 @@ struct CodexAppServerState: Sendable {
   /// quote and backslash expand. Counting just the delta avoids re-encoding the
   /// growing body and rejects overload before allocating its concatenation.
   static func encodedTextBytes(_ text: String, within limit: Int) -> Int? {
-    var count = 0
-    for byte in text.utf8 {
-      let cost: Int
-      switch byte {
-      case 8, 9, 10, 12, 13, 34, 92: cost = 2
-      case 0..<32: cost = 6
-      default: cost = 1
-      }
-      guard cost <= limit - count else { return nil }
-      count += cost
-    }
-    return count
+    CodexMessageTransfer.encodedTextBytes(text, within: limit)
+  }
+
+  static func boundedAccess(profileID: String?, approvalPolicy: JSONValue, available: [CodexAccessMode]) throws -> CodexAccess {
+    guard (profileID?.utf8.count ?? 0) <= 256, approvalPolicy.retainedPayloadBytes <= 4096,
+      CodexProjectionBytes.json(approvalPolicy,maximumBytes:4096) != nil else { throw CodexBridgeError.invalidResponse }
+    return .init(profileID:profileID,approvalPolicy:approvalPolicy,available:available)
   }
 
   private func unavailableMessage(_ message: CodexMessage) -> CodexMessage {
@@ -165,13 +225,17 @@ struct CodexAppServerState: Sendable {
   }
 
   private mutating func admitMessage(_ message: CodexMessage) throws -> CodexMessage {
-    let bytes = try CodexMessageTransfer.encode(message).count
-    guard !message.isTruncated, bytes <= CodexMessageTransfer.maximumBytes else {
+    if message.isTruncated { messageBytes.removeValue(forKey: message.id); return message.preview() }
+    guard let bytes = CodexMessageTransfer.encodedByteCount(message) else {
       messageBytes.removeValue(forKey:message.id)
       return unavailableMessage(message)
     }
+    let previous = messages.first { $0.id == message.id }.flatMap { $0.isTruncated ? nil : messageBytes[$0.id] } ?? 0
+    evictBodies(to: bodyAllowance - bytes + previous, keeping: message.id, protectingActive: true)
+    let fits = bytes <= bodyAllowance - retainedBodyBytes + previous
     messageBytes[message.id] = bytes
-    return message
+    let identified = message.identifyingContent()
+    return fits ? identified : identified.preview(evicted: true)
   }
 
   private mutating func upsert(_ message: CodexMessage) throws {

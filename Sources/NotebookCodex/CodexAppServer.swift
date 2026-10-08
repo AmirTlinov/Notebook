@@ -27,7 +27,27 @@ public actor CodexAppServer {
   private var connection: Task<Connection, Error>?
   private var generation = UUID()
   private var states: [String: CodexAppServerState] = [:]
-  private struct Attachment { let id: UUID; let task: Task<Void, Error> }
+  nonisolated let conversationMemory = CodexConversationMemory()
+  struct LoadReservation: Sendable { let id: UUID; let victim: String?; let preparation: UUID }
+  private var loadReservations: [String: LoadReservation] = [:]
+  struct ConversationReadCut: Sendable {
+    let connection: UUID, account: UUID
+    let workspace: UUID?
+    let thread: String
+  }
+  func captureConversationRead(threadID: String) throws -> ConversationReadCut {
+    guard !accountSession.changing else { throw CodexBridgeError.busy }
+    return .init(connection: generation, account: accountSession.revision,
+      workspace: threadWorkspaces[threadID], thread: threadID)
+  }
+  func requireConversationRead(_ cut: ConversationReadCut) throws {
+    try Task.checkCancellation()
+    guard !accountSession.changing, cut.connection == generation, cut.account == accountSession.revision,
+      cut.workspace == threadWorkspaces[cut.thread] else { throw CodexBridgeError.disconnected }
+  }
+  var residentConversationBodyBytes: Int { states.values.reduce(0) { $0 + $1.retainedBodyBytes } }
+
+  struct Attachment { let id: UUID; let task: Task<Void, Error> }
   private var attaching: [String: Attachment] = [:]
   private var starting: Set<String> = []
   private struct RunningProcess {
@@ -40,7 +60,7 @@ public actor CodexAppServer {
   }
   private var voice: NotebookVoiceState?
   private var processes: [UUID: RunningProcess] = [:]
-  private var selections: [String: Set<UUID>] = [:]
+  private var selections: [String: [UUID: UUID]] = [:]
   private var workspaceTools: [UUID: JSONValue] = [:]
   private var threadWorkspaces: [String: UUID] = [:]
 
@@ -95,7 +115,7 @@ public actor CodexAppServer {
   func session<T: Sendable>(_ body: @Sendable (CodexRPC) async throws -> T) async throws -> T {
     try await body(connect())
   }
-  public func snapshot(threadID: String) -> CodexConversation? { states[threadID]?.view }
+  public func snapshot(threadID: String) -> CodexConversation? { states[threadID]?.presentation }
 
   /// Only IDs and their current state generation wait in the mailbox. Payloads
   /// are projected from the existing authoritative states at the actual drain.
@@ -107,7 +127,7 @@ public actor CodexAppServer {
     }
     for threadID in dirtyThreads.keys.sorted() {
       if let state = states[threadID], state.generation == dirtyThreads[threadID] {
-        result.append(.conversation(state.view))
+        result.append(.conversation(state.presentation))
       }
     }
     dirtyThreads.removeAll(keepingCapacity: true)
@@ -116,7 +136,14 @@ public actor CodexAppServer {
 
   // Both loaded history and accepted native events publish through this owner.
   // Admission still belongs to load; dirty keys are a subset of retained states.
-  func publishConversation(_ state: CodexAppServerState) {
+  func publishConversation(_ value: CodexAppServerState) {
+    var state = value
+    let otherBytes = residentConversationBodyBytes - (states[state.threadID]?.retainedBodyBytes ?? 0)
+    state.evictBodies(to: min(CodexConversationMemory.threadBodyBytes,
+      CodexConversationMemory.bodyBytes - otherBytes), protectingActive: true)
+    if state.retainedBodyBytes > CodexConversationMemory.bodyBytes - otherBytes {
+      state.evictBodies(to: CodexConversationMemory.bodyBytes - otherBytes)
+    }
     states[state.threadID] = state
     dirtyThreads[state.threadID] = state.generation
     output.yield(())
@@ -141,18 +168,39 @@ public actor CodexAppServer {
     guard !accountSession.changing else { throw CodexBridgeError.busy }
     guard UUID(uuidString: threadID) != nil else { throw CodexBridgeError.invalidInput }
     try Task.checkCancellation()
-    selections[threadID, default: []].insert(observationID)
+    guard !loadReservations.values.contains(where: { $0.victim == threadID }) else { throw CodexBridgeError.busy }
+    let claim = selectObservation(threadID: threadID, observationID: observationID)
     if states[threadID]?.ready == true { return }
     let epoch = generation
     let entry: Attachment
     if let existing = attaching[threadID] { entry = existing }
     else {
-      entry = Attachment(id: UUID(), task: Task { try await self.load(threadID: threadID, epoch: epoch) })
+      let reservation: LoadReservation
+      do { reservation = try reserveLoad(threadID: threadID) }
+      catch { retireObservation(threadID: threadID, observationID: observationID, claim: claim); throw error }
+      entry = Attachment(id: UUID(), task: Task { try await self.load(threadID: threadID, epoch: epoch, reservation: reservation) })
       attaching[threadID] = entry
     }
+    try await joinAttachment(threadID: threadID, observationID: observationID, claim: claim, epoch: epoch, entry: entry)
+  }
+
+  func selectObservation(threadID: String, observationID: UUID) -> UUID {
+    let claim = UUID()
+    selections[threadID, default: [:]][observationID] = claim
+    return claim
+  }
+
+  private func retireObservation(threadID: String, observationID: UUID, claim: UUID) {
+    guard selections[threadID]?[observationID] == claim else { return }
+    detach(threadID: threadID, observationID: observationID)
+  }
+
+  // A refresh retains its public observation, while this captured claim owns
+  // only its join attempt. A late catch cannot retire the successor's demand.
+  func joinAttachment(threadID: String, observationID: UUID, claim: UUID, epoch: UUID, entry: Attachment) async throws {
     do { try await entry.task.value }
     catch {
-      detach(threadID: threadID, observationID: observationID)
+      retireObservation(threadID: threadID, observationID: observationID, claim: claim)
       if attaching[threadID]?.id == entry.id {
         attaching.removeValue(forKey: threadID); removeConversation(threadID: threadID)
       }
@@ -162,41 +210,74 @@ public actor CodexAppServer {
     do {
       try Task.checkCancellation()
       guard epoch == generation, states[threadID]?.ready == true else { throw CodexBridgeError.disconnected }
-      guard selections[threadID]?.contains(observationID) == true else { throw CancellationError() }
+      guard selections[threadID]?[observationID] == claim else { throw CancellationError() }
     } catch {
-      detach(threadID: threadID, observationID: observationID)
+      retireObservation(threadID: threadID, observationID: observationID, claim: claim)
       throw error
     }
   }
 
-  private func load(threadID: String, epoch: UUID) async throws {
+  private func idleForEviction(_ id: String) -> Bool {
+    selections[id]?.isEmpty != false && !(voice?.threadID == id && voice?.phase != .ended)
+      && states[id]?.view.busy == false && states[id]?.requests.isEmpty == true && !starting.contains(id)
+  }
+  func reserveLoad(threadID: String) throws -> LoadReservation {
+    // Reserve both a slot and its unique victim before connect/unsubscribe can
+    // suspend. Concurrent attachments cannot spend the same free slot twice.
+    guard loadReservations[threadID] == nil else { throw CodexBridgeError.busy }
+    let victims = Set(loadReservations.values.compactMap(\.victim))
+    let occupied = Set(states.keys).union(loadReservations.keys).subtracting(victims).count
+    let victim: String?
+    if occupied >= 9 {
+      guard let idle = states.keys.sorted().first(where: { !victims.contains($0) && idleForEviction($0) }) else {
+        throw CodexBridgeError.busy
+      }
+      victim = idle
+    } else { victim = nil }
+    let preparation = try conversationMemory.reservePreparation()
+    let value = LoadReservation(id: UUID(), victim: victim, preparation: preparation)
+    loadReservations[threadID] = value; return value
+  }
+  func releaseLoad(threadID: String, reservation: LoadReservation) {
+    conversationMemory.releasePreparation(reservation.preparation)
+    if loadReservations[threadID]?.id == reservation.id { loadReservations.removeValue(forKey: threadID) }
+  }
+  private func load(threadID: String, epoch: UUID, reservation: LoadReservation) async throws {
+    defer { releaseLoad(threadID: threadID, reservation: reservation) }
+    let cut = try captureConversationRead(threadID: threadID)
     let rpc = try await connect()
-    try Task.checkCancellation()
-    guard epoch == generation else { throw CodexBridgeError.disconnected }
+    try requireConversationRead(cut)
+    guard epoch == generation, loadReservations[threadID]?.id == reservation.id else { throw CodexBridgeError.disconnected }
     try await validateThreadScope(threadID, rpc: rpc)
-    try Task.checkCancellation()
-    guard epoch == generation else { throw CodexBridgeError.disconnected }
-    if states.count >= 9 {
-      guard let idle = states.keys.sorted().first(where: { selections[$0]?.isEmpty != false && !(voice?.threadID == $0 && voice?.phase != .ended) && states[$0]?.view.busy == false && states[$0]?.requests.isEmpty == true }) else { throw CodexBridgeError.busy }
+    try requireConversationRead(cut)
+    if let idle = reservation.victim {
+      guard idleForEviction(idle) else { throw CodexBridgeError.busy }
       _ = try await rpc.request("thread/unsubscribe", params: .object(["threadId": .string(idle)]))
-      guard epoch == generation else { throw CodexBridgeError.disconnected }
+      try requireConversationRead(cut)
+      // Preserve any late native approval instead of deleting its owner.
+      guard idleForEviction(idle) else { throw CodexBridgeError.busy }
       removeConversation(threadID: idle); threadWorkspaces.removeValue(forKey: idle)
     }
+    guard states.count < 9 || states[threadID] != nil else { throw CodexBridgeError.busy }
     // No settings overrides, stale-turn inference or force takeover. A foreign active writer is a refusal.
     states[threadID] = CodexAppServerState(threadID: threadID)
     let parameters = try await scopedThreadParameters(["threadId": .string(threadID), "excludeTurns": .bool(true)], rpc: rpc)
-    try Task.checkCancellation()
+    try requireConversationRead(cut)
     guard epoch == generation else { throw CodexBridgeError.disconnected }
     let result = try await rpc.request("thread/resume", params: .object(parameters))
+    try requireConversationRead(cut)
     guard epoch == generation, let thread = result["thread"], thread["id"] == .string(threadID),
       thread["canAcceptDirectInput"] == .bool(true) else { throw CodexBridgeError.externalOwnerUnavailable }
     if states[threadID]?.model == nil, let model = result["model"]?.string {
+      guard CodexModelSelection(model:model,effort:result["reasoningEffort"]?.string).isValid else { throw CodexBridgeError.invalidResponse }
       states[threadID]?.model = .init(model: model, effort: result["reasoningEffort"]?.string)
     }
+    guard (result["cwd"]?.string?.utf8.count ?? 0) <= 4096 else { throw CodexBridgeError.invalidResponse }
     states[threadID]?.cwd = result["cwd"]?.string
-    states[threadID]?.access = CodexAccess(profileID: result["activePermissionProfile"]?["id"]?.string,
+    states[threadID]?.access = try CodexAppServerState.boundedAccess(profileID: result["activePermissionProfile"]?["id"]?.string,
       approvalPolicy: result["approvalPolicy"] ?? .null, available: [])
     let modes = (try? await Self.availableAccess(rpc, cwd: result["cwd"]?.string)) ?? []
+    try requireConversationRead(cut)
     guard epoch == generation, let currentAccess = states[threadID]?.access else { throw CodexBridgeError.disconnected }
     // A settings event received during the catalogue read is newer than resume.
     states[threadID]?.access = CodexAccess(profileID: currentAccess.profileID,
@@ -205,14 +286,17 @@ public actor CodexAppServer {
     // writer admission. Merely resizing/detaching a ready view never enters load.
     _ = try await rpc.request("thread/inject_items", params: .object([
       "threadId": .string(threadID), "items": .array([Self.notebookRuntimeContext])]))
+    try requireConversationRead(cut)
     guard epoch == generation else { throw CodexBridgeError.disconnected }
-    let history = try await history(threadID: threadID)
+    let history = try await Self.readHistoryItem(rpc, threadID: threadID, cursor: nil, turnID: nil, cut: cut)
+    try requireConversationRead(cut)
     // Terminal headings need the bounded recent turn metadata after reconnect,
     // not the multi-megabyte items that produced each tool receipt.
     let turns = try await rpc.request("thread/turns/list", params: .object([
       "threadId": .string(threadID), "limit": .number(64), "sortDirection": .string("desc"), "itemsView": .string("notLoaded")]))
+    try requireConversationRead(cut)
     guard epoch == generation, var state = states[threadID], let rows = turns["data"]?.array, rows.count <= 64 else { throw CodexBridgeError.disconnected }
-    try state.hydrate(thread: thread, history: history.messages, turns: rows)
+    try state.hydrate(thread: thread, history: history.messages.map { $0.preview() }, turns: rows)
     publishConversation(state)
   }
 
@@ -224,7 +308,7 @@ public actor CodexAppServer {
 
   /// Removing a view neither unsubscribes an active task nor interrupts its turn.
   public func detach(threadID: String, observationID: UUID) {
-    selections[threadID]?.remove(observationID)
+    selections[threadID]?.removeValue(forKey: observationID)
     if selections[threadID]?.isEmpty == true { selections.removeValue(forKey: threadID) }
   }
 
@@ -369,7 +453,14 @@ public actor CodexAppServer {
 
   func invalidateAccountPresentation() {
     for entry in attaching.values { entry.task.cancel() }; attaching.removeAll()
-    invalidateConversations()
+    invalidateConversations(unavailable: .disconnected)
+  }
+
+  @discardableResult func acceptAccountFrame(_ frame: JSONValue) -> Bool {
+    let previous = accountSession.revision
+    guard accountSession.receive(frame) else { return false }
+    if previous != accountSession.revision { invalidateAccountPresentation() }
+    return true
   }
 
   public func hasActiveWork() -> Bool {
@@ -608,7 +699,7 @@ public actor CodexAppServer {
 
   private func receive(_ frame: JSONValue, epoch: UUID) async throws {
     guard epoch == generation else { return }
-    if accountSession.receive(frame) { return }
+    if acceptAccountFrame(frame) { return }
     if try receiveVoice(frame) { return }
     if frame["method"]?.string == "command/exec/outputDelta" {
       guard let id = frame["params"]?["processId"]?.string.flatMap(UUID.init(uuidString:)),
@@ -619,16 +710,74 @@ public actor CodexAppServer {
       }
       return
     }
-    guard let id = frame["params"]?["threadId"]?.string, var state = states[id] else {
+    try acceptConversationFrame(frame)
+  }
+
+  /// Event bodies are admitted before concatenation/formatting. The physical
+  /// channel serializes event projection; it has no suspended body-work queue.
+  func acceptConversationFrame(_ frame: JSONValue) throws {
+    guard let id = frame["params"]?["threadId"]?.string, let prior = states[id] else {
       if frame["id"] != nil { throw CodexBridgeError.unsupportedRequest }; return
     }
-    if try state.accept(frame) {
+    let growth = prior.additionalBodyBytes(for: frame)
+    var needed = max(0, residentConversationBodyBytes + growth - CodexConversationMemory.bodyBytes)
+    for other in states.keys.sorted() where other != id && needed > 0 {
+      guard var value = states[other] else { continue }
+      let before = value.retainedBodyBytes
+      value.evictBodies(to: max(0, before - needed), protectingActive: true)
+      states[other] = value; needed -= before - value.retainedBodyBytes
+    }
+    let otherBytes = residentConversationBodyBytes - prior.retainedBodyBytes
+    var state = prior
+    if try state.accept(frame, bodyAllowance: min(CodexConversationMemory.threadBodyBytes,
+      CodexConversationMemory.bodyBytes - otherBytes)) {
       publishConversation(state)
       if frame["method"] == .string("serverRequest/resolved") {
         let live = Set(state.requests.map { id + "/" + $0.id })
         answeringRequests = answeringRequests.filter { !$0.hasPrefix(id + "/") || live.contains($0) }
       }
     }
+  }
+
+  public func prepareMessage(_ read: CodexMessageRead, peer: UUID) async throws -> CodexAuthoritativeMessageRead {
+    guard read.isValid, read.transferID == nil else { throw CodexBridgeError.invalidInput }
+    let credit = try conversationMemory.reserveTransfer(peer: peer)
+    let preparation = try conversationMemory.reservePreparation()
+    defer { conversationMemory.releasePreparation(preparation) }
+    let cut = try captureConversationRead(threadID: read.threadID)
+    var message = states[read.threadID]?.messages.first {
+      $0.id == read.messageID && $0.turnID == read.turnID && !$0.isTruncated
+    }
+    var nextCursor: String?
+    if message == nil {
+      let rpc = try await connect()
+      try requireConversationRead(cut)
+      try await validateThreadScope(read.threadID, rpc: rpc)
+      try requireConversationRead(cut)
+      let page = try await Self.readHistoryItem(rpc, threadID: read.threadID, cursor: read.cursor, turnID: read.turnID, cut: cut)
+      try requireConversationRead(cut)
+      message = page.messages.first { $0.id == read.messageID && $0.turnID == read.turnID }
+      nextCursor = page.nextCursor
+    }
+    try requireConversationRead(cut)
+    guard let message else {
+      guard let nextCursor, nextCursor != read.cursor else { throw CodexBridgeError.invalidResponse }
+      return .searching(nextCursor: nextCursor)
+    }
+    // Preserve the existing utility preparation worker. Stop/Approval and
+    // native events can enter this actor while canonical Data is being encoded.
+    let worker = Task.detached(priority: .utility) {
+      try Task.checkCancellation()
+      let transfer = try CodexMessageTransfer(threadID: read.threadID, message: message,
+        release: { withExtendedLifetime(credit) {} },
+        requireOwner: { try await self.requireConversationRead(cut) })
+      try Task.checkCancellation()
+      return transfer
+    }
+    let transfer = try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
+    try requireConversationRead(cut)
+    credit.shrink(to: transfer.byteCount)
+    return .transfer(transfer)
   }
   private func disconnected(_ error: CodexBridgeError, epoch: UUID) async {
     guard generation == epoch else { return }

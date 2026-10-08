@@ -108,6 +108,378 @@ final class NotebookChatPanelTests: XCTestCase {
     XCTAssertEqual(finished, true, "Completion retires the shimmer without rewriting the conversation")
   }
 
+  func testDelayedBundledMathCannotRestoreThePreviousThreadThroughTheCoordinator() async throws {
+    let coordinator = NotebookChatTranscript.Coordinator()
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+      .first { $0.activationState == .foregroundActive })
+    let previous = scene.keyWindow, window = UIWindow(windowScene: scene), root = UIViewController()
+    window.frame = CGRect(x: 0, y: 0, width: 540, height: 560)
+    window.rootViewController = root; window.makeKeyAndVisible(); window.layoutIfNeeded()
+    coordinator.mount(root.view)
+    defer { coordinator.close(); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+
+    func waitForTranscript(_ expression: String, _ reason: String) async throws {
+      let deadline = ContinuousClock.now + .seconds(15)
+      while .now < deadline {
+        if coordinator.ready, let web = coordinator.web,
+          (try? await web.evaluateJavaScript(expression)) as? Bool == true { return }
+        try await Task.sleep(for: .milliseconds(20))
+      }
+      throw NSError(domain: "NotebookChatPanelTests", code: 1, userInfo: [NSLocalizedDescriptionKey: reason])
+    }
+
+    coordinator.update(messages: [], conversationID: "old-thread")
+    try await waitForTranscript("typeof window.updateMessages==='function' && typeof MathJax.typesetPromise==='function'",
+      "The mounted bundled transcript did not load")
+    let web = try XCTUnwrap(coordinator.web)
+    XCTAssertTrue(web.window === window)
+    XCTAssertTrue(web.url?.isFileURL == true)
+    XCTAssertEqual(web.url?.lastPathComponent, "chat-shell.html")
+    _ = try await web.evaluateJavaScript("""
+      window.chatMathReady=false;
+      MathJax.startup.promise.then(()=>{window.chatMathReady=true;});true
+      """)
+    try await waitForTranscript("window.chatMathReady===true", "The actual bundled MathJax did not become ready")
+    _ = try await web.evaluateJavaScript("""
+      window.heldChatMath={started:false,finished:false};
+      const actualTypeset=MathJax.typesetPromise.bind(MathJax);
+      const gate=new Promise(resolve=>{window.heldChatMath.release=resolve;});
+      let first=true;
+      MathJax.typesetPromise=async nodes=>{
+        const held=first;first=false;
+        if(held){window.heldChatMath.started=true;await gate;}
+        const result=await actualTypeset(nodes);
+        if(held)window.heldChatMath.finished=true;
+        return result;
+      };true
+      """)
+    let old = CodexMessage(id: "answer", turnID: "old-turn", clientID: nil, role: .assistant,
+      text: "Old thread: $x^2=1$")
+    coordinator.update(messages: [old], conversationID: "old-thread")
+    try await waitForTranscript("window.heldChatMath.started && document.querySelectorAll('.math-stage').length===1",
+      "The old thread never entered the controlled actual typeset await")
+    _ = try await web.evaluateJavaScript("window.oldChatArticle=document.querySelector('#messages [data-item-id=answer]');true")
+
+    // Reuse the server message ID across threads. Native acceptance must cross
+    // its WebKit await while the old math owner still holds its prepared clone.
+    let current = CodexMessage(id: "answer", turnID: "new-turn", clientID: nil, role: .assistant,
+      text: "Current thread: **keep this text** [Reference](https://example.com/current).")
+    coordinator.update(messages: [current], conversationID: "new-thread")
+    try await waitForTranscript("""
+      shownConversation==='new-thread' && !window.heldChatMath.finished
+        && document.querySelector('#messages [data-item-id=answer]')!==window.oldChatArticle
+        && document.querySelector('#messages .content')?.textContent.includes('Current thread: keep this text')
+      """, "The new plain thread was blocked by the previous thread's math await")
+    let selected = try await web.evaluateJavaScript("""
+      window.currentChatArticle=document.querySelector('#messages [data-item-id=answer]');
+      window.currentChatLink=window.currentChatArticle.querySelector('a');
+      window.currentChatText=window.currentChatArticle.querySelector('strong').firstChild;
+      window.currentChatLink.focus();
+      getSelection().setBaseAndExtent(window.currentChatText,0,window.currentChatText,window.currentChatText.length);
+      document.activeElement===window.currentChatLink && getSelection().toString()==='keep this text'
+      """) as? Bool
+    XCTAssertEqual(selected, true, "The current thread must own a real WebKit focus and prose selection before release")
+    _ = try await web.evaluateJavaScript("window.heldChatMath.release();true")
+    try await waitForTranscript("window.heldChatMath.finished && mathRendering===null && document.querySelectorAll('.math-stage').length===0",
+      "The released real MathJax batch did not drain")
+    let preserved = try await web.evaluateJavaScript("""
+      shownConversation==='new-thread' && document.querySelectorAll('#messages article').length===1
+        && document.querySelector('#messages [data-item-id=answer]')===window.currentChatArticle
+        && !document.getElementById('messages').textContent.includes('Old thread')
+        && document.querySelectorAll('#messages mjx-container').length===0
+        && document.activeElement===window.currentChatLink
+        && getSelection().toString()==='keep this text' && getSelection().anchorNode===window.currentChatText
+        && Array.from(MathJax.startup.document.math).length===0
+      """) as? Bool
+    XCTAssertEqual(preserved, true, "Late old-thread completion must leave the new article, focus and selection intact")
+
+    let formula = CodexMessage(id: "current-formula", turnID: "new-turn", clientID: nil, role: .assistant,
+      text: "Current formula: $z^2+9$")
+    coordinator.update(messages: [current, formula], conversationID: "new-thread")
+    try await waitForTranscript("""
+      mathRendering===null && document.querySelectorAll('#messages mjx-container').length===1
+        && document.querySelector('#messages [data-item-id=current-formula] mjx-assistive-mml math')?.textContent==='z2+9'
+      """, "The current thread did not render its formula through the same bundled engine")
+    let final = try await web.evaluateJavaScript("""
+      (()=>{
+        const svg=document.querySelector('#messages [data-item-id=current-formula] mjx-container svg');
+        const frame=svg.getBoundingClientRect();
+        return document.querySelectorAll('#messages article').length===2 && frame.width>0 && frame.height>0
+          && document.querySelector('#messages [data-item-id=answer]')===window.currentChatArticle
+          && document.activeElement===window.currentChatLink && getSelection().toString()==='keep this text'
+          && document.querySelectorAll('.math-stage,[data-mml-node=merror]').length===0
+          && Array.from(MathJax.startup.document.math).length===0;
+      })()
+      """) as? Bool
+    XCTAssertEqual(final, true)
+    XCTAssertTrue(coordinator.web === web, "A thread switch must use the mounted transcript's existing physical owner")
+    try await attachInstalledWindow(window, web: web)
+  }
+
+  func testWebContentProcessDeathRecoversReadingAndRetryPublishesOnlyTheLatestThread() async throws {
+    let coordinator = NotebookChatTranscript.Coordinator(), bodies = NotebookChatBodyWindow()
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+      .first { $0.activationState == .foregroundActive })
+    let previous = scene.keyWindow, window = UIWindow(windowScene: scene), root = UIViewController()
+    window.frame = CGRect(x: 0, y: 0, width: 540, height: 560)
+    window.rootViewController = root; window.makeKeyAndVisible(); window.layoutIfNeeded()
+    coordinator.mount(root.view)
+    defer { coordinator.close(); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+    func until(_ reason: String, _ condition: () async -> Bool) async throws {
+      let deadline = ContinuousClock.now + .seconds(15)
+      while .now < deadline {
+        if await condition() { return }
+        try await Task.sleep(for: .milliseconds(20))
+      }
+      throw NSError(domain: "NotebookChatPanelTests", code: 2, userInfo: [NSLocalizedDescriptionKey: reason])
+    }
+    let messages = (0..<30).map { CodexMessage(id: "row-\($0)", turnID: "old-turn", clientID: nil,
+      role: .assistant, text: "Reading row \($0). " + String(repeating: "The current conversation remains readable. ", count: 12)) }
+    var initialBytes = 0
+    for message in messages { initialBytes += try XCTUnwrap(CodexMessageTransfer.encodedByteCount(message)) }
+    var initialCredit: NotebookChatBodyWindow.Credit? = try XCTUnwrap(bodies.reserve(initialBytes))
+    weak let initialBodyCredit = initialCredit
+    var actions = 0
+    coordinator.loadEarlier = { actions += 1 }; coordinator.loadMessage = { _ in actions += 1 }
+    coordinator.openLink = { _ in actions += 1 }; coordinator.saveExplanation = { _ in actions += 1 }
+    coordinator.update(messages: messages, bodyCredits: [try XCTUnwrap(initialCredit)], conversationID: "reading-thread")
+    initialCredit = nil
+    try await until("The actual current thread did not settle") {
+      guard coordinator.ready, !coordinator.publicationIsPending, let web = coordinator.web else { return false }
+      return (try? await web.evaluateJavaScript("shownConversation==='reading-thread' && document.querySelectorAll('#messages article').length===30")) as? Bool == true
+    }
+    let web = try XCTUnwrap(coordinator.web), leaseID = try XCTUnwrap(coordinator.lease).id
+    let firstNavigation = try XCTUnwrap(coordinator.navigation)
+    // These WebKit SPI are confined to this native fixture. An injected delegate
+    // callback would not establish process death or replacement of the JS realm.
+    let pidSelector = NSSelectorFromString("_webProcessIdentifier"), killSelector = NSSelectorFromString("_killWebContentProcess")
+    guard web.responds(to: pidSelector), web.responds(to: killSelector) else {
+      throw XCTSkip("This installed WebKit does not expose the test-only process termination SPI")
+    }
+    typealias ProcessID = @convention(c) (AnyObject, Selector) -> Int32
+    typealias KillProcess = @convention(c) (AnyObject, Selector) -> Void
+    let processID = unsafeBitCast(try XCTUnwrap(web.method(for: pidSelector)), to: ProcessID.self)
+    let killProcess = unsafeBitCast(try XCTUnwrap(web.method(for: killSelector)), to: KillProcess.self)
+    let firstPID = processID(web, pidSelector)
+    XCTAssertGreaterThan(firstPID, 0)
+    XCTAssertTrue(web.navigationDelegate === coordinator)
+    _ = try await web.evaluateJavaScript("window.beforeChatProcessDeath='original-realm';true")
+    XCTAssertGreaterThan(web.scrollView.contentSize.height, 1_000)
+    web.scrollView.setContentOffset(.init(x: 0, y: 240), animated: true)
+    try await until("The actual native reading scroll did not produce a settled receipt") {
+      guard let offset = coordinator.settledReadingOffset else { return false }
+      return abs(web.scrollView.contentOffset.y - 240) <= 1 && abs(offset - 240) <= 1
+    }
+    killProcess(web, killSelector)
+    // Do not evaluate JavaScript while waiting for the delegate: doing so could
+    // launch a process independently of the production recovery route.
+    try await until("Actual WK termination did not start a new navigation") {
+      coordinator.navigation != nil && coordinator.navigation !== firstNavigation
+    }
+    try await until("The recovered realm did not replay the current accepted transcript") {
+      guard coordinator.ready, !coordinator.publicationIsPending else { return false }
+      return (try? await web.evaluateJavaScript("typeof window.beforeChatProcessDeath==='undefined' && shownConversation==='reading-thread' && document.querySelectorAll('#messages article').length===30")) as? Bool == true
+    }
+    try await until("The exact settled reading cut lost its native scroll position") {
+      guard let offset = coordinator.settledReadingOffset else { return false }
+      return abs(web.scrollView.contentOffset.y - 240) <= 1 && abs(offset - 240) <= 1
+    }
+    let secondPID = processID(web, pidSelector), secondNavigation = try XCTUnwrap(coordinator.navigation)
+    XCTAssertGreaterThan(secondPID, 0); XCTAssertNotEqual(secondPID, firstPID)
+    XCTAssertTrue(coordinator.web === web); XCTAssertEqual(coordinator.lease?.id, leaseID)
+    XCTAssertTrue(web.navigationDelegate === coordinator)
+
+    _ = try await web.evaluateJavaScript("""
+      window.heldChatDeathPublication={entered:false};
+      const actualUpdate=window.updateMessages;
+      const gate=new Promise(resolve=>{window.heldChatDeathPublication.release=resolve;});
+      window.updateMessages=async update=>{
+        if(update.upserts.some(value=>value.text.startsWith('Held before process death.'))){
+          window.heldChatDeathPublication.entered=true;await gate;
+        }
+        return actualUpdate(update);
+      };true
+      """)
+    let pending = CodexMessage(id: "row-0", turnID: "old-turn", clientID: nil, role: .assistant,
+      text: "Held before process death. " + String(repeating: "Submitted body stays charged. ", count: 400)).identifyingContent()
+    let pendingBytes = try XCTUnwrap(CodexMessageTransfer.encodedByteCount(pending))
+    var pendingCredit: NotebookChatBodyWindow.Credit? = try XCTUnwrap(bodies.reserve(pendingBytes))
+    weak let pendingBodyCredit = pendingCredit
+    coordinator.update(messages: [pending], bodyCredits: [try XCTUnwrap(pendingCredit)], conversationID: "reading-thread")
+    pendingCredit = nil
+    try await until("The real awaited publication was not held before process death") {
+      guard coordinator.publicationIsPending else { return false }
+      return (try? await web.evaluateJavaScript("window.heldChatDeathPublication.entered")) as? Bool == true
+    }
+    let newer = CodexMessage(id: "row-0", turnID: "old-turn", clientID: nil, role: .assistant,
+      text: "Newer desired before process death. " + String(repeating: "Only the newest accepted revision may recover. ", count: 400)).identifyingContent()
+    let newerBytes = try XCTUnwrap(CodexMessageTransfer.encodedByteCount(newer))
+    var newerCredit: NotebookChatBodyWindow.Credit? = try XCTUnwrap(bodies.reserve(newerBytes))
+    weak let newerBodyCredit = newerCredit
+    coordinator.update(messages: [newer], bodyCredits: [try XCTUnwrap(newerCredit)], conversationID: "reading-thread")
+    newerCredit = nil
+    XCTAssertTrue(coordinator.publicationIsPending)
+    XCTAssertNil(coordinator.settledReadingOffset, "A newer desired cut cannot reuse the former settled reading receipt")
+    XCTAssertNotNil(initialBodyCredit); XCTAssertNotNil(pendingBodyCredit)
+    XCTAssertEqual(bodies.retainedBytes, initialBytes + pendingBytes + newerBytes,
+      "The real held callback must retain its submitted and previously published bodies after desired advances")
+    killProcess(web, killSelector)
+    try await until("A repeated process failure did not expose bounded native Retry") {
+      !coordinator.ready && self.chatRetryButton(in: root.view) != nil
+    }
+    XCTAssertTrue(coordinator.navigation === secondNavigation, "A repeated failure cannot start an automatic reload loop")
+    coordinator.update(messages: [.init(id: "row-0", turnID: "new-turn", clientID: nil, role: .assistant,
+      text: "Superseded replacement")], conversationID: "latest-thread")
+    let latest = CodexMessage(id: "row-0", turnID: "new-turn", clientID: nil, role: .assistant,
+      text: "Latest replacement. " + String(repeating: "Read only the latest thread revision. ", count: 400))
+    let latestBytes = try XCTUnwrap(CodexMessageTransfer.encodedByteCount(latest))
+    var latestCredit: NotebookChatBodyWindow.Credit? = try XCTUnwrap(bodies.reserve(latestBytes))
+    coordinator.update(messages: [latest], bodyCredits: [try XCTUnwrap(latestCredit)], conversationID: "latest-thread")
+    latestCredit = nil
+    try XCTUnwrap(chatRetryButton(in: root.view)).sendActions(for: .touchUpInside)
+    try await until("Retry did not publish the latest desired thread in a fresh realm") {
+      guard coordinator.ready, !coordinator.publicationIsPending else { return false }
+      return (try? await web.evaluateJavaScript("typeof window.heldChatDeathPublication==='undefined' && shownConversation==='latest-thread' && document.querySelectorAll('#messages article').length===1 && document.getElementById('messages').textContent.includes('Latest replacement.') && !document.getElementById('messages').textContent.includes('Superseded replacement') && !document.getElementById('messages').textContent.includes('Held before process death.') && !document.getElementById('messages').textContent.includes('Newer desired before process death.') && !document.getElementById('messages').textContent.includes('Reading row') && getSelection().toString()===''")) as? Bool == true
+    }
+    try await until("The terminated realm's actual callback did not drain its retired body owners") {
+      initialBodyCredit == nil && pendingBodyCredit == nil && newerBodyCredit == nil
+    }
+    XCTAssertEqual(bodies.retainedBytes, latestBytes, "An old physical callback cannot release the successor's body credit")
+    let thirdPID = processID(web, pidSelector)
+    XCTAssertGreaterThan(thirdPID, 0); XCTAssertNotEqual(thirdPID, secondPID)
+    XCTAssertTrue(coordinator.navigation !== secondNavigation)
+    XCTAssertTrue(coordinator.web === web); XCTAssertEqual(coordinator.lease?.id, leaseID)
+    XCTAssertNil(chatRetryButton(in: root.view)); XCTAssertEqual(actions, 0, "Replaying a view cannot invoke conversation actions")
+    try await until("An old reading receipt scrolled the replacement thread") {
+      let scroll = web.scrollView
+      return abs(scroll.contentOffset.y - max(-scroll.adjustedContentInset.top,
+        scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom)) <= 1
+    }
+    try await attachInstalledWindow(window, web: web)
+  }
+
+  func testFailedPublicationKeepsItsBodiesAndRetryCanPublishTheLatestExcerpt() async throws {
+    let coordinator = NotebookChatTranscript.Coordinator(), bodies = NotebookChatBodyWindow()
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+      .first { $0.activationState == .foregroundActive })
+    let previous = scene.keyWindow, window = UIWindow(windowScene: scene), root = UIViewController()
+    window.frame = CGRect(x: 0, y: 0, width: 540, height: 560)
+    window.rootViewController = root; window.makeKeyAndVisible(); window.layoutIfNeeded()
+    coordinator.mount(root.view)
+    defer { coordinator.close(); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+    func until(_ reason: String, _ condition: () async -> Bool) async throws {
+      let deadline = ContinuousClock.now + .seconds(10)
+      while .now < deadline {
+        if await condition() { return }
+        try await Task.sleep(for: .milliseconds(20))
+      }
+      throw NSError(domain: "NotebookChatPanelTests", code: 3, userInfo: [NSLocalizedDescriptionKey: reason])
+    }
+    let fixed = CodexMessage(id: "fixed", turnID: "turn", clientID: nil, role: .assistant,
+      text: "**Preserved selection** [Reference](https://example.com/reference)").identifyingContent()
+    let initial = CodexMessage(id: "answer", turnID: "turn", clientID: nil, role: .assistant,
+      text: "Initial body").identifyingContent()
+    let pending = CodexMessage(id: "partial-only", turnID: "turn", clientID: nil, role: .assistant,
+      text: "Pending body. " + String(repeating: "Partially published text. ", count: 400)).identifyingContent()
+    let latest = CodexMessage(id: "answer", turnID: "new-turn", clientID: nil, role: .assistant,
+      text: String(repeating: "Retained full text. ", count: 800) + "FULL_BODY_END").identifyingContent()
+    let fixedBytes = try XCTUnwrap(CodexMessageTransfer.encodedByteCount(fixed))
+    let initialBytes = try XCTUnwrap(CodexMessageTransfer.encodedByteCount(initial))
+    let pendingBytes = try XCTUnwrap(CodexMessageTransfer.encodedByteCount(pending))
+    let latestBytes = try XCTUnwrap(CodexMessageTransfer.encodedByteCount(latest))
+    let fixedCredit = try XCTUnwrap(bodies.reserve(fixedBytes))
+    var initialCredit: NotebookChatBodyWindow.Credit? = try XCTUnwrap(bodies.reserve(initialBytes))
+    weak let initialBodyCredit = initialCredit
+    coordinator.update(messages: [fixed, initial], bodyCredits: [fixedCredit, try XCTUnwrap(initialCredit)], conversationID: "old-thread")
+    initialCredit = nil
+    try await until("The initial credited body did not settle") {
+      guard coordinator.ready, !coordinator.publicationIsPending, let web = coordinator.web else { return false }
+      return (try? await web.evaluateJavaScript("document.querySelectorAll('#messages article').length===2")) as? Bool == true
+    }
+    let web = try XCTUnwrap(coordinator.web), navigation = try XCTUnwrap(coordinator.navigation)
+    let selected = try await web.evaluateJavaScript("""
+      window.fixedChatArticle=document.querySelector('#messages [data-item-id=fixed]');
+      window.fixedChatLink=window.fixedChatArticle.querySelector('a');
+      const text=window.fixedChatArticle.querySelector('strong').firstChild;
+      window.fixedChatLink.focus();getSelection().setBaseAndExtent(text,0,text,text.length);
+      window.failedChatPublication={entered:false};
+      const actualUpdate=window.updateMessages;
+      const gate=new Promise(resolve=>{window.failedChatPublication.release=resolve;});
+      window.updateMessages=async update=>{
+        if(update.upserts.some(value=>value.text.startsWith('Pending body.'))){
+          window.failedChatPublication.entered=true;await gate;await actualUpdate(update);
+          throw new Error('Controlled publication failure after actual DOM mutation');
+        }
+        return actualUpdate(update);
+      };
+      getSelection().toString()==='Preserved selection'
+      """) as? Bool
+    XCTAssertEqual(selected, true)
+    var pendingCredit: NotebookChatBodyWindow.Credit? = try XCTUnwrap(bodies.reserve(pendingBytes))
+    coordinator.update(messages: [fixed, initial, pending], bodyCredits: [fixedCredit, try XCTUnwrap(initialBodyCredit), try XCTUnwrap(pendingCredit)], conversationID: "old-thread")
+    pendingCredit = nil
+    try await until("The real awaited WK publication was not held") {
+      (try? await web.evaluateJavaScript("window.failedChatPublication.entered")) as? Bool == true
+    }
+    var latestCredit: NotebookChatBodyWindow.Credit? = try XCTUnwrap(bodies.reserve(latestBytes))
+    coordinator.update(messages: [fixed, latest], bodyCredits: [fixedCredit, try XCTUnwrap(latestCredit)], conversationID: "new-thread")
+    XCTAssertTrue(coordinator.publicationIsPending)
+    XCTAssertEqual(bodies.retainedBytes, fixedBytes + initialBytes + pendingBytes + latestBytes,
+      "The submitted old body and acknowledged DOM body remain charged through the actual callback")
+    _ = try await web.evaluateJavaScript("window.failedChatPublication.release();true")
+    try await until("A semantic publication failure did not leave an explicit Retry") {
+      !coordinator.publicationIsPending && self.chatRetryButton(in: root.view) != nil
+    }
+    XCTAssertTrue(coordinator.ready); XCTAssertTrue(coordinator.navigation === navigation)
+    XCTAssertTrue(coordinator.web === web)
+    XCTAssertEqual(bodies.retainedBytes, fixedBytes + initialBytes + pendingBytes + latestBytes,
+      "Partial DOM mutation must retain both possible body owners after the failed callback")
+    let preserved = try await web.evaluateJavaScript("""
+      shownConversation==='old-thread' && messagesByID.has('partial-only') && document.getElementById('messages').textContent.includes('Pending body.')
+        && document.querySelector('#messages [data-item-id=fixed]')===window.fixedChatArticle
+        && document.activeElement===window.fixedChatLink && getSelection().toString()==='Preserved selection'
+      """) as? Bool
+    XCTAssertEqual(preserved, true, "A script exception must preserve the live document, focus and unaffected selection")
+    // Returning to the last ACK is not a no-op after a partially applied script.
+    // Retry must repair the actual DOM even though that basis equals `sent`.
+    coordinator.update(messages: [fixed, initial], bodyCredits: [fixedCredit, try XCTUnwrap(initialBodyCredit)], conversationID: "old-thread")
+    try XCTUnwrap(chatRetryButton(in: root.view)).sendActions(for: .touchUpInside)
+    try await until("Retry mistook the last ACK for an unchanged partially mutated DOM") {
+      guard !coordinator.publicationIsPending else { return false }
+      return (try? await web.evaluateJavaScript("shownConversation==='old-thread' && !messagesByID.has('partial-only') && document.getElementById('messages').textContent.includes('Initial body') && !document.getElementById('messages').textContent.includes('Pending body.') && document.querySelector('#messages [data-item-id=fixed]')===window.fixedChatArticle && document.activeElement===window.fixedChatLink && getSelection().toString()==='Preserved selection'")) as? Bool == true
+    }
+    XCTAssertTrue(coordinator.navigation === navigation, "Semantic Retry uses the live document")
+    XCTAssertNil(chatRetryButton(in: root.view))
+    XCTAssertEqual(bodies.retainedBytes, fixedBytes + initialBytes + latestBytes)
+    coordinator.update(messages: [fixed, latest], bodyCredits: [fixedCredit, try XCTUnwrap(latestCredit)], conversationID: "new-thread")
+    try await until("The current thread did not replace the successfully repaired DOM") {
+      guard !coordinator.publicationIsPending else { return false }
+      return (try? await web.evaluateJavaScript("shownConversation==='new-thread' && document.getElementById('messages').textContent.includes('FULL_BODY_END')")) as? Bool == true
+    }
+    XCTAssertEqual(bodies.retainedBytes, fixedBytes + latestBytes)
+    let flagged = CodexMessage(id: latest.id, turnID: latest.turnID, clientID: latest.clientID, role: latest.role,
+      text: latest.text, isTruncated: true, contentRevision: latest.contentRevision)
+    coordinator.update(messages: [fixed, flagged], bodyCredits: [fixedCredit, try XCTUnwrap(latestCredit)], conversationID: "new-thread")
+    try await until("The pending revision did not expose its actual full-body loading state") {
+      guard !coordinator.publicationIsPending else { return false }
+      return (try? await web.evaluateJavaScript("messagesByID.get('answer').isTruncated && document.getElementById('messages').textContent.includes('FULL_BODY_END')")) as? Bool == true
+    }
+    // Both headers have the same immutable revision and isTruncated value.
+    // Eviction changes the actual display shape and must reach the real WK.
+    coordinator.update(messages: [fixed, flagged.preview()], bodyCredits: [fixedCredit], conversationID: "new-thread")
+    latestCredit = nil
+    try await until("The excerpt ACK left an uncharged full body in WebKit") {
+      guard !coordinator.publicationIsPending else { return false }
+      return (try? await web.evaluateJavaScript("messagesByID.get('answer').isTruncated && !document.getElementById('messages').textContent.includes('FULL_BODY_END') && document.querySelector('#messages [data-item-id=answer] .content').textContent.length<3000")) as? Bool == true
+    }
+    XCTAssertEqual(bodies.retainedBytes, fixedBytes)
+  }
+
+  private func chatRetryButton(in view: UIView) -> UIButton? {
+    if let button = view as? UIButton, button.accessibilityIdentifier == "notebook-chat-retry" { return button }
+    return view.subviews.lazy.compactMap { self.chatRetryButton(in: $0) }.first
+  }
+
   private func attachInstalledWindow(_ window: UIWindow, web: WKWebView) async throws {
     XCTAssertTrue(window.isKeyWindow); XCTAssertFalse(window.isHidden)
     XCTAssertTrue(web.window === window); XCTAssertFalse(web.isHidden); XCTAssertGreaterThan(web.alpha, 0)

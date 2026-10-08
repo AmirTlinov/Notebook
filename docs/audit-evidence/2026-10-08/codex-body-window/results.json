@@ -1,0 +1,285 @@
+{
+  "format": 1,
+  "issue": "GUI-498",
+  "positions": [
+    "NB28",
+    "DP15",
+    "DP17"
+  ],
+  "status": "selected-core-mac-and-ipad-compiler-passed-physical-pending",
+  "baseCommit": "231debea16c71e25ffdc90faacd5c5ffe2cc2e44",
+  "owner": "CodexAppServer body/read admission; NotebookChatController reading window; NotebookChatPanel sole physical publication",
+  "change": "One bounded host body window, scoped authoritative history locators, immutable transfer credits through their last borrower and account cut, plus controller/WebKit credits through actual publication completion.",
+  "checks": [
+    {
+      "scope": "SwiftPM CodexAppServerStateTests, CodexConnectionTests and CodexReadProjectionTests",
+      "status": "passed",
+      "functions": 40,
+      "cases": 45,
+      "failed": 0,
+      "skipped": 0,
+      "source": {
+        "sha256": "e9bc398e7004a6bc122ebfb826e51756086b22086e72f15a58d551ab42b6db32",
+        "files": 1692,
+        "unchanged": true
+      },
+      "evidence": ".build/gui498-nb28-core-20261008-v4",
+      "receiptSHA256": "c8a312fc53b01b87a67e1a98c78743d82525aa37d824c897b70ddd36dd892a44"
+    },
+    {
+      "scope": "Isolated 96-message native projection and paused consumer across seven threads",
+      "status": "passed",
+      "functions": 1,
+      "cases": 1,
+      "failed": 0,
+      "skipped": 0,
+      "source": {
+        "sha256": "e9bc398e7004a6bc122ebfb826e51756086b22086e72f15a58d551ab42b6db32",
+        "files": 1692,
+        "unchanged": true
+      },
+      "evidence": ".build/gui498-nb28-memory-20261008-v1",
+      "receiptSHA256": "6d9022dbe350702e7c916e892afedf7ab75e4cc5e9e1412b6b4de4015885441b"
+    },
+    {
+      "scope": "Focused DP15 actual production attachment join, observation eviction pin and shared worker credit lifecycle",
+      "status": "passed",
+      "functions": 5,
+      "cases": 5,
+      "failed": 0,
+      "skipped": 0,
+      "source": {
+        "sha256": "95f2d48e4c757f4281326d1ffd2616f8f04f60d410f63fabd6551c45b722c385",
+        "files": 1692,
+        "unchanged": true
+      },
+      "evidence": ".build/gui498-dp15-join-20261008-v1",
+      "receiptSHA256": "23b73bdf161eca6c1a403d959247aefcb18b17adcdf0c9652115c2e22efad808",
+      "sourceDeltaFromEarlierCore": [
+        "Applications/Tests/NotebookChatPanelTests.swift",
+        "Applications/iPad/NotebookChatPanel.swift",
+        "Applications/notebook_verification.py",
+        "Sources/NotebookCodex/CodexAppServer.swift",
+        "Tests/NotebookCodexTests/CodexConnectionTests.swift",
+        "Tests/NotebookVerification/run.py"
+      ]
+    },
+    {
+      "scope": "Native Mac Sidecar full-message, account/disconnect, first workspace bind, retry, detach and same-thread refresh",
+      "status": "passed",
+      "functions": 6,
+      "failed": 0,
+      "skipped": 0,
+      "source": {
+        "sha256": "95f2d48e4c757f4281326d1ffd2616f8f04f60d410f63fabd6551c45b722c385",
+        "files": 1692,
+        "unchanged": true
+      },
+      "evidence": ".build/gui498-nb28-mac-20261008-v1",
+      "receiptSHA256": "2423b039e3767fde3d824aff3db7bdedbbaf07d9314ba4870866b67287de7b00",
+      "compilerDiagnostics": {
+        "unchangedFilesOutsideThisSlice": [
+          "/Users/amir/Documents/projects/Notebook/Applications/Shared/AgentWebElementView.swift:1080:11: warning: consider using asynchronous alternative function",
+          "/Users/amir/Documents/projects/Notebook/Applications/Shared/AgentWebElementView.swift:1093:11: warning: consider using asynchronous alternative function",
+          "/Users/amir/Documents/projects/Notebook/Applications/Shared/NotebookApplicationLaunch.swift:585:7: warning: expression of type 'NotebookPeerRetirement' is unused [#NoUsage]",
+          "/Users/amir/Documents/projects/Notebook/Applications/Shared/NotebookAttentionProjection.swift:120:12: warning: value 'strokeID' was defined but never used; consider replacing with boolean test [#NoUsage]",
+          "/Users/amir/Documents/projects/Notebook/Applications/MacTests/NotebookGraphicRenderingTests.swift:198:7: warning: no calls to throwing functions occur within 'try' expression [#UnnecessaryEffectMarker]",
+          "/Users/amir/Documents/projects/Notebook/Applications/MacTests/NotebookGraphicRenderingTests.swift:337:11: warning: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]",
+          "/Users/amir/Documents/projects/Notebook/Applications/MacTests/NotebookGraphicRenderingTests.swift:337:7: warning: no calls to throwing functions occur within 'try' expression [#UnnecessaryEffectMarker]",
+          "/Users/amir/Documents/projects/Notebook/Applications/MacTests/NotebookGraphicRenderingTests.swift:428:14: warning: no calls to throwing functions occur within 'try' expression [#UnnecessaryEffectMarker]",
+          "/Users/amir/Documents/projects/Notebook/Applications/TestSupport/ProgramStateTransferTests.swift:257:14: warning: weak variable 'retained' was never mutated; consider changing to 'let' constant [#VariableNeverMutated::WeakMutability]"
+        ],
+        "changedSliceWarnings": 0
+      }
+    },
+    {
+      "scope": "iPad production and test compiler only",
+      "status": "passed",
+      "testsExecuted": 0,
+      "action": "build-for-testing",
+      "source": {
+        "sha256": "fb0c6023b7d009619b83c9507d44a136a45285531efc0fa5a75601f647f07cad",
+        "files": 1692,
+        "unchanged": true
+      },
+      "evidence": ".build/gui498-ipad-compile-20261008-v3",
+      "compilerResultSHA256": "8dff5e324ff9f20fac578a3957502a3ef3905a33a20c304d9869514d00d8b3e6",
+      "installationChanged": false,
+      "deviceLaunch": false,
+      "compilerDiagnostics": {
+        "finalIncrementalWarnings": [
+          "/Users/amir/Documents/projects/Notebook/Applications/Tests/DocumentProgramOverlayHostTests.swift:11:18: warning: 'init(frame:)' was deprecated in iOS 26.0: Use init(windowScene:) instead. [#DeprecatedDeclaration]",
+          "/Users/amir/Documents/projects/Notebook/Applications/Tests/DocumentProgramOverlayHostTests.swift:109:18: warning: 'init(frame:)' was deprecated in iOS 26.0: Use init(windowScene:) instead. [#DeprecatedDeclaration]",
+          "/Users/amir/Documents/projects/Notebook/Applications/Tests/DocumentProgramOverlayHostTests.swift:194:18: warning: 'init(frame:)' was deprecated in iOS 26.0: Use init(windowScene:) instead. [#DeprecatedDeclaration]",
+          "/Users/amir/Documents/projects/Notebook/Applications/Tests/InkCanvasLifecycleTests.swift:105:50: warning: call to main actor-isolated instance method 'convert(_:to:)' in a synchronous nonisolated context [#ActorIsolatedCall]",
+          "/Users/amir/Documents/projects/Notebook/Applications/Tests/AgentSceneFingerRoutingTests.swift:172:140: warning: string interpolation produces a debug description for an optional value; did you mean to make this explicit?",
+          "/Users/amir/Documents/projects/Notebook/Applications/Tests/AgentSceneFingerRoutingTests.swift:192:97: warning: string interpolation produces a debug description for an optional value; did you mean to make this explicit?",
+          "/Users/amir/Documents/projects/Notebook/Applications/Tests/AgentSceneFingerRoutingTests.swift:192:112: warning: string interpolation produces a debug description for an optional value; did you mean to make this explicit?",
+          "/Users/amir/Documents/projects/Notebook/Applications/Tests/NotebookDocumentStatePersistenceTests.swift:82:14: warning: weak variable 'retainedTransfer' was never mutated; consider changing to 'let' constant [#VariableNeverMutated::WeakMutability]",
+          "/Users/amir/Documents/projects/Notebook/Applications/Tests/NotebookDrawingToolsTests.swift:1440:20: warning: 'init(frame:)' was deprecated in iOS 26.0: Use init(windowScene:) instead. [#DeprecatedDeclaration]",
+          "/Users/amir/Documents/projects/Notebook/Applications/Tests/NotebookPageMotionUXTests.swift:952:42: warning: 'weak' ownership of capture 'controller' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]",
+          "/Users/amir/Documents/projects/Notebook/Applications/Tests/NotebookSceneSelectionTests.swift:56:18: warning: 'init(frame:)' was deprecated in iOS 26.0: Use init(windowScene:) instead. [#DeprecatedDeclaration]",
+          "/Users/amir/Documents/projects/Notebook/Applications/TestSupport/ProgramStateTransferTests.swift:257:14: warning: weak variable 'retained' was never mutated; consider changing to 'let' constant [#VariableNeverMutated::WeakMutability]",
+          "/Users/amir/Documents/projects/Notebook/Applications/Tests/SceneCompositionTests.swift:1238:25: warning: 'permitsInstallation' mutated after capture by sendable closure",
+          "/Users/amir/Documents/projects/Notebook/Applications/Tests/SpatialInkTilePoolTests.swift:18:14: warning: weak variable 'retainedGrant' was never mutated; consider changing to 'let' constant [#VariableNeverMutated::WeakMutability]",
+          "/Users/amir/Documents/projects/Notebook/Applications/Tests/NotebookFirstPresentationSchedulingTests.swift:17:26: warning: 'coordinateSpace' was deprecated in iOS 26.0: Use effectiveGeometry.coordinateSpace instead. [#DeprecatedDeclaration]",
+          "/Users/amir/Documents/projects/Notebook/Applications/Tests/NotebookFirstPresentationSchedulingTests.swift:55:81: warning: 'coordinateSpace' was deprecated in iOS 26.0: Use effectiveGeometry.coordinateSpace instead. [#DeprecatedDeclaration]"
+        ],
+        "changedSliceWarnings": 0
+      },
+      "sourceDeltaFromMacAndFocusedCore": [
+        "Applications/iPad/NotebookChatPanel.swift: explicit self in nested closure",
+        "Applications/Tests/NotebookChatPanelTests.swift: explicit recursive self and four immutable weak bindings"
+      ]
+    }
+  ],
+  "memory": {
+    "unit": "bytes",
+    "samples": [
+      {
+        "phase": "before",
+        "resident": 41254912,
+        "footprint": 8880824
+      },
+      {
+        "phase": "pressure",
+        "messages": 12,
+        "retained": 42947466,
+        "resident": 156696576,
+        "footprint": 123765576
+      },
+      {
+        "phase": "pressure",
+        "messages": 24,
+        "retained": 50295536,
+        "resident": 167624704,
+        "footprint": 135136096
+      },
+      {
+        "phase": "pressure",
+        "messages": 36,
+        "retained": 45044636,
+        "resident": 167673856,
+        "footprint": 135185248
+      },
+      {
+        "phase": "pressure",
+        "messages": 48,
+        "retained": 50295540,
+        "resident": 167739392,
+        "footprint": 135250784
+      },
+      {
+        "phase": "pressure",
+        "messages": 60,
+        "retained": 45044636,
+        "resident": 167755776,
+        "footprint": 135267168
+      },
+      {
+        "phase": "pressure",
+        "messages": 72,
+        "retained": 50295540,
+        "resident": 167788544,
+        "footprint": 135299936
+      },
+      {
+        "phase": "pressure",
+        "messages": 84,
+        "retained": 45044636,
+        "resident": 145817600,
+        "footprint": 110134112
+      },
+      {
+        "phase": "pressure",
+        "messages": 96,
+        "retained": 50295540,
+        "resident": 145866752,
+        "footprint": 110150496
+      },
+      {
+        "phase": "closed",
+        "retained": 0,
+        "resident": 146079744,
+        "footprint": 110216032
+      }
+    ],
+    "scope": "Measured RSS/phys_footprint of the native Swift test process using real CodexAppServerState projections; no Codex child, TLS peer, iPad or WebContent measurement",
+    "closedBodyCounter": 0,
+    "releaseNote": "Allocator-retained process memory is not represented as live body credits; closing is not asserted to restore baseline RSS"
+  },
+  "failedAttempts": [
+    {
+      "evidence": ".build/gui498-nb28-core-20261008-v1",
+      "status": "failed",
+      "cause": "5 MB RPC exceeded the existing 10-second partial-frame deadline because a growing partial frame was scanned from its beginning on each 16 KiB chunk",
+      "unexecutedScope": "Core read-projection execution was not reached after the selected Codex product failed"
+    },
+    {
+      "evidence": ".build/gui498-nb28-pipe-isolated-20261008-v2",
+      "status": "failed",
+      "cause": "The same 5 MB timeout reproduced without concurrent body pressure",
+      "unexecutedScope": "Only the isolated 5 MB RPC regression was planned; no Core projection functions were selected"
+    },
+    {
+      "evidence": ".build/gui498-nb28-core-20261008-v3",
+      "status": "failed",
+      "cause": "Linear scan repaired the timeout; the request reached invalidResponse in 0.478 s because reversing a native cursor incorrectly required an unequal opaque token",
+      "unexecutedScope": "Core read-projection execution was not reached after the selected Codex product failed"
+    },
+    {
+      "evidence": ".build/gui498-ipad-compile-20261008-v1",
+      "status": "compile-failed",
+      "cause": "Nested MainActor.assumeIsolated closure requires explicit self.finishReadingLayout",
+      "testsExecuted": 0,
+      "installationChanged": false,
+      "sourceUnchanged": true,
+      "repair": "One explicit self qualifier in the iPad Coordinator; no behavior or Mac/Core source change"
+    },
+    {
+      "evidence": ".build/gui498-ipad-compile-20261008-v2",
+      "status": "compile-failed",
+      "cause": "Recursive test helper requires explicit self.chatRetryButton; four new weak local bindings emitted mutability warnings",
+      "testsExecuted": 0,
+      "sourceUnchanged": true,
+      "repair": "One explicit self and four weak let bindings; the native Swift compiler accepts immutable weak bindings",
+      "secondaryDiagnostic": "Two unchanged Shared compile jobs reported exit0/no output while the real test compiler error was present; final v3 compiler succeeds"
+    }
+  ],
+  "physicalAcceptance": false,
+  "installation": {
+    "changed": false,
+    "currentPair": "265 / 0.3.195"
+  },
+  "open": [
+    "Physical iPad memory, scrolling, process recovery and long-message scenarios",
+    "DP16 append transfer and other full104 criteria",
+    "DP19 actual Coordinator/MathJax scenario execution on physical iPad"
+  ],
+  "positionStatus": {
+    "NB28": "partial-local-boundaries-passed-physical-pending",
+    "DP15": "partial-local-boundaries-passed-physical-pending",
+    "DP17": "partial-local-boundaries-passed-physical-pending"
+  },
+  "finalSliceFiles": {
+    "Applications/Mac/NotebookCodexSidecar.swift": "1cc29ab1a54f310e69ee5e0f4e639293d206f8bfd21fe88b6a9983e687434d35",
+    "Applications/MacTests/NotebookCodexSidecarTests.swift": "378cf7ba28f1fba046ce88bb54f4cb70d7eb5796db7cc8d409fdeff22fab26de",
+    "Applications/Shared/NotebookChatController.swift": "fa46776d3e20319df02540075ab4f822aef8f1adc8e64a2463745e9e6a282110",
+    "Applications/Shared/NotebookChatBodyWindow.swift": "f5f4e7acd22802e7a2123c8d08cf5760267664b70ab86613e9acf2de57c61182",
+    "Applications/Tests/NotebookChatControllerTests.swift": "bbb8816827ed3303aeb9dd0da0cda807cdb42c93872b32f401fd578b33a8cd4f",
+    "Applications/Tests/NotebookChatPanelTests.swift": "7b644d2bf87f12452ea52f1c8e1d47aead774b0632a53604118ee00beb5a94a7",
+    "Applications/iPad/NotebookChatPanel.swift": "817f4d7abbb038c3daa2758bd4aa3136c596487db673da4b55a4ef0aa9e96b17",
+    "Sources/NotebookCodex/CodexAppServer.swift": "8af7af54352ae82819c1f891e3805f8a4554946e58b6280ce48ac36abdad999d",
+    "Sources/NotebookCodex/CodexAppServerState.swift": "d86b4d38bf3502f40b8f1f2adbcce783a0ca9ebdc55e7d987fd4bf0945e248a8",
+    "Sources/NotebookCodex/CodexCatalogue.swift": "1efb3aa29b303525ec8c929db0fb18d4539877847ff87730d4f8568a1ae6b233",
+    "Sources/NotebookCodex/CodexChannel.swift": "73894d705ed2f4b6ba318745ede6abaa4e637de1e2dcc9b369a18f80289714be",
+    "Sources/NotebookCodex/CodexProtocol.swift": "90e9658d9b92ef7027c9e5ed750b57441a0567edba0da78fdb6b009edca6ac0a",
+    "Sources/NotebookCodex/CodexConversationMemory.swift": "66e068e770395416757ae1f09909e89d66d78242a20f56d2b8df27298a1fe480",
+    "Sources/NotebookCore/CodexMessageTransfer.swift": "34bc71c85fb5d0af7d0a2bac0f95a488a38f1628763c47c8e595714e01a20417",
+    "Sources/NotebookCore/NotebookChat.swift": "d039b6431623ca01027ddb98aa5cf9990fdaec32f8004a6ed6adb959b1fcb118",
+    "Tests/NotebookCodexTests/CodexAppServerStateTests.swift": "25fab3e105dec33644d94943e72bd585e90b8756a98a7d2c8e219d90bcafb47c",
+    "Tests/NotebookCodexTests/CodexConnectionTests.swift": "eb13b6e3999a54c5b36d9ad239b7849227305231bbd8ef0aa4d1b435121f4bb1",
+    "Tests/NotebookCoreTests/CodexReadProjectionTests.swift": "840da56f97a51df33e431aa8f4da69bf8fe73fe5e24a3af393568fc4425aaeae"
+  },
+  "scopeNote": "Whole-source receipts include the separately prepared seven-file NB03 native-contact foundation in this working tree. Those files are outside the chat slice and have not received physical acceptance. Native UI test sources compile; no iPad test was executed in this scope. Body-pressure measurement covers the Swift process projection, not WebContent or the Codex child."
+}

@@ -123,22 +123,77 @@ extension CodexAppServer {
     }
   }
 
-  /// Page native items, not whole turns: a single multi-day turn can contain thousands of commands.
+  /// Only one full native item enters the frame/decoder at a time. The public
+  /// page retains previews and locators; an explicit body read owns its transfer.
   public func history(threadID: String, cursor: String? = nil, turnID: String? = nil) async throws -> CodexHistoryPage {
     guard UUID(uuidString: threadID) != nil else { throw CodexBridgeError.invalidInput }
-    return try await session { rpc in
-      try await self.validateThreadScope(threadID, rpc: rpc)
-      var params: [String: JSONValue] = ["threadId": .string(threadID), "limit": .number(32), "sortDirection": .string("desc")]
-      if let cursor { params["cursor"] = .string(cursor) }
-      if let turnID { params["turnId"] = .string(turnID) }
-      let result = try await rpc.request("thread/items/list", params: .object(params))
-      guard let items = result["data"]?.array, items.count <= 32 else { throw CodexBridgeError.invalidResponse }
-      let messages = try items.reversed().compactMap { entry -> CodexMessage? in
+    let preparation = try conversationMemory.reservePreparation()
+    defer { conversationMemory.releasePreparation(preparation) }
+    let cut = try captureConversationRead(threadID: threadID)
+    let rpc = try await connect()
+    try requireConversationRead(cut)
+    try await validateThreadScope(threadID, rpc: rpc)
+    try requireConversationRead(cut)
+    var messages: [CodexMessage] = [], positions: [String: CodexHistoryPosition] = [:]
+    var next = cursor, reverse: String?, seen = Set<String>(), bytes = 0
+    let ascending = try CodexItemCursor(cursor: cursor, cut: cut, turnID: turnID).ascending
+    let deadline = ContinuousClock.now + .seconds(2)
+    for index in 0..<32 {
+      if index > 0, .now >= deadline { break }
+      try requireConversationRead(cut)
+      let page = try await Self.readHistoryItem(rpc, threadID: threadID, cursor: next, turnID: turnID, cut: cut)
+      try requireConversationRead(cut)
+      if index == 0 { reverse = page.newerCursor }
+      for message in page.messages {
+        let preview = message.preview()
+        let locator = try CodexItemCursor(cursor: next, cut: cut, turnID: turnID).encoded()
+        let position = CodexHistoryPosition(readCursor: locator,
+          olderCursor: ascending ? page.newerCursor : page.nextCursor,
+          newerCursor: ascending ? page.nextCursor : page.newerCursor)
+        bytes += (CodexMessageTransfer.encodedByteCount(preview) ?? 2048) + locator.utf8.count
+          + (position.olderCursor?.utf8.count ?? 0) + (position.newerCursor?.utf8.count ?? 0) + 256
+        messages.append(preview); positions[message.id] = position
+      }
+      next = page.nextCursor
+      if let next, !seen.insert(next).inserted { throw CodexBridgeError.invalidResponse }
+      if next == nil || bytes >= 112 * 1024 { break }
+    }
+    if !ascending { messages.reverse() }
+    // nextCursor is always the older edge; newerCursor the newer edge, even
+    // when the caller is moving back towards the live end of the window.
+    return .init(messages: messages, nextCursor: ascending ? reverse : next,
+      newerCursor: ascending ? next : reverse, positions: positions)
+  }
+
+  static func readHistoryItem(_ rpc: CodexRPC, threadID: String, cursor: String?, turnID: String?,
+    cut: ConversationReadCut) async throws -> CodexHistoryPage {
+    let position = try CodexItemCursor(cursor: cursor, cut: cut, turnID: turnID)
+    var params: [String: JSONValue] = ["threadId": .string(threadID), "limit": .number(1),
+      "sortDirection": .string(position.ascending ? "asc" : "desc")]
+    if let native = position.native { params["cursor"] = .string(native) }
+    if let turn = position.turnID { params["turnId"] = .string(turn) }
+    let result = try await rpc.request("thread/items/list", params: .object(params))
+    guard let items = result["data"]?.array, items.count <= 1 else { throw CodexBridgeError.invalidResponse }
+    let worker = Task.detached(priority: .utility) {
+      try Task.checkCancellation()
+      let messages = try items.compactMap { entry -> CodexMessage? in
         guard let turn = entry["turnId"]?.string, let item = entry["item"] else { throw CodexBridgeError.invalidResponse }
         return CodexAppServerState.displayMessage(item, turnID: turn)
       }
-      return CodexHistoryPage(messages: messages, nextCursor: result["nextCursor"]?.string)
+      try Task.checkCancellation()
+      return messages
     }
+    let messages = try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
+    func continuation(_ field: String, reversed: Bool) throws -> String? {
+      guard let value = result[field], value != .null else { return nil }
+      // Native cursors are opaque. Reversing sortDirection changes the seek
+      // even when the server returns the same token for that opposite edge.
+      guard let native = value.string, !native.isEmpty,
+        reversed || native != position.native else { throw CodexBridgeError.invalidResponse }
+      return try position.advancing(native: native, reversed: reversed).encoded()
+    }
+    return .init(messages: messages, nextCursor: try continuation("nextCursor", reversed: false),
+      newerCursor: try continuation("backwardsCursor", reversed: true))
   }
 
   public func create(directory: URL, title: String, workspaceID: UUID, project: CodexProject? = nil, onCreated: @escaping @Sendable (CodexTask) async throws -> Void) async throws -> CodexTask {
@@ -209,5 +264,36 @@ struct CodexProjectTaskCursor: Codable {
     let result = "project-1:" + (try JSONEncoder().encode(self)).base64EncodedString()
     guard result.utf8.count <= 8192 else { throw CodexBridgeError.historyLimit }
     return result
+  }
+}
+
+/// A bounded continuation into the same native history, not a cached page.
+private struct CodexItemCursor: Codable {
+  let connection: UUID, account: UUID
+  let workspace: UUID?
+  let threadID: String, turnID: String?
+  var ascending = false
+  var native: String?
+  init(cursor: String?, cut: CodexAppServer.ConversationReadCut, turnID: String?) throws {
+    if let cursor {
+      guard cursor.utf8.count <= 4096, cursor.hasPrefix("items-1:"),
+        let data = Data(base64Encoded: String(cursor.dropFirst(8))),
+        let value = try? JSONDecoder().decode(Self.self, from: data),
+        value.connection == cut.connection, value.account == cut.account, value.workspace == cut.workspace,
+        value.threadID == cut.thread, value.turnID == nil || value.turnID == turnID else { throw CodexBridgeError.staleRequest }
+      self = value
+    } else {
+      connection = cut.connection; account = cut.account; workspace = cut.workspace
+      threadID = cut.thread; self.turnID = turnID
+    }
+  }
+  func advancing(native: String, reversed: Bool) -> Self {
+    var value = self; value.native = native
+    if reversed { value.ascending.toggle() }; return value
+  }
+  func encoded() throws -> String {
+    guard (native?.utf8.count ?? 0) <= 2400 else { throw CodexBridgeError.historyLimit }
+    let value = "items-1:" + (try JSONEncoder().encode(self)).base64EncodedString()
+    guard value.utf8.count <= 4096 else { throw CodexBridgeError.historyLimit }; return value
   }
 }

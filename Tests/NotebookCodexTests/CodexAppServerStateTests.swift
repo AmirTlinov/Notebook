@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Testing
 import NotebookCore
@@ -78,6 +79,19 @@ struct CodexAppServerStateTests {
       let actual = try CodexMessageTransfer.encode(filled).count - CodexMessageTransfer.encode(empty).count
       #expect(CodexAppServerState.encodedTextBytes(text,within:actual) == actual)
       if actual > 0 { #expect(CodexAppServerState.encodedTextBytes(text,within:actual-1) == nil) }
+      let variants: [CodexMessage] = [
+        filled,
+        .init(id: "minimal", turnID: "turn", clientID: nil, role: .user, text: text),
+        .init(id: "empty-optionals", turnID: "turn", clientID: "", role: .assistant, text: text,
+          activity: .init(kind: .command), attachments: [], phase: ""),
+        .init(id: "escaped", turnID: "turn", clientID: nil, role: .assistant, text: text, isTruncated: true,
+          activity: .init(kind: .files, status: "completed", detail: text), attachments: [text, "", controls])]
+      for value in variants {
+        let encoded = try CodexMessageTransfer.encode(value)
+        #expect(CodexMessageTransfer.encodedByteCount(value) == encoded.count)
+        #expect(CodexMessageTransfer.encodedByteCount(value, maximumBytes: encoded.count) == encoded.count)
+        #expect(CodexMessageTransfer.encodedByteCount(value, maximumBytes: encoded.count - 1) == nil)
+      }
     }
     let combined = samples.joined()
     let chunks = try samples.map { try #require(CodexAppServerState.encodedTextBytes($0,within:CodexMessageTransfer.maximumBytes)) }
@@ -128,6 +142,8 @@ struct CodexAppServerStateTests {
     }
     let exact = try #require(state.view.messages.first)
     #expect(!exact.isTruncated); #expect(try CodexMessageTransfer.encode(exact).count == CodexMessageTransfer.maximumBytes)
+    #expect(CodexMessageTransfer.encodedByteCount(exact) == CodexMessageTransfer.maximumBytes)
+    #expect(CodexMessageTransfer.encodedByteCount(exact, maximumBytes: CodexMessageTransfer.maximumBytes - 1) == nil)
     _ = try CodexMessageTransfer(threadID:"thread",message:exact)
     try state.accept(event("item/agentMessage/delta",["turnId":.string("turn"),"itemId":.string("answer"),"delta":.string("/")]))
     #expect(state.view.messages.first?.isTruncated == true)
@@ -157,6 +173,101 @@ struct CodexAppServerStateTests {
     #expect(before.text == prefix+" конец🙂"); #expect(!before.isTruncated); #expect(before.contentRevision != nil)
     try state.accept(event("thread/status/changed",["status":.object(["type":.string("idle")])]))
     #expect(state.view.messages.first == before)
+  }
+
+  @Test func activeBodyAndApprovalSurviveLaterLargeToolsWithinThreadBudget() throws {
+    var state = CodexAppServerState(threadID: "thread")
+    try state.accept(event("turn/started", ["turn": .object(["id": .string("turn"), "status": .string("inProgress")])]))
+    try state.accept(event("item/started", ["turnId": .string("turn"), "item": .object([
+      "id": .string("active-answer"), "type": .string("agentMessage"),
+      "text": .string(String(repeating: "a", count: 8 * 1_048_576 - 4096))])]))
+    try state.accept(event("item/tool/requestUserInput", ["turnId": .string("turn"),
+      "questions": .array([.object(["id": .string("question"),
+        "question": .string(String(repeating: "q", count: 60_000))])])], request: .number(41)))
+    for index in 0..<2 {
+      try state.accept(event("item/completed", ["turnId": .string("turn"), "item": .object([
+        "id": .string("tool-\(index)"), "type": .string("commandExecution"), "command": .string("echo result"),
+        "status": .string("completed"), "aggregatedOutput": .string(String(repeating: String(index), count: 8 * 1_048_576 - 4096))])]))
+      #expect(state.retainedBodyBytes <= CodexConversationMemory.threadBodyBytes)
+    }
+    let answer = try #require(state.view.messages.first { $0.id == "active-answer" })
+    #expect(!answer.isTruncated); #expect(answer.text.utf8.count == 8 * 1_048_576 - 4096)
+    #expect(state.view.messages.first { $0.id == "tool-0" }?.isTruncated == true)
+    #expect(state.view.messages.first { $0.id == "tool-1" }?.isTruncated == false)
+    #expect(state.view.requests.map(\.nativeID) == [.number(41)])
+    #expect(state.view.requests.first?.parameters["questions"]?.array?.first?["question"]?.string?.utf8.count == 60_000)
+    try state.accept(event("item/agentMessage/delta", ["turnId": .string("turn"),
+      "itemId": .string("active-answer"), "delta": .string(" fresh tail")]))
+    #expect(state.view.messages.first?.text.hasSuffix(" fresh tail") == true)
+    #expect(state.retainedBodyBytes <= CodexConversationMemory.threadBodyBytes)
+  }
+
+  @Test func aggregateBodyMemoryPlateausAcrossLargeThreadsWithPausedConsumer() async throws {
+    let server = CodexAppServer(installation: .init(binary: URL(fileURLWithPath: "/unused-codex"),
+      node: URL(fileURLWithPath: "/unused-node")))
+    let threads = (0..<6).map { _ in UUID().uuidString }, quiet = UUID().uuidString
+    for id in threads + [quiet] {
+      var state = CodexAppServerState(threadID: id)
+      try state.hydrate(thread: .object(["id": .string(id)]), history: [], turns: [])
+      await server.publishConversation(state)
+    }
+    try await server.acceptConversationFrame(event("item/tool/requestUserInput", ["turnId": .string("quiet-turn"),
+      "questions": .array([.object(["id": .string("approval"), "question": .string("Keep this approval")])])],
+      request: .number(47), threadID: quiet))
+    var consumer = server.events.makeAsyncIterator()
+    let initialMemory = try processMemory()
+    print("CODEX_BODY_MEMORY phase=before resident=\(initialMemory.resident) footprint=\(initialMemory.footprint)")
+    var largestRetained = 0
+    // Each call drops its generated input before sampling. No fixture array or
+    // paused event payload retains the preceding full body outside the owner.
+    func append(_ index: Int) async throws {
+      let size = (index % 8 + 1) * 1_048_576 - 4096
+      let character = String(UnicodeScalar(65 + index % 26)!)
+      try await server.acceptConversationFrame(event("item/completed", ["turnId": .string("turn-\(index)"),
+        "item": .object(["id": .string("body-\(index)"), "type": .string("agentMessage"),
+          "text": .string(String(repeating: character, count: size))])], threadID: threads[index % threads.count]))
+    }
+    for index in 0..<96 {
+      try await append(index)
+      let retained = await server.residentConversationBodyBytes
+      largestRetained = max(largestRetained, retained)
+      #expect(retained <= CodexConversationMemory.bodyBytes)
+      if (index + 1).isMultiple(of: 12) {
+        let memory = try processMemory()
+        print("CODEX_BODY_MEMORY phase=pressure messages=\(index + 1) retained=\(retained) resident=\(memory.resident) footprint=\(memory.footprint)")
+      }
+    }
+    #expect(largestRetained >= 40 * 1_048_576, "The workload must reach the aggregate budget, not pass by retaining no bodies")
+    let wake: Void? = await consumer.next()
+    #expect(wake != nil)
+    let changes = await server.drainEvents()
+    #expect(changes.count == threads.count + 1)
+    for case .conversation(let value) in changes {
+      #expect(value.messages.count <= 64)
+      for message in value.messages {
+        #expect(CodexMessageTransfer.encodedByteCount(message, maximumBytes: 2048) != nil)
+        #expect(message.activity?.kind != .error, "Body eviction preserves an authoritative-history preview")
+      }
+    }
+    let preserved = try #require(await server.snapshot(threadID: quiet))
+    #expect(preserved.requests.map(\.nativeID) == [.number(47)])
+    #expect(preserved.requests.first?.parameters["questions"]?.array?.first?["question"] == .string("Keep this approval"))
+    await server.close()
+    #expect(await server.residentConversationBodyBytes == 0)
+    let finalMemory = try processMemory()
+    print("CODEX_BODY_MEMORY phase=closed retained=0 resident=\(finalMemory.resident) footprint=\(finalMemory.footprint)")
+  }
+
+  private func processMemory() throws -> (resident: UInt64, footprint: UInt64) {
+    var info = task_vm_info_data_t()
+    var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size)
+    let status = withUnsafeMutablePointer(to: &info) { pointer in
+      pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+        task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
+      }
+    }
+    try #require(status == KERN_SUCCESS, "Kernel process-memory sampling must succeed")
+    return (UInt64(info.resident_size), UInt64(info.phys_footprint))
   }
 
   @Test(arguments: [false, true])
@@ -281,7 +392,10 @@ struct CodexAppServerStateTests {
     await server.publishConversation(fresh)
     await server.invalidateAccountPresentation()
     let invalidated = await server.drainEvents()
-    #expect(invalidated.isEmpty)
+    #expect(invalidated.count == 1)
+    guard case .unavailable(.disconnected) = try #require(invalidated.first) else {
+      Issue.record("Account invalidation must withdraw the old presentation"); return
+    }
     #expect(await server.snapshot(threadID: b) == nil)
     await server.close()
   }

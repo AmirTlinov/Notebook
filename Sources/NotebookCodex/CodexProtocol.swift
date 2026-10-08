@@ -31,7 +31,7 @@ public struct CodexStartupFailure: Error, Sendable, Equatable {
 }
 
 enum CodexProtocol {
-  static let frameLimit = CodexMessageTransfer.maximumBytes
+  static let frameLimit = 8 * 1_048_576
   static let messageLimit = 32_768
 }
 
@@ -51,6 +51,16 @@ extension JSONValue {
 extension CodexAppServerState {
   static func displayMessage(_ item: JSONValue, turnID: String) -> CodexMessage? {
     guard let id = item["id"]?.string, let type = item["type"]?.string else { return nil }
+    guard [id, turnID, item["clientId"]?.string ?? ""].allSatisfy({
+      CodexMessageTransfer.encodedTextBytes($0, within: 256) != nil
+    }), [item["phase"]?.string ?? "", item["status"]?.string ?? ""].allSatisfy({
+      CodexMessageTransfer.encodedTextBytes($0, within: 128) != nil
+    }) else { return nil }
+    guard CodexProjectionBytes.json(item, maximumBytes: CodexMessageTransfer.maximumBytes, pretty: true) != nil else {
+      return .init(id: id, turnID: turnID, clientID: item["clientId"]?.string, role: .assistant,
+        text: "Полное сообщение недоступно в Notebook", isTruncated: true,
+        activity: .init(kind: .error, status: "failed", detail: "Представление native item превышает предел 8 МиБ."))
+    }
     let role: CodexMessage.Role, text: String
     var activity: CodexMessage.Activity?
     var attachments: [String]?
@@ -148,5 +158,48 @@ extension CodexAppServerState {
     case "failed": return "Не удалось " + action.failed
     default: return action.completed
     }
+  }
+}
+
+/// A bounded preflight for the existing native JSON/public-item projection.
+/// It allocates neither an encoded tree nor a full formatted string.
+enum CodexProjectionBytes {
+  static func json(_ value: JSONValue, maximumBytes: Int, pretty: Bool = false) -> Int? {
+    guard maximumBytes >= 0 else { return nil }
+    var bytes = 0
+    func add(_ count: Int) -> Bool {
+      guard count >= 0, count <= maximumBytes - bytes else { return false }
+      bytes += count; return true
+    }
+    func walk(_ value: JSONValue, depth: Int) -> Bool {
+      guard depth <= 256 else { return false }
+      switch value {
+      case .null: return add(4)
+      case .bool(let value): return add(value ? 4 : 5)
+      case .number(let value): return value.isFinite && add(32)
+      case .string(let value):
+        guard let count = CodexMessageTransfer.encodedTextBytes(value, within: maximumBytes - bytes) else { return false }
+        return add(count + 2)
+      case .array(let values):
+        guard add(2) else { return false }
+        for (index, value) in values.enumerated() {
+          if index > 0, !add(1) { return false }
+          if pretty, !add(2 * (depth + 1) + 2) { return false }
+          guard walk(value, depth: depth + 1) else { return false }
+        }
+        return !pretty || values.isEmpty || add(2 * depth + 1)
+      case .object(let values):
+        guard add(2) else { return false }
+        var index = 0
+        for (key, value) in values {
+          if index > 0, !add(1) { return false }; index += 1
+          if pretty, !add(2 * (depth + 1) + 3) { return false }
+          guard let count = CodexMessageTransfer.encodedTextBytes(key, within: maximumBytes - bytes),
+            add(count + 3), walk(value, depth: depth + 1) else { return false }
+        }
+        return !pretty || values.isEmpty || add(2 * depth + 1)
+      }
+    }
+    return walk(value, depth: 0) ? bytes : nil
   }
 }

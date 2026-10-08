@@ -97,6 +97,20 @@ final class NotebookChatController {
   var workStatus: NotebookChatWorkStatus? { .init(conversation: conversation, connected: connected) }
   private(set) var historyCursor: String?
   private(set) var loadingHistory = false
+  private(set) var newerHistoryCursor: String?
+  private var readingEarlier = false
+  private var loadingNewer = false
+  private var messagePositions: [String: CodexHistoryPosition] = [:]
+  private var historyGeneration: UUID?
+  private var historyNeedsHead = false
+  private static let maximumReadingRows = 256
+  @ObservationIgnored private let bodyWindow = NotebookChatBodyWindow()
+  @ObservationIgnored private var bodyCredits: [String: NotebookChatBodyWindow.Credit] = [:]
+  @ObservationIgnored private var contentReadID: UUID?
+  private var automaticContents: [String: String] = [:]
+  var retainedMessageBodyBytes: Int { bodyWindow.retainedBytes }
+  var presentationBodyCredits: [NotebookChatBodyWindow.Credit] { Array(bodyCredits.values) }
+
   private(set) var jobs: [NotebookChatJob] = []
   private(set) var connected = false { didSet { dictation.environmentChanged() } }
   private(set) var error: String?
@@ -137,7 +151,12 @@ final class NotebookChatController {
   private var contentRequests: [String: ContentRequest] = [:]
   @ObservationIgnored private var contentReadError: (id: String, revision: String?, message: String)?
   @ObservationIgnored private var transcriptGeneration = UUID() {
-    didSet { contentRead?.cancel(); contentRead = nil; failedContents.removeAll(); contentRequests.removeAll(); contentReadError = nil }
+    didSet {
+      contentRead?.cancel(); failedContents.removeAll(); contentRequests.removeAll(); contentReadError = nil
+      automaticContents.removeAll(); messagePositions.removeAll(); bodyCredits.removeAll()
+      historyGeneration = nil; historyNeedsHead = false
+      newerHistoryCursor = nil; readingEarlier = false; loadingNewer = false
+    }
   }
   @ObservationIgnored private var catchUpBoundary: String?
   @ObservationIgnored private var catchUpRead: Task<Void, Never>?
@@ -237,9 +256,10 @@ final class NotebookChatController {
             else { query = outgoing.first.map { .job($0.input) } }
             if let query {
               let computer = peer
-              defer { if case .history(let id, _) = query, id == threadID, !queries.contains(where: { if case .history(let thread, _) = $0 { return thread == id }; return false }) { loadingHistory = false } }
+              let readGeneration = transcriptGeneration
+              defer { if readGeneration == transcriptGeneration, case .history(let id, _) = query, id == threadID, !queries.contains(where: { if case .history(let thread, _) = $0 { return thread == id }; return false }) { loadingHistory = false } }
               do { try await accept(try await request(query), for: query, computer: computer) }
-              catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+              catch { if !Task.isCancelled, readGeneration == transcriptGeneration { self.error = error.localizedDescription } }
             }
           }
           deliverJobs.toggle()
@@ -284,7 +304,7 @@ final class NotebookChatController {
     cancelQueries()
   }
   private func cancelQueries() {
-    contentRead?.cancel(); contentRead = nil; failedContents.removeAll()
+    contentRead?.cancel(); failedContents.removeAll()
     catalogueGeneration = UUID(); catalogueRead?.cancel(); projectsRead?.cancel()
     catalogueRead = nil; projectsRead = nil; loadingHistory = false
     for scope in catalogues.keys { catalogues[scope]?.loading = false }
@@ -473,10 +493,23 @@ final class NotebookChatController {
     var seen = Set<String>()
     return projects.filter { expandedProjects.contains($0.id) }.flatMap { catalogues[.project($0.id)]?.tasks ?? [] }.filter { seen.insert($0.id).inserted }
   }
-  var canLoadEarlier: Bool { !historyLoaded || historyCursor != nil }
+  var canLoadEarlier: Bool { !historyNeedsHead && (!historyLoaded || historyCursor != nil) }
   func loadEarlier() {
     guard !stopped, let threadID, !loadingHistory, canLoadEarlier else { return }
+    loadingNewer = false
     loadingHistory = enqueue(.history(threadID: threadID, cursor: historyLoaded ? historyCursor : nil))
+  }
+  var canLoadNewer: Bool { readingEarlier && !loadingHistory }
+  func loadNewer() {
+    guard !stopped, let threadID, canLoadNewer else { return }
+    guard let newerHistoryCursor else {
+      historyNeedsHead = false; readingEarlier = false; historyLoaded = false; historyCursor = nil; historyBoundary = nil
+      messages = []; bodyCredits.removeAll(); messagePositions.removeAll()
+      contentRequests.removeAll(); automaticContents.removeAll(); failedContents.removeAll()
+      if let conversation { mergeMessages(conversation.messages, preferIncoming: true) }
+      revealedMessageID = messages.last?.id; loadEarlier(); return
+    }
+    loadingNewer = true; loadingHistory = enqueue(.history(threadID: threadID, cursor: newerHistoryCursor))
   }
   func select(_ task: CodexTask) {
     if task.id != threadID { dictation.suspendWaiting() }
@@ -833,12 +866,16 @@ final class NotebookChatController {
     queries.append(query); wake.continuation.yield(()); return true
   }
   private func request(_ query: NotebookChatQuery) async throws -> NotebookChatReply {
+    let readGeneration = transcriptGeneration
+    let transcriptRead: Bool
+    switch query { case .conversation,.history,.message: transcriptRead = true; default: transcriptRead = false }
     // One bounded normal request plus one reserved human-control request.
     // A file chunk or lost read reply cannot head-of-line block Cancel/Approval.
     while pending.count >= (query.isInteractiveControl ? 2 : 1), connected, !stopped {
       try await Task.sleep(for: .milliseconds(25))
     }
     guard connected, !stopped, let peer else { throw NotebookTransportError.disconnected }
+    guard !transcriptRead || transcriptGeneration == readGeneration else { throw NotebookTransportError.disconnected }
     let envelope = NotebookChatEnvelope(body: .request(query))
     if case .conversation = query { conversationSubscription = envelope.id }
     let reply: NotebookChatReply = try await withCheckedThrowingContinuation { continuation in
@@ -855,13 +892,29 @@ final class NotebookChatController {
       }
     }
     guard self.peer == peer else { throw NotebookTransportError.disconnected }
+    guard !transcriptRead || transcriptGeneration == readGeneration else { throw NotebookTransportError.disconnected }
     return reply
   }
   private func acceptConversation(_ value: CodexConversation) {
     guard value.succeeds(conversation) else { return }
-    if let conversation, conversation.generation != value.generation { suspendTranscript() }
+    if let previous = historyGeneration, previous != value.generation {
+      // Native cursors belong to the old account/connection cut. Retain a
+      // bounded reading anchor, then let the existing Newer action fetch a
+      // fresh head; never manufacture new cursors from old rows.
+      let previousCredits = bodyCredits
+      messages = messages.map { $0.preview(evicted:true) }
+      cancelQueries(); transcriptGeneration = UUID()
+      withExtendedLifetime(previousCredits) {}
+      historyCursor = nil; newerHistoryCursor = nil; historyLoaded = true
+      readingEarlier = !messages.isEmpty; historyNeedsHead = readingEarlier
+      catchUpBoundary = nil
+      if messages.isEmpty { historyLoaded = false }
+    }
+    historyGeneration = value.generation
     conversation = value; continuationUnavailable = false; error = nil
-    mergeMessages(value.messages, preferIncoming: true)
+    let visible = readingEarlier ? Set(messages.map(\.id)) : nil
+    mergeMessages(visible.map { ids in value.messages.filter { ids.contains($0.id) } } ?? value.messages,
+      preferIncoming: true)
     if readPosition == nil || expanded || voice.activeID != nil { markRepliesRead() }
     refreshCompanionReplies()
   }
@@ -882,7 +935,8 @@ final class NotebookChatController {
     position.present(in: compactReplies, at: now)
     if position != readPosition { readPosition = position; persistPanel() }
     let visible = position.previews(in: compactReplies, at: now)
-    if companionReplies != visible { companionReplies = visible }
+    let previews = visible.map { $0.preview() }
+    if companionReplies != previews { companionReplies = previews }
   }
   private func markRepliesRead() {
     guard let threadID else { return }
@@ -892,28 +946,34 @@ final class NotebookChatController {
   }
 
   private func suspendTranscript() {
-    contentRead?.cancel(); contentRead = nil; failedContents.removeAll()
+    contentRead?.cancel(); failedContents.removeAll()
     if catchUpBoundary == nil { catchUpBoundary = messages.last?.id }
     catchUpRead?.cancel(); catchUpRead = nil; nextCatchUp = .now
   }
   /// A reconnect can miss more than the 64-item live window. Fill that gap up
   /// to the last shown native ID without replacing the older reading window.
   private func catchUpTranscript() {
-    guard connected, !stopped, !expanded || !browsesChats, catchUpRead == nil, let threadID, let boundary = catchUpBoundary else { return }
+    guard connected, !stopped, !historyNeedsHead, !expanded || !browsesChats, catchUpRead == nil, let threadID, let boundary = catchUpBoundary else { return }
     let generation = transcriptGeneration
     catchUpRead = Task { [weak self] in
       guard let self else { return }
       defer { if transcriptGeneration == generation, !Task.isCancelled { catchUpRead = nil; nextCatchUp = .now + .seconds(10) } }
       do {
         var cursor: String?, before: String?, seen = Set<String>()
-        repeat {
+        for _ in 0..<8 {
           guard case .history(let page) = try await directQuery(.history(threadID: threadID, cursor: cursor)) else { throw NotebookTransportError.invalidAcknowledgement }
           guard !Task.isCancelled, transcriptGeneration == generation else { return }
+          try installHistoryPositions(page)
           mergeMessages(page.messages, preferIncoming: false, before: before)
+          refreshHistoryEdges()
           if page.messages.contains(where: { $0.id == boundary }) || page.nextCursor == nil { catchUpBoundary = nil; return }
           before = page.messages.first?.id ?? before; cursor = page.nextCursor
           if let cursor, !seen.insert(cursor).inserted { throw NotebookTransportError.invalidAcknowledgement }
-        } while cursor != nil
+          if cursor == nil { break }
+        }
+        // A large reconnect gap remains navigable through the same older/newer
+        // cursors; background catch-up never grows an unlimited transcript.
+        catchUpBoundary = nil
       } catch { /* Keep the reading window; the visible-read schedule retries without resending work. */ }
     }
   }
@@ -937,7 +997,10 @@ final class NotebookChatController {
   func retryMessageContent(_ id: String) {
     clearContentReadError(for:id)
     if contentRequests[id] == nil, let header = messages.first(where: { $0.id == id }),
-      header.isTruncated, header.contentRevision != nil { contentRequests[id] = .init(generation:UUID(),header:header) }
+      header.isTruncated, header.contentRevision != nil {
+      contentRequests[id] = .init(generation:UUID(),header:header.preview())
+      automaticContents[id] = header.contentRevision
+    }
     failedContents.removeValue(forKey:id); readMessageContents()
   }
 
@@ -962,15 +1025,23 @@ final class NotebookChatController {
     guard connected, !stopped, contentRead == nil, let threadID,
       nextContentRequest != nil else { return }
     let generation = transcriptGeneration, computer = peer
+    let readID = UUID(); contentReadID = readID
     contentRead = Task { [weak self] in
       guard let self else { return }
-      defer { if transcriptGeneration == generation, !Task.isCancelled { contentRead = nil } }
+      defer {
+        if contentReadID == readID { contentRead = nil; contentReadID = nil; readMessageContents() }
+      }
+      let assemblyCredit: NotebookChatBodyWindow.Assembly
+      do { assemblyCredit = try bodyWindow.reserveAssembly() }
+      catch { return }
+      defer { withExtendedLifetime(assemblyCredit) {} }
       while connected, !stopped, !Task.isCancelled, transcriptGeneration == generation, peer == computer,
         let request = nextContentRequest {
         let pending = request.header
-        let bodyAtStart = messages.first { $0.id == pending.id }
+        let bodyRevisionAtStart = messages.first { $0.id == pending.id }?.contentRevision
         do {
-          var assembly = CodexMessageAssembly(), cursor: String?, seen = Set<String>()
+          var assembly = CodexMessageAssembly(), cursor = messagePositions[pending.id]?.readCursor, seen = Set<String>()
+          var decodedCredit: NotebookChatBodyWindow.Credit?
           contentParts: while !Task.isCancelled, permitsContentCompletion(request) {
             let read = CodexMessageRead(threadID:threadID,turnID:pending.turnID,messageID:pending.id,
               cursor:cursor,transferID:assembly.transferID,offset:assembly.offset)
@@ -979,9 +1050,18 @@ final class NotebookChatController {
             guard permitsContentCompletion(request) else { break contentParts }
             switch reply {
             case .searching(let next):
-              guard assembly.offset == 0, seen.insert(next).inserted else { throw NotebookTransportError.invalidAcknowledgement }
+              guard assembly.offset == 0, seen.count < 256, seen.insert(next).inserted else { throw NotebookTransportError.invalidAcknowledgement }
               cursor = next
             case .part(let part):
+              if assembly.offset == 0 {
+                guard (1...CodexMessageTransfer.maximumBytes).contains(part.totalBytes) else {
+                  throw NotebookTransportError.invalidAcknowledgement
+                }
+                evictBodiesForRead(bytes: part.totalBytes, keeping: pending.id)
+                decodedCredit = try await bodyWindow.reserveAfterPublicationDrain(part.totalBytes)
+                guard !Task.isCancelled, transcriptGeneration == generation, peer == computer,
+                  permitsContentCompletion(request) else { break contentParts }
+              }
               guard try assembly.append(part) else { continue }
               let frozen = assembly
               let worker = Task.detached(priority:.utility) { try frozen.decode() }
@@ -992,10 +1072,13 @@ final class NotebookChatController {
                 complete.role == pending.role else { throw NotebookTransportError.invalidAcknowledgement }
               if contentRequests[pending.id] != nil,
                 let index = messages.firstIndex(where: { $0.id == pending.id }),
-                messages[index].isTruncated || messages[index].contentRevision == bodyAtStart?.contentRevision
+                messages[index].isTruncated || messages[index].contentRevision == bodyRevisionAtStart
                   || messages[index].contentRevision == assembly.contentRevision {
+                guard let decodedCredit else { throw NotebookTransportError.invalidAcknowledgement }
+                let previousCredit = bodyCredits.updateValue(decodedCredit, forKey: pending.id)
                 messages[index] = .init(id:complete.id,turnID:complete.turnID,clientID:complete.clientID,role:complete.role,
                   text:complete.text,contentRevision:assembly.contentRevision,activity:complete.activity,attachments:complete.attachments,phase:complete.phase)
+                withExtendedLifetime(previousCredit) {}
                 clearContentReadError(for:pending.id, revision:pending.contentRevision)
                 if contentRequests[pending.id]?.header.contentRevision == pending.contentRevision
                   || contentRequests[pending.id]?.header.contentRevision == assembly.contentRevision {
@@ -1018,13 +1101,24 @@ final class NotebookChatController {
     }
   }
 
+  private func evictBodiesForRead(bytes: Int, keeping id: String) {
+    for index in messages.indices where bodyWindow.retainedBytes > NotebookChatBodyWindow.maximumBytes - bytes {
+      guard messages[index].id != id, bodyCredits[messages[index].id] != nil else { continue }
+      let key = messages[index].id
+      messages[index] = messages[index].preview(evicted: true)
+      bodyCredits.removeValue(forKey: key)
+    }
+  }
+
   private func mergeMessages(_ incoming: [CodexMessage], preferIncoming: Bool, before boundary: String? = nil) {
+    // Local temporaries continue to own their real bodies during the merge.
+    let previousCredits = bodyCredits
+    defer { withExtendedLifetime(previousCredits) {} }
     let known = Dictionary(messages.map { ($0.id,$0) },uniquingKeysWith:{ _,last in last })
+    let automaticID = !readingEarlier ? incoming.last(where: { $0.isTruncated && $0.contentRevision != nil && $0.activity?.kind != .error })?.id : nil
     let displayed = incoming.map { header -> CodexMessage in
       let prior = known[header.id]
       guard preferIncoming || prior == nil else {
-        // The shared merge may fill an exact truncated row from history even
-        // when history has no authority to replace another live revision.
         if !header.isTruncated, prior?.isTruncated == true,
           prior?.contentRevision == header.contentRevision { contentRequests.removeValue(forKey:header.id) }
         return header
@@ -1034,17 +1128,65 @@ final class NotebookChatController {
         let current = contentRequests[header.id]
         let continues = current?.header.turnID == header.turnID && current?.header.role == header.role
           && (header.activity?.kind != .error || current?.header.contentRevision == revision)
-        contentRequests[header.id] = .init(generation:continues ? current!.generation : UUID(),header:header)
-        // Only this full-content reading owner can retain an older body while
-        // separately queuing its latest header. Other native transcript owners
-        // still consume the shared merge's normal latest-excerpt contract.
+        if current != nil || (header.id == automaticID && automaticContents[header.id] != revision) {
+          contentRequests[header.id] = .init(generation:continues ? current!.generation : UUID(),header:header.preview())
+          automaticContents[header.id] = revision
+        }
         if let prior, !prior.isTruncated, prior.turnID == header.turnID, prior.role == header.role,
           header.activity?.kind != .error { return prior }
       } else { contentRequests.removeValue(forKey:header.id) }
       return header
     }
-    messages = CodexTranscript.merging(messages, displayed, preferIncoming: preferIncoming, before: boundary)
+    var merged = CodexTranscript.merging(messages, displayed, preferIncoming: preferIncoming, before: boundary)
+    if merged.count > Self.maximumReadingRows {
+      merged = readingEarlier && !loadingNewer ? Array(merged.prefix(Self.maximumReadingRows))
+        : Array(merged.suffix(Self.maximumReadingRows))
+    }
+    for index in merged.indices where !merged[index].isTruncated {
+      let value = merged[index]
+      if known[value.id] == value, bodyCredits[value.id] != nil { continue }
+      guard let count = CodexMessageTransfer.encodedByteCount(value), let credit = bodyWindow.reserve(count) else {
+        merged[index] = value.preview(evicted: true); continue
+      }
+      bodyCredits[value.id] = credit
+    }
+    messages = merged
+    let visible = Set(messages.map(\.id))
+    let full = Set(messages.filter { !$0.isTruncated }.map(\.id))
+    bodyCredits = bodyCredits.filter { full.contains($0.key) }
+    contentRequests = contentRequests.filter { visible.contains($0.key) }
+    automaticContents = automaticContents.filter { visible.contains($0.key) }
+    failedContents = failedContents.filter { visible.contains($0.key) }
+    messagePositions = messagePositions.filter { visible.contains($0.key) }
+    refreshHistoryEdges()
     readMessageContents()
+  }
+
+  private func installHistoryPositions(_ page: CodexHistoryPage) throws {
+    let ids = Set(page.messages.map(\.id))
+    guard page.messages.count <= 32, ids.count == page.messages.count, (page.positions?.count ?? 0) <= 32,
+      (page.nextCursor?.utf8.count ?? 0) <= 4096, (page.newerCursor?.utf8.count ?? 0) <= 4096,
+      (page.positions?.allSatisfy { id, value in
+        ids.contains(id) && value.readCursor.utf8.count <= 4096
+          && (value.olderCursor?.utf8.count ?? 0) <= 4096 && (value.newerCursor?.utf8.count ?? 0) <= 4096
+      } ?? true) else { throw NotebookTransportError.invalidAcknowledgement }
+    if let positions = page.positions {
+      for (id, value) in positions { messagePositions[id] = value }
+    }
+  }
+
+  private func refreshHistoryEdges() {
+    guard !historyNeedsHead else { historyBoundary = messages.first?.id; return }
+    if let first = messages.first, let position = messagePositions[first.id] { historyCursor = position.olderCursor }
+    if let last = messages.last {
+      if let position = messagePositions[last.id] {
+        newerHistoryCursor = position.newerCursor
+        readingEarlier = position.newerCursor != nil
+      } else if last.id == conversation?.messages.last?.id {
+        newerHistoryCursor = nil; readingEarlier = false
+      }
+    }
+    historyBoundary = messages.first?.id
   }
 
   private func accept(_ reply: NotebookChatReply, for query: NotebookChatQuery, computer: UUID?) async throws {
@@ -1089,9 +1231,19 @@ final class NotebookChatController {
     case (.history(let id, let cursor), .history(let page)):
       guard page.nextCursor == nil || page.nextCursor != cursor else { throw NotebookTransportError.invalidAcknowledgement }
       if threadID == id {
-        mergeMessages(page.messages, preferIncoming: false, before: cursor == nil ? nil : historyBoundary ?? messages.first?.id)
-        historyBoundary = page.messages.first?.id ?? historyBoundary
-        historyLoaded = true; historyCursor = page.nextCursor; loadingHistory = false; error = nil
+        guard !historyNeedsHead else { return }
+        try installHistoryPositions(page)
+        if loadingNewer {
+          mergeMessages(page.messages, preferIncoming: false)
+          if page.newerCursor == nil { readingEarlier = false }
+        } else {
+          readingEarlier = historyLoaded && cursor != nil
+          mergeMessages(page.messages, preferIncoming: false, before: cursor == nil ? nil : historyBoundary ?? messages.first?.id)
+        }
+        historyCursor = page.nextCursor; newerHistoryCursor = page.newerCursor
+        refreshHistoryEdges()
+        historyLoaded = true; loadingHistory = false; loadingNewer = false; error = nil
+        if !readingEarlier, let conversation { mergeMessages(conversation.messages, preferIncoming: true) }
         if page.messages.isEmpty, page.nextCursor != nil { loadEarlier() }
       }
     case (_, .failure(let message)): error = message

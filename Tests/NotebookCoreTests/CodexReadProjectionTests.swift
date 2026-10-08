@@ -55,4 +55,16 @@ struct CodexReadProjectionTests {
     #expect(throws:NotebookTransportError.invalidAcknowledgement) { try mixed.append(transfer.part(offset:0)) }
   }
 
+  @Test func assembledNativeValueRefusesStructuralExpansionBeforeTypedDecode() throws {
+    // Small encoded bytes can still contain hundreds of thousands of native
+    // attachment slots. The public transfer's byte cap alone cannot admit it.
+    let native = CodexMessage(id:"complex",turnID:"turn",clientID:nil,role:.assistant,text:"small",
+      attachments:Array(repeating:"",count:270_000))
+    let transfer = try CodexMessageTransfer(threadID:"thread",message:native)
+    #expect(transfer.byteCount < 1_048_576)
+    var assembly = CodexMessageAssembly()
+    while assembly.offset < transfer.byteCount { _ = try assembly.append(transfer.part(offset:assembly.offset)) }
+    #expect(throws:NotebookStorageError.limitExceeded("json_decode_memory")) { try assembly.decode() }
+  }
+
 }

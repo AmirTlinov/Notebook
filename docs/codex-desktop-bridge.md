@@ -10,14 +10,14 @@ external API references are not a promise of compatibility with an arbitrary ver
 
 `NotebookCodexHost` owns one App Server per plugin runtime. Workspace
 `NotebookCodexSidecar` instances route delivery, not separate model processes.
-The Codex panel calls the runtime; iPad uses authenticated Notebook transport.
+Direct MCP calls the runtime; iPad uses authenticated Notebook transport.
 Up to eight workspace owners retain distinct IPC addresses, so switching spaces
 does not redirect an active agent's tools.
 
 `thread/resume` acquires Codex's own exclusive writer. “Already has an active
 writer” is an explicit refusal; history remains readable. Notebook neither evicts
 the other process nor creates a replacement task. Catalog reads do not resume
-every listed task. Closing the panel leaves the connection and active turn alive;
+every listed task. Closing the iPad chat leaves the connection and active turn alive;
 inactive completed tasks can leave the bounded working set.
 
 A `thread/start` request remains pending until reply or connection closure, rather
@@ -32,10 +32,25 @@ confirmation, not an inferred device location or Codex acceptance.
 ## Bounded protocol and questions
 
 `CodexRPC` supports at most 16 pending requests, 8 MiB JSONL frames and a ten-second
-partial-frame deadline. `CodexAppServerState` retains up to 64 public messages,
-separate recent acceptance receipts and 32 questions. Hidden reasoning is not
-exposed. History pages contain native items rather than entire multiday turns;
-late reads cannot replace newer events. Truncation is explicit.
+partial-frame deadline. The reader scans each incoming byte once and admits JSON
+structure before decoding it. `CodexAppServerState` retains 64 public message
+headers, separate acceptance receipts and 32 questions. Full bodies share a
+48 MiB host budget and a 16 MiB thread budget; the active answer takes priority
+within its thread. Eviction leaves an explicit preview and a native read locator.
+Questions retain at most 64 KiB of encoded parameters and 256 KiB of estimated
+allocation each. Hidden reasoning is not exposed.
+
+Two concurrent reads can reserve 160 MiB of estimated preparation each. Immutable
+transfers share 16 MiB, with one transfer of at most 8 MiB per peer. Their credits
+remain held until the actual worker and last borrower finish, including after
+account change or disconnect. These are owner admission limits, not total process
+RSS or WebContent limits.
+
+History reads one native item per RPC. A public page carries at most 32 previews,
+stopping after 112 KiB or two seconds between items. Both edge cursors and
+per-row locators bind the connection, account, workspace, thread and direction.
+Reversing direction may reuse the same opaque native token. Late reads cannot
+replace newer events.
 
 Native string/numeric question IDs survive unchanged. Human decisions may approve
 once or for a duration offered by Codex. A supported
@@ -44,8 +59,8 @@ session/always scopes; persistent approval names that tool, not universal access
 Unsupported forms never auto-consent. Completion comes from Codex's event, not
 merely writing to a pipe.
 
-Snapshots carry all native question IDs and one full question. The common Mac/iPad
-picker reads another question by connection generation and native ID. A decision
+Snapshots carry all native question IDs and one full question. The iPad picker
+reads another question by connection generation and native ID. A decision
 from an old generation cannot answer a reused ID.
 
 Process-output persistence does not block the JSONL reader. One per-process mailbox
@@ -179,16 +194,20 @@ left by an interrupted JavaScript publication.
 
 ### Полный текст в Notebook
 
-Ограничение короткого сетевого кадра не обрезает native history. Mac сохраняет
-полное публичное сообщение в текущем native window; короткий заголовок переносит
-его `contentRevision`. iPad автоматически дочитывает сообщение порциями по 48 КиБ
-через обычную очередь чтения. Для peer одновременно существует один неизменяемый
-перенос; его SHA-256 и смещения проверяются до установки целого текста. Старый
-заголовок той же версии не заменяет уже полученный текст. Ошибка видна и допускает
-«Загрузить полностью» без отправки нового пользовательского сообщения.
+Короткий заголовок переносит `contentRevision`; полный текст читается из текущего
+native window или авторитетной истории порциями по 48 КиБ. iPad автоматически
+дочитывает актуальное live-сообщение. Старые вытесненные тела открываются действием
+«Загрузить полностью». SHA-256 и смещения проверяются до установки целого текста;
+заголовок той же версии сохраняет уже полученный текст.
 
-Перенос использует существующий предел native App Server frame (8 МиБ); превышение
-не меняет оригинал и сообщает невозможность чтения этим протоколом. Live-delta
+Читатель iPad удерживает 256 строк с настоящими курсорами «Раньше»/«Позже»,
+16 МиБ тел и одну сборку до 8 МиБ. Controller и публикация WebKit разделяют
+ARC credits; старый физический callback удерживает свои тела до завершения.
+Новое native поколение отзывает старые курсоры и предлагает перейти к свежему
+началу через существующее действие «Позже».
+
+Предел полного encoded значения — 8 МиБ; native RPC envelope также ограничен
+8 МиБ. Превышение сообщает невозможность чтения этим протоколом. Live-delta
 получает поколение/номер native event за O(1), не хеширует весь растущий ответ.
 Закрытие, смена задачи, detach/revoke отзывают также ещё ожидающий первый read.
 Статус и новая версия с неизменным видимым префиксом не пересобирают Markdown.
@@ -218,6 +237,12 @@ exact first part. Its request identity lives with that one per-peer MessageRead,
 not in a second response cache. A new envelope replaces the transfer; a collision
 with another payload is rejected. Revoking its peer/observation revokes that
 identity and pending asynchronous admission together.
+
+WebContent recovery keeps the same WK surface, desired publication and reading
+anchor. Navigation and publication identities fence late callbacks. One automatic
+reload is followed by a visible Retry; a JavaScript publication error retains the
+live DOM and forces a full current publication on Retry. Credits retire at the
+actual navigation or callback boundary.
 
 ## Cold runtime startup
 
