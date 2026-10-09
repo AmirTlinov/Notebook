@@ -7,31 +7,32 @@ enum NotebookSearchText {
   static let maximumHTMLBytes = 8 * 1_024 * 1_024
   static let maximumTextBytes = 8 * 1_024 * 1_024
 
-  static func plain(_ value: String) throws -> String {
+  static func plain(_ value: String, observesCancellation: Bool = true) throws -> String {
     guard value.utf8.count <= maximumTextBytes else { throw NotebookStorageError.limitExceeded("search_text_bytes") }
-    return value.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
-  }
-
-  static func element(_ value: JSONValue) throws -> String {
-    switch value["kind"]?.string {
-    case "group": return ""
-    case "graphic":
-      guard let graphic = value["graphic"], graphic["visible"] != .bool(false),
-        graphic["representation"] != .string("ink") else { return "" }
-      return try plain(graphic["label"]?.string ?? "")
-    case "nativeText": return try plain(value["source"]?.string ?? "")
-    default:
-      let source = value["source"]?.string ?? ""
-      if !source.isEmpty { return try plain(source) }
-      return try html(value["html"]?.string ?? "")
+    var result = String(), space = false, visited = 0
+    result.reserveCapacity(value.utf8.count)
+    for character in value {
+      if observesCancellation {
+        for _ in character.unicodeScalars {
+          visited += 1
+          if visited & 4_095 == 0 { try Task.checkCancellation() }
+        }
+      }
+      if character.isWhitespace { space = !result.isEmpty }
+      else {
+        if space { result.append(" "); space = false }
+        result.append(character)
+      }
     }
+    if observesCancellation { try Task.checkCancellation() }
+    return result
   }
 
   /// Preserve literal '<' outside recognized markup and unknown entities.
   /// An unfinished tag/comment/raw-text element contributes no remaining
   /// markup body; unbalanced ordinary element boundaries need no DOM repair.
   /// Encoded markup is decoded once into text, never parsed a second time.
-  static func html(_ source: String) throws -> String {
+  static func html(_ source: String, observesCancellation: Bool = true) throws -> String {
     guard source.utf8.count <= maximumHTMLBytes else {
       throw NotebookStorageError.limitExceeded("search_html_bytes")
     }
@@ -40,8 +41,12 @@ enum NotebookSearchText {
     output.reserveCapacity(min(bytes.count, 65_536))
     var index = 0, suppressed: [String] = []
     var raw: String?
+    var cancellationAt = 0
     func space() { if !output.isEmpty, output.last != 32 { output.append(32) } }
     while index < bytes.count {
+      if observesCancellation, index >= cancellationAt {
+        try Task.checkCancellation(); cancellationAt = index + 4_096
+      }
       if let name = raw {
         if startsClosing(bytes, at: index, name: name) {
           guard let tag = tag(bytes, at: index) else { break }
@@ -90,7 +95,7 @@ enum NotebookSearchText {
       }
       index += 1
     }
-    return try plain(String(decoding: output, as: UTF8.self))
+    return try plain(String(decoding: output, as: UTF8.self), observesCancellation: observesCancellation)
   }
 
   private struct Tag { let name: String; let closing: Bool; let end: Int }

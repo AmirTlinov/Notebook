@@ -174,4 +174,84 @@ struct NotebookSearchIndexTests {
       print("Search 512 matches: total+keys+one body SQL instructions=\(counter.steps)")
     }
   }
+
+  @Test(arguments: ["source", "address", "workspace"])
+  func aPreparedIndexCannotInstallAgainstDifferentAuthoredInputs(mismatch: String) throws {
+    try fixture { store, _, _, documentID, _ in
+      let address = documentFile(documentID) + "#/files/@CamelCaseBlock"
+      let input = NotebookSearchInput(documentID: documentID, fileID: "CamelCaseBlock", source: "PreparedOnlyNeedle")
+      let workspace = mismatch == "workspace" ? UUID() : try store.storedWorkspaceID()
+      let prepared = try NotebookPreparedSearchEntry(input: input, workspaceID: workspace)
+      let original = try #require(try store.storedFragments(address: address, descendants: false).first)
+      let value = original.value.setting("source", .string(mismatch == "source" ? "DifferentLiteralNeedle" : input.source))
+      let changed: NotebookStoredFragment
+      if mismatch == "address" {
+        changed = .init(address: documentFile(documentID) + "#/files/@DifferentBlock", file: original.file,
+          parent: original.parent, collection: original.collection, member: "DifferentBlock", position: 0,
+          value: value.setting("id", .string("DifferentBlock")), collections: original.collections)
+      } else { changed = original.replacing(value: value) }
+      let revision = try store.currentReadCursor(), cursor = try store.currentChangeCursor()
+      let previous = try store.sqlRead { try $0.rows("SELECT plain_text FROM search_entries WHERE address=?", [.text(address)]).first?[0].text }
+      do {
+        try store.commandTransaction {
+          _ = try store.writeFragment(changed, database: store.currentSQL!, preparedSearch: prepared)
+        }
+        Issue.record("A prepared index accepted a different literal source or owner")
+      } catch let error as NotebookStorageError {
+        #expect(mismatch != "workspace" && error == .invalidTransaction("prepared search source mismatch"))
+      } catch let error as NotebookStoreError {
+        if case .workspaceChanged = error { #expect(mismatch == "workspace") }
+        else { Issue.record("The prepared owner refused for an unrelated store error") }
+      }
+      #expect(try store.storedFragments(address: address, descendants: false).first == original)
+      #expect(try store.storedFragments(address: documentFile(documentID) + "#/files/@DifferentBlock", descendants: false).isEmpty)
+      #expect(try store.currentReadCursor() == revision && store.currentChangeCursor() == cursor)
+      #expect(try store.sqlRead { try $0.rows("SELECT plain_text FROM search_entries WHERE address=?", [.text(address)]).first?[0].text } == previous)
+      #expect(try store.search("PreparedOnlyNeedle").total == 0)
+      #expect(try store.search("DifferentLiteralNeedle").total == 0)
+    }
+  }
+
+  @Test func nativeSourceAdmissionRejectsRetainedRegisterBodiesBeforeCapture() throws {
+    let version = ContentFieldVersion(stamp: .init(counter: 1, actor: UUID()), human: true)
+      .retainingValue(.string(String(repeating: "x", count: 9 * 1_024 * 1_024)))
+    let edit = DocumentSourceEdit(sessionID: UUID(), documentID: UUID(), fileID: "main",
+      baseSource: "before", baseVersion: version, source: "after", sequence: 1)
+    #expect(version.isValid && version.hasRetainedAlternatives)
+    #expect(throws: NotebookStorageError.limitExceeded("document_source_preparation")) {
+      try PreparedDocumentSourceEdit.cost(for: edit)
+    }
+  }
+
+  @Test(arguments: [false, true])
+  func actualDistinctGramAndEscapedFinishCostsRefuseBeforeSourcePublication(escaped: Bool) throws {
+    try fixture { store, _, _, documentID, _ in
+      let original = try #require(try store.readDocumentFile(documentID: documentID, fileID: "CamelCaseBlock"))
+      let source: String
+      if escaped { source = String(repeating: "\0", count: 3 * 1_024 * 1_024) }
+      else {
+        // All supplementary scalars are valid. Their distinctness forces the
+        // actual gram table's growth rather than a small repeated-text Set.
+        var value = String(); value.reserveCapacity(DocumentFile.maximumSourceLength)
+        for codepoint in 0x1_0000..<0x11_0000 { value.unicodeScalars.append(Unicode.Scalar(codepoint)!) }
+        source = value
+      }
+      #expect(source.utf8.count <= DocumentFile.maximumSourceLength)
+      let edit = DocumentSourceEdit(sessionID: UUID(), documentID: documentID, fileID: original.file.id,
+        baseSource: original.file.source, baseVersion: original.sourceVersion, source: source, sequence: 1)
+      let initial = try PreparedDocumentSourceEdit.cost(for: edit)
+      #expect(initial.bytes <= PreparedDocumentSourceEdit.maximumPreparationBytes)
+      let cursor = try store.currentChangeCursor(), revision = try store.currentReadCursor()
+      do {
+        _ = try PreparedDocumentSourceEdit(edit: edit, workspaceID: store.storedWorkspaceID())
+        Issue.record("An actual oversized gram table or escaped writer finish was admitted")
+      } catch let error as NotebookStorageError {
+        #expect(error == .limitExceeded(escaped ? "document_source_preparation" : "search_preparation_memory"))
+      }
+      #expect(try store.readDocumentFile(documentID: documentID, fileID: original.file.id) == original)
+      #expect(try store.currentReadCursor() == revision && store.currentChangeCursor() == cursor)
+      #expect(try store.documentEditingSessions().isEmpty)
+      #expect(try store.search("cafe").total == 1)
+    }
+  }
 }

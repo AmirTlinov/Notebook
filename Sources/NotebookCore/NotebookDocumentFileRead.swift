@@ -30,13 +30,18 @@ extension NotebookStore {
     }
   }
 
-  func documentFileProjection(documentID: UUID, fileID: String) throws -> DocumentDocument? {
-    try documentFilesProjection(documentID: documentID, fileIDs: [fileID])
+  func documentFileProjection(documentID: UUID, fileID: String,
+    maximumEnvelopeBytes: Int64 = 16 * 1_024 * 1_024, maximumEnvelopeAllocationBytes: Int? = nil,
+    budget: String = "document_file_read") throws -> DocumentDocument? {
+    try documentFilesProjection(documentID: documentID, fileIDs: [fileID],
+      maximumEnvelopeBytes: maximumEnvelopeBytes, maximumEnvelopeAllocationBytes: maximumEnvelopeAllocationBytes, budget: budget)
   }
 
   /// Reused by an editor's one file and a program's declared resource cut.
   /// Neither caller decodes unrelated authored files or their retained clocks.
-  func documentFilesProjection(documentID: UUID, fileIDs: Set<String>) throws -> DocumentDocument? {
+  func documentFilesProjection(documentID: UUID, fileIDs: Set<String>,
+    maximumEnvelopeBytes: Int64 = 16 * 1_024 * 1_024, maximumEnvelopeAllocationBytes: Int? = nil,
+    budget: String = "document_file_read") throws -> DocumentDocument? {
     guard fileIDs.count <= DocumentDocument.maximumFileCount,
       fileIDs.allSatisfy({ !$0.isEmpty && $0.utf16.count <= 120 }) else {
       throw NotebookStorageError.invalidTransaction("document file address")
@@ -50,7 +55,8 @@ extension NotebookStore {
       }
     }
     let rows = try boundedStoredFragments(addresses, maximumCount: max(4096, ids.count * 8 + 1),
-      maximumBytes: 16 * 1_024 * 1_024, budget: "document_file_read")
+      maximumBytes: min(16 * 1_024 * 1_024, maximumEnvelopeBytes), budget: budget,
+      maximumEnvelopeAllocationBytes: maximumEnvelopeAllocationBytes)
     guard !rows.isEmpty else { return nil }
     let value = try NotebookRecordCodec.decode(rows, root: root), document = try value.decode(DocumentDocument.self)
     let actual = Dictionary(uniqueKeysWithValues: rows.map { ($0.address, $0) })

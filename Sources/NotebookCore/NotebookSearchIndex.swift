@@ -1,5 +1,176 @@
 import Foundation
 import CSQLite
+import CryptoKit
+
+/// Disposable recipe output, sealed to its literal extraction input. Only a
+/// native document preparation crosses an await; ordinary writers call the
+/// same preparation and installation synchronously in their existing cut.
+struct NotebookPreparedSearchEntry: Sendable {
+  static let maximumRetainedBytes = 64 * 1_024 * 1_024
+  let recipe: Int
+  let workspaceID: UUID?
+  let input: NotebookSearchInput
+  let inputHash: String?
+  let plain: String
+  let folded: String
+  let grams: Set<String>
+  let retainedBytes: Int
+
+  init(input: NotebookSearchInput, workspaceID: UUID? = nil,
+    maximumWorkingBytes: Int = 128 * 1_024 * 1_024, observesCancellation: Bool = true,
+    previousFolded: String? = nil) throws {
+    self.recipe = NotebookStore.searchRecipe; self.workspaceID = workspaceID; self.input = input
+    let sourceBytes = input.source.utf8.count
+    // Literal normalization retains one output String. Folding's bounded
+    // Unicode expansion and Foundation's UTF16/UTF8 scratch are separate from
+    // the later gram table; these two phases do not coexist.
+    guard sourceBytes <= NotebookSearchText.maximumTextBytes,
+      sourceBytes <= (maximumWorkingBytes - 8_192) / 8 else { throw Self.refusal() }
+    if observesCancellation { try Task.checkCancellation() }
+    let plain = try input.isHTML
+      ? NotebookSearchText.html(input.source, observesCancellation: observesCancellation)
+      : NotebookSearchText.plain(input.source, observesCancellation: observesCancellation)
+    let folded = NotebookStore.foldedSearchText(plain)
+    if observesCancellation { try Task.checkCancellation() }
+    let strings = 4_096 + plain.utf8.count * 2 + folded.utf8.count * 2
+    let limit = min(Self.maximumRetainedBytes, maximumWorkingBytes)
+    guard strings <= limit else { throw Self.refusal() }
+    var grams = Set<String>(), retained = strings, previous: Character?, previousBytes = 0, visited = 0
+    func insert(_ first: Character?, _ character: Character, bytes: Int) throws {
+      // A candidate may be a single very long grapheme. Pay its temporary
+      // strings before constructing it; a duplicate consumes no retained slot.
+      guard bytes <= (maximumWorkingBytes - retained) / 4 else { throw Self.refusal() }
+      let gram = first.map { String($0) + String(character) } ?? String(character)
+      if grams.contains(gram) { return }
+      // Hash-table growth, control bytes and both String representations.
+      let next = 192 + bytes * 2
+      guard next <= limit - retained, bytes <= (maximumWorkingBytes - retained - next) / 4 else {
+        throw Self.refusal()
+      }
+      grams.insert(gram); retained += next
+    }
+    if previousFolded != folded {
+      for character in folded {
+        var bytes = 0
+        for scalar in character.unicodeScalars {
+          let value = scalar.value
+          bytes += value < 0x80 ? 1 : value < 0x800 ? 2 : value < 0x1_0000 ? 3 : 4
+          visited += 1
+          if observesCancellation, visited & 4_095 == 0 { try Task.checkCancellation() }
+        }
+        try insert(nil, character, bytes: bytes)
+        if let previous { try insert(previous, character, bytes: previousBytes + bytes) }
+        previous = character; previousBytes = bytes
+      }
+    }
+    let actual = strings + grams.capacity * (MemoryLayout<String>.stride + 32)
+      + grams.reduce(0) { $0 + $1.utf8.count * 2 }
+    guard actual <= limit else { throw Self.refusal() }
+    self.plain = plain; self.folded = folded; self.grams = grams
+    self.retainedBytes = actual
+    self.inputHash = workspaceID == nil ? nil : try input.hash(observesCancellation: observesCancellation)
+  }
+
+  func validate(_ fragment: NotebookStoredFragment, database: NotebookSQLConnection) throws -> NotebookSearchInput {
+    guard recipe == NotebookStore.searchRecipe, let inputHash, let actual = try NotebookSearchInput(fragment),
+      actual.sameAddress(as: input),
+      try actual.hash(observesCancellation: !database.writable) == inputHash else {
+      throw NotebookStorageError.invalidTransaction("prepared search source mismatch")
+    }
+    if let workspaceID {
+      guard try database.rows("SELECT value FROM metadata WHERE key='workspace_id'").first?[0].text
+        == workspaceID.uuidString.lowercased() else { throw NotebookStoreError.workspaceChanged }
+    }
+    return actual
+  }
+
+  private static func refusal() -> NotebookStorageError { .limitExceeded("search_preparation_memory") }
+}
+
+struct NotebookSearchInput: Sendable {
+  let address: String
+  let kind: String
+  let owner: String
+  let targetKind: String?
+  let targetID: String?
+  let elementID: String?
+  let source: String
+  let isHTML: Bool
+
+  init(documentID: UUID, fileID: String, source: String) {
+    let file = documentFile(documentID)
+    address = file + "#/files/@" + fieldKey([collaborationIdentity(fileID)])
+    kind = "document"; owner = documentID.uuidString.lowercased()
+    targetKind = nil; targetID = nil; elementID = fileID; self.source = source; isHTML = false
+  }
+
+  init?(_ fragment: NotebookStoredFragment) throws {
+    address = fragment.address
+    let value = fragment.value
+    if fragment.file == "workspace.json", fragment.collection == "items" {
+      kind = "item"; owner = fragment.member; targetKind = nil; targetID = nil; elementID = nil
+      source = value["title"]?.string ?? ""; isHTML = false
+    } else if fragment.file.hasPrefix("documents/"), fragment.collection == "files" {
+      kind = "document"; owner = String(fragment.file.dropFirst(10).dropLast(5))
+      targetKind = nil; targetID = nil; elementID = value["id"]?.string
+      source = value["source"]?.string ?? ""; isHTML = false
+    } else {
+      if fragment.file.hasPrefix("pages/"), fragment.collection == "elements" {
+        kind = "page"; owner = String(fragment.file.dropFirst(6).dropLast(5)); targetKind = nil; targetID = nil
+      } else if fragment.file == "board.json", fragment.collection == "board/elements", let parent = fragment.parent,
+        let surface = try value["surface"]?.decode(SurfaceID.self), let id = surface.ownerID {
+        kind = "spatial"; owner = String(parent.dropFirst("board.json#/boards/@".count))
+        targetKind = surface.kind.rawValue; targetID = id.uuidString.lowercased()
+      } else { return nil }
+      elementID = value["id"]?.string
+      switch value["kind"]?.string {
+      case "group": source = ""; isHTML = false
+      case "graphic":
+        let graphic = value["graphic"]
+        source = graphic?["visible"] != .bool(false) && graphic?["representation"] != .string("ink")
+          ? graphic?["label"]?.string ?? "" : ""
+        isHTML = false
+      case "nativeText": source = value["source"]?.string ?? ""; isHTML = false
+      default:
+        let literal = value["source"]?.string ?? ""
+        source = literal.isEmpty ? value["html"]?.string ?? "" : literal; isHTML = literal.isEmpty
+      }
+    }
+  }
+
+  func sameAddress(as other: Self) -> Bool {
+    address == other.address && kind == other.kind && owner == other.owner
+      && targetKind == other.targetKind && targetID == other.targetID
+      && elementID.map(collaborationIdentity) == other.elementID.map(collaborationIdentity) && isHTML == other.isHTML
+  }
+
+  func hash(observesCancellation: Bool) throws -> String {
+    var digest = SHA256()
+    let contiguous = try source.utf8.withContiguousStorageIfAvailable { bytes -> Bool in
+      for offset in stride(from: 0, to: bytes.count, by: 65_536) {
+        if observesCancellation { try Task.checkCancellation() }
+        digest.update(bufferPointer: UnsafeRawBufferPointer(start: bytes.baseAddress!.advanced(by: offset),
+          count: min(65_536, bytes.count - offset)))
+      }
+      return true
+    }
+    if contiguous == nil {
+      // A bridged noncontiguous string uses one fixed scratch block; never a
+      // second full Data(source.utf8) allocation inside the writer.
+      var buffer: [UInt8] = []; buffer.reserveCapacity(4_096)
+      for byte in source.utf8 {
+        buffer.append(byte)
+        if buffer.count == 4_096 {
+          if observesCancellation { try Task.checkCancellation() }
+          buffer.withUnsafeBytes { digest.update(bufferPointer: $0) }; buffer.removeAll(keepingCapacity: true)
+        }
+      }
+      buffer.withUnsafeBytes { digest.update(bufferPointer: $0) }
+    }
+    if observesCancellation { try Task.checkCancellation() }
+    return NotebookHexEncoding.encode(digest.finalize())
+  }
+}
 
 extension NotebookStore {
   static let searchRecipe = 1
@@ -67,37 +238,31 @@ extension NotebookStore {
     value.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "en_US_POSIX"))
   }
 
-  func updateSearchIndex(_ fragment: NotebookStoredFragment, database: NotebookSQLConnection) throws {
-    let kind: String, owner: String, targetKind: String?, targetID: String?, elementID: String?, plain: String
-    let value = fragment.value
-    if fragment.file == "workspace.json", fragment.collection == "items" {
-      kind = "item"; owner = fragment.member; targetKind = nil; targetID = nil; elementID = nil; plain = try NotebookSearchText.plain(value["title"]?.string ?? "")
-    } else if fragment.file.hasPrefix("pages/"), fragment.collection == "elements" {
-      kind = "page"; owner = String(fragment.file.dropFirst(6).dropLast(5)); targetKind = nil; targetID = nil; elementID = value["id"]?.string
-      plain = try NotebookSearchText.element(value)
-    } else if fragment.file.hasPrefix("documents/"), fragment.collection == "files" {
-      kind = "document"; owner = String(fragment.file.dropFirst(10).dropLast(5)); targetKind = nil; targetID = nil; elementID = value["id"]?.string; plain = try NotebookSearchText.plain(value["source"]?.string ?? "")
-    } else if fragment.file == "board.json", fragment.collection == "board/elements", let parent = fragment.parent,
-      let surface = try value["surface"]?.decode(SurfaceID.self), let id = surface.ownerID {
-      kind = "spatial"; owner = String(parent.dropFirst("board.json#/boards/@".count)); targetKind = surface.kind.rawValue; targetID = id.uuidString.lowercased(); elementID = value["id"]?.string
-      plain = try NotebookSearchText.element(value)
-    } else { return }
-    let folded = Self.foldedSearchText(plain)
-    if folded.isEmpty { try database.run("DELETE FROM search_entries WHERE address=?", [.text(fragment.address)]); return }
-    let previous = try database.rows("SELECT rowid,folded FROM search_entries WHERE address=?", [.text(fragment.address)]).first
+  func updateSearchIndex(_ fragment: NotebookStoredFragment, database: NotebookSQLConnection,
+    prepared: NotebookPreparedSearchEntry? = nil) throws {
+    let entry: NotebookPreparedSearchEntry
+    let input: NotebookSearchInput
+    if let prepared { input = try prepared.validate(fragment, database: database) }
+    else { guard let actual = try NotebookSearchInput(fragment) else { return }; input = actual }
+    let previous = try database.rows("SELECT folded FROM search_entries WHERE address=?", [.text(input.address)]).first?[0].text
+    if let prepared { entry = prepared }
+    else {
+      entry = try .init(input: input, observesCancellation: !database.writable, previousFolded: previous)
+    }
+    try installSearchIndex(entry, input: input, previousFolded: previous, database: database)
+  }
+
+  private func installSearchIndex(_ entry: NotebookPreparedSearchEntry, input: NotebookSearchInput, previousFolded: String?,
+    database: NotebookSQLConnection) throws {
+    let folded = entry.folded
+    if folded.isEmpty { try database.run("DELETE FROM search_entries WHERE address=?", [.text(input.address)]); return }
     try database.run("INSERT INTO search_entries(address,kind,owner_id,target_kind,target_id,element_id,plain_text,folded) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(address) DO UPDATE SET kind=excluded.kind,owner_id=excluded.owner_id,target_kind=excluded.target_kind,target_id=excluded.target_id,element_id=excluded.element_id,plain_text=excluded.plain_text,folded=excluded.folded", [
-      .text(fragment.address), .text(kind), .text(owner), targetKind.map(NotebookSQLValue.text) ?? .null, targetID.map(NotebookSQLValue.text) ?? .null,
-      elementID.map(NotebookSQLValue.text) ?? .null, .text(plain), .text(folded)])
-    if previous?[1].text != folded {
-      let id = try database.rows("SELECT rowid FROM search_entries WHERE address=?", [.text(fragment.address)])[0][0].integer!
+      .text(input.address), .text(input.kind), .text(input.owner), input.targetKind.map(NotebookSQLValue.text) ?? .null, input.targetID.map(NotebookSQLValue.text) ?? .null,
+      input.elementID.map(NotebookSQLValue.text) ?? .null, .text(entry.plain), .text(folded)])
+    if previousFolded != folded {
+      let id = try database.rows("SELECT rowid FROM search_entries WHERE address=?", [.text(input.address)])[0][0].integer!
       try database.run("DELETE FROM search_short WHERE entry_id=?", [.integer(id)])
-      var grams = Set<String>(), last: Character?
-      for character in folded {
-        grams.insert(String(character))
-        if let last { grams.insert(String(last) + String(character)) }
-        last = character
-      }
-      for gram in grams { try database.run("INSERT INTO search_short(gram,entry_id) VALUES(?,?)", [.text(gram), .integer(id)]) }
+      for gram in entry.grams { try database.run("INSERT INTO search_short(gram,entry_id) VALUES(?,?)", [.text(gram), .integer(id)]) }
     }
   }
 }

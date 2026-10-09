@@ -16,6 +16,13 @@ public struct DocumentSourceEdit: Codable, Equatable, Sendable {
     self.sessionID = sessionID; self.documentID = documentID; self.fileID = fileID
     self.baseSource = baseSource; self.baseVersion = baseVersion; self.source = source; self.sequence = sequence
   }
+
+  public static func == (lhs: Self, rhs: Self) -> Bool {
+    lhs.sessionID == rhs.sessionID && lhs.documentID == rhs.documentID && lhs.fileID == rhs.fileID
+      && lhs.baseVersion == rhs.baseVersion && lhs.sequence == rhs.sequence
+      && DocumentFile.sourcesAreEqual(lhs.baseSource, rhs.baseSource)
+      && DocumentFile.sourcesAreEqual(lhs.source, rhs.source)
+  }
 }
 
 public struct DocumentEditingSession: Codable, Equatable, Sendable, Identifiable {
@@ -41,7 +48,7 @@ public struct DocumentEditingSession: Codable, Equatable, Sendable, Identifiable
     .init(edit: edit, selectionStart: selectionStart, selectionEnd: selectionEnd, isComposing: false, scrollTop: scrollTop, phase: phase)
   }
 
-  fileprivate func validate() throws {
+  func validate() throws {
     guard !edit.fileID.isEmpty, edit.fileID.utf16.count <= 120,
       edit.source.utf8.count <= DocumentFile.maximumSourceLength,
       edit.baseSource.utf8.count <= DocumentFile.maximumSourceLength,
@@ -122,52 +129,49 @@ extension NotebookStore {
 
   /// Only this locked read/compare/publication accepts a text edit. Another
   /// block's update is retained; a changed/deleted source leaves the draft.
-  public func commitDocumentSource(edit: DocumentSourceEdit, actor: UUID) throws -> DocumentSourceCommitResult {
+  public func commitDocumentSource(_ prepared: PreparedDocumentSourceEdit, actor: UUID) throws -> DocumentSourceCommitResult {
+    let edit = prepared.edit
     let candidate = DocumentEditingSession(edit: edit)
     try candidate.validate()
-    return try commandTransaction {
-      let previous = try readDocumentEditingSession(edit.sessionID)
-      if let previous {
-        try validateDocumentSessionIdentity(edit, previous.edit)
-        if previous.phase == .committed {
-          guard previous.edit == edit else { throw CollaborationError("stale_draft", "Завершённый сеанс нельзя использовать для другого текста.") }
-          guard let accepted = previous.committedResult else {
-            throw CollaborationError("edit_receipt_unavailable", "Сохранение уже выполнено. Прочитайте текущий исходник перед следующей правкой.")
-          }
-          return accepted
-        }
-        guard previous.phase != .discarded, edit.sequence >= previous.edit.sequence else {
-          throw CollaborationError("stale_draft", "Этот вариант черновика уже завершён или продолжен.")
-        }
-      }
-      let before = try documentSourceForEdit(edit)
+    return try commandTransaction(readAllowance: .nativeCommand) {
+      guard try storedWorkspaceID() == prepared.workspaceID else { throw NotebookStoreError.workspaceChanged }
+      try Self.requireSearchRecipe(database: currentSQL!)
+      let previous = try documentSourceDraftState(edit, finish: prepared.finishRead)
+      if let accepted = previous.accepted { return accepted }
+      let before = try documentSourceForEdit(edit, finish: prepared.finishRead)
       var document = before
       let file = document?.files.first
       let currentSource = file?.isText == true ? file?.source : nil
       let currentVersion = document?.fileVersion(fileID: edit.fileID)
       let status: DocumentSourceCommitResult.Status
       if currentSource == nil { status = .targetMissing }
-      else if currentSource != edit.baseSource || currentVersion != edit.baseVersion {
+      else if !DocumentFile.sourcesAreEqual(currentSource!, edit.baseSource) || currentVersion != edit.baseVersion {
         status = .conflict
       } else { status = .committed }
       var actionID: UUID?
-      if status == .committed, currentSource != edit.source {
+      if status == .committed, !DocumentFile.sourcesAreEqual(currentSource!, edit.source) {
         let target = CollaborationTarget(kind: .document, id: edit.documentID)
         // The addressed field CAS above and this owner expectation are in the
         // same transaction. Changes in other blocks do not invalidate a draft.
         let action = CollaborationAction(id: edit.sessionID, summary: "Изменение текста документа",
           expected: [.init(target: target, revision: try targetContentRevision(target: target))],
           operations: [.init(kind: .patchDocumentFile, target: target, id: edit.fileID, values: ["expectedVersion": try .encode(edit.baseVersion), "range": .object(["location": .number(0), "length": .number(Double(edit.baseSource.utf16.count))]), "expectedText": .string(edit.baseSource), "source": .string(edit.source)])])
-        actionID = try applyCollaborationActionImmediately(action, actor: actor, requestFingerprint: nil, human: true).id
-        document = try documentSourceForEdit(edit)
+        actionID = try applyCollaborationActionImmediately(action, actor: actor, requestFingerprint: nil,
+          human: true, preparedSearch: prepared.search, sourceFinish: prepared.finishRead).id
+        document = try documentSourceForEdit(edit, finish: prepared.finishRead)
+      }
+      if status == .committed {
+        guard let saved = document?.files.first?.source, DocumentFile.sourcesAreEqual(saved, edit.source) else {
+          throw NotebookStorageError.invalidTransaction("document source publication mismatch")
+        }
       }
       let phase: DocumentEditingSession.Phase = status == .committed ? .committed : status == .conflict ? .conflict : .targetMissing
       let result = DocumentSourceCommitResult(status: status, publication: document.flatMap {
         DocumentFileSourcePublication(document: $0, fileID: edit.fileID)
       }, actionID: actionID)
       let draft = DocumentEditingSession(edit: edit,
-        selectionStart: min(previous?.selectionStart ?? 0, edit.source.utf16.count),
-        selectionEnd: min(previous?.selectionEnd ?? 0, edit.source.utf16.count), scrollTop: previous?.scrollTop,
+        selectionStart: min(previous.selectionStart, edit.source.utf16.count),
+        selectionEnd: min(previous.selectionEnd, edit.source.utf16.count), scrollTop: previous.scrollTop,
         phase: phase, committedResult: status == .committed ? result : nil)
       try publishCollaboration(writes: [documentDraftPath(edit.sessionID): try .encode(draft)])
       return result
@@ -177,13 +181,49 @@ extension NotebookStore {
   /// Only this editor's source and causal owners are admitted before decoding.
   /// A partial document remains private to the command; callers receive one
   /// named publication, never an archive with silently missing neighbours.
-  private func documentSourceForEdit(_ edit: DocumentSourceEdit) throws -> DocumentDocument? {
-    try documentFileProjection(documentID: edit.documentID, fileID: edit.fileID)
+  private func documentSourceForEdit(_ edit: DocumentSourceEdit,
+    finish: PreparedDocumentSourceEdit.FinishRead) throws -> DocumentDocument? {
+    try documentFileProjection(documentID: edit.documentID, fileID: edit.fileID,
+      maximumEnvelopeBytes: finish.projectionBytes, maximumEnvelopeAllocationBytes: finish.projectionAllocationBytes,
+      budget: "document_source_finish")
+  }
+
+  private struct DocumentSourceDraftState {
+    let selectionStart: Int
+    let selectionEnd: Int
+    let scrollTop: Double?
+    let accepted: DocumentSourceCommitResult?
+  }
+
+  /// Keep only scalar presentation after validating an unfinished old draft.
+  /// Its potentially large source does not coexist with the action projection.
+  private func documentSourceDraftState(_ edit: DocumentSourceEdit,
+    finish: PreparedDocumentSourceEdit.FinishRead) throws -> DocumentSourceDraftState {
+    let file = documentDraftPath(edit.sessionID)
+    let rows = try boundedStoredFragments([(file + "#", true)], maximumCount: 4_096,
+      maximumBytes: finish.draftBytes, budget: "document_source_finish",
+      maximumEnvelopeAllocationBytes: finish.draftAllocationBytes)
+    guard !rows.isEmpty else { return .init(selectionStart: 0, selectionEnd: 0, scrollTop: nil, accepted: nil) }
+    let previous = try NotebookRecordCodec.decode(rows, root: file + "#").decode(DocumentEditingSession.self)
+    try previous.validate()
+    try validateDocumentSessionIdentity(edit, previous.edit)
+    if previous.phase == .committed {
+      guard previous.edit == edit else { throw CollaborationError("stale_draft", "Завершённый сеанс нельзя использовать для другого текста.") }
+      guard let accepted = previous.committedResult else {
+        throw CollaborationError("edit_receipt_unavailable", "Сохранение уже выполнено. Прочитайте текущий исходник перед следующей правкой.")
+      }
+      return .init(selectionStart: 0, selectionEnd: 0, scrollTop: nil, accepted: accepted)
+    }
+    guard previous.phase != .discarded, edit.sequence >= previous.edit.sequence else {
+      throw CollaborationError("stale_draft", "Этот вариант черновика уже завершён или продолжен.")
+    }
+    return .init(selectionStart: previous.selectionStart, selectionEnd: previous.selectionEnd,
+      scrollTop: previous.scrollTop, accepted: nil)
   }
 
   private func validateDocumentSessionIdentity(_ next: DocumentSourceEdit, _ previous: DocumentSourceEdit) throws {
     guard next.sessionID == previous.sessionID, next.documentID == previous.documentID,
-      next.fileID == previous.fileID, next.baseSource == previous.baseSource, next.baseVersion == previous.baseVersion else {
+      next.fileID == previous.fileID, DocumentFile.sourcesAreEqual(next.baseSource, previous.baseSource), next.baseVersion == previous.baseVersion else {
       throw CollaborationError("draft_owner_mismatch", "Сеанс редактирования не меняет исходного владельца и его версию.")
     }
   }

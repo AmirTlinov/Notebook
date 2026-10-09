@@ -584,7 +584,8 @@ final class NotebookAppModel {
 
   private var hasPendingHistoryAuthoredPreparation: Bool {
     if documentSourceEditor?.hasComposingInput == true
-      || documentImportOwner?.hasPendingAuthoredPreparation == true { return true }
+      || documentImportOwner?.hasPendingAuthoredPreparation == true
+      || documentSourceWriteOwner?.hasPendingAuthoredPreparation == true { return true }
     #if os(iOS)
       return chat?.hasPendingAuthoredPreparation == true || isSavingAgentQuestion
         || chatSubmissionTask != nil || chat?.dictation.busy == true
@@ -1930,6 +1931,7 @@ final class NotebookAppModel {
     guard automaticWorkspaceTransition == transition, !workspaceTransitionIsFrozen,
       automaticWorkspaceInputIsUnchanged(transition),
       documentImportOwner?.hasPendingAuthoredPreparation != true,
+      documentSourceWriteOwner?.hasPendingAuthoredPreparation != true,
       let seal = persistence.sealWorkspaceSelection(expectedGeneration: transition.mutationGeneration) else { return false }
     workspaceSelectionWriterSeal = seal
     workspaceTransitionIsFrozen = true
@@ -4986,6 +4988,14 @@ final class NotebookAppModel {
     enqueueStoreWrite(owner: .documentDraft(sessionID)) { try $0.discardDocumentDraft(sessionID) }
   }
 
+  @ObservationIgnored private var documentSourceWriteOwner: NotebookDocumentSourceWriteOwner?
+  private func documentSourceWriter() -> NotebookDocumentSourceWriteOwner {
+    if let documentSourceWriteOwner { return documentSourceWriteOwner }
+    let owner = NotebookDocumentSourceWriteOwner(persistence: persistence, inputGate: inputGate, actor: actorID)
+    documentSourceWriteOwner = owner
+    return owner
+  }
+
   func commitDocumentSource(edit: DocumentSourceEdit, onCommit: ((DocumentSourceCommitResult) -> Void)? = nil) async throws -> DocumentSourceCommitResult.Status {
     if let error = historyReadiness.authoredAdmissionError { throw error }
     guard shutdownPhase == .running else {
@@ -4994,8 +5004,15 @@ final class NotebookAppModel {
     guard !isItemBeingDeleted(edit.documentID) else {
       throw NotebookPersistenceQueue.Failure(message: "Документ удаляется; новые изменения временно недоступны.")
     }
+    guard loadState == .ready, let workspaceID = admittedWorkspaceID else {
+      throw NotebookPersistenceQueue.Failure(message: "Хранилище Notebook ещё не открыто; исходник не принят.")
+    }
+    let saving = try documentSourceWriter().begin(edit: edit, workspaceID: workspaceID) { [weak self] in
+      guard let self else { return false }
+      return permitsAuthoredWork && loadState == .ready && admittedWorkspaceID == workspaceID
+        && !isItemBeingDeleted(edit.documentID)
+    }
     readAdmission.changed(.init(kind: .document, id: edit.documentID))
-    let actor = actorID
     if let documentSaveObserver { DocumentRenderRegistry.shared.removeLiveObserver(documentSaveObserver) }
     documentSavePresentation = .init(sessionID: edit.sessionID, documentID: edit.documentID,
       fileID: edit.fileID, phase: .saving, source: edit.source)
@@ -5006,13 +5023,8 @@ final class NotebookAppModel {
     }
     let result: DocumentSourceCommitResult
     do {
-      // The Save button can post its WebKit message before UIKit retires the
-      // same contact. Join that contact and its ordered input publication;
-      // do not bypass the common command executor's human-input barrier.
-      await withCheckedContinuation { continuation in
-        inputGate.performAfterIdle { continuation.resume() }
-      }
-      result = try await persistence.submit(publishesChanges: true) { try $0.commitDocumentSource(edit: edit, actor: actor) }
+      result = try await withTaskCancellationHandler { try await saving.value }
+        onCancel: { saving.cancel() }
     } catch {
       clearDocumentSavePresentation(sessionID: edit.sessionID)
       throw error
@@ -5051,9 +5063,9 @@ final class NotebookAppModel {
   }
 
   private func completeDocumentSavePresentation() {
-    guard let saved = documentSavePresentation, saved.phase == .saved else { return }
+    guard let saved = documentSavePresentation, saved.phase == .saved, let savedSource = saved.source else { return }
     if let document = documents[saved.documentID],
-      document.files.first(where: { $0.id == saved.fileID })?.source != saved.source {
+      document.files.first(where: { $0.id == saved.fileID }).map({ DocumentFile.sourcesAreEqual($0.source, savedSource) }) != true {
       // Undo or a newer author's source superseded this pending presentation.
       // It can no longer install, so it must not leave an endless save cue.
       clearDocumentSavePresentation(sessionID: saved.sessionID); return
@@ -5063,7 +5075,7 @@ final class NotebookAppModel {
       presence.openProgress >= 0.999, presencePhase == .settled,
       !documentReading.isRestoring(saved.documentID),
       let document = documents[saved.documentID], let state = documentStates[saved.documentID],
-      document.files.first(where: { $0.id == saved.fileID })?.source == saved.source,
+      document.files.first(where: { $0.id == saved.fileID }).map({ DocumentFile.sourcesAreEqual($0.source, savedSource) }) == true,
       DocumentRenderRegistry.shared.hasLiveSurface(document: document, state: state, pageIndex: presence.documentPageIndex, scope: .paper) else { return }
     documentSavePresentation?.phase = .installed
     documentSavePresentation?.source = nil
@@ -7067,6 +7079,7 @@ final class NotebookAppModel {
     }
     if shutdownPhase == .stopped { return true }
     if shutdownPhase == .running { shutdownPhase = .closing }
+    documentSourceWriteOwner?.stop()
     let task = Task { [self] in
       defer { shutdownTask = nil }
       await historyReadiness.stopAndJoin()
@@ -7117,6 +7130,7 @@ final class NotebookAppModel {
       // teardown would otherwise make publicationFailure impossible to clear.
       guard agentStopped && inputSaved && programsSaved else { return false }
       await documentImportOwner?.close(); documentImportOwner = nil
+      await documentSourceWriteOwner?.close(); documentSourceWriteOwner = nil
       if let documentSaveObserver { DocumentRenderRegistry.shared.removeLiveObserver(documentSaveObserver) }
       documentSaveObserver = nil
       #if os(iOS)

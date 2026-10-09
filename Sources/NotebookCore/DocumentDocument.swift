@@ -19,6 +19,42 @@ public struct DocumentFile: Codable, Equatable, Identifiable, Sendable {
   public init(id: String, path: String, source: String = "", resource: NotebookProgramPackage.File? = nil) {
     self.id = id; self.path = path; self.source = source; self.resource = resource
   }
+  /// Source is authored literal text. Canonical Unicode equivalence must not
+  /// erase an edit, its causal owner, or the exact text restored by Undo.
+  public static func sourcesAreEqual(_ lhs: String, _ rhs: String) -> Bool {
+    if lhs.isContiguousUTF8, rhs.isContiguousUTF8 {
+      return lhs.utf8.withContiguousStorageIfAvailable { left in
+        rhs.utf8.withContiguousStorageIfAvailable { right in
+          left.count == right.count && (left.isEmpty || memcmp(left.baseAddress!, right.baseAddress!, left.count) == 0)
+        }!
+      }!
+    }
+    return (lhs as NSString).compare(rhs, options: .literal) == .orderedSame
+  }
+
+  public static func == (lhs: Self, rhs: Self) -> Bool {
+    lhs.id == rhs.id && lhs.path == rhs.path && lhs.resource == rhs.resource
+      && sourcesAreEqual(lhs.source, rhs.source)
+  }
+
+  /// Only document source leaves use literal equality. Other JSON fields
+  /// retain their current comparison semantics, including program state.
+  static func sourceValuesAreEqual(_ lhs: JSONValue?, _ rhs: JSONValue?, source: Bool = false) -> Bool {
+    switch (lhs, rhs) {
+    case (.none, .none): return true
+    case (.some(.string(let left)), .some(.string(let right))):
+      return source ? sourcesAreEqual(left, right) : left == right
+    case (.some(.array(let left)), .some(.array(let right))):
+      return left.count == right.count && zip(left, right).allSatisfy {
+        sourceValuesAreEqual($0.0, $0.1)
+      }
+    case (.some(.object(let left)), .some(.object(let right))):
+      return left.count == right.count && left.allSatisfy { key, value in
+        sourceValuesAreEqual(value, right[key], source: key == "source")
+      }
+    default: return lhs == rhs
+    }
+  }
   private enum CodingKeys: String, CodingKey { case id, path, source, resource }
   public init(from decoder: Decoder) throws {
     let c = try decoder.container(keyedBy: CodingKeys.self)

@@ -99,7 +99,7 @@ final class DocumentSourceEditorSession {
   /// history cut does not publish a SwiftUI observation to disable this view.
   func permitsNativeMutation() -> Bool { model?.permitsAuthoredWork == true }
   func input(_ value: String, selection: NSRange, composing: Bool, scroll: Double) {
-    let changed = text != value, compositionEnded = self.composing && !composing
+    let changed = !DocumentFile.sourcesAreEqual(text, value), compositionEnded = self.composing && !composing
     guard !changed || permitsNativeMutation() else { return }
     if changed, frozen == sessionID { sessionID = UUID(); sequence = 0 }
     text = value; self.selection = selection; self.composing = composing; self.scroll = max(0, scroll)
@@ -126,7 +126,7 @@ final class DocumentSourceEditorSession {
     commitTask = nil
   }
   private func commitInput() async {
-    guard permitsNativeMutation(), !saving, !composing, !conflicted, text != base, let model else { return }
+    guard permitsNativeMutation(), !saving, !composing, !conflicted, !DocumentFile.sourcesAreEqual(text, base), let model else { return }
     pending = nil; persist()
     let submitted = edit
     frozen = submitted.sessionID; saving = true; notice = "Сохранение…"
@@ -140,7 +140,7 @@ final class DocumentSourceEditorSession {
       let unfinished = sessionID != submitted.sessionID ? sessionID : nil
       base = submitted.source; version = acceptedVersion
       sessionID = UUID(); sequence = 0; frozen = nil; saving = false; notice = "Сохранено"
-      if text != base {
+      if !DocumentFile.sourcesAreEqual(text, base) {
         // Persist the rebased successor before retiring the input typed while
         // the previous transaction was in flight. Neither session changes its
         // original owner, and a crash cannot erase this newer text.
@@ -157,7 +157,7 @@ final class DocumentSourceEditorSession {
     let end = min(max(start, NSMaxRange(selection)), source.length)
     var excerptEnd = min(end, start + 16_000)
     if excerptEnd < end, excerptEnd > start, (0xD800...0xDBFF).contains(source.character(at: excerptEnd - 1)) { excerptEnd -= 1 }
-    let draft = text != base || conflicted
+    let draft = !DocumentFile.sourcesAreEqual(text, base) || conflicted
     return .init(documentID: documentID, fileID: fileID, path: path, baseVersion: version,
       selectionStart: start, selectionEnd: end,
       selectedText: source.substring(with: .init(location: start, length: excerptEnd - start)),
@@ -169,12 +169,12 @@ final class DocumentSourceEditorSession {
   private func performHistory(redo: Bool) {
     model?.performSurfaceHistory(redo: redo, documentID: documentID) { [self] in
       await save()
-      return !conflicted && !composing && text == base
+      return !conflicted && !composing && DocumentFile.sourcesAreEqual(text, base)
     }
   }
   func reconcile(_ document: DocumentDocument) {
     if let file = document.files.first(where: { $0.id == fileID }) { path = file.path }
-    guard !saving, text == base, document.id == documentID,
+    guard !saving, DocumentFile.sourcesAreEqual(text, base), document.id == documentID,
       let current = source(in: document), current.version != version else { return }
     base = current.text; text = base; version = current.version
     sessionID = UUID(); sequence = 0; notice = nil; navigate(selection.location)
@@ -185,7 +185,7 @@ final class DocumentSourceEditorSession {
   func navigate(_ offset: Int) {
     selection = NSRange(location: min(max(0, offset), text.utf16.count), length: 0); navigation = UUID()
   }
-  func finish() { pending?.cancel(); pending = nil; if text != base { persist(); Task { await save() } } }
+  func finish() { pending?.cancel(); pending = nil; if !DocumentFile.sourcesAreEqual(text, base) { persist(); Task { await save() } } }
   /// A composing input is retained as a draft rather than committed halfway
   /// through an IME transaction. The caller drains the same persistence FIFO.
   func checkpoint() async { if composing { persist() }; await save() }
@@ -413,7 +413,7 @@ struct DocumentSourceWorkspace<Paper: View>: View {
   private func canRevealSelection(_ document: DocumentDocument) -> Bool {
     guard let session, let printedSource else { return false }
     return printedSource.artifact.document == document
-      && session.text == document.files.first(where: { $0.id == session.fileID })?.source
+      && document.files.first(where: { $0.id == session.fileID }).map { DocumentFile.sourcesAreEqual(session.text, $0.source) } == true
   }
   private func revealSelection(_ document: DocumentDocument, range: NSRange) {
     guard canRevealSelection(document), let session,

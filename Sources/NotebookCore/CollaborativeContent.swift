@@ -9,8 +9,8 @@ public struct ContentFieldVersion: Codable, Equatable, Sendable {
   public let observed: [String: UInt64]
   private var heads: [ContentFieldHead]?
 
-  /// Scalar preparation may inspect the frontier shape without visiting any
-  /// retained losing values; their allocation is measured by its owned worker.
+  /// A scalar admission can reject retained register bodies without visiting
+  /// them when its contract accepts only a compact causal comparison token.
   public var hasRetainedAlternatives: Bool { heads != nil }
 
   /// Concurrent authored alternatives remain owned even when another value is
@@ -286,11 +286,15 @@ public struct CollaborativeContent: Codable, Equatable, Sendable {
   mutating func record(before: JSONValue, after: JSONValue, beforeStamp: VersionStamp,
     stamp: VersionStamp, human: Bool) {
     let a = contentFields(before), b = contentFields(after)
-    guard a != b else { return }
+    let documentSources = before["files"] != nil || after["files"] != nil
+    func equal(_ lhs: JSONValue?, _ rhs: JSONValue?) -> Bool {
+      documentSources ? DocumentFile.sourceValuesAreEqual(lhs, rhs) : lhs == rhs
+    }
+    guard !equal(.object(a), .object(b)) else { return }
     var adopted: Set<String> = []
     for key in Set(a.keys).union(b.keys) {
       let previous = fields[key] ?? .init(stamp: beforeStamp, human: true)
-      let changed = a[key] != b[key]
+      let changed = !equal(a[key], b[key])
       if let exists = memberExistenceField(key), a[exists] == .bool(true), b[exists] == nil {
         fields[key] = previous.retainingValue(a[key])
       } else if changed {
@@ -371,7 +375,10 @@ func mergedContentStamp(local: JSONValue, incoming: JSONValue, result: JSONValue
   localStamp: VersionStamp, incomingStamp: VersionStamp) -> VersionStamp {
   let frontier = max(localStamp, incomingStamp)
   let owner = localStamp > incomingStamp ? local : incoming
-  guard contentFields(owner) != contentFields(result) else { return frontier }
+  let before = JSONValue.object(contentFields(owner)), after = JSONValue.object(contentFields(result))
+  let equal = owner["files"] != nil || result["files"] != nil
+    ? DocumentFile.sourceValuesAreEqual(before, after) : before == after
+  guard !equal else { return frontier }
   return frontier.advanced(by: frontier.actor) ?? frontier
 }
 

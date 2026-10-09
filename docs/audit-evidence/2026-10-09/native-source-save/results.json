@@ -1,0 +1,362 @@
+{
+  "format": 1,
+  "issue": "GUI-494",
+  "positions": [
+    "NB10"
+  ],
+  "status": "selected-core-and-native-mac-passed-writer-latency-and-physical-acceptance-open",
+  "baseCommit": "4db3b0ef8b14a06d7a1acd3cb0a95de17495ff36",
+  "owner": "PreparedDocumentSourceEdit / NotebookDocumentSourceWriteOwner prepares; existing NotebookPersistenceQueue and sole Core action/source/search writer publish",
+  "change": "Native Save prepares exact search recipe outside the writer after scalar bounded admission; physical worker join, idle generation, same reservation transfer and complete writer finish bounds preserve source/index/action/draft atomically. Document-source equality is literal through editors, CAS, delta, drafts, Undo and Redo.",
+  "checks": [
+    {
+      "scope": "Core: files, search, references, projection edits and one independent causal merge",
+      "status": "passed",
+      "functions": 48,
+      "cases": 67,
+      "failed": 0,
+      "skipped": 0,
+      "source": {
+        "sha256": "bb9d0a5c9c53691e72d253dcbb2eb76622ead53e9edcb86b75df5bb042e30098",
+        "files": 1694,
+        "unchanged": true
+      },
+      "evidence": ".build/gui494-native-source-core-20261009-v2",
+      "receiptSHA256": "7e4037b32f622b27eb297a60c876b9a416a24df1e82b73c9514564101364d886"
+    },
+    {
+      "scope": "Native Mac: source persistence and editing during an accepted Save",
+      "status": "passed",
+      "functions": 8,
+      "cases": 8,
+      "failed": 0,
+      "skipped": 0,
+      "source": {
+        "sha256": "bb9d0a5c9c53691e72d253dcbb2eb76622ead53e9edcb86b75df5bb042e30098",
+        "files": 1694,
+        "unchanged": true
+      },
+      "evidence": ".build/gui494-native-source-mac-20261009-v1",
+      "receiptSHA256": "29a8b7e962514aebcad27dc55aaa8216bf5f6d4dc8d02cb828b84f49caac2a53"
+    },
+    {
+      "scope": "Fresh-process instrumented Debug native Save at 1024 UTF8 bytes with competing real page ink",
+      "status": "passed",
+      "functions": 1,
+      "cases": 1,
+      "failed": 0,
+      "skipped": 0,
+      "source": {
+        "sha256": "bb9d0a5c9c53691e72d253dcbb2eb76622ead53e9edcb86b75df5bb042e30098",
+        "files": 1694,
+        "unchanged": true
+      },
+      "evidence": ".build/gui494-native-source-cost-1024-20261009-v1",
+      "receiptSHA256": "e84b96cef5856000cabd815c366d1690f8f94120e3399c92d4da182207acc6e7"
+    },
+    {
+      "scope": "Fresh-process instrumented Debug native Save at 1048576 UTF8 bytes with competing real page ink",
+      "status": "passed",
+      "functions": 1,
+      "cases": 1,
+      "failed": 0,
+      "skipped": 0,
+      "source": {
+        "sha256": "bb9d0a5c9c53691e72d253dcbb2eb76622ead53e9edcb86b75df5bb042e30098",
+        "files": 1694,
+        "unchanged": true
+      },
+      "evidence": ".build/gui494-native-source-cost-1048576-20261009-v1",
+      "receiptSHA256": "7f6ba4f37f4cb67080c4c5b982058d7e151497db6ea370bd9fe050f0a84661e9"
+    },
+    {
+      "scope": "Fresh-process instrumented Debug native Save at 4194304 UTF8 bytes with competing real page ink",
+      "status": "passed",
+      "functions": 1,
+      "cases": 1,
+      "failed": 0,
+      "skipped": 0,
+      "source": {
+        "sha256": "bb9d0a5c9c53691e72d253dcbb2eb76622ead53e9edcb86b75df5bb042e30098",
+        "files": 1694,
+        "unchanged": true
+      },
+      "evidence": ".build/gui494-native-source-cost-4194304-20261009-v1",
+      "receiptSHA256": "15f3b076ee680e3ac9a751a514a93889a5250f56367c39830f9f066465409cbb"
+    }
+  ],
+  "preparationAdmission": {
+    "aggregateUnacceptedBytes": 67108864,
+    "sharedWriterBytes": 268435456,
+    "realPencilReservationBytes": 201326592,
+    "baseVersion": "compact fileBasis vector; retained register bodies refused before capture",
+    "afterWorkerJoin": "shrink to retained plan, then extend the same credit only after idle generation recheck",
+    "cancelAndShutdown": "join actual utility worker before releasing provisional credit",
+    "accepted": "same FIFO; accepted tails free preparation slot"
+  },
+  "sourceFiles": [
+    {
+      "path": "Sources/NotebookCore/PreparedDocumentSourceEdit.swift",
+      "sha256": "23dca6f0733d52bda433b1768a386a8a17ccb77cea198003cb6ab03fbf550cfd"
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookSearchIndex.swift",
+      "sha256": "0003213e6576c33e11158ac8a20f0ae026a01853d0568e8b4b44896e18610dec"
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookSearchText.swift",
+      "sha256": "ee0fa380878029d1921bd352edee87fb0568a51d4665bfca9b3f8428e79f9903"
+    },
+    {
+      "path": "Sources/NotebookCore/DocumentEditingSession.swift",
+      "sha256": "a2f9c88d2cb765753189feea84cbae1ae6f2973ed69427ae5e90648bb5b661f6"
+    },
+    {
+      "path": "Sources/NotebookCore/CollaborationStore.swift",
+      "sha256": "a00a1f5f37ebe03f1a07c059c2ab495cf895ad5cc896dd457c94e66757e87415"
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookScopedCommand.swift",
+      "sha256": "04a4201211dd0b91deff2718d95319d196bac4e19be6eac4d13f1f1037515648"
+    },
+    {
+      "path": "Sources/NotebookCore/DocumentDocument.swift",
+      "sha256": "04fed62894e20de778963ea0ada60b815197c704111bf876ac08526ad581df52"
+    },
+    {
+      "path": "Sources/NotebookCore/CollaborativeContent.swift",
+      "sha256": "2ca7e9b5393df0637d21946ac2112c731116440bf3bc92c800a4bb7d5da383dc"
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookFieldRestoration.swift",
+      "sha256": "f08e08652a87870479e778741b9ded3a2dee24907d0440f20721fd28069725cc"
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookAddressedRead.swift",
+      "sha256": "2716a310f589e6c1b7d31076323326f5cf379a8ad7da36cf6cafd701593056fc"
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookDocumentFileRead.swift",
+      "sha256": "beb43a06ad6986d0e159c088231cd8f6a004c01c28aba797a3e566198d2c482f"
+    },
+    {
+      "path": "Tests/NotebookCoreTests/DocumentFilesTests.swift",
+      "sha256": "458f50a7735d3b65e214a0750443df0368d503742a0b8fb118e58a6a0b99fc45"
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookSearchIndexTests.swift",
+      "sha256": "d85b9f4b83d0e726bb6c54e89607fa802046508f26b26de360f4c82eab8c619a"
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookSearchIndexCostTests.swift",
+      "sha256": "6998de1e1b445c280f706b337da484ada812737bdf5c90f12c563e1de07138f0"
+    },
+    {
+      "path": "Applications/Shared/NotebookDocumentSourceWriteOwner.swift",
+      "sha256": "e1f3eff2aa58c35c547abe024dc99d94f97c74d6735e7237b83c83122268cb1e"
+    },
+    {
+      "path": "Applications/Shared/NotebookAppModel.swift",
+      "sha256": "0635e648871a834e92d71ff386ddb192b9f481d04b22e8253a6fafae60c46fb3"
+    },
+    {
+      "path": "Applications/Shared/DocumentSourceWorkspace.swift",
+      "sha256": "2778c4d141f936120b040984b47c8ff51c72691483b16b43032ab02d8fe4c0d1"
+    },
+    {
+      "path": "Applications/Shared/DocumentNativeSourceEditor.swift",
+      "sha256": "ef4a06dd049a31e6d7fff27a76776184e2c54c180317c8f07038112a88dcb5e9"
+    },
+    {
+      "path": "Applications/TestSupport/DocumentNativeSourceSessionTests.swift",
+      "sha256": "1073e338127355480bd771965d6aa45db8c77c91f2ca154c2a4a9d1794356983"
+    },
+    {
+      "path": "Applications/TestSupport/NotebookDocumentSourcePersistenceTests.swift",
+      "sha256": "5233565b4f6dc6f68adf68de3abc49ec4e6464edda7ab17742ed1e0e97927d8b"
+    }
+  ],
+  "deletedFiles": [
+    "Applications/Tests/NotebookDocumentSourcePersistenceTests.swift"
+  ],
+  "measurements": [
+    {
+      "after": {
+        "mallocLiveBlocks": 7080,
+        "mallocLiveBytes": 2020736,
+        "mallocReservedBytes": 50331648,
+        "residentFootprintBytes": 18826032,
+        "sqliteBytes": 0
+      },
+      "before": {
+        "mallocLiveBlocks": 4220,
+        "mallocLiveBytes": 1259408,
+        "mallocReservedBytes": 50331648,
+        "residentFootprintBytes": 17957680,
+        "sqliteBytes": 0
+      },
+      "coordinationMilliseconds": 0.498333,
+      "databaseCacheBytesAtSQLPeak": 415744,
+      "inkAttemptMilliseconds": 90.206792,
+      "inkSaved": true,
+      "inkWriterHoldMilliseconds": 12.797417,
+      "mallocLiveBlocksAtSQLPeak": 9202,
+      "mallocLiveBytesAtSQLPeak": 2527792,
+      "measurement": "Native document-source Save: immutable search preparation completes before BEGIN IMMEDIATE; the mandatory prepared command then commits source, search index, action and draft receipt together. Writer hold is completed BEGIN to completed COMMIT, including instrumentation and coordinated competing ink attempt. Preparation memory is a terminal live sample; malloc peaks are sampled at SQL PROFILE, not total allocation events. Process RSS high water includes setup. Admission costs are code-derived credits, not observed RSS.",
+      "preparation": {
+        "acceptedCompletionBytes": 1582656,
+        "acceptedPayloadBytes": 82930,
+        "after": {
+          "mallocLiveBlocks": 4231,
+          "mallocLiveBytes": 1265248,
+          "mallocReservedBytes": 50331648,
+          "residentFootprintBytes": 17974064,
+          "sqliteBytes": 0
+        },
+        "maximumCompletionBytes": 237568,
+        "maximumPayloadBytes": 70848,
+        "milliseconds": 0.252916,
+        "retainedCompletionBytes": 0,
+        "retainedPayloadBytes": 82930
+      },
+      "processPeakRSSBytes": 80723968,
+      "sourceBytes": 1024,
+      "sqliteBytesAtSQLPeak": 0,
+      "sqliteHighWaterBytes": 0,
+      "statementBytesAtSQLPeak": 448928,
+      "writerHoldMilliseconds": 48.609791,
+      "writerStatements": 404,
+      "writerVMSteps": 11225
+    },
+    {
+      "after": {
+        "mallocLiveBlocks": 9123,
+        "mallocLiveBytes": 8795392,
+        "mallocReservedBytes": 88080384,
+        "residentFootprintBytes": 62309264,
+        "sqliteBytes": 0
+      },
+      "before": {
+        "mallocLiveBlocks": 4213,
+        "mallocLiveBytes": 5471760,
+        "mallocReservedBytes": 71303168,
+        "residentFootprintBytes": 34571104,
+        "sqliteBytes": 0
+      },
+      "coordinationMilliseconds": 0.687333,
+      "databaseCacheBytesAtSQLPeak": 9868288,
+      "inkAttemptMilliseconds": 594.996041,
+      "inkSaved": true,
+      "inkWriterHoldMilliseconds": 17.213292,
+      "mallocLiveBlocksAtSQLPeak": 11513,
+      "mallocLiveBytesAtSQLPeak": 25163168,
+      "measurement": "Native document-source Save: immutable search preparation completes before BEGIN IMMEDIATE; the mandatory prepared command then commits source, search index, action and draft receipt together. Writer hold is completed BEGIN to completed COMMIT, including instrumentation and coordinated competing ink attempt. Preparation memory is a terminal live sample; malloc peaks are sampled at SQL PROFILE, not total allocation events. Process RSS high water includes setup. Admission costs are code-derived credits, not observed RSS.",
+      "preparation": {
+        "acceptedCompletionBytes": 43433992,
+        "acceptedPayloadBytes": 8429000,
+        "after": {
+          "mallocLiveBlocks": 4224,
+          "mallocLiveBytes": 7768544,
+          "mallocReservedBytes": 71303168,
+          "residentFootprintBytes": 34603872,
+          "sqliteBytes": 0
+        },
+        "maximumCompletionBytes": 62847808,
+        "maximumPayloadBytes": 4261056,
+        "milliseconds": 193.143709,
+        "retainedCompletionBytes": 0,
+        "retainedPayloadBytes": 8429000
+      },
+      "processPeakRSSBytes": 133300224,
+      "sourceBytes": 1048576,
+      "sqliteBytesAtSQLPeak": 0,
+      "sqliteHighWaterBytes": 0,
+      "statementBytesAtSQLPeak": 4595488,
+      "writerHoldMilliseconds": 536.268625,
+      "writerStatements": 597,
+      "writerVMSteps": 13950
+    },
+    {
+      "after": {
+        "mallocLiveBlocks": 9119,
+        "mallocLiveBytes": 24313568,
+        "mallocReservedBytes": 79953920,
+        "residentFootprintBytes": 207930400,
+        "sqliteBytes": 0
+      },
+      "before": {
+        "mallocLiveBlocks": 4209,
+        "mallocLiveBytes": 13862864,
+        "mallocReservedBytes": 71450624,
+        "residentFootprintBytes": 76350328,
+        "sqliteBytes": 0
+      },
+      "coordinationMilliseconds": 0.427041,
+      "databaseCacheBytesAtSQLPeak": 38700288,
+      "inkAttemptMilliseconds": 1675.273333,
+      "inkSaved": true,
+      "inkWriterHoldMilliseconds": 15.953833,
+      "mallocLiveBlocksAtSQLPeak": 18576,
+      "mallocLiveBytesAtSQLPeak": 100010096,
+      "measurement": "Native document-source Save: immutable search preparation completes before BEGIN IMMEDIATE; the mandatory prepared command then commits source, search index, action and draft receipt together. Writer hold is completed BEGIN to completed COMMIT, including instrumentation and coordinated competing ink attempt. Preparation memory is a terminal live sample; malloc peaks are sampled at SQL PROFILE, not total allocation events. Process RSS high water includes setup. Admission costs are code-derived credits, not observed RSS.",
+      "preparation": {
+        "acceptedCompletionBytes": 169263112,
+        "acceptedPayloadBytes": 33491684,
+        "after": {
+          "mallocLiveBlocks": 4220,
+          "mallocLiveBytes": 22926240,
+          "mallocReservedBytes": 79953920,
+          "residentFootprintBytes": 76481400,
+          "sqliteBytes": 0
+        },
+        "maximumCompletionBytes": 50264896,
+        "maximumPayloadBytes": 16843968,
+        "milliseconds": 665.109708,
+        "retainedCompletionBytes": 0,
+        "retainedPayloadBytes": 33491684
+      },
+      "processPeakRSSBytes": 313786368,
+      "sourceBytes": 4194304,
+      "sqliteBytesAtSQLPeak": 0,
+      "sqliteHighWaterBytes": 0,
+      "statementBytesAtSQLPeak": 17154944,
+      "writerHoldMilliseconds": 1617.834833,
+      "writerStatements": 1068,
+      "writerVMSteps": 20073
+    }
+  ],
+  "measurementScope": {
+    "host": "Mac17,6 / Apple M5 Max / 18 logical CPUs",
+    "configuration": "SwiftPM Debug, instrumented SQLite STMT/PROFILE, one fresh process per size",
+    "samplesPerSize": 1,
+    "background": "normal desktop load; another independent Swift compilation observed during probes; no controlled release latency comparison",
+    "memory": "admission credits are code estimates; terminal preparation live memory and SQL PROFILE live allocation samples are observed; high water RSS includes fixture setup; SQLite global memory counters returned zero",
+    "interpretation": "All three actual Save transactions and competing ink completed; 4MiB writer still held 1617.83ms with ink wait 1675.27ms. This result keeps NB10 open and motivates removal of repeated source serialization inside the same transaction."
+  },
+  "initialFailure": {
+    "evidence": ".build/gui494-native-source-core-20261009-v1",
+    "phase": "compilation",
+    "testsExecuted": 0,
+    "reason": "loadAction method reference no longer matched UUID-only Optional.map after optional finish bound parameter",
+    "repair": "explicit throwing UUID closure; repeated selected route v2 passed"
+  },
+  "review": {
+    "scalarAdmission": "Read-only review confirmed all live native editor and addressed file publication versions use compact fileBasis; head-body refusal precedes reserve and Task capture.",
+    "foreignFoundationSource": "Seven NB03 foundation paths remained unchanged and are excluded from this slice commit."
+  },
+  "remaining": [
+    "Remove measured repeated source encode/decode work in the sole native writer; other content commands still prepare search synchronously.",
+    "Port exact accepted main slice into common candidate267 and check affected iPad Save/Undo/Pencil scenario.",
+    "Physical iPad gesture, installed production pair and full acceptance are unexecuted for this slice.",
+    "DP06/DP09 and whole GUI-494/104-row remediation remain open."
+  ],
+  "installation": {
+    "productionPair": "265 / 0.3.195",
+    "changed": false,
+    "databaseVersion": 29,
+    "wire": 44,
+    "manifest": 26,
+    "authoredHistory": "retain forever"
+  },
+  "physicalAcceptance": false
+}

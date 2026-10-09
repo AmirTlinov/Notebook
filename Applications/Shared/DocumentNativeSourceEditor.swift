@@ -67,7 +67,7 @@ struct DocumentNativeSourceEditor: UIViewRepresentable {
   func updateUIView(_ view: SourceTextView, context: Context) {
     let owner = context.coordinator; owner.applying = true; defer { owner.applying = false }
     view.sourceRevealSelection = revealSelection
-    if view.text != session.text, view.markedTextRange == nil {
+    if !DocumentFile.sourcesAreEqual(view.text, session.text), view.markedTextRange == nil {
       view.text = session.text; SourceSyntax.highlight(view.textStorage, around: session.selection, full: true)
     }
     if owner.navigation != session.navigation {
@@ -221,7 +221,7 @@ struct DocumentNativeSourceEditor: NSViewRepresentable {
     guard let view = scroll.documentView as? SourceTextView else { return }
     let owner = context.coordinator; owner.applying = true; defer { owner.applying = false }
     view.sourceRevealSelection = revealSelection
-    if view.string != session.text, !view.hasMarkedText() {
+    if !DocumentFile.sourcesAreEqual(view.string, session.text), !view.hasMarkedText() {
       view.string = session.text; SourceSyntax.highlight(view.textStorage!, around: session.selection, full: true)
     }
     if owner.navigation != session.navigation {

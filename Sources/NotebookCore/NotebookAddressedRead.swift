@@ -5,7 +5,7 @@ extension NotebookStore {
   /// Admit indexed fragment lengths before decoding any value. The caller
   /// names disjoint points/subtrees, never a partial archive to be replaced.
   func boundedStoredFragments(_ roots: [(String, Bool)], maximumCount: Int,
-    maximumBytes: Int64, budget: String) throws -> [NotebookStoredFragment] {
+    maximumBytes: Int64, budget: String, maximumEnvelopeAllocationBytes: Int? = nil) throws -> [NotebookStoredFragment] {
     guard maximumCount > 0, maximumBytes >= 0, roots.count <= maximumCount else {
       throw NotebookStorageError.limitExceeded(budget)
     }
@@ -30,8 +30,19 @@ extension NotebookStore {
       guard Set(metadata.map(\.address)).count == metadata.count else {
         throw NotebookStorageError.invalidTransaction("overlapping fragment read")
       }
+      var allocationBytes = maximumEnvelopeAllocationBytes
       return try metadata.map { row in
-        let value = try database.decodedStoredFragment(from:database.blob(row.hash),remainingBytes:&remainingBytes,budget:budget)
+        let data = try database.blob(row.hash)
+        if let available = allocationBytes {
+          do {
+            let cost = try NotebookJSONAdmission.allocationCost(data, maximumBytes: available,
+              observesCancellation: !database.writable)
+            allocationBytes = available - cost
+          } catch NotebookStorageError.limitExceeded { throw NotebookStorageError.limitExceeded(budget) }
+        }
+        // The phase ceiling does not replace or renew the connection's parent
+        // allowance. This existing decoder still pays its remaining latch once.
+        let value = try database.decodedStoredFragment(from:data,remainingBytes:&remainingBytes,budget:budget)
         guard value.address == row.address, value.position >= 0, value.value.isValid else {
           throw NotebookStorageError.corruptRecord(row.address)
         }

@@ -171,12 +171,10 @@ extension NotebookStore {
         }
         let oldStored = try stored(priorHash), writtenStored = try stored(hash)
         if oldStored.inkBodies != writtenStored.inkBodies
-          || collaborationComparable(oldStored.value, file: row.file, path: source)
-            != collaborationComparable(writtenStored.value, file: row.file, path: source) {
+          || !collaborationValuesAreEqual(oldStored.value, writtenStored.value, file: row.file, path: source) {
           let old = try readLifecycleInverseFragment(hash: priorHash, address: sourceAddress)
           let written = try readLifecycleInverseFragment(hash: hash, address: sourceAddress)
-          guard collaborationComparable(old.value, file: row.file, path: source)
-            == collaborationComparable(written.value, file: row.file, path: source) else { return nil }
+          guard collaborationValuesAreEqual(old.value, written.value, file: row.file, path: source) else { return nil }
         }
       }
       return prefix + [.field("collaboration"), .field("fields"), .field(row.member)]

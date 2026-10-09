@@ -25,7 +25,8 @@ extension NotebookStore {
   /// edits both reach it inside the same SQL command/receipt transaction.
   @discardableResult
   func writeFragment(_ fragment: NotebookStoredFragment, data suppliedData: Data? = nil, hash suppliedHash: String? = nil,
-    database: NotebookSQLConnection, migratingInk: Bool = false) throws -> Bool {
+    database: NotebookSQLConnection, migratingInk: Bool = false,
+    preparedSearch: NotebookPreparedSearchEntry? = nil) throws -> Bool {
     for part in try documentResourceParts(in: fragment) {
       guard try blobSize(hash: part.sha256) == part.byteCount else { throw NotebookStorageError.blobHashMismatch }
     }
@@ -150,7 +151,7 @@ extension NotebookStore {
       member: fragment.member, previous: previousHash, next: hash, database: database)
     try updateAddressIndexes(fragment, database: database)
     try noteContextHistoryChange(file: fragment.file, database: database)
-    try updateSearchIndex(fragment, database: database)
+    try updateSearchIndex(fragment, database: database, prepared: preparedSearch)
     try noteReferenceChange(fragment.address, file: fragment.file, database: database)
     try noteDocumentSourceDelivery(address: fragment.address, file: fragment.file,
       collection: fragment.collection, member: fragment.member, database: database)
@@ -209,17 +210,24 @@ extension NotebookStore {
     }
   }
 
-  private func projectionDelta(before: JSONValue?, after: JSONValue?, current: JSONValue?) throws -> JSONValue? {
-    if before == after { return current }
-    if current == before || current == after { return after }
+  private func projectionDelta(before: JSONValue?, after: JSONValue?, current: JSONValue?,
+    documentSource: Bool = false, source: Bool = false) throws -> JSONValue? {
+    func equal(_ lhs: JSONValue?, _ rhs: JSONValue?) -> Bool {
+      documentSource ? DocumentFile.sourceValuesAreEqual(lhs, rhs, source: source) : lhs == rhs
+    }
+    if equal(before, after) { return current }
+    if equal(current, before) || equal(current, after) { return after }
     if let current, let after, let oldVersion = try? current.decode(ContentFieldVersion.self),
       let nextVersion = try? after.decode(ContentFieldVersion.self) { return try .encode(oldVersion.joining(nextVersion)) }
     if let current, let after, let oldStamp = try? current.decode(VersionStamp.self),
       let nextStamp = try? after.decode(VersionStamp.self) { return try .encode(max(oldStamp, nextStamp)) }
     if case .object(let old) = before, case .object(let next) = after, case .object(let stored) = current {
       var result = stored
-      for key in Set(old.keys).union(next.keys) where old[key] != next[key] {
-        result[key] = try projectionDelta(before: old[key], after: next[key], current: stored[key])
+      for key in Set(old.keys).union(next.keys) {
+        let same = documentSource ? DocumentFile.sourceValuesAreEqual(old[key], next[key], source: key == "source") : old[key] == next[key]
+        if same { continue }
+        result[key] = try projectionDelta(before: old[key], after: next[key], current: stored[key],
+          documentSource: documentSource, source: key == "source")
       }
       return .object(result)
     }
@@ -229,7 +237,8 @@ extension NotebookStore {
   /// Baseline identity defines the command's scope. Missing unseen members of
   /// either projection are not sent to the writer and cannot become tombstones.
   @discardableResult
-  func publishProjectionEdits(file: String, before: JSONValue, after: JSONValue) throws -> Bool {
+  func publishProjectionEdits(file: String, before: JSONValue, after: JSONValue,
+    preparedSearch: NotebookPreparedSearchEntry? = nil) throws -> Bool {
     var didChange = false
     let old = Dictionary(uniqueKeysWithValues: try NotebookRecordCodec.encode(before, file: file).map { ($0.address, $0) })
     let next = Dictionary(uniqueKeysWithValues: try NotebookRecordCodec.encode(after, file: file).map { ($0.address, $0) })
@@ -295,14 +304,17 @@ extension NotebookStore {
     let depths = Dictionary(uniqueKeysWithValues: addresses.map { ($0, $0.filter { $0 == "/" }.count) })
     for address in addresses.sorted(by: { depths[$0] == depths[$1] ? $0 < $1 : depths[$0]! > depths[$1]! }) {
       let previous = old[address], edited = next[address]
-      guard previous?.value != edited?.value || previous?.collections != edited?.collections || positions[address] != nil else { continue }
+      let sameValue = file.hasPrefix("documents/")
+        ? DocumentFile.sourceValuesAreEqual(previous?.value, edited?.value) : previous?.value == edited?.value
+      guard !sameValue || previous?.collections != edited?.collections || positions[address] != nil else { continue }
       let stored = try storedFragments(address: address, descendants: false).first
       if let edited {
         if stored == nil, previous != nil { throw NotebookStorageError.transactionConflict }
         let value: JSONValue?
         if edited.collection == "board/placements", let stored {
           value = try .encode(stored.value.decode(WorkspacePlacement.self).merging(edited.value.decode(WorkspacePlacement.self)))
-        } else { value = try projectionDelta(before: previous?.value, after: edited.value, current: stored?.value) }
+        } else { value = try projectionDelta(before: previous?.value, after: edited.value, current: stored?.value,
+          documentSource: file.hasPrefix("documents/")) }
         guard let value else { throw NotebookStorageError.invalidTransaction("projection value") }
         let oldCollections = Dictionary(uniqueKeysWithValues: (previous?.collections ?? []).map { (fieldKey($0.path), $0) })
         let nextCollections = Dictionary(uniqueKeysWithValues: edited.collections.map { (fieldKey($0.path), $0) })
@@ -316,7 +328,8 @@ extension NotebookStore {
         let position = hasCanonicalZeroPosition(edited) ? 0 : try positions[address] ?? stored?.position ?? Int(database.rows("SELECT COALESCE(MAX(position),-1)+1 FROM records WHERE parent=? AND collection=?", [edited.parent.map(NotebookSQLValue.text) ?? .null, .text(edited.collection)]).first![0].integer!)
         let changed = try writeFragment(edited.replacing(value: value,
           collections: collections.values.sorted { $0.path.lexicographicallyPrecedes($1.path) },
-          position: position), database: database)
+          position: position), database: database,
+          preparedSearch: preparedSearch?.input.address == address ? preparedSearch : nil)
         didChange = didChange || changed
         if changed, !file.hasPrefix("documents/"), !edited.member.isEmpty, !edited.collection.hasSuffix("collaboration/fields"), let parent = edited.parent {
           let prefix = fieldKey([edited.collection.components(separatedBy: "/").last!, edited.member]) + "/"
@@ -326,7 +339,8 @@ extension NotebookStore {
           }
         }
       } else if let stored {
-        guard stored.value == previous?.value else { throw NotebookStorageError.transactionConflict }
+        guard file.hasPrefix("documents/") ? DocumentFile.sourceValuesAreEqual(stored.value, previous?.value)
+          : stored.value == previous?.value else { throw NotebookStorageError.transactionConflict }
         try removeFragment(address, database: database)
         didChange = true
       }
