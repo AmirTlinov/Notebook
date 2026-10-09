@@ -128,6 +128,74 @@
       }
     },
     {
+      "sourceBytes": 1048576,
+      "pair": "1m",
+      "baseline": {
+        "evidence": ".build/gui494-meter-baseline-1048576-20261009-v1",
+        "raw": "baseline-1m.json",
+        "rawSHA256": "ef17243477e60c79f5b90bd3fc6f40af2b5d80ccd7bc1982937be71d857737b1",
+        "sourceSHA256": "d2c0b9c57935a4fe9115217611efb589e68450437af4dd314189d9b9958bbfd4",
+        "sourceCount": 1712,
+        "unchanged": true,
+        "writerMilliseconds": 848.256333,
+        "inkWaitMilliseconds": 916.576667,
+        "preparationMilliseconds": 427.313042,
+        "SQLStatements": 602,
+        "VMSteps": 14094,
+        "hostContext": {
+          "utcBefore": "2026-10-09T11:02:18Z",
+          "loadBefore": [
+            11.56787109375,
+            9.11767578125,
+            7.62353515625
+          ],
+          "sourceRoot": "/Users/amir/Documents/projects/Notebook/.build/nb10-meter-baseline-20261009/source",
+          "debug": true,
+          "profileMarkerEnabled": false,
+          "scope": "Sequential fresh-process1MiB completion of NB10 size matrix after both builds completed; no sampler/marker I/O; SQL PROFILE memory sampling and competing ink retained",
+          "utcAfter": "2026-10-09T11:02:26Z",
+          "loadAfter": [
+            15.11865234375,
+            9.966796875,
+            7.94287109375
+          ]
+        },
+        "verificationSHA256": "0e529bb32b51bbdf8897b873652f48ada1ff909fa3da5ee6943df54f52a92998"
+      },
+      "after": {
+        "evidence": ".build/gui494-meter-after-1048576-20261009-v1",
+        "raw": "after-1m.json",
+        "rawSHA256": "03e560291f643b46a7f39ddf21b2256b96d8ba08dbae582bf402573420c590b8",
+        "sourceSHA256": "0a9edf3b3d10f7bf15265ce4d2a058a31a013105bbd51b1d22a665a027c765a9",
+        "sourceCount": 1713,
+        "unchanged": true,
+        "writerMilliseconds": 294.173041,
+        "inkWaitMilliseconds": 393.790875,
+        "preparationMilliseconds": 184.00875,
+        "SQLStatements": 602,
+        "VMSteps": 14093,
+        "hostContext": {
+          "utcBefore": "2026-10-09T11:02:26Z",
+          "loadBefore": [
+            15.11865234375,
+            9.966796875,
+            7.94287109375
+          ],
+          "sourceRoot": "/Users/amir/Documents/projects/Notebook",
+          "debug": true,
+          "profileMarkerEnabled": false,
+          "scope": "Sequential fresh-process1MiB completion of NB10 size matrix after both builds completed; no sampler/marker I/O; SQL PROFILE memory sampling and competing ink retained",
+          "utcAfter": "2026-10-09T11:02:32Z",
+          "loadAfter": [
+            14.94873046875,
+            10.01708984375,
+            7.97216796875
+          ]
+        },
+        "verificationSHA256": "91f76785698c692836b418ae35faa6863902e1f23e1a01cf2c4d1aa8b08a25e9"
+      }
+    },
+    {
       "sourceBytes": 4194304,
       "pair": "4m-initial",
       "baseline": {
@@ -296,7 +364,8 @@
     "The sequential warmed-build4MiB fresh-process pair observed1354.335333 to676.556667ms writer and1412.951417 to782.129875ms ink wait.",
     "Source reads/codecs and the delivery hash remain. Both sequential probes used1073 SQL statements and20216–20217 VM steps. Work was reduced inside the same transaction; preparation is still included separately.",
     "Initial4MiB pair1600.64725 to645.2905ms overlaps baseline compile/load uncertainty and remains separate;1KiB49.431042 to53.92725ms establishes no small-input latency gain.",
-    "All probes are Debug and instrumented with SQL PROFILE memory sampling and coordinated ink; ordinary host loads differ. Single-pair observations do not establish release or device budgets. malloc peaks are sampled live values, not total allocations; RSS includes fixture setup."
+    "All probes are Debug and instrumented with SQL PROFILE memory sampling and coordinated ink; ordinary host loads differ. Single-pair observations do not establish release or device budgets. malloc peaks are sampled live values, not total allocations; RSS includes fixture setup.",
+    "The1MiB matrix completion observed848.256333 to294.173041ms writer and916.576667 to393.790875ms ink;602 SQL statements and14094/14093 VM steps. Fresh-process Debug at ordinary host load, contexts retained, single comparison only."
   ],
   "unchangedFormats": {
     "codeDatabase": 30,

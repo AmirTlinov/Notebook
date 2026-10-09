@@ -65,28 +65,31 @@ final class DocumentFileFixture {
   }
 }
 
-struct NotebookDocumentCodecCounts: Codable, Sendable {
+struct NotebookPublicationCodecCounts: Codable, Sendable {
   struct Work: Codable, Sendable {
     var passes = 0
     var encodedBytes: Int64 = 0
     mutating func record(_ bytes: Int) { passes += 1; encodedBytes += Int64(bytes) }
   }
   var documentDecode = Work(), documentEncode = Work(), filesEncode = Work()
+  var receiptDecode = Work(), receiptEncode = Work()
 }
 
 #if DEBUG
-final class NotebookDocumentCodecSamples: @unchecked Sendable {
+final class NotebookPublicationCodecSamples: @unchecked Sendable {
   private let lock = NSLock()
-  private var counts = NotebookDocumentCodecCounts()
-  func record(_ sample: NotebookDocumentCodecObservation.Sample) {
+  private var counts = NotebookPublicationCodecCounts()
+  func record(_ sample: NotebookPublicationCodecObservation.Sample) {
     lock.lock(); defer { lock.unlock() }
     switch sample.phase {
     case .documentDecode: counts.documentDecode.record(sample.encodedBytes)
     case .documentEncode: counts.documentEncode.record(sample.encodedBytes)
     case .filesEncode: counts.filesEncode.record(sample.encodedBytes)
+    case .receiptDecode: counts.receiptDecode.record(sample.encodedBytes)
+    case .receiptEncode: counts.receiptEncode.record(sample.encodedBytes)
     }
   }
-  func snapshot() -> NotebookDocumentCodecCounts {
+  func snapshot() -> NotebookPublicationCodecCounts {
     lock.lock(); defer { lock.unlock() }
     return counts
   }
@@ -147,14 +150,16 @@ struct DocumentFilesTests {
     _ = try f.apply([f.patch(neighbor, to: "Independent")])
     let prepared = try f.prepare(edit)
     #if DEBUG
-    let codec = NotebookDocumentCodecSamples()
-    let result = try NotebookDocumentCodecObservation.withObserver(codec.record) {
+    let codec = NotebookPublicationCodecSamples()
+    let result = try NotebookPublicationCodecObservation.withObserver(codec.record) {
       try f.store.commitDocumentSource(prepared, actor: f.actor)
     }
     let counts = codec.snapshot()
     // Both source SQL cuts and one action candidate remain. Receipt revision
     // also decodes its bounded, source-free content header.
     #expect(counts.documentDecode.passes == 4 && counts.documentDecode.encodedBytes > 0)
+    #expect(counts.receiptEncode.passes == 1 && counts.receiptEncode.encodedBytes > 0)
+    #expect(counts.receiptDecode.passes == 0)
     #else
     let result = try f.store.commitDocumentSource(prepared, actor: f.actor)
     #endif

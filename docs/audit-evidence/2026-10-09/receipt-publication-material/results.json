@@ -1,0 +1,633 @@
+{
+  "format": 1,
+  "date": "2026-10-09",
+  "issue": "GUI-494",
+  "register": [
+    "NB10"
+  ],
+  "baseCommit": "a4cf389d2d7a3f706cb7c9ab4321622d7b2a579e",
+  "result": "One local final receipt and its already encoded JSON cross the synchronous physical writer; normal native Save removes one full receipt encode and one typed decode, retaining one delivery hash.",
+  "owners": [
+    "Sources/NotebookCore/NotebookReceiptPublication.swift",
+    "Sources/NotebookCore/CollaborationStore.swift",
+    "Sources/NotebookCore/NotebookActionReadModel.swift",
+    "Sources/NotebookCore/NotebookAddressedRead.swift",
+    "Sources/NotebookCore/NotebookSQLite.swift",
+    "Sources/NotebookCore/NotebookScopedCommand.swift"
+  ],
+  "contract": [
+    "Exact whole root/file/address/shape; literal UTF8 keys/strings and Double bit patterns, including signed zero.",
+    "All retained typed integers and causal versions must round-trip exactly. Ineligible/raw/unknown/split roots retain existing typed decoding and refusal semantics.",
+    "Model INSERT binds the actual written records.hash and checks one affected row; mismatch rolls back the entire command.",
+    "Immutable publication material ends with the synchronous finish. No product cache, thread-local material, new store or executor.",
+    "Original afterDigest and actual Undo result freeze retain their respective existing owners; no digest reuse.",
+    "Public APIs, DB30/wire44/manifest26, authored histories, identities and keys unchanged."
+  ],
+  "checks": {
+    "evidence": ".build/gui494-receipt-regressions-20261009-v1",
+    "sourceSHA256": "4d82eb3b3b61c3a43cde6c2fde4f44d9b3591ac10fc39641c2164d802034c599",
+    "sourceCount": 1715,
+    "unchanged": true,
+    "functions": 36,
+    "cases": 55,
+    "failures": 0,
+    "skips": 0,
+    "verificationSHA256": "68a12c7d1104d7a9caa5820c994ea7d277a1d340228480add59b027225225b41",
+    "selection": {
+      "commands": [],
+      "core": [
+        "NotebookCoreTests.DocumentFilesTests",
+        "NotebookCoreTests.NotebookActionDeliveryPhaseTests/canonicalVersionSurvivesEncodingAndChangesWithTheSavedOutcome",
+        "NotebookCoreTests.NotebookActionDeliveryPhaseTests/lateOldPhaseCannotOverwriteOrUnionTheCurrentReceipt",
+        "NotebookCoreTests.NotebookActionDeliveryPhaseTests/originalEmptyAndUndoEmptyRequireDifferentActualArrivals",
+        "NotebookCoreTests.NotebookActionDeliveryPhaseTests/realReplicationOfALateAckKeepsTheCurrentUndoArrival",
+        "NotebookCoreTests.NotebookActionReadModelTests",
+        "NotebookCoreTests.NotebookReceiptPhaseMergeTests/rawSelectedPhaseRetainsUnknownsAndLateOriginalDoesNotRewriteMaterial",
+        "NotebookCoreTests.NotebookReceiptPhaseMergeTests/typedEncodingBorrowsAndLatchesOuterJSONCreditBeforeEncoding",
+        "NotebookCoreTests.NotebookReceiptPublicationTests"
+      ],
+      "ipad": [],
+      "mac": []
+    },
+    "compilerWarning": "One existing NotebookGraphicVisibilityTests.swift:167 UnnecessaryEffectMarker; no test issue."
+  },
+  "profile": {
+    "evidence": ".build/gui494-receipt-profile-before-4194304-20261009-v1/verification",
+    "sourceSHA256": "3e7e97b5ab1d7b39755593a8b0d174397dc21dde084c7a4a636ab23028eff605",
+    "sourceCount": 1712,
+    "unchanged": true,
+    "functions": 1,
+    "cases": 1,
+    "failures": 0,
+    "skips": 0,
+    "verificationSHA256": "3f7b38d5d50e83b8997c479e0a1f2d84675e9fb979ec04e3ae6b9b07ecd654fd",
+    "raw": "writer-before.sample.txt",
+    "rawSHA256": "5b3bf2d1e18e8b2bc8a6f6616cd0b3f7a9413174bc3629db88c5c6fa851c0fde",
+    "hostContext": {
+      "utcBefore": "2026-10-09T11:14:59Z",
+      "loadBefore": [
+        6.6435546875,
+        6.80126953125,
+        7.3974609375
+      ],
+      "baseCommit": "a4cf389d2d7a3f706cb7c9ab4321622d7b2a579e",
+      "sourceRoot": "/Users/amir/Documents/projects/Notebook/.build/nb10-receipt-baseline-20261009/source",
+      "scope": "Attribution only; actual Save after source-buffer repair and before local receipt repair. Post-COMMIT opt-in fixture wait keeps symbols available; no held transaction is extended.",
+      "begin": {
+        "clock": "DispatchTime.uptimeNanoseconds",
+        "pid": "66559",
+        "phase": "begin",
+        "uptimeNanoseconds": "498839610212875"
+      },
+      "profilePID": 66559,
+      "profileProcessCommand": "/Users/amir/Documents/projects/Notebook/.build/toolchains/swift-6.4.0/swift-6.4.0-RELEASE-osx-package.pkg/Payload/usr/libexec/swift/pm/swiftpm-testing-helper --test-bundle-path /Users/amir/Documents/projects/Notebook/.build/nb10-receipt-baseline-20261009/source/.build/out/Products/Debug/NotebookCoreTests.xctest/Contents/MacOS/NotebookCoreTests --disable-xctest --skip-build --test-product NotebookCoreTests --filter ^(?:NotebookCoreTests\\.NotebookSearchIndexCostTests/multilingualOneCharacterEditMeasuresTheActualWriterAndCompetingInk\\(\\)/NotebookSearchIndexCostTests\\.swift:221:4)$ --event-stream-version 6.4 --event-stream-output-path /Users/amir/Documents/projects/Notebook/.build/gui494-receipt-profile-before-4194304-20261009-v1/verification/core-NotebookCoreTests-events.jsonl /Users/amir/Documents/projects/Notebook/.build/nb10-receipt-baseline-20261009/source/.build/out/Products/Debug/NotebookCoreTests.xctest/Contents/MacOS/NotebookCoreTests --testing-library swift-testing",
+      "controllerUptimeNanoseconds": 498839615141458,
+      "sampleExitCode": 0,
+      "sampleControllerEndUptimeNanoseconds": 498840975246791,
+      "exitCode": 0,
+      "utcAfter": "2026-10-09T11:15:04Z",
+      "loadAfter": [
+        6.671875,
+        6.80419921875,
+        7.39501953125
+      ],
+      "commit": {
+        "phase": "commit",
+        "pid": "66559",
+        "uptimeNanoseconds": "498840952471958",
+        "clock": "DispatchTime.uptimeNanoseconds"
+      }
+    },
+    "writerThreadFromActualSaveStack": 35038470,
+    "writerStackSamples": 297,
+    "nominalIntervalMilliseconds": 1,
+    "toolStartInsideHeldWriter": true,
+    "toolEndsAfterCommitMilliseconds": 22.774833,
+    "toolWindowEntirelyInsideWriter": false,
+    "observations": "Actual synchronous Save stacks include updateAddressIndexes receipt decoding and NotebookActionReadModel→deliveryVersion receipt encoding. Parent and child counts are not summed. Profiling perturbs execution and is attribution only."
+  },
+  "probes": [
+    {
+      "sourceBytes": 1024,
+      "pair": "1k",
+      "baseline": {
+        "evidence": ".build/gui494-receipt-latency-baseline-1024-20261009-v1",
+        "sourceSHA256": "24a63f6d8b06e6e5ae9206c0e93c3dcfb186c7cf3a90273c606d8e110ce8ebe7",
+        "sourceCount": 1712,
+        "unchanged": true,
+        "functions": 1,
+        "cases": 1,
+        "failures": 0,
+        "skips": 0,
+        "verificationSHA256": "a4e9506302adcf94b0675509ab11b940576d66f199e3eb3e163b9dc6eb33c9bd",
+        "raw": "baseline-1k.json",
+        "rawSHA256": "40e8cebd282b139a9bd951e41bfbc59085a9229a19ddb03641787c908fb3d949",
+        "writerMilliseconds": 15.757,
+        "inkWaitMilliseconds": 25.595542,
+        "preparationMilliseconds": 0.275791,
+        "SQLStatements": 409,
+        "VMSteps": 11368,
+        "publicationCodec": {
+          "documentDecode": {
+            "encodedBytes": 6072,
+            "passes": 4
+          },
+          "documentEncode": {
+            "encodedBytes": 3816,
+            "passes": 2
+          },
+          "filesEncode": {
+            "encodedBytes": 1071,
+            "passes": 1
+          },
+          "receiptDecode": {
+            "encodedBytes": 5630,
+            "passes": 1
+          },
+          "receiptEncode": {
+            "encodedBytes": 11260,
+            "passes": 2
+          }
+        },
+        "hostContext": {
+          "utcBefore": "2026-10-09T11:19:31Z",
+          "loadBefore": [
+            5.74755859375,
+            6.21630859375,
+            6.95556640625
+          ],
+          "sourceRoot": "/Users/amir/Documents/projects/Notebook/.build/nb10-receipt-latency-baseline-20261009/source",
+          "debug": true,
+          "sqlMemorySampling": false,
+          "profileMarkerEnabled": false,
+          "scope": "Immutable a4cf behavior with identical actual codec observer; per-statement SQL memory sampling disabled for latency attribution, initial compiler/load context retained; SQL trace/VM and coordinated ink unchanged",
+          "utcAfter": "2026-10-09T11:20:43Z",
+          "loadAfter": [
+            8.06396484375,
+            7.1279296875,
+            7.2548828125
+          ]
+        }
+      },
+      "after": {
+        "evidence": ".build/gui494-receipt-latency-after-1024-20261009-v1",
+        "sourceSHA256": "4d82eb3b3b61c3a43cde6c2fde4f44d9b3591ac10fc39641c2164d802034c599",
+        "sourceCount": 1715,
+        "unchanged": true,
+        "functions": 1,
+        "cases": 1,
+        "failures": 0,
+        "skips": 0,
+        "verificationSHA256": "cd821dd29da15fe2227ced1ef06836f463bdf1ec6ca4daa47e0aba6488a2995d",
+        "raw": "after-1k.json",
+        "rawSHA256": "ae25071af491359174b761bf8f6be7c030c941610fc68ffed85af1ba2f1a68fe",
+        "writerMilliseconds": 17.125708,
+        "inkWaitMilliseconds": 24.562625,
+        "preparationMilliseconds": 0.255792,
+        "SQLStatements": 409,
+        "VMSteps": 11374,
+        "publicationCodec": {
+          "documentDecode": {
+            "encodedBytes": 6072,
+            "passes": 4
+          },
+          "documentEncode": {
+            "encodedBytes": 3816,
+            "passes": 2
+          },
+          "filesEncode": {
+            "encodedBytes": 1071,
+            "passes": 1
+          },
+          "receiptDecode": {
+            "encodedBytes": 0,
+            "passes": 0
+          },
+          "receiptEncode": {
+            "encodedBytes": 5631,
+            "passes": 1
+          }
+        },
+        "hostContext": {
+          "before": {
+            "utc": "2026-10-09T11:36:03.892121+00:00",
+            "load": [
+              6.140625,
+              6.99462890625,
+              6.95556640625
+            ]
+          },
+          "sourceRoot": "/Users/amir/Documents/projects/Notebook",
+          "debug": true,
+          "sqlMemorySampling": false,
+          "profileMarkerEnabled": false,
+          "scope": "Sequential fresh-process actual Save and competing ink; no external profiler. Source and required codecs counted in the canonical verification.",
+          "exitCode": 0,
+          "after": {
+            "utc": "2026-10-09T11:36:06.635968+00:00",
+            "load": [
+              6.140625,
+              6.99462890625,
+              6.95556640625
+            ]
+          }
+        }
+      }
+    },
+    {
+      "sourceBytes": 1048576,
+      "pair": "1m",
+      "baseline": {
+        "evidence": ".build/gui494-receipt-latency-baseline-1048576-20261009-v1",
+        "sourceSHA256": "24a63f6d8b06e6e5ae9206c0e93c3dcfb186c7cf3a90273c606d8e110ce8ebe7",
+        "sourceCount": 1712,
+        "unchanged": true,
+        "functions": 1,
+        "cases": 1,
+        "failures": 0,
+        "skips": 0,
+        "verificationSHA256": "15ffb4bb15113119eef2ca343a110384013a590f50a6051eabcc99cad075277a",
+        "raw": "baseline-1m.json",
+        "rawSHA256": "4a6047e9d4709cf679440b9e9c389bce2045f1524a81065fe4a9fc83aaa06bd1",
+        "writerMilliseconds": 167.422708,
+        "inkWaitMilliseconds": 172.3605,
+        "preparationMilliseconds": 156.646666,
+        "SQLStatements": 602,
+        "VMSteps": 14094,
+        "publicationCodec": {
+          "documentDecode": {
+            "encodedBytes": 3148728,
+            "passes": 4
+          },
+          "documentEncode": {
+            "encodedBytes": 2098920,
+            "passes": 2
+          },
+          "filesEncode": {
+            "encodedBytes": 1048623,
+            "passes": 1
+          },
+          "receiptDecode": {
+            "encodedBytes": 4195842,
+            "passes": 1
+          },
+          "receiptEncode": {
+            "encodedBytes": 8391684,
+            "passes": 2
+          }
+        },
+        "hostContext": {
+          "before": {
+            "utc": "2026-10-09T11:36:06.636306+00:00",
+            "load": [
+              6.140625,
+              6.99462890625,
+              6.95556640625
+            ]
+          },
+          "sourceRoot": "/Users/amir/Documents/projects/Notebook/.build/nb10-receipt-latency-baseline-20261009/source",
+          "debug": true,
+          "sqlMemorySampling": false,
+          "profileMarkerEnabled": false,
+          "scope": "Sequential fresh-process actual Save and competing ink; no external profiler. Source and required codecs counted in the canonical verification.",
+          "exitCode": 0,
+          "after": {
+            "utc": "2026-10-09T11:36:09.905909+00:00",
+            "load": [
+              6.208984375,
+              6.99462890625,
+              6.95556640625
+            ]
+          }
+        }
+      },
+      "after": {
+        "evidence": ".build/gui494-receipt-latency-after-1048576-20261009-v1",
+        "sourceSHA256": "4d82eb3b3b61c3a43cde6c2fde4f44d9b3591ac10fc39641c2164d802034c599",
+        "sourceCount": 1715,
+        "unchanged": true,
+        "functions": 1,
+        "cases": 1,
+        "failures": 0,
+        "skips": 0,
+        "verificationSHA256": "24bf245a3bcd1ea9b66637530fbf0705d09826c8ee6beeb4dc7703b943eee522",
+        "raw": "after-1m.json",
+        "rawSHA256": "9265a9b840641a004ff58f15d734a29cbd4ff5bbab415fc69968d099b208bbc7",
+        "writerMilliseconds": 149.35275,
+        "inkWaitMilliseconds": 157.382541,
+        "preparationMilliseconds": 160.052792,
+        "SQLStatements": 602,
+        "VMSteps": 14099,
+        "publicationCodec": {
+          "documentDecode": {
+            "encodedBytes": 3148728,
+            "passes": 4
+          },
+          "documentEncode": {
+            "encodedBytes": 2098920,
+            "passes": 2
+          },
+          "filesEncode": {
+            "encodedBytes": 1048623,
+            "passes": 1
+          },
+          "receiptDecode": {
+            "encodedBytes": 0,
+            "passes": 0
+          },
+          "receiptEncode": {
+            "encodedBytes": 4195840,
+            "passes": 1
+          }
+        },
+        "hostContext": {
+          "before": {
+            "utc": "2026-10-09T11:36:09.906216+00:00",
+            "load": [
+              6.208984375,
+              6.99462890625,
+              6.95556640625
+            ]
+          },
+          "sourceRoot": "/Users/amir/Documents/projects/Notebook",
+          "debug": true,
+          "sqlMemorySampling": false,
+          "profileMarkerEnabled": false,
+          "scope": "Sequential fresh-process actual Save and competing ink; no external profiler. Source and required codecs counted in the canonical verification.",
+          "exitCode": 0,
+          "after": {
+            "utc": "2026-10-09T11:36:13.054335+00:00",
+            "load": [
+              6.35205078125,
+              7.01123046875,
+              6.96142578125
+            ]
+          }
+        }
+      }
+    },
+    {
+      "sourceBytes": 4194304,
+      "pair": "4m",
+      "baseline": {
+        "evidence": ".build/gui494-receipt-latency-baseline-4194304-20261009-v1",
+        "sourceSHA256": "24a63f6d8b06e6e5ae9206c0e93c3dcfb186c7cf3a90273c606d8e110ce8ebe7",
+        "sourceCount": 1712,
+        "unchanged": true,
+        "functions": 1,
+        "cases": 1,
+        "failures": 0,
+        "skips": 0,
+        "verificationSHA256": "d3f3ef787f3adbf32798177b71e09cb58ab468134a379d4758d9cf22b8b99bdb",
+        "raw": "baseline-4m.json",
+        "rawSHA256": "b401beea5796fd5299a596502c5360e47655dd4ce573fbc06f10244e794eb9de",
+        "writerMilliseconds": 611.455708,
+        "inkWaitMilliseconds": 686.551209,
+        "preparationMilliseconds": 613.189167,
+        "SQLStatements": 1073,
+        "VMSteps": 20217,
+        "publicationCodec": {
+          "documentDecode": {
+            "encodedBytes": 12585912,
+            "passes": 4
+          },
+          "documentEncode": {
+            "encodedBytes": 8390376,
+            "passes": 2
+          },
+          "filesEncode": {
+            "encodedBytes": 4194351,
+            "passes": 1
+          },
+          "receiptDecode": {
+            "encodedBytes": 16778755,
+            "passes": 1
+          },
+          "receiptEncode": {
+            "encodedBytes": 33557510,
+            "passes": 2
+          }
+        },
+        "hostContext": {
+          "utcBefore": "2026-10-09T11:20:43Z",
+          "loadBefore": [
+            8.06396484375,
+            7.1279296875,
+            7.2548828125
+          ],
+          "sourceRoot": "/Users/amir/Documents/projects/Notebook/.build/nb10-receipt-latency-baseline-20261009/source",
+          "debug": true,
+          "sqlMemorySampling": false,
+          "profileMarkerEnabled": false,
+          "scope": "Immutable a4cf behavior with identical actual codec observer; per-statement SQL memory sampling disabled for latency attribution, initial compiler/load context retained; SQL trace/VM and coordinated ink unchanged",
+          "utcAfter": "2026-10-09T11:20:48Z",
+          "loadAfter": [
+            7.818359375,
+            7.09228515625,
+            7.2412109375
+          ]
+        }
+      },
+      "after": {
+        "evidence": ".build/gui494-receipt-latency-after-4194304-20261009-v1",
+        "sourceSHA256": "4d82eb3b3b61c3a43cde6c2fde4f44d9b3591ac10fc39641c2164d802034c599",
+        "sourceCount": 1715,
+        "unchanged": true,
+        "functions": 1,
+        "cases": 1,
+        "failures": 0,
+        "skips": 0,
+        "verificationSHA256": "e257214fca21176964a86d02b62334b404d1a70ad813d99b51f1788840da0b16",
+        "raw": "after-4m.json",
+        "rawSHA256": "565b6cceb4ea7ee657a0e36f2095311c675c7d2e83bb22ec35b0ac00ca3c46ea",
+        "writerMilliseconds": 516.799291,
+        "inkWaitMilliseconds": 611.435916,
+        "preparationMilliseconds": 667.903625,
+        "SQLStatements": 1073,
+        "VMSteps": 20221,
+        "publicationCodec": {
+          "documentDecode": {
+            "encodedBytes": 12585912,
+            "passes": 4
+          },
+          "documentEncode": {
+            "encodedBytes": 8390376,
+            "passes": 2
+          },
+          "filesEncode": {
+            "encodedBytes": 4194351,
+            "passes": 1
+          },
+          "receiptDecode": {
+            "encodedBytes": 0,
+            "passes": 0
+          },
+          "receiptEncode": {
+            "encodedBytes": 16778755,
+            "passes": 1
+          }
+        },
+        "hostContext": {
+          "before": {
+            "utc": "2026-10-09T11:36:13.054633+00:00",
+            "load": [
+              6.35205078125,
+              7.01123046875,
+              6.96142578125
+            ]
+          },
+          "sourceRoot": "/Users/amir/Documents/projects/Notebook",
+          "debug": true,
+          "sqlMemorySampling": false,
+          "profileMarkerEnabled": false,
+          "scope": "Sequential fresh-process actual Save and competing ink; no external profiler. Source and required codecs counted in the canonical verification.",
+          "exitCode": 0,
+          "after": {
+            "utc": "2026-10-09T11:36:17.662648+00:00",
+            "load": [
+              6.32373046875,
+              6.994140625,
+              6.95556640625
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "memorySampling": {
+    "evidence": ".build/gui494-receipt-latency-after-memory-4194304-20261009-v1",
+    "sourceSHA256": "4d82eb3b3b61c3a43cde6c2fde4f44d9b3591ac10fc39641c2164d802034c599",
+    "sourceCount": 1715,
+    "unchanged": true,
+    "functions": 1,
+    "cases": 1,
+    "failures": 0,
+    "skips": 0,
+    "verificationSHA256": "0a25cbf4a2147af92cfa52a524d647c9f0c9324b3a0076a2b13342910621b7e6",
+    "raw": "after-memory-4m.json",
+    "rawSHA256": "19b826a5be4a1b44288f7a1e8e4d5fee5895a3c15152fdb30812f8b85bda470e",
+    "hostContext": {
+      "before": {
+        "utc": "2026-10-09T11:36:17.662987+00:00",
+        "load": [
+          6.32373046875,
+          6.994140625,
+          6.95556640625
+        ]
+      },
+      "sourceRoot": "/Users/amir/Documents/projects/Notebook",
+      "debug": true,
+      "sqlMemorySampling": true,
+      "profileMarkerEnabled": false,
+      "scope": "Sequential fresh-process actual Save and competing ink; no external profiler. Source and required codecs counted in the canonical verification.",
+      "exitCode": 0,
+      "after": {
+        "utc": "2026-10-09T11:36:22.384306+00:00",
+        "load": [
+          6.37744140625,
+          6.994140625,
+          6.95556640625
+        ]
+      }
+    },
+    "scope": "Separate ordinary SQL PROFILE memory-sampling run. Sampled live allocation peaks are not total allocation events. No matched latency improvement is claimed for this mode."
+  },
+  "baseline": {
+    "sourceRoot": ".build/nb10-receipt-latency-baseline-20261009/source",
+    "sourceSHA256": "24a63f6d8b06e6e5ae9206c0e93c3dcfb186c7cf3a90273c606d8e110ce8ebe7",
+    "baseCommit": "a4cf389d2d7a3f706cb7c9ab4321622d7b2a579e",
+    "overrides": [
+      "Sources/NotebookCore/JSONValue.swift",
+      "Tests/NotebookCoreTests/DocumentFilesTests.swift",
+      "Tests/NotebookCoreTests/NotebookSearchIndexCostTests.swift"
+    ],
+    "scope": "Same three observer/fixture files as final; immutable production comparison, no measuring encode. New publication/test files exist only after."
+  },
+  "retainedAttempts": [
+    {
+      "evidence": ".build/gui494-writer-sample-after-4194304-20261009-v1",
+      "core": {
+        "evidence": ".build/gui494-writer-sample-after-4194304-20261009-v1/verification",
+        "sourceSHA256": "0a9edf3b3d10f7bf15265ce4d2a058a31a013105bbd51b1d22a665a027c765a9",
+        "sourceCount": 1713,
+        "unchanged": true,
+        "functions": 1,
+        "cases": 1,
+        "failures": 0,
+        "skips": 0,
+        "verificationSHA256": "6688320d48f7b7e89b8d613ebf0cc4c7ec73f6fe0043a7680fc1547bef2d8af8"
+      },
+      "hostContext": {
+        "utcBefore": "2026-10-09T10:58:18Z",
+        "loadBefore": [
+          4.94921875,
+          8.1259765625,
+          7.015625
+        ],
+        "scope": "Debug actual source Save after buffer scans; sampling is attribution only, never benchmark",
+        "baseCommit": "a4cf389d2d7a3f706cb7c9ab4321622d7b2a579e",
+        "begin": {
+          "uptimeNanoseconds": "497840339059041",
+          "pid": "21104",
+          "phase": "begin",
+          "clock": "DispatchTime.uptimeNanoseconds"
+        },
+        "profilePID": 21104,
+        "profileProcessCommand": "/Users/amir/Documents/projects/Notebook/.build/toolchains/swift-6.4.0/swift-6.4.0-RELEASE-osx-package.pkg/Payload/usr/libexec/swift/pm/swiftpm-testing-helper --test-bundle-path /Users/amir/Documents/projects/Notebook/.build/out/Products/Debug/NotebookCoreTests.xctest/Contents/MacOS/NotebookCoreTests --disable-xctest --skip-build --test-product NotebookCoreTests --filter ^(?:NotebookCoreTests\\.NotebookSearchIndexCostTests/multilingualOneCharacterEditMeasuresTheActualWriterAndCompetingInk\\(\\)/NotebookSearchIndexCostTests\\.swift:221:4)$ --event-stream-version 6.4 --event-stream-output-path /Users/amir/Documents/projects/Notebook/.build/gui494-writer-sample-after-4194304-20261009-v1/verification/core-NotebookCoreTests-events.jsonl /Users/amir/Documents/projects/Notebook/.build/out/Products/Debug/NotebookCoreTests.xctest/Contents/MacOS/NotebookCoreTests --testing-library swift-testing",
+        "controllerUptimeNanoseconds": 497840343260958,
+        "controllerFailure": "TimeoutExpired(['/usr/bin/sample', '21104', '1', '1', '-mayDie', '-file', '/Users/amir/Documents/projects/Notebook/.build/gui494-writer-sample-after-4194304-20261009-v1/writer.sample.txt'], 5)",
+        "utcAfter": "2026-10-09T10:58:28Z",
+        "loadAfter": [
+          4.64892578125,
+          7.95654296875,
+          6.96826171875
+        ],
+        "commit": {
+          "phase": "commit",
+          "pid": "21104",
+          "clock": "DispatchTime.uptimeNanoseconds",
+          "uptimeNanoseconds": "497841035444458"
+        }
+      },
+      "profileResult": "No valid stack: upfront symbols timed out with -mayDie. Actual Save and ink completed; this is not profiler PASS."
+    },
+    {
+      "evidence": ".build/gui494-receipt-baseline-4194304-20261009-v1",
+      "scope": "Initial real receipt-counter baseline and profile share frozen3e7e97b5… source, before the memory-sampling switch. Not used as the matched latency comparator."
+    }
+  ],
+  "numericRegressions": [
+    "Real rename pageIndex=9007199254740993 retains the old rounded decode followed by frozen-model mismatch refusal and full rollback.",
+    "Real rename pageIndex=Int.max retains the old decoder overflow and full rollback."
+  ],
+  "interpretation": [
+    "Actual Save counters: receipt encode2→1 and decode1→0 at all three sizes, document decode4 and one delivery hash retained. At4MiB each removed codec pass covers16778755B.",
+    "Single fresh-process Debug pairs under ordinary host load: 1KiB writer15.757→17.125708ms (no gain),1MiB167.422708→149.35275ms,4MiB611.455708→516.799291ms; respective competing ink saved.",
+    "Per-statement memory sampling is off for those comparisons; unobserved SQL peak fields are absent. Raw SQL/VM observations remain, including small binding predicate differences.",
+    "The memory-enabled final run is673.900334ms; it does not establish elapsed improvement for that mode.",
+    "These are observed local runs, not release/device percentiles or budget acceptance. Baseline1KiB initial compile/load context and all recorded host contexts remain."
+  ],
+  "pending": [
+    "NB10 remains In Progress: actual writer cost, optimized native and physical iPad acceptance, total allocation events/VM evidence as required by final acceptance.",
+    "Installed production265/0.3.195/DB29 remains unchanged. This Core slice does not install or activate DB30/history format.",
+    "The full104 register, physical repetitions/system frame CPU GPU memory and30-minute joint acceptance remain open.",
+    "Whole source includes seven previous native WIP inputs. Selected checks apply to Core; all847 Package/Sources/Tests inputs match the accepted index."
+  ],
+  "packageBinding": {
+    "inputs": 847,
+    "allMatchAcceptedIndex": true,
+    "proofSourceSHA256": "4d82eb3b3b61c3a43cde6c2fde4f44d9b3591ac10fc39641c2164d802034c599",
+    "scope": "All Package/Sources/Tests inputs, including executable bits; native WIP excluded from the staged change.",
+    "baselineInputs": 845,
+    "baselineDifferentPaths": [
+      "Sources/NotebookCore/CollaborationStore.swift",
+      "Sources/NotebookCore/NotebookActionReadModel.swift",
+      "Sources/NotebookCore/NotebookAddressedRead.swift",
+      "Sources/NotebookCore/NotebookReceiptPublication.swift",
+      "Sources/NotebookCore/NotebookSQLite.swift",
+      "Sources/NotebookCore/NotebookScopedCommand.swift",
+      "Tests/NotebookCoreTests/NotebookReceiptPublicationTests.swift"
+    ],
+    "observerAndActualSaveFixtureIdentical": true
+  }
+}

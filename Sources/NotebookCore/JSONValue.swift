@@ -1,10 +1,10 @@
 import Foundation
 
 #if DEBUG
-/// Counts actual codec work on the synchronous source writer. Observing bytes
+/// Counts actual publication codec work on the synchronous writer. Observing bytes
 /// borrows the buffer already required by the codec; it never encodes a sample.
-enum NotebookDocumentCodecObservation {
-  enum Phase: String, Sendable { case documentDecode, documentEncode, filesEncode }
+enum NotebookPublicationCodecObservation {
+  enum Phase: String, Sendable { case documentDecode, documentEncode, filesEncode, receiptDecode, receiptEncode }
   struct Sample: Sendable {
     let phase: Phase
     let encodedBytes: Int
@@ -13,7 +13,7 @@ enum NotebookDocumentCodecObservation {
     let observer: @Sendable (Sample) -> Void
     init(_ observer: @escaping @Sendable (Sample) -> Void) { self.observer = observer }
   }
-  private static let key = "notebook.document-codec.debug-observer"
+  private static let key = "notebook.publication-codec.debug-observer"
   static func withObserver<T>(_ observer: @escaping @Sendable (Sample) -> Void,
     operation: () throws -> T) rethrows -> T {
     let thread = Thread.current, previous = thread.threadDictionary[key]
@@ -72,9 +72,9 @@ public enum JSONValue: Codable, Equatable, Sendable {
   public static func encode<T: Encodable>(_ value: T) throws -> JSONValue {
     let data = try JSONEncoder().encode(value)
     #if DEBUG
-    if T.self == DocumentDocument.self || T.self == [DocumentFile].self,
-      let observer = NotebookDocumentCodecObservation.observer {
-      let phase: NotebookDocumentCodecObservation.Phase = T.self == DocumentDocument.self ? .documentEncode : .filesEncode
+    let phase: NotebookPublicationCodecObservation.Phase? = T.self == DocumentDocument.self ? .documentEncode
+      : T.self == [DocumentFile].self ? .filesEncode : T.self == CollaborationReceipt.self ? .receiptEncode : nil
+    if let phase, let observer = NotebookPublicationCodecObservation.observer {
       observer(.init(phase: phase, encodedBytes: data.count))
     }
     #endif
@@ -88,8 +88,10 @@ public enum JSONValue: Codable, Equatable, Sendable {
   func decode<T: Decodable>(_ type: T.Type, sharing: InkRelationDecoding) throws -> T {
     let data = try JSONEncoder().encode(self)
     #if DEBUG
-    if type == DocumentDocument.self, let observer = NotebookDocumentCodecObservation.observer {
-      observer(.init(phase: .documentDecode, encodedBytes: data.count))
+    let phase: NotebookPublicationCodecObservation.Phase? = type == DocumentDocument.self ? .documentDecode
+      : type == CollaborationReceipt.self ? .receiptDecode : nil
+    if let phase, let observer = NotebookPublicationCodecObservation.observer {
+      observer(.init(phase: phase, encodedBytes: data.count))
     }
     #endif
     return try InkRelationDecoding.decoder(sharing:sharing).decode(type, from: data)

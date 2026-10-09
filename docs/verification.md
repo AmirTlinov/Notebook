@@ -445,7 +445,29 @@ A sequential fresh-process Debug pair, without external sampling, observed
 4 MiB writer **1354.34→676.56 ms**, ink wait **1412.95→782.13 ms**; both saved.
 Both used 1073 SQL statements, 20216–20217 VM steps, four document decodes
 and one delivery hash.
+The retained 1 MiB pair observed writer 848.26→294.17 ms and ink 916.58→393.79 ms
+under its recorded ordinary host loads; all three requested sizes are measured.
 The initial load-confounded pair and three compiler refusals (zero cases) remain
 in [exact evidence](audit-evidence/2026-10-09/source-admission-walks/results.json).
 NB10, optimized native/physical budgets and full joint acceptance remain open.
 Production 265 and DB30/wire44/manifest26 are unchanged.
+
+## 2026-10-09: local receipt publication material
+
+The existing final receipt carries its typed material and already encoded JSON
+through the synchronous physical writer. Exact whole-root/literal/scalar checks
+gate reuse; model publication binds the written hash. Raw, split or ineligible
+roots keep typed validation. Actual Undo digests and frozen results retain their
+owners. **36 Core functions / 55 cases PASS**, zero failures/skips; 1715 source
+inputs `4d82eb3b…` stayed unchanged. One pre-existing compiler warning remains.
+
+Actual Save at all three source sizes observes receipt encode2→1 and decode1→0;
+document decode4 and one delivery hash remain. Each removed4MiB receipt pass
+covers16778755B. Fresh-process Debug pairs, with SQL memory sampling disabled:
+1KiB writer15.76→17.13ms,1MiB167.42→149.35ms,4MiB611.46→516.80ms.
+The4MiB competing ink saved and waited686.55→611.44ms. A separate final memory-
+sampling run gives673.90ms, without established elapsed improvement in that mode.
+The actual writer stack, failed symbolication attempt, load contexts and raw
+results remain in [exact evidence](audit-evidence/2026-10-09/receipt-publication-material/results.json).
+NB10, optimized native/device budgets and full104 acceptance remain open.
+Installed265/DB29 and code DB30/wire44/manifest26 are unchanged.
