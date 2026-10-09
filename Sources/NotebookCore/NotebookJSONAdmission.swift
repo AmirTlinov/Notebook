@@ -10,8 +10,11 @@ public enum NotebookJSONAdmission {
     }
     var cost=data.count*8,depth=0,inString=false,escaped=false,inScalar=false
     try data.withUnsafeBytes { (bytes:UnsafeRawBufferPointer) in
-      for (index,byte) in bytes.enumerated() {
+      var index=0
+      while index < bytes.count {
         if observesCancellation && index & 4095 == 0 { try Task.checkCancellation() }
+        let byte=bytes[index]
+        index += 1
         if inString {
           if escaped { escaped=false }
           else if byte == 92 { escaped=true }

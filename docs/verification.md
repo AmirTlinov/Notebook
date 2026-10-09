@@ -433,3 +433,19 @@ probes per phase observed 7→4 decodes; at 4 MiB their encoded bytes fell from
 no latency improvement. NB10 and native/physical acceptance remain open.
 [Exact results and host contexts](audit-evidence/2026-10-09/source-action-material/results.json).
 Production 265 and DB30/wire44/manifest26 are unchanged.
+
+## 2026-10-09: allocation admission scans
+
+The actual Save writer profile identified raw/semantic admission iterators as
+hot work. Their existing owners now borrow buffers without per-byte enumeration
+tuples. Exact UTF-8/escape credit, cumulative refusal/rollback and read cancellation
+pass with the retained source and ink scenarios: **30 Core functions / 37 cases**,
+zero failures/skips; 1713 inputs `0a9edf3b…` stayed unchanged.
+A sequential fresh-process Debug pair, without external sampling, observed
+4 MiB writer **1354.34→676.56 ms**, ink wait **1412.95→782.13 ms**; both saved.
+Both used 1073 SQL statements, 20216–20217 VM steps, four document decodes
+and one delivery hash.
+The initial load-confounded pair and three compiler refusals (zero cases) remain
+in [exact evidence](audit-evidence/2026-10-09/source-admission-walks/results.json).
+NB10, optimized native/physical budgets and full joint acceptance remain open.
+Production 265 and DB30/wire44/manifest26 are unchanged.

@@ -59,6 +59,7 @@ struct NotebookSearchIndexCostTests {
     var databaseCachePeak: Int32 = 0, statementBytesPeak: Int32 = 0
     var sawInkAttempt = false
     var recordsOwner = false, ownerSQL: [String: SQL] = [:]
+    private let profileMarker = ProcessInfo.processInfo.environment["NOTEBOOK_SEARCH_WRITER_PROFILE_MARKER"]
     init(gate: Gate, competingInk: Bool = false, coordinate: Bool = true) {
       self.gate = gate; self.competingInk = competingInk; self.coordinate = coordinate
     }
@@ -83,6 +84,7 @@ struct NotebookSearchIndexCostTests {
           trace.sample(sqlite3_db_handle(statement))
           if sql == "BEGIN IMMEDIATE", sqlite3_get_autocommit(sqlite3_db_handle(statement)) == 0 {
             trace.started = DispatchTime.now().uptimeNanoseconds
+            trace.markProfileBoundary("begin", at: trace.started!)
             if !trace.competingInk && trace.coordinate {
               trace.gate.writerBegan.signal()
               trace.sawInkAttempt = trace.gate.inkAttempted.wait(timeout: .now() + 5) == .success
@@ -90,13 +92,25 @@ struct NotebookSearchIndexCostTests {
             }
           }
           if sql == "COMMIT", sqlite3_get_autocommit(sqlite3_db_handle(statement)) != 0 {
-            trace.ended = DispatchTime.now().uptimeNanoseconds
+            let end = DispatchTime.now().uptimeNanoseconds
+            if trace.started != nil && trace.ended == nil { trace.markProfileBoundary("commit", at: end) }
+            trace.ended = end
           }
         }
         return 0
       }, Unmanaged.passUnretained(self).toOpaque())
     }
     func detach(_ database: NotebookSQLConnection) { sqlite3_trace_v2(database.handle, 0, nil, nil) }
+    // Opt-in external sampling binds this test process and the actual held
+    // writer interval. The ordinary cost probes perform no marker I/O.
+    private func markProfileBoundary(_ phase: String, at nanoseconds: UInt64) {
+      guard !competingInk, let profileMarker else { return }
+      let record: [String: String] = ["pid": String(getpid()), "phase": phase,
+        "uptimeNanoseconds": String(nanoseconds), "clock": "DispatchTime.uptimeNanoseconds"]
+      if let data = try? JSONEncoder().encode(record) {
+        try? data.write(to: URL(fileURLWithPath: profileMarker + "." + phase + ".json"), options: .atomic)
+      }
+    }
     private func sample(_ handle: OpaquePointer?) {
       var statistics = malloc_statistics_t(); malloc_zone_statistics(nil, &statistics)
       liveBlocksPeak = max(liveBlocksPeak, statistics.blocks_in_use)

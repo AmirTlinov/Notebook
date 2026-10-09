@@ -19,6 +19,58 @@ struct NotebookNativeWriteAllowanceTests {
     }
   }
 
+  @Test func escapedUTF8KeepsExactCreditAndACaughtCumulativeRefusalStillRollsBack() async throws {
+    try await Task.detached {
+      try fixture { store, _ in
+        let text = "\0\t\n\"\\/Пример 🖋️", utf16 = Array(text.utf16)
+        let bridged = utf16.withUnsafeBufferPointer {
+          NSString(characters: $0.baseAddress!, length: $0.count) as String
+        }
+        // Scalar/string headers, three controls, three escaped ASCII bytes,
+        // then twenty literal UTF-8 bytes. Both String representations pay it.
+        let phaseBytes = 704 + 528 + 3 * 48 + 3 * 16 + 20 * 8
+        func allowance(_ bytes: Int) -> NotebookSQLReadAllowance {
+          .init(rows: 1_024, bytes: 1_048_576, valueBytes: 1_048_576,
+            reason: "resource_limit", jsonDecodeBytes: bytes)
+        }
+        for source in [text, bridged] {
+          try store.commandTransaction(readAllowance: allowance(phaseBytes * 2)) {
+            try store.currentSQL!.admitNativeJSONPhase(.string(source), copies: 2)
+          }
+          var firstAdmitted = false, refusalCaught = false, commandRefused = false
+          do {
+            try store.commandTransaction(readAllowance: allowance(phaseBytes * 2 - 1)) {
+              let database = store.currentSQL!
+              try database.admitNativeJSONPhase(.string(source))
+              firstAdmitted = true
+              try database.run("INSERT INTO metadata(key,value) VALUES('utf8_admission_provisional','must rollback')")
+              do { try database.admitNativeJSONPhase(.string(source)) }
+              catch NotebookStorageError.limitExceeded { refusalCaught = true }
+            }
+            Issue.record("A caught cumulative refusal must veto COMMIT")
+          } catch NotebookStorageError.limitExceeded { commandRefused = true }
+          #expect(firstAdmitted && refusalCaught && commandRefused)
+          try store.readTransaction { _ in
+            let rows = try store.currentSQL!.rows("SELECT value FROM metadata WHERE key='utf8_admission_provisional'")
+            #expect(rows.isEmpty)
+          }
+        }
+        var cancelled = false
+        do {
+          try store.readTransaction { _ in
+            withUnsafeCurrentTask { $0?.cancel() }
+            try store.currentSQL!.admitNativeJSONPhase(.string(bridged))
+          }
+        } catch is CancellationError { cancelled = true }
+        #expect(cancelled)
+        // The same cancelled caller can finish an already accepted writer.
+        try store.commandTransaction(readAllowance: allowance(phaseBytes)) {
+          try store.currentSQL!.admitNativeJSONPhase(.string(text))
+        }
+      }
+    }.value
+  }
+
   @Test func rootAndPartsShareAdmissionAndCaughtExhaustionRollsBackTheWholeCommand() throws {
     try fixture { store, workspace in
       let id = UUID()

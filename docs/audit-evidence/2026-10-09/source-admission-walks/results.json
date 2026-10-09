@@ -1,0 +1,325 @@
+{
+  "format": 1,
+  "date": "2026-10-09",
+  "issue": "GUI-494",
+  "register": [
+    "NB10"
+  ],
+  "baseCommit": "a956e32621a286d4028cde487f8b01e79e789954",
+  "result": "Existing allocation owners scan borrowed buffers without per-byte enumerated tuples. Exact admission and failure semantics remain.",
+  "owners": [
+    "Sources/NotebookCore/NotebookJSONAdmission.swift",
+    "Sources/NotebookCore/NotebookNativeWriteAllowance.swift"
+  ],
+  "contract": [
+    "No source buffer copy precedes admission. Contiguous UTF8 is borrowed; bridged strings retain scalar iteration.",
+    "Raw JSON state/depth/escape handling, coefficients48/16/8, cumulative copies and refusal latch remain.",
+    "Checkpoints0/4096/... preserve read cancellation and accepted writer completion."
+  ],
+  "checks": {
+    "evidence": ".build/gui494-meter-regressions-20261009-v4",
+    "functions": 30,
+    "cases": 37,
+    "failures": 0,
+    "skips": 0,
+    "sourceSHA256": "0a9edf3b3d10f7bf15265ce4d2a058a31a013105bbd51b1d22a665a027c765a9",
+    "sourceCount": 1713,
+    "unchanged": true,
+    "verificationSHA256": "4b374d4c1e5660e7f7da9b8d29a29e9b4665eb1c5ff0e6740380641e5bcbd52a"
+  },
+  "profile": {
+    "evidence": ".build/gui494-writer-sample-4194304-20261009-v1",
+    "raw": "writer.sample.txt",
+    "rawSHA256": "5b8adae7f5c3867928003b21a8a363bdb7aeefed8be2b644656c333c74e5074f",
+    "sourceSHA256": "9fe256e8acc2a43cabb57d281fb758108f66ff92ae1121fb6ee91155449cd041",
+    "unchanged": true,
+    "PID": 87693,
+    "writerThreadFromActualSaveStack": 34723024,
+    "writerStackSamples": 116,
+    "nominalSamplingIntervalMilliseconds": 1,
+    "toolWindowEntirelyInsideWriter": true,
+    "begin": {
+      "pid": "87693",
+      "clock": "DispatchTime.uptimeNanoseconds",
+      "uptimeNanoseconds": "495545195021291",
+      "phase": "begin"
+    },
+    "commit": {
+      "phase": "commit",
+      "uptimeNanoseconds": "495547380920916",
+      "clock": "DispatchTime.uptimeNanoseconds",
+      "pid": "87693"
+    },
+    "controllerStartUptimeNanoseconds": 495545208039833,
+    "controllerEndUptimeNanoseconds": 495546577346541,
+    "observations": "During the sampled early writer window: raw JSON admission32 stack samples; NativeJSONPhase.string44; EnumeratedSequence/tuple metadata recur below both. Trace allocation sampling appears in4 distinct samples. These are observed stacks, not whole-transaction CPU percentages.",
+    "scope": "Profiler perturbs the writer:2185.899625ms is not a comparison benchmark. Writer thread identified from synchronous commitDocumentSource stack; markers bind PID and monotonic interval."
+  },
+  "probes": [
+    {
+      "sourceBytes": 1024,
+      "pair": "1k",
+      "baseline": {
+        "evidence": ".build/gui494-meter-baseline-1024-20261009-v1",
+        "raw": "baseline-1k.json",
+        "rawSHA256": "34c35612e4303593910c98de30086f4f021b7194a7dfde2908bf82696d267915",
+        "sourceSHA256": "d2c0b9c57935a4fe9115217611efb589e68450437af4dd314189d9b9958bbfd4",
+        "sourceCount": 1712,
+        "unchanged": true,
+        "writerMilliseconds": 49.431042,
+        "inkWaitMilliseconds": 81.966583,
+        "preparationMilliseconds": 0.235375,
+        "coordinationMilliseconds": 0.47525,
+        "SQLStatements": 409,
+        "VMSteps": 11369,
+        "hostContext": {
+          "utcBefore": "2026-10-09T10:26:46Z",
+          "loadBefore": [
+            9.8369140625,
+            6.697265625,
+            5.78271484375
+          ],
+          "sourceRoot": "/Users/amir/Documents/projects/Notebook/.build/nb10-meter-baseline-20261009/source",
+          "debug": true,
+          "profileMarkerEnabled": false,
+          "scope": "immutable exact a956 plus opt-in marker fixture; no profiler runs in this process",
+          "utcAfter": "2026-10-09T10:26:49Z",
+          "loadAfter": [
+            9.8369140625,
+            6.697265625,
+            5.78271484375
+          ]
+        },
+        "verificationSHA256": "7a9544ef9664e8fb24915b89693fdb589f9375086b0bfa1ad2eb0c01d4c5d344"
+      },
+      "after": {
+        "evidence": ".build/gui494-meter-after-1024-20261009-v1",
+        "raw": "after-1k.json",
+        "rawSHA256": "4198df64c2326530e3257d26bfb4f49b196d48e92e4cd21cc0b79dd88223d28f",
+        "sourceSHA256": "0a9edf3b3d10f7bf15265ce4d2a058a31a013105bbd51b1d22a665a027c765a9",
+        "sourceCount": 1713,
+        "unchanged": true,
+        "writerMilliseconds": 53.92725,
+        "inkWaitMilliseconds": 83.401333,
+        "preparationMilliseconds": 0.243541,
+        "coordinationMilliseconds": 0.380834,
+        "SQLStatements": 409,
+        "VMSteps": 11369,
+        "hostContext": {
+          "utcBefore": "2026-10-09T10:41:00Z",
+          "loadBefore": [
+            6.74658203125,
+            5.97802734375,
+            5.76318359375
+          ],
+          "sourceRoot": "/Users/amir/Documents/projects/Notebook",
+          "debug": true,
+          "profileMarkerEnabled": false,
+          "scope": "No sampler/marker I/O in this process; SQL PROFILE allocation sampling and competing ink coordination retained",
+          "exitCode": 0,
+          "utcAfter": "2026-10-09T10:41:03Z",
+          "loadAfter": [
+            6.5263671875,
+            5.94482421875,
+            5.75244140625
+          ]
+        },
+        "verificationSHA256": "25d19006cff2794e22b38b888cd1e094e3e0a3b9ae759b3030b2a2b73fd1d4fe"
+      }
+    },
+    {
+      "sourceBytes": 4194304,
+      "pair": "4m-initial",
+      "baseline": {
+        "evidence": ".build/gui494-meter-baseline-4194304-20261009-v1",
+        "raw": "baseline-4m-initial.json",
+        "rawSHA256": "3cabe67bdd2cac8ecf51029a14d326f3e8d98f08a4359e248599773f7c490172",
+        "sourceSHA256": "d2c0b9c57935a4fe9115217611efb589e68450437af4dd314189d9b9958bbfd4",
+        "sourceCount": 1712,
+        "unchanged": true,
+        "writerMilliseconds": 1600.64725,
+        "inkWaitMilliseconds": 1630.74525,
+        "preparationMilliseconds": 857.535125,
+        "coordinationMilliseconds": 1.061667,
+        "SQLStatements": 1073,
+        "VMSteps": 20217,
+        "hostContext": {
+          "utcBefore": "2026-10-09T10:24:54Z",
+          "loadBefore": [
+            3.03125,
+            3.8076171875,
+            4.72021484375
+          ],
+          "sourceRoot": "/Users/amir/Documents/projects/Notebook/.build/nb10-meter-baseline-20261009/source",
+          "debug": true,
+          "profileMarkerEnabled": false,
+          "scope": "immutable exact a956 plus opt-in marker fixture; no profiler runs in this process",
+          "utcAfter": "2026-10-09T10:26:24Z",
+          "loadAfter": [
+            12.48974609375,
+            6.8798828125,
+            5.81884765625
+          ]
+        },
+        "verificationSHA256": "50beb5093af8e891879606159b2554b990811cc91af07b62319d426416f54c23"
+      },
+      "after": {
+        "evidence": ".build/gui494-meter-after-4194304-20261009-v1",
+        "raw": "after-4m-initial.json",
+        "rawSHA256": "d803b7dbc4cb15fc22b0f77b935125e225d8c099a6b5699ef568839f1892599b",
+        "sourceSHA256": "0a9edf3b3d10f7bf15265ce4d2a058a31a013105bbd51b1d22a665a027c765a9",
+        "sourceCount": 1713,
+        "unchanged": true,
+        "writerMilliseconds": 645.2905,
+        "inkWaitMilliseconds": 696.814791,
+        "preparationMilliseconds": 624.560125,
+        "coordinationMilliseconds": 0.491667,
+        "SQLStatements": 1073,
+        "VMSteps": 20217,
+        "hostContext": {
+          "utcBefore": "2026-10-09T10:39:42Z",
+          "loadBefore": [
+            5.259765625,
+            5.712890625,
+            5.66796875
+          ],
+          "sourceRoot": "/Users/amir/Documents/projects/Notebook",
+          "debug": true,
+          "profileMarkerEnabled": false,
+          "scope": "No sampler/marker I/O in this process; SQL PROFILE allocation sampling and competing ink coordination retained",
+          "exitCode": 0,
+          "utcAfter": "2026-10-09T10:39:47Z",
+          "loadAfter": [
+            5.15869140625,
+            5.68408203125,
+            5.65771484375
+          ]
+        },
+        "verificationSHA256": "2fed87285186f6f9da6890fe13ed9c2f169945bc15422bbd478ef957ef9a21b6"
+      }
+    },
+    {
+      "sourceBytes": 4194304,
+      "pair": "4m-sequential",
+      "baseline": {
+        "evidence": ".build/gui494-meter-baseline-4194304-20261009-v2",
+        "raw": "baseline-4m-sequential.json",
+        "rawSHA256": "9b99b421a565f72217486b374201bc3f37c268a270dc90bd8ed335cb0277afb6",
+        "sourceSHA256": "d2c0b9c57935a4fe9115217611efb589e68450437af4dd314189d9b9958bbfd4",
+        "sourceCount": 1712,
+        "unchanged": true,
+        "writerMilliseconds": 1354.335333,
+        "inkWaitMilliseconds": 1412.951417,
+        "preparationMilliseconds": 593.126958,
+        "coordinationMilliseconds": 0.527708,
+        "SQLStatements": 1073,
+        "VMSteps": 20216,
+        "hostContext": {
+          "utcBefore": "2026-10-09T10:43:42Z",
+          "loadBefore": [
+            3.7568359375,
+            5.18701171875,
+            5.48681640625
+          ],
+          "sourceRoot": "/Users/amir/Documents/projects/Notebook/.build/nb10-meter-baseline-20261009/source",
+          "debug": true,
+          "profileMarkerEnabled": false,
+          "scope": "Sequential fresh-process pair after both builds completed; repeats only4MiB to remove the initial compile/load uncertainty. No sampler/marker I/O; SQL PROFILE allocation sampling retained.",
+          "utcAfter": "2026-10-09T10:43:48Z",
+          "loadAfter": [
+            3.93603515625,
+            5.2001953125,
+            5.48974609375
+          ]
+        },
+        "verificationSHA256": "d932a48b89b4889fb49801b17739dac9e4c9308c10d57740a3b26cbeca093926"
+      },
+      "after": {
+        "evidence": ".build/gui494-meter-after-4194304-20261009-v2",
+        "raw": "after-4m-sequential.json",
+        "rawSHA256": "48f5513957cda25ed098bb7ead6a2bc0cd22e646edc0cdbf178cc79243153008",
+        "sourceSHA256": "0a9edf3b3d10f7bf15265ce4d2a058a31a013105bbd51b1d22a665a027c765a9",
+        "sourceCount": 1713,
+        "unchanged": true,
+        "writerMilliseconds": 676.556667,
+        "inkWaitMilliseconds": 782.129875,
+        "preparationMilliseconds": 652.447459,
+        "coordinationMilliseconds": 0.571542,
+        "SQLStatements": 1073,
+        "VMSteps": 20217,
+        "hostContext": {
+          "utcBefore": "2026-10-09T10:43:48Z",
+          "loadBefore": [
+            3.93603515625,
+            5.2001953125,
+            5.48974609375
+          ],
+          "sourceRoot": "/Users/amir/Documents/projects/Notebook",
+          "debug": true,
+          "profileMarkerEnabled": false,
+          "scope": "Sequential fresh-process pair after both builds completed; repeats only4MiB to remove the initial compile/load uncertainty. No sampler/marker I/O; SQL PROFILE allocation sampling retained.",
+          "utcAfter": "2026-10-09T10:43:53Z",
+          "loadAfter": [
+            4.02099609375,
+            5.19677734375,
+            5.48681640625
+          ]
+        },
+        "verificationSHA256": "6fe7cc8c01d2b51d7ec4de874988f39405d44c3b8c634f092a93043d1930b70e"
+      }
+    }
+  ],
+  "preservedFailures": [
+    {
+      "evidence": ".build/gui494-meter-regressions-20261009-v1",
+      "status": "compile_failed",
+      "executedCases": 0,
+      "sourceSHA256": "f3329b4d5be3a28157a187a86525a1261b78457cefa20c8efbd869d66fdb59e4",
+      "reason": "New cancellation fixture needed explicit throwing Task closure."
+    },
+    {
+      "evidence": ".build/gui494-meter-regressions-20261009-v2",
+      "status": "compile_failed",
+      "executedCases": 0,
+      "sourceSHA256": "7746144fadd7aa9934edf3839991ad5d4537d99da3bbea73ce3c75dda12ba17d",
+      "reason": "Throwing SQL read hidden in expect macro needed a named result."
+    },
+    {
+      "evidence": ".build/gui494-meter-regressions-20261009-v3",
+      "status": "compile_failed",
+      "executedCases": 0,
+      "sourceSHA256": "2042a1a909b0706f6cfa0a5dddcc5852de3c8800c2a5420fb433945458f2f061",
+      "reason": "Swift6.4 lowering rejected nested generic closure inside expect(throws); ordinary do/catch preserves the cumulative-refusal check."
+    }
+  ],
+  "interpretation": [
+    "The sequential warmed-build4MiB fresh-process pair observed1354.335333 to676.556667ms writer and1412.951417 to782.129875ms ink wait.",
+    "Source reads/codecs and the delivery hash remain. Both sequential probes used1073 SQL statements and20216–20217 VM steps. Work was reduced inside the same transaction; preparation is still included separately.",
+    "Initial4MiB pair1600.64725 to645.2905ms overlaps baseline compile/load uncertainty and remains separate;1KiB49.431042 to53.92725ms establishes no small-input latency gain.",
+    "All probes are Debug and instrumented with SQL PROFILE memory sampling and coordinated ink; ordinary host loads differ. Single-pair observations do not establish release or device budgets. malloc peaks are sampled live values, not total allocations; RSS includes fixture setup."
+  ],
+  "unchangedFormats": {
+    "codeDatabase": 30,
+    "wire": 44,
+    "manifest": 26,
+    "installedPair": 265
+  },
+  "open": [
+    "NB10 remains open: actual writer still holds~0.68s at4MiB; optimized native and physical acceptance remain.",
+    "Full104 acceptance, history transition, system frames/CPU/GPU/memory and joint work remain open."
+  ],
+  "commonCandidate": {
+    "baseCommit": "a956e32621a286d4028cde487f8b01e79e789954",
+    "packageInputs": 845,
+    "packageInputsMatchStagedIndex": true,
+    "comparisonInputsDifferOnly": [
+      "Sources/NotebookCore/NotebookJSONAdmission.swift",
+      "Sources/NotebookCore/NotebookNativeWriteAllowance.swift",
+      "Tests/NotebookCoreTests/NotebookJSONAdmissionTests.swift",
+      "Tests/NotebookCoreTests/NotebookNativeWriteAllowanceTests.swift"
+    ],
+    "profileFixtureIdenticalAcrossComparison": true,
+    "packageInputsSHA256": "54638e1901570a4eaea99bdda915a337795cfb14a9baf740767ea257b63a522b",
+    "scope": "All Package/Sources/Tests inputs match the checked source and staged index. The retained seven native-document WIP paths are excluded from this Core commit and its native acceptance."
+  }
+}
