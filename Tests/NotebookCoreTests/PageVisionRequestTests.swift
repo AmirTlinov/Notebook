@@ -93,12 +93,14 @@ func pageVisionRequestReopensOnlyACompletedDerivative() throws {
   #expect(!store.hasCurrentPageVision(page))
   #expect(try store.requestPageVision(pageID: page.id, expectedRevision: page.drawingStamp.revision) == request)
   #expect(!FileManager.default.fileExists(atPath: store.targetReceiptURL(request.id).path))
+  #expect(try store.targetRenderRequests(pendingOnly: true) == [request])
   let failure = TargetRenderReceipt(request: request, status: "error", diagnostics: [
     .init(kind: "render_error", message: "Unavailable renderer")])
   try store.saveTargetRender(failure)
   #expect(try store.requestPageVision(pageID: page.id, expectedRevision: page.drawingStamp.revision) == request)
   #expect(try JSONDecoder().decode(TargetRenderReceipt.self,
     from: Data(contentsOf: store.targetReceiptURL(request.id))) == failure)
+  #expect(try store.targetRenderRequests(pendingOnly: true).isEmpty)
 }
 
 @Test("Карта использует ограниченную очередь целевых снимков")

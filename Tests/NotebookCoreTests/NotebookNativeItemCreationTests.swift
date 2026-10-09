@@ -10,11 +10,13 @@ struct NotebookNativeItemCreationTests {
     let actor = UUID()
     let store: NotebookStore
     let header: NotebookWorkspaceHeader
-    init() throws {
+    init(hasPresence: Bool = true) throws {
       store = .init(root: root)
       header = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
-      try store.savePresence(.init(boardID: header.rootBoardID, mode: .board, camera: .init(),
-        viewport: .init(x: 1194, y: 834)))
+      if hasPresence {
+        try store.savePresence(.init(boardID: header.rootBoardID, mode: .board, camera: .init(),
+          viewport: .init(x: 1194, y: 834)))
+      }
     }
     func plan(_ kind: NotebookNativeItemCreation.Kind) throws -> NotebookNativeItemCreation {
       try .init(kind: kind, workspaceID: header.workspaceID, boardID: header.rootBoardID,
@@ -23,11 +25,31 @@ struct NotebookNativeItemCreationTests {
     func clean() { try? FileManager.default.removeItem(at: root) }
   }
 
+  @Test func headlessBirthCommitsWithoutCreatingHumanPresence() throws {
+    let f = try Fixture(hasPresence: false); defer { f.clean() }
+    let plan = try f.plan(.board), command = plan.command()
+    let witnesses = NotebookAcceptedWriteWitnesses(root: f.root)
+    let accepted = NotebookAcceptedWrite(witnesses: witnesses) { try command.apply(to: $0) }
+    let result = try accepted.apply(to: f.store)
+    #expect(result.receipt.id == plan.actionID && result.sources.first?.itemID == plan.itemID)
+    #expect(result.sources.first?.selectedPresence == nil)
+    #expect(try f.store.readItemHeader(plan.itemID)?.kind == .board)
+    #expect(try f.store.ownerBoardID(of: plan.itemID) == f.header.rootBoardID)
+    #expect(try f.store.readPresenceIfAvailable() == nil)
+    #expect(try f.store.nativeHistory(domain: .cover(plan.itemID), actor: f.actor) == [.command(plan.actionID)])
+    try witnesses.flush(in: f.store)
+    let cursor = try f.store.currentChangeCursor()
+    #expect(try accepted.apply(to: f.store).receipt == result.receipt)
+    #expect(try f.store.currentChangeCursor() == cursor)
+  }
+
   @Test func allThreeKindsKeepTheirActualOwnersPresenceAndColdUndoRedoIdentity() throws {
     for kind: NotebookNativeItemCreation.Kind in [.notebook(.init(width: 1024, height: 1366)), .document(.book), .board] {
       print("NATIVE_BIRTH kind=\(kind.itemKind.rawValue) cold_undo_redo=started")
       let f = try Fixture(); defer { f.clean() }
       let plan = try f.plan(kind), output = try plan.command().apply(to: f.store)
+      #expect(plan.nativeHistoryDomains == output.receipt.action.nativeHistoryDomains,
+        "Admission and the durable birth retain the same history owners")
       let source = try #require(output.sources.first)
       let header = try f.store.readItemHeader(plan.itemID), presence = try f.store.loadPresence()
       #expect(header?.kind == kind.itemKind && presence.selectedItemID == plan.itemID)

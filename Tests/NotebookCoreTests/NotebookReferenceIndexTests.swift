@@ -39,6 +39,45 @@ struct NotebookReferenceIndexTests {
     #expect(try Set(reopened.targetRenderRequests().map(\.id)) == [previous.id, current.id])
   }
 
+  @Test func pendingRenderCutFindsLateOlderRequestsAndPreservesRecordedReceipts() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), actor = UUID()
+    let header = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 100, height: 140))
+    let target = CollaborationTarget(kind: .board, id: header.rootBoardID)
+    let revision = try store.targetContentRevision(target: target)
+    let newer = try store.requestTargetRender(target: target, expectedRevision: revision,
+      region: .init(x: 0, y: 0, width: 10, height: 10))
+    try store.saveTargetRender(.init(request: newer, status: "ready"))
+    let originalReceipt = try Data(contentsOf: store.targetReceiptURL(newer.id))
+    let reader = NotebookReadSession(store: store)
+    let initiallyPending = try reader.observe { try $0.pendingTargetRenderRequests() }
+    #expect(initiallyPending.isEmpty)
+    let incoming = try store.requestTargetRender(target: target, expectedRevision: revision,
+      region: .init(x: 20, y: 20, width: 10, height: 10))
+    let older = TargetRenderRequest(id: incoming.id, target: incoming.target, sourceRevision: incoming.sourceRevision,
+      region: incoming.region, worldOrigin: incoming.worldOrigin, pageIndex: incoming.pageIndex,
+      pageVisionRevision: incoming.pageVisionRevision, createdAt: newer.createdAt.addingTimeInterval(-60))
+    try store.publishRecords(writes: ["collaboration/render-requests/" + older.id.uuidString.lowercased() + ".json": try .encode(older)])
+    let cursor = try store.currentChangeCursor()
+    let pending = try reader.observe { cut in
+      try store.currentSQL!.limitReads(.init(rows: 16, bytes: 32 * 1_024, valueBytes: 16 * 1_024,
+        reason: "pending_render_metadata"))
+      return try cut.pendingTargetRenderRequests(limit: 1)
+    }
+    #expect(pending == [older])
+    #expect(try store.currentChangeCursor() == cursor)
+    // A local index rebuild can replay a request whose terminal file survived.
+    // Repair only its scheduling metadata; completed bytes stay immutable.
+    try store.commandTransaction {
+      try store.currentSQL!.run("UPDATE metadata_index SET status='pending' WHERE kind='renderRequest'")
+    }
+    try store.reconcileTargetRenderStatus(newer)
+    #expect(try reader.observe { try $0.pendingTargetRenderRequests() } == [older])
+    #expect(try Data(contentsOf: store.targetReceiptURL(newer.id)) == originalReceipt)
+    #expect(try store.currentChangeCursor() == cursor)
+  }
+
   @Test func physicalOwnerTokensMatchCompleteSnapshotsAndBindPartialSources() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }

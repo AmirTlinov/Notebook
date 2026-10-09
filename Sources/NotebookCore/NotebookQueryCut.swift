@@ -27,6 +27,9 @@ public struct NotebookQueryCut {
   public func storedWorkspaceID() throws -> UUID {
     try requireActive(); return try store.storedWorkspaceID()
   }
+  public func pendingTargetRenderRequests(limit: Int = 80) throws -> [TargetRenderRequest] {
+    try requireActive(); return try store.targetRenderRequests(pendingOnly: true, limit: limit)
+  }
   public func workspaceHeader() throws -> NotebookWorkspaceHeader {
     try requireActive(); return try store.workspaceHeader()
   }
@@ -48,6 +51,26 @@ public struct NotebookQueryCut {
   }
   public func loadPage(_ id: UUID) throws -> PageDocument {
     try requireActive(); return try store.loadPage(id)
+  }
+  public func readPageMaterialWindow(itemID: UUID, pageID: UUID, bounds: CGRect,
+    expectedVisibleRoot: String? = nil, sourceInkIDs: Set<UUID> = [], elementPins: Set<String> = [], limit: Int = 256) throws -> NotebookPageMaterialWindow {
+    try requireActive()
+    return try store.readPageMaterialWindow(itemID: itemID, pageID: pageID, bounds: bounds,
+      expectedVisibleRoot: expectedVisibleRoot, sourceInkIDs: sourceInkIDs, elementPins: elementPins, limit: limit)
+  }
+  public func readPageInkWindow(pageID: UUID, bounds: CGRect, pinnedActionIDs: Set<UUID> = [],
+    elementIDs: Set<String> = []) throws -> NotebookPageInkWindow {
+    try requireActive()
+    return try store.readPageInkWindow(pageID: pageID, bounds: bounds, pinnedActionIDs: pinnedActionIDs, elementIDs: elementIDs)
+  }
+  public func pageSourceRevision(_ pageID: UUID) throws -> String? {
+    try requireActive(); return try store.pageSourceRevision(pageID)
+  }
+  public func readPageMaterialSource(itemID: UUID, pageID: UUID, bounds: CGRect,
+    expectedVisibleRoot: String? = nil, historyPins: Set<UUID> = [], elementPins: Set<String> = [], limit: Int = 256) throws -> NotebookPageMaterialSource {
+    try requireActive()
+    return try store.readPageMaterialSource(itemID: itemID, pageID: pageID, bounds: bounds,
+      expectedVisibleRoot: expectedVisibleRoot, historyPins: historyPins, elementPins: elementPins, limit: limit)
   }
   public func readBoardNodeHeader(_ id: UUID) throws -> BoardNode? {
     try requireActive(); return try store.readBoardNodeHeader(id)
@@ -197,4 +220,49 @@ public struct NotebookQueryCut {
   public func attentionEvidence(contextID: UUID, referenceID: UUID) throws -> AgentPinnedSource? {
     try requireActive(); return try store.attentionEvidence(contextID: contextID, referenceID: referenceID)
   }
+  public func readPublicationChanges(after cursor: UInt64, limit: Int = 256) throws -> NotebookPublicationChanges {
+    try requireActive(); return try store.readPublicationChanges(after: cursor, limit: limit)
+  }
+
+  public func readNotebookPageDirectory(itemID: UUID, from index: Int = 0, limit: Int = 32,
+    expectedVisibleRoot: String? = nil) throws -> NotebookPageDirectory {
+    try requireActive(); return try store.readNotebookPageDirectory(itemID: itemID, from: index,
+      limit: limit, expectedVisibleRoot: expectedVisibleRoot)
+  }
+  public func readNotebookPageWindow(itemID: UUID, pages: [NotebookPageReadTarget],
+    expectedVisibleRoot: String? = nil, reusing sources: [UUID: NotebookPageSource] = [:]) throws -> NotebookPageWindow {
+    try requireActive(); return try store.readNotebookPageWindow(itemID: itemID, pages: pages,
+      expectedVisibleRoot: expectedVisibleRoot, reusing: sources)
+  }
+  public func workspaceProjection(items: [WorkspaceItem], selectedItemID: UUID, selectedPageID: UUID?) throws -> WorkspaceIndex {
+    try requireActive(); return try store.workspaceProjection(items: items, selectedItemID: selectedItemID, selectedPageID: selectedPageID)
+  }
+  public func inputScopes(for targets: [CollaborationTarget]) throws -> [NotebookInputScope] {
+    try requireActive(); return try store.inputScopes(for: targets)
+  }
+  public func nativeHistory(domain: PencilUndoHistory.Domain, actor: UUID) throws -> [PencilUndoHistory.Entry] {
+    try requireActive(); return try store.nativeHistory(domain: domain, actor: actor)
+  }
+  public func nativeRedoHistory(domain: PencilUndoHistory.Domain, actor: UUID) throws -> [PencilUndoHistory.Entry] {
+    try requireActive(); return try store.nativeRedoHistory(domain: domain, actor: actor)
+  }
+  public func loadDocument(_ id: UUID) throws -> DocumentDocument {
+    try requireActive(); return try store.loadDocument(id)
+  }
+  public func loadDocumentState(_ id: UUID) throws -> DocumentStateJournal {
+    try requireActive(); return try store.loadDocumentState(id)
+  }
+  public func recentActionPhases(limit: Int = 64) throws -> [NotebookActionReadModel] {
+    try requireActive(); return try store.recentActionPhases(limit: limit)
+  }
+  public func agentFeedbackChanges(_ actions: [NotebookActionReadModel], elementsInScene: [String: [String]] = [:]) throws -> [NotebookAgentFeedbackChange] {
+    try requireActive(); return try store.agentFeedbackChanges(actions, elementsInScene: elementsInScene)
+  }
+  public func agentAttentionSubjects(_ references: [CollaborationReference]) throws -> [NotebookAgentFeedbackChange.Subject] {
+    try requireActive(); return try store.agentAttentionSubjects(references)
+  }
+  public func deviceActionReceipts(actionIDs: [UUID]) throws -> [DeviceActionReceipt] {
+    try requireActive(); return try store.deviceActionReceipts(actionIDs: actionIDs)
+  }
+
 }

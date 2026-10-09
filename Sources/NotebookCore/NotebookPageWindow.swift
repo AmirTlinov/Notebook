@@ -262,7 +262,7 @@ extension NotebookStore {
 
 /// Borrows the enclosing synchronous WAL reader. This cache is only a finite
 /// read workset; the register/vector and SQL membership remain the order owners.
-private final class NotebookPageReadSnapshot {
+final class NotebookPageReadSnapshot {
   let store: NotebookStore
   let itemID: UUID
   let itemAddress: String

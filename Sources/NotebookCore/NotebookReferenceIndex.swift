@@ -397,13 +397,13 @@ extension NotebookStore {
 
   private static func referenceBoardAddress(_ id: UUID) -> String { "board.json#/boards/@" + id.uuidString.lowercased() }
 
-  private static func xorReferenceDigest(_ digest: inout Data, _ contribution: Data) {
+  static func xorReferenceDigest(_ digest: inout Data, _ contribution: Data) {
     for (offset, byte) in contribution.enumerated() { digest[offset] ^= byte }
   }
 
-  private static func referenceOwnerKey(_ kind: String, _ id: UUID) -> String { kind + ":" + id.uuidString.lowercased() }
-  private static func referenceHash(_ bytes: Data) -> String { NotebookHexEncoding.encode(SHA256.hash(data: bytes)) }
-  private static func referenceContribution(_ address: String, _ hash: String) -> Data {
+  static func referenceOwnerKey(_ kind: String, _ id: UUID) -> String { kind + ":" + id.uuidString.lowercased() }
+  static func referenceHash(_ bytes: Data) -> String { NotebookHexEncoding.encode(SHA256.hash(data: bytes)) }
+  static func referenceContribution(_ address: String, _ hash: String) -> Data {
     Data(SHA256.hash(data: Data(("reference-contribution-v2\n" + address + "\n" + hash).utf8)))
   }
 
@@ -807,7 +807,7 @@ extension NotebookStore {
     try database.noteOwner(.referencePending, key)
   }
 
-  private static func referenceOrderAddress(owner: String, group: String? = nil, from: String?) -> String {
+  static func referenceOrderAddress(owner: String, group: String? = nil, from: String?) -> String {
     "reference-order:" + owner + (group.map { "|" + $0 } ?? "") + ":" + (from.map { "node/" + fieldKey([$0]) } ?? "start")
   }
 

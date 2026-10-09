@@ -12,11 +12,15 @@ public struct NotebookProgramStateBasis: Equatable, Sendable {
   }
 
   init(elementID: String, metadata: CollaborativeContent?, fallback: VersionStamp) {
+    self.init(elementID: elementID, versions: metadata?.fields ?? [:], fallback: fallback)
+  }
+
+  init(elementID: String, versions: [String: ContentFieldVersion], fallback: VersionStamp) {
     let id = collaborationIdentity(elementID)
     stateKey = fieldKey(["elements", id, "state"])
     fields = Dictionary(uniqueKeysWithValues: ["id", "content", "css", "javaScript", "state"].map {
       let key = fieldKey(["elements", id, $0])
-      return (key, metadata?.fields[key] ?? .init(stamp: fallback, human: true))
+      return (key, versions[key] ?? .init(stamp: fallback, human: true))
     })
   }
 

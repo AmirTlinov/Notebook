@@ -728,6 +728,14 @@ public struct NotebookGraphicGraph: Sendable {
 extension PageDocument {
   public func graphicGraph() -> NotebookGraphicGraph { elementProjection.graph }
   func makeGraphicGraph(shown:Set<String>) -> NotebookGraphicGraph {
+    NotebookGraphicGraph.page(id: id, elements: elements, shown: shown)
+  }
+}
+
+extension NotebookGraphicGraph {
+  /// Complete page documents and addressed material cuts share one geometry
+  /// owner. The caller supplies the closed set of parents, bindings and claims.
+  static func page(id: UUID, elements: [AgentElement], shown: Set<String>) -> NotebookGraphicGraph {
     let groups=Dictionary(elements.filter { $0.kind == .group }.map {
       (collaborationIdentity($0.id),NotebookElementPlacement.Source(frame:$0.frame,parentID:$0.parentID,basis:$0.basis,isGroup:true))
     },uniquingKeysWith:{ first,_ in first })

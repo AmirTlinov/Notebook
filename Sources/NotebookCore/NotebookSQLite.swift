@@ -43,6 +43,7 @@ final class NotebookSQLConnection {
   var actionRecordCapturesPrepared = false
   var activeActionRecordCapture: NotebookActionRecordCaptureState?
   var sceneReadRecorder: NotebookSceneReadRecorder?
+  var pageMaterialIndexAdmitted: Bool?
   private var statements: [String: OpaquePointer] = [:]
   // Borrowed by nested addressed reads; released with this SQL snapshot.
   private var decodedInk: InkRelationDecoding?
@@ -598,7 +599,7 @@ extension NotebookStore {
   var currentSQL: NotebookSQLConnection? { Thread.current.threadDictionary[connectionKey] as? NotebookSQLConnection }
 
   // SQLite admission is local to this database, independently of wire and content formats.
-  static let currentDatabaseVersion: Int64 = 29
+  static let currentDatabaseVersion: Int64 = 30
 
   @discardableResult
   func prepareDatabase(initialWorkspaceID: UUID? = nil,
@@ -798,6 +799,9 @@ extension NotebookStore {
         }
       }
       if admittedVersion < 29 { try rebuildSearchIndex(database: database) }
+      if admittedVersion < Self.pageMaterialDatabaseVersion {
+        try rebuildPageMaterialIndex(database: database)
+      }
       try database.run("PRAGMA user_version=\(Self.currentDatabaseVersion)")
     }
     // Admission published its own command. Its pending changes, ownership
@@ -821,6 +825,7 @@ extension NotebookStore {
 
   /// Called only inside the bootstrap or admission writer transaction.
   private func prepareCurrentDatabaseSchema(_ database: NotebookSQLConnection) throws {
+    try Self.createPageMaterialIndex(database)
     try Self.createPageInkOrderIndex(database)
     try Self.createCausalFieldCountIndex(database)
     try Self.createElementGroupSpatialIndex(database)
@@ -972,6 +977,7 @@ extension NotebookStore {
       let result = try operation()
       try refreshGraphicIndex(database: database)
       try refreshElementGroupIndex(database: database)
+      try refreshPageMaterialIndex(database: database)
       try validateChangedPageOrders(database: database)
       try validateChangedOwnership(database: database)
       try refreshBoardFrontier(database: database)

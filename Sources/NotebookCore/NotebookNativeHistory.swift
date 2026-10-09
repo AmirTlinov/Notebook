@@ -41,6 +41,8 @@ public struct NotebookCodeInkHistory: Sendable {
 /// The same transaction writes material and its history; replicas never invent
 /// local Undo entries from a peer's receipt or a wall-clock timestamp.
 extension NotebookStore {
+  static let nativeHistoryMaximumDirectoryBytes = 65_536
+
   public func nativeHistory(domain: PencilUndoHistory.Domain, actor: UUID) throws -> [PencilUndoHistory.Entry] {
     try readTransaction { _ in
       try rawNativeHistory(domain:domain,actor:actor,redo:false).filter { try nativeHistoryEntry($0,domain:domain,active:true) }
@@ -61,7 +63,7 @@ extension NotebookStore {
   private func rawNativeHistory(domain:PencilUndoHistory.Domain,actor:UUID,redo:Bool) throws -> [PencilUndoHistory.Entry] {
     let key=Self.nativeHistoryKey(domain:domain,actor:actor,redo:redo)
     guard let value=try currentSQL!.rows("SELECT value FROM metadata WHERE key=?",[.text(key)]).first?[0].text else { return [] }
-    guard value.utf8.count <= 65_536 else { throw NotebookStorageError.corruptRecord("native history") }
+    guard value.utf8.count <= Self.nativeHistoryMaximumDirectoryBytes else { throw NotebookStorageError.corruptRecord("native history") }
     let entries=try JSONDecoder().decode([PencilUndoHistory.Entry].self,from:Data(value.utf8))
     guard entries.count <= 32,entries.allSatisfy({ entry in
       switch entry {

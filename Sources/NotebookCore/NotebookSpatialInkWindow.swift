@@ -94,71 +94,9 @@ extension NotebookStore {
       coverage.keys.allSatisfy({ $0.isValid && $0.kind != .page }),
       elementIDs.keys.allSatisfy({ $0.isValid && $0.kind != .page }) else { throw NotebookStorageError.limitExceeded("ink_window_owners") }
     return try readTransaction { _ in
-      let database = currentSQL!, maximum = 8192
-      var addresses = Set(pinnedActionIDs.map { "spatial-ink.json#/actions/@" + $0.uuidString.lowercased() })
-      var eraserCoverage: [SurfaceID: [WorkspaceSpatialBounds]] = [:]
-      func bounds(_ row: [NotebookSQLValue]) -> WorkspaceSpatialBounds {
-        .init(origin: .init(tileX: row[4].integer!, tileY: row[5].integer!, localX: row[6].spatialNumber, localY: row[7].spatialNumber),
-          maximum: .init(tileX: row[8].integer!, tileY: row[9].integer!, localX: row[10].spatialNumber, localY: row[11].spatialNumber))
-      }
-      func retain(_ row: [NotebookSQLValue], expands: Bool) throws {
-        let address = row[0].text!
-        guard addresses.contains(address) || addresses.count < maximum else { throw NotebookStorageError.limitExceeded("ink_window_actions") }
-        addresses.insert(address)
-        if expands, row[1].text == "pen", let kind = row[2].text.flatMap(SurfaceKind.init(rawValue:)), let owner = row[3].text.flatMap(UUID.init(uuidString:)) {
-          let surface = SurfaceID(kind: kind, ownerID: owner)
-          guard coverage[surface] != nil else { return }
-          let value = bounds(row)
-          if coverage[surface]?.contains(value) != true { eraserCoverage[surface, default: []].append(value) }
-        }
-      }
-      let fields = "s.address,s.tool,s.kind,s.owner_id,s.min_tx,s.min_ty,s.min_x,s.min_y,s.max_tx,s.max_ty,s.max_x,s.max_y"
-      func query(_ surface: SurfaceID, _ bounds: WorkspaceSpatialBounds, erasersOnly: Bool,
-        _ consume: ([NotebookSQLValue]) throws -> Void) throws {
-        let a = bounds.origin, b = bounds.maximum, owner = surface.ownerID!.uuidString.lowercased()
-        let space = NotebookSQLValue.integer(Self.spatialSpaceKey(board: surface.kind.rawValue, parent: owner))
-        let sql = "SELECT " + fields + " FROM ink_ranges r CROSS JOIN ink_surfaces s ON s.rowid=r.entry WHERE r.min_space<=? AND r.max_space>=? AND r.min_tx<=? AND r.max_tx>=? AND r.min_ty<=? AND r.max_ty>=? AND r.min_x<=? AND r.max_x>=? AND r.min_y<=? AND r.max_y>=? AND s.kind=? AND s.owner_id=? AND s.active=1 " + (erasersOnly ? "AND s.tool='eraser' " : "") + "AND (s.min_tx<? OR (s.min_tx=? AND s.min_x<=?)) AND (s.max_tx>? OR (s.max_tx=? AND s.max_x>=?)) AND (s.min_ty<? OR (s.min_ty=? AND s.min_y<=?)) AND (s.max_ty>? OR (s.max_ty=? AND s.max_y>=?)) LIMIT ?"
-        try database.forEachRow(sql, [space, space, .integer(b.tileX), .integer(a.tileX), .integer(b.tileY), .integer(a.tileY),
-          .real(a.tileX == b.tileX ? b.localX : WorldPoint.tileSize), .real(a.tileX == b.tileX ? a.localX : 0),
-          .real(a.tileY == b.tileY ? b.localY : WorldPoint.tileSize), .real(a.tileY == b.tileY ? a.localY : 0),
-          .text(surface.kind.rawValue), .text(owner), .integer(b.tileX), .integer(b.tileX), .real(b.localX),
-          .integer(a.tileX), .integer(a.tileX), .real(a.localX), .integer(b.tileY), .integer(b.tileY), .real(b.localY),
-          .integer(a.tileY), .integer(a.tileY), .real(a.localY), .integer(erasersOnly ? -1 : Int64(maximum + 1))], consume)
-      }
-      for (surface, bounds) in coverage {
-        if surface.kind == .board { try requireLiveBoard(surface.ownerID!) }
-        try query(surface, bounds, erasersOnly: false) { try retain($0, expands: true) }
-      }
-      for id in pinnedActionIDs {
-        try database.forEachRow("SELECT " + fields + " FROM ink_surfaces s WHERE s.address=?", [.text("spatial-ink.json#/actions/@" + id.uuidString.lowercased())]) {
-          try retain($0, expands: true)
-        }
-      }
-      for (surface, regions) in eraserCoverage {
-        // One broad phase per owner, not one repeated query per retained pen.
-        // The exact tiled index excludes gaps before the action admission limit;
-        // neither false positives nor accepted rows retain a second body copy.
-        let retained = WorkspaceSpatialIndex(entries: regions.enumerated().map {
-          .init(id: .element(String($0.offset)), bounds: $0.element, zIndex: 0)
-        })
-        let envelope = regions.dropFirst().reduce(regions[0]) { $0.union($1) }
-        try query(surface, envelope, erasersOnly: true) { row in
-          guard !retained.intersections(in: bounds(row), limit: 1).entries.isEmpty else { return }
-          try retain(row, expands: false)
-        }
-      }
-      // Figure erasure follows its addressed source, even after that figure was
-      // moved away from the old eraser's physical bounding rectangle.
-      for (surface, ids) in elementIDs {
-        for id in Set(ids) {
-          let rows = try database.rows("SELECT e.address FROM ink_element_erasures e JOIN ink_surfaces s ON s.address=e.address AND s.kind=e.kind AND s.owner_id=e.owner_id WHERE e.kind=? AND e.owner_id=? AND e.element_id=? AND s.active=1 LIMIT ?",
-            [.text(surface.kind.rawValue), .text(surface.ownerID!.uuidString.lowercased()), .text(collaborationIdentity(id)), .integer(Int64(maximum + 1))])
-          for row in rows {
-            guard addresses.contains(row[0].text!) || addresses.count < maximum else { throw NotebookStorageError.limitExceeded("ink_window_actions") }
-            addresses.insert(row[0].text!)
-          }
-        }
-      }
+      let database = currentSQL!
+      let addresses = try inkWindowAddresses(coverage: coverage,
+        pinnedAddresses: Set(pinnedActionIDs.map { "spatial-ink.json#/actions/@" + $0.uuidString.lowercased() }), elementIDs: elementIDs)
       var hashes: [String: String] = [:]
       for address in addresses.sorted() {
         for row in try database.rows("SELECT address,hash FROM records WHERE address=? OR address=? ORDER BY address",
@@ -168,6 +106,78 @@ extension NotebookStore {
       }
       return .init(coverage: coverage, pinnedActionIDs: pinnedActionIDs, elementIDs: elementIDs.mapValues(Set.init), hashes: hashes)
     }
+  }
+
+  /// Shared indexed broad phase for page and spatial ink. Every retained pen
+  /// contributes its full support to eraser dependency closure, including pins.
+  func inkWindowAddresses(coverage: [SurfaceID: WorkspaceSpatialBounds], pinnedAddresses: Set<String>,
+    elementIDs: [SurfaceID: [String]]) throws -> Set<String> {
+    let database = currentSQL!, maximum = 8192
+    var addresses = pinnedAddresses
+    var eraserCoverage: [SurfaceID: [WorkspaceSpatialBounds]] = [:]
+    func bounds(_ row: [NotebookSQLValue]) -> WorkspaceSpatialBounds {
+      .init(origin: .init(tileX: row[4].integer!, tileY: row[5].integer!, localX: row[6].spatialNumber, localY: row[7].spatialNumber),
+        maximum: .init(tileX: row[8].integer!, tileY: row[9].integer!, localX: row[10].spatialNumber, localY: row[11].spatialNumber))
+    }
+    func retain(_ row: [NotebookSQLValue], expands: Bool) throws {
+      let address = row[0].text!
+      guard addresses.contains(address) || addresses.count < maximum else { throw NotebookStorageError.limitExceeded("ink_window_actions") }
+      addresses.insert(address)
+      if expands, row[1].text == "pen", let kind = row[2].text.flatMap(SurfaceKind.init(rawValue:)), let owner = row[3].text.flatMap(UUID.init(uuidString:)) {
+        let surface = SurfaceID(kind: kind, ownerID: owner)
+        guard coverage[surface] != nil else { return }
+        let value = bounds(row)
+        if coverage[surface]?.contains(value) != true { eraserCoverage[surface, default: []].append(value) }
+      }
+    }
+    let fields = "s.address,s.tool,s.kind,s.owner_id,s.min_tx,s.min_ty,s.min_x,s.min_y,s.max_tx,s.max_ty,s.max_x,s.max_y"
+    func query(_ surface: SurfaceID, _ bounds: WorkspaceSpatialBounds, erasersOnly: Bool,
+      _ consume: ([NotebookSQLValue]) throws -> Void) throws {
+      let a = bounds.origin, b = bounds.maximum, owner = surface.ownerID!.uuidString.lowercased()
+      let space = NotebookSQLValue.integer(Self.spatialSpaceKey(board: surface.kind.rawValue, parent: owner))
+      let sql = "SELECT " + fields + " FROM ink_ranges r CROSS JOIN ink_surfaces s ON s.rowid=r.entry WHERE r.min_space<=? AND r.max_space>=? AND r.min_tx<=? AND r.max_tx>=? AND r.min_ty<=? AND r.max_ty>=? AND r.min_x<=? AND r.max_x>=? AND r.min_y<=? AND r.max_y>=? AND s.kind=? AND s.owner_id=? AND s.active=1 " + (erasersOnly ? "AND s.tool='eraser' " : "") + "AND (s.min_tx<? OR (s.min_tx=? AND s.min_x<=?)) AND (s.max_tx>? OR (s.max_tx=? AND s.max_x>=?)) AND (s.min_ty<? OR (s.min_ty=? AND s.min_y<=?)) AND (s.max_ty>? OR (s.max_ty=? AND s.max_y>=?)) LIMIT ?"
+      try database.forEachRow(sql, [space, space, .integer(b.tileX), .integer(a.tileX), .integer(b.tileY), .integer(a.tileY),
+        .real(a.tileX == b.tileX ? b.localX : WorldPoint.tileSize), .real(a.tileX == b.tileX ? a.localX : 0),
+        .real(a.tileY == b.tileY ? b.localY : WorldPoint.tileSize), .real(a.tileY == b.tileY ? a.localY : 0),
+        .text(surface.kind.rawValue), .text(owner), .integer(b.tileX), .integer(b.tileX), .real(b.localX),
+        .integer(a.tileX), .integer(a.tileX), .real(a.localX), .integer(b.tileY), .integer(b.tileY), .real(b.localY),
+        .integer(a.tileY), .integer(a.tileY), .real(a.localY), .integer(erasersOnly ? -1 : Int64(maximum + 1))], consume)
+    }
+    for (surface, bounds) in coverage {
+      if surface.kind == .board { try requireLiveBoard(surface.ownerID!) }
+      try query(surface, bounds, erasersOnly: false) { try retain($0, expands: true) }
+    }
+    for address in pinnedAddresses {
+      try database.forEachRow("SELECT " + fields + " FROM ink_surfaces s WHERE s.address=?", [.text(address)]) {
+        try retain($0, expands: true)
+      }
+    }
+    for (surface, regions) in eraserCoverage {
+      // One broad phase per owner, not one repeated query per retained pen.
+      // The exact tiled index excludes gaps before the action admission limit;
+      // neither false positives nor accepted rows retain a second body copy.
+      let retained = WorkspaceSpatialIndex(entries: regions.enumerated().map {
+        .init(id: .element(String($0.offset)), bounds: $0.element, zIndex: 0)
+      })
+      let envelope = regions.dropFirst().reduce(regions[0]) { $0.union($1) }
+      try query(surface, envelope, erasersOnly: true) { row in
+        guard !retained.intersections(in: bounds(row), limit: 1).entries.isEmpty else { return }
+        try retain(row, expands: false)
+      }
+    }
+    // Figure erasure follows its addressed source, even after that figure was
+    // moved away from the old eraser's physical bounding rectangle.
+    for (surface, ids) in elementIDs {
+      for id in Set(ids) {
+        let rows = try database.rows("SELECT e.address FROM ink_element_erasures e JOIN ink_surfaces s ON s.address=e.address AND s.kind=e.kind AND s.owner_id=e.owner_id WHERE e.kind=? AND e.owner_id=? AND e.element_id=? AND s.active=1 LIMIT ?",
+          [.text(surface.kind.rawValue), .text(surface.ownerID!.uuidString.lowercased()), .text(collaborationIdentity(id)), .integer(Int64(maximum + 1))])
+        for row in rows {
+          guard addresses.contains(row[0].text!) || addresses.count < maximum else { throw NotebookStorageError.limitExceeded("ink_window_actions") }
+          addresses.insert(row[0].text!)
+        }
+      }
+    }
+    return addresses
   }
 
   public func readSpatialInkWindow(coverage: [SurfaceID: WorkspaceSpatialBounds], pinnedActionIDs: Set<UUID> = [],
@@ -189,8 +199,8 @@ extension NotebookStore {
 }
 
 extension NotebookStore {
-  /// Page cuts share the existing indexed-ink directory. Pen-only appends do
-  /// not touch this projection; visibility changes update one indexed header.
+  /// Page pens and cuts share the existing indexed-ink directory. Visibility
+  /// changes update one header; immutable measurements are decoded only once.
   func indexPageInkWindow(_ fragment:NotebookStoredFragment,database:NotebookSQLConnection) throws {
     guard let page=UUID(uuidString:URL(fileURLWithPath:fragment.file).deletingPathExtension().lastPathComponent),
       let id=UUID(uuidString:fragment.member) else {throw NotebookStorageError.corruptRecord(fragment.address)}
@@ -204,7 +214,7 @@ extension NotebookStore {
       INSERT INTO ink_surfaces(address,kind,owner_id,min_tx,min_ty,min_x,min_y,max_tx,max_ty,max_x,max_y,space_key,active,tool,has_ink)
       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       """,[.text(fragment.address),.text("page"),.text(owner),.integer(a.tileX),.integer(a.tileY),.real(a.localX),.real(a.localY),
-        .integer(b.tileX),.integer(b.tileY),.real(b.localX),.real(b.localY),.integer(Self.spatialSpaceKey(board:"page",parent:owner)),.integer(Int64(active)),.text("eraser"),.integer(1)])
+        .integer(b.tileX),.integer(b.tileY),.real(b.localX),.real(b.localY),.integer(Self.spatialSpaceKey(board:"page",parent:owner)),.integer(Int64(active)),.text(action.tool.rawValue),.integer(action.samples.hasVisibleInk ? 1 : 0)])
     try indexInkPainter(.init(action),address:fragment.address,database:database)
   }
 }

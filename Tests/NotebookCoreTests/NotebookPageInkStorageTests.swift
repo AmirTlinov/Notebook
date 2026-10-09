@@ -4,6 +4,53 @@ import Testing
 
 @Suite("SQL pen samples have immutable addressed owners")
 struct NotebookPageInkStorageTests {
+  @Test func addressedHistoryAllowanceFinishesRapidPenAndEraserInversesWithoutSamples() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), actor = UUID()
+    _ = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
+    let pageID = try #require(store.loadIndex().selectedPageID)
+    let page = try store.loadPage(pageID)
+    try page.prepareInkForPresentation()
+    let sample = SpatialInkSample(point: .init(x: 10, y: 10), timeOffset: 0, width: 3,
+      opacity: 1, force: 1, azimuth: 0, altitude: 1)
+    let short = PageInkAction(tool: .pen, samples: [sample])
+    let pen = PageInkAction(tool: .pen, samples: Array(repeating: sample, count: 65_536))
+    let targets = (0..<128).map {
+      InkElementTarget(elementID: "target-\($0)", frame: .init(x: 0, y: 0, width: 100, height: 100),
+        graphicTransform: .identity, elementTransform: .identity)
+    }
+    let eraser = PageInkAction(tool: .eraser, samples: [sample], elementTargets: targets)
+    let penAllowance = NotebookPageInkCommand.stateWriteAllowance(for: [pen])
+    #expect(penAllowance.executionBytes == NotebookPageInkCommand.stateWriteAllowance(for: [short]).executionBytes,
+      "A history inverse must not reserve the immutable measurement body again")
+    #expect(NotebookPageInkCommand.stateWriteAllowance(for: [eraser]).executionBytes > penAllowance.executionBytes,
+      "Eraser targets are part of the addressed header and still need real finish credit")
+    for action in [pen, eraser] {
+      let append = try page.prepareLiveInkChange(.append(action), stamp: #require(page.drawingStamp.advanced(by: actor)))
+      _ = try store.commitPageInk(pageID: pageID, command: .init(append))
+      #expect(page.publishLiveInkChange(append))
+      let samplesAddress = pageFile(pageID) + "#/drawingData/actions/@" + action.id.uuidString.lowercased() + "/samples"
+      let samplesHash = try store.sqlRead { try $0.rows("SELECT hash FROM records WHERE address=?", [.text(samplesAddress)]).first?[0].text }
+      let allowance = NotebookPageInkCommand.stateWriteAllowance(for: [action])
+      #expect(4 * allowance.executionBytes < 256 * 1_024 * 1_024,
+        "The real inverse headers fit two blocked Undo/Redo cycles in the native admission limit")
+      for active in [false, true, false, true] {
+        let change = try page.prepareLiveInkChange(.setActive([action.id], active),
+          stamp: #require(page.drawingStamp.advanced(by: actor)))
+        let saved = try store.withNativeWriteAllowance(allowance) {
+          try store.commitPageInk(pageID: pageID, command: .init(change, nativeRedo: active))
+        }
+        #expect(saved.stamp == change.stamp)
+        #expect(page.publishLiveInkChange(change))
+        #expect(try store.readPageInkAction(pageID: pageID, actionID: action.id)?.action.isActive == active)
+      }
+      #expect(try store.sqlRead { try $0.rows("SELECT hash FROM records WHERE address=?", [.text(samplesAddress)]).first?[0].text } == samplesHash)
+      #expect(try store.nativeHistory(domain: .page(pageID), actor: actor).last == .ink([action.id]))
+      #expect(try store.nativeRedoHistory(domain: .page(pageID), actor: actor).isEmpty)
+    }
+  }
+
   @Test func appendAndUndoDoNotRepublishHistoricalSamples() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -63,6 +110,8 @@ struct NotebookPageInkStorageTests {
       .init(point: .init(x: 10, y: 10), timeOffset: 0, width: 20,
         opacity: 1, force: 1, azimuth: 0, altitude: 1)
     ], sequence: 1, elementTargets: targets)
+    #expect(NotebookPageInkCommand.stateWriteAllowance(for: [action]).executionBytes == NotebookNativeWriteAllowance.maximumExecutionBytes,
+      "An oversized legacy header keeps the existing SQL refusal boundary")
     let appendStamp = try #require(page.drawingStamp.advanced(by: actor))
     let appended = try store.commitPageInk(pageID: pageID,
       command: .append(action, baseStamp: page.drawingStamp, stamp: appendStamp))
