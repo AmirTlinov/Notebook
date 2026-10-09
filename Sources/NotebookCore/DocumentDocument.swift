@@ -133,6 +133,30 @@ public struct DocumentDocument: Codable, Equatable, Identifiable, Sendable {
     return .fileBasis(versions, fallback: contentStamp)
   }
 
+  /// The action executor owns field CAS, authorship and metadata publication.
+  /// Its typed material shares that command cut without a second JSON roundtrip.
+  func projectingCommandMaterial(entrypoint: String, files: [DocumentFile]) throws -> Self {
+    var candidate = self
+    candidate.entrypoint = entrypoint
+    candidate.files = files.sorted { collaborationIdentity($0.id) < collaborationIdentity($1.id) }
+    return try candidate.validatingCommandProjection()
+  }
+
+  func recordingCommandMetadata(contentStamp: VersionStamp, collaboration: CollaborativeContent?) throws -> Self {
+    var candidate = self
+    candidate.contentStamp = contentStamp; candidate.collaboration = collaboration
+    return try candidate.validatingCommandProjection()
+  }
+
+  private func validatingCommandProjection() throws -> Self {
+    guard isValid else {
+      // Match the typed decoder's refusal for an invalid candidate document.
+      throw DecodingError.dataCorrupted(.init(codingPath: [CodingKeys.files],
+        debugDescription: "Invalid file-backed LaTeX document"))
+    }
+    return self
+  }
+
   @discardableResult
   public mutating func replaceContent(entrypoint: String? = nil, files: [DocumentFile]? = nil, actor: UUID) -> Bool {
     guard let stamp = contentStamp.advanced(by: actor) else { return false }

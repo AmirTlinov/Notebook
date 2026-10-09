@@ -420,3 +420,16 @@ Cold geometry admission remains a conservative 128 MiB within the Mac 256 MiB po
 Physical iPad runtime acceptance, process budgets, source codec cost, causal
 birth/Undo transition and full joint acceptance remain open. Production 265 and
 DB30/wire44/manifest26 are unchanged.
+
+## 2026-10-09: source-action typed material
+
+One `CollaborationWorkspace` candidate removes three repeat source decodes and
+ends before publication. Both source SQL cuts and the source-free receipt header
+remain. **26 Core functions / 34 cases PASS**, including batch, binary, lifecycle,
+literal source, refusal, cold reopening and Undo/Redo; zero failures/skips.
+All 1713 inputs `060d2fc2…` stayed unchanged. Two matched fresh-process Debug
+probes per phase observed 7→4 decodes; at 4 MiB their encoded bytes fell from
+25171929 to 12585912. Writer time was 1264.59→1290.26 ms: these probes establish
+no latency improvement. NB10 and native/physical acceptance remain open.
+[Exact results and host contexts](audit-evidence/2026-10-09/source-action-material/results.json).
+Production 265 and DB30/wire44/manifest26 are unchanged.

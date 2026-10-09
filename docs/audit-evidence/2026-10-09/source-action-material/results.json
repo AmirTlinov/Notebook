@@ -1,0 +1,256 @@
+{
+  "format": 1,
+  "date": "2026-10-09",
+  "issue": "GUI-494",
+  "register": [
+    "NB10"
+  ],
+  "baseCommit": "3e12c5dee091d8d32d8061b15015dc319b634ace",
+  "result": "One derived typed document per source-action segment; repeat source decoding removed. No writer latency improvement established by these single instrumented probes.",
+  "owners": [
+    "Sources/NotebookCore/CollaborationStore.swift",
+    "Sources/NotebookCore/DocumentDocument.swift",
+    "Sources/NotebookCore/JSONValue.swift"
+  ],
+  "contract": [
+    "JSON remains publication authority. Every files mutation invalidates the candidate, including direct Undo/restamp.",
+    "Validated source material and the actual recorded human/agent metadata share one candidate. Unknown root JSON fields remain untouched.",
+    "Lifecycle flush and final validation discard typed material before publication and receipt encoding.",
+    "Source CAS and final SQL publication read, independent published receipt header, admission, field namespaces, exact Unicode, atomicity and one delivery hash remain."
+  ],
+  "checks": [
+    {
+      "evidence": ".build/gui494-codec-regressions-20261009-v1",
+      "functions": 21,
+      "cases": 28,
+      "failures": 0,
+      "skips": 0,
+      "sourceSHA256": "060d2fc25b5e914988d536b2b24509d4ed41577218a99b827cc0875145eaadf6",
+      "sourceCount": 1713,
+      "unchanged": true,
+      "verificationSHA256": "d135b6f104f06f9586ac2245c66480e5c0629d29f8b62c884a5c180421fbd447"
+    },
+    {
+      "evidence": ".build/gui494-codec-batch-undo-20261009-v1",
+      "functions": 5,
+      "cases": 6,
+      "failures": 0,
+      "skips": 0,
+      "sourceSHA256": "060d2fc25b5e914988d536b2b24509d4ed41577218a99b827cc0875145eaadf6",
+      "sourceCount": 1713,
+      "unchanged": true,
+      "verificationSHA256": "69f68b1cfe50659656dbb83e0ae8058c32d8df5ce60db62ec84398135f8be0b5"
+    }
+  ],
+  "probes": [
+    {
+      "sourceBytes": 1024,
+      "baseline": {
+        "evidence": ".build/gui494-codec-baseline-1024-20261009-v1",
+        "raw": "baseline-1k.json",
+        "rawSHA256": "4714e90afc19f76fb13e7dc2cb7244de71e65fb7d97745db113fcf966f532693",
+        "sourceSHA256": "e134abe7edba9d9c01afac57a8b0a1214e70ca326328a1c12ab0b209413d4e9d",
+        "sourceCount": 1713,
+        "unchanged": true,
+        "writerMilliseconds": 45.899,
+        "inkWaitMilliseconds": 77.629875,
+        "coordinationMilliseconds": 0.481791,
+        "preparationMilliseconds": 0.236167,
+        "documentCodec": {
+          "documentDecode": {
+            "encodedBytes": 12249,
+            "passes": 7
+          },
+          "documentEncode": {
+            "encodedBytes": 3816,
+            "passes": 2
+          },
+          "filesEncode": {
+            "encodedBytes": 1071,
+            "passes": 1
+          }
+        },
+        "hostContext": {
+          "phase": "before",
+          "utc": "2026-10-09T10:00:50Z",
+          "load": [
+            6.4990234375,
+            5.609375,
+            6.1015625
+          ],
+          "debug": true,
+          "sourceBytes": 1024,
+          "host": "hw.model: Mac17,6\nhw.logicalcpu: 18\nhw.memsize: 137438953472\n",
+          "concurrentNativeAcceptance": "foreign Xcode slot reserved; may overlap independent checkout",
+          "head": "3e12c5dee091d8d32d8061b15015dc319b634ace"
+        },
+        "verificationSHA256": "2a1509ca8b51b670ac96db9c12303c3f18255213af940eb62648990d622829ff"
+      },
+      "after": {
+        "evidence": ".build/gui494-codec-after-1024-20261009-v1",
+        "raw": "after-1k.json",
+        "rawSHA256": "75ae7fc1659b8b1eaa8c16cf62e470ebbbb49b2fc6effcf3c43ecb424ab7d77d",
+        "sourceSHA256": "060d2fc25b5e914988d536b2b24509d4ed41577218a99b827cc0875145eaadf6",
+        "sourceCount": 1713,
+        "unchanged": true,
+        "writerMilliseconds": 44.846458,
+        "inkWaitMilliseconds": 63.3105,
+        "coordinationMilliseconds": 0.441291,
+        "preparationMilliseconds": 0.223083,
+        "documentCodec": {
+          "documentDecode": {
+            "encodedBytes": 6072,
+            "passes": 4
+          },
+          "documentEncode": {
+            "encodedBytes": 3816,
+            "passes": 2
+          },
+          "filesEncode": {
+            "encodedBytes": 1071,
+            "passes": 1
+          }
+        },
+        "hostContext": {
+          "utcBefore": "2026-10-09T10:05:58Z",
+          "loadBefore": [
+            5.04736328125,
+            5.64013671875,
+            6.02783203125
+          ],
+          "debug": true,
+          "sourceBytes": 1024,
+          "host": "hw.model: Mac17,6\nhw.logicalcpu: 18\nhw.memsize: 137438953472\n",
+          "concurrentNativeAcceptance": "foreign Xcode slot reserved; may overlap independent checkout",
+          "head": "3e12c5dee091d8d32d8061b15015dc319b634ace",
+          "exitCode": 0,
+          "utcAfter": "2026-10-09T10:06:00Z",
+          "loadAfter": [
+            5.04736328125,
+            5.64013671875,
+            6.02783203125
+          ]
+        },
+        "verificationSHA256": "4354e0592f0520c599541914c329724eaeea4f18d088b0239d585be0f675ad78"
+      }
+    },
+    {
+      "sourceBytes": 4194304,
+      "baseline": {
+        "evidence": ".build/gui494-codec-baseline-4194304-20261009-v1",
+        "raw": "baseline-4m.json",
+        "rawSHA256": "1c9a8e3438aa6cd6dcf6bffd1ba7f87baed16169be12af7c1e20068757f8f49c",
+        "sourceSHA256": "e134abe7edba9d9c01afac57a8b0a1214e70ca326328a1c12ab0b209413d4e9d",
+        "sourceCount": 1713,
+        "unchanged": true,
+        "writerMilliseconds": 1264.594292,
+        "inkWaitMilliseconds": 1314.384334,
+        "coordinationMilliseconds": 0.52075,
+        "preparationMilliseconds": 611.026083,
+        "documentCodec": {
+          "documentDecode": {
+            "encodedBytes": 25171929,
+            "passes": 7
+          },
+          "documentEncode": {
+            "encodedBytes": 8390376,
+            "passes": 2
+          },
+          "filesEncode": {
+            "encodedBytes": 4194351,
+            "passes": 1
+          }
+        },
+        "hostContext": {
+          "phase": "before",
+          "utc": "2026-10-09T10:02:07Z",
+          "load": [
+            7.39794921875,
+            6.4404296875,
+            6.396484375
+          ],
+          "debug": true,
+          "sourceBytes": 4194304,
+          "host": "hw.model: Mac17,6\nhw.logicalcpu: 18\nhw.memsize: 137438953472\n",
+          "concurrentNativeAcceptance": "foreign Xcode slot reserved; may overlap independent checkout",
+          "head": "3e12c5dee091d8d32d8061b15015dc319b634ace"
+        },
+        "verificationSHA256": "d690acd3d01bdd2e029536614662aee0841fffce874af63566bd96c06fc1c0d6"
+      },
+      "after": {
+        "evidence": ".build/gui494-codec-after-4194304-20261009-v1",
+        "raw": "after-4m.json",
+        "rawSHA256": "1326412ca47f8e43cc69d1da1f866d78a1794d821fa9ca2df7b3b57110fe095c",
+        "sourceSHA256": "060d2fc25b5e914988d536b2b24509d4ed41577218a99b827cc0875145eaadf6",
+        "sourceCount": 1713,
+        "unchanged": true,
+        "writerMilliseconds": 1290.2615,
+        "inkWaitMilliseconds": 1371.185292,
+        "coordinationMilliseconds": 0.550333,
+        "preparationMilliseconds": 616.659541,
+        "documentCodec": {
+          "documentDecode": {
+            "encodedBytes": 12585912,
+            "passes": 4
+          },
+          "documentEncode": {
+            "encodedBytes": 8390376,
+            "passes": 2
+          },
+          "filesEncode": {
+            "encodedBytes": 4194351,
+            "passes": 1
+          }
+        },
+        "hostContext": {
+          "utcBefore": "2026-10-09T10:06:58Z",
+          "loadBefore": [
+            5.14111328125,
+            5.51513671875,
+            5.94921875
+          ],
+          "debug": true,
+          "sourceBytes": 4194304,
+          "host": "hw.model: Mac17,6\nhw.logicalcpu: 18\nhw.memsize: 137438953472\n",
+          "concurrentNativeAcceptance": "foreign Xcode slot reserved; may overlap independent checkout",
+          "head": "3e12c5dee091d8d32d8061b15015dc319b634ace",
+          "exitCode": 0,
+          "utcAfter": "2026-10-09T10:07:03Z",
+          "loadAfter": [
+            5.12939453125,
+            5.50634765625,
+            5.943359375
+          ]
+        },
+        "verificationSHA256": "a2b379139b8cfa3632b6667faf3e40be8e6e09b4512662ade70f1e82fabb4356"
+      }
+    }
+  ],
+  "interpretation": {
+    "typedDecodes": "Observed total 7 to 4: source-bearing decodes 6 to 3 plus one unchanged source-free published receipt header.",
+    "decodeEncodedBytesAt4MiB": "25171929 to 12585912; counts borrow required encoder buffers and include JSON envelope/metadata.",
+    "writerLatency": "1264.594292 to 1290.2615 ms at 4 MiB. This pair establishes no elapsed improvement. The remaining writer cost requires attribution.",
+    "measurementScope": "One fresh Debug process per size and phase on this working Mac, DB30 and pinned Swift6.4. SQL PROFILE allocation sampling, coordination and optional concurrent independent-checkout native work are inside the measured interval. CPU time was not measured. RSS includes fixture setup. No release performance or physical acceptance claim."
+  },
+  "unchangedFormats": {
+    "database": 30,
+    "wire": 44,
+    "manifest": 26,
+    "installedPair": 265
+  },
+  "open": [
+    "NB10 remains open: attribute and reduce the remaining actual writer cost.",
+    "Native and physical iPad acceptance of this Core slice; full104 acceptance, device history transition and joint work remain open."
+  ],
+  "commonCandidate": {
+    "tree": "7051a63ee8470cec4a8cc8820d264d94dc5c2848",
+    "packageInputCount": 845,
+    "packageInputsMatchVerifiedSource": true,
+    "baselineToAfterSourceChanges": [
+      "Sources/NotebookCore/CollaborationStore.swift",
+      "Sources/NotebookCore/DocumentDocument.swift",
+      "Tests/NotebookCoreTests/DocumentFilesTests.swift"
+    ],
+    "scope": "Core evidence contains the preserved native WIP; all Package/Sources/Tests inputs match the common index. Native acceptance is not claimed."
+  }
+}

@@ -203,6 +203,7 @@ extension NotebookStore {
       var inkPointCount = 0
       func flushSegment() throws {
         try after.recordFieldChanges(from: segmentBefore, human: human)
+        after.releaseWorkingDocument()
         let delta = collaborationDiff(segmentBefore.files, after.files)
         for field in delta {
           if field.path.isEmpty { evidenceAfter[field.file] = field.after }
@@ -285,6 +286,9 @@ extension NotebookStore {
         try after.validateElementParents(action: action, scope: self)
         try after.validate(scope: self)
       }
+      // Validation has consumed the command's typed material. Publication and
+      // receipt encoding retain JSON evidence, not another decoded source body.
+      after.releaseWorkingDocument()
       if hasLifecycle { try coalesceCreatedNotebookSources(action, before: before, after: after, evidence: &evidenceAfter) }
       var changes = try graphicConversionChanges(action, after: after.files,
         changes: collaborationDiff(before.files, hasLifecycle ? evidenceAfter : after.files).filter { !action.ownsInkField($0) })
@@ -831,7 +835,10 @@ private struct CollaborationCreationProtection {
 }
 
 struct CollaborationWorkspace {
-  var files: [String: JSONValue]
+  // JSON remains the publication authority. Any direct rewrite (including
+  // Undo/restamp) invalidates the one derived typed candidate automatically.
+  var files: [String: JSONValue] { didSet { workingDocument = nil } }
+  private var workingDocument: (file: String, value: DocumentDocument)? = nil
   let projectedPageIDs: Set<UUID>
   var pageGraphicSources: [UUID: [PageInkAction]] = [:]
   var pageInkFrontiers: [UUID: UInt64] = [:]
@@ -843,6 +850,13 @@ struct CollaborationWorkspace {
     self.creationZIndexes = creationZIndexes
   }
   var ink: SpatialInkJournal { get throws { try files["spatial-ink.json"]!.decode(SpatialInkJournal.self) } }
+
+  private func document(file: String, raw: JSONValue) throws -> DocumentDocument {
+    if let workingDocument, workingDocument.file == file { return workingDocument.value }
+    return try raw.decode(DocumentDocument.self)
+  }
+
+  mutating func releaseWorkingDocument() { workingDocument = nil }
 
   init(store: NotebookStore) throws {
     projectedPageIDs = []
@@ -1096,9 +1110,10 @@ struct CollaborationWorkspace {
   }
 
   mutating func editDocument(_ op: CollaborationOperation, actor: UUID) throws {
-    guard op.target.kind == .document, let value = files[documentFile(op.target.id)], let id = op.id else { throw missing(op.target) }
-    let document = try value.decode(DocumentDocument.self)
-    var entries = document.files
+    let file = documentFile(op.target.id)
+    guard op.target.kind == .document, let value = files[file], let id = op.id else { throw missing(op.target) }
+    let document = try self.document(file: file, raw: value)
+    var entries = document.files, entrypoint = document.entrypoint
     let index = entries.firstIndex { collaborationIdentity($0.id) == collaborationIdentity(id) }
     guard let rawVersion = op.values["expectedVersion"] else { throw invalid("Нужна прочитанная версия файла; null только для создания.") }
     let expected = try rawVersion == .null ? nil : rawVersion.decode(ContentFieldVersion.self)
@@ -1128,17 +1143,20 @@ struct CollaborationWorkspace {
     case .renameDocumentFile:
       guard let index, let path = op.values["path"]?.string else { throw missing(op.target) }
       entries[index] = entries[index].renamed(path)
+      if document.files[index].path == document.entrypoint { entrypoint = path }
     case .removeDocumentFile:
       guard let index else { throw missing(op.target) }; entries.remove(at: index)
     default: throw invalid("Операция не принадлежит файлу документа.")
     }
-    var next = value.setting("files", try .encode(entries.sorted { collaborationIdentity($0.id) < collaborationIdentity($1.id) }))
-    if op.kind == .renameDocumentFile, let index, document.files[index].path == document.entrypoint, let path = op.values["path"] {
-      next = next.setting("entrypoint", path)
-    }
-    guard try next.decode(DocumentDocument.self).isValid else { throw invalid("Пути и ID файлов должны быть уникальны.") }
+    var candidate = try document.projectingCommandMaterial(entrypoint: entrypoint, files: entries)
+    // Preserve unknown root fields and the existing addressed JSON delta.
+    var next = value.setting("files", try .encode(candidate.files))
+    if entrypoint != document.entrypoint { next = next.setting("entrypoint", .string(entrypoint)) }
     guard !DocumentFile.sourceValuesAreEqual(next, value) else { return }
-    files[documentFile(op.target.id)] = try advancing(next, key: "contentStamp", actor: actor)
+    guard let stamp = candidate.contentStamp.advanced(by: actor) else { throw invalid("Счётчик версий достиг предела.") }
+    candidate = try candidate.recordingCommandMetadata(contentStamp: stamp, collaboration: candidate.collaboration)
+    files[file] = next.setting("contentStamp", try .encode(stamp))
+    workingDocument = (file, candidate)
   }
 
   mutating func create(_ op: CollaborationOperation, actor: UUID) throws {
@@ -1218,8 +1236,11 @@ struct CollaborationWorkspace {
         }
       }
       if item.kind == .document {
-        guard let document = files[documentFile(item.id)], try document.decode(DocumentDocument.self).isValid else { throw invalid("Документ содержит согласованные файлы.") }
-        if let scope { try scope.validateDocumentFileNamespace(file: documentFile(item.id), replacing: document.decode(DocumentDocument.self)) }
+        let file = documentFile(item.id)
+        guard let raw = files[file] else { throw invalid("Документ содержит согласованные файлы.") }
+        let document = try self.document(file: file, raw: raw)
+        guard document.isValid else { throw invalid("Документ содержит согласованные файлы.") }
+        if let scope { try scope.validateDocumentFileNamespace(file: file, replacing: document) }
         if let state = files[stateFile(item.id)] {
           guard try state.decode(DocumentStateJournal.self).isValid else { throw invalid("Документ содержит допустимое состояние.") }
         } else if let scope {
@@ -1367,7 +1388,11 @@ struct CollaborationWorkspace {
       let newContent = target.kind == .page ? current.setting("computations", nil) : current
       metadata.record(before: oldContent, after: newContent, beforeStamp: beforeStamp, stamp: stamp, human: human)
       if metadata != previousMetadata { current = current.setting("collaboration", try .encode(metadata)) }
+      let retained = target.kind == .document && workingDocument?.file == file ? workingDocument?.value : nil
+      let recorded = try retained?.recordingCommandMetadata(contentStamp: stamp,
+        collaboration: metadata != previousMetadata ? metadata : retained?.collaboration)
       files[file] = files[file]!.setting(at: path[...], to: current)
+      if let recorded { workingDocument = (file, recorded) }
     }
   }
 

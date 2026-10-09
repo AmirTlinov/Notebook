@@ -60,9 +60,19 @@ old envelope can refuse a small direct Save; the editor first persists its lates
 draft through the same FIFO. Source comparisons preserve exact Unicode bytes in
 editor changes, CAS, delta, drafts and Undo/Redo.
 
+`CollaborationWorkspace` retains at most one typed document during a source-action
+segment. Every JSON `files` write invalidates it; an accepted edit restores its
+validated material and the metadata written by the existing field-change owner.
+The candidate is released before publication, lifecycle barriers and receipts.
+Initial/final SQL source cuts and the published, source-free receipt header remain
+independent reads. The command never retains a typed cache for every document.
+
 The isolated NB10 probe is `NotebookSearchIndexCostTests` with
 `NOTEBOOK_SEARCH_TRACE_BYTES=1024`, `1048576`, or `4194304`, once per process.
 It traces actual BEGIN IMMEDIATE→COMMIT, VM steps, allocator live memory, SQLite
 memory and a competing accepted ink command. PROFILE tracing preserves the
 progress handler. Sampled live allocation peaks are distinct from total
 allocation events; RSS high water includes fixture setup.
+In Debug, `documentCodec` counts the actual typed decodes and document/files
+encodes, borrowing each already required encoder buffer's byte count. It adds no
+measurement encode. Reduced codec work alone does not establish lower latency.
