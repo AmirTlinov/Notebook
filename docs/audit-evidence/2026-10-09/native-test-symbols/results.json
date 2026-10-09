@@ -1,0 +1,65 @@
+{
+  "status": "passed",
+  "scope": "Disposable clone of real v5 iPad product; no Xcode/install/native test executed",
+  "symbols": {
+    "Notebook": {
+      "linkedLocalBefore": 553412,
+      "linkedLocalAfter": 0,
+      "dSYMBefore": 611470,
+      "dSYMAfter": 193976,
+      "dwarfSections": 14,
+      "dwarfBytes": 70682087
+    },
+    "NotebookTests": {
+      "linkedLocalBefore": 126731,
+      "linkedLocalAfter": 0,
+      "dSYMBefore": 133825,
+      "dSYMAfter": 99458,
+      "dwarfSections": 12,
+      "dwarfBytes": 51556131
+    }
+  },
+  "sourceLookup": "NotebookWorkspaceRuntime.swift:47 (configuration init)",
+  "uuidAndExternalExportsUnchanged": true,
+  "allDWARFSectionsUnchanged": true,
+  "signingIdentifierAuthorityTeamFlagsEntitlementsProfileUnchanged": true,
+  "childThenParentSignatureVerified": true,
+  "actualProductsUnmodified": true,
+  "helperCandidate": {
+    "head": "69384bd541c6bfa57814dba50663fb3dad225c9e",
+    "paths": {
+      "Applications/notebook_release.py": "699ce78d498ab1c890e6e3f61d0a5c6ad6d6275e27b45e4cec6da0d31c38020c",
+      "Applications/notebook_verification.py": "b70136b5df45408560f75a9c47c901d36c3e1eeaafc2d7e82a066f3ec24d464b",
+      "Tests/NotebookVerification/run.py": "83702da1a6ce8400d9606a583d45561e9a5e591c6a7b81a1105c7d8c1b2724c4"
+    },
+    "onlySymbolHelpers": true,
+    "selectedFunctions": {
+      "Applications/notebook_release.py": [
+        "prepare_native_test_symbols"
+      ],
+      "Applications/notebook_verification.py": [
+        "native_arguments",
+        "run_selected"
+      ],
+      "Tests/NotebookVerification/run.py": [
+        "NativeIPadUIArtifactTests.test_ui_route_builds_then_installs_and_cleans_both_identities_even_on_failure",
+        "CodexReceiptTests.test_source_manifest_binds_preparation_native_arguments_and_final_receipt",
+        "SelectionTests.test_native_symbol_preparation_refuses_stale_dsym_before_stripping_either_product",
+        "SelectionTests.test_ipad_selection_uses_the_physical_device_and_an_isolated_signed_app"
+      ]
+    },
+    "assembly": "exact complete existing owner functions, excludes uncommitted paper harness removal"
+  },
+  "focusedPythonTests": {
+    "passed": 5,
+    "failed": 0,
+    "seconds": 0.282,
+    "scope": "Exact complete helper owner functions, excludes future document-paper verification branch removal"
+  },
+  "actualChildCompanion": {
+    "path": "Debug-iphoneos/Notebook.app/PlugIns/NotebookTests.xctest.dSYM",
+    "uuid": "25420838-C893-3D14-A684-9C6407F74C3D",
+    "flatProductChildCompanionExists": false
+  },
+  "physicalScope": "No native test or installation performed by this proof; real v5 products untouched"
+}

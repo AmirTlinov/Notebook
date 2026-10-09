@@ -131,7 +131,7 @@ class NativeIPadUIArtifactTests(unittest.TestCase):
                 if label == "ipad": raise release.ReleaseError("runner failed")
                 if label == "ipad-native-test-cleanup-after" and cleanup_fails:
                     raise release.ReleaseError("cleanup failed")
-                return b"", None
+                return b"", b""
             def install(products, evidence, command):
                 calls.append(("preinstall", []))
                 if install_fails: raise release.ReleaseError("install failed")
@@ -139,6 +139,10 @@ class NativeIPadUIArtifactTests(unittest.TestCase):
                 configured.parent.mkdir(parents=True, exist_ok=True)
                 configured.write_bytes(b"fixture generated Xcode run")
                 return configured
+            def symbols(*args, **kwargs):
+                calls.append(("prepare-symbols", []))
+                self.assertEqual(kwargs["platform"], "ipad")
+                return {}
             selector = "NotebookUITests/NotebookNavigationLoadUITests/testContinuousZoomWithProgramsMeetsSystemHitchBudget"
             plan = {"optimized": True, "checks": {"core": [], "ipad": [selector], "mac": [], "commands": []}}
             evidence = self.root / ("selected-" + str(install_fails) + "-" + str(cleanup_fails))
@@ -148,11 +152,15 @@ class NativeIPadUIArtifactTests(unittest.TestCase):
                  patch.object(release, "prepare_codex_runtime", return_value=self.root / ("0" * 64)), \
                  patch.object(verify, "prepared_codex", return_value={"versions": {"node": "fixture"}}), \
                  patch.object(release, "prepare_typesetter_runtime", return_value=self.root), \
+                 patch.object(release, "development_signer", return_value=("fixture signer", {})), \
+                 patch.object(release, "prepare_native_test_symbols", side_effect=symbols), \
                  patch.object(verify, "install_native_ipad_ui_artifacts", side_effect=install), \
                  self.assertRaises(release.ReleaseError):
                 verify.run_selected(self.root, plan, evidence)
             labels = [label for label, _ in calls]
             self.assertLess(labels.index("ipad-build-for-testing"), labels.index("preinstall"))
+            self.assertLess(labels.index("ipad-build-for-testing"), labels.index("prepare-symbols"))
+            self.assertLess(labels.index("prepare-symbols"), labels.index("preinstall"))
             self.assertEqual(labels[-2:], ["ipad-native-test-cleanup-after", "ipad-ui-runner-cleanup-after"])
             build = next(argv for label, argv in calls if label == "ipad-build-for-testing")
             self.assertIn("build-for-testing", build); self.assertIn("SWIFT_OPTIMIZATION_LEVEL=-O", build)
@@ -212,8 +220,10 @@ class CodexReceiptTests(unittest.TestCase):
         self.plan["typesetterRuntime"] = str(self.root / "typesetter")
         argv = verify.native_arguments(self.root, self.evidence, self.plan, "mac", [], "build-for-testing")
         self.assertIn("NOTEBOOK_CODEX_RUNTIME=" + str(self.stage), argv)
-        self.assertIn("DEBUG_INFORMATION_FORMAT=dwarf-with-dsym", argv)
-        self.assertIn("ENABLE_DEBUG_DYLIB=NO", argv)
+        for platform in ("mac", "ipad"):
+            argv = verify.native_arguments(self.root, self.evidence, self.plan, platform, [], "build-for-testing")
+            self.assertIn("DEBUG_INFORMATION_FORMAT=dwarf-with-dsym", argv)
+            self.assertIn("ENABLE_DEBUG_DYLIB=NO", argv)
 
     def test_forged_report_cannot_pass_even_when_all_generic_evidence_hashes_are_recomputed(self):
         receipt = release.finish_verification(self.root, self.evidence)
@@ -366,28 +376,33 @@ class SelectionTests(unittest.TestCase):
             command.assert_not_called()
 
     def test_native_symbol_preparation_refuses_stale_dsym_before_stripping_either_product(self):
-        with tempfile.TemporaryDirectory() as directory:
-            app, symbols = Path(directory) / "NotebookRuntime.app", Path(directory) / "symbols"
-            bundles = (app, app / "Contents/PlugIns/NotebookMacTests.xctest")
-            for bundle in bundles:
-                name = bundle.stem
-                (bundle / "Contents/MacOS").mkdir(parents=True)
-                (bundle / "Contents/MacOS" / name).write_bytes(b"signed executable with local symbols")
-                (bundle / "Contents/Info.plist").write_bytes(plistlib.dumps({
-                    "CFBundleIdentifier": release.MAC_BUNDLE + ".acceptance", "CFBundleExecutable": name}))
-                (bundle.parent / (bundle.name + ".dSYM")).mkdir(parents=True)
-            identity = str(uuid.uuid4()).upper()
-            calls = []
-            def command(label, argv, **options):
-                calls.append(label)
-                value = str(uuid.uuid4()).upper() if label == "native-symbols-NotebookMacTests-dsym" else identity
-                return (("UUID: " + value + " (arm64) binary\n").encode(), b"")
-            with self.assertRaisesRegex(release.ReleaseError, "разные UUID"):
-                release.prepare_native_test_symbols(app, symbols, command, signing_identity="-")
-            self.assertEqual(len(calls), 4)
-            self.assertTrue(all(label.endswith(("-binary", "-dsym")) for label in calls))
-            for bundle in bundles:
-                self.assertEqual((bundle / "Contents/MacOS" / bundle.stem).read_bytes(), b"signed executable with local symbols")
+        for platform, app_name, test_name, identifier in (
+                ("mac", "NotebookRuntime", "NotebookMacTests", release.MAC_BUNDLE + ".acceptance"),
+                ("ipad", "Notebook", "NotebookTests", verify.NATIVE_IPAD_BUNDLE)):
+            with self.subTest(platform=platform), tempfile.TemporaryDirectory() as directory:
+                app, symbols = Path(directory) / (app_name + ".app"), Path(directory) / "symbols"
+                contents = Path("Contents") if platform == "mac" else Path()
+                executable_directory = contents / "MacOS" if platform == "mac" else contents
+                bundles = (app, app / contents / "PlugIns" / (test_name + ".xctest"))
+                for bundle in bundles:
+                    name = bundle.stem
+                    (bundle / executable_directory).mkdir(parents=True)
+                    (bundle / executable_directory / name).write_bytes(b"signed executable with local symbols")
+                    (bundle / contents / "Info.plist").write_bytes(plistlib.dumps({
+                        "CFBundleIdentifier": identifier, "CFBundleExecutable": name}))
+                    (bundle.parent / (bundle.name + ".dSYM")).mkdir(parents=True)
+                identity = str(uuid.uuid4()).upper()
+                calls = []
+                def command(label, argv, **options):
+                    calls.append(label)
+                    value = str(uuid.uuid4()).upper() if label == "native-symbols-" + test_name + "-dsym" else identity
+                    return (("UUID: " + value + " (arm64) binary\n").encode(), b"")
+                with self.assertRaisesRegex(release.ReleaseError, "разные UUID"):
+                    release.prepare_native_test_symbols(app, symbols, command, platform=platform, signing_identity="-")
+                self.assertEqual(len(calls), 4)
+                self.assertTrue(all(label.endswith(("-binary", "-dsym")) for label in calls))
+                for bundle in bundles:
+                    self.assertEqual((bundle / executable_directory / bundle.stem).read_bytes(), b"signed executable with local symbols")
 
     def test_dsym_compaction_keeps_external_aliases_uuid_and_all_debug_bytes(self):
         names, debug = b"\0a\0b\0c\0d\0e\0", b"DWARF source lines and types remain byte-identical"
@@ -673,7 +688,7 @@ class SelectionTests(unittest.TestCase):
             calls.append((label, argv))
             native_inventory_fixture(label, argv)
             if label == "ipad": raise RunnerReached()
-            return b"", None
+            return b"", b""
         plan = {"checks": {"core": [], "ipad": ["NotebookTests/NotebookGraphicModelTests"],
                             "mac": [], "commands": []}}
         with patch.object(release, "release_commands", return_value=command), \
@@ -681,8 +696,11 @@ class SelectionTests(unittest.TestCase):
              patch.object(release, "read_toolchain", return_value={"toolchain": "fixture", "node": "fixture"}), \
              patch.object(release, "prepare_codex_runtime", return_value=self.root / ("0" * 64)), \
              patch.object(verify, "prepared_codex", return_value={"versions": {"node": "fixture"}}), \
+             patch.object(release, "development_signer", return_value=("fixture signer", {})), \
+             patch.object(release, "prepare_native_test_symbols", return_value={}) as symbols, \
              self.assertRaises(RunnerReached):
             verify.run_selected(self.root, plan, self.root / "physical-native")
+        self.assertEqual(symbols.call_args.kwargs, {"platform": "ipad", "signing_identity": "fixture signer"})
         args = next(args for label, args in calls if label == "ipad")
         self.assertEqual(args[args.index("-destination") + 1], "platform=iOS,id=" + release.UDID)
         self.assertIn("NOTEBOOK_BUNDLE_SUFFIX=.native-test", args)

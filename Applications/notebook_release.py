@@ -546,7 +546,7 @@ def compact_dsym_local_aliases(path):
     return {"before": count, "after": len(kept) // 16}
 
 
-def prepare_native_test_symbols(app, symbols, command, *, signing_identity):
+def prepare_native_test_symbols(app, symbols, command, *, platform, signing_identity):
     """Keep source diagnostics in matching dSYMs and external testable exports.
 
     The typesetter has hundreds of thousands of folded local cold aliases.
@@ -555,18 +555,22 @@ def prepare_native_test_symbols(app, symbols, command, *, signing_identity):
     -S alone only removes debug-map entries and leaves this collision intact.
     """
     app, symbols = Path(app).resolve(), Path(symbols).resolve()
+    require(platform in ("mac", "ipad"), "Неизвестная платформа native-test.")
     require(not below(app, CANONICAL_MAC.resolve()), "Нельзя изменять символы установленного рабочего Mac.")
-    info = plistlib.loads((app / "Contents/Info.plist").read_bytes())
-    require(info.get("CFBundleIdentifier") == MAC_BUNDLE + ".acceptance",
-            "Ожидался изолированный native-test Mac bundle.")
-    bundles = (app, app / "Contents/PlugIns/NotebookMacTests.xctest")
+    contents = Path("Contents") if platform == "mac" else Path()
+    executable_directory = contents / "MacOS" if platform == "mac" else contents
+    identifier = MAC_BUNDLE + ".acceptance" if platform == "mac" else CANONICAL + ".native-test"
+    info = plistlib.loads((app / contents / "Info.plist").read_bytes())
+    require(info.get("CFBundleIdentifier") == identifier,
+            "Ожидался изолированный native-test " + platform + " bundle.")
+    bundles = (app, app / contents / "PlugIns" / ("NotebookMacTests.xctest" if platform == "mac" else "NotebookTests.xctest"))
     targets = []
     # Validate both companions before changing either signed executable.
     for bundle in bundles:
-        info = plistlib.loads((bundle / "Contents/Info.plist").read_bytes())
+        info = plistlib.loads((bundle / contents / "Info.plist").read_bytes())
         name = info.get("CFBundleExecutable")
         require(isinstance(name, str) and name == Path(name).name, "Нет имени тестового executable.")
-        executable, companion = bundle / "Contents/MacOS" / name, bundle.parent / (bundle.name + ".dSYM")
+        executable, companion = bundle / executable_directory / name, bundle.parent / (bundle.name + ".dSYM")
         require(executable.is_file() and companion.is_dir(), "Нет native executable или полного dSYM.")
         identities = []
         for label, path in (("binary", executable), ("dsym", companion)):
@@ -583,7 +587,11 @@ def prepare_native_test_symbols(app, symbols, command, *, signing_identity):
         if bundle != app:
             command("native-symbols-" + name + "-reseal", ["/usr/bin/codesign", "--force", "--sign", signing_identity,
                 "--timestamp=none", "--preserve-metadata=identifier,entitlements,flags,runtime", bundle])
-    # The existing worker-entitlement stage reseals and verifies the outer app.
+    if platform == "ipad":
+        command("native-symbols-host-reseal", ["/usr/bin/codesign", "--force", "--sign", signing_identity,
+            "--timestamp=none", "--preserve-metadata=identifier,entitlements,flags,runtime", app])
+        command("native-symbols-host-verify", ["/usr/bin/codesign", "--verify", "--deep", "--strict", app])
+    # On Mac the existing worker-entitlement stage reseals the outer app.
     return summaries
 
 

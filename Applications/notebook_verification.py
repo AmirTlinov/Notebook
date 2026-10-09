@@ -620,9 +620,9 @@ def native_arguments(root, evidence, plan, platform, selectors, action, typescri
             argv.extend(("SWIFT_OPTIMIZATION_LEVEL=-O", "GCC_OPTIMIZATION_LEVEL=s"))
         argv.extend(native_mac_signing_settings() if platform == "mac" else native_ipad_signing_settings())
         argv.append("NOTEBOOK_TYPESETTER_RUNTIME=" + str(prepared_typesetter_stage(plan)))
+        argv.extend(("DEBUG_INFORMATION_FORMAT=dwarf-with-dsym", "ENABLE_DEBUG_DYLIB=NO"))
         if platform == "mac":
-            argv.extend(("DEBUG_INFORMATION_FORMAT=dwarf-with-dsym", "ENABLE_DEBUG_DYLIB=NO",
-                         "NOTEBOOK_TYPESCRIPT_RUNTIME=" + str(typescript),
+            argv.extend(("NOTEBOOK_TYPESCRIPT_RUNTIME=" + str(typescript),
                          "NOTEBOOK_CODEX_RUNTIME=" + str(prepared_codex_stage(plan))))
     argv.extend("-only-testing:" + selector for selector in selectors)
     return argv
@@ -924,15 +924,24 @@ def run_selected(root, plan, evidence):
                 app = derived / "mac/Build/Products/Debug/NotebookRuntime.app"
                 display = command("mac-native-signer", ["/usr/bin/codesign", "--display", "--verbose=4", app], read_output=True)
                 signer, identity = release.development_signer(b"\n".join(display).decode(), release.MAC_BUNDLE + ".acceptance")
-                symbols = release.prepare_native_test_symbols(app, evidence / "mac-symbols", command, signing_identity=signer)
+                symbols = release.prepare_native_test_symbols(app, evidence / "mac-symbols", command,
+                    platform="mac", signing_identity=signer)
                 release.restrict_test_script_services(app, root, command, bundle_identifier=release.MAC_BUNDLE + ".acceptance", signing_identity=signer)
                 release.write_json(evidence / "mac-native-signature.json", {"identity": identity,
                     "debugSymbols": symbols,
                     "workerBundleSuffix": ".native-test", "scope": "isolated stateless native-test workers"})
-            elif ipad_ui:
-                configured = install_native_ipad_ui_artifacts(derived / "ipad/Build/Products", evidence, command)
-                release.write_json(evidence / "ipad-configured-run.json", {"path": str(configured), "sha256": release.file_digest(configured)})
-                (evidence / "ipad-configured-run.plist").write_bytes(configured.read_bytes())
+            else:
+                app = derived / "ipad/Build/Products/Debug-iphoneos/Notebook.app"
+                display = command("ipad-native-signer", ["/usr/bin/codesign", "--display", "--verbose=4", app], read_output=True)
+                signer, identity = release.development_signer(b"\n".join(display).decode(), NATIVE_IPAD_BUNDLE)
+                symbols = release.prepare_native_test_symbols(app, evidence / "ipad-symbols", command,
+                    platform="ipad", signing_identity=signer)
+                release.write_json(evidence / "ipad-native-signature.json", {"identity": identity,
+                    "debugSymbols": symbols, "scope": "isolated native-test app and test bundle"})
+                if ipad_ui:
+                    configured = install_native_ipad_ui_artifacts(derived / "ipad/Build/Products", evidence, command)
+                    release.write_json(evidence / "ipad-configured-run.json", {"path": str(configured), "sha256": release.file_digest(configured)})
+                    (evidence / "ipad-configured-run.plist").write_bytes(configured.read_bytes())
             enumeration = native_arguments(root, evidence, plan, platform, checks[platform], "test-without-building", typescript, configured)
             enumeration = [value for value in enumeration if value not in ("-resultBundlePath", str(evidence / (platform + ".xcresult")))]
             enumeration.extend(("-enumerate-tests", "-test-enumeration-style", "flat", "-test-enumeration-format", "json",
