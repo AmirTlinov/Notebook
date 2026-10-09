@@ -1,0 +1,34 @@
+{
+  "Sources/NotebookCore/CollaborationStore.swift": {
+    "accepted": "7e3709e04a067f488d48a1700ddb731c49053dc6cf1fec002df0ecb31691e7c6",
+    "actual": "c8b5ba4edbd48e9f593b997fd744b1386d72cd29f2476292868841e996a58b33"
+  },
+  "Sources/NotebookCore/JSONValue.swift": {
+    "accepted": "43b0c34b5e5454fcd328d15f881d0c6dfce3e06f97390cbcae03642f81806089",
+    "actual": "d96a32a6466d4143fcb911208b34c6c8e06524d0aa4c077e54642641a950ab16"
+  },
+  "Sources/NotebookCore/NotebookActionReadModel.swift": {
+    "accepted": "9b04d3654d3865c76ff2d6f5ca59d921291d61c86f5e52473f5b4a6b931a8b11",
+    "actual": "23e1a434078cfcf70135ac54200db4a37165eff416c177d41454f381a709f9ad"
+  },
+  "Sources/NotebookCore/NotebookActionResult.swift": {
+    "accepted": "1bbad8506b68c9ceb709aaf0ac0d50159d2bb0bd54e5308533a8a388392b1d4b",
+    "actual": "67f226fd961e64464e5d74122777d04f02426771982eb6444a831001bb312990"
+  },
+  "Sources/NotebookCore/NotebookReceiptPublication.swift": {
+    "accepted": "a292f37bf1971fb46718efecaa952a85d6f344fbbecf12531c30a82066b4f487",
+    "actual": "56b505e9d342bb09d2a0db64d055c54f0a9869c1c9596482298481b420ef1813"
+  },
+  "Tests/NotebookCoreTests/DocumentFilesTests.swift": {
+    "accepted": "f767a6d096057d6feb5e6b41b6fb179dd196ef7717ada30c36d3ff5459a3514f",
+    "actual": "5dc3c0c90ac67e000264add3e43ebe4eb4ee8aac2cff18322745abad3a30173a"
+  },
+  "Tests/NotebookCoreTests/NotebookReceiptPublicationTests.swift": {
+    "accepted": "51ed3d7ae4a07ae8ed7a1af3cc66a784ca34c49025c473b0aef1290e79b67907",
+    "actual": "459f7d8c4ef7464a25a3ac47ffe7dae5fb1349e4ed3944fa1796a1ab081649d0"
+  },
+  "Tests/NotebookCoreTests/NotebookSearchIndexCostTests.swift": {
+    "accepted": "b97b3f3c71d290fd4a45e7df1bdca074ef4ea6274645c1ee3f6d1ec530d33679",
+    "actual": "b8da2404a009293e2888953044c6a263bb95cc8a3a000cd29d523603e943532b"
+  }
+}

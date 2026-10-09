@@ -220,11 +220,13 @@ final class NotebookPageMaterialSources {
     let unread = strokes.subtracting(claimedStrokes)
     guard !unread.isEmpty else { return }
     claimedStrokes.formUnion(unread)
-    for claimant in try store.graphicClaimants(on: .page(pageID), sourceInkIDs: unread) {
+    try store.forEachGraphicClaimant(on: .page(pageID), sourceInkIDs: unread) { claimant in
       let id = claimant.candidate.id
-      candidates[collaborationIdentity(id)] = claimant.candidate
-      claimedStrokes.formUnion(claimant.candidate.graphic.sourceInkIDs)
-      try include(id)
+      guard let element = try include(id), let graphic = element.graphic else {
+        throw NotebookStorageError.corruptRecord(claimant.fragment.address)
+      }
+      candidates[collaborationIdentity(id)] = .init(id: id, graphic: graphic, version: claimant.candidate.version)
+      claimedStrokes.formUnion(graphic.sourceInkIDs)
     }
   }
 

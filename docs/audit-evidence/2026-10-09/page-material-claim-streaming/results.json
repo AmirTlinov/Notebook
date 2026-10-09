@@ -1,0 +1,38 @@
+{
+  "base": "63fcfe3e809ff8408829d097908c7ff26891afd0",
+  "outcome": "PASS",
+  "runtime": "Upstream Swift 6.4, standalone exact committed Package inputs plus only seven owned paths",
+  "tests": 8,
+  "suites": 2,
+  "testRuntimeSeconds": 23.77,
+  "sharedInkAcquisition": {
+    "componentBodies": 96,
+    "acquiredBodies": 83,
+    "lateBodyRead": false,
+    "expectedRefusal": "page_material_bytes",
+    "databaseVersionAfterRefusal": 29,
+    "authoredSnapshotUnchanged": true
+  },
+  "inputs": 847,
+  "inputsUnchanged": true,
+  "patchSHA256": "d824f2d79e86a97cc6c0c67b82e55812a8030ff55e2b1ef4849abe5223686c8e",
+  "logSHA256": "a7c84de9533bf81a95e3432073e530fb21a9f5c6c34b7eb786c483022daf0011",
+  "owned": {
+    "Sources/NotebookCore/NotebookActionProjection.swift": "43c32a555cd8aa97a6335edd113582f30b4298f436f87752d1d0917b6602a904",
+    "Sources/NotebookCore/NotebookGraphicGraphRead.swift": "e124bb3c4dd5c9a4575a35919d87be44d0300c1135d1953661d6193a280a3ef9",
+    "Sources/NotebookCore/NotebookGraphicIndex.swift": "efb33c02969ff76a4f5080dda299c54d3a5222d12fb40d2d793b158a4fe203f5",
+    "Sources/NotebookCore/NotebookGraphicRead.swift": "fd4958d5b28d88c650e8490b8d8a5bd92b595631f68539b3796b854c340d7bc0",
+    "Sources/NotebookCore/NotebookPageMaterialIndex.swift": "00317233f30c99d00eced1431ae5de19c0d2b01c26db61993bafb29f807d606a",
+    "Sources/NotebookCore/NotebookPageMaterialWindow.swift": "1483ff2876e37bf5141c51c8f72fec6a4aff250a8b64247b92536d90d329f9ac",
+    "Tests/NotebookCoreTests/NotebookPageMaterialWindowTests.swift": "6948eaa947e469f7980d7cdfb9e86aabb6b1492b8845711662a962c2b0811f62"
+  },
+  "parse": "PASS",
+  "applyCheck": "PASS",
+  "trackedSourcesEdited": false,
+  "xcodeOrDeviceActions": false,
+  "format": 1,
+  "date": "2026-10-09",
+  "scope": "Bounded streaming handoff at the existing claimant owner. Only the consumer chooses retained arbitration inputs; page material credit stops acquisition before the next body.",
+  "physicalAcceptance": false,
+  "runtimeAcceptance": "No physical or installed-pair acceptance claimed."
+}

@@ -495,4 +495,20 @@ rollback, Unicode, ineligible roots and exact Undo omission limits. One actual
 4,194,306 encoded bytes. Debug writer hold is 567.57 ms; this single run does not
 establish a latency improvement. Sources remain unchanged across both scopes.
 [Exact outputs and scope](audit-evidence/2026-10-09/source-digest-handoff/results.json).
+
+## 2026-10-09: common page geometry and claimant admission
+
+The final geometry, domain guards and streaming claimant changes are adopted
+together from `2c3762fb`, `63fcfe3e` and `c32dd89b`; their seven owned paths match
+the accepted bytes. The prior 11 functions / 27 cases cover malformed physical
+roots, geometry limits, large program/checkpoint material and the 100k window.
+The final streaming scope has 8 functions / 2 suites PASS. Its shared-ink closure
+reads 83 of 96 bodies, refuses before the last body and preserves DB29 authored
+records on rollback. All seven consumers use the existing streaming owner.
+
+Common-main integration adds 2 functions / 4 cases PASS for aggregate overflow
+and causal connector Undo. Of 847 package inputs, 839 match the streaming proof;
+the other eight belong to the separately accepted source-digest slice. Final
+sources are unchanged across this combined check. No physical acceptance claimed.
+[Bindings and exact scope](audit-evidence/2026-10-09/page-material-common-main/results.json).
 NB10, optimized native/device budgets and full104 acceptance remain open.

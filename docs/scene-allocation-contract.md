@@ -40,6 +40,15 @@ the old source. Workspace identity, bounds, group poses and nested WAL-cut check
 remain mandatory. The source retains only its last proven cursor, never a read
 transaction across awaits or a second material revision.
 
+The disposable page-material index derives geometry from canonical addressed
+envelopes. It validates physical row metadata, required source/program strings
+and the existing parent, basis, graphic and text predicates. A dependency closure
+retains at most 16 MiB of geometry, text, versions and claims; opaque program and
+checkpoint bodies are not assembled. The existing claimant owner supplies one
+body at a time, so the consumer's credit refusal stops before the next acquisition.
+The public addressed reader keeps its own unchanged allowance. Failed DB30 index
+admission rolls back to DB29 with authored records and cursors unchanged.
+
 The interactive ink window retains whole admitted contacts, all erasers intersecting
 their complete pen extents, and addressed figure masks even outside the camera.
 Pins preserve contacts through interaction, not a claim of complete surface history.

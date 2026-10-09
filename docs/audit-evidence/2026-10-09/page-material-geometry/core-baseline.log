@@ -1,0 +1,1143 @@
+Building for debugging...
+[Computing dependencies]
+[Pre-planning 1 / 855]
+[Planning deferred tasks]
+[56 / 378] NotebookTypesetter
+[189 / 380] CQuickJS
+[190 / 415]
+In file included from /Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/libunicode.c:30:
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/cutils.h:432:30: warning: implicit conversion loses integer precision: 'uint64_t' (aka 'unsigned long long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+  432 |             v = (a + addend) >> shift;
+      |               ~ ~~~~~~~~~~~~~^~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/libunicode.c:1206:26: warning: implicit conversion loses integer precision: 'unsigned long' to 'int' [-Wshorten-64-to-32]
+ 1206 |     buf_len = dbuf->size / sizeof(int);
+      |             ~ ~~~~~~~~~~~^~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/libunicode.c:1617:31: warning: implicit conversion loses integer precision: 'uint64_t' (aka 'unsigned long long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 1617 |         gc_mask = (uint64_t)1 << gc_idx;
+      |                 ~ ~~~~~~~~~~~~^~~~~~~~~
+3 warnings generated.
+[198 / 444]
+In file included from /Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/libregexp.c:31:
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/cutils.h:432:30: warning: implicit conversion loses integer precision: 'uint64_t' (aka 'unsigned long long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+  432 |             v = (a + addend) >> shift;
+      |               ~ ~~~~~~~~~~~~~^~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/libregexp.c:626:24: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+  626 |     pos = s->byte_code.size;
+      |         ~ ~~~~~~~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/libregexp.c:635:24: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+  635 |     pos = s->byte_code.size;
+      |         ~ ~~~~~~~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/libregexp.c:645:24: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+  645 |     pos = s->byte_code.size;
+      |         ~ ~~~~~~~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/libregexp.c:656:24: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+  656 |     pos = s->byte_code.size;
+      |         ~ ~~~~~~~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/libregexp.c:711:12: warning: implicit conversion loses integer precision: 'uint64_t' (aka 'unsigned long long') to 'int' [-Wshorten-64-to-32]
+  711 |     return v;
+      |     ~~~~~~ ^
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/libregexp.c:1019:40: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 1019 |         if (re_string_add(cr, str.size / 4, (uint32_t *)str.buf)) {
+      |             ~~~~~~~~~~~~~     ~~~~~~~~~^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/libregexp.c:1323:73: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 1323 |                 put_u32(s->byte_code.buf + split_pos, s->byte_code.size - (split_pos + 4));
+      |                 ~~~~~~~                               ~~~~~~~~~~~~~~~~~~^~~~~~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/libregexp.c:1339:73: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 1339 |                 put_u32(s->byte_code.buf + split_pos, s->byte_code.size - (split_pos + 4));
+      |                 ~~~~~~~                               ~~~~~~~~~~~~~~~~~~^~~~~~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/libregexp.c:1345:74: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 1345 |             put_u32(s->byte_code.buf + last_match_pos, s->byte_code.size - (last_match_pos + 4));
+      |             ~~~~~~~                                    ~~~~~~~~~~~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/libregexp.c:1867:40: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 1867 |         last_atom_start = s->byte_code.size;
+      |                         ~ ~~~~~~~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/libregexp.c:1905:48: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 1905 |                 last_atom_start = s->byte_code.size;
+      |                                 ~ ~~~~~~~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/libregexp.c:1940:48: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 1940 |                 last_atom_start = s->byte_code.size;
+      |                                 ~ ~~~~~~~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/libregexp.c:1967:52: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 1967 |                     last_atom_start = s->byte_code.size;
+      |                                     ~ ~~~~~~~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/libregexp.c:1981:67: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 1981 |                 put_u32(s->byte_code.buf + pos, s->byte_code.size - (pos + 4));
+      |                 ~~~~~~~                         ~~~~~~~~~~~~~~~~~~^~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/libregexp.c:2012:44: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 2012 |             last_atom_start = s->byte_code.size;
+      |                             ~ ~~~~~~~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/libregexp.c:2079:48: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 2079 |                 last_atom_start = s->byte_code.size;
+      |                                 ~ ~~~~~~~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/libregexp.c:2137:48: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 2137 |                 last_atom_start = s->byte_code.size;
+      |                                 ~ ~~~~~~~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/libregexp.c:2149:40: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 2149 |         last_atom_start = s->byte_code.size;
+      |                         ~ ~~~~~~~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/libregexp.c:2169:40: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 2169 |         last_atom_start = s->byte_code.size;
+      |                         ~ ~~~~~~~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/libregexp.c:2268:74: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 2266 |                     re_need_check_adv_and_capture_init(&need_capture_init,
+      |                     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ 2267 |                                                        s->byte_code.buf + last_atom_start,
+ 2268 |                                                        s->byte_code.size - last_atom_start);
+      |                                                        ~~~~~~~~~~~~~~~~~~^~~~~~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/libregexp.c:2285:41: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 2285 |                 len = s->byte_code.size - last_atom_start;
+      |                     ~ ~~~~~~~~~~~~~~~~~~^~~~~~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/libregexp.c:2413:26: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 2413 |     start = s->byte_code.size;
+      |           ~ ~~~~~~~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/libregexp.c:2419:33: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 2419 |         len = s->byte_code.size - start;
+      |             ~ ~~~~~~~~~~~~~~~~~~^~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/libregexp.c:2436:33: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 2436 |         len = s->byte_code.size - (pos + 4);
+      |             ~ ~~~~~~~~~~~~~~~~~~^~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/libregexp.c:2588:76: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 2588 |     register_count = compute_register_count(s->byte_code.buf, s->byte_code.size);
+      |                      ~~~~~~~~~~~~~~~~~~~~~~                   ~~~~~~~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/libregexp.c:2597:31: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 2596 |     put_u32(s->byte_code.buf + RE_HEADER_BYTECODE_LEN,
+      |     ~~~~~~~
+ 2597 |             s->byte_code.size - RE_HEADER_LEN);
+      |             ~~~~~~~~~~~~~~~~~~^~~~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/libregexp.c:2612:26: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 2612 |     *plen = s->byte_code.size;
+      |           ~ ~~~~~~~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/libregexp.c:3068:48: warning: implicit conversion loses integer precision: 'uintptr_t' (aka 'unsigned long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 3068 |                 val2 = (uintptr_t)capture[idx] - 1;
+      |                      ~ ~~~~~~~~~~~~~~~~~~~~~~~~^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/libregexp.c:3090:48: warning: implicit conversion loses integer precision: 'uintptr_t' (aka 'unsigned long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 3090 |                 val2 = (uintptr_t)capture[idx] - 1;
+      |                      ~ ~~~~~~~~~~~~~~~~~~~~~~~~^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/libregexp.c:3359:11: warning: implicit conversion loses integer precision: 'intptr_t' (aka 'long') to 'int' [-Wshorten-64-to-32]
+ 3359 |     ret = lre_exec_backtrack(s, capture, bc_buf + RE_HEADER_LEN, cptr);
+      |         ~ ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+31 warnings generated.
+In file included from /Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/cutils.c:30:
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/cutils.h:432:30: warning: implicit conversion loses integer precision: 'uint64_t' (aka 'unsigned long long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+  432 |             v = (a + addend) >> shift;
+      |               ~ ~~~~~~~~~~~~~^~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/cutils.c:53:11: warning: implicit conversion loses integer precision: 'unsigned long' to 'int' [-Wshorten-64-to-32]
+   53 |     len = strlen(buf);
+      |         ~ ^~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/cutils.c:248:14: warning: implicit conversion loses integer precision: 'long' to 'int' [-Wshorten-64-to-32]
+  248 |     return q - buf;
+      |     ~~~~~~ ~~^~~~~
+3 warnings generated.
+In file included from /Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/dtoa.c:35:
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/cutils.h:432:30: warning: implicit conversion loses integer precision: 'uint64_t' (aka 'unsigned long long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+  432 |             v = (a + addend) >> shift;
+      |               ~ ~~~~~~~~~~~~~^~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/dtoa.c:100:19: warning: implicit conversion loses integer precision: 'dlimb_t' (aka 'unsigned long long') to 'limb_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+  100 |         tabr[i] = t;
+      |                 ~ ^
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/dtoa.c:112:46: warning: implicit conversion loses integer precision: 'dlimb_t' (aka 'unsigned long long') to 'limb_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+  112 |     return (((dlimb_t)a1 << LIMB_BITS) | a0) / d;
+      |     ~~~~~~ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/dtoa.c:144:22: warning: implicit conversion loses integer precision: 'dlimb_t' (aka 'unsigned long long') to 'limb_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+  144 |         tabr[i] = a1 / b;
+      |                 ~ ~~~^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/dtoa.c:284:13: warning: implicit conversion loses integer precision: 'uint64_t' (aka 'unsigned long long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+  284 |         r = pow_ui(a, b);
+      |           ~ ^~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/dtoa.c:425:17: warning: implicit conversion loses integer precision: 'uint64_t' (aka 'unsigned long long') to 'limb_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+  425 |     r->tab[0] = m;
+      |               ~ ^
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/dtoa.c:486:36: warning: implicit conversion loses integer precision: 'int64_t' (aka 'long long') to 'int' [-Wshorten-64-to-32]
+  486 |         return ((int64_t)a * mult) >> MUL_LOG2_RADIX_BASE_LOG2;
+      |         ~~~~~~ ~~~~~~~~~~~~~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/dtoa.c:535:17: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+  535 |     for(i = len - 1; i >= 0; i--) {
+      |           ~ ~~~~^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/dtoa.c:619:28: warning: implicit conversion loses integer precision: 'uint64_t' (aka 'unsigned long long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+  619 |         return u32toa(buf, n);
+      |                ~~~~~~      ^
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/dtoa.c:628:21: warning: implicit conversion loses integer precision: 'uint64_t' (aka 'unsigned long long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+  628 |             n2 = n1 / 1000000000;
+      |                ~ ~~~^~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/dtoa.c:636:27: warning: implicit conversion loses integer precision: 'uint64_t' (aka 'unsigned long long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+  636 |             u32toa_len(q, n1, 9);
+      |             ~~~~~~~~~~    ^~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/dtoa.c:639:28: warning: implicit conversion loses integer precision: 'uint64_t' (aka 'unsigned long long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+  639 |             q += u32toa(q, n1);
+      |                  ~~~~~~    ^~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/dtoa.c:641:23: warning: implicit conversion loses integer precision: 'uint64_t' (aka 'unsigned long long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+  641 |         u32toa_len(q, n, 9);
+      |         ~~~~~~~~~~    ^
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/dtoa.c:908:25: warning: implicit conversion loses integer precision: 'uint64_t' (aka 'unsigned long long') to 'limb_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+  908 |                     b = pow_ui(radix1, n);
+      |                       ~ ^~~~~~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/dtoa.c:1317:14: warning: implicit conversion loses integer precision: 'long' to 'int' [-Wshorten-64-to-32]
+ 1317 |     return q - buf;
+      |     ~~~~~~ ~~^~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/dtoa.c:1495:29: warning: implicit conversion loses integer precision: 'uint64_t' (aka 'unsigned long long') to 'limb_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 1495 |         mpb_mul1_base(tmp0, pow_ui(radix, limb_digit_count), cur_limb);
+      |         ~~~~~~~~~~~~~       ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+16 warnings generated.
+[205 / 444]
+[213 / 444]
+[219 / 444]
+[221 / 444]
+[227 / 444]
+In file included from /Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:43:
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/cutils.h:432:30: warning: implicit conversion loses integer precision: 'uint64_t' (aka 'unsigned long long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+  432 |             v = (a + addend) >> shift;
+      |               ~ ~~~~~~~~~~~~~^~~~~~~~
+In file included from /Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:45:
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.h:574:30: warning: implicit conversion loses integer precision: 'int64_t' (aka 'long long') to 'int32_t' (aka 'int') [-Wshorten-64-to-32]
+  574 |         v = JS_NewInt32(ctx, val);
+      |             ~~~~~~~~~~~      ^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.h:643:12: warning: implicit conversion loses integer precision: 'long' to 'int' [-Wshorten-64-to-32]
+  643 |     return js_unlikely(JS_VALUE_GET_TAG(v) == JS_TAG_EXCEPTION);
+      |     ~~~~~~ ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.h:38:31: note: expanded from macro 'js_unlikely'
+   38 | #define js_unlikely(x)        __builtin_expect(!!(x), 0)
+      |                               ^~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.h:648:12: warning: implicit conversion loses integer precision: 'long' to 'int' [-Wshorten-64-to-32]
+  648 |     return js_unlikely(JS_VALUE_GET_TAG(v) == JS_TAG_UNINITIALIZED);
+      |     ~~~~~~ ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.h:38:31: note: expanded from macro 'js_unlikely'
+   38 | #define js_unlikely(x)        __builtin_expect(!!(x), 0)
+      |                               ^~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:1458:31: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 1458 |         return (size + 7) / 8 - 2;
+      |         ~~~~~~ ~~~~~~~~~~~~~~~^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:1460:33: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 1460 |         return (size + 15) / 16 + 6;
+      |         ~~~~~~ ~~~~~~~~~~~~~~~~~^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:1462:33: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 1462 |         return (size + 31) / 32 + 14;
+      |         ~~~~~~ ~~~~~~~~~~~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:2063:12: warning: implicit conversion loses integer precision: 'long' to 'BOOL' (aka 'int') [-Wshorten-64-to-32]
+ 2063 |     return unlikely(sp < rt->stack_limit);
+      |     ~~~~~~ ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+In file included from /Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:43:
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/cutils.h:33:25: note: expanded from macro 'unlikely'
+   33 | #define unlikely(x)     __builtin_expect(!!(x), 0)
+      |                         ^~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:2341:25: warning: implicit conversion loses integer precision: 'uintptr_t' (aka 'unsigned long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 2341 |     return (uintptr_t)p >> 1;
+      |     ~~~~~~ ~~~~~~~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:2931:21: warning: implicit conversion loses integer precision: 'uint64_t' (aka 'unsigned long long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 2931 |                 n = n64;
+      |                   ~ ^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:3099:15: warning: implicit conversion loses integer precision: 'unsigned long' to 'int' [-Wshorten-64-to-32]
+ 3099 |         len = strlen(p);
+      |             ~ ^~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:3491:44: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 3491 |         val = js_new_string8_len(ctx, buf, len);
+      |               ~~~~~~~~~~~~~~~~~~           ^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:3508:44: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 3508 |         val = js_new_string8_len(ctx, buf, len);
+      |               ~~~~~~~~~~~~~~~~~~           ^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:3601:45: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 3601 |         return js_new_string8_len(ctx, buf, len);
+      |                ~~~~~~~~~~~~~~~~~~           ^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:3911:11: warning: implicit conversion loses integer precision: 'unsigned long' to 'int' [-Wshorten-64-to-32]
+ 3911 |     len = strlen(class_def->class_name);
+      |         ~ ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:3940:41: warning: implicit conversion loses integer precision: 'unsigned long' to 'int' [-Wshorten-64-to-32]
+ 3940 |     return js_new_string8_len(ctx, buf, strlen(buf));
+      |            ~~~~~~~~~~~~~~~~~~           ^~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:4089:33: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 4089 |     new_size = min_int(new_size + (slack >> s->is_wide_char), JS_STRING_LEN_MAX);
+      |                ~~~~~~~ ~~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:4244:58: warning: implicit conversion loses integer precision: 'unsigned long' to 'int' [-Wshorten-64-to-32]
+ 4244 |     return string_buffer_write8(s, (const uint8_t *)str, strlen(str));
+      |            ~~~~~~~~~~~~~~~~~~~~                          ^~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:4372:45: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 4372 |         return js_new_string8_len(ctx, buf, buf_len);
+      |                ~~~~~~~~~~~~~~~~~~           ^~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:4374:40: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 4374 |         if (string_buffer_init(ctx, b, buf_len))
+      |             ~~~~~~~~~~~~~~~~~~         ^~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:4376:42: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 4376 |         string_buffer_write8(b, p_start, len1);
+      |         ~~~~~~~~~~~~~~~~~~~~             ^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:4382:48: warning: implicit conversion loses integer precision: 'long' to 'int' [-Wshorten-64-to-32]
+ 4382 |                 c = unicode_from_utf8(p, p_end - p, &p_next);
+      |                     ~~~~~~~~~~~~~~~~~    ~~~~~~^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:4427:12: warning: implicit conversion loses integer precision: 'unsigned long' to 'int' [-Wshorten-64-to-32]
+ 4427 |     len1 = strlen(str1);
+      |          ~ ^~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:4428:12: warning: implicit conversion loses integer precision: 'unsigned long' to 'int' [-Wshorten-64-to-32]
+ 4428 |     len3 = strlen(str3);
+      |          ~ ^~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:4543:22: warning: implicit conversion loses integer precision: 'long' to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 4543 |     str_new->len = q - str_new->u.str8;
+      |                  ~ ~~^~~~~~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:5159:23: warning: implicit conversion loses integer precision: 'uintptr_t' (aka 'unsigned long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 5159 |     h = shape_hash(1, (uintptr_t)proto);
+      |         ~~~~~~~~~~    ^~~~~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:7242:49: warning: implicit conversion loses integer precision: 'const size_t' (aka 'const unsigned long') to 'unsigned int' [-Wshorten-64-to-32]
+ 7242 |             unsigned int size = object_types[i].size;
+      |                          ~~~~   ~~~~~~~~~~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:7245:38: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'unsigned int' [-Wshorten-64-to-32]
+ 7245 |                 unsigned int size1 = js_malloc_usable_size_rt(rt, p);
+      |                              ~~~~~   ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:7413:24: warning: implicit conversion loses integer precision: 'long' to 'int' [-Wshorten-64-to-32]
+ 7413 |             return ptr - buf;
+      |             ~~~~~~ ~~~~^~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:7595:73: warning: implicit conversion loses integer precision: 'long' to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 7594 |                 line_num1 = find_line_num(ctx, b,
+      |                             ~~~~~~~~~~~~~
+ 7595 |                                           sf->cur_pc - b->byte_code_buf - 1, &col_num1);
+      |                                           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:9123:64: warning: implicit conversion loses integer precision: 'int64_t' (aka 'long long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 9123 |         present = JS_HasProperty(ctx, obj, __JS_AtomFromUInt32(idx));
+      |                                            ~~~~~~~~~~~~~~~~~~~ ^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:9125:66: warning: implicit conversion loses integer precision: 'int64_t' (aka 'long long') to 'int32_t' (aka 'int') [-Wshorten-64-to-32]
+ 9125 |             val = JS_GetPropertyValue(ctx, obj, JS_NewInt32(ctx, idx));
+      |                                                 ~~~~~~~~~~~      ^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:9153:63: warning: implicit conversion loses integer precision: 'int64_t' (aka 'long long') to 'int32_t' (aka 'int') [-Wshorten-64-to-32]
+ 9153 |         return JS_GetPropertyValue(ctx, obj, JS_NewInt32(ctx, idx));
+      |                                              ~~~~~~~~~~~      ^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:9334:31: warning: implicit conversion loses integer precision: 'long' to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 9334 |                 lpr_idx = lpr - get_shape_prop(sh);
+      |                         ~ ~~~~^~~~~~~~~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:9588:39: warning: implicit conversion loses integer precision: 'int64_t' (aka 'long long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 9588 |         if (expand_fast_array(ctx, p, len) < 0) {
+      |             ~~~~~~~~~~~~~~~~~         ^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:9592:28: warning: implicit conversion loses integer precision: 'int64_t' (aka 'long long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 9592 |         p->u.array.count = len;
+      |                          ~ ^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:9596:62: warning: implicit conversion loses integer precision: 'int64_t' (aka 'long long') to 'int32_t' (aka 'int') [-Wshorten-64-to-32]
+ 9596 |         set_value(ctx, &p->prop[0].u.value, JS_NewInt32(ctx, len));
+      |                                             ~~~~~~~~~~~      ^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:10087:68: warning: implicit conversion loses integer precision: 'int64_t' (aka 'long long') to 'int32_t' (aka 'int') [-Wshorten-64-to-32]
+ 10087 |         return JS_SetPropertyValue(ctx, this_obj, JS_NewInt32(ctx, idx), val,
+       |                                                   ~~~~~~~~~~~      ^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:10312:29: warning: implicit conversion loses integer precision: 'long' to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 10312 |                 idx = *pprs - get_shape_prop(sh);
+       |                     ~ ~~~~~~^~~~~~~~~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:10949:64: warning: implicit conversion loses integer precision: 'int64_t' (aka 'long long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 10949 |         return JS_DeleteProperty(ctx, obj, __JS_AtomFromUInt32(idx), flags);
+       |                                            ~~~~~~~~~~~~~~~~~~~ ^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:11249:14: warning: implicit conversion loses integer precision: 'long' to 'int' [-Wshorten-64-to-32]
+ 11249 |     return p - p_start;
+       |     ~~~~~~ ~~^~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:11512:16: warning: implicit conversion loses integer precision: 'js_limb_t' (aka 'unsigned long long') to 'int' [-Wshorten-64-to-32]
+ 11512 |     for(j = nb - 1; j >= 0; j--) {
+       |           ~ ~~~^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:11521:42: warning: implicit conversion loses integer precision: 'js_limb_t' (aka 'unsigned long long') to 'int' [-Wshorten-64-to-32]
+ 11521 |         mp_sub(taba + n, taba + n, tabb, nb, 0);
+       |         ~~~~~~                           ^~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:11524:15: warning: implicit conversion loses integer precision: 'js_limb_t' (aka 'unsigned long long') to 'int' [-Wshorten-64-to-32]
+ 11524 |     for(i = n - 1; i >= 0; i--) {
+       |           ~ ~~^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:11941:13: warning: implicit conversion loses integer precision: 'js_limb_t' (aka 'unsigned long long') to 'int' [-Wshorten-64-to-32]
+ 11941 |     shift = js_limb_clz(tabb[nb - 1]);
+       |           ~ ^~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:12135:34: warning: implicit conversion loses integer precision: 'js_limb_t' (aka 'unsigned long long') to 'int' [-Wshorten-64-to-32]
+ 12135 |             n = JS_LIMB_BITS - 1 - js_limb_clz(v);
+       |               ~ ~~~~~~~~~~~~~~~~~^~~~~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:12140:17: warning: implicit conversion loses integer precision: 'js_limb_t' (aka 'unsigned long long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 12140 |             e = b->tab[0];
+       |               ~ ^~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:12144:17: warning: implicit conversion loses integer precision: 'uint64_t' (aka 'unsigned long long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 12144 |             e = e1;
+       |               ~ ^~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:12161:9: warning: implicit conversion loses integer precision: 'js_limb_t' (aka 'unsigned long long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 12161 |     e = b->tab[0];
+       |       ~ ^~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:12475:16: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 12475 |     n_digits = n_digits1;
+       |              ~ ^~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:12639:15: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 12639 |         len = i64toa_radix(buf, JS_VALUE_GET_SHORT_BIG_INT(val), radix);
+       |             ~ ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:12670:40: warning: implicit conversion loses integer precision: 'js_limb_t' (aka 'unsigned long long') to 'int' [-Wshorten-64-to-32]
+ 12670 |         n_bits = r->len * JS_LIMB_BITS - js_limb_safe_clz(r->tab[r->len - 1]);
+       |                ~ ~~~~~~~~~~~~~~~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:12712:33: warning: implicit conversion loses integer precision: 'js_limb_t' (aka 'unsigned long long') to 'unsigned int' [-Wshorten-64-to-32]
+ 12712 |                 c = r->tab[pos] >> shift;
+       |                   ~ ~~~~~~~~~~~~^~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:12724:50: warning: implicit conversion loses integer precision: 'long' to 'int' [-Wshorten-64-to-32]
+ 12724 |         res = js_new_string8_len(ctx, q, buf_end - q);
+       |               ~~~~~~~~~~~~~~~~~~         ~~~~~~~~^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:12878:13: warning: implicit conversion loses integer precision: 'long' to 'int' [-Wshorten-64-to-32]
+ 12878 |     len = p - p_start;
+       |         ~ ~~^~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:13407:27: warning: implicit conversion loses integer precision: 'long' to 'int' [-Wshorten-64-to-32]
+ 13407 |                     res = lrint(d);
+       |                         ~ ^~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:13603:49: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 13603 |             return js_new_string8_len(ctx, buf, len);
+       |                    ~~~~~~~~~~~~~~~~~~           ^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:15327:48: warning: implicit conversion loses integer precision: 'js_slimb_t' (aka 'long long') to 'unsigned int' [-Wshorten-64-to-32]
+ 15327 |                     r = js_bigint_shl(ctx, p1, shift);
+       |                         ~~~~~~~~~~~~~          ^~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:18952:58: warning: implicit conversion loses integer precision: 'long' to 'int32_t' (aka 'int') [-Wshorten-64-to-32]
+ 18952 |                 sp[0] = JS_NewCatchOffset(ctx, pc + diff - b->byte_code_buf);
+       |                         ~~~~~~~~~~~~~~~~~      ~~~~~~~~~~^~~~~~~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:18962:49: warning: implicit conversion loses integer precision: 'long' to 'int32_t' (aka 'int') [-Wshorten-64-to-32]
+ 18962 |                 sp[0] = JS_NewInt32(ctx, pc + 4 - b->byte_code_buf);
+       |                         ~~~~~~~~~~~      ~~~~~~~^~~~~~~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:19733:51: warning: implicit conversion loses integer precision: 'int64_t' (aka 'long long') to 'int32_t' (aka 'int') [-Wshorten-64-to-32]
+ 19733 |                         sp[-2] = JS_NewInt32(ctx, r);
+       |                                  ~~~~~~~~~~~      ^
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:19785:48: warning: implicit conversion loses integer precision: 'int64_t' (aka 'long long') to 'int32_t' (aka 'int') [-Wshorten-64-to-32]
+ 19785 |                         *pv = JS_NewInt32(ctx, r);
+       |                               ~~~~~~~~~~~      ^
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:19829:51: warning: implicit conversion loses integer precision: 'int64_t' (aka 'long long') to 'int32_t' (aka 'int') [-Wshorten-64-to-32]
+ 19829 |                         sp[-2] = JS_NewInt32(ctx, r);
+       |                                  ~~~~~~~~~~~      ^
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:19877:47: warning: implicit conversion loses integer precision: 'int64_t' (aka 'long long') to 'int32_t' (aka 'int') [-Wshorten-64-to-32]
+ 19877 |                     sp[-2] = JS_NewInt32(ctx, r);
+       |                              ~~~~~~~~~~~      ^
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:23742:37: warning: implicit conversion loses integer precision: 'long' to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 23742 |         dbuf_put_u32(bc, source_ptr - s->buf_start);
+       |         ~~~~~~~~~~~~     ~~~~~~~~~~~^~~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:23752:31: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 23752 |     fd->last_opcode_pos = bc->size;
+       |                         ~ ~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:23810:66: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 23810 |     s->cur_func->label_slots[label].pos = s->cur_func->byte_code.size;
+       |                                         ~ ~~~~~~~~~~~~~~~~~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:23819:70: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 23819 |         s->cur_func->label_slots[label].pos = s->cur_func->byte_code.size;
+       |                                             ~ ~~~~~~~~~~~~~~~~~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:23820:44: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 23820 |         return s->cur_func->byte_code.size - 4;
+       |         ~~~~~~ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:25223:39: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 25223 |     ctor_cpool_offset = fd->byte_code.size;
+       |                       ~ ~~~~~~~~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:25551:42: warning: implicit conversion loses integer precision: 'long' to 'int' [-Wshorten-64-to-32]
+ 25551 |         ctor_fd->source_len = s->buf_ptr - class_start_ptr;
+       |                             ~ ~~~~~~~~~~~^~~~~~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:26240:41: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 26240 |     start_addr = s->cur_func->byte_code.size;
+       |                ~ ~~~~~~~~~~~~~~~~~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:26254:42: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 26254 |     assign_addr = s->cur_func->byte_code.size;
+       |                 ~ ~~~~~~~~~~~~~~~~~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:26737:33: warning: implicit conversion loses integer precision: 'int64_t' (aka 'long long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 26737 |                     emit_u32(s, v);
+       |                     ~~~~~~~~    ^
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:28582:39: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 28582 |     pos_next = s->cur_func->byte_code.size;
+       |              ~ ~~~~~~~~~~~~~~~~~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:28646:39: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 28646 |     pos_expr = s->cur_func->byte_code.size;
+       |              ~ ~~~~~~~~~~~~~~~~~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:28719:31: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 28719 |         int offset = bc->size - pos_next;
+       |             ~~~~~~   ~~~~~~~~~^~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:28726:49: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 28726 |         s->cur_func->last_opcode_pos = bc->size - 5;
+       |                                      ~ ~~~~~~~~~^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:29102:51: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 29102 |                 pos_cont = s->cur_func->byte_code.size;
+       |                          ~ ~~~~~~~~~~~~~~~~~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:29113:47: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 29113 |             pos_body = s->cur_func->byte_code.size;
+       |                      ~ ~~~~~~~~~~~~~~~~~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:29126:39: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 29126 |                 int offset = bc->size - pos_cont;
+       |                     ~~~~~~   ~~~~~~~~~^~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:29133:57: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 29133 |                 s->cur_func->last_opcode_pos = bc->size - 5;
+       |                                              ~ ~~~~~~~~~^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:29242:69: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 29242 |                     default_label_pos = s->cur_func->byte_code.size - 4;
+       |                                       ~ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:29837:17: warning: implicit conversion loses integer precision: 'long' to 'int' [-Wshorten-64-to-32]
+ 29837 |         len = p - base_name;
+       |             ~ ~~^~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:29841:34: warning: implicit conversion loses integer precision: 'unsigned long' to 'int' [-Wshorten-64-to-32]
+ 29841 |     cap = len + strlen(name) + 1 + 1;
+       |         ~ ~~~~~~~~~~~~~~~~~~~~~~~^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:32000:33: warning: implicit conversion loses integer precision: 'long' to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 32000 |     fd->source_pos = source_ptr - get_line_col_cache->buf_start;
+       |                    ~ ~~~~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:32057:67: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 32057 |     free_bytecode_atoms(ctx->rt, fd->byte_code.buf, fd->byte_code.size,
+       |     ~~~~~~~~~~~~~~~~~~~                             ~~~~~~~~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:33275:47: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 33275 |         s->label_slots[label_done].pos2 = bc->size;
+       |                                         ~ ~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:33986:47: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 33986 |         s->label_slots[label_next].pos2 = bc->size;
+       |                                         ~ ~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:34080:39: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 34080 |     cc.bc_len = bc_len = s->byte_code.size;
+       |                        ~ ~~~~~~~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:34277:40: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 34277 |                 ls->pos2 = bc_out.size + opcode_info[op].size;
+       |                          ~ ~~~~~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:34697:39: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 34697 |     cc.bc_len = bc_len = s->byte_code.size;
+       |                        ~ ~~~~~~~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:34800:35: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 34800 |                 ls->addr = bc_out.size;
+       |                          ~ ~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:34832:48: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 34832 |                     add_pc2line_info(s, bc_out.size, line_num);
+       |                     ~~~~~~~~~~~~~~~~    ~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:34837:44: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 34837 |                 add_pc2line_info(s, bc_out.size, line_num);
+       |                 ~~~~~~~~~~~~~~~~    ~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:34868:48: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 34868 |                     add_pc2line_info(s, bc_out.size, line_num);
+       |                     ~~~~~~~~~~~~~~~~    ~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:34923:40: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 34923 |             add_pc2line_info(s, bc_out.size, line_num);
+       |             ~~~~~~~~~~~~~~~~    ~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:34933:35: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 34933 |             jp->pos = bc_out.size + 1;
+       |                     ~ ~~~~~~~~~~~~^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:34943:57: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 34943 |                     if (!add_reloc(ctx, ls, bc_out.size - 1, 1))
+       |                          ~~~~~~~~~          ~~~~~~~~~~~~^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:34952:57: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 34952 |                     if (!add_reloc(ctx, ls, bc_out.size - 2, 2))
+       |                          ~~~~~~~~~          ~~~~~~~~~~~~^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:34957:51: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 34957 |                 int diff = ls->addr - bc_out.size - 1;
+       |                     ~~~~   ~~~~~~~~~~~~~~~~~~~~~~~^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:34975:44: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 34975 |             dbuf_put_u32(&bc_out, ls->addr - bc_out.size);
+       |             ~~~~~~~~~~~~          ~~~~~~~~~^~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:34978:53: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 34978 |                 if (!add_reloc(ctx, ls, bc_out.size - 4, 4))
+       |                      ~~~~~~~~~          ~~~~~~~~~~~~^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:34999:44: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 34999 |                 add_pc2line_info(s, bc_out.size, line_num);
+       |                 ~~~~~~~~~~~~~~~~    ~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:35004:39: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 35004 |                 jp->pos = bc_out.size + 5;
+       |                         ~ ~~~~~~~~~~~~^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:35009:48: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 35009 |                 dbuf_put_u32(&bc_out, ls->addr - bc_out.size);
+       |                 ~~~~~~~~~~~~          ~~~~~~~~~^~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:35012:57: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 35012 |                     if (!add_reloc(ctx, ls, bc_out.size - 4, 4))
+       |                          ~~~~~~~~~          ~~~~~~~~~~~~^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:35035:48: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 35035 |                     add_pc2line_info(s, bc_out.size, line_num);
+       |                     ~~~~~~~~~~~~~~~~    ~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:35043:48: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 35043 |                     add_pc2line_info(s, bc_out.size, line_num);
+       |                     ~~~~~~~~~~~~~~~~    ~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:35090:52: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 35090 |                         add_pc2line_info(s, bc_out.size, line_num);
+       |                         ~~~~~~~~~~~~~~~~    ~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:35107:44: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 35107 |                 add_pc2line_info(s, bc_out.size, line_num);
+       |                 ~~~~~~~~~~~~~~~~    ~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:35123:52: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 35123 |                         add_pc2line_info(s, bc_out.size, line_num);
+       |                         ~~~~~~~~~~~~~~~~    ~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:35139:48: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 35139 |                     add_pc2line_info(s, bc_out.size, line_num);
+       |                     ~~~~~~~~~~~~~~~~    ~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:35152:48: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 35152 |                     add_pc2line_info(s, bc_out.size, line_num);
+       |                     ~~~~~~~~~~~~~~~~    ~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:35172:48: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 35172 |                     add_pc2line_info(s, bc_out.size, line_num);
+       |                     ~~~~~~~~~~~~~~~~    ~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:35202:48: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 35202 |                     add_pc2line_info(s, bc_out.size, line_num);
+       |                     ~~~~~~~~~~~~~~~~    ~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:35216:48: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 35216 |                     add_pc2line_info(s, bc_out.size, line_num);
+       |                     ~~~~~~~~~~~~~~~~    ~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:35224:48: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 35224 |                     add_pc2line_info(s, bc_out.size, line_num);
+       |                     ~~~~~~~~~~~~~~~~    ~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:35242:48: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 35242 |                     add_pc2line_info(s, bc_out.size, line_num);
+       |                     ~~~~~~~~~~~~~~~~    ~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:35270:48: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 35270 |                     add_pc2line_info(s, bc_out.size, line_num);
+       |                     ~~~~~~~~~~~~~~~~    ~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:35293:48: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 35293 |                     add_pc2line_info(s, bc_out.size, line_num);
+       |                     ~~~~~~~~~~~~~~~~    ~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:35304:48: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 35304 |                     add_pc2line_info(s, bc_out.size, line_num);
+       |                     ~~~~~~~~~~~~~~~~    ~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:35325:48: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 35325 |                     add_pc2line_info(s, bc_out.size, line_num);
+       |                     ~~~~~~~~~~~~~~~~    ~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:35339:48: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 35339 |                     add_pc2line_info(s, bc_out.size, line_num);
+       |                     ~~~~~~~~~~~~~~~~    ~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:35346:44: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 35346 |                 add_pc2line_info(s, bc_out.size, line_num);
+       |                 ~~~~~~~~~~~~~~~~    ~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:35357:44: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 35357 |                 add_pc2line_info(s, bc_out.size, line_num);
+       |                 ~~~~~~~~~~~~~~~~    ~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:35373:48: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 35373 |                     add_pc2line_info(s, bc_out.size, line_num);
+       |                     ~~~~~~~~~~~~~~~~    ~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:35378:44: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 35378 |                 add_pc2line_info(s, bc_out.size, line_num);
+       |                 ~~~~~~~~~~~~~~~~    ~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:35403:48: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 35403 |                     add_pc2line_info(s, bc_out.size, line_num);
+       |                     ~~~~~~~~~~~~~~~~    ~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:35410:48: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 35410 |                     add_pc2line_info(s, bc_out.size, line_num);
+       |                     ~~~~~~~~~~~~~~~~    ~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:35419:48: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 35419 |                     add_pc2line_info(s, bc_out.size, line_num);
+       |                     ~~~~~~~~~~~~~~~~    ~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:35447:56: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 35447 |                             add_pc2line_info(s, bc_out.size, line_num);
+       |                             ~~~~~~~~~~~~~~~~    ~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:35456:56: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 35456 |                             add_pc2line_info(s, bc_out.size, line_num);
+       |                             ~~~~~~~~~~~~~~~~    ~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:35472:40: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 35472 |             add_pc2line_info(s, bc_out.size, line_num);
+       |             ~~~~~~~~~~~~~~~~    ~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:35646:31: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 35646 |     s->bc_len = fd->byte_code.size;
+       |               ~ ~~~~~~~~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:36024:38: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 36024 |     b->byte_code_len = fd->byte_code.size;
+       |                      ~ ~~~~~~~~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:36102:44: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 36102 |         b->debug.pc2line_len = fd->pc2line.size;
+       |                              ~ ~~~~~~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:36790:46: warning: implicit conversion loses integer precision: 'long' to 'int' [-Wshorten-64-to-32]
+ 36790 |                 fd->source_len = s->last_ptr - ptr;
+       |                                ~ ~~~~~~~~~~~~^~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:36817:37: warning: implicit conversion loses integer precision: 'long' to 'int' [-Wshorten-64-to-32]
+ 36817 |         fd->source_len = s->buf_ptr - ptr;
+       |                        ~ ~~~~~~~~~~~^~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:38179:26: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 38179 |     atoms_size = s->dbuf.size;
+       |                ~ ~~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:38685:20: warning: implicit conversion loses integer precision: 'uint64_t' (aka 'unsigned long long') to 'int' [-Wshorten-64-to-32]
+ 38685 |     cpool_offset = function_size;
+       |                  ~ ^~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:38687:22: warning: implicit conversion loses integer precision: 'uint64_t' (aka 'unsigned long long') to 'int' [-Wshorten-64-to-32]
+ 38687 |     vardefs_offset = function_size;
+       |                    ~ ^~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:38689:26: warning: implicit conversion loses integer precision: 'uint64_t' (aka 'unsigned long long') to 'int' [-Wshorten-64-to-32]
+ 38689 |     closure_var_offset = function_size;
+       |                        ~ ^~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:38691:24: warning: implicit conversion loses integer precision: 'uint64_t' (aka 'unsigned long long') to 'int' [-Wshorten-64-to-32]
+ 38691 |     byte_code_offset = function_size;
+       |                      ~ ^~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:39422:28: warning: implicit conversion loses integer precision: 'unsigned long' to 'int' [-Wshorten-64-to-32]
+ 39422 |         len = strlen(name) - 1;
+       |             ~ ~~~~~~~~~~~~~^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:41062:11: warning: implicit conversion loses integer precision: 'int64_t' (aka 'long long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 41062 |     len = len64;
+       |         ~ ^~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:41636:44: warning: implicit conversion loses integer precision: 'int64_t' (aka 'long long') to 'int32_t' (aka 'int') [-Wshorten-64-to-32]
+ 41636 |                 args[1] = JS_NewInt32(ctx, k);
+       |                           ~~~~~~~~~~~      ^
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:41669:44: warning: implicit conversion loses integer precision: 'int64_t' (aka 'long long') to 'int32_t' (aka 'int') [-Wshorten-64-to-32]
+ 41669 |                 args[1] = JS_NewInt32(ctx, k);
+       |                           ~~~~~~~~~~~      ^
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:41681:66: warning: implicit conversion loses integer precision: 'int64_t' (aka 'long long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 41681 |     if (JS_SetProperty(ctx, r, JS_ATOM_length, JS_NewUint32(ctx, k)) < 0)
+       |                                                ~~~~~~~~~~~~      ^
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:42031:36: warning: implicit conversion loses integer precision: 'int64_t' (aka 'long long') to 'int32_t' (aka 'int') [-Wshorten-64-to-32]
+ 42031 |         args[1] = JS_NewInt32(ctx, len);
+       |                   ~~~~~~~~~~~      ^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:42087:68: warning: implicit conversion loses integer precision: 'int64_t' (aka 'long long') to 'int32_t' (aka 'int') [-Wshorten-64-to-32]
+ 42087 |                 if (JS_SetPropertyValue(ctx, ret, JS_NewInt32(ctx, k), res, JS_PROP_THROW) < 0)
+       |                                                   ~~~~~~~~~~~      ^
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:42110:36: warning: implicit conversion loses integer precision: 'int64_t' (aka 'long long') to 'int32_t' (aka 'int') [-Wshorten-64-to-32]
+ 42110 |         args[1] = JS_NewInt32(ctx, n);
+       |                   ~~~~~~~~~~~      ^
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:42539:45: warning: implicit conversion loses integer precision: 'int64_t' (aka 'long long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 42539 |         el = JS_GetPropertyUint32(ctx, obj, i);
+       |              ~~~~~~~~~~~~~~~~~~~~           ^
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:44166:71: warning: implicit conversion loses integer precision: 'int64_t' (aka 'long long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 44166 |     if (JS_SetProperty(ctx, result, JS_ATOM_length, JS_NewUint32(ctx, idx)) < 0)
+       |                                                     ~~~~~~~~~~~~      ^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:44755:15: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 44755 |         len = i64toa_radix(buf1, JS_VALUE_GET_INT(val), base);
+       |             ~ ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:45686:51: warning: implicit conversion loses integer precision: 'long' to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 45686 |         matched_len = (captures[1] - captures[0]) >> shift;
+       |                     ~ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:45738:64: warning: implicit conversion loses integer precision: 'long' to 'int' [-Wshorten-64-to-32]
+ 45738 |                         start = (captures[2 * k] - sp->u.str8) >> shift;
+       |                               ~ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:45739:66: warning: implicit conversion loses integer precision: 'long' to 'int' [-Wshorten-64-to-32]
+ 45739 |                         end = (captures[2 * k + 1] - sp->u.str8) >> shift;
+       |                             ~ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:45954:36: warning: implicit conversion loses integer precision: 'int64_t' (aka 'long long') to 'int' [-Wshorten-64-to-32]
+ 45954 |         e = string_indexof(sp, rp, q);
+       |             ~~~~~~~~~~~~~~         ^
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:45957:39: warning: implicit conversion loses integer precision: 'int64_t' (aka 'long long') to 'int' [-Wshorten-64-to-32]
+ 45957 |         T = js_sub_string(ctx, sp, p, e);
+       |             ~~~~~~~~~~~~~             ^
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:45957:36: warning: implicit conversion loses integer precision: 'int64_t' (aka 'long long') to 'int' [-Wshorten-64-to-32]
+ 45957 |         T = js_sub_string(ctx, sp, p, e);
+       |             ~~~~~~~~~~~~~          ^
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:45966:35: warning: implicit conversion loses integer precision: 'int64_t' (aka 'long long') to 'int' [-Wshorten-64-to-32]
+ 45966 |     T = js_sub_string(ctx, sp, p, s);
+       |         ~~~~~~~~~~~~~             ^
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:45966:32: warning: implicit conversion loses integer precision: 'int64_t' (aka 'long long') to 'int' [-Wshorten-64-to-32]
+ 45966 |     T = js_sub_string(ctx, sp, p, s);
+       |         ~~~~~~~~~~~~~          ^
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:46162:9: warning: implicit conversion loses integer precision: 'int64_t' (aka 'long long') to 'int' [-Wshorten-64-to-32]
+ 46162 |     n = val;
+       |       ~ ^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:47275:29: warning: implicit conversion loses integer precision: 'long' to 'int' [-Wshorten-64-to-32]
+ 47275 |         res = -tm.tm_gmtoff / 60;
+       |             ~ ~~~~~~~~~~~~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:47933:32: warning: implicit conversion loses integer precision: 'int64_t' (aka 'long long') to 'int' [-Wshorten-64-to-32]
+ 47932 |         rc = lre_exec(capture, re_bytecode,
+       |              ~~~~~~~~
+ 47933 |                       str_buf, last_index, str->len,
+       |                                ^~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:47956:64: warning: implicit conversion loses integer precision: 'long' to 'int' [-Wshorten-64-to-32]
+ 47955 |             if (js_regexp_set_lastIndex(ctx, this_val,
+       |                 ~~~~~~~~~~~~~~~~~~~~~~~
+ 47956 |                                         (capture[1] - str_buf) >> shift) < 0)
+       |                                         ~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:47978:68: warning: implicit conversion loses integer precision: 'long' to 'int32_t' (aka 'int') [-Wshorten-64-to-32]
+ 47978 |         props[1].u.value = JS_NewInt32(ctx, (capture[0] - str_buf) >> shift); /* index */
+       |                            ~~~~~~~~~~~      ~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:48010:46: warning: implicit conversion loses integer precision: 'long' to 'int' [-Wshorten-64-to-32]
+ 48010 |                 start = (match[0] - str_buf) >> shift;
+       |                       ~ ~~~~~~~~~~~~~~~~~~~~~^~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:48011:44: warning: implicit conversion loses integer precision: 'long' to 'int' [-Wshorten-64-to-32]
+ 48011 |                 end = (match[1] - str_buf) >> shift;
+       |                     ~ ~~~~~~~~~~~~~~~~~~~~~^~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:48160:37: warning: implicit conversion loses integer precision: 'int64_t' (aka 'long long') to 'int' [-Wshorten-64-to-32]
+ 48159 |             ret = lre_exec(capture, re_bytecode,
+       |                   ~~~~~~~~
+ 48160 |                            str_buf, last_index, str->len, shift, ctx);
+       |                                     ^~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:48178:40: warning: implicit conversion loses integer precision: 'long' to 'int' [-Wshorten-64-to-32]
+ 48178 |         start = (capture[0] - str_buf) >> shift;
+       |               ~ ~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:48179:38: warning: implicit conversion loses integer precision: 'long' to 'int' [-Wshorten-64-to-32]
+ 48179 |         end = (capture[1] - str_buf) >> shift;
+       |             ~ ~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:48201:19: warning: implicit conversion loses integer precision: 'int64_t' (aka 'long long') to 'int' [-Wshorten-64-to-32]
+ 48201 |             end = string_advance_index(str, end, fullUnicode);
+       |                 ~ ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:48754:77: warning: implicit conversion loses integer precision: 'int64_t' (aka 'long long') to 'int32_t' (aka 'int') [-Wshorten-64-to-32]
+ 48754 |             if (JS_DefinePropertyValueInt64(ctx, tab, n++, JS_NewInt32(ctx, position), JS_PROP_C_W_E | JS_PROP_THROW) < 0)
+       |                                                            ~~~~~~~~~~~      ^~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:48781:67: warning: implicit conversion loses integer precision: 'int64_t' (aka 'long long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 48781 |             ret = js_string_GetSubstitution(ctx, b1, matched, sp, position,
+       |                   ~~~~~~~~~~~~~~~~~~~~~~~~~                       ^~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:48792:61: warning: implicit conversion loses integer precision: 'int64_t' (aka 'long long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 48792 |             string_buffer_concat(b, sp, nextSourcePosition, position);
+       |             ~~~~~~~~~~~~~~~~~~~~                            ^~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:48794:43: warning: implicit conversion loses integer precision: 'int64_t' (aka 'long long') to 'int' [-Wshorten-64-to-32]
+ 48794 |             nextSourcePosition = position + JS_VALUE_GET_STRING(matched)->len;
+       |                                ~ ~~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:48948:17: warning: implicit conversion loses integer precision: 'int64_t' (aka 'long long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 48948 |             q = string_advance_index(strp, q, unicodeMatching);
+       |               ~ ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:48955:21: warning: implicit conversion loses integer precision: 'int64_t' (aka 'long long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 48955 |                 q = string_advance_index(strp, q, unicodeMatching);
+       |                   ~ ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:48965:21: warning: implicit conversion loses integer precision: 'int64_t' (aka 'long long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 48965 |                 p = e;
+       |                   ~ ^
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:49383:57: warning: implicit conversion loses integer precision: 'long' to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 49381 |             json_parse_record_init_primitive(ctx, pr, val, 
+       |             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ 49382 |                                              s->token.ptr - s->buf_start,
+ 49383 |                                              s->buf_ptr - s->token.ptr);
+       |                                              ~~~~~~~~~~~^~~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:49382:59: warning: implicit conversion loses integer precision: 'long' to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 49381 |             json_parse_record_init_primitive(ctx, pr, val, 
+       |             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ 49382 |                                              s->token.ptr - s->buf_start,
+       |                                              ~~~~~~~~~~~~~^~~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:49393:57: warning: implicit conversion loses integer precision: 'long' to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 49391 |             json_parse_record_init_primitive(ctx, pr, val, 
+       |             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ 49392 |                                              s->token.ptr - s->buf_start,
+ 49393 |                                              s->buf_ptr - s->token.ptr);
+       |                                              ~~~~~~~~~~~^~~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:49392:59: warning: implicit conversion loses integer precision: 'long' to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 49391 |             json_parse_record_init_primitive(ctx, pr, val, 
+       |             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ 49392 |                                              s->token.ptr - s->buf_start,
+       |                                              ~~~~~~~~~~~~~^~~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:49405:61: warning: implicit conversion loses integer precision: 'long' to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 49403 |                 json_parse_record_init_primitive(ctx, pr, val, 
+       |                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ 49404 |                                                  s->token.ptr - s->buf_start,
+ 49405 |                                                  s->buf_ptr - s->token.ptr);
+       |                                                  ~~~~~~~~~~~^~~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:49404:63: warning: implicit conversion loses integer precision: 'long' to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 49403 |                 json_parse_record_init_primitive(ctx, pr, val, 
+       |                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ 49404 |                                                  s->token.ptr - s->buf_start,
+       |                                                  ~~~~~~~~~~~~~^~~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:49412:61: warning: implicit conversion loses integer precision: 'long' to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 49410 |                 json_parse_record_init_primitive(ctx, pr, val, 
+       |                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ 49411 |                                                  s->token.ptr - s->buf_start,
+ 49412 |                                                  s->buf_ptr - s->token.ptr);
+       |                                                  ~~~~~~~~~~~^~~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:49411:63: warning: implicit conversion loses integer precision: 'long' to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 49410 |                 json_parse_record_init_primitive(ctx, pr, val, 
+       |                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ 49411 |                                                  s->token.ptr - s->buf_start,
+       |                                                  ~~~~~~~~~~~~~^~~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:51680:29: warning: implicit conversion loses integer precision: 'unsigned long long' to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 51680 |     return (a * HASH_MUL64) >> (64 - hash_bits);
+       |     ~~~~~~ ~~~~~~~~~~~~~~~~~^~~~~~~~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:51737:29: warning: implicit conversion loses integer precision: 'js_limb_t' (aka 'unsigned long long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 51737 |                 h = h * 263 + p->tab[i];
+       |                   ~ ~~~~~~~~^~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:56082:24: warning: implicit conversion loses integer precision: 'uint64_t' (aka 'unsigned long long') to 'int' [-Wshorten-64-to-32]
+ 56082 |             shift = 64 - bits;
+       |                   ~ ~~~^~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:56098:45: warning: implicit conversion loses integer precision: 'uint64_t' (aka 'unsigned long long') to 'int' [-Wshorten-64-to-32]
+ 56098 |             len = (bits + JS_LIMB_BITS - 1) / JS_LIMB_BITS;
+       |                 ~ ~~~~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:56547:25: warning: implicit conversion loses integer precision: 'uint64_t' (aka 'unsigned long long') to 'int' [-Wshorten-64-to-32]
+ 56547 |     abuf->byte_length = len;
+       |                       ~ ^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:56548:39: warning: implicit conversion loses integer precision: 'uint64_t' (aka 'unsigned long long') to 'int' [-Wshorten-64-to-32]
+ 56548 |     abuf->max_byte_length = max_len ? *max_len : -1;
+       |                           ~           ^~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:56556:58: warning: implicit conversion loses integer precision: 'uint64_t' (aka 'unsigned long long') to 'int' [-Wshorten-64-to-32]
+ 56556 |                                                  max_int(sab_alloc_len, 1));
+       |                                                  ~~~~~~~ ^~~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:56562:50: warning: implicit conversion loses integer precision: 'uint64_t' (aka 'unsigned long long') to 'int' [-Wshorten-64-to-32]
+ 56562 |             abuf->data = js_mallocz(ctx, max_int(len, 1));
+       |                                          ~~~~~~~ ^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:56812:38: warning: implicit conversion loses integer precision: 'int64_t' (aka 'long long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 56812 |                     ta->length = len - ta->offset;
+       |                                ~ ~~~~^~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:56823:59: warning: implicit conversion loses integer precision: 'int64_t' (aka 'long long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 56823 |                     p->u.array.count = (len - ta->offset) >> size_log2;
+       |                                      ~ ~~~~~~~~~~~~~~~~~~~^~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:56948:69: warning: implicit conversion loses integer precision: 'uint64_t' (aka 'unsigned long long') to 'int' [-Wshorten-64-to-32]
+ 56948 |                 memcpy(new_abuf->data, abuf->data, min_int(old_len, new_len));
+       |                                                    ~~~~~~~          ^~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:56948:60: warning: implicit conversion loses integer precision: 'uint64_t' (aka 'unsigned long long') to 'int' [-Wshorten-64-to-32]
+ 56948 |                 memcpy(new_abuf->data, abuf->data, min_int(old_len, new_len));
+       |                                                    ~~~~~~~ ^~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:56969:41: warning: implicit conversion loses integer precision: 'uint64_t' (aka 'unsigned long long') to 'int' [-Wshorten-64-to-32]
+ 56969 |                 new_abuf->byte_length = new_len;
+       |                                       ~ ^~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:57025:29: warning: implicit conversion loses integer precision: 'int64_t' (aka 'long long') to 'int' [-Wshorten-64-to-32]
+ 57025 |         abuf->byte_length = len;
+       |                           ~ ^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:57027:52: warning: implicit conversion loses integer precision: 'int64_t' (aka 'long long') to 'int' [-Wshorten-64-to-32]
+ 57027 |         data = js_realloc(ctx, abuf->data, max_int(len, 1));
+       |                                            ~~~~~~~ ^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:57032:29: warning: implicit conversion loses integer precision: 'int64_t' (aka 'long long') to 'int' [-Wshorten-64-to-32]
+ 57032 |         abuf->byte_length = len;
+       |                           ~ ^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:57383:51: warning: implicit conversion loses integer precision: 'int64_t' (aka 'long long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 57383 |         if (JS_SetPropertyUint32(ctx, dst, offset + i, val) < 0)
+       |             ~~~~~~~~~~~~~~~~~~~~           ~~~~~~~^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:57451:54: warning: implicit conversion loses integer precision: 'int64_t' (aka 'long long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 57450 |     arr = js_typed_array_constructor_ta(ctx, JS_UNDEFINED, this_val,
+       |           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ 57451 |                                         p->class_id, len);
+       |                                                      ^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:57605:40: warning: implicit conversion loses integer precision: 'int64_t' (aka 'long long') to 'int32_t' (aka 'int') [-Wshorten-64-to-32]
+ 57605 |             args[1] = JS_NewInt32(ctx, k);
+       |                       ~~~~~~~~~~~      ^
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:57765:42: warning: implicit conversion loses integer precision: 'uint64_t' (aka 'unsigned long long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 57765 |             p->u.array.u.uint32_ptr[k] = v64;
+       |                                        ~ ^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:57871:17: warning: implicit conversion loses integer precision: 'int64_t' (aka 'long long') to 'int' [-Wshorten-64-to-32]
+ 57871 |             k = k1;
+       |               ~ ^~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:57970:30: warning: implicit conversion loses integer precision: 'long' to 'int' [-Wshorten-64-to-32]
+ 57970 |                     res = pp - pv;
+       |                         ~ ~~~^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:58010:17: warning: implicit conversion loses integer precision: 'int64_t' (aka 'long long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 58010 |             v = v64;
+       |               ~ ^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:58668:32: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 58668 |                 array_idx[i] = i;
+       |                              ~ ^
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:58669:28: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 58669 |             tsc.elt_size = elt_size;
+       |                          ~ ^~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:59280:33: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 59280 |     ostr = js_alloc_string(ctx, out_len, 0);
+       |            ~~~~~~~~~~~~~~~      ^~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:59293:17: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 59293 |     ostr->len = written;
+       |               ~ ^~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:59316:33: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'int' [-Wshorten-64-to-32]
+ 59316 |     ostr = js_alloc_string(ctx, out_len, 0);
+       |            ~~~~~~~~~~~~~~~      ^~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:59427:53: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 59427 |                                   JS_NewUint32(ctx, read), JS_PROP_C_W_E) < 0)
+       |                                   ~~~~~~~~~~~~      ^~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:59430:53: warning: implicit conversion loses integer precision: 'size_t' (aka 'unsigned long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 59430 |                                   JS_NewUint32(ctx, written), JS_PROP_C_W_E) < 0)
+       |                                   ~~~~~~~~~~~~      ^~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:59627:18: warning: implicit conversion loses integer precision: 'uint64_t' (aka 'unsigned long long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 59627 |     ta->offset = offset;
+       |                ~ ^~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:59628:22: warning: implicit conversion loses integer precision: 'uint64_t' (aka 'unsigned long long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 59628 |     ta->length = len << size_log2;
+       |                ~ ~~~~^~~~~~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:59632:24: warning: implicit conversion loses integer precision: 'uint64_t' (aka 'unsigned long long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 59632 |     p->u.array.count = len;
+       |                      ~ ^~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:59925:29: warning: implicit conversion loses integer precision: 'uint64_t' (aka 'unsigned long long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 59925 |     len = abuf->byte_length - offset;
+       |         ~ ~~~~~~~~~~~~~~~~~~^~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:59932:15: warning: implicit conversion loses integer precision: 'uint64_t' (aka 'unsigned long long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 59932 |         len = l;
+       |             ~ ^
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:59950:33: warning: implicit conversion loses integer precision: 'uint64_t' (aka 'unsigned long long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 59950 |         len = abuf->byte_length - offset;
+       |             ~ ~~~~~~~~~~~~~~~~~~^~~~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:59965:18: warning: implicit conversion loses integer precision: 'uint64_t' (aka 'unsigned long long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 59965 |     ta->offset = offset;
+       |                ~ ^~~~~~
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:60461:27: warning: implicit conversion loses integer precision: 'uint64_t' (aka 'unsigned long long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 60461 |             uint32_t v1 = v;
+       |                      ~~   ^
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:60492:32: warning: implicit conversion loses integer precision: 'uint64_t' (aka 'unsigned long long') to 'int32_t' (aka 'int') [-Wshorten-64-to-32]
+ 60492 |         ret = JS_NewInt32(ctx, a);
+       |               ~~~~~~~~~~~      ^
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Sources/CQuickJS/quickjs.c:60495:33: warning: implicit conversion loses integer precision: 'uint64_t' (aka 'unsigned long long') to 'uint32_t' (aka 'unsigned int') [-Wshorten-64-to-32]
+ 60495 |         ret = JS_NewUint32(ctx, a);
+       |               ~~~~~~~~~~~~      ^
+229 warnings generated.
+[230 / 444]
+[233 / 444]
+[236 / 444]
+[240 / 444]
+[245 / 444] NotebookSurface
+[247 / 444] NotebookSurface
+[255 / 444]
+[256 / 444] NotebookSurface-product
+[262 / 444] NotebookSurface
+[264 / 444]
+[265 / 445] NotebookSurface
+[268 / 445] NotebookCore
+[275 / 516]
+[276 / 516]
+[283 / 516]
+[288 / 516]
+[292 / 516]
+[295 / 516]
+[296 / 516]
+[299 / 516]
+[300 / 516]
+[305 / 516]
+[307 / 516]
+[317 / 516]
+[322 / 516]
+[323 / 516]
+[324 / 516] NotebookScriptWorker
+[327 / 516]
+[329 / 517]
+[335 / 525] NotebookScriptWorker
+[344 / 525] NotebookScriptWorker
+[347 / 525] NotebookScriptWorker
+[353 / 526] NotebookScriptWorkerTests-product
+[354 / 533]
+[358 / 533] NotebookScriptWorkerTests-product
+[359 / 533] NotebookScriptWorkerTests-product
+[365 / 533] NotebookScriptWorkerTests-product
+[368 / 533] NotebookScriptWorkerTests-product
+[372 / 533]
+[377 / 533] NotebookCore
+[378 / 533] NotebookCore
+[379 / 533] NotebookCore
+[380 / 533] NotebookCore
+[381 / 533] NotebookCore
+[382 / 533] NotebookCore
+[388 / 533] NotebookCore
+[389 / 533] notebook-ipc-test-host-product
+[390 / 533] notebook-ipc-test-host-product
+[392 / 533] NotebookCore
+[393 / 533] NotebookCore
+[394 / 533] NotebookCore
+[395 / 533] NotebookCore
+[396 / 533] NotebookCore
+[397 / 533] NotebookCore
+[397 / 533] NotebookCodex
+[409 / 535] notebook-bridge-product
+[410 / 537] notebook-ipc-test-host-product
+[411 / 539] notebook-bridge-product
+[414 / 539] notebook-bridge-product
+[415 / 539] notebook-bridge-product
+[418 / 540]
+[421 / 554] NotebookTypesetter
+[422 / 556] notebook-acceptance-product
+[423 / 566]
+[425 / 566] NotebookTypesetter
+[428 / 566] NotebookCore
+[437 / 566] notebook-archive-transfer-product
+[439 / 566] notebook-archive-transfer-product
+[441 / 566] notebook-archive-transfer-product
+[445 / 566] notebook-archive-transfer-product
+[447 / 566] NotebookTypesetter
+[449 / 566] NotebookTypesetter-product
+[453 / 566] NotebookTypesetter
+[456 / 566] NotebookCore
+[457 / 567]
+[459 / 569] NotebookArchiveTransfer
+[460 / 569] NotebookTypesetter
+[463 / 578] NotebookScriptHost
+[464 / 595] NotebookCodex
+[466 / 604] NotebookScriptHost
+[467 / 604] NotebookCodex
+[469 / 604] NotebookTypesetter
+[486 / 604] NotebookArchiveTransfer
+[493 / 604] NotebookScriptHost
+[494 / 604] NotebookCoreTests-product
+[499 / 604] NotebookCodex
+[502 / 604] NotebookCodex
+[503 / 604] NotebookCodex
+[505 / 604] notebook-codex-proof-product
+[510 / 604] NotebookCodex
+[513 / 604] NotebookCodex
+[515 / 604] NotebookArchiveTransfer
+[516 / 604] NotebookArchiveTransfer
+[519 / 604] NotebookArchiveTransfer
+[521 / 604] NotebookArchiveTransfer
+[528 / 605] NotebookScriptHost
+[533 / 606] NotebookScriptHost
+[543 / 606] notebook-acceptance-product
+[553 / 612] notebook-codex-proof-product
+[557 / 635] NotebookScriptHost-product
+[559 / 635]
+[560 / 635]
+[565 / 636] NotebookCoreTests-product
+[566 / 636] NotebookScriptHostTests-product
+[569 / 650] NotebookScriptHostTests-product
+[570 / 650] NotebookScriptHostTests-product
+[571 / 650] NotebookScriptHostTests-product
+[573 / 650] NotebookScriptHostTests-product
+[578 / 650] NotebookScriptHostTests-product
+[580 / 650] NotebookScriptHostTests-product
+[582 / 650] NotebookScriptHostTests-product
+[583 / 650] NotebookScriptHostTests-product
+[584 / 650] NotebookScriptHostTests-product
+[585 / 650] NotebookScriptHostTests-product
+[586 / 650] NotebookScriptHostTests-product
+[587 / 650] NotebookScriptHostTests-product
+[588 / 650] NotebookCoreTests-product
+[589 / 650] NotebookCoreTests-product
+[591 / 650] NotebookCoreTests-product
+[593 / 650] NotebookCoreTests-product
+[593 / 650] NotebookScriptHostTests-product
+[595 / 650] NotebookCoreTests-product
+[596 / 650] NotebookCoreTests-product
+[597 / 650] NotebookCoreTests-product
+[598 / 650] NotebookCoreTests-product
+[599 / 650] NotebookCoreTests-product
+[600 / 650] NotebookCoreTests-product
+[601 / 650] NotebookCoreTests-product
+[602 / 650] NotebookCoreTests-product
+[603 / 650] NotebookCoreTests-product
+[604 / 650] NotebookCoreTests-product
+[604 / 650] NotebookCore-product
+[606 / 650]
+[613 / 651] NotebookCodexTests-product
+[618 / 652] NotebookCodexTests-product
+[621 / 663] NotebookCodexTests-product
+[622 / 672] NotebookCodexTests-product
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source/Tests/NotebookCoreTests/NotebookGraphicVisibilityTests.swift:167:42: warning: no calls to throwing functions occur within 'try' expression [#UnnecessaryEffectMarker]
+165 |     func inspect(_ graph:NotebookGraphicGraph) throws {
+166 |       for id in ["a","b","link"] {
+167 |         let layout:NotebookGraphicLayout=try #require(graph.resolve(id).layout)
+    |                                          `- warning: no calls to throwing functions occur within 'try' expression [#UnnecessaryEffectMarker]
+168 |         let area=CGRect(x:layout.frame.x,y:layout.frame.y,width:layout.frame.width,height:layout.frame.height)
+169 |         let result=graph.visiblePageGraphics(page.id,in:area)
+
+[#UnnecessaryEffectMarker]: <https://docs.swift.org/compiler/documentation/diagnostics/unnecessary-effect-marker>
+[624 / 672] NotebookCoreTests-product
+[635 / 672] NotebookCodexTests-product
+[637 / 672] NotebookCodexTests-product
+[643 / 672] NotebookCodexTests-product
+[644 / 672] NotebookCodexTests-product
+[646 / 672] NotebookCodexTests-product
+[648 / 672] NotebookArchiveTransferTests-product
+[650 / 672] NotebookArchiveTransferTests-product
+[651 / 672] NotebookArchiveTransferTests-product
+[653 / 672] NotebookArchiveTransferTests-product
+[656 / 672] AllIncludingTests
+[658 / 672] NotebookCodexTests-product
+[662 / 672] NotebookArchiveTransferTests-product
+[666 / 672] NotebookCoreTests-product
+[668 / 672] NotebookCoreTests-product
+[671 / 672] NotebookCoreTests-product
+Build complete! (100,54 с)
+◇ Test run started.
+↳ Testing Library Version: 2084
+↳ Target Platform: arm64e-apple-macos14.0
+◇ Suite "Cold page material uses addressed geometry and one source cut" started.
+◇ Suite "An existing page element is an addressed command, not a whole page" started.
+◇ Test "Cold material decodes the same viewport bodies at 1000 and 100000 page elements" started.
+◇ Test fittedTextAndTransformedGroupUseSamePlacementAsCompletePage() started.
+◇ Test offscreenClaimWinnerAndNativeDeletionRetainCanonicalArbitration() started.
+◇ Test unadmittedReadRefusesAndIndexAdmissionPreservesContentAndCursors() started.
+◇ Test addressedErasuresFollowActivityAndOverflowDoesNotPublishPartialCoverage() started.
+◇ Test crossingConnectorCarriesOffWindowEndpointsAndRetainsCausalDeleteUndo() started.
+◇ Test largeCurrentPageStateBorrowsTransferAdmissionAcrossFIFOAndCheckpoint() started.
+✔ Test addressedErasuresFollowActivityAndOverflowDoesNotPublishPartialCoverage() passed after 0.167 seconds.
+✔ Test fittedTextAndTransformedGroupUseSamePlacementAsCompletePage() passed after 0.172 seconds.
+✔ Test crossingConnectorCarriesOffWindowEndpointsAndRetainsCausalDeleteUndo() passed after 0.199 seconds.
+✔ Test offscreenClaimWinnerAndNativeDeletionRetainCanonicalArbitration() passed after 0.212 seconds.
+✔ Test unadmittedReadRefusesAndIndexAdmissionPreservesContentAndCursors() passed after 0.392 seconds.
+✔ Suite "Cold page material uses addressed geometry and one source cut" passed after 0.392 seconds.
+PAGE_MATERIAL_COLD total=1000 visible=3 decoded_fragments=6 decoded_bytes=2746 sql_vm_steps=2492
+PAGE_MATERIAL_1000_PLAN steps=1365 plan=SEARCH r USING INDEX sqlite_autoindex_records_1 (address=?) | SEARCH b USING INDEX sqlite_autoindex_blobs_1 (hash=?) LEFT-JOIN sql=SELECT r.address,r.hash,length(b.data) FROM records r LEFT JOIN blobs b ON b.hash=r.hash WHERE r.address=?
+PAGE_MATERIAL_1000_PLAN steps=610 plan=SCAN sqlite_master sql=SELECT 1 FROM sqlite_master WHERE name='page_material_entries' AND type='table'
+PAGE_MATERIAL_1000_PLAN steps=102 plan=SCAN r VIRTUAL TABLE INDEX 2:B4D5B0D1B2D3 | SEARCH e USING INTEGER PRIMARY KEY (rowid=?) sql=SELECT e.element_id,e.is_group FROM page_material_ranges r   CROSS JOIN page_material_entries e ON e.rowid=r.entry WHERE r.min_space<=? AND r.max_space>=? AND r.min_x<=? AND r.max_x>=?   AND r.min_y<=? AND r.max_y>=? AND e.page_id=? AND e.parent_id IS ? AND e.has_paint=1   AND e.min_x<=? AND e.max_x>=? AND e.min_y<=? AND e.max_y>=? LIMIT ?
+PAGE_MATERIAL_1000_PLAN steps=60 plan=SEARCH r USING INDEX sqlite_autoindex_records_1 (address=?) | SEARCH b USING INDEX sqlite_autoindex_blobs_1 (hash=?) sql=SELECT b.data FROM records r JOIN blobs b ON b.hash=r.hash WHERE r.address=?
+PAGE_MATERIAL_1000_PLAN steps=57 plan=SEARCH r USING INDEX sqlite_autoindex_records_1 (address>? AND address<?) | SEARCH b USING INDEX sqlite_autoindex_blobs_1 (hash=?) LEFT-JOIN sql=SELECT r.address,r.hash,length(b.data) FROM records r LEFT JOIN blobs b ON b.hash=r.hash WHERE r.address>=? AND r.address<? ORDER BY r.address LIMIT ?
+PAGE_MATERIAL_1000_PLAN steps=56 plan=SEARCH blobs USING INDEX sqlite_autoindex_blobs_1 (hash=?) sql=SELECT data FROM blobs WHERE hash=?
+PAGE_MATERIAL_1000_PLAN steps=45 plan=SEARCH records USING INDEX sqlite_autoindex_records_1 (address=?) sql=SELECT position,member FROM records WHERE address=?
+PAGE_MATERIAL_1000_PLAN steps=42 plan=SEARCH records USING INDEX sqlite_autoindex_records_1 (address=?) sql=SELECT position FROM records WHERE address=?
+PAGE_MATERIAL_1000_PLAN steps=33 plan=SEARCH ink_element_erasures USING COVERING INDEX ink_element_erasures_target (kind=? AND owner_id=? AND element_id=?) | USE TEMP B-TREE FOR DISTINCT sql=SELECT DISTINCT address FROM ink_element_erasures WHERE kind='page' AND owner_id=? AND element_id IN (?,?,?) LIMIT 4097
+PAGE_MATERIAL_1000_PLAN steps=18 plan=SEARCH records USING COVERING INDEX record_order (parent=? AND collection=? AND position=?) sql=SELECT member FROM records WHERE parent=? AND collection='pageIDs' AND position=? ORDER BY member LIMIT 1
+PAGE_MATERIAL_1000_PLAN steps=16 plan=SEARCH change_log sql=SELECT COALESCE(MAX(sequence),0) FROM change_log
+PAGE_MATERIAL_1000_PLAN steps=15 plan=SEARCH blobs USING INDEX sqlite_autoindex_blobs_1 (hash=?) sql=SELECT length(data) FROM blobs WHERE hash=?
+PAGE_MATERIAL_1000_PLAN steps=15 plan=SEARCH lifecycle_files USING INDEX sqlite_autoindex_lifecycle_files_1 (file=?) sql=SELECT digest,record_count FROM lifecycle_files WHERE file=?
+PAGE_MATERIAL_1000_PLAN steps=14 plan=SEARCH item_page_counts USING INDEX sqlite_autoindex_item_page_counts_1 (address=?) sql=SELECT count FROM item_page_counts WHERE address=?
+PAGE_MATERIAL_1000_PLAN steps=12 plan=SEARCH metadata USING INDEX sqlite_autoindex_metadata_1 (key=?) sql=SELECT value FROM metadata WHERE key='workspace_id'
+PAGE_MATERIAL_1000_PLAN steps=12 plan=SEARCH metadata USING INDEX sqlite_autoindex_metadata_1 (key=?) sql=SELECT value FROM metadata WHERE key='read_revision'
+PAGE_MATERIAL_1000_PLAN steps=10 plan=SEARCH records USING COVERING INDEX sqlite_autoindex_records_1 (address=?) sql=SELECT 1 FROM records WHERE address=?
+PAGE_MATERIAL_1000_PLAN steps=10 plan=SEARCH main.page_material_ranges_node USING INTEGER PRIMARY KEY (rowid=?) sql=SELECT length(data) FROM 'main'.'page_material_ranges_node' WHERE nodeno = 1
+✔ Test largeCurrentPageStateBorrowsTransferAdmissionAcrossFIFOAndCheckpoint() passed after 2.580 seconds.
+◇ Test insertingFragmentsDoesNotReadUnrelatedPageMaterialAndUndoKeepsItsOrder() started.
+✔ Test insertingFragmentsDoesNotReadUnrelatedPageMaterialAndUndoKeepsItsOrder() passed after 0.439 seconds.
+◇ Test nativeFrameCommitDoesNotReadOrRewriteInkAndLargeNeighbours() started.
+PAGE_ELEMENT_COMMAND sql_vm_steps=10583
+✔ Test nativeFrameCommitDoesNotReadOrRewriteInkAndLargeNeighbours() passed after 0.340 seconds.
+✔ Suite "An existing page element is an addressed command, not a whole page" passed after 3.360 seconds.
+PAGE_MATERIAL_COLD total=100000 visible=3 decoded_fragments=6 decoded_bytes=2746 sql_vm_steps=2492
+PAGE_MATERIAL_100000_PLAN steps=1365 plan=SEARCH r USING INDEX sqlite_autoindex_records_1 (address=?) | SEARCH b USING INDEX sqlite_autoindex_blobs_1 (hash=?) LEFT-JOIN sql=SELECT r.address,r.hash,length(b.data) FROM records r LEFT JOIN blobs b ON b.hash=r.hash WHERE r.address=?
+PAGE_MATERIAL_100000_PLAN steps=610 plan=SCAN sqlite_master sql=SELECT 1 FROM sqlite_master WHERE name='page_material_entries' AND type='table'
+PAGE_MATERIAL_100000_PLAN steps=102 plan=SCAN r VIRTUAL TABLE INDEX 2:B4D5B0D1B2D3 | SEARCH e USING INTEGER PRIMARY KEY (rowid=?) sql=SELECT e.element_id,e.is_group FROM page_material_ranges r   CROSS JOIN page_material_entries e ON e.rowid=r.entry WHERE r.min_space<=? AND r.max_space>=? AND r.min_x<=? AND r.max_x>=?   AND r.min_y<=? AND r.max_y>=? AND e.page_id=? AND e.parent_id IS ? AND e.has_paint=1   AND e.min_x<=? AND e.max_x>=? AND e.min_y<=? AND e.max_y>=? LIMIT ?
+PAGE_MATERIAL_100000_PLAN steps=60 plan=SEARCH r USING INDEX sqlite_autoindex_records_1 (address=?) | SEARCH b USING INDEX sqlite_autoindex_blobs_1 (hash=?) sql=SELECT b.data FROM records r JOIN blobs b ON b.hash=r.hash WHERE r.address=?
+PAGE_MATERIAL_100000_PLAN steps=57 plan=SEARCH r USING INDEX sqlite_autoindex_records_1 (address>? AND address<?) | SEARCH b USING INDEX sqlite_autoindex_blobs_1 (hash=?) LEFT-JOIN sql=SELECT r.address,r.hash,length(b.data) FROM records r LEFT JOIN blobs b ON b.hash=r.hash WHERE r.address>=? AND r.address<? ORDER BY r.address LIMIT ?
+PAGE_MATERIAL_100000_PLAN steps=56 plan=SEARCH blobs USING INDEX sqlite_autoindex_blobs_1 (hash=?) sql=SELECT data FROM blobs WHERE hash=?
+PAGE_MATERIAL_100000_PLAN steps=45 plan=SEARCH records USING INDEX sqlite_autoindex_records_1 (address=?) sql=SELECT position,member FROM records WHERE address=?
+PAGE_MATERIAL_100000_PLAN steps=42 plan=SEARCH records USING INDEX sqlite_autoindex_records_1 (address=?) sql=SELECT position FROM records WHERE address=?
+PAGE_MATERIAL_100000_PLAN steps=33 plan=SEARCH ink_element_erasures USING COVERING INDEX ink_element_erasures_target (kind=? AND owner_id=? AND element_id=?) | USE TEMP B-TREE FOR DISTINCT sql=SELECT DISTINCT address FROM ink_element_erasures WHERE kind='page' AND owner_id=? AND element_id IN (?,?,?) LIMIT 4097
+PAGE_MATERIAL_100000_PLAN steps=18 plan=SEARCH records USING COVERING INDEX record_order (parent=? AND collection=? AND position=?) sql=SELECT member FROM records WHERE parent=? AND collection='pageIDs' AND position=? ORDER BY member LIMIT 1
+PAGE_MATERIAL_100000_PLAN steps=16 plan=SEARCH change_log sql=SELECT COALESCE(MAX(sequence),0) FROM change_log
+PAGE_MATERIAL_100000_PLAN steps=15 plan=SEARCH blobs USING INDEX sqlite_autoindex_blobs_1 (hash=?) sql=SELECT length(data) FROM blobs WHERE hash=?
+PAGE_MATERIAL_100000_PLAN steps=15 plan=SEARCH lifecycle_files USING INDEX sqlite_autoindex_lifecycle_files_1 (file=?) sql=SELECT digest,record_count FROM lifecycle_files WHERE file=?
+PAGE_MATERIAL_100000_PLAN steps=14 plan=SEARCH item_page_counts USING INDEX sqlite_autoindex_item_page_counts_1 (address=?) sql=SELECT count FROM item_page_counts WHERE address=?
+PAGE_MATERIAL_100000_PLAN steps=12 plan=SEARCH metadata USING INDEX sqlite_autoindex_metadata_1 (key=?) sql=SELECT value FROM metadata WHERE key='workspace_id'
+PAGE_MATERIAL_100000_PLAN steps=12 plan=SEARCH metadata USING INDEX sqlite_autoindex_metadata_1 (key=?) sql=SELECT value FROM metadata WHERE key='read_revision'
+PAGE_MATERIAL_100000_PLAN steps=10 plan=SEARCH records USING COVERING INDEX sqlite_autoindex_records_1 (address=?) sql=SELECT 1 FROM records WHERE address=?
+PAGE_MATERIAL_100000_PLAN steps=10 plan=SEARCH main.page_material_ranges_node USING INTEGER PRIMARY KEY (rowid=?) sql=SELECT length(data) FROM 'main'.'page_material_ranges_node' WHERE nodeno = 1
+✔ Test "Cold material decodes the same viewport bodies at 1000 and 100000 page elements" passed after 49.121 seconds.
+✔ Test run with 9 tests in 2 suites passed after 49.121 seconds.

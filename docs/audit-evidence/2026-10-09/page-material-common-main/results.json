@@ -1,0 +1,73 @@
+{
+  "format": 1,
+  "date": "2026-10-09",
+  "baseCommit": "64435ace8612d1530dd2c14c66eac4487c3a31ec",
+  "adoptedCommits": [
+    "2c3762fbb768bcb4e75348f1d490934df43ab804",
+    "63fcfe3e809ff8408829d097908c7ff26891afd0",
+    "c32dd89b85cf6c2a39330bf3713c5e9fcfa6e528"
+  ],
+  "result": "Adopt final geometry derivation, strict root admission and claimant streaming together into common main.",
+  "owned": {
+    "Sources/NotebookCore/NotebookActionProjection.swift": "43c32a555cd8aa97a6335edd113582f30b4298f436f87752d1d0917b6602a904",
+    "Sources/NotebookCore/NotebookGraphicGraphRead.swift": "e124bb3c4dd5c9a4575a35919d87be44d0300c1135d1953661d6193a280a3ef9",
+    "Sources/NotebookCore/NotebookGraphicIndex.swift": "efb33c02969ff76a4f5080dda299c54d3a5222d12fb40d2d793b158a4fe203f5",
+    "Sources/NotebookCore/NotebookGraphicRead.swift": "fd4958d5b28d88c650e8490b8d8a5bd92b595631f68539b3796b854c340d7bc0",
+    "Sources/NotebookCore/NotebookPageMaterialIndex.swift": "00317233f30c99d00eced1431ae5de19c0d2b01c26db61993bafb29f807d606a",
+    "Sources/NotebookCore/NotebookPageMaterialWindow.swift": "1483ff2876e37bf5141c51c8f72fec6a4aff250a8b64247b92536d90d329f9ac",
+    "Tests/NotebookCoreTests/NotebookPageMaterialWindowTests.swift": "6948eaa947e469f7980d7cdfb9e86aabb6b1492b8845711662a962c2b0811f62"
+  },
+  "priorScopes": {
+    "page-material-root-admission": {
+      "functions": 11,
+      "cases": 27,
+      "outcome": "PASS"
+    },
+    "page-material-claim-streaming": {
+      "functions": 8,
+      "suites": 2,
+      "outcome": "PASS"
+    }
+  },
+  "binding": {
+    "inputs": 847,
+    "exactMatchesAgainstFinalStreamingProof": 839,
+    "acceptedDigestSliceChangedInputs": 8,
+    "delta": "package-delta.json",
+    "allChangedInputsBoundToCommit": "64435ace8612d1530dd2c14c66eac4487c3a31ec",
+    "finalPackageSHA256": "7a07ab23ca8c1d6965c776cf22286b372b8d7a10264efe726b737e4378821894"
+  },
+  "commonMainCheck": {
+    "evidence": ".build/page-material-common-main-20261009-v1/verification",
+    "functions": 2,
+    "cases": 4,
+    "failed": [],
+    "skipped": [],
+    "execution": "core-execution.json",
+    "executionSHA256": "909d57a1796d6b72ce211eec1bccecb95c4be05383d757108eb161ea09513f76",
+    "verificationSHA256": "d4746f6df8ead2bfd884dd125c267301f278cb75febcd07757cdb7882275c97f",
+    "sourceSHA256": "14e6fdf4ce905a3ab9c52ba395122f457d4aa6bcf92b7fd5b0442fb73b16ceb2",
+    "sourceCount": 1715,
+    "sourcesUnchanged": true,
+    "actualSharedClaims": {
+      "acquired": 83,
+      "component": 96,
+      "lateBodyRead": false,
+      "refusal": "page_material_bytes",
+      "databaseAfterRefusal": 29,
+      "authoredSnapshotUnchanged": true
+    }
+  },
+  "physicalAcceptance": false,
+  "installedProduction": {
+    "pair": 265,
+    "database": 29,
+    "wire": 44,
+    "manifest": 26
+  },
+  "currentCodeFormat": {
+    "database": 30,
+    "wire": 44,
+    "manifest": 26
+  }
+}

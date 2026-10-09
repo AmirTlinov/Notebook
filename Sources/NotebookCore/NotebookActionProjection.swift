@@ -90,8 +90,9 @@ extension NotebookStore {
             // The graphic owns its source budget: a retained freehand selection
             // is not limited to a quick-shape recognizer's sixteen strokes.
             let ids = graphic.sourceInkIDs
-            let claimants = try graphicClaimants(on: .page(page), sourceInkIDs: Set(ids))
-            pageElementIDs[page, default: []].formUnion(claimants.map { collaborationIdentity($0.candidate.id) })
+            try forEachGraphicClaimant(on: .page(page), sourceInkIDs: Set(ids)) {
+              pageElementIDs[page, default: []].insert(collaborationIdentity($0.candidate.id))
+            }
             for id in ids {
               if let stroke = try storedMember(file: file, collection: "drawingData/actions", id: id.uuidString)?.decode(PageInkAction.self) {
                 pageGraphicSources[page, default: []].append(stroke)
@@ -154,8 +155,9 @@ extension NotebookStore {
           let board = operation.target.kind == .board ? operation.target.id : operation.target.boardID
           if let board {
             let surface: SurfaceID = operation.target.kind == .board ? .board(board) : .cover(operation.target.id)
-            let claimants = try graphicClaimants(on: surface, sourceInkIDs: Set(ids))
-            elementIDs[board, default: []].formUnion(claimants.map { collaborationIdentity($0.candidate.id) })
+            try forEachGraphicClaimant(on: surface, sourceInkIDs: Set(ids)) {
+              elementIDs[board, default: []].insert(collaborationIdentity($0.candidate.id))
+            }
           }
         }
       } catch let error as CollaborationError {

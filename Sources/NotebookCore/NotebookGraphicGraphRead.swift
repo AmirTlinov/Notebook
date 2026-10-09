@@ -113,7 +113,7 @@ extension NotebookStore {
     for row in dependencies {
       guard let graphic = try row.value["graphic"]?.decode(NotebookGraphic.self), !graphic.sourceInkIDs.isEmpty,
         let surface = try row.value["surface"]?.decode(SurfaceID.self) else { continue }
-      for claimant in try graphicClaimants(on: surface, sourceInkIDs: Set(graphic.sourceInkIDs)) {
+      try forEachGraphicClaimant(on: surface, sourceInkIDs: Set(graphic.sourceInkIDs)) { claimant in
         if seen.insert(claimant.fragment.address).inserted {
           guard seen.count <= 4096 else { throw NotebookStorageError.limitExceeded("graphic_dependencies") }
           rows.append(claimant.fragment)

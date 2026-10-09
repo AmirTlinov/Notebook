@@ -1,0 +1,17 @@
+{
+  "executed": [
+    "NotebookCoreTests.NotebookPageMaterialWindowTests/crossingConnectorCarriesOffWindowEndpointsAndRetainsCausalDeleteUndo()/NotebookPageMaterialWindowTests.swift:299:4",
+    "NotebookCoreTests.NotebookPageMaterialWindowTests/retainedGeometryClosureRefusesAggregateOverflowDuringAdmission(_:)/NotebookPageMaterialWindowTests.swift:208:4"
+  ],
+  "executions": {
+    "NotebookCoreTests.NotebookPageMaterialWindowTests/crossingConnectorCarriesOffWindowEndpointsAndRetainsCausalDeleteUndo()/NotebookPageMaterialWindowTests.swift:299:4": 1,
+    "NotebookCoreTests.NotebookPageMaterialWindowTests/retainedGeometryClosureRefusesAggregateOverflowDuringAdmission(_:)/NotebookPageMaterialWindowTests.swift:208:4": 3
+  },
+  "failed": [],
+  "format": 1,
+  "planned": [
+    "NotebookCoreTests.NotebookPageMaterialWindowTests/crossingConnectorCarriesOffWindowEndpointsAndRetainsCausalDeleteUndo()/NotebookPageMaterialWindowTests.swift:299:4",
+    "NotebookCoreTests.NotebookPageMaterialWindowTests/retainedGeometryClosureRefusesAggregateOverflowDuringAdmission(_:)/NotebookPageMaterialWindowTests.swift:208:4"
+  ],
+  "skipped": []
+}
