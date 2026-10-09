@@ -471,3 +471,19 @@ The actual writer stack, failed symbolication attempt, load contexts and raw
 results remain in [exact evidence](audit-evidence/2026-10-09/receipt-publication-material/results.json).
 NB10, optimized native/device budgets and full104 acceptance remain open.
 Installed265/DB29 and code DB30/wire44/manifest26 are unchanged.
+
+## 2026-10-09: page material geometry without whole-element reads
+
+Index maintenance derives bounded geometry from its already admitted canonical root.
+It reuses the existing geometry, claim and erasure resolvers without loading program
+source or fragmented state through the public whole-element read. Native text keeps
+the source/style required for actual layout; no partial PageDocument is constructed.
+Both normal writes and DB29 -> DB30 derived-index rebuild use this path.
+
+The original large-neighbour writes, Undo, checkpoint, migration and full geometry
+oracle passed: **9 Core cases** on18a6c587, then **3 affected write/checkpoint cases**
+after receipt publication69c81c90, with each immutable package unchanged. Windows at
+1000/100000 elements returned the same6fragments/2746bytes/2492SQL VM steps.
+Public whole-element4MiB and window16MiB limits, DB30/wire44/manifest26 and history
+remain unchanged. [Exact scope and inputs](audit-evidence/2026-10-09/page-material-geometry/results.json).
+Installed265 and full physical acceptance remain separate.

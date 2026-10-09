@@ -1,0 +1,91 @@
+{
+  "format": 1,
+  "date": "2026-10-09",
+  "scope": "Core geometry index repair; native full acceptance remains open.",
+  "base": "69c81c907535f94fd77fbb43de61479aef02f281",
+  "codeTree": "193befebff7b3068f3235c0299a9f5111ade995b",
+  "changedSources": {
+    "Sources/NotebookCore/NotebookPageMaterialIndex.swift": "d62079b58bc6fedfa16780b3074158eea29655a35d358ada47ed942e39391521",
+    "Tests/NotebookCoreTests/NotebookPageMaterialWindowTests.swift": "b6851196dadbfedf67650355debe4419fdc1a164a3106c23df91b3144e9b24a4"
+  },
+  "checks": [
+    {
+      "base": "18a6c587554e523e20bc68ce973be2fee7dfb592",
+      "tree": "21fc8f97ad45cc8e2590191fe87896c19c0e0416",
+      "argv": [
+        "/Users/amir/Documents/projects/Notebook/.build/toolchains/swift-6.4.0/swift-6.4.0-RELEASE-osx-package.pkg/Payload/usr/bin/swift",
+        "test",
+        "--package-path",
+        "/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/source",
+        "--scratch-path",
+        "/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-coherent/scratch",
+        "-j",
+        "4",
+        "--filter",
+        "NotebookPageElementCommandTests/(insertingFragmentsDoesNotReadUnrelatedPageMaterialAndUndoKeepsItsOrder|nativeFrameCommitDoesNotReadOrRewriteInkAndLargeNeighbours|largeCurrentPageStateBorrowsTransferAdmissionAcrossFIFOAndCheckpoint)|NotebookPageMaterialWindowTests|pageMaterialWindowAtOneHundredThousandElements"
+      ],
+      "wrapperPID": 58009,
+      "UTCStart": "2026-10-09T11:44:09Z",
+      "packageInputCount": 845,
+      "exitCode": 0,
+      "seconds": 151.34222770901397,
+      "inputsUnchanged": true,
+      "UTCEnd": "2026-10-09T11:46:40Z",
+      "executed": 9,
+      "failed": 0,
+      "skipped": 0,
+      "scope": "Standalone original large-neighbour, checkpoint, migration29->30, geometry oracle and 1000/100000 windows on base18a6c587."
+    },
+    {
+      "base": "69c81c907535f94fd77fbb43de61479aef02f281",
+      "tree": "193befebff7b3068f3235c0299a9f5111ade995b",
+      "argv": [
+        "/Users/amir/Documents/projects/Notebook/.build/toolchains/swift-6.4.0/swift-6.4.0-RELEASE-osx-package.pkg/Payload/usr/bin/swift",
+        "test",
+        "--package-path",
+        "/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-integrated/source",
+        "--scratch-path",
+        "/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-geometry-integrated/scratch",
+        "-j",
+        "4",
+        "--filter",
+        "NotebookPageElementCommandTests/(insertingFragmentsDoesNotReadUnrelatedPageMaterialAndUndoKeepsItsOrder|nativeFrameCommitDoesNotReadOrRewriteInkAndLargeNeighbours|largeCurrentPageStateBorrowsTransferAdmissionAcrossFIFOAndCheckpoint)"
+      ],
+      "wrapperPID": 88159,
+      "UTCStart": "2026-10-09T11:52:50Z",
+      "packageInputCount": 847,
+      "exitCode": 0,
+      "seconds": 110.1929337499896,
+      "inputsUnchanged": true,
+      "UTCEnd": "2026-10-09T11:54:41Z",
+      "executed": 3,
+      "failed": 0,
+      "skipped": 0,
+      "scope": "Same original addressed write and checkpoint cases after exact receipt publication69c81c90."
+    }
+  ],
+  "boundedWindow": {
+    "elements": [
+      1000,
+      100000
+    ],
+    "fragments": [
+      6,
+      6
+    ],
+    "wireBytes": [
+      2746,
+      2746
+    ],
+    "sqlVMSteps": [
+      2492,
+      2492
+    ]
+  },
+  "publicReadLimitsUnchanged": true,
+  "database": 30,
+  "wire": 44,
+  "manifest": 26,
+  "installedPair": 265,
+  "physicalAcceptance": false
+}

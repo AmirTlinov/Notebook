@@ -94,10 +94,9 @@ extension NotebookStore {
     while let address = try database.takeOwner(.pageMaterial) {
       guard try !database.hasOwner(.pageMaterialProjected, address) else { continue }
       guard let row = try storedFragments(address: address, descendants: false).first,
-        let pageID = UUID(uuidString: URL(fileURLWithPath: row.file).deletingPathExtension().lastPathComponent),
-        let id = row.value["id"]?.string else { continue }
-      guard let element = try readPageElement(pageID: pageID, elementID: id) else { continue }
-      if element.kind == .group {
+        let pageID = UUID(uuidString: URL(fileURLWithPath: row.file).deletingPathExtension().lastPathComponent) else { continue }
+      let element = try PageMaterialGeometry(row), id = element.id
+      if element.placement.isGroup {
         try database.noteOwner(.pageMaterialGroup, address)
         continue
       }
@@ -106,8 +105,7 @@ extension NotebookStore {
       }
       let bounds: CGRect?
       if let graphic = element.graphic {
-        let sources = NotebookPageMaterialSources(store: self, pageID: pageID, capturesVersions: false)
-        try sources.include(id)
+        let sources = PageMaterialGeometrySources(store: self, pageID: pageID, root: element)
         let graph = try sources.graph()
         bounds = graph.node(id).flatMap { NotebookGraphicVisibility.bounds($0, in: graph, parent: true) }
         // The shared claim component can reveal a previously hidden body.
@@ -121,8 +119,10 @@ extension NotebookStore {
         }
         if graphic.connection != nil { try indexPageMaterialBindings(element, pageID: pageID, graph: graph, database: database) }
       } else {
-        let placement = try NotebookElementPlacement(id: id, frame: element.frame).updating(frame: element.frame, basis: element.basis)
-        bounds = NotebookGraphicVisibility.outward(NotebookElementPresentation(element, placement: placement).bounds, through: .identity)
+        let placement = try NotebookElementPlacement(id: id, frame: element.placement.frame)
+          .updating(frame: element.placement.frame, basis: element.placement.basis)
+        bounds = NotebookGraphicVisibility.outward(NotebookElementPresentation(placement: placement,
+          text: element.text, style: element.textStyle).bounds, through: .identity)
       }
       try database.noteOwner(.pageMaterialProjected, address)
       try updatePageMaterialEntry(row, element: element, bounds: bounds, database: database)
@@ -132,18 +132,19 @@ extension NotebookStore {
     }
     while let address = try database.takeOwner(.pageMaterialGroup) {
       guard let row = try storedFragments(address: address, descendants: false).first,
-        let pageID = UUID(uuidString: URL(fileURLWithPath: row.file).deletingPathExtension().lastPathComponent),
-        let id = row.value["id"]?.string,
-        let element = try readPageElement(pageID: pageID, elementID: id), element.kind == .group else { continue }
-      let resolver = NotebookElementPlacement.Resolver { try self.elementGroupingSource(target: .init(kind: .page, id: pageID), id: $0) }
-      let placement = try resolver.resolve(id)
+        let pageID = UUID(uuidString: URL(fileURLWithPath: row.file).deletingPathExtension().lastPathComponent) else { continue }
+      let element = try PageMaterialGeometry(row), id = element.id
+      guard element.placement.isGroup else { continue }
+      let sources = PageMaterialGeometrySources(store: self, pageID: pageID, root: element)
+      let resolver = NotebookElementPlacement.Resolver { try sources.include($0)?.placement }
+      let placement = try resolver.resolve(id, source: element.placement)
       let local = try pageMaterialGroupBounds(pageID: pageID, parentID: id, database: database)
       let bounds = placement.flatMap { placement in local.map { NotebookGraphicVisibility.outward($0, through: placement.localTransform) } }
       try updatePageMaterialEntry(row, element: element, bounds: bounds, database: database)
     }
   }
 
-  private func indexPageMaterialBindings(_ element: AgentElement, pageID: UUID, graph: NotebookGraphicGraph,
+  private func indexPageMaterialBindings(_ element: PageMaterialGeometry, pageID: UUID, graph: NotebookGraphicGraph,
     database: NotebookSQLConnection) throws {
     let address = pageFile(pageID) + "#/elements/@" + fieldKey([collaborationIdentity(element.id)])
     let own = Set(graph.placement(element.id)?.ancestors.map(collaborationIdentity) ?? [])
@@ -158,10 +159,10 @@ extension NotebookStore {
     }
   }
 
-  private func updatePageMaterialEntry(_ fragment: NotebookStoredFragment, element: AgentElement, bounds: CGRect?,
+  private func updatePageMaterialEntry(_ fragment: NotebookStoredFragment, element: PageMaterialGeometry, bounds: CGRect?,
     database: NotebookSQLConnection) throws {
     let page = URL(fileURLWithPath: fragment.file).deletingPathExtension().lastPathComponent
-    let parent = element.parentID.map(collaborationIdentity)
+    let parent = element.placement.parentID.map(collaborationIdentity)
     let box = bounds ?? .zero
     guard !box.isInfinite, [box.minX, box.maxX, box.minY, box.maxY].allSatisfy(\.isFinite) else {
       throw NotebookStorageError.limitExceeded("page_material_bounds")
@@ -171,7 +172,7 @@ extension NotebookStore {
       old[2].spatialNumber == box.minX, old[3].spatialNumber == box.maxX,
       old[4].spatialNumber == box.minY, old[5].spatialNumber == box.maxY,
       old[6].integer == Int64(fragment.position), old[7].text == fragment.member,
-      old[8].integer == (element.kind == .group ? 1 : 0) { return }
+      old[8].integer == (element.placement.isGroup ? 1 : 0) { return }
     try database.run("""
       INSERT INTO page_material_entries(address,page_id,element_id,parent_id,position,member,is_group,has_paint,space_key,min_x,max_x,min_y,max_y)
       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(address) DO UPDATE SET
@@ -179,7 +180,7 @@ extension NotebookStore {
         is_group=excluded.is_group,has_paint=excluded.has_paint,space_key=excluded.space_key,
         min_x=excluded.min_x,max_x=excluded.max_x,min_y=excluded.min_y,max_y=excluded.max_y
       """, [.text(fragment.address), .text(page), .text(collaborationIdentity(element.id)), parent.map(NotebookSQLValue.text) ?? .null,
-        .integer(Int64(fragment.position)), .text(fragment.member), .integer(element.kind == .group ? 1 : 0), .integer(bounds == nil ? 0 : 1),
+        .integer(Int64(fragment.position)), .text(fragment.member), .integer(element.placement.isGroup ? 1 : 0), .integer(bounds == nil ? 0 : 1),
         .integer(Self.spatialSpaceKey(board: page, parent: parent)), .real(box.minX), .real(box.maxX), .real(box.minY), .real(box.maxY)])
     for id in Set([old?[0].text, parent].compactMap({ $0 })) {
       try database.noteOwner(.pageMaterialGroup, fragment.file + "#/elements/@" + fieldKey([id]))
@@ -195,5 +196,109 @@ extension NotebookStore {
     guard let x = try extreme("min_x"), let y = try extreme("min_y"),
       let right = try extreme("max_x", descending: true), let bottom = try extreme("max_y", descending: true) else { return nil }
     return .init(x: x, y: y, width: right - x, height: bottom - y)
+  }
+}
+
+/// The index consumes geometry from the canonical root already admitted by the
+/// writer. Program source and fragmented state are not geometry, and their size
+/// must not turn a bounded presentation read into a durable-write restriction.
+private struct PageMaterialGeometry {
+  let id: String
+  let placement: NotebookElementPlacement.Source
+  let graphic: NotebookGraphic?
+  let text: String?
+  let textStyle: NativeTextStyle
+
+  init(_ fragment: NotebookStoredFragment) throws {
+    let value = fragment.value
+    guard let id = value["id"]?.string,
+      let kind = value["kind"]?.string.flatMap(AgentElementKind.init(rawValue:)),
+      let frame = try value["frame"]?.decode(PageRect.self) else {
+      throw NotebookStorageError.corruptRecord(fragment.address)
+    }
+    func optional<T: Decodable>(_ key: String, _ type: T.Type) throws -> T? {
+      guard let field = value[key], field != .null else { return nil }
+      return try field.decode(type)
+    }
+    self.id = id
+    placement = try .init(frame: frame, parentID: optional("parentID", String.self),
+      basis: optional("basis", NotebookElementBasis.self), isGroup: kind == .group)
+    graphic = try optional("graphic", NotebookGraphic.self)
+    text = kind == .nativeText ? value["source"]?.string : nil
+    textStyle = try optional("textStyle", NativeTextStyle.self) ?? .standard
+  }
+}
+
+/// Only the addressed geometry closure survives while the index is refreshed.
+/// The returned graph borrows no store, program body or mutable transaction.
+private final class PageMaterialGeometrySources {
+  private let store: NotebookStore
+  private let pageID: UUID
+  private var elements: [String: PageMaterialGeometry]
+  private var absent = Set<String>()
+  private var pending: [String]
+  private var expanded = Set<String>()
+  private var claimedStrokes = Set<UUID>()
+  private var candidates: [String: NotebookGraphicPresentation.Candidate] = [:]
+  var claimedElementIDs: Set<String> { Set(candidates.keys) }
+
+  init(store: NotebookStore, pageID: UUID, root: PageMaterialGeometry) {
+    self.store = store; self.pageID = pageID
+    let key = collaborationIdentity(root.id)
+    elements = [key: root]; pending = [key]
+  }
+
+  @discardableResult
+  func include(_ id: String, fragment: NotebookStoredFragment? = nil) throws -> PageMaterialGeometry? {
+    let key = collaborationIdentity(id)
+    if let element = elements[key] { return element }
+    if absent.contains(key) { return nil }
+    guard elements.count + absent.count < 4096 else {
+      throw NotebookStorageError.limitExceeded("page_material_dependencies")
+    }
+    let address = pageFile(pageID) + "#/elements/@" + fieldKey([key])
+    guard let row = try fragment ?? store.storedFragments(address: address, descendants: false).first else {
+      absent.insert(key); return nil
+    }
+    let element = try PageMaterialGeometry(row)
+    guard collaborationIdentity(element.id) == key else { throw NotebookStorageError.corruptRecord(address) }
+    elements[key] = element; pending.append(key)
+    return element
+  }
+
+  func graph() throws -> NotebookGraphicGraph {
+    while let id = pending.popLast() {
+      guard expanded.insert(id).inserted, let element = elements[id] else { continue }
+      if let parent = element.placement.parentID { try include(parent) }
+      guard let graphic = element.graphic else { continue }
+      let unread = Set(graphic.sourceInkIDs).subtracting(claimedStrokes)
+      if !unread.isEmpty {
+        claimedStrokes.formUnion(unread)
+        for claimant in try store.graphicClaimants(on: .page(pageID), sourceInkIDs: unread) {
+          candidates[collaborationIdentity(claimant.candidate.id)] = claimant.candidate
+          claimedStrokes.formUnion(claimant.candidate.graphic.sourceInkIDs)
+          try include(claimant.candidate.id, fragment: claimant.fragment)
+        }
+      }
+      for binding in graphic.connection?.bindings ?? [] { try include(binding.elementID) }
+    }
+    let groups = elements.filter { $0.value.placement.isGroup }.mapValues(\.placement)
+    let resolver = NotebookElementPlacement.Resolver { groups[collaborationIdentity($0)] }
+    let shown = NotebookGraphicPresentation(elements.values.compactMap { element in
+      guard let graphic = element.graphic else { return nil }
+      return candidates[collaborationIdentity(element.id)] ?? .init(id: element.id, graphic: graphic,
+        version: .init(stamp: .init(counter: 0, actor: pageID), human: true))
+    }).geometryIDs
+    let surface = SurfaceID.page(pageID)
+    let nodes: [NotebookGraphicGraph.Node] = elements.values.compactMap { element in
+      guard let graphic = element.graphic,
+        let placement = try? resolver.resolve(element.id, source: element.placement) else { return nil }
+      return .init(id: element.id, graphic: graphic, frame: element.placement.frame,
+        surface: surface, shown: shown.contains(element.id), placement: placement)
+    }
+    return .init(nodes, groupSources: groups.mapValues { .init(source: $0, surface: surface) },
+      elementSources: elements.filter { !$0.value.placement.isGroup && $0.value.graphic == nil }.mapValues {
+        .init(source: $0.placement, surface: surface, text: $0.text, textStyle: $0.textStyle)
+      }, resolvers: [surface: resolver])
   }
 }

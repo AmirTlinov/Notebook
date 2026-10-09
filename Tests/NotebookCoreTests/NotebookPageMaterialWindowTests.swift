@@ -102,7 +102,11 @@ private struct PageMaterialFixture {
 struct NotebookPageMaterialWindowTests {
   @Test func unadmittedReadRefusesAndIndexAdmissionPreservesContentAndCursors() throws {
     let f = try PageMaterialFixture(); defer { f.clean() }
-    try f.replace([.init(id: "text", kind: .nativeText, frame: .init(x: 20, y: 20, width: 120, height: 40), source: "Hello", html: "")])
+    try f.replace([
+      .init(id: "text", kind: .nativeText, frame: .init(x: 20, y: 20, width: 120, height: 40), source: "Hello", html: ""),
+      .init(id: "large-program", kind: .web, frame: .init(x: 600, y: 600, width: 100, height: 100),
+        source: "Offscreen", html: String(repeating: "x", count: 8 * 1_024 * 1_024))
+    ])
     try f.edit("text", values: ["source": .string("Accepted text")])
     let history = try f.store.nativeHistory(domain: .page(f.pageID), actor: f.actor)
     #expect(!history.isEmpty)
@@ -127,6 +131,9 @@ struct NotebookPageMaterialWindowTests {
     #expect(try db.rows("PRAGMA user_version").first?[0].integer == NotebookStore.currentDatabaseVersion)
     let reopened = NotebookStore(root: f.root)
     #expect(try reopened.readPageMaterialWindow(itemID: f.itemID, pageID: f.pageID, bounds: .init(x: 0, y: 0, width: 200, height: 200)).elements.map(\.id) == ["text"])
+    #expect(throws: NotebookStorageError.limitExceeded("page_element_read")) {
+      try reopened.readPageElement(pageID: f.pageID, elementID: "large-program")
+    }
   }
 
   @Test func fittedTextAndTransformedGroupUseSamePlacementAsCompletePage() throws {
