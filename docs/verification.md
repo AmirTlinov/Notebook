@@ -400,3 +400,23 @@ Source `c651851853ad4e11826b78c2c536e85fef77ccd2b117f0283a3c8e5563790a5e`
 cleaned, production pair 260 is unchanged. [Cases and receipts](audit-evidence/2026-10-08/live-compositor-publication/results.json).
 GUI-505's dead paths are removed. Process/WebContent budgets, birth/event Undo,
 the coordinated format transition and full joint acceptance remain open.
+
+## 2026-10-09: common native and headless workspace owners
+
+The catalog's writer, command reader, trusted connection and history owner now
+serve native and headless lifetimes. Automatic continuation keeps fresh writes
+closed under its exact seal; bootstrap reads the post-COMMIT cursor. Image geometry
+keeps original scalar source witnesses and one charged document through its real
+print completion. Canonical paper retains the admitted integral pixel width.
+
+The exact staged common source passed all 32 selected Mac cases, including actual
+100k discovery, source/credit release, stale publication, admission and Retry.
+Failures, skips and runtime warnings: zero. Source
+`7f7a74fe7850d6db506709e6a4ed7390ffc6260db989f03887f248ff55439ffb`
+/ 1712 files stayed unchanged. ScriptHost: 7 functions/8 cases passed; its 845
+package inputs match this candidate. The earlier build failure and 29/32 route
+are retained. [Scope and receipts](audit-evidence/2026-10-09/common-runtime-owners/results.json).
+Cold geometry admission remains a conservative 128 MiB within the Mac 256 MiB pool.
+Physical iPad runtime acceptance, process budgets, source codec cost, causal
+birth/Undo transition and full joint acceptance remain open. Production 265 and
+DB30/wire44/manifest26 are unchanged.

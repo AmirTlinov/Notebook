@@ -127,7 +127,61 @@ final class NotebookHeadlessWorkspaceTests: XCTestCase {
     XCTAssertNil(runtime.connection.transportReader)
   }
 
-  private func makeRuntime() throws -> (runtime: NotebookHeadlessWorkspace, socket: URL) {
+  func testAutomaticWorkspaceSealKeepsFreshAuthorshipClosedAndRejectsChangedAcceptance() async throws {
+    let fixture = try makeRuntime(opensDefaultAccountWorkspace: true), runtime = fixture.runtime
+    await runtime.start(pageSize: .init(width: 96, height: 144))
+    let queue = runtime.persistence, reader = runtime.commandReader
+    XCTAssertEqual(runtime.workspaceHeader?.cursor, try runtime.store.currentChangeCursor(),
+      "Automatic selection starts from the completed bootstrap journal, not its pre-COMMIT header")
+    let preparation = await runtime.prepareAutomaticWorkspaceSwitch()
+    let original = try XCTUnwrap(preparation)
+    let froze = try await runtime.freezeAutomaticWorkspaceSwitch(original)
+    XCTAssertTrue(froze, "The exact owner must finish its post-seal read while new authorship stays closed")
+    XCTAssertFalse(runtime.permitsExternalWork)
+    XCTAssertFalse(runtime.permitsAuthoredWork)
+    XCTAssertFalse(queue.permitsNewWorkspaceMutation)
+    do {
+      _ = try await queue.submit(writesStore: true) { try $0.currentChangeCursor() }
+      XCTFail("A new accepted writer crossed the automatic workspace seal")
+    } catch {
+      XCTAssertEqual((error as? CollaborationError)?.code, "workspace_selection_pending")
+    }
+    XCTAssertEqual(queue.acceptedMutationGeneration, original.mutationGeneration)
+    XCTAssertEqual(try runtime.store.currentChangeCursor(), original.cursor)
+    runtime.rollbackAutomaticWorkspaceSwitch(original)
+    XCTAssertTrue(runtime.permitsAuthoredWork)
+    XCTAssertTrue(queue.permitsNewWorkspaceMutation)
+
+    let nextPreparation = await runtime.prepareAutomaticWorkspaceSwitch()
+    let next = try XCTUnwrap(nextPreparation)
+    let nextFroze = try await runtime.freezeAutomaticWorkspaceSwitch(next)
+    XCTAssertTrue(nextFroze)
+    runtime.commitAutomaticWorkspaceSwitch(original)
+    runtime.rollbackAutomaticWorkspaceSwitch(original)
+    XCTAssertFalse(runtime.permitsAuthoredWork, "A retired transition cannot release its successor's seal")
+    XCTAssertFalse(queue.permitsNewWorkspaceMutation)
+    runtime.commitAutomaticWorkspaceSwitch(next)
+    XCTAssertTrue(runtime.permitsAuthoredWork)
+    XCTAssertTrue(queue.permitsNewWorkspaceMutation)
+    XCTAssertTrue(runtime.persistence === queue)
+    XCTAssertTrue(runtime.commandReader === reader)
+
+    let changedPreparation = await runtime.prepareAutomaticWorkspaceSwitch()
+    let changed = try XCTUnwrap(changedPreparation)
+    _ = try await queue.submit(writesStore: true) { try $0.currentChangeCursor() }
+    let drained = await queue.flush()
+    XCTAssertTrue(drained)
+    XCTAssertEqual(try runtime.store.currentChangeCursor(), changed.cursor)
+    XCTAssertGreaterThan(queue.acceptedMutationGeneration, changed.mutationGeneration)
+    let changedFroze = try await runtime.freezeAutomaticWorkspaceSwitch(changed)
+    XCTAssertFalse(changedFroze, "Even an accepted material no-op revokes the source's earlier acceptance basis")
+    runtime.rollbackAutomaticWorkspaceSwitch(changed)
+    XCTAssertTrue(runtime.permitsAuthoredWork)
+    XCTAssertTrue(queue.permitsNewWorkspaceMutation)
+    XCTAssertEqual(runtime.shutdownPhase, .running)
+  }
+
+  private func makeRuntime(opensDefaultAccountWorkspace: Bool = false) throws -> (runtime: NotebookHeadlessWorkspace, socket: URL) {
     let root = URL(fileURLWithPath: "/tmp/nb-runtime-" + UUID().uuidString)
     // The IPC owner creates its private 0700 directory independently of the
     // store, whose bootstrap has already created the workspace directory.
@@ -137,7 +191,7 @@ final class NotebookHeadlessWorkspaceTests: XCTestCase {
     let writer = NotebookPersistenceQueue(store: store)
     let runtime = NotebookHeadlessWorkspace(configuration: .init(store: store, persistence: writer,
       commandSocketURL: socket, allowsCodexRegistration: false, pairingActivationID: nil,
-      opensDefaultAccountWorkspace: false, requiresExistingAccountContent: false, expectedWorkspaceID: nil,
+      opensDefaultAccountWorkspace: opensDefaultAccountWorkspace, requiresExistingAccountContent: false, expectedWorkspaceID: nil,
       preferences: defaults), startsNearbySync: false)
     addTeardownBlock { @MainActor in
       let saved = await runtime.shutdown(); XCTAssertTrue(saved, runtime.persistenceFailure ?? "")

@@ -140,7 +140,12 @@ final class NotebookHeadlessWorkspace: NotebookWorkspaceLifecycle {
           if startsNearbySync { try await workspaceRuntime.startConnection() }
           return
         }
-        let header = storage.header
+        // Bootstrap's prepared header precedes its accepted COMMIT and journal
+        // publication. The admitted reader captures that completed durable cut
+        // before IPC can accept work or automatic selection compares its cursor.
+        let header = try await commandReader.read(workspaceID: storage.header.workspaceID) {
+          try $0.workspaceHeader()
+        }
         workspaceHeader = header
         if opensDefaultAccountWorkspace { initialAccountWorkspaceCursor = header.cursor }
         loadState = .ready
@@ -207,8 +212,14 @@ final class NotebookHeadlessWorkspace: NotebookWorkspaceLifecycle {
       unchanged(transition), current == cursor else { return nil }
     prepared = true; return transition
   }
-  private func unchanged(_ transition: NotebookWorkspaceTransition) -> Bool {
-    shutdownPhase == .running && loadState == .ready && permitsAuthoredWork && automaticTransition == transition
+  private func unchanged(_ transition: NotebookWorkspaceTransition, writerSeal: UUID? = nil) -> Bool {
+    if let writerSeal {
+      guard workspaceTransitionIsFrozen, selectionSeal == writerSeal,
+        persistence.ownsWorkspaceSelectionSeal(writerSeal), workspaceRuntime.historyReadiness.permitsAuthorship else { return false }
+    } else {
+      guard permitsAuthoredWork else { return false }
+    }
+    return shutdownPhase == .running && loadState == .ready && automaticTransition == transition
       && admittedWorkspaceID == transition.workspaceID && persistence.acceptedMutationGeneration == transition.mutationGeneration
   }
   func freezeAutomaticWorkspaceSwitch(_ transition: NotebookWorkspaceTransition) async throws -> Bool {
@@ -217,7 +228,7 @@ final class NotebookHeadlessWorkspace: NotebookWorkspaceLifecycle {
     selectionSeal = seal; workspaceTransitionIsFrozen = true
     do {
       let cursor = try await commandReader.read(workspaceID: transition.workspaceID) { try $0.currentChangeCursor() }
-      guard unchanged(transition), selectionSeal == seal, cursor == transition.cursor else {
+      guard unchanged(transition, writerSeal: seal), cursor == transition.cursor else {
         rollbackAutomaticWorkspaceSwitch(transition); return false
       }
       return true

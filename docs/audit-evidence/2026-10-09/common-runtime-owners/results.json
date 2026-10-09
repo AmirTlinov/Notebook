@@ -1,0 +1,121 @@
+{
+  "date": "2026-10-09",
+  "scope": "Common native/headless workspace runtime; exact staged common sources",
+  "upstreamRuntimeCommit": "69384bd541c6bfa57814dba50663fb3dad225c9e",
+  "candidateTree": "e68a59eb71d189a577f544dce34900a0128b01cb",
+  "source": {
+    "sha256": "7f7a74fe7850d6db506709e6a4ed7390ffc6260db989f03887f248ff55439ffb",
+    "files": 1712,
+    "beforeEqualsAfter": true,
+    "construction": "Git index archive; unfinished old7 paths excluded; upcoming commit uses these exact code inputs."
+  },
+  "mac": {
+    "evidenceDirectory": ".build/common-runtime-native-mac-20261009-v3",
+    "result": "Passed",
+    "executed": 32,
+    "passed": 32,
+    "failed": 0,
+    "skipped": 0,
+    "runtimeWarnings": [],
+    "durationSeconds": 101.77799987792969,
+    "artifacts": [
+      {
+        "path": ".build/common-runtime-native-mac-20261009-v3/mac-summary.json",
+        "sha256": "1774d2beb7d01fdcb574370dc355554d09407161d328f8f61d42b9a6d2f8172f"
+      },
+      {
+        "path": ".build/common-runtime-native-mac-20261009-v3/mac-tests.json",
+        "sha256": "1eaf86156c7aab020e1b841035cdace011288f49195f80d5b82ac9779a324ffc"
+      },
+      {
+        "path": ".build/common-runtime-native-mac-20261009-v3/mac-execution.json",
+        "sha256": "7ac025c24d6113058e83051180b5f2c2490d00deb395effd643a9bc20267417c"
+      },
+      {
+        "path": ".build/common-runtime-native-mac-20261009-v3/verification.json",
+        "sha256": "c5e15af340456e85e8c4748cea978a6ba58d1b9e1d85feb1d194758c9b929428"
+      },
+      {
+        "path": ".build/common-runtime-native-mac-20261009-v3/source-before.json",
+        "sha256": "0661aaeaf91feeb5eef013d15d88c8d275c8829109709dc98536e85e98767612"
+      },
+      {
+        "path": ".build/common-runtime-native-mac-20261009-v3/source-after.json",
+        "sha256": "0661aaeaf91feeb5eef013d15d88c8d275c8829109709dc98536e85e98767612"
+      }
+    ]
+  },
+  "scriptHost": {
+    "evidenceDirectory": ".build/common-runtime-script-selection-20261009-v1",
+    "functions": 7,
+    "cases": 8,
+    "failed": [],
+    "skipped": [],
+    "sourceSHA256": "89c3e30766b524741ebfcea47471bfc9c14691a230a6d08960cc4c8094be8df0",
+    "beforeEqualsAfter": true,
+    "compiledPackageInputsMatchCommonCandidate": 845,
+    "artifacts": [
+      {
+        "path": ".build/common-runtime-script-selection-20261009-v1/core-execution.json",
+        "sha256": "530ee65a7411888c8af1f9911454ec32d9817ebfef65f00cab7cee1f96ab8357"
+      },
+      {
+        "path": ".build/common-runtime-script-selection-20261009-v1/verification.json",
+        "sha256": "cd26187173a8cba117c62c2f76182eeea35ae3895d1f0dfa1edb97b64c2cd34c"
+      }
+    ]
+  },
+  "repairs": [
+    "Shared catalog writer, command reader, trusted connection and history owner; native and headless supply their own accepted lifetime.",
+    "Automatic post-seal continuation requires its captured writer seal, unchanged accepted basis and current history admission; fresh authorship remains closed.",
+    "Headless bootstrap reads its bounded header after COMMIT through the same admitted command reader.",
+    "Image discovery retains scalar source witnesses from its original cut; only one admitted full document survives until actual print completion; final publication checks the original witnesses.",
+    "Native canonical paper preserves the admitted requested pixel width despite WebKit overlay rounding.",
+    "Shutdown compares durable content and identical runtime/writer/readers through failure and Retry, rather than identity of two independent decoded values."
+  ],
+  "geometryRegression": {
+    "boardElements": 100000,
+    "visibleDocuments": 2,
+    "checks": [
+      "actual paper dimensions",
+      "previous weak source and credit released before the next body",
+      "capacity refusal and cancelled queue before decoding",
+      "source change after actual print and before final publication"
+    ]
+  },
+  "admissionPolicy": "Cold geometry discovery/body/validation uses conservative SQL32MiB + JSON96MiB reservation; normal Mac pool256MiB. Smaller pools refuse before body decoding. Full source credit ends before validation admission.",
+  "preservedFailures": [
+    {
+      "directory": ".build/common-runtime-native-mac-20261009-v1",
+      "scope": "build only",
+      "executedTests": 0,
+      "cause": "Three test-only private property accesses corrected to existing workspaceRuntime.persistence."
+    },
+    {
+      "directory": ".build/common-runtime-native-mac-20261009-v2",
+      "executed": 32,
+      "passed": 29,
+      "failed": 3,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "sourceBeforeEqualsAfter": true,
+      "causes": [
+        "stale pre-COMMIT bootstrap cursor",
+        "WebKit-rounded raster below required density",
+        "false decoded-value ObjectIdentifier assertion"
+      ]
+    }
+  ],
+  "unchangedCoreProof": "Core90functions/117cases and actual100k material/ink2cases retained from common-source-and-history; this runtime slice changes no Core owner or Core test input.",
+  "physicalAcceptance": false,
+  "open": "Physical iPad source/runtime scenario gate, new native UI repairs, process/WebContent budgets, remaining source codec cost, birth/event Undo transition and full joint acceptance remain in Linear.",
+  "format": {
+    "database": 30,
+    "wire": 44,
+    "manifest": 26
+  },
+  "productionPair": {
+    "build": 265,
+    "changedByThisSlice": false
+  }
+}

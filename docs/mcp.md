@@ -9,6 +9,17 @@ writer after a client disconnects, and has no Notebook window or Dock entry.
 The [release owner](release-build-contract.md#build-versus-installation) installs
 it and registers `mcp_servers.notebook` through `codex mcp add`.
 
+`NotebookWorkspaceLaunch` admits the catalog identity. `NotebookWorkspaceRuntime`
+borrows its single writer, command reader, trusted connection and history owner.
+`NotebookHeadlessWorkspace` supplies their Mac lifetime; the iPad model supplies
+the accepted native input boundary and presentation. Shutdown joins accepted
+preparation and delivery before closing these same owners.
+
+An automatic workspace switch keeps fresh authorship closed while its exact
+transition finishes the post-seal read. Only the captured writer seal, unchanged
+workspace/input/acceptance basis and current history admission permit continuation.
+A stale transition cannot release its successor's seal.
+
 ## Tools
 
 - `notebook_workspaces`: list, create, select, rename and retry a workspace through

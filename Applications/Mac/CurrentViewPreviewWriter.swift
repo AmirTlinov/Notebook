@@ -77,8 +77,14 @@ enum CurrentViewPreviewWriter {
   ) async throws -> ScenePixelDependencies? {
     guard viewport.width == presence.viewport.x, viewport.height == presence.viewport.y else { throw PreviewError.invalidSurface }
     let store = model.store
+    let capture: NotebookRenderDocumentGeometry.Capture?
+    if presence.mode == .board || presence.mode == .cover {
+      capture = try await NotebookRenderDocumentGeometry.capture(store: store, presence: presence,
+        expectedIdentity: sourceIdentity)
+    } else { capture = nil }
     let reader = Task.detached(priority: .utility) {
-      try store.readTransaction { store in
+      if let capture { return (capture.header, capture.identity) }
+      return try store.readTransaction { store in
         let header = try store.workspaceHeader()
         guard try store.readBoardNodeHeader(presence.boardID) != nil else { throw PreviewError.invalidSurface }
         if let page {
@@ -98,9 +104,11 @@ enum CurrentViewPreviewWriter {
     let (header, identity) = try await withTaskCancellationHandler { try await reader.value } onCancel: { reader.cancel() }
     let identities: [NotebookReferenceIdentity]?
     if case .scene(let values) = identity { identities = values } else { identities = nil }
-    let documentGeometry = try await NotebookRenderDocumentGeometry.prepare(store: store, presence: presence)
+    let documentGeometry: NotebookRenderDocumentGeometry.Prepared
+    if let capture { documentGeometry = try await NotebookRenderDocumentGeometry.prepare(store: store, capture: capture) }
+    else { documentGeometry = .empty }
     let source = identities.map { SceneCompositionSource(store: store, revision: header.cursor, workspaceID: header.workspaceID,
-      validationIdentities: $0, recordPixelDependencies: true, documentGeometry: documentGeometry) }
+      validationIdentities: $0, recordPixelDependencies: true, documentGeometry: documentGeometry.values) }
     let png: Data
     let surface: CurrentViewSurfaceRevision
     switch presence.mode {
@@ -145,7 +153,8 @@ enum CurrentViewPreviewWriter {
           let current: Bool
           if let dependencies { current = try dependencies.isCurrent(store) }
           else { current = try PreviewSourceIdentity.read(store, presence: presence) == identity }
-          guard latest.workspaceID == header.workspaceID, try store.readBoardNodeHeader(presence.boardID) != nil, current else { throw PreviewError.sourceChanged }
+          guard latest.workspaceID == header.workspaceID, try store.readBoardNodeHeader(presence.boardID) != nil, current,
+            try documentGeometry.isCurrent(store) else { throw PreviewError.sourceChanged }
           guard let boardRevision = latest.boardRevision, let inkStamp = latest.spatialInkStamp else { throw PreviewError.invalidReceipt }
           let receipt = CurrentViewReceipt(workspaceStamp: latest.stamp, boardRevision: boardRevision,
             spatialInkStamp: inkStamp, presence: currentPresence,
@@ -205,8 +214,20 @@ enum CurrentViewPreviewWriter {
       return
     }
     guard model.permitsBackgroundPreparation else { throw PreviewError.inputActive }
+    let capture: NotebookRenderDocumentGeometry.Capture?
+    if request.target.kind == .board || request.target.kind == .cover {
+      let target = request.target
+      let region = request.region ?? PageRect(x: 0, y: 0, width: 1024, height: 768)
+      let center = (request.worldOrigin ?? .zero).offsetBy(x: region.x + region.width / 2, y: region.y + region.height / 2)
+      let presence = SessionPresence(boardID: target.kind == .board ? target.id : target.boardID!,
+        mode: target.kind == .board ? .board : .cover, camera: .init(center: center, scale: 1),
+        viewport: .init(x: region.width, y: region.height), focusedItemID: target.kind == .cover ? target.id : nil)
+      capture = try await NotebookRenderDocumentGeometry.capture(store: store, presence: presence,
+        expectedIdentity: .scene([.init(target: target, revision: request.sourceRevision)]))
+    } else { capture = nil }
     let reader = Task.detached(priority: .utility) {
-      try store.readTransaction { store in
+      if let capture { return ([String: JSONValue](), capture.header) }
+      return try store.readTransaction { store in
         guard try store.referenceRevision(target: request.target) == request.sourceRevision else {
           throw PreviewError.sourceChanged
         }
@@ -217,16 +238,10 @@ enum CurrentViewPreviewWriter {
     }
     let (files, header) = try await withTaskCancellationHandler { try await reader.value } onCancel: { reader.cancel() }
     let target = request.target
-    var documentGeometry: [UUID: WorkspaceItemGeometry] = [:]
-    if target.kind == .board || target.kind == .cover {
-      let region = request.region ?? PageRect(x: 0, y: 0, width: 1024, height: 768)
-      let center = (request.worldOrigin ?? .zero).offsetBy(x: region.x + region.width / 2, y: region.y + region.height / 2)
-      let presence = SessionPresence(boardID: target.kind == .board ? target.id : target.boardID!,
-        mode: target.kind == .board ? .board : .cover, camera: .init(center: center, scale: 1),
-        viewport: .init(x: region.width, y: region.height), focusedItemID: target.kind == .cover ? target.id : nil)
-      documentGeometry = try await NotebookRenderDocumentGeometry.prepare(store: store, presence: presence)
-    }
-    let source = SceneCompositionSource(store: store, revision: header.cursor, workspaceID: header.workspaceID, documentGeometry: documentGeometry)
+    let documentGeometry: NotebookRenderDocumentGeometry.Prepared
+    if let capture { documentGeometry = try await NotebookRenderDocumentGeometry.prepare(store: store, capture: capture) }
+    else { documentGeometry = .empty }
+    let source = SceneCompositionSource(store: store, revision: header.cursor, workspaceID: header.workspaceID, documentGeometry: documentGeometry.values)
     let full: RasterSnapshot
     var camera: SpatialCamera?
     var diagnostics: [RenderDiagnostic] = []
@@ -320,6 +335,7 @@ enum CurrentViewPreviewWriter {
           let latest = try store.workspaceHeader()
           guard latest.cursor == header.cursor, latest.workspaceID == header.workspaceID else { throw PreviewError.sourceChanged }
           guard try store.referenceRevision(target: target) == request.sourceRevision else { throw PreviewError.sourceChanged }
+          guard try documentGeometry.isCurrent(store) else { throw PreviewError.sourceChanged }
           guard let image = NSBitmapImageRep(data: png) else { throw PreviewError.pngEncoding }
           let fingerprint = request.region == nil ? nil : target.kind == .document ? outputHash
             : try store.regionalFingerprint(request, inkFingerprint: inkFingerprint)

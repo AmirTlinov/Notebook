@@ -1653,8 +1653,14 @@ final class NotebookAppModel: NotebookWorkspaceLifecycle {
     return transition
   }
 
-  private func automaticWorkspaceInputIsUnchanged(_ transition: AutomaticWorkspaceTransition) -> Bool {
-    shutdownPhase == .running && loadState == .ready && permitsAuthoredWork
+  private func automaticWorkspaceInputIsUnchanged(_ transition: AutomaticWorkspaceTransition, writerSeal: UUID? = nil) -> Bool {
+    if let writerSeal {
+      guard workspaceTransitionIsFrozen, workspaceSelectionWriterSeal == writerSeal,
+        persistence.ownsWorkspaceSelectionSeal(writerSeal), historyReadiness.permitsAuthorship else { return false }
+    } else {
+      guard permitsAuthoredWork else { return false }
+    }
+    return shutdownPhase == .running && loadState == .ready
       && admittedWorkspaceID == transition.workspaceID && !inputGate.isActive
       && inputGate.acceptedContactGeneration == transition.inputGeneration
       && persistence.acceptedMutationGeneration == transition.mutationGeneration
@@ -1675,8 +1681,8 @@ final class NotebookAppModel: NotebookWorkspaceLifecycle {
     workspaceTransitionIsFrozen = true
     do {
       let cursor = try await commandReader.read(workspaceID: transition.workspaceID) { try $0.currentChangeCursor() }
-      guard automaticWorkspaceTransition == transition, automaticWorkspaceInputIsUnchanged(transition),
-        workspaceSelectionWriterSeal == seal, cursor == transition.cursor else {
+      guard automaticWorkspaceTransition == transition, automaticWorkspaceInputIsUnchanged(transition, writerSeal: seal),
+        cursor == transition.cursor else {
         rollbackAutomaticWorkspaceSwitch(transition); return false
       }
       return true

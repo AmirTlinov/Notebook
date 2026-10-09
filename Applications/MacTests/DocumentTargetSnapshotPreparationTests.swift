@@ -711,6 +711,7 @@ final class DocumentTargetSnapshotPreparationTests: XCTestCase {
     probe.orderOut(nil); probe.close()
     let cached = SceneRenderResources.shared.retainRaster(for: source)
     defer { cached?.release() }
+    let cachedPixels = cached?.image.cgImage(forProposedRect: nil, context: nil, hints: nil)
     let evidence: [String: Any] = ["fixture": name, "documentID": document.id.uuidString,
       "elapsedMS": elapsedMS,
       "screenScaleBeforePreparation": screenScaleBeforePreparation.map { $0 as Any } ?? NSNull(),
@@ -720,6 +721,7 @@ final class DocumentTargetSnapshotPreparationTests: XCTestCase {
       "screenRequiredScale": Double(NSScreen.main?.backingScaleFactor ?? 2),
       "sameGeometryProbeWindowScale": probeScale, "returned": result != nil,
       "actualCacheScale": cached?.pixelScale ?? 0, "actualCachePresent": cached != nil,
+      "actualCachePixelWidth": cachedPixels?.width ?? 0, "actualCachePixelHeight": cachedPixels?.height ?? 0,
       "sourceToken": DocumentSnapshotCache.token(document: document, state: state, pageIndex: 0),
       "error": failure.map { String(describing: $0) } ?? "none",
       "activeWebSurfacesAfterReturn": SceneRenderResources.shared.activeWebSurfaceCount]
@@ -732,6 +734,10 @@ final class DocumentTargetSnapshotPreparationTests: XCTestCase {
     }
     XCTAssertNil(failure, String(decoding: data, as: UTF8.self))
     XCTAssertNotNil(result, "The live preparation path must return its own actual raster")
+    if let result {
+      XCTAssertGreaterThanOrEqual(result.pixelScale + 0.000_001, Double(NSScreen.main?.backingScaleFactor ?? 2),
+        "The exact requested raster must retain its admitted display density")
+    }
   }
 
   private static var publicContents: [DocumentTestFiles] { [
