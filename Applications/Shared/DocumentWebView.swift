@@ -2534,7 +2534,10 @@ final class DocumentWebCoordinator: NSObject,
               Task { @MainActor [weak self, capture] in
                 var received = false
                 do {
-                  let cg = try await paper.image(width: overlay.width, overlay: overlay)
+                  // WebKit may round its overlay down by one pixel. The native
+                  // paper keeps the integral width already admitted for this
+                  // request, so its density can satisfy the same waiting reader.
+                  let cg = try await paper.image(width: pixelWidth, overlay: overlay)
                   #if os(iOS)
                     let normalized = UIImage(cgImage: cg, scale: nativeScale ?? Double(cg.width) / size.width, orientation: .up)
                   #else

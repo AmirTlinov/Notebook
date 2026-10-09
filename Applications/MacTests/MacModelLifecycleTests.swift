@@ -143,7 +143,7 @@ final class MacModelLifecycleTests: XCTestCase {
       boardID: try XCTUnwrap(model.presence?.boardID), elementID: "board-element"
     )
 
-    var source = page
+    var source = try model.store.loadPage(page.id)
     source.replaceElements([.init(id: "page-element", kind: .web, frame: .init(x: 20, y: 20, width: 160, height: 100), source: "", html: "<p>Material</p>")], actor: model.actorID)
     try model.store.savePage(source); await model.reloadExternalChanges()?.value
     model.selectElement(pageReference)
@@ -243,6 +243,7 @@ final class MacModelLifecycleTests: XCTestCase {
     retainNotebookUntilTeardown(fixture.model, removing: root)
     let store = fixture.store, model = fixture.model
     try await fixture.start(showingPage: true)
+    await model.prepareCurrentView()
     let page = try XCTUnwrap(model.activePage)
     let clock = ContinuousClock()
     let deadline = clock.now + .seconds(4)
@@ -308,6 +309,7 @@ final class MacModelLifecycleTests: XCTestCase {
     retainNotebookUntilTeardown(fixture.model, removing: root)
     let store = fixture.store, model = fixture.model
     try await fixture.start(showingPage: true)
+    await model.prepareCurrentView()
     try await fixture.waitUntil(seconds: 3) { (try? store.loadCurrentViewReceipt()) != nil }
     let original = try XCTUnwrap(store.loadCurrentViewReceipt())
     XCTAssertEqual(original.workspaceStamp, model.workspace?.stamp)
@@ -316,6 +318,7 @@ final class MacModelLifecycleTests: XCTestCase {
     let itemID = try XCTUnwrap(model.presence?.selectedItemID), boardID = try XCTUnwrap(model.presence?.boardID)
     try await fixture.move(itemID, boardID: boardID, to: .init(x: 700, y: 900))
     let revision = try XCTUnwrap(store.workspaceHeader().boardRevision)
+    await model.prepareCurrentView()
     try await fixture.waitUntil(seconds: 3) { (try? store.loadCurrentViewReceipt())?.boardRevision == revision }
     XCTAssertNotEqual(revision, original.boardRevision)
     XCTAssertEqual(try store.readBoardItem(itemID)?.board.focusedCenter(of: itemID), .init(x: 700, y: 900))

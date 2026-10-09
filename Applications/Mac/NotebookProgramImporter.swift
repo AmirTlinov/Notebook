@@ -18,6 +18,7 @@ final class NotebookProgramImporter {
   private var jobs: [String: Job] = [:]
   private var resourceImports = 0
   private var stopped = false
+  var hasPendingPreparation: Bool { resourceImports > 0 || jobs.values.contains { $0.task != nil } }
   init(persistence: NotebookPersistenceQueue, workspaceID: UUID) {
     self.persistence = persistence; self.workspaceID = workspaceID
   }

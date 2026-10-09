@@ -278,10 +278,12 @@ final class DocumentTargetSnapshotPreparationTests: XCTestCase {
         "pressure": String(describing: resources.memoryPressureLevel), "reconciliationSeconds": 3_600]
     }
     do {
-      // AppModel starts the sole real publisher; the exact-root configuration
-      // holds its second serial read, after it has discovered the page source.
+      // Image demand enters the shared workspace service. The exact-root
+      // configuration holds its second read after discovering the page source.
       try await fixture.start(pageSize: size)
-      phase = "automatic-read-and-durable-target-held"
+      let imageRequest = Task { await fixture.model.prepareCurrentView() }
+      defer { imageRequest.cancel() }
+      phase = "requested-read-and-durable-target-held"
       try await waitUntil { reading.entered.value == true && targetContinuation != nil }
       XCTAssertNil(try fixture.store.loadCurrentViewReceipt())
       XCTAssertNil(try fixture.store.loadTargetRenderReceipt(request.id))
@@ -310,8 +312,10 @@ final class DocumentTargetSnapshotPreparationTests: XCTestCase {
       XCTAssertEqual(artifact.path, fixture.store.previewURL(pageID).path)
       XCTAssertNotNil(NSImage(contentsOfFile: artifact.path))
       XCTAssertNil(try fixture.store.loadCurrentViewReceipt(), "The durable target does not revive optional current-view publication")
-      phase = "normal-event-resumes-without-timer"
+      await imageRequest.value
+      phase = "next-request-after-pressure"
       resources.handleMemoryPressure(.normal)
+      await fixture.model.prepareCurrentView()
       try await waitUntil { (try? fixture.store.loadCurrentViewReceipt()) != nil }
       let currentReceipt = try XCTUnwrap(fixture.store.loadCurrentViewReceipt())
       XCTAssertEqual(currentReceipt.presence.notebookPageID, pageID)
@@ -707,6 +711,7 @@ final class DocumentTargetSnapshotPreparationTests: XCTestCase {
     probe.orderOut(nil); probe.close()
     let cached = SceneRenderResources.shared.retainRaster(for: source)
     defer { cached?.release() }
+    let cachedPixels = cached?.image.cgImage(forProposedRect: nil, context: nil, hints: nil)
     let evidence: [String: Any] = ["fixture": name, "documentID": document.id.uuidString,
       "elapsedMS": elapsedMS,
       "screenScaleBeforePreparation": screenScaleBeforePreparation.map { $0 as Any } ?? NSNull(),
@@ -716,6 +721,7 @@ final class DocumentTargetSnapshotPreparationTests: XCTestCase {
       "screenRequiredScale": Double(NSScreen.main?.backingScaleFactor ?? 2),
       "sameGeometryProbeWindowScale": probeScale, "returned": result != nil,
       "actualCacheScale": cached?.pixelScale ?? 0, "actualCachePresent": cached != nil,
+      "actualCachePixelWidth": cachedPixels?.width ?? 0, "actualCachePixelHeight": cachedPixels?.height ?? 0,
       "sourceToken": DocumentSnapshotCache.token(document: document, state: state, pageIndex: 0),
       "error": failure.map { String(describing: $0) } ?? "none",
       "activeWebSurfacesAfterReturn": SceneRenderResources.shared.activeWebSurfaceCount]
@@ -728,6 +734,10 @@ final class DocumentTargetSnapshotPreparationTests: XCTestCase {
     }
     XCTAssertNil(failure, String(decoding: data, as: UTF8.self))
     XCTAssertNotNil(result, "The live preparation path must return its own actual raster")
+    if let result {
+      XCTAssertGreaterThanOrEqual(result.pixelScale + 0.000_001, Double(NSScreen.main?.backingScaleFactor ?? 2),
+        "The exact requested raster must retain its admitted display density")
+    }
   }
 
   private static var publicContents: [DocumentTestFiles] { [

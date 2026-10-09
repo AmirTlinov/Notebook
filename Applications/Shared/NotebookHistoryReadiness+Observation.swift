@@ -4,15 +4,15 @@ import NotebookCore
 extension NotebookHistoryReadiness {
   /// The admitted native owner adds account and connection evidence to Core's
   /// finite SQL observation. Exhaustive comparison remains a sealed phase.
-  func observeInventory(_ command: NotebookCommand, model: NotebookAppModel) async throws -> JSONValue {
+  func observeInventory(_ command: NotebookCommand, runtime: NotebookWorkspaceRuntime) async throws -> JSONValue {
     guard command.command == .read, let query = command.queries?.first,
       command.queries?.count == 1, query.kind == .replicaInventory else {
       throw CollaborationError("invalid_replica_query", "Наблюдение реплики требует одного отдельного запроса.")
     }
     let request = try NotebookReadCommand(command), initialPhase = phase
-    let fleetWitness = try await model.captureHistoryFleet()
-    let fleet = fleetWitness.observation, actor = model.actorID
-    let observation = try await model.observeHistorySource { cut in
+    let fleetWitness = try await runtime.captureHistoryFleet()
+    let fleet = fleetWitness.observation, actor = runtime.actorID
+    let observation = try await runtime.observeHistorySource { cut in
       (try cut.handle(request), try cut.replicaInventoryCut())
     }
     try fleetWitness.requireCurrent()

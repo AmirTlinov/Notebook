@@ -10,7 +10,7 @@ extension XCTestCase {
   /// The lifetime of the real writer extends through its background readers.
   /// On a failed shutdown leave the database intact as failure evidence.
   @MainActor
-  func retainNotebookUntilTeardown(_ model: NotebookAppModel, removing root: URL) {
+  func retainNotebookUntilTeardown(_ model: any NotebookWorkspaceLifecycle, removing root: URL) {
     addTeardownBlock {
       let stopped = await model.shutdown()
       let failure = await model.persistenceFailure

@@ -41,6 +41,10 @@ final class MacShutdownTests: XCTestCase {
     let presentation = ShutdownPresentationProbe(model: model)
     model.registerScenePresentation(presentation)
     let page = try XCTUnwrap(model.activePage)
+    let durablePage = try model.store.loadPage(page.id)
+    let runtime = model.workspaceRuntime, commandReader = runtime.commandReader
+    _ = try await runtime.connection.makeTransportStorage()
+    let transportReader = try XCTUnwrap(runtime.connection.transportReader)
     try fault.rejectReadsAndWrites()
     await model.reloadExternalChanges()?.value
     XCTAssertNotNil(model.persistenceFailure)
@@ -54,6 +58,10 @@ final class MacShutdownTests: XCTestCase {
     let refused = await model.shutdown()
     XCTAssertFalse(refused)
     XCTAssertEqual(model.shutdownPhase, .closing)
+    XCTAssertTrue(model.workspaceRuntime === runtime)
+    XCTAssertTrue(runtime.persistence === writer)
+    XCTAssertTrue(runtime.commandReader === commandReader)
+    XCTAssertTrue(runtime.connection.transportReader === transportReader)
     XCTAssertTrue(presentation.terminalPhases.isEmpty, "A failed publication cannot retire the human's scene")
     XCTAssertFalse(model.inputGate.permitsNewContact)
     XCTAssertFalse(model.inputGate.beginPencilAction(source: UUID()))
@@ -68,7 +76,14 @@ final class MacShutdownTests: XCTestCase {
     let repaired = await model.finishPendingPersistence()
     XCTAssertTrue(repaired, model.persistenceFailure ?? "The refresh owner did not recover")
     XCTAssertNil(model.persistenceFailure)
-    XCTAssertEqual(try model.store.loadPage(page.id), page)
+    // A new disk decode has its own projection cache. Durable content and the
+    // retained runtime owners are the unchanged boundaries of repair.
+    XCTAssertEqual(try model.store.loadPage(page.id), durablePage)
+    XCTAssertEqual(try XCTUnwrap(model.activePage), page)
+    XCTAssertTrue(model.workspaceRuntime === runtime)
+    XCTAssertTrue(runtime.persistence === writer)
+    XCTAssertTrue(runtime.commandReader === commandReader)
+    XCTAssertTrue(runtime.connection.transportReader === transportReader)
     let stopped = await model.shutdown()
     XCTAssertTrue(stopped, "A refused quit must leave the refresh owner available for explicit repair")
     XCTAssertEqual(model.shutdownPhase, .stopped)
@@ -84,6 +99,9 @@ final class MacShutdownTests: XCTestCase {
     XCTAssertEqual(model.shutdownPhase, .running)
     let presentation = ShutdownPresentationProbe(model: model)
     model.registerScenePresentation(presentation)
+    let runtime = model.workspaceRuntime, commandReader = runtime.commandReader
+    _ = try await runtime.connection.makeTransportStorage()
+    let transportReader = runtime.connection.transportReader
     let page = try XCTUnwrap(model.activePage)
     let durableStampBeforeContact = page.drawingStamp
     try fault.rejectReadsAndWrites()
@@ -99,7 +117,7 @@ final class MacShutdownTests: XCTestCase {
     let stamp = try XCTUnwrap(model.reserveDrawingAction(pageID: page.id))
     let accepted = model.acceptDrawingAction(action, pageID: page.id, stamp: stamp)
     XCTAssertNotNil(accepted, "The native contact has already been accepted in memory")
-    let inMemory = try PageInkDrawing.decode(XCTUnwrap(model.activePage).drawingData)
+    let inMemory = try XCTUnwrap(model.activePage).inkDrawing()
     XCTAssertEqual(inMemory.activeActions.map(\.id), [action.id])
     let savedBeforeRepair = await model.finishPendingPersistence()
     XCTAssertFalse(savedBeforeRepair)
@@ -113,6 +131,10 @@ final class MacShutdownTests: XCTestCase {
     XCTAssertEqual(model.shutdownPhase, .closing)
     XCTAssertTrue(presentation.terminalPhases.isEmpty)
 
+    XCTAssertTrue(model.workspaceRuntime === runtime)
+    XCTAssertTrue(runtime.persistence === writer)
+    XCTAssertTrue(runtime.commandReader === commandReader)
+    XCTAssertTrue(runtime.connection.transportReader === transportReader)
     try fault.restore()
     let durableBeforeRetry = try model.store.loadPage(page.id)
     XCTAssertEqual(durableBeforeRetry.drawingStamp, durableStampBeforeContact)

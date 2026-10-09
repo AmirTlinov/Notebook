@@ -46,6 +46,7 @@ import SwiftUI
     XCTAssertEqual(try fixture.store.loadPresence(), local)
     let observed = try await fixture.read(.init(kind: .presence)).decode(SessionPresence.self)
     XCTAssertEqual(observed, remote)
+    await model.prepareCurrentView()
     try await fixture.waitUntil(seconds: 8) {
       (try? fixture.store.loadCurrentViewReceipt())?.presence == remote
     }

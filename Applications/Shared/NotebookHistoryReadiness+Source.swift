@@ -136,10 +136,10 @@ extension NotebookHistoryReadiness {
     }
   }
 
-  /// Exhaustive source evidence through the model's existing serial reader.
+  /// Exhaustive source evidence through the runtime's existing serial reader.
   /// Each finite call owns a new WAL cut; only semantic positions cross await.
   /// No report here grants joint readiness, authorship or format activation.
-  func produceSource(model: NotebookAppModel, request: Request, scope: NotebookHistoryControlScope,
+  func produceSource(runtime: NotebookWorkspaceRuntime, request: Request, scope: NotebookHistoryControlScope,
     fleetWitness: NotebookHistoryFleetWitness,
     send: @MainActor (NotebookHistoryControl.Page) async throws -> Void) async throws -> SourceReport {
     var section = SourceError.Section.acceptedPhysicalHistory
@@ -147,22 +147,22 @@ extension NotebookHistoryReadiness {
     do {
       try Task.checkCancellation()
       try requireSourceCoordinationCurrent(requestID: request.id)
-      guard self === model.historyReadiness, case .sealed(let current, let seal) = phase, current == request else {
+      guard self === runtime.historyReadiness, case .sealed(let current, let seal) = phase, current == request else {
         throw SourceError(reason: .phaseChanged, section: section)
       }
-      guard model.ownsHistoryWriterSeal(request: request, seal: seal) else {
+      guard runtime.ownsHistoryWriterSeal(request: request, seal: seal) else {
         throw SourceError(reason: .writerSealChanged, section: section)
       }
       let fleet = fleetWitness.observation
       guard scope.isValid, scope.requestID == request.id, scope.workspaceID == request.workspaceID,
         Set(scope.endpoints.map { $0.identity.deviceID }) == request.devices,
-        fleet.local.deviceID == model.actorID, fleet.local.workspaceID == request.workspaceID,
-        let endpoint = scope.endpoint(for: model.actorID), endpoint.identity == fleet.local else {
+        fleet.local.deviceID == runtime.actorID, fleet.local.workspaceID == request.workspaceID,
+        let endpoint = scope.endpoint(for: runtime.actorID), endpoint.identity == fleet.local else {
         throw SourceError(reason: .identityMismatch, section: section)
       }
-      try requireSourceCurrent(model: model, request: request, seal: seal, witness: fleetWitness, section: section)
-      let initial = try await model.observeHistorySource { try $0.replicaInventoryCut() }
-      try requireSourceCurrent(model: model, request: request, seal: seal, witness: fleetWitness, section: section)
+      try requireSourceCurrent(runtime: runtime, request: request, seal: seal, witness: fleetWitness, section: section)
+      let initial = try await runtime.observeHistorySource { try $0.replicaInventoryCut() }
+      try requireSourceCurrent(runtime: runtime, request: request, seal: seal, witness: fleetWitness, section: section)
       let cut = initial.value
       guard cut.workspaceID == scope.workspaceID else { throw SourceError(reason: .workspaceChanged, section: section) }
       guard cut.journalGenerationStatus == .stored, cut.journalGeneration == endpoint.journalGeneration else {
@@ -171,8 +171,8 @@ extension NotebookHistoryReadiness {
       guard cut.acceptedLocalPrefix == endpoint.head else { throw SourceError(reason: .prefixChanged, section: section) }
       guard cut.databaseVersion == scope.databaseVersion, cut.wireVersion == scope.wireVersion,
         cut.manifestVersion == scope.manifestVersion else { throw SourceError(reason: .formatChanged, section: section) }
-      let source = NotebookReplicationSource(deviceID: model.actorID, generation: endpoint.journalGeneration)
-      let borrow = NotebookHistorySourceBorrow(readiness: self, model: model, request: request, seal: seal,
+      let source = NotebookReplicationSource(deviceID: runtime.actorID, generation: endpoint.journalGeneration)
+      let borrow = NotebookHistorySourceBorrow(readiness: self, runtime: runtime, request: request, seal: seal,
         witness: fleetWitness, lifetime: initial.connectionLifetimeID, anchor: cut)
       var accepted = try NotebookHistorySourceEmission(scope: scope, source: source, stream: .acceptedTransactions)
       var physical = try NotebookHistorySourceEmission(scope: scope, source: source, stream: .physicalClosures)
@@ -323,14 +323,14 @@ extension NotebookHistoryReadiness {
     }
   }
 
-  fileprivate func requireSourceCurrent(model: NotebookAppModel, request: Request, seal: UUID,
+  fileprivate func requireSourceCurrent(runtime: NotebookWorkspaceRuntime, request: Request, seal: UUID,
     witness: NotebookHistoryFleetWitness, section: SourceError.Section, transactionID: UUID? = nil) throws {
     try Task.checkCancellation()
     try requireSourceCoordinationCurrent(requestID: request.id)
     guard phase == .sealed(request, writerSeal: seal) else {
       throw SourceError(reason: .phaseChanged, section: section, transactionID: transactionID)
     }
-    guard model.ownsHistoryWriterSeal(request: request, seal: seal) else {
+    guard runtime.ownsHistoryWriterSeal(request: request, seal: seal) else {
       throw SourceError(reason: .writerSealChanged, section: section, transactionID: transactionID)
     }
     do { try witness.requireCurrent() }
@@ -369,13 +369,13 @@ extension NotebookHistoryReadiness {
 
 @MainActor
 private struct NotebookHistorySourceBorrow {
-  let readiness: NotebookHistoryReadiness, model: NotebookAppModel
+  let readiness: NotebookHistoryReadiness, runtime: NotebookWorkspaceRuntime
   let request: NotebookHistoryReadiness.Request, seal: UUID
   let witness: NotebookHistoryFleetWitness, lifetime: UUID
   let anchor: NotebookReplicaInventoryCut
 
   func requireCurrent(section: NotebookHistoryReadiness.SourceError.Section, transactionID: UUID? = nil) throws {
-    try readiness.requireSourceCurrent(model: model, request: request, seal: seal,
+    try readiness.requireSourceCurrent(runtime: runtime, request: request, seal: seal,
       witness: witness, section: section, transactionID: transactionID)
   }
   func read<Value: Sendable>(section: NotebookHistoryReadiness.SourceError.Section, transactionID: UUID? = nil,
@@ -384,7 +384,7 @@ private struct NotebookHistorySourceBorrow {
     do {
       try requireCurrent(section: section, transactionID: transactionID)
       let expected = anchor
-      let observation = try await model.observeHistorySource { query -> Result<Value, NotebookHistoryReadiness.SourceError> in
+      let observation = try await runtime.observeHistorySource { query -> Result<Value, NotebookHistoryReadiness.SourceError> in
         let current = try query.replicaInventoryCut()
         if let reason = NotebookHistoryReadiness.sourceAnchorMismatch(current, expected: expected) {
           return .failure(.init(reason: reason, section: section, transactionID: transactionID))

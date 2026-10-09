@@ -40,6 +40,7 @@ final class PageVisionDemandTests: XCTestCase {
     let model = NotebookAppModel(store: store, startsNearbySync: false)
     removeAfterShutdown(model, root: root)
     await model.start(pageSize: size)
+    await model.prepareCurrentView()
     XCTAssertEqual(try store.workspaceHeader().itemCount, 64)
     let canonicalPageCount = try store.readItemHeaders(limit: 128).reduce(0) { count, item in
       count + item.pageCount
@@ -62,6 +63,7 @@ final class PageVisionDemandTests: XCTestCase {
     let afterIdentity = try PreviewSourceIdentity.read(store, presence: XCTUnwrap(model.observedPresence))
     XCTAssertEqual(beforeIdentity, afterIdentity)
     await model.reloadExternalChanges()?.value
+    await model.prepareCurrentView()
     try await Task.sleep(for: .milliseconds(1_200))
     try await waitUntil { try store.loadCurrentViewReceipt()?.workspaceStamp == store.workspaceHeader().stamp }
     XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: store.currentViewPreviewURL.path)[.modificationDate] as? Date, pngBefore)
@@ -132,8 +134,9 @@ final class PageVisionDemandTests: XCTestCase {
     let model = NotebookAppModel(store: store, startsNearbySync: false)
     removeAfterShutdown(model, root: root)
     await model.start(pageSize: .init(width: 100, height: 140))
+    await model.prepareCurrentView()
     let page = try XCTUnwrap(model.activePage)
-    try await waitUntil { store.hasCurrentPageVision(page) }
+    try await waitUntil { store.hasCurrentPageVision(try store.loadPage(page.id)) }
     let stopped = await model.shutdown()
     XCTAssertTrue(stopped)
     let cursor = try store.currentReadCursor()
@@ -177,6 +180,7 @@ final class PageVisionDemandTests: XCTestCase {
     XCTAssertNotEqual(selected.selectedItemID, before.presence.selectedItemID)
     XCTAssertEqual(selected.camera, before.presence.camera)
     XCTAssertEqual(selected.mode, .board)
+    await model.prepareCurrentView()
     try await waitUntil { try store.loadCurrentViewReceipt()?.presence == selected }
     try await waitUntil { queue.pendingCount == 0 }
     let receipt = try XCTUnwrap(store.loadCurrentViewReceipt())
@@ -214,6 +218,8 @@ final class PageVisionDemandTests: XCTestCase {
     model.selectItem(firstItemID)
     let selected = try XCTUnwrap(model.observedPresence)
     let acceptedSelectionCount = queue.pendingCount
+    let requested = Task { await model.prepareCurrentView() }
+    defer { requested.cancel() }
     XCTAssertGreaterThan(acceptedSelectionCount, 1, "The real selection command is accepted behind the barrier")
     try await waitUntil { queue.pendingCount > acceptedSelectionCount }
     let contact = UUID()
@@ -240,8 +246,10 @@ final class PageVisionDemandTests: XCTestCase {
     XCTAssertNil(queue.failure)
 
     // There is deliberately no second selection, camera edit or notification.
-    // The same demand must become eligible again when the contact ends.
+    // The next request uses the same selection after contact completion.
     model.inputGate.endContact(source: contact)
+    await requested.value
+    await model.prepareCurrentView()
     try await waitUntil { try store.loadCurrentViewReceipt()?.presence == selected }
     XCTAssertEqual(model.observedPresence, selected)
     XCTAssertEqual(try Data(contentsOf: store.currentViewPreviewURL), beforePNG)
@@ -263,7 +271,9 @@ final class PageVisionDemandTests: XCTestCase {
     model.updatePresence(rendering, settled: true)
     let persisted = await model.finishPendingPersistence()
     XCTAssertTrue(persisted)
-    // The publisher's normal delayed render first reads addressed materials on
+    let requested = Task { await model.prepareCurrentView() }
+    defer { requested.cancel() }
+    // The publisher's requested render first reads addressed materials on
     // the FIFO. Put the barrier immediately behind that read, not in front of
     // it: rendering can finish, while its final publication must wait.
     let deadline = ContinuousClock.now + .seconds(8)
@@ -348,13 +358,14 @@ final class PageVisionDemandTests: XCTestCase {
     let model = NotebookAppModel(store: store, startsNearbySync: false, persistenceQueue: queue)
     removeAfterShutdown(model, root: root)
     await model.start(pageSize: size)
+    await model.prepareCurrentView()
     try await waitUntil { try store.loadCurrentViewReceipt()?.presence == model.observedPresence }
     try await waitUntil { store.hasCurrentPageVision(created.page) && queue.pendingCount == 0 }
     return (model, store, queue, firstItemID)
   }
 
   @MainActor
-  private func requestVision(_ page: PageDocument, model: NotebookAppModel) async throws -> TargetRenderRequest {
+  private func requestVision(_ page: any NotebookPagePresentationSource, model: NotebookAppModel) async throws -> TargetRenderRequest {
     var command = NotebookCommand(command: .pageVision)
     command.target = .init(kind: .page, id: page.id)
     command.expectedRevision = page.drawingStamp.revision

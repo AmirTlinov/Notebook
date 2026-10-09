@@ -26,10 +26,25 @@ final class NotebookPersistenceQueueTests: XCTestCase {
     defer { try? FileManager.default.removeItem(at: root) }
     let store = NotebookStore(root: root), device = UUID(), peer = UUID()
     let header = try store.initializeWorkspace(actor: device, pageSize: .init(width: 834, height: 1194))
+    let pageID = try XCTUnwrap(store.loadIndex().items.first?.pageIDs.first)
+    let target = CollaborationTarget(kind: .page, id: pageID)
+    let action = try store.applyCollaborationAction(.init(summary: "Accepted peer material", expected: [
+      .init(target: target, revision: store.targetContentRevision(target: target))], operations: [
+        .init(kind: .insertElement, target: target, id: "accepted", values: [
+          "kind": .string("web"), "source": .string("<button>Accepted</button>"),
+          "frame": try .encode(PageRect(x: 20, y: 20, width: 100, height: 40))])]), actor: peer)
+    let authored = try store.collaborationActions(), history = try store.nativeHistory(domain: .page(pageID), actor: device)
     let queue = NotebookPersistenceQueue(store: store), readiness = NotebookHistoryReadiness()
     queue.authoredAdmission = { readiness.authoredAdmissionError }
+    var durableReceipts: [DeviceActionReceipt] = []
+    queue.onCommit = { owner in
+      guard owner == .deliveryReceipt else { return }
+      do { durableReceipts.append(try XCTUnwrap(store.deviceActionReceipts(actionIDs: [action.id]).first)) }
+      catch { XCTFail("Receipt publication must follow its durable value: \(error)") }
+    }
     let marker = root.appendingPathComponent("retry-ready"), transactionID = UUID()
     let accepted = CompletionProbe<UUID>(), late = CompletionProbe<UUID>(), acknowledgement = CompletionProbe<Bool>()
+    let arrival = CompletionProbe<Int>()
     queue.enqueueCommand(owner: .pageInk(UUID()), { store in
       guard FileManager.default.fileExists(atPath: marker.path) else { throw StorageUnavailable.unavailable }
       try store.publishRecords(writes: ["readiness-accepted.json": .string(transactionID.uuidString)])
@@ -47,11 +62,16 @@ final class NotebookPersistenceQueueTests: XCTestCase {
       try store.acknowledgePeer(peerID: peer, through: 0)
       return true
     }, completion: acknowledgement.record)
+    queue.enqueueCommand(owner: .deliveryReceipt, { store in
+      try store.acknowledgeReceivedActions(deviceID: device).published
+    }, completion: arrival.record)
     let blocked = await queue.flush()
     XCTAssertFalse(blocked)
-    XCTAssertEqual(queue.pendingCount, 2, "Accepted content and delivery retain the original FIFO")
+    XCTAssertEqual(queue.pendingCount, 3, "Accepted content, delivery and its receipt retain the original FIFO")
     XCTAssertTrue(accepted.values.isEmpty)
     XCTAssertTrue(acknowledgement.values.isEmpty)
+    XCTAssertTrue(arrival.values.isEmpty)
+    XCTAssertTrue(durableReceipts.isEmpty, "A blocked receipt cannot wake outgoing transport")
     guard case .failure(let error) = try XCTUnwrap(late.values.first),
       let refusal = error as? CollaborationError else { return XCTFail("Late authorship was not refused") }
     XCTAssertEqual(refusal.code, "history_readiness_pending")
@@ -61,11 +81,34 @@ final class NotebookPersistenceQueueTests: XCTestCase {
     XCTAssertTrue(saved)
     XCTAssertEqual(try accepted.values.first?.get(), transactionID)
     XCTAssertEqual(try acknowledgement.values.first?.get(), true)
+    XCTAssertEqual(try arrival.values.first?.get(), 1)
+    XCTAssertEqual(durableReceipts.count, 1, "The received receipt wakes transport once, after its durable FIFO slot")
+    let received = try XCTUnwrap(durableReceipts.first)
+    XCTAssertTrue(try received.matches(action, version: action.deliveryVersion()))
+    XCTAssertFalse(received.displayComplete)
+    let shown = DeviceActionReceipt(id: action.id, deviceID: device, revisions: action.revisions,
+      actionVersion: try action.deliveryVersion(), shown: action.revisions, displayComplete: true)
+    queue.enqueueChange(owner: .deliveryReceipt) { store in
+      try store.saveDeviceActionReceipt(shown)
+      return .init(merged: false, changed: try store.transactionHasContentChanges())
+    }
+    let shownSaved = await queue.flush()
+    XCTAssertTrue(shownSaved)
+    XCTAssertEqual(durableReceipts.count, 2, "The shown receipt remains allowed while new authorship is paused")
+    XCTAssertTrue(try XCTUnwrap(durableReceipts.last).displayComplete)
+    let duplicate = try await queue.submit(owner: .deliveryReceipt) { store in
+      try store.acknowledgeReceivedActions(deviceID: device).published
+    }
+    XCTAssertEqual(duplicate, 0)
+    XCTAssertEqual(durableReceipts.count, 2, "An already published receipt has no second transport wake")
+    XCTAssertEqual(try store.collaborationActions(), authored, "Receipt publication never authors another action")
+    XCTAssertEqual(try store.nativeHistory(domain: .page(pageID), actor: device), history,
+      "Delivery never appends a human Undo entry")
     XCTAssertEqual(try store.storedValue("readiness-accepted.json"), .string(transactionID.uuidString))
     let seal = try XCTUnwrap(queue.sealWorkspaceSelection(expectedGeneration: queue.acceptedMutationGeneration))
     try readiness.seal(request, writerSeal: seal)
     let afterSeal = CompletionProbe<Bool>()
-    queue.enqueueCommand(writesStore: true, { _ in XCTFail("Control write crossed the final seal"); return true },
+    queue.enqueueCommand(owner: .deliveryReceipt, { _ in XCTFail("Receipt crossed the final seal"); return true },
       completion: afterSeal.record)
     XCTAssertThrowsError(try afterSeal.values.first?.get())
     try readiness.finish(request, releaseWriter: queue.finishWorkspaceSelection)
