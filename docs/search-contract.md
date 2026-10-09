@@ -76,3 +76,8 @@ allocation events; RSS high water includes fixture setup.
 In Debug, `documentCodec` counts the actual typed decodes and document/files
 encodes, borrowing each already required encoder buffer's byte count. It adds no
 measurement encode. Reduced codec work alone does not establish lower latency.
+
+Allocation admission scans borrow raw JSON bytes and existing contiguous UTF-8;
+bridged strings retain a scalar fallback. The byte coefficients, cumulative
+transaction credit, caught-refusal latch and cancellation every 4096 bytes remain.
+Readers observe cancellation; an accepted writer keeps its completion lifetime.

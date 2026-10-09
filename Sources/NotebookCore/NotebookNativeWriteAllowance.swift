@@ -91,10 +91,27 @@ private struct NativeJSONPhase {
 
   mutating func string(_ value: String) throws {
     try add(512 + 16)
-    for (index, byte) in value.utf8.enumerated() {
+    // Borrow existing UTF-8. A bridged string is counted without allocating
+    // a full buffer before its admission.
+    if value.isContiguousUTF8 {
+      let borrowed = try value.utf8.withContiguousStorageIfAvailable { utf8 -> Bool in
+        var index = 0
+        while index < utf8.count {
+          if observesCancellation, index & 4095 == 0 { try Task.checkCancellation() }
+          let byte = utf8[index]
+          // JSON's worst escaping, transient wire buffers and String capacity.
+          try add(byte < 0x20 ? 48 : byte == 34 || byte == 92 || byte == 47 ? 16 : 8)
+          index += 1
+        }
+        return true
+      }
+      if borrowed == true { return }
+    }
+    var index = 0
+    for byte in value.utf8 {
       if observesCancellation, index & 4095 == 0 { try Task.checkCancellation() }
-      // JSON's worst escaping, transient wire buffers and String capacity.
       try add(byte < 0x20 ? 48 : byte == 34 || byte == 92 || byte == 47 ? 16 : 8)
+      index += 1
     }
   }
 

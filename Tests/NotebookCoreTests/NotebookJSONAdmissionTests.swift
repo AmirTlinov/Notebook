@@ -10,7 +10,30 @@ struct NotebookJSONAdmissionTests {
     #expect(throws:NotebookStorageError.self) {
       try NotebookJSONAdmission.allocationCost(data,maximumBytes:65_536)
     }
-    #expect(try NotebookJSONAdmission.allocationCost(Data("{\"source\":\"[0,0]\\\"\"}".utf8),maximumBytes:65_536) < 65_536)
+    let escaped=Data(#"{"source":"Пример 🖋️ [0,0] \"\\\/\u0001"}"#.utf8)
+    // Object, key and value: brackets and escapes inside the value are text.
+    let exact=escaped.count*8+3*512
+    #expect(try NotebookJSONAdmission.allocationCost(escaped,maximumBytes:exact) == exact)
+    #expect(try NotebookJSONAdmission.allocationCost(escaped,maximumBytes:Int.max) == exact)
+    #expect(throws:NotebookStorageError.self) {
+      try NotebookJSONAdmission.allocationCost(escaped,maximumBytes:exact-1)
+    }
+    #expect(try NotebookJSONAdmission.allocationCost(Data(),maximumBytes:0) == 0)
+    #expect(throws:NotebookStorageError.self) {
+      try NotebookJSONAdmission.allocationCost(Data(),maximumBytes:-1)
+    }
+  }
+
+  @Test func cancelledReaderStopsTheScanAndAnAcceptedWriterCanFinish() async throws {
+    let data=Data(("\""+String(repeating:"Пример ",count:2_000)+"\"").utf8)
+    let exact=data.count*8+512
+    try await Task.detached { () throws -> Void in
+      withUnsafeCurrentTask { $0?.cancel() }
+      #expect(throws:CancellationError.self) {
+        try NotebookJSONAdmission.allocationCost(data,maximumBytes:exact)
+      }
+      #expect(try NotebookJSONAdmission.allocationCost(data,maximumBytes:exact,observesCancellation:false) == exact)
+    }.value
   }
 
   @Test func aCaughtDecodeRefusalStillVetoesTheSourceCut() throws {
