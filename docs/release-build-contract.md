@@ -328,9 +328,9 @@ Historical release-harness runs and former transition gates are retained in
 The isolated acceptance schemes use UI tests, not `@testable` app imports.
 Their Release applications disable testability and apply Xcode deployment
 postprocessing/linked-product stripping while retaining the external matching
-dSYM. Selected Mac unit builds use one linked host executable, disable the Debug
-dylib bootstrap, and retain matching host/test dSYMs in their evidence
-and remove local linked symbols before the existing bundle reseal. Their dSYM
+dSYM. Selected Mac and iPad unit builds use one linked host executable, disable
+the Debug dylib bootstrap, retain matching host/test dSYMs in their evidence,
+and remove local linked symbols before child and host bundle reseal. Their dSYM
 symbol tables retain one local alias per address, with DWARF bytes unchanged. External
 `@testable` exports remain intact; folded typesetter aliases otherwise stall
 XCTest's failure symbolication. Native unit hosts may enable testability; their timing observations are
