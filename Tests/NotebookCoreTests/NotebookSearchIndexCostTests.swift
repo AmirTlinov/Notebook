@@ -53,6 +53,7 @@ struct NotebookSearchIndexCostTests {
   private final class Trace: @unchecked Sendable {
     struct SQL: Codable { var executions = 0; var vmSteps: Int64 = 0; var profileNanoseconds: UInt64 = 0 }
     let gate: Gate, competingInk: Bool, coordinate: Bool
+    let samplesMemory = ProcessInfo.processInfo.environment["NOTEBOOK_SEARCH_TRACE_SQL_MEMORY"] != "0"
     var started: UInt64?, ended: UInt64?, coordinationNanoseconds: UInt64 = 0
     var statements = 0, vmSteps: Int64 = 0
     var liveBlocksPeak: UInt32 = 0, liveBytesPeak: UInt64 = 0, sqliteBytesPeak: Int64 = 0
@@ -81,7 +82,7 @@ struct NotebookSearchIndexCostTests {
             work.profileNanoseconds += duration?.assumingMemoryBound(to: UInt64.self).pointee ?? 0
             trace.ownerSQL[sql] = work
           }
-          trace.sample(sqlite3_db_handle(statement))
+          if trace.samplesMemory { trace.sample(sqlite3_db_handle(statement)) }
           if sql == "BEGIN IMMEDIATE", sqlite3_get_autocommit(sqlite3_db_handle(statement)) == 0 {
             trace.started = DispatchTime.now().uptimeNanoseconds
             trace.markProfileBoundary("begin", at: trace.started!)
@@ -130,7 +131,8 @@ struct NotebookSearchIndexCostTests {
     let sourceBytes: Int, updateSearchIndexMilliseconds: Double
     let ownerVMSteps: Int64, topLevelSQLProfileMilliseconds: Double, nonSQLOrProfileResolutionMilliseconds: Double
     let sql: [String: Trace.SQL]
-    let before: Memory, after: Memory, mallocLiveBlocksAtSQLPeak: UInt32, mallocLiveBytesAtSQLPeak: UInt64
+    let before: Memory, after: Memory, sqlMemorySampling: Bool
+    let mallocLiveBlocksAtSQLPeak: UInt32?, mallocLiveBytesAtSQLPeak: UInt64?
     let sourceHash: String, rollbackPreservedSourceIndexAndCursors: Bool
     let measurement = "Only actual updateSearchIndex, inside the sole writer, followed by deliberate whole-transaction rollback. Top-level PROFILE includes nested FTS; all raw statement profiles are retained and may overlap. SQLite profile timing is millisecond-resolution; residual combines non-SQL preparation and resolution/instrumentation."
   }
@@ -190,8 +192,10 @@ struct NotebookSearchIndexCostTests {
     let result = IndexOnlyResult(sourceBytes: count, updateSearchIndexMilliseconds: Double(duration) / 1_000_000,
       ownerVMSteps: ownerSteps, topLevelSQLProfileMilliseconds: Double(topNanoseconds) / 1_000_000,
       nonSQLOrProfileResolutionMilliseconds: Double(max(duration, topNanoseconds) - topNanoseconds) / 1_000_000,
-      sql: trace.ownerSQL, before: before, after: after, mallocLiveBlocksAtSQLPeak: trace.liveBlocksPeak,
-      mallocLiveBytesAtSQLPeak: trace.liveBytesPeak, sourceHash: sourceHash, rollbackPreservedSourceIndexAndCursors: true)
+      sql: trace.ownerSQL, before: before, after: after, sqlMemorySampling: trace.samplesMemory,
+      mallocLiveBlocksAtSQLPeak: trace.samplesMemory ? trace.liveBlocksPeak : nil,
+      mallocLiveBytesAtSQLPeak: trace.samplesMemory ? trace.liveBytesPeak : nil,
+      sourceHash: sourceHash, rollbackPreservedSourceIndexAndCursors: true)
     let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
     let data = try encoder.encode(result)
     if let path = ProcessInfo.processInfo.environment["NOTEBOOK_SEARCH_TRACE_OUTPUT"] { try data.write(to: URL(fileURLWithPath: path)) }
@@ -209,13 +213,15 @@ struct NotebookSearchIndexCostTests {
     let sourceBytes: Int, writerHoldMilliseconds: Double, coordinationMilliseconds: Double
     let preparation: Preparation
     let receiptDeliveryVersionPasses: Int?, receiptDeliveryHashInputBytes: Int64?
-    let documentCodec: NotebookDocumentCodecCounts?
+    let publicationCodec: NotebookPublicationCodecCounts?
     let writerVMSteps: Int64, writerStatements: Int
-    let mallocLiveBlocksAtSQLPeak: UInt32, mallocLiveBytesAtSQLPeak: UInt64
-    let sqliteBytesAtSQLPeak: Int64, sqliteHighWaterBytes: Int64, databaseCacheBytesAtSQLPeak: Int32, statementBytesAtSQLPeak: Int32
+    let sqlMemorySampling: Bool
+    let mallocLiveBlocksAtSQLPeak: UInt32?, mallocLiveBytesAtSQLPeak: UInt64?
+    let sqliteBytesAtSQLPeak: Int64?, sqliteHighWaterBytes: Int64
+    let databaseCacheBytesAtSQLPeak: Int32?, statementBytesAtSQLPeak: Int32?
     let before: Memory, after: Memory, processPeakRSSBytes: Int64
     let inkAttemptMilliseconds: Double, inkSaved: Bool, inkFailure: String?, inkWriterHoldMilliseconds: Double?
-    let measurement = "Native document-source Save: immutable search preparation completes before BEGIN IMMEDIATE; the mandatory prepared command then commits source, search index, action and draft receipt together. Writer hold is completed BEGIN to completed COMMIT, including instrumentation and coordinated competing ink attempt. Preparation memory is a terminal live sample; malloc peaks are sampled at SQL PROFILE, not total allocation events. Process RSS high water includes setup. Admission costs are code-derived credits, not observed RSS. Debug documentCodec counts actual typed document decode and document/files encode passes; encodedBytes borrow each codec's already required JSONEncoder output, include its escaped envelope and metadata, and perform no measuring encode."
+    let measurement = "Native document-source Save: immutable search preparation completes before BEGIN IMMEDIATE; the mandatory prepared command then commits source, search index, action and draft receipt together. Writer hold is completed BEGIN to completed COMMIT, including instrumentation and coordinated competing ink attempt. Preparation memory is a terminal live sample; sqlMemorySampling names whether per-statement SQL PROFILE memory probes ran. Disabled SQL peak fields are absent; sampled malloc peaks are live values, not total allocation events. Process RSS high water includes setup. Admission costs are code-derived credits, not observed RSS. Debug publicationCodec counts actual typed document/receipt decodes and document/files/receipt encode passes; encodedBytes borrow each codec's already required JSONEncoder output, include its escaped envelope and metadata, and perform no measuring encode."
   }
 
   @Test func multilingualOneCharacterEditMeasuresTheActualWriterAndCompetingInk() async throws {
@@ -274,7 +280,7 @@ struct NotebookSearchIndexCostTests {
     }
     #if DEBUG
       let deliveryWork = DeliveryWork(actionID: edit.sessionID)
-      let codecWork = NotebookDocumentCodecSamples()
+      let codecWork = NotebookPublicationCodecSamples()
     #endif
     do {
       let save = {
@@ -283,7 +289,7 @@ struct NotebookSearchIndexCostTests {
         }
       }
       #if DEBUG
-        let result = try NotebookDocumentCodecObservation.withObserver(codecWork.record) {
+        let result = try NotebookPublicationCodecObservation.withObserver(codecWork.record) {
           try NotebookActionDeliveryObservation.withObserver(deliveryWork.record, operation: save)
         }
       #else
@@ -302,27 +308,39 @@ struct NotebookSearchIndexCostTests {
       #expect(delivery.passes == 1 && delivery.bytes > 0)
       let receiptPasses: Int? = delivery.passes, receiptBytes: Int64? = delivery.bytes
       let codec = codecWork.snapshot()
-      let documentCodec: NotebookDocumentCodecCounts? = codec
+      let publicationCodec: NotebookPublicationCodecCounts? = codec
       #expect(codec.documentDecode.passes > 0 && codec.documentDecode.encodedBytes > 0)
     #else
       let receiptPasses: Int? = nil, receiptBytes: Int64? = nil
-      let documentCodec: NotebookDocumentCodecCounts? = nil
+      let publicationCodec: NotebookPublicationCodecCounts? = nil
     #endif
     var usage = rusage(); getrusage(RUSAGE_SELF, &usage)
     let result = Result(sourceBytes: count, writerHoldMilliseconds: held,
       coordinationMilliseconds: Double(trace.coordinationNanoseconds) / 1_000_000,
       preparation: preparation,
       receiptDeliveryVersionPasses: receiptPasses, receiptDeliveryHashInputBytes: receiptBytes,
-      documentCodec: documentCodec,
+      publicationCodec: publicationCodec,
       writerVMSteps: trace.vmSteps, writerStatements: trace.statements,
-      mallocLiveBlocksAtSQLPeak: trace.liveBlocksPeak, mallocLiveBytesAtSQLPeak: trace.liveBytesPeak,
-      sqliteBytesAtSQLPeak: trace.sqliteBytesPeak, sqliteHighWaterBytes: sqlite3_memory_highwater(0),
-      databaseCacheBytesAtSQLPeak: trace.databaseCachePeak, statementBytesAtSQLPeak: trace.statementBytesPeak,
+      sqlMemorySampling: trace.samplesMemory,
+      mallocLiveBlocksAtSQLPeak: trace.samplesMemory ? trace.liveBlocksPeak : nil,
+      mallocLiveBytesAtSQLPeak: trace.samplesMemory ? trace.liveBytesPeak : nil,
+      sqliteBytesAtSQLPeak: trace.samplesMemory ? trace.sqliteBytesPeak : nil, sqliteHighWaterBytes: sqlite3_memory_highwater(0),
+      databaseCacheBytesAtSQLPeak: trace.samplesMemory ? trace.databaseCachePeak : nil,
+      statementBytesAtSQLPeak: trace.samplesMemory ? trace.statementBytesPeak : nil,
       before: before, after: after, processPeakRSSBytes: Int64(usage.ru_maxrss),
       inkAttemptMilliseconds: inkWait, inkSaved: inkSaved, inkFailure: inkFailure, inkWriterHoldMilliseconds: inkTrace.heldMilliseconds)
     let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
     let data = try encoder.encode(result)
     if let path = ProcessInfo.processInfo.environment["NOTEBOOK_SEARCH_TRACE_OUTPUT"] { try data.write(to: URL(fileURLWithPath: path)) }
     print("SEARCH_WRITER_COST \(String(decoding: data, as: UTF8.self))")
+    // Keep the sampled process available for symbolication after COMMIT.
+    // This opt-in wait starts after all measured work and affects no probe.
+    if let marker = ProcessInfo.processInfo.environment["NOTEBOOK_SEARCH_WRITER_PROFILE_MARKER"] {
+      let clock = ContinuousClock(), complete = marker + ".profile-complete"
+      let deadline = clock.now + .seconds(10)
+      while !FileManager.default.fileExists(atPath: complete), clock.now < deadline {
+        try await Task.sleep(for: .milliseconds(10))
+      }
+    }
   }
 }

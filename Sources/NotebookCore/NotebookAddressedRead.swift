@@ -190,7 +190,8 @@ extension NotebookStore {
     }
   }
 
-  func updateAddressIndexes(_ fragment: NotebookStoredFragment, database: NotebookSQLConnection) throws {
+  func updateAddressIndexes(_ fragment: NotebookStoredFragment, database: NotebookSQLConnection,
+    receiptRoot: NotebookReceiptPublication.Root? = nil) throws {
     try notePageMaterialChange(fragment, database: database)
     try noteGraphicIndexChange(fragment, database: database)
     if fragment.file.hasPrefix("pages/"), fragment.collection == "actions" {
@@ -240,9 +241,9 @@ extension NotebookStore {
       try database.run("INSERT INTO metadata_index(address,kind,context_id,created_at,status) VALUES(?,'renderRequest',?,?,'pending') ON CONFLICT(address) DO UPDATE SET context_id=excluded.context_id,created_at=excluded.created_at", [.text(fragment.address), .text(Self.renderTargetKey(request.target)), .real(request.createdAt.timeIntervalSince1970)])
     }
     if fragment.parent == nil, fragment.file.hasPrefix("collaboration/actions/") {
-      let receipt = try fragment.value.decode(CollaborationReceipt.self)
+      let receipt = try receiptRoot?.receipt ?? fragment.value.decode(CollaborationReceipt.self)
       try database.run("INSERT INTO metadata_index(address,kind,context_id,created_at,status) VALUES(?,'action',?,?,?) ON CONFLICT(address) DO UPDATE SET context_id=excluded.context_id,created_at=excluded.created_at,status=excluded.status", [.text(fragment.address), .text(receipt.action.resolvedContextID.uuidString.lowercased()), .real(receipt.createdAt.timeIntervalSince1970), .text(receipt.undo == nil ? "active" : "undone")])
-      try indexActionReadModel(receipt, address: fragment.address, database: database)
+      try indexActionReadModel(receipt, address: fragment.address, database: database, receiptRoot: receiptRoot)
     }
     if fragment.file.hasPrefix("collaboration/contexts/"), fragment.collection == "entries", let parent = fragment.parent {
       let entry = try fragment.value.decode(SharedContextEntry.self)

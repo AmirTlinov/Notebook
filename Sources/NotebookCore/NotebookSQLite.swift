@@ -1077,7 +1077,8 @@ extension NotebookStore {
     }
   }
 
-  func publishRecords(writes: [String: JSONValue], removals: [String] = []) throws {
+  func publishRecords(writes: [String: JSONValue], removals: [String] = [],
+    receiptPublication: NotebookReceiptPublication? = nil) throws {
     let changesMaterial = writes.keys.contains { !Self.localRecord($0) }
       || removals.contains { !Self.localRecord($0) }
     try commandTransaction(advancesReadRevision: changesMaterial) {
@@ -1110,7 +1111,8 @@ extension NotebookStore {
           let data = try database.encodedStoredFragment(fragment)
           let hash = NotebookHexEncoding.encode(SHA256.hash(data: data))
           if old.removeValue(forKey: fragment.address) == hash { continue }
-          try writeFragment(fragment, data: data, hash: hash, database: database)
+          try writeFragment(fragment, data: data, hash: hash, database: database,
+            receiptPublication: receiptPublication)
         }
         let affected = Set(try fragments.compactMap { member -> String? in
           guard !file.hasPrefix("documents/"), try database.hasChange(member.address), !member.member.isEmpty,

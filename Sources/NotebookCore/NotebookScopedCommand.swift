@@ -26,7 +26,8 @@ extension NotebookStore {
   @discardableResult
   func writeFragment(_ fragment: NotebookStoredFragment, data suppliedData: Data? = nil, hash suppliedHash: String? = nil,
     database: NotebookSQLConnection, migratingInk: Bool = false,
-    preparedSearch: NotebookPreparedSearchEntry? = nil) throws -> Bool {
+    preparedSearch: NotebookPreparedSearchEntry? = nil,
+    receiptPublication: NotebookReceiptPublication? = nil) throws -> Bool {
     for part in try documentResourceParts(in: fragment) {
       guard try blobSize(hash: part.sha256) == part.byteCount else { throw NotebookStorageError.blobHashMismatch }
     }
@@ -149,7 +150,8 @@ extension NotebookStore {
     try updateBoardContribution(address: fragment.address, previous: previousHash, next: hash, database: database)
     try noteItemLifecycleChange(address: fragment.address, file: fragment.file, collection: fragment.collection,
       member: fragment.member, previous: previousHash, next: hash, database: database)
-    try updateAddressIndexes(fragment, database: database)
+    try updateAddressIndexes(fragment, database: database,
+      receiptRoot: receiptPublication?.root(for: fragment, hash: hash))
     try noteContextHistoryChange(file: fragment.file, database: database)
     try updateSearchIndex(fragment, database: database, prepared: preparedSearch)
     try noteReferenceChange(fragment.address, file: fragment.file, database: database)

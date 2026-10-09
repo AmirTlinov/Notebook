@@ -689,13 +689,15 @@ extension NotebookStore {
         inkRevision: try header?.inkStamp?.revision ?? (receipt.action.containsInk ? after.inkRevision(of: target) : nil),
         lifecycleRevision: extent)
     }
-    try publishCollaboration(writes: [actionFile(receipt.id): try .encode(receipt)])
+    let publication = try NotebookReceiptPublication(receipt)
+    try publishCollaboration(writes: [publication.file: publication.value], receiptPublication: publication)
     try freezeActionResult(receipt, changed: changed)
     return receipt
   }
 
-  func publishCollaboration(writes: [String: JSONValue], removals: [String] = []) throws {
-    try publishRecords(writes: writes, removals: removals)
+  func publishCollaboration(writes: [String: JSONValue], removals: [String] = [],
+    receiptPublication: NotebookReceiptPublication? = nil) throws {
+    try publishRecords(writes: writes, removals: removals, receiptPublication: receiptPublication)
   }
 
   public func collaborationContent() throws -> CollaborationContent {

@@ -1,3 +1,4 @@
+import CSQLite
 import Foundation
 
 /// Read-only description of an immutable action receipt. It carries no source
@@ -70,7 +71,15 @@ public struct NotebookActionReadModel: Codable, Equatable, Sendable, Identifiabl
   public var summary: String { action.summary }
 
   public init(_ receipt: CollaborationReceipt) throws {
-    id = receipt.id; actionVersion = try receipt.deliveryVersion()
+    try self.init(receipt, version: receipt.deliveryVersion())
+  }
+
+  init(_ root: NotebookReceiptPublication.Root) throws {
+    try self.init(root.receipt, version: notebookActionDeliveryVersion(root.value))
+  }
+
+  private init(_ receipt: CollaborationReceipt, version: String) throws {
+    id = receipt.id; actionVersion = version
     action = try .init(summary: receipt.summary, resolvedContextID: receipt.action.resolvedContextID,
       references: receipt.action.references, operations: receipt.action.operations.map(Operation.init))
     author = receipt.author
@@ -178,13 +187,21 @@ extension NotebookStore {
   }
 
   func indexActionReadModel(_ receipt: CollaborationReceipt, address: String,
-    database: NotebookSQLConnection) throws {
-    try indexFieldRestorations(receipt, address: address, database: database)
-    let model = try NotebookActionReadModel(receipt)
+    database: NotebookSQLConnection, receiptRoot: NotebookReceiptPublication.Root? = nil) throws {
+    if let receiptRoot, receiptRoot.address != address {
+      throw NotebookStorageError.corruptRecord("receipt publication binding: " + address)
+    }
+    let indexedReceipt = receiptRoot?.receipt ?? receipt
+    try indexFieldRestorations(indexedReceipt, address: address, database: database)
+    let model = try receiptRoot.map(NotebookActionReadModel.init) ?? NotebookActionReadModel(indexedReceipt)
     let data = try Self.storageEncoder.encode(model)
-    let phaseAt = max(receipt.createdAt, receipt.undo?.completedAt ?? receipt.createdAt)
-    try database.run("INSERT INTO action_read_models(address,receipt_hash,value,phase_at) SELECT address,hash,?,? FROM records WHERE address=? ON CONFLICT(address) DO UPDATE SET receipt_hash=excluded.receipt_hash,value=excluded.value,phase_at=excluded.phase_at",
-      [.blob(data), .real(phaseAt.timeIntervalSince1970), .text(address)])
+    let phaseAt = max(indexedReceipt.createdAt, indexedReceipt.undo?.completedAt ?? indexedReceipt.createdAt)
+    let hash = receiptRoot.map { NotebookSQLValue.text($0.hash) } ?? .null
+    try database.run("INSERT INTO action_read_models(address,receipt_hash,value,phase_at) SELECT address,hash,?,? FROM records WHERE address=? AND (? IS NULL OR hash=?) ON CONFLICT(address) DO UPDATE SET receipt_hash=excluded.receipt_hash,value=excluded.value,phase_at=excluded.phase_at",
+      [.blob(data), .real(phaseAt.timeIntervalSince1970), .text(address), hash, hash])
+    if receiptRoot != nil, sqlite3_changes64(database.handle) != 1 {
+      throw NotebookStorageError.corruptRecord("receipt publication binding: " + address)
+    }
   }
 
   public func actionReadModel(_ id: UUID) throws -> NotebookActionReadModel {
