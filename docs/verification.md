@@ -519,3 +519,14 @@ the final body is never read, and DB29/authored content roll back exactly. Nativ
 CAS, page/board conversion-delete-Undo, concurrent arbitration and scene dependency
 witnesses pass. [Exact inputs and execution](audit-evidence/2026-10-09/page-material-claim-streaming/results.json).
 This is focused Core verification; installed-pair acceptance remains open.
+
+## 2026-10-09: one fresh digest across document source publication
+
+The accepted source digest slice64435ace is integrated with the bounded geometry
+and claim owner. Its847 Package/Sources/Tests blobs and executable modes exactly
+match common mainae79dcf3, including all guards. Literal source/address binding,
+frozen result integrity and Undo retain their existing checks. The exact common
+candidate passed9functions/21cases, one actual4MiB Save and the focused material
+integration2functions/4cases. [Input binding and actual scopes](audit-evidence/2026-10-09/common-digest-adoption/results.json).
+Native WIP and installed265 acceptance remain separate; no unchanged Core check
+was repeated to adopt this identical candidate.

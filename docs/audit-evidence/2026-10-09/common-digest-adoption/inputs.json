@@ -1,0 +1,3390 @@
+{
+  "Package.swift": {
+    "mode": "100644",
+    "object": "3c683440c281b7f867e22641002447f8161a0d79"
+  },
+  "Sources/CNotebookTypesetter/gzip.c": {
+    "mode": "100644",
+    "object": "72a697a14f0158993ff4c7eadff0d0ff71738a3d"
+  },
+  "Sources/CNotebookTypesetter/include/NotebookTypesetter.h": {
+    "mode": "100644",
+    "object": "e4e56326fabd7e25d85716428446daa22fb01959"
+  },
+  "Sources/CQuickJS/LICENSE": {
+    "mode": "100644",
+    "object": "2cf449dd3eea4291da7470bd322211b61981ccd8"
+  },
+  "Sources/CQuickJS/UPSTREAM.md": {
+    "mode": "100644",
+    "object": "ff06f1911ff0f1499df644571435df41fe4a02ec"
+  },
+  "Sources/CQuickJS/cutils.c": {
+    "mode": "100644",
+    "object": "6a3aeca454bd60e4f79f2bfc39415c08f3dbb341"
+  },
+  "Sources/CQuickJS/cutils.h": {
+    "mode": "100644",
+    "object": "094a8f124119ea179e3fe34586929a35402cf914"
+  },
+  "Sources/CQuickJS/dtoa.c": {
+    "mode": "100644",
+    "object": "ac1be8d8e1a49a5f088acc1f74728f172e74a447"
+  },
+  "Sources/CQuickJS/dtoa.h": {
+    "mode": "100644",
+    "object": "de76f1a3feb6028c9c662933a41fe270cec02d3b"
+  },
+  "Sources/CQuickJS/include/NotebookQuickJS.h": {
+    "mode": "100644",
+    "object": "3903c7e5051e05a0e8e36ff14264386abe7b61cb"
+  },
+  "Sources/CQuickJS/libregexp-opcode.h": {
+    "mode": "100644",
+    "object": "b3d7b6fdf3a574004fe5e586d1f246b088bcbc07"
+  },
+  "Sources/CQuickJS/libregexp.c": {
+    "mode": "100644",
+    "object": "c387f004387d546faf418abfe0b1227d5763c2dc"
+  },
+  "Sources/CQuickJS/libregexp.h": {
+    "mode": "100644",
+    "object": "0905bcb7973bd1ebbe883fabb449267dc7997a72"
+  },
+  "Sources/CQuickJS/libunicode-table.h": {
+    "mode": "100644",
+    "object": "85956edc14de1a2192f79e5223875d323142c8db"
+  },
+  "Sources/CQuickJS/libunicode.c": {
+    "mode": "100644",
+    "object": "0b7b6d0b1f09a84f17d7fe18c3492c2d5318afb1"
+  },
+  "Sources/CQuickJS/libunicode.h": {
+    "mode": "100644",
+    "object": "c2fdeac89e6b222aec2a4eaf8e62133b7b57e6b3"
+  },
+  "Sources/CQuickJS/list.h": {
+    "mode": "100644",
+    "object": "809831115feffd2d879e679c3adfdf242eab74bb"
+  },
+  "Sources/CQuickJS/notebook-quickjs.c": {
+    "mode": "100644",
+    "object": "02ef6fad280d094eeaf6f9336654f36293055d72"
+  },
+  "Sources/CQuickJS/quickjs-atom.h": {
+    "mode": "100644",
+    "object": "13c1ccdb963e3bb994a1de571bdfba3ce745f1d5"
+  },
+  "Sources/CQuickJS/quickjs-opcode.h": {
+    "mode": "100644",
+    "object": "7b98ddf055e4c30ad1c3295a2cd38bfed37b0f5a"
+  },
+  "Sources/CQuickJS/quickjs.c": {
+    "mode": "100644",
+    "object": "fa5a7a9d0181778042a97ddb7234aefc4a8fc9a8"
+  },
+  "Sources/CQuickJS/quickjs.h": {
+    "mode": "100644",
+    "object": "476d735137f241272568f9365988f118ee1387d3"
+  },
+  "Sources/CSQLite/module.modulemap": {
+    "mode": "100644",
+    "object": "f6010bd743c91c05eff0226ede1fcc169216a93f"
+  },
+  "Sources/CSQLite/shim.h": {
+    "mode": "100644",
+    "object": "f52e1f09e6bbfc8a3cb0c03c6f4624b77a664277"
+  },
+  "Sources/CZlib/module.modulemap": {
+    "mode": "100644",
+    "object": "e49af12e6037e329ac57ebfa81a3b6d7cea846a7"
+  },
+  "Sources/CZlib/shim.h": {
+    "mode": "100644",
+    "object": "4470a1fd4e59600a6fc98fff51ca226499212b05"
+  },
+  "Sources/NotebookAcceptance/main.swift": {
+    "mode": "100644",
+    "object": "067c715e79dceb3db2d85c823e6a42a941c77899"
+  },
+  "Sources/NotebookArchiveTransfer/ArchiveComputerPreparation.swift": {
+    "mode": "100644",
+    "object": "d98818f5f1e73836e8fe0e7745d5f7ce995b541d"
+  },
+  "Sources/NotebookArchiveTransfer/ArchiveConsolidation.swift": {
+    "mode": "100644",
+    "object": "cdf513680ca2f08bb3cf5de7e8fcb4251031ce60"
+  },
+  "Sources/NotebookArchiveTransfer/ArchivePairPreparation.swift": {
+    "mode": "100644",
+    "object": "023d237ec1b172c7bc28c981aafcbea969aa9596"
+  },
+  "Sources/NotebookArchiveTransfer/ArchiveRecordProof.swift": {
+    "mode": "100644",
+    "object": "f05967011d259b856274fe2ab45e54eeb83f7e1c"
+  },
+  "Sources/NotebookArchiveTransfer/ArchiveTransfer.swift": {
+    "mode": "100644",
+    "object": "75ebddee600e31a098c3f5d7481c9b23356b7375"
+  },
+  "Sources/NotebookArchiveTransfer/LegacyArchive.swift": {
+    "mode": "100644",
+    "object": "9d17855aa3168512ece722ebb8dbce8270602094"
+  },
+  "Sources/NotebookArchiveTransfer/LegacyDocumentAndBoard.swift": {
+    "mode": "100644",
+    "object": "f2675ae1bcaec359436675ec2e24ab91e2532d45"
+  },
+  "Sources/NotebookArchiveTransfer/TransferCommand.swift": {
+    "mode": "100644",
+    "object": "16add7576414cc01fa41b10c0c2c3af6fd7e30c7"
+  },
+  "Sources/NotebookBridge/main.swift": {
+    "mode": "100644",
+    "object": "5594ba73ce0af70af3aa7ba08e1496feff328402"
+  },
+  "Sources/NotebookCodex/CodexAccess.swift": {
+    "mode": "100644",
+    "object": "c14135de6c06dddab8070c89e14b46a873965a35"
+  },
+  "Sources/NotebookCodex/CodexAccount.swift": {
+    "mode": "100644",
+    "object": "a72cb17e7f84b3a792b6fdc3f2e6e15dc6442a21"
+  },
+  "Sources/NotebookCodex/CodexAppServer.swift": {
+    "mode": "100644",
+    "object": "fb800d67375f447514bc537f8959c15fa6627355"
+  },
+  "Sources/NotebookCodex/CodexAppServerState.swift": {
+    "mode": "100644",
+    "object": "31f29fc58b9f4d63de60d6251d2ab5aa32587ae0"
+  },
+  "Sources/NotebookCodex/CodexCatalogue.swift": {
+    "mode": "100644",
+    "object": "f294e8031808a96bfeecb1d2942b62b91eb1da6f"
+  },
+  "Sources/NotebookCodex/CodexChannel.swift": {
+    "mode": "100644",
+    "object": "717d42cd1fea2811d4bed0bbd13df73d100aa6ad"
+  },
+  "Sources/NotebookCodex/CodexComposer.swift": {
+    "mode": "100644",
+    "object": "9392e3b6e22558167b443974fa0bba4de4a00b77"
+  },
+  "Sources/NotebookCodex/CodexConversationMemory.swift": {
+    "mode": "100644",
+    "object": "7434a80b6fa8e64216742832090b25a18c9ca408"
+  },
+  "Sources/NotebookCodex/CodexDictation.swift": {
+    "mode": "100644",
+    "object": "18d5fcdfb59f27b3ebc1acba50d399f46fa420e9"
+  },
+  "Sources/NotebookCodex/CodexInstallation.swift": {
+    "mode": "100644",
+    "object": "bff621b69d523b5a484256d20896383e930dd41b"
+  },
+  "Sources/NotebookCodex/CodexProcessOutput.swift": {
+    "mode": "100644",
+    "object": "8ac1fba050cb02a81e6f97286e3a01107edc93ab"
+  },
+  "Sources/NotebookCodex/CodexProtocol.swift": {
+    "mode": "100644",
+    "object": "fd9e7f0d559a2f81b21f3871e40550e68bfe6b1d"
+  },
+  "Sources/NotebookCodex/CodexRPC.swift": {
+    "mode": "100644",
+    "object": "31e5b9754920b180f781f8f8b0454ef05dfdbdfb"
+  },
+  "Sources/NotebookCodex/CodexRuntimeScope.swift": {
+    "mode": "100644",
+    "object": "8fed85a6c27f97ce3cf8fba541887f2d1aa70b3d"
+  },
+  "Sources/NotebookCodex/CodexToolPolicy.swift": {
+    "mode": "100644",
+    "object": "708caabc2f333a78dd803c6af1ce6c30f2108c40"
+  },
+  "Sources/NotebookCodex/CodexUserMessageDisplay.swift": {
+    "mode": "100644",
+    "object": "00b16149552fd7dcf98c0aedb1a0e6eb1a59440f"
+  },
+  "Sources/NotebookCore/AddressedReplication.swift": {
+    "mode": "100644",
+    "object": "58a6dcecfde4eead902554d9aff5e3b25bc14623"
+  },
+  "Sources/NotebookCore/AgentArchive.swift": {
+    "mode": "100644",
+    "object": "3148d9da876ad3d16e6cb64f5abc41e873393ac3"
+  },
+  "Sources/NotebookCore/AgentPinnedImage.swift": {
+    "mode": "100644",
+    "object": "2a9c222aad65535ff72bbac1ed7561380e229582"
+  },
+  "Sources/NotebookCore/AgentPinnedSource.swift": {
+    "mode": "100644",
+    "object": "6ea3b44f0d98c6324242ac06ceaede0268d03bf2"
+  },
+  "Sources/NotebookCore/AgentRequest.swift": {
+    "mode": "100644",
+    "object": "218830ded47d8d8adb62e73f2ee26d19320f9611"
+  },
+  "Sources/NotebookCore/BoardElementLookup.swift": {
+    "mode": "100644",
+    "object": "2bc982d8e061e83d72e562c42e505d795f43f241"
+  },
+  "Sources/NotebookCore/BoardHierarchy.swift": {
+    "mode": "100644",
+    "object": "2ac0490f266805eddcf91f77aa34eee6177bf062"
+  },
+  "Sources/NotebookCore/BoardPortalProjection.swift": {
+    "mode": "100644",
+    "object": "dffb739c2b024ab0b2468dee64bf219d38882182"
+  },
+  "Sources/NotebookCore/BoardReplication.swift": {
+    "mode": "100644",
+    "object": "2a66a8bd67814efa57b9d4802b987e289fed9fcf"
+  },
+  "Sources/NotebookCore/CodexAccess.swift": {
+    "mode": "100644",
+    "object": "a5717f18a827174f12f49162ce98415254bd9858"
+  },
+  "Sources/NotebookCore/CodexAccount.swift": {
+    "mode": "100644",
+    "object": "438dced1a7f2298764c047919317170bb9ca3d4d"
+  },
+  "Sources/NotebookCore/CodexComposer.swift": {
+    "mode": "100644",
+    "object": "2b7d2c225d18bf52ca81b97a7b0ad97dbbf6f268"
+  },
+  "Sources/NotebookCore/CodexMessageTransfer.swift": {
+    "mode": "100644",
+    "object": "aa3a88f7f176bc6f87d67d4c27231ab62da97241"
+  },
+  "Sources/NotebookCore/CodexReadProjection.swift": {
+    "mode": "100644",
+    "object": "bbb79731a8e1131ddca8ee23a4eb5db766da39ea"
+  },
+  "Sources/NotebookCore/Collaboration.swift": {
+    "mode": "100644",
+    "object": "827d54708364b925b739529e518a833c5ecadf9c"
+  },
+  "Sources/NotebookCore/CollaborationContent.swift": {
+    "mode": "100644",
+    "object": "47dc97025dd1c0a568a48cd298942f5f5f2d2507"
+  },
+  "Sources/NotebookCore/CollaborationInkStroke.swift": {
+    "mode": "100644",
+    "object": "69cbcabc801a6005acb8aba28c2b674682b1c2cd"
+  },
+  "Sources/NotebookCore/CollaborationPlacement.swift": {
+    "mode": "100644",
+    "object": "d4547bdf550aebf460aee567d9abefccf7ce204e"
+  },
+  "Sources/NotebookCore/CollaborationReadSnapshot.swift": {
+    "mode": "100644",
+    "object": "3cf55d1c558eab97b1e97dd275dabc1c466a8120"
+  },
+  "Sources/NotebookCore/CollaborationResults.swift": {
+    "mode": "100644",
+    "object": "89d118904dad408ebddb08b50d961e219763ae4f"
+  },
+  "Sources/NotebookCore/CollaborationRuntime.swift": {
+    "mode": "100644",
+    "object": "d50626a748201b1a6d0ce7c81f9a8b6d7851a770"
+  },
+  "Sources/NotebookCore/CollaborationStore.swift": {
+    "mode": "100644",
+    "object": "711b99561097bc1d0e9c439a775dfef118a48b52"
+  },
+  "Sources/NotebookCore/CollaborativeContent.swift": {
+    "mode": "100644",
+    "object": "9b4c3ffcadeaab06090aa236ba1c2b7908d5d384"
+  },
+  "Sources/NotebookCore/CompositionScope.swift": {
+    "mode": "100644",
+    "object": "92a69752b1924c08cc068cd11f5ff9fb6a0b2bc9"
+  },
+  "Sources/NotebookCore/CompositionTile.swift": {
+    "mode": "100644",
+    "object": "57eb012b93294a1907626b2fad728fcc286898f8"
+  },
+  "Sources/NotebookCore/CurrentViewReceipt.swift": {
+    "mode": "100644",
+    "object": "55402ced20e76770ca36c56a39d48ceee640f463"
+  },
+  "Sources/NotebookCore/DocumentDocument.swift": {
+    "mode": "100644",
+    "object": "064371eac921ab75cecb624d8de8261a1375d80c"
+  },
+  "Sources/NotebookCore/DocumentEditingSession.swift": {
+    "mode": "100644",
+    "object": "ad867862dde1981a0e76a6010082567e4db425d0"
+  },
+  "Sources/NotebookCore/DocumentPrintDependencies.swift": {
+    "mode": "100644",
+    "object": "d96ac66b1a49fdf0b35ff322f2370906e06275f1"
+  },
+  "Sources/NotebookCore/DocumentPrintGeometry.swift": {
+    "mode": "100644",
+    "object": "c8ede674238814cfbaa75b16a45d77a8859b6666"
+  },
+  "Sources/NotebookCore/DocumentPrintLocations.swift": {
+    "mode": "100644",
+    "object": "7cc2846e69940affacf7bf38a61d239827fa3f93"
+  },
+  "Sources/NotebookCore/DocumentPrintSourceMap.swift": {
+    "mode": "100644",
+    "object": "a5c9bf9f73d022b1c2bf2b01c1d8661cee8f2045"
+  },
+  "Sources/NotebookCore/DocumentProgramSource.swift": {
+    "mode": "100644",
+    "object": "683694d8a3644965abf63ac4e9e6d243988b78c5"
+  },
+  "Sources/NotebookCore/DocumentReadingPosition.swift": {
+    "mode": "100644",
+    "object": "0608d32a0c024f30ab6f9734ec45efdffa2eb021"
+  },
+  "Sources/NotebookCore/DocumentSourceDelivery.swift": {
+    "mode": "100644",
+    "object": "cff892b87b844267e7426d82b0c99d89897ac4a2"
+  },
+  "Sources/NotebookCore/DocumentSourceReplication.swift": {
+    "mode": "100644",
+    "object": "7cd214c99a4ef00dad32aa07276b7d27f1241167"
+  },
+  "Sources/NotebookCore/DocumentStateReplication.swift": {
+    "mode": "100644",
+    "object": "b6e53397129a06226b458df99c5f8927027445b3"
+  },
+  "Sources/NotebookCore/DocumentStructure.swift": {
+    "mode": "100644",
+    "object": "b31a415b976cc37231eb79b380a726bc8ec8d098"
+  },
+  "Sources/NotebookCore/DocumentTemplate.swift": {
+    "mode": "100644",
+    "object": "8c8ccbf879df5b22cc07e10adc5d9c9ba2846fae"
+  },
+  "Sources/NotebookCore/InkActionMap.swift": {
+    "mode": "100644",
+    "object": "a41b7e69bff54a852a199e8f9a9e5eaa877b22aa"
+  },
+  "Sources/NotebookCore/InkAffine.swift": {
+    "mode": "100644",
+    "object": "c936cde2b536af8d488f248541441844becb2322"
+  },
+  "Sources/NotebookCore/InkBoundsIndex.swift": {
+    "mode": "100644",
+    "object": "39ae38de11d4b88d913236393507bda547f9f746"
+  },
+  "Sources/NotebookCore/InkContactBoundsIndex.swift": {
+    "mode": "100644",
+    "object": "63247019e2980dc4614d5348d0c2b7eb73d451c5"
+  },
+  "Sources/NotebookCore/InkDisplayNormalization.swift": {
+    "mode": "100644",
+    "object": "56a9844bb27bd937283a0a6f722b81f4e445acfd"
+  },
+  "Sources/NotebookCore/InkElementContact.swift": {
+    "mode": "100644",
+    "object": "ecff13265e8bdf399456e8c9831ab0eee1599454"
+  },
+  "Sources/NotebookCore/InkElementErasureMap.swift": {
+    "mode": "100644",
+    "object": "0ace302230f8592089bfdc1c837ffabbf3a7487d"
+  },
+  "Sources/NotebookCore/InkElementTarget.swift": {
+    "mode": "100644",
+    "object": "7e53b0ee59e0b8edbfdc787e87f872106058269a"
+  },
+  "Sources/NotebookCore/InkExactRelation.swift": {
+    "mode": "100644",
+    "object": "4f27e85a48dfe773172ffea06bed2995be9ec941"
+  },
+  "Sources/NotebookCore/InkMeasurements.swift": {
+    "mode": "100644",
+    "object": "1355306759f98b3c6579f6de2b2f51d16b54d211"
+  },
+  "Sources/NotebookCore/InkMeasurementsPrefix.swift": {
+    "mode": "100644",
+    "object": "5cb73019599b512f888dcaa02f26c3bb0c62886c"
+  },
+  "Sources/NotebookCore/InkRelationCodec.swift": {
+    "mode": "100644",
+    "object": "5217b9111cdc1817a54406e91178bbc4b3846ff4"
+  },
+  "Sources/NotebookCore/InkRelationSequence.swift": {
+    "mode": "100644",
+    "object": "23d7ed24db75c505684b7b06651114203a2496cb"
+  },
+  "Sources/NotebookCore/InkRenderBounds.swift": {
+    "mode": "100644",
+    "object": "62de1e1896357e61de4217e4e3e1c81f6ddc0cff"
+  },
+  "Sources/NotebookCore/InkSampleRelations.swift": {
+    "mode": "100644",
+    "object": "cd6b758fd64a95101e11f3cb773fd111ae09cc77"
+  },
+  "Sources/NotebookCore/JSONValue.swift": {
+    "mode": "100644",
+    "object": "0d41b239f21dac45d73ca16cb447b5de72902a16"
+  },
+  "Sources/NotebookCore/NativeTextFormat.swift": {
+    "mode": "100644",
+    "object": "879c4ec9746d2ebfb6ae64e1a9f99239ebbb042c"
+  },
+  "Sources/NotebookCore/NotebookAcceptedWrite.swift": {
+    "mode": "100644",
+    "object": "989fd1b72fd8196270ffa0c58fade7396250c31d"
+  },
+  "Sources/NotebookCore/NotebookAccountDirectory.swift": {
+    "mode": "100644",
+    "object": "8dfabc9b8bb5371a13e9e173a2de4d79f0eeffe3"
+  },
+  "Sources/NotebookCore/NotebookAcousticUtterance.swift": {
+    "mode": "100644",
+    "object": "f1719be3756ae25388b4a849934ba583b05ae211"
+  },
+  "Sources/NotebookCore/NotebookActionDelivery.swift": {
+    "mode": "100644",
+    "object": "2c990abd7fe54ba9bbed0776859d1d277ca2318b"
+  },
+  "Sources/NotebookCore/NotebookActionDetails.swift": {
+    "mode": "100644",
+    "object": "545668d844e6687bcd864b95d06cf3aec3217c15"
+  },
+  "Sources/NotebookCore/NotebookActionHistoryFactResolver.swift": {
+    "mode": "100644",
+    "object": "218865641bf483101dbb1ca8a5beae0597abcdb0"
+  },
+  "Sources/NotebookCore/NotebookActionHistoryInventory.swift": {
+    "mode": "100644",
+    "object": "ec1995cafe195664098ab55e056e1862df1f80ad"
+  },
+  "Sources/NotebookCore/NotebookActionHistoryPreflight.swift": {
+    "mode": "100644",
+    "object": "ffc9e6b5b8fe5764ad1e4acd2598ad0fe96f3dd0"
+  },
+  "Sources/NotebookCore/NotebookActionInverseDependencies.swift": {
+    "mode": "100644",
+    "object": "90b9fe8d1d88fdf662d396568d0a3c25ecd0f902"
+  },
+  "Sources/NotebookCore/NotebookActionInverseStore.swift": {
+    "mode": "100644",
+    "object": "1a55a63cb135daf4818c39029f617cd73700811d"
+  },
+  "Sources/NotebookCore/NotebookActionProjection.swift": {
+    "mode": "100644",
+    "object": "5532b920d4264fc1f223798b4fd3b74093a5aa91"
+  },
+  "Sources/NotebookCore/NotebookActionReadModel.swift": {
+    "mode": "100644",
+    "object": "ab5c077b9ea0bc1bf23d8e1397e5659947a2e33b"
+  },
+  "Sources/NotebookCore/NotebookActionRecordCapture.swift": {
+    "mode": "100644",
+    "object": "7a61b3658c81ebb9f76f15a851cee87459fab734"
+  },
+  "Sources/NotebookCore/NotebookActionResult.swift": {
+    "mode": "100644",
+    "object": "79843055f200c9540d948a2c7f8100f73ec08982"
+  },
+  "Sources/NotebookCore/NotebookActionSubmission.swift": {
+    "mode": "100644",
+    "object": "42a117dbd1e66ec27c7106414791c45176735b53"
+  },
+  "Sources/NotebookCore/NotebookAddressedRead.swift": {
+    "mode": "100644",
+    "object": "d95f7a9ab489ccb830c05a1868817c2cd2093bf9"
+  },
+  "Sources/NotebookCore/NotebookAgentArchive.swift": {
+    "mode": "100644",
+    "object": "e98142bd4f65e92015714a7e13a11b536c5e8a5e"
+  },
+  "Sources/NotebookCore/NotebookAgentFeedbackChange.swift": {
+    "mode": "100644",
+    "object": "4d9f80ec254621ebd96db3ea4a7339a14d6d6962"
+  },
+  "Sources/NotebookCore/NotebookAppendedPageUndo.swift": {
+    "mode": "100644",
+    "object": "e3caedf35cbdc249a81fa91d25d64fe590944ac1"
+  },
+  "Sources/NotebookCore/NotebookArchiveActivation.swift": {
+    "mode": "100644",
+    "object": "12c9fc877cc939fce06db41497e965f2706308e6"
+  },
+  "Sources/NotebookCore/NotebookArchiveEnrollment.swift": {
+    "mode": "100644",
+    "object": "4b71428aa01fd00be2aa3744696ec243e8090c9f"
+  },
+  "Sources/NotebookCore/NotebookArchiveFiles.swift": {
+    "mode": "100644",
+    "object": "433b270bf60e925d35adc1212198c7f3bffac32c"
+  },
+  "Sources/NotebookCore/NotebookArchiveSnapshot.swift": {
+    "mode": "100644",
+    "object": "3d220d95d22a3c448ad6e607d34cc620124810be"
+  },
+  "Sources/NotebookCore/NotebookAttentionEvidence.swift": {
+    "mode": "100644",
+    "object": "27c1b4532c3e23b5d330f8734f8d1479786fa8c7"
+  },
+  "Sources/NotebookCore/NotebookBirthReservation.swift": {
+    "mode": "100644",
+    "object": "92e3f7c251d7b3efadb9b2b7abadff2b18a7db53"
+  },
+  "Sources/NotebookCore/NotebookBoardFrontier.swift": {
+    "mode": "100644",
+    "object": "a98d98338c097875f0beec9345b3dbfc93dbbb77"
+  },
+  "Sources/NotebookCore/NotebookBoardPlacementMigration.swift": {
+    "mode": "100644",
+    "object": "9fbf75dfc6bae0b2e45c4b2353638ef8bb09f784"
+  },
+  "Sources/NotebookCore/NotebookChat.swift": {
+    "mode": "100644",
+    "object": "e62d365f738eba41397f4d764e9a253b64e4fa2c"
+  },
+  "Sources/NotebookCore/NotebookChatImages.swift": {
+    "mode": "100644",
+    "object": "f5d360b5e6b0c016758c4d5cb8abb40e2ef28d04"
+  },
+  "Sources/NotebookCore/NotebookChatReadPosition.swift": {
+    "mode": "100644",
+    "object": "29f303667d8fc7368c60b8a0db9d23b33e78dfbd"
+  },
+  "Sources/NotebookCore/NotebookChatStore.swift": {
+    "mode": "100644",
+    "object": "bafe4895e57caf942ab455dc479be49b0ae16035"
+  },
+  "Sources/NotebookCore/NotebookCheckpoint.swift": {
+    "mode": "100644",
+    "object": "e78ae8cd64021742d7e48a896f0f1c50a6f22752"
+  },
+  "Sources/NotebookCore/NotebookCloudSnapshot.swift": {
+    "mode": "100644",
+    "object": "d722d782307cb47fa04b85606b01ab6ee25b672b"
+  },
+  "Sources/NotebookCore/NotebookCloudStorage.swift": {
+    "mode": "100644",
+    "object": "b4c77eaaee6da9a5febe1e330a3b18fdeddfe583"
+  },
+  "Sources/NotebookCore/NotebookCloudUploadPlan.swift": {
+    "mode": "100644",
+    "object": "a04714cd84854f2cb43f4bcc8e3bb59518cf9456"
+  },
+  "Sources/NotebookCore/NotebookCodeFragment.swift": {
+    "mode": "100644",
+    "object": "402caa2b7f1ce53008a3055041f518ab45876f6e"
+  },
+  "Sources/NotebookCore/NotebookCodeLink.swift": {
+    "mode": "100644",
+    "object": "8728f2990d869318502f25aa237f4a5e3e04ba67"
+  },
+  "Sources/NotebookCore/NotebookCodeStore.swift": {
+    "mode": "100644",
+    "object": "44a6e1aa086df0dfb63a8617469d6c265a177cab"
+  },
+  "Sources/NotebookCore/NotebookCommandDispatcher.swift": {
+    "mode": "100644",
+    "object": "7980d67e900856b284630165fed3a7126f0131d2"
+  },
+  "Sources/NotebookCore/NotebookCommandRead.swift": {
+    "mode": "100644",
+    "object": "d4c9c105d3a9a62c83cb37a0b309eec76d2715f8"
+  },
+  "Sources/NotebookCore/NotebookComputation.swift": {
+    "mode": "100644",
+    "object": "35c63349ccd8ef368f7474749cdd842ff56ea577"
+  },
+  "Sources/NotebookCore/NotebookComputationStore.swift": {
+    "mode": "100644",
+    "object": "d7a7520415bfac9e2255463916102b1cc2a12e71"
+  },
+  "Sources/NotebookCore/NotebookComputerStore.swift": {
+    "mode": "100644",
+    "object": "b295fefbcbed507f97a80cbfd29c306a566a04e8"
+  },
+  "Sources/NotebookCore/NotebookContentRead.swift": {
+    "mode": "100644",
+    "object": "588512e0516f69566bc0207195eabd42aeecac58"
+  },
+  "Sources/NotebookCore/NotebookDeletedItemRestoration.swift": {
+    "mode": "100644",
+    "object": "a6a56e4cb72e34944405f284009b59ae40befa72"
+  },
+  "Sources/NotebookCore/NotebookDictation.swift": {
+    "mode": "100644",
+    "object": "da06981bfb60cd329c9ba0ccb0ee4c99e03005a8"
+  },
+  "Sources/NotebookCore/NotebookDocumentFileRead.swift": {
+    "mode": "100644",
+    "object": "8ad3f5901e7eff70f2d242a9b6a97a8468674aeb"
+  },
+  "Sources/NotebookCore/NotebookDocumentFormatMigration.swift": {
+    "mode": "100644",
+    "object": "01b6c1f8a09155608669bca59fb4d1ce40b59cea"
+  },
+  "Sources/NotebookCore/NotebookDocumentImportRequest.swift": {
+    "mode": "100644",
+    "object": "5f6547bdd1173f37158284b47cde9406d2fabb3b"
+  },
+  "Sources/NotebookCore/NotebookDocumentProgramRead.swift": {
+    "mode": "100644",
+    "object": "1a72dbbf6759bb55ad434f38f1883b241bdebebd"
+  },
+  "Sources/NotebookCore/NotebookDocumentResourceTransfer.swift": {
+    "mode": "100644",
+    "object": "b12b512267644c60a0eb195ca6bb6c21d8da8082"
+  },
+  "Sources/NotebookCore/NotebookDocumentStateCommand.swift": {
+    "mode": "100644",
+    "object": "6bc2830574617c483c5cc4d24b0bf1160d0d910c"
+  },
+  "Sources/NotebookCore/NotebookDocumentStateWriteAllowance.swift": {
+    "mode": "100644",
+    "object": "2d4adaf9667b46691f0cee5c92085ab9d57115fc"
+  },
+  "Sources/NotebookCore/NotebookDocumentZIP.swift": {
+    "mode": "100644",
+    "object": "44b3d10caa3378274fe3a8b0ed49aae0394f037a"
+  },
+  "Sources/NotebookCore/NotebookElementAppearance.swift": {
+    "mode": "100644",
+    "object": "79c612e50e39aca503e790288bf242a57c9fee76"
+  },
+  "Sources/NotebookCore/NotebookElementBasis.swift": {
+    "mode": "100644",
+    "object": "c7c06e8d455e46fc1586ab00bd0b3b0026133370"
+  },
+  "Sources/NotebookCore/NotebookElementErasureRead.swift": {
+    "mode": "100644",
+    "object": "6ab5fc95d74df30c6443440dc0cd38cfd3e848f8"
+  },
+  "Sources/NotebookCore/NotebookElementGroupIndex.swift": {
+    "mode": "100644",
+    "object": "4168d17c08cfd9fd68fc654197d659a53253077c"
+  },
+  "Sources/NotebookCore/NotebookElementGrouping.swift": {
+    "mode": "100644",
+    "object": "6f6893f87683ec42ad211b09793b1d193e127160"
+  },
+  "Sources/NotebookCore/NotebookElementPresentation.swift": {
+    "mode": "100644",
+    "object": "730034cef8373eff23040802f5a3dde7776eb6dc"
+  },
+  "Sources/NotebookCore/NotebookElementSourceSnapshot.swift": {
+    "mode": "100644",
+    "object": "c2398f0237b2817dcef766c0ebba501bd2ee153b"
+  },
+  "Sources/NotebookCore/NotebookElementTransfer.swift": {
+    "mode": "100644",
+    "object": "74acb3bb6f789d2b292b2ece8db888cb67bad047"
+  },
+  "Sources/NotebookCore/NotebookExportCutRead.swift": {
+    "mode": "100644",
+    "object": "a76b08f8bb7345db7427da66b136e08d883f9c22"
+  },
+  "Sources/NotebookCore/NotebookExportFiles.swift": {
+    "mode": "100644",
+    "object": "a4476ff632c6ef0651c81ddcb6d6f5b7b74d842d"
+  },
+  "Sources/NotebookCore/NotebookExportSVG.swift": {
+    "mode": "100644",
+    "object": "b0102fe6a14c2576f6cc11f044662a6319268634"
+  },
+  "Sources/NotebookCore/NotebookFieldRestoration.swift": {
+    "mode": "100644",
+    "object": "5b0b15286cf0ef77e5422b58b905a1a9ccd4dfd7"
+  },
+  "Sources/NotebookCore/NotebookFileStore.swift": {
+    "mode": "100644",
+    "object": "d53b6f4c778abfa6bc4ad609994789a25361260a"
+  },
+  "Sources/NotebookCore/NotebookFreehand.swift": {
+    "mode": "100644",
+    "object": "dc361361d0844635ab3830159b44250e8efae4c3"
+  },
+  "Sources/NotebookCore/NotebookFreehandGeometry.swift": {
+    "mode": "100644",
+    "object": "bd4f1bf5ee135969e34b179f9407801e4409ecb8"
+  },
+  "Sources/NotebookCore/NotebookGraphic.swift": {
+    "mode": "100644",
+    "object": "4e83ee27ca7ce5f9726c39682eb4d0b4fb7809f6"
+  },
+  "Sources/NotebookCore/NotebookGraphicCommand.swift": {
+    "mode": "100644",
+    "object": "1ad7e3e21436c537da5997369093ba23466e270a"
+  },
+  "Sources/NotebookCore/NotebookGraphicConnection.swift": {
+    "mode": "100644",
+    "object": "b5ab8f586b87e3819d37dbd29bbbad2b59941521"
+  },
+  "Sources/NotebookCore/NotebookGraphicContact.swift": {
+    "mode": "100644",
+    "object": "6501f3163fcedc9231325c2ca9704fd347c166a8"
+  },
+  "Sources/NotebookCore/NotebookGraphicCorners.swift": {
+    "mode": "100644",
+    "object": "fe70c1f400acd55c889a2f5f2981b186d9a82259"
+  },
+  "Sources/NotebookCore/NotebookGraphicGraphRead.swift": {
+    "mode": "100644",
+    "object": "29939c7add1d403587f81a7ed92828fbd1367696"
+  },
+  "Sources/NotebookCore/NotebookGraphicIndex.swift": {
+    "mode": "100644",
+    "object": "ebbf41ceff8754c8d3ed5aa96469495c70a34150"
+  },
+  "Sources/NotebookCore/NotebookGraphicRead.swift": {
+    "mode": "100644",
+    "object": "cef7a3ac909bdc7fa393e6a5d9461cd752b84932"
+  },
+  "Sources/NotebookCore/NotebookGraphicSelection.swift": {
+    "mode": "100644",
+    "object": "9d32e43ba73126b1b37c457c7259d9e55d695a58"
+  },
+  "Sources/NotebookCore/NotebookGraphicVisibility.swift": {
+    "mode": "100644",
+    "object": "82e4e2172a8ab99d7bc58f09980afe7602d77a8c"
+  },
+  "Sources/NotebookCore/NotebookHexEncoding.swift": {
+    "mode": "100644",
+    "object": "2ed6c2c934357319c7cea338f22554e1ceb99c9c"
+  },
+  "Sources/NotebookCore/NotebookHistoryPhysicalClosure.swift": {
+    "mode": "100644",
+    "object": "c3667469abe5029a25ed2f949a858a485d91dd3a"
+  },
+  "Sources/NotebookCore/NotebookHistoryPhysicalClosureRead.swift": {
+    "mode": "100644",
+    "object": "6e2d3d925b456d6bf43bdf0d1302640b91f1bef5"
+  },
+  "Sources/NotebookCore/NotebookHistoryReadinessDigest.swift": {
+    "mode": "100644",
+    "object": "c2339c91b0bd858d8d68374439bca900e43d45aa"
+  },
+  "Sources/NotebookCore/NotebookHistoryReadinessMetadata.swift": {
+    "mode": "100644",
+    "object": "457fabe2d6c1fda4f52e67a53c2defb567fd95f8"
+  },
+  "Sources/NotebookCore/NotebookHistoryReadinessProtocol.swift": {
+    "mode": "100644",
+    "object": "2b5ca4e70e30f72a6680d3c7591e1814697da808"
+  },
+  "Sources/NotebookCore/NotebookHistoryReadinessRequest.swift": {
+    "mode": "100644",
+    "object": "4766c63a5de600406282cf2fc0063b4b29eb2f17"
+  },
+  "Sources/NotebookCore/NotebookIPC.swift": {
+    "mode": "100644",
+    "object": "ec8752e227fa4dcacad9406e20c24aaa62b39099"
+  },
+  "Sources/NotebookCore/NotebookIPCArtifacts.swift": {
+    "mode": "100644",
+    "object": "bf0c514fdb710c509fcc3ad23a21f29516ba6f7a"
+  },
+  "Sources/NotebookCore/NotebookIPCProcessLease.swift": {
+    "mode": "100644",
+    "object": "cdf63641e073073d8abd918fe20cf7916d327c1c"
+  },
+  "Sources/NotebookCore/NotebookInkBodies.swift": {
+    "mode": "100644",
+    "object": "854a41d930ad09cc78b33754a1a9fe236a6eb7b0"
+  },
+  "Sources/NotebookCore/NotebookInkPaintKey.swift": {
+    "mode": "100644",
+    "object": "5660d8afd2960b399c7b111ca16755501411b9d1"
+  },
+  "Sources/NotebookCore/NotebookInkReadProjection.swift": {
+    "mode": "100644",
+    "object": "d2e54eea0c6c997880599928797250137240b72d"
+  },
+  "Sources/NotebookCore/NotebookInkReadSet.swift": {
+    "mode": "100644",
+    "object": "24cf11ceb1e6f27479a06692101f530f301570ce"
+  },
+  "Sources/NotebookCore/NotebookInkRelationMigration.swift": {
+    "mode": "100644",
+    "object": "79fbfba8d5b0cfda2fb4bc7d067a05e96464316e"
+  },
+  "Sources/NotebookCore/NotebookInputActivity.swift": {
+    "mode": "100644",
+    "object": "2d11aca33681a0612783324c481553d924fc7d69"
+  },
+  "Sources/NotebookCore/NotebookItemLifecycle.swift": {
+    "mode": "100644",
+    "object": "07444e8c7eb5efd0806c856d28843b10cae8f151"
+  },
+  "Sources/NotebookCore/NotebookJSONAdmission.swift": {
+    "mode": "100644",
+    "object": "559f3c8ad42e635dda6b90d1a261655848a679c7"
+  },
+  "Sources/NotebookCore/NotebookLifecycleAction.swift": {
+    "mode": "100644",
+    "object": "dce94665569e4990fad6300b25c257578a6f027e"
+  },
+  "Sources/NotebookCore/NotebookNativeCommand.swift": {
+    "mode": "100644",
+    "object": "d2209c0d2fe46ecfe1d3d0bf0a415992967fe62a"
+  },
+  "Sources/NotebookCore/NotebookNativeElementCommand.swift": {
+    "mode": "100644",
+    "object": "615f130b0b6b39dc5ef5b1e651d8437699c5a788"
+  },
+  "Sources/NotebookCore/NotebookNativeHistory.swift": {
+    "mode": "100644",
+    "object": "7b4435eea9179b43146f0adc61f7262e51341483"
+  },
+  "Sources/NotebookCore/NotebookNativeItemCreation.swift": {
+    "mode": "100644",
+    "object": "f1e88eb5af261bc5c26695d6e0e87fe44d139245"
+  },
+  "Sources/NotebookCore/NotebookNativeItemDeletion.swift": {
+    "mode": "100644",
+    "object": "af9609d075802b5dee854b7542f27f1c5fb49535"
+  },
+  "Sources/NotebookCore/NotebookNativePlacementCommand.swift": {
+    "mode": "100644",
+    "object": "d7d6407e3a272ac83c337014b00b4159772536bd"
+  },
+  "Sources/NotebookCore/NotebookNativeWriteAllowance.swift": {
+    "mode": "100644",
+    "object": "6ecc075d176bdf2a5a8012a3b96eb075ec5d314f"
+  },
+  "Sources/NotebookCore/NotebookObservation.swift": {
+    "mode": "100644",
+    "object": "752cdba5fb3671354a55a9720473e1012e67f6c5"
+  },
+  "Sources/NotebookCore/NotebookObservationIndex.swift": {
+    "mode": "100644",
+    "object": "b52743526fb50d6bc6221ce3b42a6e2929fbbd04"
+  },
+  "Sources/NotebookCore/NotebookOwnershipValidation.swift": {
+    "mode": "100644",
+    "object": "862c6bfe684e312d29bb8ec04e60c74f223194f2"
+  },
+  "Sources/NotebookCore/NotebookPageInkOrder.swift": {
+    "mode": "100644",
+    "object": "fc1546a7e32b250c33255731d0f4f34501c1a09e"
+  },
+  "Sources/NotebookCore/NotebookPageInkPersistence.swift": {
+    "mode": "100644",
+    "object": "95fbb1331b49d9ee1da71d0619713115cd2e0e8c"
+  },
+  "Sources/NotebookCore/NotebookPageInkRead.swift": {
+    "mode": "100644",
+    "object": "9b17c85fe03bfbfa193a37a30c7d803e1220ac49"
+  },
+  "Sources/NotebookCore/NotebookPageInkWindow.swift": {
+    "mode": "100644",
+    "object": "87b50d1f48c6037075093b7a0cd48263d37f8cd2"
+  },
+  "Sources/NotebookCore/NotebookPageMaterialIndex.swift": {
+    "mode": "100644",
+    "object": "276d83a16d3e906838100d5149be07641fa0add4"
+  },
+  "Sources/NotebookCore/NotebookPageMaterialWindow.swift": {
+    "mode": "100644",
+    "object": "108b547e902a8f5bff4aa671da94ed2e72d83e50"
+  },
+  "Sources/NotebookCore/NotebookPageOrder.swift": {
+    "mode": "100644",
+    "object": "2e943f5ed5c34421cf1a680d854eea1f3f4a13c1"
+  },
+  "Sources/NotebookCore/NotebookPageOrderStore.swift": {
+    "mode": "100644",
+    "object": "bb00804e0002f8ad59f33d252d755b76498c9587"
+  },
+  "Sources/NotebookCore/NotebookPageOrderVector.swift": {
+    "mode": "100644",
+    "object": "447a4898e66eb25c96cce47a9bb89d63e69cc6a4"
+  },
+  "Sources/NotebookCore/NotebookPagePresentationSource.swift": {
+    "mode": "100644",
+    "object": "5635ea5de94074fc11aa2b208761aff9c3478dd8"
+  },
+  "Sources/NotebookCore/NotebookPageReferenceSource.swift": {
+    "mode": "100644",
+    "object": "6db2d9e72515ce7943f4b9c47c1825ea6aea78e1"
+  },
+  "Sources/NotebookCore/NotebookPageWindow.swift": {
+    "mode": "100644",
+    "object": "d2197f2d42fd494ae86d989167935db333fb421b"
+  },
+  "Sources/NotebookCore/NotebookPasteFragment.swift": {
+    "mode": "100644",
+    "object": "ab4b6bb19474f742318957dde4ab78574a745289"
+  },
+  "Sources/NotebookCore/NotebookPendingChanges.swift": {
+    "mode": "100644",
+    "object": "2e8ec908632132ed9ecd4bb9903886ee79468be5"
+  },
+  "Sources/NotebookCore/NotebookPendingOwners.swift": {
+    "mode": "100644",
+    "object": "5c754f2c9a67de8f430ec13ca276bf76ac10a350"
+  },
+  "Sources/NotebookCore/NotebookPlacementAction.swift": {
+    "mode": "100644",
+    "object": "2cd4fa455ed05496aa36e0a2d9ade8b39d5a751f"
+  },
+  "Sources/NotebookCore/NotebookPlacementRead.swift": {
+    "mode": "100644",
+    "object": "c40bd0987fe9640589a37b3a864e3bc6a3d30446"
+  },
+  "Sources/NotebookCore/NotebookPortableDocument.swift": {
+    "mode": "100644",
+    "object": "cddefaa1139a16539796433bfdfb3893758b4569"
+  },
+  "Sources/NotebookCore/NotebookPortableDocumentImport.swift": {
+    "mode": "100644",
+    "object": "e5ea88a02905dd29109c1a116ebebe5dc0af8bc0"
+  },
+  "Sources/NotebookCore/NotebookPresentation.swift": {
+    "mode": "100644",
+    "object": "c0880d652ae4496962d9bf0b39306c4e487360da"
+  },
+  "Sources/NotebookCore/NotebookProgramDependencies.swift": {
+    "mode": "100644",
+    "object": "cc1930c550c588571adfdcb7efafc7f2e5632f8f"
+  },
+  "Sources/NotebookCore/NotebookProgramImport.swift": {
+    "mode": "100644",
+    "object": "eb8d52a11b53695510c9e13396d799aac0b99873"
+  },
+  "Sources/NotebookCore/NotebookProgramPackage.swift": {
+    "mode": "100644",
+    "object": "ec9316648aaa57dec811447eabdf77f3e4aa83da"
+  },
+  "Sources/NotebookCore/NotebookProgramResource.swift": {
+    "mode": "100644",
+    "object": "cf59f5903999873267fb7106a2d6a4d779351a93"
+  },
+  "Sources/NotebookCore/NotebookProgramStateRead.swift": {
+    "mode": "100644",
+    "object": "09a975745ba0b92765cc456a95206dff3e89323f"
+  },
+  "Sources/NotebookCore/NotebookProgramTransfer.swift": {
+    "mode": "100644",
+    "object": "83532ee80507554492a09246441d59bca8b075d4"
+  },
+  "Sources/NotebookCore/NotebookProjectFile.swift": {
+    "mode": "100644",
+    "object": "8efca428d809ec60711b3587df3dd9b29fb05025"
+  },
+  "Sources/NotebookCore/NotebookProjectRun.swift": {
+    "mode": "100644",
+    "object": "b3826918517b22b38536146a647ff1fd84b610f1"
+  },
+  "Sources/NotebookCore/NotebookPublicationChanges.swift": {
+    "mode": "100644",
+    "object": "cf7ff711baba7d1143ea208e4e7b1d0ef4a5d3a7"
+  },
+  "Sources/NotebookCore/NotebookQueryCut.swift": {
+    "mode": "100644",
+    "object": "718011b2e4150b2c660639d1d4b0b887ea1dae0a"
+  },
+  "Sources/NotebookCore/NotebookQuickShape.swift": {
+    "mode": "100644",
+    "object": "ea43971110c2988c7fd2c57303913d1a31906e7a"
+  },
+  "Sources/NotebookCore/NotebookReadBasis.swift": {
+    "mode": "100644",
+    "object": "46aa983680998e21c562f96c4bb92e7326a6d8d4"
+  },
+  "Sources/NotebookCore/NotebookReadCoverage.swift": {
+    "mode": "100644",
+    "object": "39e8c78300608da6552046b236b70fdbe1ba6b12"
+  },
+  "Sources/NotebookCore/NotebookReadSession.swift": {
+    "mode": "100644",
+    "object": "bd173725dfc9a508a8f633bd5fd780e2bc153e8b"
+  },
+  "Sources/NotebookCore/NotebookReadSnapshot.swift": {
+    "mode": "100644",
+    "object": "ac2610ba9f13542748e5ebcbc69e271770e40d0d"
+  },
+  "Sources/NotebookCore/NotebookReceiptPhaseMerge.swift": {
+    "mode": "100644",
+    "object": "e2833f8895ec805976c9561ddcfcd89bced16f84"
+  },
+  "Sources/NotebookCore/NotebookReceiptPublication.swift": {
+    "mode": "100644",
+    "object": "e10e84532c8da8abaf1e61bc3eff69404fcd9c9b"
+  },
+  "Sources/NotebookCore/NotebookReferenceIndex.swift": {
+    "mode": "100644",
+    "object": "267a0dbaf4bc4bb39a02e6f326e686a6dc3af2a5"
+  },
+  "Sources/NotebookCore/NotebookReferenceLocation.swift": {
+    "mode": "100644",
+    "object": "ebb21710bf20545c32d369a1a615ab06d806d8d2"
+  },
+  "Sources/NotebookCore/NotebookRelay.swift": {
+    "mode": "100644",
+    "object": "ffcc35fccddcfcac6a5bb96ffb7c0f2c353769aa"
+  },
+  "Sources/NotebookCore/NotebookReplicaCloudInventory.swift": {
+    "mode": "100644",
+    "object": "ea42b79ab1d8031ea64f35c0371d2bc24a4f6d4b"
+  },
+  "Sources/NotebookCore/NotebookReplicaInventory.swift": {
+    "mode": "100644",
+    "object": "e03b31193df210c9bb288f83c30b883f447a57cc"
+  },
+  "Sources/NotebookCore/NotebookReplicaInventoryRead.swift": {
+    "mode": "100644",
+    "object": "5ee85900fd69d0223f5a2b089d665a0b11c0a6ca"
+  },
+  "Sources/NotebookCore/NotebookReplicationDelivery.swift": {
+    "mode": "100644",
+    "object": "42e9cd63b73a08d000676d892ed5ba49da3f561f"
+  },
+  "Sources/NotebookCore/NotebookReplicationRetirement.swift": {
+    "mode": "100644",
+    "object": "f0670450ba8ecd0443a24709590daad67aa516d5"
+  },
+  "Sources/NotebookCore/NotebookReplicationStore.swift": {
+    "mode": "100644",
+    "object": "4b2ccfcd58755b8910c2e289d4448a98ae90d04d"
+  },
+  "Sources/NotebookCore/NotebookRetiredBoardSource.swift": {
+    "mode": "100644",
+    "object": "1b0a7c9e6d3814e2cca4166c7b3ade5683a74aea"
+  },
+  "Sources/NotebookCore/NotebookRetiredDocumentSource.swift": {
+    "mode": "100644",
+    "object": "b2b35ee0ea1cb115ae336a4fe16f210b827cd9df"
+  },
+  "Sources/NotebookCore/NotebookRetiredPageSource.swift": {
+    "mode": "100644",
+    "object": "a188754884d2693a57b99052845745b2e3f04635"
+  },
+  "Sources/NotebookCore/NotebookRunStore.swift": {
+    "mode": "100644",
+    "object": "932781557045ab1f3fb28d77378cea9b7bbffa47"
+  },
+  "Sources/NotebookCore/NotebookRuntimeProtocol.swift": {
+    "mode": "100644",
+    "object": "7ab7d449b2527debe40d9028b5a6cc7217a4f884"
+  },
+  "Sources/NotebookCore/NotebookSQLExecution.swift": {
+    "mode": "100644",
+    "object": "e549276df421fddecf591966c9d22734d8afce5a"
+  },
+  "Sources/NotebookCore/NotebookSQLite.swift": {
+    "mode": "100644",
+    "object": "df9d24cc976522303ec00c6714d192a7b8f84e86"
+  },
+  "Sources/NotebookCore/NotebookSceneReadDependencies.swift": {
+    "mode": "100644",
+    "object": "3419dc930ce4a356d388eb2e19e327d3c19c4549"
+  },
+  "Sources/NotebookCore/NotebookScopedCommand.swift": {
+    "mode": "100644",
+    "object": "2ecbbd135c5aec1e982dc9c35656ab13b7d89179"
+  },
+  "Sources/NotebookCore/NotebookScriptEffectOutcome.swift": {
+    "mode": "100644",
+    "object": "a340f7bffd2a9ad27ac0341c03fec6dc56f85d73"
+  },
+  "Sources/NotebookCore/NotebookScriptRun.swift": {
+    "mode": "100644",
+    "object": "dba46815a3b62078bd2c018338255de1c107f9f7"
+  },
+  "Sources/NotebookCore/NotebookSearch.swift": {
+    "mode": "100644",
+    "object": "ffc616880e090cbe6f323f344f641f0038bf48b6"
+  },
+  "Sources/NotebookCore/NotebookSearchIndex.swift": {
+    "mode": "100644",
+    "object": "6f14741d757bd7687a777210cc96a0a9f69a47ff"
+  },
+  "Sources/NotebookCore/NotebookSearchText.swift": {
+    "mode": "100644",
+    "object": "1cfbbd7e817928c18896f7e31533d69b58bce563"
+  },
+  "Sources/NotebookCore/NotebookSelectionPublication.swift": {
+    "mode": "100644",
+    "object": "673d9ec66cf773faedeee7e45651c3f94bd039a5"
+  },
+  "Sources/NotebookCore/NotebookSourceWitness.swift": {
+    "mode": "100644",
+    "object": "a82b3bf174b38a369b54e410707d5e5f90cf4825"
+  },
+  "Sources/NotebookCore/NotebookSpatialGroupQuery.swift": {
+    "mode": "100644",
+    "object": "93c0259653bea62a4716c049f3e5caa4b16da6e5"
+  },
+  "Sources/NotebookCore/NotebookSpatialInkCommand.swift": {
+    "mode": "100644",
+    "object": "ccb618b712801787f0648c0b19efe0e6d5431049"
+  },
+  "Sources/NotebookCore/NotebookSpatialInkWindow.swift": {
+    "mode": "100644",
+    "object": "252e9053a2357296a8af851546102eb287e5f431"
+  },
+  "Sources/NotebookCore/NotebookStorage.swift": {
+    "mode": "100644",
+    "object": "304647ff7894c0d3e378a72464e3d6c6137ff8c5"
+  },
+  "Sources/NotebookCore/NotebookStorageUsage.swift": {
+    "mode": "100644",
+    "object": "7a79721a449750a965606d701e3fb9ef458f59f1"
+  },
+  "Sources/NotebookCore/NotebookStore.swift": {
+    "mode": "100644",
+    "object": "f7bff5335956838f43be65decbf1a86b1e6e0939"
+  },
+  "Sources/NotebookCore/NotebookTextTypography.swift": {
+    "mode": "100644",
+    "object": "3e9875e757c98aaa8cc7e0ec57fe030c1536bd31"
+  },
+  "Sources/NotebookCore/NotebookTldrawClipboard.swift": {
+    "mode": "100644",
+    "object": "6d7b7c716c35859d66ed34d9840536783097dc84"
+  },
+  "Sources/NotebookCore/NotebookTldrawImport.swift": {
+    "mode": "100644",
+    "object": "e0558a699fb13c622462ea95cbb2cc54f6207496"
+  },
+  "Sources/NotebookCore/NotebookTldrawRecognition.swift": {
+    "mode": "100644",
+    "object": "d96dc26df802c97d6a34c2a703258b4a91b3832b"
+  },
+  "Sources/NotebookCore/NotebookTransientPresence.swift": {
+    "mode": "100644",
+    "object": "b16b98f50854db52ebbb1d5a6c4f225879dac00f"
+  },
+  "Sources/NotebookCore/NotebookTransportProtocol.swift": {
+    "mode": "100644",
+    "object": "432155dc096b1c015b2f66f276f3494870a82862"
+  },
+  "Sources/NotebookCore/NotebookTransportStorage.swift": {
+    "mode": "100644",
+    "object": "eab256938524bd675726296268c53211fda73fb1"
+  },
+  "Sources/NotebookCore/NotebookVectorPath.swift": {
+    "mode": "100644",
+    "object": "617bb4f9c649f46a18995ecbb39025879cdb6085"
+  },
+  "Sources/NotebookCore/NotebookVoice.swift": {
+    "mode": "100644",
+    "object": "0c4b5ab954d53a011bd3c678ea4425405b5cd122"
+  },
+  "Sources/NotebookCore/NotebookWakeAddress.swift": {
+    "mode": "100644",
+    "object": "ea29ff4702ec9097e25445e7d00a65787ba3d2a2"
+  },
+  "Sources/NotebookCore/NotebookWorkspaceCommand.swift": {
+    "mode": "100644",
+    "object": "704e2936192d3b4bfb8055b8cb62bf17061efb2c"
+  },
+  "Sources/NotebookCore/PageDocument.swift": {
+    "mode": "100644",
+    "object": "5e08955242856328cb78491cd49001dc95f634df"
+  },
+  "Sources/NotebookCore/PageElementProjection.swift": {
+    "mode": "100644",
+    "object": "46c320d4af6e025b8befadcef1dcdd3b151e37c9"
+  },
+  "Sources/NotebookCore/PageInkDrawing.swift": {
+    "mode": "100644",
+    "object": "3320d14e4c3e1d0b908dca68ce26fe0fb33d2bda"
+  },
+  "Sources/NotebookCore/PageInkVisibility.swift": {
+    "mode": "100644",
+    "object": "8084f2cc29c708cba411a01613aacd3d4f938565"
+  },
+  "Sources/NotebookCore/PageReplication.swift": {
+    "mode": "100644",
+    "object": "3f4fab88213d74fd4cd12a108684e363d8d8f8bd"
+  },
+  "Sources/NotebookCore/PageVisionArtifacts.swift": {
+    "mode": "100644",
+    "object": "ecf557a9acab12603a3861a9abb0f801520d00b6"
+  },
+  "Sources/NotebookCore/PageVisionReceipt.swift": {
+    "mode": "100644",
+    "object": "bf2f0df114dc4c0c7504419cf8da0e73c7fc2c1a"
+  },
+  "Sources/NotebookCore/PencilUndoHistory.swift": {
+    "mode": "100644",
+    "object": "b540e53b29a4e54a8f0e6223cfed64301aadee6c"
+  },
+  "Sources/NotebookCore/PreparedDocumentSourceEdit.swift": {
+    "mode": "100644",
+    "object": "8efa6f8f406f1778d47ff10a514352e8f3580a33"
+  },
+  "Sources/NotebookCore/ProgramSemanticSelection.swift": {
+    "mode": "100644",
+    "object": "25b80486cefe362a376d344dc7202eb3700ba9a2"
+  },
+  "Sources/NotebookCore/ReferenceSourceFiles.swift": {
+    "mode": "100644",
+    "object": "b66ccff50be77235084c253be931e734c6084a58"
+  },
+  "Sources/NotebookCore/ReferenceVision.swift": {
+    "mode": "100644",
+    "object": "e83bb40221a212e5644cc6e65c39998ff68c5e07"
+  },
+  "Sources/NotebookCore/SharedContext.swift": {
+    "mode": "100644",
+    "object": "efacd6f7d77343f80cd8aa54612a9454f4ba88f2"
+  },
+  "Sources/NotebookCore/SharedContextOrder.swift": {
+    "mode": "100644",
+    "object": "3b0974669a8358cd31a2e76f5e3dfb7c5e516d9f"
+  },
+  "Sources/NotebookCore/SharedContextRead.swift": {
+    "mode": "100644",
+    "object": "e7068b3c2921a954de5e79d83dbd93610802666f"
+  },
+  "Sources/NotebookCore/SharedContextReferences.swift": {
+    "mode": "100644",
+    "object": "3bdf133a115fa75387e87c3edab5bcd14cd81b85"
+  },
+  "Sources/NotebookCore/SharedContextReplication.swift": {
+    "mode": "100644",
+    "object": "2bd15a9abe528cd42d6e2ab9d712c80ac4e2db67"
+  },
+  "Sources/NotebookCore/SpatialInkActionStorage.swift": {
+    "mode": "100644",
+    "object": "4ce94785eddb6d2c279fe83cfe0bb67454eb3acf"
+  },
+  "Sources/NotebookCore/SpatialInkGeometry.swift": {
+    "mode": "100644",
+    "object": "28831b4c3c65bfc569cc92177d67f44b32dc66bf"
+  },
+  "Sources/NotebookCore/SpatialInkJournal.swift": {
+    "mode": "100644",
+    "object": "6293148d7790c12bdd58d217e902aecb7058574d"
+  },
+  "Sources/NotebookCore/SpatialInkReplication.swift": {
+    "mode": "100644",
+    "object": "0ed8467f07d380b7d3041a895f3b827c0225f9bf"
+  },
+  "Sources/NotebookCore/SpatialWorkspace.swift": {
+    "mode": "100644",
+    "object": "48a575b44e02ebe8125a3a846c5d3c08c92a397b"
+  },
+  "Sources/NotebookCore/SurfaceExports.swift": {
+    "mode": "100644",
+    "object": "3c5f406c08dec606a1dd225f1c36d996b8ee3e7a"
+  },
+  "Sources/NotebookCore/VersionStamp.swift": {
+    "mode": "100644",
+    "object": "d37cefff6e1261c2caa3646a36c2f6eca86e0def"
+  },
+  "Sources/NotebookCore/WorkspaceIndex.swift": {
+    "mode": "100644",
+    "object": "989160dad1b614e1fa483ccba75e4659e1e657c8"
+  },
+  "Sources/NotebookCore/WorkspaceItemGeometry.swift": {
+    "mode": "100644",
+    "object": "308e91126b72bb4434098e4029ba648eef75e685"
+  },
+  "Sources/NotebookCore/WorkspacePlacement.swift": {
+    "mode": "100644",
+    "object": "3af56bcd237b0ef10d428e667aeafb3271c3efb9"
+  },
+  "Sources/NotebookCore/WorkspaceReplication.swift": {
+    "mode": "100644",
+    "object": "b34fbf94512994a50d60b5e6e5612bdcc5aec2b9"
+  },
+  "Sources/NotebookCore/WorkspaceSpatialIndex.swift": {
+    "mode": "100644",
+    "object": "079c4f6873b04cce088084b4952d57f873a28418"
+  },
+  "Sources/NotebookImageCompiler/Cargo.lock": {
+    "mode": "100644",
+    "object": "8d16feeedc6e4ad183d8ebcd022f4fe68a149f92"
+  },
+  "Sources/NotebookImageCompiler/Cargo.toml": {
+    "mode": "100644",
+    "object": "d2fce3968b4192364ad47ae6037b3c5c26d88147"
+  },
+  "Sources/NotebookImageCompiler/licenses/krilla/LICENSE_APACHE": {
+    "mode": "100644",
+    "object": "d645695673349e3947e8e5ae42332d0ac3164cd7"
+  },
+  "Sources/NotebookImageCompiler/licenses/krilla/LICENSE_MIT": {
+    "mode": "100644",
+    "object": "63b1625f14ba62fb45f803b3d5d643f62bed7b31"
+  },
+  "Sources/NotebookImageCompiler/licenses/krilla/NOTICE.md": {
+    "mode": "100644",
+    "object": "b4e73a7ca16b3eeb9edf4e4d06f8372d761c9382"
+  },
+  "Sources/NotebookImageCompiler/licenses/provenance.json": {
+    "mode": "100644",
+    "object": "bffa5b2a30ce8ba3eb0edf38dd17c4f41a5b4263"
+  },
+  "Sources/NotebookImageCompiler/rust-toolchain.toml": {
+    "mode": "100644",
+    "object": "9c2b6511c73664e68e80de3402de785a0542cc9c"
+  },
+  "Sources/NotebookImageCompiler/src/main.rs": {
+    "mode": "100644",
+    "object": "387bb346006c68244bad88562a5585e1960301f9"
+  },
+  "Sources/NotebookMarkupService/Info.plist": {
+    "mode": "100644",
+    "object": "de849160cf8d919a12a37c0a109aa214748d6506"
+  },
+  "Sources/NotebookMarkupService/Resources/marked-LICENSE.md": {
+    "mode": "100644",
+    "object": "4bd2d4a084987ab634893a29f72ff6d1a67bf658"
+  },
+  "Sources/NotebookMarkupService/Resources/notebook-markup.js": {
+    "mode": "100644",
+    "object": "c5c01210f06d65b5b7a9ca48abf02ff95e1ed308"
+  },
+  "Sources/NotebookMarkupService/TypeScriptResources.lock.json": {
+    "mode": "100644",
+    "object": "d489c6676d9e10f7b9b2cc82eeb6d7133cc40e02"
+  },
+  "Sources/NotebookMarkupService/entitlements.plist": {
+    "mode": "100644",
+    "object": "7366ffe71dba076fd9d70b17b89a5912180253d9"
+  },
+  "Sources/NotebookMarkupService/main.swift": {
+    "mode": "100644",
+    "object": "1a7585b9872372b9225a2816ce5a8d1c281ced3d"
+  },
+  "Sources/NotebookMarkupService/typescript-child.entitlements.plist": {
+    "mode": "100644",
+    "object": "6e95868f6494163633ec9d6c2d3ff6d7ddc7a944"
+  },
+  "Sources/NotebookScriptHost/NotebookScriptCoordinator.swift": {
+    "mode": "100644",
+    "object": "47bbde7e10596f8af0964ee3ce51dfa629bfda63"
+  },
+  "Sources/NotebookScriptHost/NotebookScriptEffects.swift": {
+    "mode": "100644",
+    "object": "899d66b8af576634a036619a7bb92ec7c4cbe50d"
+  },
+  "Sources/NotebookScriptHost/NotebookScriptExports.swift": {
+    "mode": "100644",
+    "object": "5e9e40a5548d1d1b9e593a24c2c26e9170b2e0fb"
+  },
+  "Sources/NotebookScriptHost/NotebookScriptObserve.swift": {
+    "mode": "100644",
+    "object": "5a4d67ded7d293e2b82c3a195336fa75244eba18"
+  },
+  "Sources/NotebookScriptHost/NotebookScriptReads.swift": {
+    "mode": "100644",
+    "object": "efe7c2c924a800d03187fdaa2c0280eb7ce4af19"
+  },
+  "Sources/NotebookScriptHost/NotebookTypeScriptPreparation.swift": {
+    "mode": "100644",
+    "object": "30605e49de7f6b4ab92e132113d6db6848e95025"
+  },
+  "Sources/NotebookScriptHost/NotebookXPCWorker.swift": {
+    "mode": "100644",
+    "object": "1bbd17110783f685c639773f345eb26b525d4c37"
+  },
+  "Sources/NotebookScriptHost/Resources/notebook-sdk.d.ts": {
+    "mode": "100644",
+    "object": "147446c84f368777a02e7f96a97b6f1fab13ed72"
+  },
+  "Sources/NotebookScriptHost/Resources/sdk-reference.json": {
+    "mode": "100644",
+    "object": "e51e0e655b596433a03cfd17616dc1106110142f"
+  },
+  "Sources/NotebookScriptProtocol/NotebookScriptProtocol.swift": {
+    "mode": "100644",
+    "object": "e74cf5774d79fd87b30c16d1dcbc68095a86bec1"
+  },
+  "Sources/NotebookScriptProtocol/NotebookTypeScriptSourceMap.swift": {
+    "mode": "100644",
+    "object": "97ae15a2bb236839c420641ff89d6c4905d66a85"
+  },
+  "Sources/NotebookScriptService/Info.plist": {
+    "mode": "100644",
+    "object": "62636ed6a5b87861771c8fdddb79aecd4739cdb3"
+  },
+  "Sources/NotebookScriptService/entitlements.plist": {
+    "mode": "100644",
+    "object": "7366ffe71dba076fd9d70b17b89a5912180253d9"
+  },
+  "Sources/NotebookScriptService/main.swift": {
+    "mode": "100644",
+    "object": "c969d63c2ffdd554ae32f7c1c5fb2365228ecbff"
+  },
+  "Sources/NotebookScriptWorker/NotebookCompilerMemory.swift": {
+    "mode": "100644",
+    "object": "a638e0ba2e7dbf0c9fff5f744d4c4135831db788"
+  },
+  "Sources/NotebookScriptWorker/NotebookCompilerPipe.swift": {
+    "mode": "100644",
+    "object": "4893049cf6149a41318567b0a9269cd94e3c5499"
+  },
+  "Sources/NotebookScriptWorker/NotebookCompilerProcess.swift": {
+    "mode": "100644",
+    "object": "b670632a3823e88264cd1b3ed4ef75980cf6429f"
+  },
+  "Sources/NotebookScriptWorker/NotebookQuickJSEngine.swift": {
+    "mode": "100644",
+    "object": "ef1000db3a5836e4da461cfcfacb6e17acab495d"
+  },
+  "Sources/NotebookScriptWorker/NotebookSandboxedTypeScriptCompiler.swift": {
+    "mode": "100644",
+    "object": "39357d217a91eafce45596062013339732f53f40"
+  },
+  "Sources/NotebookScriptWorker/NotebookScriptService.swift": {
+    "mode": "100644",
+    "object": "3f9af167bf63c4c8a79188a5c5f1e2c33abec4bc"
+  },
+  "Sources/NotebookScriptWorker/Resources/notebook-sdk.js": {
+    "mode": "100644",
+    "object": "1e2aa87954d02b93ea8587370614a515e4773b12"
+  },
+  "Sources/NotebookSurface/CameraGestureTrajectory.swift": {
+    "mode": "100644",
+    "object": "27eb4376e08fc03a8dc1938e0d370f837f7ea81a"
+  },
+  "Sources/NotebookSurface/IncrementalInkGeometry.swift": {
+    "mode": "100644",
+    "object": "4c4fecc83ffefc423e2e8faa311df253c9198347"
+  },
+  "Sources/NotebookSurface/InkRenderGeometry.swift": {
+    "mode": "100644",
+    "object": "9a30d74025b773d4e4f6c169906f69ff4e24c956"
+  },
+  "Sources/NotebookSurface/InkStrokeGeometry.swift": {
+    "mode": "100644",
+    "object": "d28b62e11147e7ff0473f1a845edbdf4f69bef91"
+  },
+  "Sources/NotebookSurface/PenStyle.swift": {
+    "mode": "100644",
+    "object": "1b1cb353a71e7f1a10eada7ddc48792fa39b0090"
+  },
+  "Sources/NotebookSurface/PencilPressure.swift": {
+    "mode": "100644",
+    "object": "05bc5f36156569cc739aec6df111062d74f3052c"
+  },
+  "Sources/NotebookSurface/PhysicalPaper.swift": {
+    "mode": "100644",
+    "object": "74b391968e31918698415ebe2aa9074b435566f2"
+  },
+  "Sources/NotebookSurface/SpatialCoordinates.swift": {
+    "mode": "100644",
+    "object": "140a028d2922ea28be211710d9fece95f1fa35d2"
+  },
+  "Sources/NotebookSurface/SurfaceFrameManipulation.swift": {
+    "mode": "100644",
+    "object": "ec7872ebdbaf29cb1e5bb872e3e7e72ee9fd3153"
+  },
+  "Sources/NotebookSurface/SurfaceVectors.swift": {
+    "mode": "100644",
+    "object": "2afb25f6765ddabf2bed9fb3e5013378c1a93134"
+  },
+  "Sources/NotebookTypesetter/NotebookPDFBuffer.swift": {
+    "mode": "100644",
+    "object": "f95a921e6ef9677d904b75df710f0dc51fc46348"
+  },
+  "Sources/NotebookTypesetter/NotebookPrintedArtifactCache.swift": {
+    "mode": "100644",
+    "object": "e60fbc73ebe0da264e1a912e302620ccb075d4c5"
+  },
+  "Sources/NotebookTypesetter/NotebookPrintedDocument+Locations.swift": {
+    "mode": "100644",
+    "object": "83f34f026a119b33123fc1e0e741ae57eac20fc6"
+  },
+  "Sources/NotebookTypesetter/NotebookPrintedDocumentStore.swift": {
+    "mode": "100644",
+    "object": "2c03d5d3c256434a06bed9322e4ce1cc55a7a110"
+  },
+  "Sources/NotebookTypesetter/NotebookTypesetter.swift": {
+    "mode": "100644",
+    "object": "3f763c92914b25d67525c624911e2e2231ce1900"
+  },
+  "Sources/NotebookTypesetter/NotebookTypesetterAdmission.swift": {
+    "mode": "100644",
+    "object": "0fdf260769ae69a85ff1bd056a2334b0ac547c70"
+  },
+  "Sources/NotebookTypesetter/NotebookTypesetterDemand.swift": {
+    "mode": "100644",
+    "object": "4c4ee9feb32e4b6cb9f2bfb0b80c151220e1e142"
+  },
+  "Sources/NotebookTypesetter/NotebookTypesetterInput.swift": {
+    "mode": "100644",
+    "object": "e4afa834dad0e71ce98577cfbdd9e9f491d069e7"
+  },
+  "Sources/NotebookTypesetterRuntime/.gitignore": {
+    "mode": "100644",
+    "object": "b83d22266ac8aa2f8df2edef68082c789727841d"
+  },
+  "Sources/NotebookTypesetterRuntime/Cargo.lock": {
+    "mode": "100644",
+    "object": "999a48d11f03aec79d314388d9935a24495dff49"
+  },
+  "Sources/NotebookTypesetterRuntime/Cargo.toml": {
+    "mode": "100644",
+    "object": "97fd2a67e1f275900679457a55b10be8d5320794"
+  },
+  "Sources/NotebookTypesetterRuntime/Runtime.lock.json": {
+    "mode": "100644",
+    "object": "85d9e450de972f1d297fe8347043957edeec2b4a"
+  },
+  "Sources/NotebookTypesetterRuntime/build.rs": {
+    "mode": "100644",
+    "object": "1aa4da12a405864dad6d617cd061d7adcc717ba5"
+  },
+  "Sources/NotebookTypesetterRuntime/build/font-index.py": {
+    "mode": "100644",
+    "object": "531cdd56acd2be7daf621a77c5b942ab21ccbd60"
+  },
+  "Sources/NotebookTypesetterRuntime/build/fontmap-test.c": {
+    "mode": "100644",
+    "object": "89e6d6c830b8b1d2f8e37aef80dd68ce589d3411"
+  },
+  "Sources/NotebookTypesetterRuntime/build/format-test.c": {
+    "mode": "100644",
+    "object": "6b36ce86ca28ed57aca49dd8346be755125b5c08"
+  },
+  "Sources/NotebookTypesetterRuntime/build/generate.py": {
+    "mode": "100644",
+    "object": "bf840c3308bc2d05499ab2c33a8976f8f6e37724"
+  },
+  "Sources/NotebookTypesetterRuntime/build/rebuild-tectonic.py": {
+    "mode": "100644",
+    "object": "8f8dc21679989b4e5f0594ba6056f8fbc1421054"
+  },
+  "Sources/NotebookTypesetterRuntime/build/tectonic.patch": {
+    "mode": "100644",
+    "object": "542506ce98776849f33239e663fa916fd4e84484"
+  },
+  "Sources/NotebookTypesetterRuntime/build/test-supervisor.py": {
+    "mode": "100644",
+    "object": "c769026e1af1ac4e58ade713c3d49c068ee60976"
+  },
+  "Sources/NotebookTypesetterRuntime/kernels/fonts.tsv.gz": {
+    "mode": "100644",
+    "object": "abb2af70129b852ac68a07fe8c7cf460b1d4ba14"
+  },
+  "Sources/NotebookTypesetterRuntime/kernels/image.wasm.gz": {
+    "mode": "100644",
+    "object": "7e80b8cf36bb6ec4fe695ccb7ea91074fa60f932"
+  },
+  "Sources/NotebookTypesetterRuntime/kernels/latex.fmt.gz": {
+    "mode": "100644",
+    "object": "01004195347a28a9f5da27b3d806a68d479561e3"
+  },
+  "Sources/NotebookTypesetterRuntime/kernels/tectonic.wasm.gz": {
+    "mode": "100644",
+    "object": "26df89ea6e3f553f06535e9407a17438f214f8da"
+  },
+  "Sources/NotebookTypesetterRuntime/licenses/Brotli-1.1.0-LICENSE.txt": {
+    "mode": "100644",
+    "object": "33b7cdd2dbaeddce1e35aa1a13f63d71154dc42f"
+  },
+  "Sources/NotebookTypesetterRuntime/licenses/Expat-2.7.3-COPYING.txt": {
+    "mode": "100644",
+    "object": "c6d184a8aae845ce7bf4d195b214d8244d457f8f"
+  },
+  "Sources/NotebookTypesetterRuntime/licenses/FreeType-2.13.3-FTL.txt": {
+    "mode": "100644",
+    "object": "c406d150fa57aaf7a5b950b6cf302daeba1d0bb9"
+  },
+  "Sources/NotebookTypesetterRuntime/licenses/Graphite-1.3.14-COPYING.txt": {
+    "mode": "100644",
+    "object": "f6630af5336c6314e857cde538819435df645b9d"
+  },
+  "Sources/NotebookTypesetterRuntime/licenses/HarfBuzz-11.3.3-COPYING.txt": {
+    "mode": "100644",
+    "object": "1dd917e9f2e72167de69e3b5dadbc4e7db417da1"
+  },
+  "Sources/NotebookTypesetterRuntime/licenses/ICU-74.2-LICENSE.txt": {
+    "mode": "100644",
+    "object": "9f54372febca06e134bbc9d4700a1ebfeda13843"
+  },
+  "Sources/NotebookTypesetterRuntime/licenses/LPPL-1.3c.txt": {
+    "mode": "100644",
+    "object": "1b57559a8320cc9ff85481e2bc1a0eb5e9620377"
+  },
+  "Sources/NotebookTypesetterRuntime/licenses/Rust-dependencies.txt": {
+    "mode": "100644",
+    "object": "21ef4dad2e3448724b220411972b5c6b421676c5"
+  },
+  "Sources/NotebookTypesetterRuntime/licenses/TeXLive-LICENSE.TL": {
+    "mode": "100644",
+    "object": "fbae99b390bc298b0396cf7b46364b07906d308e"
+  },
+  "Sources/NotebookTypesetterRuntime/licenses/Tectonic-LICENSE.txt": {
+    "mode": "100644",
+    "object": "89bb0b5e2012754d60211227b135ab9a95012a7e"
+  },
+  "Sources/NotebookTypesetterRuntime/licenses/Tectonic-WASI-LICENSE.txt": {
+    "mode": "100644",
+    "object": "89bb0b5e2012754d60211227b135ab9a95012a7e"
+  },
+  "Sources/NotebookTypesetterRuntime/licenses/WABT-LICENSE.txt": {
+    "mode": "100644",
+    "object": "d645695673349e3947e8e5ae42332d0ac3164cd7"
+  },
+  "Sources/NotebookTypesetterRuntime/licenses/bzip2-1.0.8-LICENSE.txt": {
+    "mode": "100644",
+    "object": "81a37eab7a5be1a34456f38adb74928cc9073e9b"
+  },
+  "Sources/NotebookTypesetterRuntime/licenses/fontconfig-2.15.0-COPYING.txt": {
+    "mode": "100644",
+    "object": "cd5fca1a03b03a815bfb8c4e8ea40a022b38507d"
+  },
+  "Sources/NotebookTypesetterRuntime/licenses/libpng-1.6.50-LICENSE.txt": {
+    "mode": "100644",
+    "object": "ea6df986cb6a743738771689876215dfdd81dcc5"
+  },
+  "Sources/NotebookTypesetterRuntime/licenses/zlib-1.3.1-LICENSE.txt": {
+    "mode": "100644",
+    "object": "ab8ee6f71428c3e4646b12b64ad387cde33462e5"
+  },
+  "Sources/NotebookTypesetterRuntime/native/supervisor.c": {
+    "mode": "100644",
+    "object": "9649ef53003d53fa8205dbd04c2b93b5bea8d417"
+  },
+  "Sources/NotebookTypesetterRuntime/native/supervisor.h": {
+    "mode": "100644",
+    "object": "98ca506ac5ff9848895f7cfb5faf1330ba940bca"
+  },
+  "Sources/NotebookTypesetterRuntime/resources/notebook.sty": {
+    "mode": "100644",
+    "object": "ae5341e9d93c24116fa4d26ca219b186230a7dd0"
+  },
+  "Sources/NotebookTypesetterRuntime/src/ffi.rs": {
+    "mode": "100644",
+    "object": "1d63f5ee4c128983fd27c49be226593507f66317"
+  },
+  "Sources/NotebookTypesetterRuntime/src/files.rs": {
+    "mode": "100644",
+    "object": "c4509fc7d5ab262c0d907b2c32da4d4455e1379a"
+  },
+  "Sources/NotebookTypesetterRuntime/src/lib.rs": {
+    "mode": "100644",
+    "object": "d25ee5b1305beb1f8421a983a959dab23ff387f5"
+  },
+  "Sources/NotebookTypesetterRuntime/src/main.rs": {
+    "mode": "100644",
+    "object": "205e560caf6cb45ca0acb47b95d6d8409074f4cc"
+  },
+  "Sources/NotebookTypesetterRuntime/src/wasi.rs": {
+    "mode": "100644",
+    "object": "28e10f6b8ffba28002dd6314c222a3f178a71faa"
+  },
+  "Tests/NotebookArchiveTransferFixture/generate.sh": {
+    "mode": "100755",
+    "object": "f2915e86eda177f6c815d9f050dbc46fba4638f1"
+  },
+  "Tests/NotebookArchiveTransferTests/ArchiveComputerPreparationTests.swift": {
+    "mode": "100644",
+    "object": "89c4cf5d87ec8e4cbf4db86c221389ba0e391faa"
+  },
+  "Tests/NotebookArchiveTransferTests/ArchiveConsolidationTests.swift": {
+    "mode": "100644",
+    "object": "44b5b9f641359225349928e62e60190dd4230fe4"
+  },
+  "Tests/NotebookArchiveTransferTests/ArchivePairPreparationTests.swift": {
+    "mode": "100644",
+    "object": "72d7e629c8039e2742eb6c4b15e063116651606e"
+  },
+  "Tests/NotebookArchiveTransferTests/ArchiveTransferTests.swift": {
+    "mode": "100644",
+    "object": "09b76ccf0e2ee71556873335d2aa57792cbc9ec4"
+  },
+  "Tests/NotebookArchiveTransferTests/LegacyArchiveFixture.swift": {
+    "mode": "100644",
+    "object": "a39c9ade075e5775fb5b798db0caaa007fb98ddc"
+  },
+  "Tests/NotebookArchiveTransferTests/LegacyDocumentAndBoardTests.swift": {
+    "mode": "100644",
+    "object": "735576bcbf4be0beca974f0dd756114926399ab8"
+  },
+  "Tests/NotebookArchiveTransferTests/Resources/one-stroke.pkd": {
+    "mode": "100644",
+    "object": "6c4ba6a4dfd6ab0415e2f4f3fa4e5a5e629f75f5"
+  },
+  "Tests/NotebookCameraAcceptance/NativeVideoDecoder.swift": {
+    "mode": "100644",
+    "object": "bb6a44f304990abb2f75b873231c2f72741b978c"
+  },
+  "Tests/NotebookCameraAcceptance/NotebookCameraAcceptanceFixture.swift": {
+    "mode": "100644",
+    "object": "ff0e6c9cbfea19b3e77ae9b983a61914db962494"
+  },
+  "Tests/NotebookCameraAcceptance/README.md": {
+    "mode": "100644",
+    "object": "947a590c3b6e01dcfc7aabf88bd3aef4d6ae95f9"
+  },
+  "Tests/NotebookCameraAcceptance/component_centroid.py": {
+    "mode": "100644",
+    "object": "2eed9107a0a14fd6e1edf754cfa03a004eac162a"
+  },
+  "Tests/NotebookCameraAcceptance/lossless.py": {
+    "mode": "100644",
+    "object": "287e5bf0c7365a430e8579069519306fa327e8f0"
+  },
+  "Tests/NotebookCameraAcceptance/measure.py": {
+    "mode": "100644",
+    "object": "9d05172a76bc3f068e1492cd8ed9860b2a3f181a"
+  },
+  "Tests/NotebookCameraAcceptance/measure_joint.py": {
+    "mode": "100644",
+    "object": "8d5563c322518a909c0b88c27bfb3695ec3aebe5"
+  },
+  "Tests/NotebookCameraAcceptance/measure_lossless.py": {
+    "mode": "100644",
+    "object": "b5cc8e809452ef88ef7e8944902a3b6daaff823a"
+  },
+  "Tests/NotebookCameraAcceptance/native_video.py": {
+    "mode": "100644",
+    "object": "c8bfb39f08ec3b14715e943ed34f04c4444bf444"
+  },
+  "Tests/NotebookCameraAcceptance/pipeline.py": {
+    "mode": "100644",
+    "object": "b46854d30a0695051aaa0efce66124f64fc3eb2e"
+  },
+  "Tests/NotebookCameraAcceptance/run.py": {
+    "mode": "100644",
+    "object": "4fa424c23f61b8738bdaf4ec427dcfb61bdfe520"
+  },
+  "Tests/NotebookCameraAcceptance/temporal_provenance.py": {
+    "mode": "100644",
+    "object": "5540de0df779285f750cdf290a821ede19db3dbc"
+  },
+  "Tests/NotebookCameraAcceptance/test_joint.py": {
+    "mode": "100644",
+    "object": "99b8433454d7f4f6e6cc6ca62e8da462230addbe"
+  },
+  "Tests/NotebookCameraAcceptance/test_lossless.py": {
+    "mode": "100644",
+    "object": "4cc8b32bab6d4ee4aed63130d45444ee7bc37b05"
+  },
+  "Tests/NotebookCameraAcceptance/test_measure.py": {
+    "mode": "100644",
+    "object": "349bd67757b358422d65940bae30fde06a023fcb"
+  },
+  "Tests/NotebookCameraAcceptance/test_native_video.py": {
+    "mode": "100644",
+    "object": "669de929c41bf8009a6a8860da90b4999b927655"
+  },
+  "Tests/NotebookCameraAcceptance/test_temporal_provenance.py": {
+    "mode": "100644",
+    "object": "c41a7f7e0d283840a8dd20e5f28879a99cbcd098"
+  },
+  "Tests/NotebookCausalContentHarness/main.swift": {
+    "mode": "100644",
+    "object": "cfe33ce3c4176022293cbb78028407af9d0cce3c"
+  },
+  "Tests/NotebookCausalContentHarness/run.py": {
+    "mode": "100644",
+    "object": "df7dd6840b459d716e1e7e5395b7aca8335efb3a"
+  },
+  "Tests/NotebookCodexBridgeHarness/AccessProof.swift": {
+    "mode": "100644",
+    "object": "94f8bb57d8d71469f13f946203d47b90503148b5"
+  },
+  "Tests/NotebookCodexBridgeHarness/ComposerProof.swift": {
+    "mode": "100644",
+    "object": "8c7b9d7128a66dab86ebba158b368aeba38a5600"
+  },
+  "Tests/NotebookCodexBridgeHarness/ProjectRunProof.swift": {
+    "mode": "100644",
+    "object": "b2d32195011e6491423403988382f2d17b4449f2"
+  },
+  "Tests/NotebookCodexBridgeHarness/RemoteProof.swift": {
+    "mode": "100644",
+    "object": "f28bf43f7f6007118cd805811b17d6c3fca5a2e7"
+  },
+  "Tests/NotebookCodexBridgeHarness/main.swift": {
+    "mode": "100644",
+    "object": "5f5a2b23f75fe775274ce7864edd53c9023aeb44"
+  },
+  "Tests/NotebookCodexBridgeHarness/receipt.json": {
+    "mode": "100644",
+    "object": "0567fd3e461be413d8b8791ca96f7f41b2beaef4"
+  },
+  "Tests/NotebookCodexTests/CodexAccessTests.swift": {
+    "mode": "100644",
+    "object": "e2ab7e9155b61da256cc7e24f52b00d1c0edf818"
+  },
+  "Tests/NotebookCodexTests/CodexAccountTests.swift": {
+    "mode": "100644",
+    "object": "dca795be67e4b04547cf884038a467caa31d4d0f"
+  },
+  "Tests/NotebookCodexTests/CodexAppServerStateTests.swift": {
+    "mode": "100644",
+    "object": "8aee1bfc293a3433df75ae443e5a0b96a8a56711"
+  },
+  "Tests/NotebookCodexTests/CodexComposerTests.swift": {
+    "mode": "100644",
+    "object": "e25c150265d20a4d0f9a4f47e6e963ec356c19d9"
+  },
+  "Tests/NotebookCodexTests/CodexConnectionTests.swift": {
+    "mode": "100644",
+    "object": "65d9c4822d6821cb8b94b86fb179bce4d9709882"
+  },
+  "Tests/NotebookCodexTests/CodexDictationTests.swift": {
+    "mode": "100644",
+    "object": "d7221ab6649c817534117d74c94115e63b6dc642"
+  },
+  "Tests/NotebookCodexTests/CodexDisplayProjectionTests.swift": {
+    "mode": "100644",
+    "object": "83e8f1873a2a22d5634e9f31a35734cb823614c1"
+  },
+  "Tests/NotebookCodexTests/CodexProtocolTests.swift": {
+    "mode": "100644",
+    "object": "57c3c820e926dcf13686208d4faa1419d6920f3f"
+  },
+  "Tests/NotebookCodexTests/CodexRuntimeScopeTests.swift": {
+    "mode": "100644",
+    "object": "ec079a9781d026acdd3aeb076a11482c33b53d87"
+  },
+  "Tests/NotebookCollaborationAcceptance/README.md": {
+    "mode": "100644",
+    "object": "f15780fc5be2de545d55ee003e7f127213269c21"
+  },
+  "Tests/NotebookCollaborationAcceptance/typecheck.py": {
+    "mode": "100644",
+    "object": "c9c69b28fe4e9a35e2bc4fc3eefd46c636c02b40"
+  },
+  "Tests/NotebookComputationHarness/.gitignore": {
+    "mode": "100644",
+    "object": "c18dd8d83ceed1806b50b0aaa46beb7e335fff13"
+  },
+  "Tests/NotebookComputationHarness/index.html": {
+    "mode": "100644",
+    "object": "3caf91acb20b8317709aeed3bb3da33d8eeba94c"
+  },
+  "Tests/NotebookComputationHarness/main.swift": {
+    "mode": "100644",
+    "object": "4166962e7634892c9a9ff19befaa71e5b592fdaf"
+  },
+  "Tests/NotebookComputationHarness/run.sh": {
+    "mode": "100755",
+    "object": "64daad008d8f0b461f0926013ed51c4b8f4bf356"
+  },
+  "Tests/NotebookComputationHarness/verify-resources.py": {
+    "mode": "100644",
+    "object": "f768641a8c54b0b818295e91d189a4f0850d429f"
+  },
+  "Tests/NotebookComputationHarness/worker.mjs": {
+    "mode": "100644",
+    "object": "bb9a9c4533ff188640b3beb0da5600600390902e"
+  },
+  "Tests/NotebookComputationQueueHarness/main.swift": {
+    "mode": "100644",
+    "object": "7be78d854a11a977d452d12f29cb383b37d9bed8"
+  },
+  "Tests/NotebookComputationQueueHarness/run.sh": {
+    "mode": "100755",
+    "object": "3397365c4abbd96fe1adf4207bf87a159e0450ba"
+  },
+  "Tests/NotebookCoreTests/AddressedReplicationTests.swift": {
+    "mode": "100644",
+    "object": "c22027fefcd76cdff04d8a9d618d91fdb19af0df"
+  },
+  "Tests/NotebookCoreTests/AgentArchiveTests.swift": {
+    "mode": "100644",
+    "object": "4d094a5416ec168da74d257f110093a99c6ce0f5"
+  },
+  "Tests/NotebookCoreTests/AgentInkTests.swift": {
+    "mode": "100644",
+    "object": "1c72cc7a5d084bd5a6fd7a05698de363ea32269b"
+  },
+  "Tests/NotebookCoreTests/AgentPinnedSourceTests.swift": {
+    "mode": "100644",
+    "object": "68c73b3bf143314f096ec8c02d951d6b8ad08ef6"
+  },
+  "Tests/NotebookCoreTests/BoardElementLookupTests.swift": {
+    "mode": "100644",
+    "object": "06e9242db4d35617c79ebd42f9b47ab60914da6c"
+  },
+  "Tests/NotebookCoreTests/BoardHierarchyTests.swift": {
+    "mode": "100644",
+    "object": "50815488912f5ef456f30acd656abcbb8ed42ee9"
+  },
+  "Tests/NotebookCoreTests/BoardMergeOwnershipTests.swift": {
+    "mode": "100644",
+    "object": "50ca619a4912cc9da91cdce6e993aaf158729fa8"
+  },
+  "Tests/NotebookCoreTests/BoardPlacementMigrationTests.swift": {
+    "mode": "100644",
+    "object": "02c7fbd183c2cf3b6cbb99531a05b75ac1c48606"
+  },
+  "Tests/NotebookCoreTests/CameraGestureTrajectoryTests.swift": {
+    "mode": "100644",
+    "object": "7c06d2733032fa9e8b00bfd63c7d44cfa8ac2222"
+  },
+  "Tests/NotebookCoreTests/CausalContentMergeTests.swift": {
+    "mode": "100644",
+    "object": "8475346c4966bb40fdf23fa9eb0097a0fe8f4dcd"
+  },
+  "Tests/NotebookCoreTests/CodexReadProjectionTests.swift": {
+    "mode": "100644",
+    "object": "ef08d335c1e2c77477a85933d916709a4d9f45dd"
+  },
+  "Tests/NotebookCoreTests/CollaborationComparableTests.swift": {
+    "mode": "100644",
+    "object": "adfb569a8d9ad297518490945a75cc9cad64625e"
+  },
+  "Tests/NotebookCoreTests/CollaborationCreationUndoTests.swift": {
+    "mode": "100644",
+    "object": "861fad3d6fd2973423ed1ea1321a958ed9af38a9"
+  },
+  "Tests/NotebookCoreTests/CollaborationTests.swift": {
+    "mode": "100644",
+    "object": "e923ce3934d9c8325f314b43f5e735783f80b60e"
+  },
+  "Tests/NotebookCoreTests/CompositionTileTests.swift": {
+    "mode": "100644",
+    "object": "f41f8a181b17518287f379f08b84a4a8ee875c56"
+  },
+  "Tests/NotebookCoreTests/DocumentDocumentTests.swift": {
+    "mode": "100644",
+    "object": "7d5bb729098386eadef20db98ad2af4e7efd9864"
+  },
+  "Tests/NotebookCoreTests/DocumentFileFixture.swift": {
+    "mode": "100644",
+    "object": "01f706e6e4c6e131ec9c475cabdcaa5f4a33d12a"
+  },
+  "Tests/NotebookCoreTests/DocumentFilesTests.swift": {
+    "mode": "100644",
+    "object": "4b8b17f775afb85e88888b4605092650db94a435"
+  },
+  "Tests/NotebookCoreTests/DocumentFormatMigrationTests.swift": {
+    "mode": "100644",
+    "object": "3e7f3e0ba6f5262c0c3291e7b648c975a705f1da"
+  },
+  "Tests/NotebookCoreTests/DocumentPrintDependenciesTests.swift": {
+    "mode": "100644",
+    "object": "261da760822de4634e576d91df5755a3f0066128"
+  },
+  "Tests/NotebookCoreTests/DocumentPrintLocationsTests.swift": {
+    "mode": "100644",
+    "object": "d974f416641f46a39c3890945540da8ae0154225"
+  },
+  "Tests/NotebookCoreTests/DocumentPrintSourceMapTests.swift": {
+    "mode": "100644",
+    "object": "b133f729e62f09a20c133ae9c77b3e668d9754ab"
+  },
+  "Tests/NotebookCoreTests/DocumentProgramStateTests.swift": {
+    "mode": "100644",
+    "object": "49cdb221a31bf2153df7836bfc5548c5ff86889e"
+  },
+  "Tests/NotebookCoreTests/DocumentReadingPositionTests.swift": {
+    "mode": "100644",
+    "object": "077429985ce5515dc3ca60cc0423e5dded8ac0eb"
+  },
+  "Tests/NotebookCoreTests/DocumentRenderRecipeTests.swift": {
+    "mode": "100644",
+    "object": "caee597b715fe2811925d6733db0a07c151fc7fd"
+  },
+  "Tests/NotebookCoreTests/DocumentStateReplicationTests.swift": {
+    "mode": "100644",
+    "object": "6f08fbb3d3cdd262452b387206d095dacb2f66ca"
+  },
+  "Tests/NotebookCoreTests/FreehandMeshControl.swift": {
+    "mode": "100644",
+    "object": "f689ce5cf0bc4235e81d7571173d41f3eb4e4131"
+  },
+  "Tests/NotebookCoreTests/IncrementalInkGeometryTests.swift": {
+    "mode": "100644",
+    "object": "98800249b18c40aacaf23c9789342585f5f95068"
+  },
+  "Tests/NotebookCoreTests/InkActionMapTests.swift": {
+    "mode": "100644",
+    "object": "ec01838e0ab91c7c7395251414132318d5881ae1"
+  },
+  "Tests/NotebookCoreTests/InkAggregateDisplayTests.swift": {
+    "mode": "100644",
+    "object": "660551548867d0291a49067f61f2b6fbadb346cd"
+  },
+  "Tests/NotebookCoreTests/InkCurveSummaryTests.swift": {
+    "mode": "100644",
+    "object": "b5fd0a5035715df51e5bc35d877022785949a24e"
+  },
+  "Tests/NotebookCoreTests/InkDisplayNormalizationTests.swift": {
+    "mode": "100644",
+    "object": "e0250f21e7a972e5899e9c01f56363cfe533eb30"
+  },
+  "Tests/NotebookCoreTests/InkElementContactTests.swift": {
+    "mode": "100644",
+    "object": "709540b85a61f2d62cee58b99b87c0f679ab1b67"
+  },
+  "Tests/NotebookCoreTests/InkElementErasureTests.swift": {
+    "mode": "100644",
+    "object": "a32cbab7bc83b2fcd69703379c2c1c56a0728e31"
+  },
+  "Tests/NotebookCoreTests/InkErasureReference.swift": {
+    "mode": "100644",
+    "object": "7bce3c4c31aaf6b71bb86b19df71f775ffa77590"
+  },
+  "Tests/NotebookCoreTests/InkRelationCodecTests.swift": {
+    "mode": "100644",
+    "object": "836fd7b12c8387feb40c8625067c9bf48ce00fa5"
+  },
+  "Tests/NotebookCoreTests/InkRelationMigrationTests.swift": {
+    "mode": "100644",
+    "object": "76444b6d6f187c1d2d0a03fe2253c7eb0f1995e1"
+  },
+  "Tests/NotebookCoreTests/InkRelationPersistenceTests.swift": {
+    "mode": "100644",
+    "object": "6499334451e15c7ba016a6453009cbeb47cbdbdb"
+  },
+  "Tests/NotebookCoreTests/InkRelationSharingTests.swift": {
+    "mode": "100644",
+    "object": "bea6ab099c1eef77a66d50801adcc3a10e709d09"
+  },
+  "Tests/NotebookCoreTests/InkRenderGeometryTests.swift": {
+    "mode": "100644",
+    "object": "d45d58347bbd0effde42b457504acdbf80866723"
+  },
+  "Tests/NotebookCoreTests/InkShortBodyTests.swift": {
+    "mode": "100644",
+    "object": "2d02bf94f503fa78e3cb0ad35ac105a59d1143de"
+  },
+  "Tests/NotebookCoreTests/JSONValueTests.swift": {
+    "mode": "100644",
+    "object": "b85add40bee682078fde5ddbb88fd4e202ae27b6"
+  },
+  "Tests/NotebookCoreTests/MeasuredFreehandTests.swift": {
+    "mode": "100644",
+    "object": "78ae70e8e9186d5228abbd923688db054020f32b"
+  },
+  "Tests/NotebookCoreTests/NativeTextFormatTests.swift": {
+    "mode": "100644",
+    "object": "cf0a0c67b05e94c35e9a8ab9a1d17250a8719c91"
+  },
+  "Tests/NotebookCoreTests/NotebookAcceptedWriteTests.swift": {
+    "mode": "100644",
+    "object": "0b726996e80aab1b85ec2b31790d7d897fc3d840"
+  },
+  "Tests/NotebookCoreTests/NotebookAccountBootstrapTests.swift": {
+    "mode": "100644",
+    "object": "8e738703b34b1345eab4c483aef094feca7b7903"
+  },
+  "Tests/NotebookCoreTests/NotebookAccountDirectoryTests.swift": {
+    "mode": "100644",
+    "object": "97b72cc990e27702e94565cf0114d2e0e8ab6f4b"
+  },
+  "Tests/NotebookCoreTests/NotebookActionDeliveryPhaseTests.swift": {
+    "mode": "100644",
+    "object": "25092907dcb70abf768e7057b6e6053f6c476f50"
+  },
+  "Tests/NotebookCoreTests/NotebookActionHistoryFactResolverTests.swift": {
+    "mode": "100644",
+    "object": "9d3d5469459fc756cbff291a1e1fa7149ae50037"
+  },
+  "Tests/NotebookCoreTests/NotebookActionHistoryInventoryTests.swift": {
+    "mode": "100644",
+    "object": "f4c506ce3d13ef933e8bf56320662369ddc7fdfe"
+  },
+  "Tests/NotebookCoreTests/NotebookActionHistoryPreflightTests.swift": {
+    "mode": "100644",
+    "object": "7258e917bd4cc428f13c7db0bd774fd89f734d09"
+  },
+  "Tests/NotebookCoreTests/NotebookActionInverseScaleTests.swift": {
+    "mode": "100644",
+    "object": "21fb46868f50a2860cc7df4289f6de0865bb5bc0"
+  },
+  "Tests/NotebookCoreTests/NotebookActionInverseTests.swift": {
+    "mode": "100644",
+    "object": "ac2a116ccb90a7519b1fff30a0371ed4ac7d39ba"
+  },
+  "Tests/NotebookCoreTests/NotebookActionPublicationTests.swift": {
+    "mode": "100644",
+    "object": "2ab1133cdab698342ed1c219c6dda9ea2bb9d1a6"
+  },
+  "Tests/NotebookCoreTests/NotebookActionReadModelTests.swift": {
+    "mode": "100644",
+    "object": "74049556576b7eeec4ba8d2834666d8114de5421"
+  },
+  "Tests/NotebookCoreTests/NotebookActionRecordCaptureTests.swift": {
+    "mode": "100644",
+    "object": "12ebc5ad0f4421cb6d9d8fde32d1265eb2b061de"
+  },
+  "Tests/NotebookCoreTests/NotebookAgentCommandBudgetTests.swift": {
+    "mode": "100644",
+    "object": "49bc489a7d0908ba1f651a2f8971f8720511ed16"
+  },
+  "Tests/NotebookCoreTests/NotebookAgentFeedbackTests.swift": {
+    "mode": "100644",
+    "object": "9d3872163830bae2dec5d4649799ed2ed2d29ea1"
+  },
+  "Tests/NotebookCoreTests/NotebookAgentPersistenceTests.swift": {
+    "mode": "100644",
+    "object": "0fe11a93dbc7b65efacdb488f14539c5e6ccd04a"
+  },
+  "Tests/NotebookCoreTests/NotebookAgentSpatialProjectionTests.swift": {
+    "mode": "100644",
+    "object": "31b09e8ca39366008647fd67b33f95e018c10beb"
+  },
+  "Tests/NotebookCoreTests/NotebookAppearanceComplexityTests.swift": {
+    "mode": "100644",
+    "object": "43780179e021e4742728b6e5261749100822d6f0"
+  },
+  "Tests/NotebookCoreTests/NotebookAppendRestorationChainTests.swift": {
+    "mode": "100644",
+    "object": "7b604b545de7d08f17513ce14fdff167d138b16b"
+  },
+  "Tests/NotebookCoreTests/NotebookAppendedPageUndoTests.swift": {
+    "mode": "100644",
+    "object": "1069c13250a6a64956e32642aec1030e2d45b1b5"
+  },
+  "Tests/NotebookCoreTests/NotebookArchitectureDeliveryTests.swift": {
+    "mode": "100644",
+    "object": "02636eda1bcd1efc5097d394b5f416f49bc65eac"
+  },
+  "Tests/NotebookCoreTests/NotebookArchiveActivationTests.swift": {
+    "mode": "100644",
+    "object": "047648be6f1fa02b202cdad2dccc853703dcc73c"
+  },
+  "Tests/NotebookCoreTests/NotebookArchiveUnionTests.swift": {
+    "mode": "100644",
+    "object": "0e24f0afe91a2d0d29982920817ffddc3e5c14c9"
+  },
+  "Tests/NotebookCoreTests/NotebookBoardContentRevisionTests.swift": {
+    "mode": "100644",
+    "object": "ffabfa41dce5817c2902d79f98a950f4b1f730b7"
+  },
+  "Tests/NotebookCoreTests/NotebookCapturedSourceSizeTests.swift": {
+    "mode": "100644",
+    "object": "591d221c7e5afa48444d4265100d8f2a9d412b80"
+  },
+  "Tests/NotebookCoreTests/NotebookChatReadPositionTests.swift": {
+    "mode": "100644",
+    "object": "a1c5d3cf77960c73ac48ec0b8969b6a9424b9dce"
+  },
+  "Tests/NotebookCoreTests/NotebookChatStoreTests.swift": {
+    "mode": "100644",
+    "object": "19be047688c66dda7eeb0ca4d959a97861849742"
+  },
+  "Tests/NotebookCoreTests/NotebookCheckpointTests.swift": {
+    "mode": "100644",
+    "object": "c09ec5b184518d8d2dd343a037e8881efbb6b9a4"
+  },
+  "Tests/NotebookCoreTests/NotebookCloudDeliveryTests.swift": {
+    "mode": "100644",
+    "object": "96f8fc1b19e54e9fe9bdac868546d61ca20cf043"
+  },
+  "Tests/NotebookCoreTests/NotebookCloudPreparationFixture.swift": {
+    "mode": "100644",
+    "object": "61319517ccea9d9a0ae80295b8abea6f5bcc2e79"
+  },
+  "Tests/NotebookCoreTests/NotebookCodeDiscussionTests.swift": {
+    "mode": "100644",
+    "object": "97a6cdeef953ca379ca649f09882b285120c2213"
+  },
+  "Tests/NotebookCoreTests/NotebookCodeFragmentTests.swift": {
+    "mode": "100644",
+    "object": "61cf423b5eef3fab0eb33bc0089a93a9ef90e0d9"
+  },
+  "Tests/NotebookCoreTests/NotebookCodeInkHistoryTests.swift": {
+    "mode": "100644",
+    "object": "8e49edaa3b9d56091da74aed6cc3c33511d746f4"
+  },
+  "Tests/NotebookCoreTests/NotebookCodeStoreTests.swift": {
+    "mode": "100644",
+    "object": "f1ea2fc9cb214c284f421839897caf3f54b5461e"
+  },
+  "Tests/NotebookCoreTests/NotebookComputationTests.swift": {
+    "mode": "100644",
+    "object": "a1c15468b99e325832104a568f8c82c73eee4900"
+  },
+  "Tests/NotebookCoreTests/NotebookComputerStoreTests.swift": {
+    "mode": "100644",
+    "object": "ae2e9139bad4941b489c873e2905580cbc39667d"
+  },
+  "Tests/NotebookCoreTests/NotebookConnectorTests.swift": {
+    "mode": "100644",
+    "object": "6bbfc21e08e2ca0927e21ea80222d0997060597e"
+  },
+  "Tests/NotebookCoreTests/NotebookContentReadTests.swift": {
+    "mode": "100644",
+    "object": "1fc69633c834d435b3264bd21f7d39da6e48e4f4"
+  },
+  "Tests/NotebookCoreTests/NotebookDeletedBoardUndoTests.swift": {
+    "mode": "100644",
+    "object": "a6fd79a22d03cd54175d73102ab2593227055677"
+  },
+  "Tests/NotebookCoreTests/NotebookDeletedItemRestorationTests.swift": {
+    "mode": "100644",
+    "object": "b1f9e7c55b06d4ff71e84802547c01a07fa730e2"
+  },
+  "Tests/NotebookCoreTests/NotebookDictationTests.swift": {
+    "mode": "100644",
+    "object": "32be9655a234d466c3c1ae2f2fde51609d04f72d"
+  },
+  "Tests/NotebookCoreTests/NotebookDocumentFileReferenceTests.swift": {
+    "mode": "100644",
+    "object": "1cffe93cc72021fad452fb8c0230da19ab03b13e"
+  },
+  "Tests/NotebookCoreTests/NotebookDocumentResourceTransferTests.swift": {
+    "mode": "100644",
+    "object": "d6d7e4e23eb34374794e52fb341f456cc40e6059"
+  },
+  "Tests/NotebookCoreTests/NotebookDrawingToolsContentTests.swift": {
+    "mode": "100644",
+    "object": "574723ff692f13a62d0878499be4411e9e313a25"
+  },
+  "Tests/NotebookCoreTests/NotebookElementAppearanceTests.swift": {
+    "mode": "100644",
+    "object": "e6c8e17beeb6473124c0cc957543e81eeca7bafa"
+  },
+  "Tests/NotebookCoreTests/NotebookElementGroupingTests.swift": {
+    "mode": "100644",
+    "object": "1920b7d4f20a50d127952359129900408cb33284"
+  },
+  "Tests/NotebookCoreTests/NotebookElementIdentityLookupTests.swift": {
+    "mode": "100644",
+    "object": "2fc3c4249b6a1b72be2d1bc5c8975f5819ee3128"
+  },
+  "Tests/NotebookCoreTests/NotebookElementRestorationChainTests.swift": {
+    "mode": "100644",
+    "object": "a0f4147849ca798c61a3a1adb1a307e662e2ef29"
+  },
+  "Tests/NotebookCoreTests/NotebookElementTransferTests.swift": {
+    "mode": "100644",
+    "object": "8b7dde611a8ea80129b78dba8840f103b38ec7cf"
+  },
+  "Tests/NotebookCoreTests/NotebookExportPublicationTests.swift": {
+    "mode": "100644",
+    "object": "6a69d670548ac3f309a0ca04359262f3eef0f5e7"
+  },
+  "Tests/NotebookCoreTests/NotebookFolderContentsTests.swift": {
+    "mode": "100644",
+    "object": "43ed1e0e8a9b29b9c53c4cc1b4aa9ace14597226"
+  },
+  "Tests/NotebookCoreTests/NotebookFreehandAppearanceTests.swift": {
+    "mode": "100644",
+    "object": "e9e33d6e0a92dab6e271e9b0d1733cf79111e0e9"
+  },
+  "Tests/NotebookCoreTests/NotebookFreehandEraserTests.swift": {
+    "mode": "100644",
+    "object": "bc1ab0cdc5542fd2c0641aea731706c64d3b4c47"
+  },
+  "Tests/NotebookCoreTests/NotebookGraphicAdmissionScaleTests.swift": {
+    "mode": "100644",
+    "object": "616de3ab6bd5cb10d1030e53f5dea03e99569a3a"
+  },
+  "Tests/NotebookCoreTests/NotebookGraphicCommandTests.swift": {
+    "mode": "100644",
+    "object": "f6298a2338dd70516876ab8ed0df01b80b519616"
+  },
+  "Tests/NotebookCoreTests/NotebookGraphicConcurrencyTests.swift": {
+    "mode": "100644",
+    "object": "6169760f5cddb74acbdb9caa6a350fc62dea0804"
+  },
+  "Tests/NotebookCoreTests/NotebookGraphicSelectionTests.swift": {
+    "mode": "100644",
+    "object": "de708d7d878fbc8e2f99102a4232ebf11c305b38"
+  },
+  "Tests/NotebookCoreTests/NotebookGraphicVisibilityTests.swift": {
+    "mode": "100644",
+    "object": "f86546b2aa06270d63d764d66c051ad187811cee"
+  },
+  "Tests/NotebookCoreTests/NotebookGroupContactTests.swift": {
+    "mode": "100644",
+    "object": "738534231f1f0ed6cac7760b6144f7a28f09fea8"
+  },
+  "Tests/NotebookCoreTests/NotebookGroupGeometryTests.swift": {
+    "mode": "100644",
+    "object": "37b7f0e47c2ce04cc90172961139992955c65203"
+  },
+  "Tests/NotebookCoreTests/NotebookGroupSpatialIndexTests.swift": {
+    "mode": "100644",
+    "object": "d227b027580cfe00c67d954a2984e4a43cb23f6e"
+  },
+  "Tests/NotebookCoreTests/NotebookGroupSpatialScaleTests.swift": {
+    "mode": "100644",
+    "object": "cc6f99af3d36f22d654897e6639b6f0fe3137a4f"
+  },
+  "Tests/NotebookCoreTests/NotebookHexEncodingTests.swift": {
+    "mode": "100644",
+    "object": "2a1f19d6525ef3ca9c123b531663ec08b2b9d584"
+  },
+  "Tests/NotebookCoreTests/NotebookHistoryReadinessDigestTests.swift": {
+    "mode": "100644",
+    "object": "0b6fe2a3044c8def515e7a268b27fcac07c389b2"
+  },
+  "Tests/NotebookCoreTests/NotebookHistoryReadinessMetadataTests.swift": {
+    "mode": "100644",
+    "object": "803b78c1c5ac2e19180cd8931faa8761598e26e1"
+  },
+  "Tests/NotebookCoreTests/NotebookIPCTests.swift": {
+    "mode": "100644",
+    "object": "9d5350ca4405bff1d69da3a5f435ba100885647f"
+  },
+  "Tests/NotebookCoreTests/NotebookInkReadSetTests.swift": {
+    "mode": "100644",
+    "object": "2b90083bd4ca9b79a9fc97aa4aa5f43eb8aef455"
+  },
+  "Tests/NotebookCoreTests/NotebookItemDeletionFixture.swift": {
+    "mode": "100644",
+    "object": "c5589d04a7a4b2a47cd9737360c6d2568fea1d54"
+  },
+  "Tests/NotebookCoreTests/NotebookItemDeletionSourceTests.swift": {
+    "mode": "100644",
+    "object": "6cd657850b1c2d8a2ad468c9e6d58b0b726f770e"
+  },
+  "Tests/NotebookCoreTests/NotebookItemIdentityRetirementTests.swift": {
+    "mode": "100644",
+    "object": "57ee2b5f4f2d3ffcae88ba6b6ae3a6b95c68b596"
+  },
+  "Tests/NotebookCoreTests/NotebookItemLifecycleIndexTests.swift": {
+    "mode": "100644",
+    "object": "06267c9cde9171cb5eb58d4326043fdd38e2c00f"
+  },
+  "Tests/NotebookCoreTests/NotebookItemLifecycleTests.swift": {
+    "mode": "100644",
+    "object": "bf9be2dfc46e8545f40ff12b1b85f1cd944d3ab2"
+  },
+  "Tests/NotebookCoreTests/NotebookJSONAdmissionTests.swift": {
+    "mode": "100644",
+    "object": "8a16bd952cbcd5120ccbec708cfe80bbcecabd88"
+  },
+  "Tests/NotebookCoreTests/NotebookLegacyActionVersionTests.swift": {
+    "mode": "100644",
+    "object": "4ef93e32b22e294dc8beb449c815b423120ae22c"
+  },
+  "Tests/NotebookCoreTests/NotebookLifecycleActionTests.swift": {
+    "mode": "100644",
+    "object": "20d0438109a329e89a287b4aacad0cda2f518d57"
+  },
+  "Tests/NotebookCoreTests/NotebookLifecycleConcurrentPageTests.swift": {
+    "mode": "100644",
+    "object": "f59b325cdab90f069b8d606f2d4ade6b1ba5f0a2"
+  },
+  "Tests/NotebookCoreTests/NotebookLifecyclePlacementChainTests.swift": {
+    "mode": "100644",
+    "object": "95d88d9f0137373b285a570e32b9b8fe3bd89030"
+  },
+  "Tests/NotebookCoreTests/NotebookLifecyclePublicationTests.swift": {
+    "mode": "100644",
+    "object": "a807ea94ba1e9eba24d3bd6c5a63350f80a2ca34"
+  },
+  "Tests/NotebookCoreTests/NotebookLifecycleReceiptIdentityTests.swift": {
+    "mode": "100644",
+    "object": "dd17cbe54dc6ff687e1b4e19dc21ba793fc8dd3c"
+  },
+  "Tests/NotebookCoreTests/NotebookLifecycleResultTests.swift": {
+    "mode": "100644",
+    "object": "9307bafa244412f334a64ad26b1539830a17e5f0"
+  },
+  "Tests/NotebookCoreTests/NotebookMaskedPageFragmentTests.swift": {
+    "mode": "100644",
+    "object": "d4b40f2ef804b4bf38a84492274634e3fcadb836"
+  },
+  "Tests/NotebookCoreTests/NotebookMoveStackTests.swift": {
+    "mode": "100644",
+    "object": "7cebab7432f93cbc2d20f6299f8f0c9c86bd6f9e"
+  },
+  "Tests/NotebookCoreTests/NotebookNativeDeletionTests.swift": {
+    "mode": "100644",
+    "object": "84a53800fb3247cf673a21308c54469aa6e9246d"
+  },
+  "Tests/NotebookCoreTests/NotebookNativeElementTests.swift": {
+    "mode": "100644",
+    "object": "749c6a690ac56cf9f711926bd8debf15a405c622"
+  },
+  "Tests/NotebookCoreTests/NotebookNativeHistoryTests.swift": {
+    "mode": "100644",
+    "object": "47f0d7026540e3f59222ce2713f9aba914f27f1a"
+  },
+  "Tests/NotebookCoreTests/NotebookNativeItemCreationTests.swift": {
+    "mode": "100644",
+    "object": "a0fd547280b150fc899c6ad249fa5780a617ea33"
+  },
+  "Tests/NotebookCoreTests/NotebookNativePlacementTests.swift": {
+    "mode": "100644",
+    "object": "fa4249de8b2fa8aec62c531f1f436b28b5e4b0d9"
+  },
+  "Tests/NotebookCoreTests/NotebookNativeWriteAllowanceTests.swift": {
+    "mode": "100644",
+    "object": "9c8a6182dad3b5aca0e38b183417ea0d1aa4f216"
+  },
+  "Tests/NotebookCoreTests/NotebookObservationAppearanceTests.swift": {
+    "mode": "100644",
+    "object": "4e4bc31e9922f44175526f5548e5a7274b36a448"
+  },
+  "Tests/NotebookCoreTests/NotebookObservationReadTests.swift": {
+    "mode": "100644",
+    "object": "1db018a436ef74c9d3d006a0f56329367b6683d6"
+  },
+  "Tests/NotebookCoreTests/NotebookPageAppendOwnerTests.swift": {
+    "mode": "100644",
+    "object": "e7a17fe8cc9986f074bf63ec491b3f1c742eb77d"
+  },
+  "Tests/NotebookCoreTests/NotebookPageAppendTests.swift": {
+    "mode": "100644",
+    "object": "02ca2dc14b8ea91de2105cc4b31bedae980bb817"
+  },
+  "Tests/NotebookCoreTests/NotebookPageElementCommandTests.swift": {
+    "mode": "100644",
+    "object": "62b5d5f713afadf8ab1ae924a091e9ccb98954b7"
+  },
+  "Tests/NotebookCoreTests/NotebookPageInkPersistenceTests.swift": {
+    "mode": "100644",
+    "object": "ac507b6736060cc1ce67f89195601dd6d664d579"
+  },
+  "Tests/NotebookCoreTests/NotebookPageInkReadTests.swift": {
+    "mode": "100644",
+    "object": "2b83e3834d7a7fb8ee9a437dd3222ad98b121b37"
+  },
+  "Tests/NotebookCoreTests/NotebookPageInkStorageTests.swift": {
+    "mode": "100644",
+    "object": "8cef159266f2c0b3c23026c70c6f5a472510aaa8"
+  },
+  "Tests/NotebookCoreTests/NotebookPageInkWindowTests.swift": {
+    "mode": "100644",
+    "object": "9fc8d99ce1a63a84476f8045faee1a1620208419"
+  },
+  "Tests/NotebookCoreTests/NotebookPageMaterialWindowTests.swift": {
+    "mode": "100644",
+    "object": "1f439fd0a6e1f4715b47db023aec2a3acb81360e"
+  },
+  "Tests/NotebookCoreTests/NotebookPageOrderTests.swift": {
+    "mode": "100644",
+    "object": "1a187ea4967a9609f6238f7fd2097da44356848f"
+  },
+  "Tests/NotebookCoreTests/NotebookPageOrderVectorTests.swift": {
+    "mode": "100644",
+    "object": "f083d37069655bb05d45cafa97de0a724b3df731"
+  },
+  "Tests/NotebookCoreTests/NotebookPageSourceOwnershipTests.swift": {
+    "mode": "100644",
+    "object": "869847e5b45c5bef7192683d98086ed586625134"
+  },
+  "Tests/NotebookCoreTests/NotebookPageWindowScaleTests.swift": {
+    "mode": "100644",
+    "object": "2c80714d041b88919129b7b04f5ff4230f32cd08"
+  },
+  "Tests/NotebookCoreTests/NotebookPageWindowTests.swift": {
+    "mode": "100644",
+    "object": "7c644c550d2902d92785e229d6dfb76bea19f38f"
+  },
+  "Tests/NotebookCoreTests/NotebookPasteFragmentTests.swift": {
+    "mode": "100644",
+    "object": "e9311882523a17d47dc927139da0be99fd3d7dd8"
+  },
+  "Tests/NotebookCoreTests/NotebookPasteTransferTests.swift": {
+    "mode": "100644",
+    "object": "a942718ff986d7c1fa2af274d2b26dfcdf9637e0"
+  },
+  "Tests/NotebookCoreTests/NotebookPendingChangesTests.swift": {
+    "mode": "100644",
+    "object": "14996d0b93c6541e4968e69fe7f74d32986b37e6"
+  },
+  "Tests/NotebookCoreTests/NotebookPlacementRestorationEvidenceTests.swift": {
+    "mode": "100644",
+    "object": "228a701455c39b3f4c180d33cb00811a49ee50bc"
+  },
+  "Tests/NotebookCoreTests/NotebookPlacementTests.swift": {
+    "mode": "100644",
+    "object": "9a4763cb40e0d96d9787d42189386efdced36ce9"
+  },
+  "Tests/NotebookCoreTests/NotebookPortableDocumentTests.swift": {
+    "mode": "100644",
+    "object": "c898226de72578e9b248dacd0f139f3b9c81551c"
+  },
+  "Tests/NotebookCoreTests/NotebookPresentationTests.swift": {
+    "mode": "100644",
+    "object": "4872d4baf0824a05566666f941b0eaa5464132d9"
+  },
+  "Tests/NotebookCoreTests/NotebookPreservedDeletionInkTests.swift": {
+    "mode": "100644",
+    "object": "4b15617cae9d547ed16a70e1e95bfe1f8c46fd9a"
+  },
+  "Tests/NotebookCoreTests/NotebookProgramDeliveryTests.swift": {
+    "mode": "100644",
+    "object": "90ac129f158b131d7babf3440e269128f67a46d4"
+  },
+  "Tests/NotebookCoreTests/NotebookProgramPackageTests.swift": {
+    "mode": "100644",
+    "object": "a2dd763e0e1276f0e5340a32768e98be3c980585"
+  },
+  "Tests/NotebookCoreTests/NotebookProgramStateReadTests.swift": {
+    "mode": "100644",
+    "object": "328e27591ef5bd33bb42bb03dc89be2fe810af8c"
+  },
+  "Tests/NotebookCoreTests/NotebookProgramTransferTests.swift": {
+    "mode": "100644",
+    "object": "92edeec3dd3fc252b9ccdf2f5275eac7a250b874"
+  },
+  "Tests/NotebookCoreTests/NotebookProjectFileTests.swift": {
+    "mode": "100644",
+    "object": "f6b3fa1986825a9c2d0478d968307228e7fef0a3"
+  },
+  "Tests/NotebookCoreTests/NotebookProjectionEditTests.swift": {
+    "mode": "100644",
+    "object": "e6a5895e7b2a8ac97922d7b092745bb4c655617f"
+  },
+  "Tests/NotebookCoreTests/NotebookPublicProtocolTests.swift": {
+    "mode": "100644",
+    "object": "d0bee3ee0661d03451b61306e69f19aa3bb08932"
+  },
+  "Tests/NotebookCoreTests/NotebookPublicationChangesTests.swift": {
+    "mode": "100644",
+    "object": "64641088e6a0efa62e231fc68fa6bf638399f52a"
+  },
+  "Tests/NotebookCoreTests/NotebookQueryCutTests.swift": {
+    "mode": "100644",
+    "object": "0f9ec65910c1ab0be5e933048e2fad7fe57594b8"
+  },
+  "Tests/NotebookCoreTests/NotebookQuickShapeTests.swift": {
+    "mode": "100644",
+    "object": "d613f65bc7aeffb7236efd75ed1ac2f206c72b1a"
+  },
+  "Tests/NotebookCoreTests/NotebookReadOutputAllowanceTests.swift": {
+    "mode": "100644",
+    "object": "63d9db8e6998ebf738a91028402554f07fd5c6b7"
+  },
+  "Tests/NotebookCoreTests/NotebookReadRevisionTests.swift": {
+    "mode": "100644",
+    "object": "7b763a35af3ec36befa12c687bcb97411a8e1ce5"
+  },
+  "Tests/NotebookCoreTests/NotebookReadSessionTests.swift": {
+    "mode": "100644",
+    "object": "14946057cd9fabaac38d8f23c32f352c734b1c17"
+  },
+  "Tests/NotebookCoreTests/NotebookReceiptPhaseMergeTests.swift": {
+    "mode": "100644",
+    "object": "1294de8d1adeb5f18b663604638ac5d6b3c5e0b5"
+  },
+  "Tests/NotebookCoreTests/NotebookReceiptPublicationTests.swift": {
+    "mode": "100644",
+    "object": "563f51aa8917e88746ae65dc05002e81f1e885c4"
+  },
+  "Tests/NotebookCoreTests/NotebookReceivedAcceptanceRevisionTests.swift": {
+    "mode": "100644",
+    "object": "7f508300cb595b70d0ce5a6192d7bb5318dd86b5"
+  },
+  "Tests/NotebookCoreTests/NotebookReferenceIndexTests.swift": {
+    "mode": "100644",
+    "object": "637430438ffea15579e802220f5c6cc181e2d08f"
+  },
+  "Tests/NotebookCoreTests/NotebookReferenceInkTests.swift": {
+    "mode": "100644",
+    "object": "65af55162f3b343014fb015892e81e743d609024"
+  },
+  "Tests/NotebookCoreTests/NotebookReferenceLiveSceneTests.swift": {
+    "mode": "100644",
+    "object": "105fcf667ef5ea7db8fc3346080dd0a755116ef6"
+  },
+  "Tests/NotebookCoreTests/NotebookReferenceLocationTests.swift": {
+    "mode": "100644",
+    "object": "971bb25feb93784d9565dbb9ce8c9a1468cdf0a5"
+  },
+  "Tests/NotebookCoreTests/NotebookRemoteControlTests.swift": {
+    "mode": "100644",
+    "object": "4960b7aea252824ce74f013862dcf1439af0a915"
+  },
+  "Tests/NotebookCoreTests/NotebookReplicaInventoryTests.swift": {
+    "mode": "100644",
+    "object": "d67afbe0c1e015d07885a2a77d501128a902a3d7"
+  },
+  "Tests/NotebookCoreTests/NotebookReplicationInputTests.swift": {
+    "mode": "100644",
+    "object": "55c4901601b302ca80a1b5f0b71be26cb3dae1ea"
+  },
+  "Tests/NotebookCoreTests/NotebookReplicationOwnerWindowTests.swift": {
+    "mode": "100644",
+    "object": "41184f3b3935d1272e76eebe6c5f57b12da1e005"
+  },
+  "Tests/NotebookCoreTests/NotebookReplicationTests.swift": {
+    "mode": "100644",
+    "object": "02dfce1a1154d4e673f4fb03352838b9ab62676a"
+  },
+  "Tests/NotebookCoreTests/NotebookRetainedContentMergeTests.swift": {
+    "mode": "100644",
+    "object": "c14b84a4d6067a8e7ce4477f661657d090a40bd2"
+  },
+  "Tests/NotebookCoreTests/NotebookRetainedLifecycleUndoTests.swift": {
+    "mode": "100644",
+    "object": "3d3c3bbeabb9337ea7416ca30511b84e1394af17"
+  },
+  "Tests/NotebookCoreTests/NotebookRetiredBoardAdmissionTests.swift": {
+    "mode": "100644",
+    "object": "65c06dd4a8472e5e50dadc23ecce6e3616f02341"
+  },
+  "Tests/NotebookCoreTests/NotebookRetiredContentDeliveryTests.swift": {
+    "mode": "100644",
+    "object": "a4c5c8010083b7de91eb0cf72224cdf84887dbf6"
+  },
+  "Tests/NotebookCoreTests/NotebookRetiredDocumentSourceTests.swift": {
+    "mode": "100644",
+    "object": "fd6482570f5d7e313ebf32e4fcc6a94b8d926294"
+  },
+  "Tests/NotebookCoreTests/NotebookRunStoreTests.swift": {
+    "mode": "100644",
+    "object": "155e10c32caa856ac8f7bce01658c3547f03051c"
+  },
+  "Tests/NotebookCoreTests/NotebookSDKV2Tests.swift": {
+    "mode": "100644",
+    "object": "4ce058445cecd3a527b552a51d4ce8c72069f443"
+  },
+  "Tests/NotebookCoreTests/NotebookSQLExecutionTests.swift": {
+    "mode": "100644",
+    "object": "79370ff0d81a37a17e1cdf29b3dd791bb93cb7de"
+  },
+  "Tests/NotebookCoreTests/NotebookSQLScaleTests.swift": {
+    "mode": "100644",
+    "object": "33f19ae31e4850ef412ab9e8ee3c45d0db32275e"
+  },
+  "Tests/NotebookCoreTests/NotebookSQLiteTests.swift": {
+    "mode": "100644",
+    "object": "6094dd0053528b80906a3e0c84cad82b067d941b"
+  },
+  "Tests/NotebookCoreTests/NotebookScenePaintRevisionTests.swift": {
+    "mode": "100644",
+    "object": "440ad245eae18f6d4818e493d120e8c132d456a9"
+  },
+  "Tests/NotebookCoreTests/NotebookSceneReadDependencyTests.swift": {
+    "mode": "100644",
+    "object": "7b5f9d5630dab1015ccc779811a0929450755626"
+  },
+  "Tests/NotebookCoreTests/NotebookSceneSourceTests.swift": {
+    "mode": "100644",
+    "object": "c5de02b7c6e25565f481607d217cd1a63ef70215"
+  },
+  "Tests/NotebookCoreTests/NotebookScriptAdmissionTests.swift": {
+    "mode": "100644",
+    "object": "6037b5b0ed9b5d1be870f570e89a6efc11ad5a20"
+  },
+  "Tests/NotebookCoreTests/NotebookScriptCancellationTests.swift": {
+    "mode": "100644",
+    "object": "e2308e32d3714835652e5f9e33b4438c0600ee6f"
+  },
+  "Tests/NotebookCoreTests/NotebookScriptEffectOutcomeTests.swift": {
+    "mode": "100644",
+    "object": "31ef26550b3fadca317ad395c4c03640814f8e08"
+  },
+  "Tests/NotebookCoreTests/NotebookScriptLanguageTests.swift": {
+    "mode": "100644",
+    "object": "41657c63254f04722943200fcea865b8fb2c6785"
+  },
+  "Tests/NotebookCoreTests/NotebookSearchIndexCostTests.swift": {
+    "mode": "100644",
+    "object": "40c1984705c5aa5867e8ef37eb2b79738dc56b20"
+  },
+  "Tests/NotebookCoreTests/NotebookSearchIndexTests.swift": {
+    "mode": "100644",
+    "object": "b59d866d2bac55c0206b099b0150bba89a18eacf"
+  },
+  "Tests/NotebookCoreTests/NotebookSearchRecipeTests.swift": {
+    "mode": "100644",
+    "object": "a026c624aa0d2eea873b8da6954147bfbe799834"
+  },
+  "Tests/NotebookCoreTests/NotebookSearchTextTests.swift": {
+    "mode": "100644",
+    "object": "31e166aee43830c00e110e7dc381c2645167c67e"
+  },
+  "Tests/NotebookCoreTests/NotebookSelectionPublicationTests.swift": {
+    "mode": "100644",
+    "object": "47aa66465adfd66cb796bc6ebee429c6cd0e8d49"
+  },
+  "Tests/NotebookCoreTests/NotebookSpatialInkCommandTests.swift": {
+    "mode": "100644",
+    "object": "735a42ffa47ae01025a18d7e1a3f6a8d1fce3b04"
+  },
+  "Tests/NotebookCoreTests/NotebookSpatialInkWindowScalingTests.swift": {
+    "mode": "100644",
+    "object": "eb9f5052bacdb30d1cfb341119c830f12e85f636"
+  },
+  "Tests/NotebookCoreTests/NotebookSpatialInkWindowTests.swift": {
+    "mode": "100644",
+    "object": "3f5894d8062470ac0194a22ccd52684c38876561"
+  },
+  "Tests/NotebookCoreTests/NotebookStorageUsageTests.swift": {
+    "mode": "100644",
+    "object": "f0625b8d467181555178a15ceaf730b183ff92f9"
+  },
+  "Tests/NotebookCoreTests/NotebookTldrawImportTests.swift": {
+    "mode": "100644",
+    "object": "064783ef41e512bd9ba8fd4e23c85f152ce7eb9c"
+  },
+  "Tests/NotebookCoreTests/NotebookTldrawRecognitionTests.swift": {
+    "mode": "100644",
+    "object": "8f68790ac4dd0b7d6cd59efa4a02447a66937944"
+  },
+  "Tests/NotebookCoreTests/NotebookTransportFramingTests.swift": {
+    "mode": "100644",
+    "object": "127a6dad878d80f9c5a17a375b9ba74a450406b8"
+  },
+  "Tests/NotebookCoreTests/NotebookTransportStorageTests.swift": {
+    "mode": "100644",
+    "object": "460b1b018ea9897369e5797f9a6244999c20b581"
+  },
+  "Tests/NotebookCoreTests/NotebookVectorPathTests.swift": {
+    "mode": "100644",
+    "object": "1448d8c1639ee41b6ce070872c7a0e9780e04652"
+  },
+  "Tests/NotebookCoreTests/NotebookWakeAddressTests.swift": {
+    "mode": "100644",
+    "object": "d99f0fbd1ae0fb9431b361f7085c79a8c7e25c33"
+  },
+  "Tests/NotebookCoreTests/PageDrawingFixture.swift": {
+    "mode": "100644",
+    "object": "994166e1d0a580c9826411d8e13a21c9e77fcbeb"
+  },
+  "Tests/NotebookCoreTests/PageInkConflictTests.swift": {
+    "mode": "100644",
+    "object": "bce6b044fbc50adc659626d8f30ac259a0dbc68f"
+  },
+  "Tests/NotebookCoreTests/PageInkDrawingTests.swift": {
+    "mode": "100644",
+    "object": "9e291b5e98f34d4f6ea3c862ccec54cc36d13883"
+  },
+  "Tests/NotebookCoreTests/PageInkPublicationTests.swift": {
+    "mode": "100644",
+    "object": "1820a8bbb5ae28dbec5a5e9afcf1705729b0513c"
+  },
+  "Tests/NotebookCoreTests/PageInkVisibilityTests.swift": {
+    "mode": "100644",
+    "object": "8d0a79e5d2627daa7e401421c42bd524f3d79a82"
+  },
+  "Tests/NotebookCoreTests/PageVisionReceiptTests.swift": {
+    "mode": "100644",
+    "object": "7cae05d3ca1b7997ef17dfbfabeb4331e6a2ca74"
+  },
+  "Tests/NotebookCoreTests/PageVisionRequestTests.swift": {
+    "mode": "100644",
+    "object": "fcbfdb0b2f2cbf50ebccf1a920e018d07d3fea52"
+  },
+  "Tests/NotebookCoreTests/PlacementActionOwnershipTests.swift": {
+    "mode": "100644",
+    "object": "2834b24356e7a339e0946158eaf044b2f615f346"
+  },
+  "Tests/NotebookCoreTests/PortalIntegrityTests.swift": {
+    "mode": "100644",
+    "object": "5044adc4c40247e9bcc3d2aa2c781437d71f6619"
+  },
+  "Tests/NotebookCoreTests/PublicationNoOpTests.swift": {
+    "mode": "100644",
+    "object": "144ecbce9d681c6bd0a2726a6e76dff8075883c9"
+  },
+  "Tests/NotebookCoreTests/Resources/QuickShapeMeasured.json": {
+    "mode": "100644",
+    "object": "b58d8a3955c10ef1e5aa554de8b958c9af7d6e27"
+  },
+  "Tests/NotebookCoreTests/SQLFixture.swift": {
+    "mode": "100644",
+    "object": "dd910772f34f1bed0edc9fc7169368df3fcc9da7"
+  },
+  "Tests/NotebookCoreTests/SequentialUndoTests.swift": {
+    "mode": "100644",
+    "object": "a8646ebb814848b1a0e8bb43b447a5a6ce709b23"
+  },
+  "Tests/NotebookCoreTests/SharedContextReadTests.swift": {
+    "mode": "100644",
+    "object": "10a789091acb248dcb5cb8dea2d8172173eaf275"
+  },
+  "Tests/NotebookCoreTests/SharedContextReferenceTests.swift": {
+    "mode": "100644",
+    "object": "431bb1e08a278a7d90369fd81a5f85957df034ba"
+  },
+  "Tests/NotebookCoreTests/SharedContextReplicationTests.swift": {
+    "mode": "100644",
+    "object": "9597e1d8d989e5b717867c1ef508be1c8fd5374c"
+  },
+  "Tests/NotebookCoreTests/SharedContextValidationTests.swift": {
+    "mode": "100644",
+    "object": "63a6f5306c6206e5376cb371c80920353068cf16"
+  },
+  "Tests/NotebookCoreTests/SpatialInkJournalTests.swift": {
+    "mode": "100644",
+    "object": "90da919a2014f9b2bc8d6b220fc0476e52e561c3"
+  },
+  "Tests/NotebookCoreTests/SpatialInkReplicationTests.swift": {
+    "mode": "100644",
+    "object": "3ee691b2389bfd4b7560747f06d54c69a282989f"
+  },
+  "Tests/NotebookCoreTests/SpatialWorkspaceTests.swift": {
+    "mode": "100644",
+    "object": "9971f8ba656c7e5e00249966cb8fae45dffaebe7"
+  },
+  "Tests/NotebookCoreTests/SurfaceFrameManipulationTests.swift": {
+    "mode": "100644",
+    "object": "5ec3b5e5aba80f7df9bcdd278151079190998142"
+  },
+  "Tests/NotebookCoreTests/VectorInkSourceTests.swift": {
+    "mode": "100644",
+    "object": "de7a871f874964754c3065d4fc339a7e1927c374"
+  },
+  "Tests/NotebookCoreTests/WorkspaceIndexTests.swift": {
+    "mode": "100644",
+    "object": "9c664c1e5faa343f638de0c5e8f4470370d26ef6"
+  },
+  "Tests/NotebookCoreTests/WorkspaceItemGeometryTests.swift": {
+    "mode": "100644",
+    "object": "e20936c75df3dbb0202bebde4f77958fd03d6606"
+  },
+  "Tests/NotebookCoreTests/WorkspacePageOrderMutationTests.swift": {
+    "mode": "100644",
+    "object": "2815e4e10aecf6dd1e3e5de781149f180e73e3f7"
+  },
+  "Tests/NotebookCoreTests/WorkspacePublicationTests.swift": {
+    "mode": "100644",
+    "object": "40ccc9e4b0a1d8b0d6537b84bfe0f6ad76dd2394"
+  },
+  "Tests/NotebookCoreTests/WorkspaceSpatialIndexTests.swift": {
+    "mode": "100644",
+    "object": "8ff2a1c8010aed1444ed35879220e55204ae4c03"
+  },
+  "Tests/NotebookCoreTests/WorldPointCodingTests.swift": {
+    "mode": "100644",
+    "object": "17be316f2884e70c302fa0b7ccb649e5fb0895d7"
+  },
+  "Tests/NotebookDocumentAcceptance/README.md": {
+    "mode": "100644",
+    "object": "0e4602451a354f96e4edb2108616411a76307682"
+  },
+  "Tests/NotebookDocumentAcceptance/create-control.js": {
+    "mode": "100644",
+    "object": "b4ef15d166fe9a2f27d816d0897c7c6a62b5ea53"
+  },
+  "Tests/NotebookDocumentAcceptance/export-control.js": {
+    "mode": "100644",
+    "object": "ce84c9fa4d9171a3b6cc305e85bf8d85b60dbb60"
+  },
+  "Tests/NotebookDocumentAcceptance/system_trace.py": {
+    "mode": "100644",
+    "object": "31aeb5b377838177c43dad6b514520e7806bf762"
+  },
+  "Tests/NotebookDocumentAcceptance/test_link_activation.mjs": {
+    "mode": "100644",
+    "object": "c5eeb9266cceb0be0759ba414f8b777037b47ccb"
+  },
+  "Tests/NotebookDocumentAcceptance/test_page_phase_observation.mjs": {
+    "mode": "100644",
+    "object": "b3df8d9e7352c623c69331d6cddc0a410ad84c0a"
+  },
+  "Tests/NotebookDocumentAcceptance/test_system_trace.py": {
+    "mode": "100644",
+    "object": "8a52450d1a502f5947a638386c483de65d772c3c"
+  },
+  "Tests/NotebookIPCTestHost/main.swift": {
+    "mode": "100644",
+    "object": "57715579586b8629fb24645cfeda4cde89959b47"
+  },
+  "Tests/NotebookInteractionAcceptance/README.md": {
+    "mode": "100644",
+    "object": "dfe4e28c2093d26e85247495f335b08bed1244bf"
+  },
+  "Tests/NotebookInteractionAcceptance/WindowCapture.swift": {
+    "mode": "100644",
+    "object": "8839bfed214d108b81b79f2a79fa57b56e79ac8e"
+  },
+  "Tests/NotebookInteractionAcceptance/analyze.py": {
+    "mode": "100644",
+    "object": "74d5edd5b0c038fe31261934306f0cc7df31d793"
+  },
+  "Tests/NotebookInteractionAcceptance/test_analyze.py": {
+    "mode": "100644",
+    "object": "3d5ba543f81f9df72f4601711a08536056cddabb"
+  },
+  "Tests/NotebookInteractionAcceptance/test_driver.py": {
+    "mode": "100644",
+    "object": "7ba6c6bbde58cf1acd99784a38f4419df804ec67"
+  },
+  "Tests/NotebookInteractionAcceptance/test_script.mjs": {
+    "mode": "100644",
+    "object": "43dcb944bf280472d9315164814394df3e003562"
+  },
+  "Tests/NotebookInteractionAcceptance/watch_capture.py": {
+    "mode": "100644",
+    "object": "1877df9f5a29f2d1ef4a70ca08ee02e5a4e43f43"
+  },
+  "Tests/NotebookNavigationObservation/README.md": {
+    "mode": "100644",
+    "object": "eddd9cc530ac86e56ecc9290c8edad7e471f749b"
+  },
+  "Tests/NotebookNavigationObservation/test_driver.py": {
+    "mode": "100644",
+    "object": "eae9d4d293b66e31aa93443ea58d825436ba9208"
+  },
+  "Tests/NotebookPersistenceFenceHarness/README.md": {
+    "mode": "100644",
+    "object": "a9509ef1440f66a465546a7f9c2fe7f7c96acf0a"
+  },
+  "Tests/NotebookPersistenceFenceHarness/main.swift": {
+    "mode": "100644",
+    "object": "946a4293406191ae6cc0e6daabe678ccc09a56c0"
+  },
+  "Tests/NotebookRecognitionHarness/.gitignore": {
+    "mode": "100644",
+    "object": "4b7a81db080ec7e8704aac84485a80ef408c2b20"
+  },
+  "Tests/NotebookRecognitionHarness/LICENSE-UniMERNet": {
+    "mode": "100644",
+    "object": "13269eeae919f31be79812ff00edb029ba6c73ea"
+  },
+  "Tests/NotebookRecognitionHarness/README.md": {
+    "mode": "100644",
+    "object": "8b7cf3156ad95217f4adb99c6daeac6ffe310dc7"
+  },
+  "Tests/NotebookRecognitionHarness/evaluate.mjs": {
+    "mode": "100644",
+    "object": "75686ea09c4e269abea0facd63f8db1ed83b48b3"
+  },
+  "Tests/NotebookRecognitionHarness/fixtures.json": {
+    "mode": "100644",
+    "object": "cc84f278d677b37b621434481cd84df308909201"
+  },
+  "Tests/NotebookRecognitionHarness/fixtures/hwe_0000001.png": {
+    "mode": "100644",
+    "object": "0a08156689807ebb208861c1b7874a1400e7cd84"
+  },
+  "Tests/NotebookRecognitionHarness/fixtures/hwe_0000047.png": {
+    "mode": "100644",
+    "object": "106d531a0efc48a9921df67bc9265f0d13497db3"
+  },
+  "Tests/NotebookRecognitionHarness/fixtures/hwe_0000050.png": {
+    "mode": "100644",
+    "object": "605e756f1b133445860e4985adbec9d5f1dda304"
+  },
+  "Tests/NotebookRecognitionHarness/fixtures/hwe_0000083.png": {
+    "mode": "100644",
+    "object": "fab0d1258c643854bdcefa8f79648eb28d1b96ca"
+  },
+  "Tests/NotebookRecognitionHarness/fixtures/hwe_0000135.png": {
+    "mode": "100644",
+    "object": "7b60eccedf7709771090bdb07473f1aaad1dcd04"
+  },
+  "Tests/NotebookRecognitionHarness/model-lock.json": {
+    "mode": "100644",
+    "object": "66e7fc29ce59ca5a3b95b55cc9535f3aed699216"
+  },
+  "Tests/NotebookRecognitionHarness/package-lock.json": {
+    "mode": "100644",
+    "object": "e7568ecb4ff2973b55aa47c2a33c82c3e68e1710"
+  },
+  "Tests/NotebookRecognitionHarness/package.json": {
+    "mode": "100644",
+    "object": "27f04de4fc619e74f7f08bce23942afe28e5a3af"
+  },
+  "Tests/NotebookRecognitionHarness/prepare.py": {
+    "mode": "100644",
+    "object": "961b529c3fbcb504fb09570ce1730a68b6e90638"
+  },
+  "Tests/NotebookRecognitionHarness/preprocess.mjs": {
+    "mode": "100644",
+    "object": "a7bb5d7bda893855ed6a583b3f0af764185a7b1c"
+  },
+  "Tests/NotebookRecognitionHarness/preprocess.test.mjs": {
+    "mode": "100644",
+    "object": "a6109dd2686b2cb89285d8d2feff784e684522d4"
+  },
+  "Tests/NotebookRelease/cli_fixture.py": {
+    "mode": "100644",
+    "object": "f428b3a93c4d8322c6b2e49a0720f852b3df1afe"
+  },
+  "Tests/NotebookRelease/codex_fixture.py": {
+    "mode": "100644",
+    "object": "377d6bfece3d66d10dff1b225db4515726c1d038"
+  },
+  "Tests/NotebookRelease/macho_fixture.py": {
+    "mode": "100644",
+    "object": "fc6af3de5c290a66d15c999df30c8d311114b868"
+  },
+  "Tests/NotebookRelease/run.py": {
+    "mode": "100644",
+    "object": "0d290f5a15b04115c1e70ab4d118b90a4706a4e5"
+  },
+  "Tests/NotebookRelease/runtime_lifecycle_fixture.swift": {
+    "mode": "100644",
+    "object": "1d3b707e6e1a3418741227f7b952dac12ad015c1"
+  },
+  "Tests/NotebookRelease/test_codex.py": {
+    "mode": "100644",
+    "object": "f69184ed4af9ff7ce8bea1f57098dad2035031d9"
+  },
+  "Tests/NotebookRelease/test_runtime_lifecycle.py": {
+    "mode": "100644",
+    "object": "7f854e0f7dff115b04971d8cd27de59b8430ed31"
+  },
+  "Tests/NotebookRelease/test_typesetter.py": {
+    "mode": "100644",
+    "object": "f3a105a7f7304646cba1f82e74022b0ceedab360"
+  },
+  "Tests/NotebookRelease/typescript_fixture.py": {
+    "mode": "100644",
+    "object": "3a7986380d515181481bcf63642579137b21a0c7"
+  },
+  "Tests/NotebookRelease/typesetter_fixture.py": {
+    "mode": "100644",
+    "object": "02cf4f81ce52c2c535a26abb789143f8a4437e7d"
+  },
+  "Tests/NotebookSceneObservation/README.md": {
+    "mode": "100644",
+    "object": "6a9f1585c38ed15c5c14ad7940aa2a38b037063f"
+  },
+  "Tests/NotebookSceneObservation/test_driver.py": {
+    "mode": "100644",
+    "object": "1f8fd55a89944330e55c79a3d9f8e584c0bc3b61"
+  },
+  "Tests/NotebookScriptHostTests/NotebookDocumentCheckTests.swift": {
+    "mode": "100644",
+    "object": "64181990f77c384413e675b5bf4ecd4f1703a66c"
+  },
+  "Tests/NotebookScriptHostTests/NotebookMarkupQueueTests.swift": {
+    "mode": "100644",
+    "object": "0a6ac2981dbd8c575f7836f848672fd9773969ac"
+  },
+  "Tests/NotebookScriptHostTests/NotebookSDKV2ReadTests.swift": {
+    "mode": "100644",
+    "object": "5cd826a3bf2893d0808baeec6ec16f7b8f8f8a57"
+  },
+  "Tests/NotebookScriptHostTests/NotebookScriptAddressedReadTests.swift": {
+    "mode": "100644",
+    "object": "5727713cc4b23096f35c3c8be1f2537817b6a1fa"
+  },
+  "Tests/NotebookScriptHostTests/NotebookScriptCompletionWaitTests.swift": {
+    "mode": "100644",
+    "object": "30ecac11e43b1b61028a958c33478a9142df0189"
+  },
+  "Tests/NotebookScriptHostTests/NotebookScriptDeadlineTests.swift": {
+    "mode": "100644",
+    "object": "a775157fe695f3c08b28456f173b9ec8953e39e4"
+  },
+  "Tests/NotebookScriptHostTests/NotebookScriptEffectRecoveryTests.swift": {
+    "mode": "100644",
+    "object": "27b50db4fa56baca0583cc639499728b3a070556"
+  },
+  "Tests/NotebookScriptHostTests/NotebookScriptHelpTests.swift": {
+    "mode": "100644",
+    "object": "b2783415327ba144000c0f15235dd3db9f5ae9d6"
+  },
+  "Tests/NotebookScriptHostTests/NotebookScriptReadCancellationTests.swift": {
+    "mode": "100644",
+    "object": "f3459a22c291c022364580a815fdc7492a901934"
+  },
+  "Tests/NotebookScriptHostTests/NotebookScriptReaderTests.swift": {
+    "mode": "100644",
+    "object": "22ba84a02d4f52f72463e76b146ba74bff6f8172"
+  },
+  "Tests/NotebookScriptHostTests/NotebookSelectionReadTests.swift": {
+    "mode": "100644",
+    "object": "cea4342fe244fbb94bec257324b11353414b60bb"
+  },
+  "Tests/NotebookScriptHostTests/NotebookTldrawReadTests.swift": {
+    "mode": "100644",
+    "object": "d048754b8cc1bedfd33ade790e7979c3e6b1a6ff"
+  },
+  "Tests/NotebookScriptWorkerTests/NotebookCompilerMemoryTests.swift": {
+    "mode": "100644",
+    "object": "9e2b98b03f271529ff35fc7b24d0486ea6bfa859"
+  },
+  "Tests/NotebookScriptWorkerTests/NotebookCompilerProcessTests.swift": {
+    "mode": "100644",
+    "object": "cae7bc16b6b7e4edb700317696684935ab62031d"
+  },
+  "Tests/NotebookScriptWorkerTests/NotebookQuickJSCancellationTests.swift": {
+    "mode": "100644",
+    "object": "4eeb91c553c33b56734b28b9bff2f702a3ea40fb"
+  },
+  "Tests/NotebookScriptWorkerTests/NotebookTypeScriptCompilerTests.swift": {
+    "mode": "100644",
+    "object": "73a8561a147a7e17769a159b9ad810ce3b98b654"
+  },
+  "Tests/NotebookTypesetterProbe/README.md": {
+    "mode": "100644",
+    "object": "6c5ac99fa00cbc2ae020e1de47617fb169d9045e"
+  },
+  "Tests/NotebookTypesetterProbe/app/Probe.swift": {
+    "mode": "100644",
+    "object": "30cea946e498c57a5b67ec7b4db1eeb8b0204d0d"
+  },
+  "Tests/NotebookTypesetterProbe/app/Typeset.h": {
+    "mode": "100644",
+    "object": "471171eb352fc2793d597be48eda472c764f1a56"
+  },
+  "Tests/NotebookTypesetterProbe/bridge/Cargo.lock": {
+    "mode": "100644",
+    "object": "fb6b6aa6392bf1c9b275f40c0d5b4cca8a0b735d"
+  },
+  "Tests/NotebookTypesetterProbe/bridge/Cargo.toml": {
+    "mode": "100644",
+    "object": "d42d27e048c3c9f67d0044658946f87030d20cfe"
+  },
+  "Tests/NotebookTypesetterProbe/bridge/src/lib.rs": {
+    "mode": "100644",
+    "object": "b6c8bcd82372f838372a6e3a11f56be3aa7af1e9"
+  },
+  "Tests/NotebookTypesetterProbe/project.yml": {
+    "mode": "100644",
+    "object": "5e73f841e5819a84c5df18f0f3fe6607451121aa"
+  },
+  "Tests/NotebookTypesetterProbe/run.py": {
+    "mode": "100644",
+    "object": "bb131b1fc19051f2ae6907fea66d18d37decc3fb"
+  },
+  "Tests/NotebookTypesetterProbe/tectonic.patch": {
+    "mode": "100644",
+    "object": "1b3a50d443a0eae9aee7e7c405330ccf2aa81cb0"
+  },
+  "Tests/NotebookTypesetterProbe/vcpkg.patch": {
+    "mode": "100644",
+    "object": "5e837c6217a68dadb702611e3921b200eacc53b4"
+  },
+  "Tests/NotebookVerification/distribution_contracts.py": {
+    "mode": "100644",
+    "object": "dd7433bc1680a1111df75148daf5c2005f5d8559"
+  },
+  "Tests/NotebookVerification/full.sh": {
+    "mode": "100755",
+    "object": "0a82cd35400adf1f0aa7266c5b82e7e2e9a3cc4f"
+  },
+  "Tests/NotebookVerification/run.py": {
+    "mode": "100644",
+    "object": "79c18db71eb245e1b3c7064d89f9873cdba9b231"
+  },
+  "Tests/NotebookVerification/test_registry.py": {
+    "mode": "100644",
+    "object": "6a8230df5cd1d63f24a18ab2ba972bc69fa60458"
+  },
+  "Tests/NotebookVoiceHarness/audio.test.mjs": {
+    "mode": "100644",
+    "object": "5454b82304d0413bae2b0d35b1710f9b97103a9f"
+  },
+  "Tests/PencilKitIntegration/EraserPathProof.swift": {
+    "mode": "100644",
+    "object": "6f2e7e29716f305eae6a31d48c33dc934f51b82b"
+  },
+  "Tests/Performance/CameraPipeline.swift": {
+    "mode": "100644",
+    "object": "fc469ada83a00ec694ebf7b125853ff1037c8c1b"
+  },
+  "Tests/Performance/CompactInk/README.md": {
+    "mode": "100644",
+    "object": "925180aef4cc53fb0b2afd596d1a54a808ddd0a7"
+  },
+  "Tests/Performance/CompactInk/Results/ipad-m1.json": {
+    "mode": "100644",
+    "object": "c4d1c1421d29d533450924ae77cff77ee305fef5"
+  },
+  "Tests/Performance/CompactInk/main.swift": {
+    "mode": "100644",
+    "object": "053bad5f5a2a16ad1127bd8546436efbe8d04e70"
+  },
+  "Tests/Performance/CompactInk/run.sh": {
+    "mode": "100755",
+    "object": "6fda0fa77b478db6dabef8d4d8b75c049654f611"
+  },
+  "Tests/Performance/RelationalInk/Codec.swift": {
+    "mode": "100644",
+    "object": "f6650998061e7e19f6caac39342bfbe3ee152b4c"
+  },
+  "Tests/Performance/RelationalInk/README.md": {
+    "mode": "100644",
+    "object": "637f26e2e991e3f27920f19dcf7244f789e480cb"
+  },
+  "Tests/Performance/RelationalInk/Results/contours.png": {
+    "mode": "100644",
+    "object": "65c8cfb441e50d4b325d720c713dab9cefc9c982"
+  },
+  "Tests/Performance/RelationalInk/Results/environment.txt": {
+    "mode": "100644",
+    "object": "a18d6325cd76cc8b9a2fcdb5a76a7528635097bc"
+  },
+  "Tests/Performance/RelationalInk/Results/runs.json": {
+    "mode": "100644",
+    "object": "e90dcfdb432c88ee5e06344a8d057a727186f9d5"
+  },
+  "Tests/Performance/RelationalInk/main.swift": {
+    "mode": "100644",
+    "object": "49699f12e2217ddd7d2200ea0ff124d88a230d5d"
+  },
+  "Tests/Performance/RelationalInk/run.sh": {
+    "mode": "100755",
+    "object": "a19fd1cd06bc55d519c65b9583244c2976150caa"
+  },
+  "Tests/Performance/TensorGPU/README.md": {
+    "mode": "100644",
+    "object": "85140d0e5aa079bea5f8c54c0ed1a4290863604f"
+  },
+  "Tests/Performance/TensorGPU/Results/comparison.png": {
+    "mode": "100644",
+    "object": "8c0e6dd1503d5127e2fcf97bfb2d1de3cc4f8f83"
+  },
+  "Tests/Performance/TensorGPU/Results/environment.txt": {
+    "mode": "100644",
+    "object": "aee3def6543a373c9e25909609ea837dcb69ed30"
+  },
+  "Tests/Performance/TensorGPU/Results/runs.json": {
+    "mode": "100644",
+    "object": "db0c53397f48b824dac8ac78f5135b56050010cd"
+  },
+  "Tests/Performance/TensorGPU/Support.swift": {
+    "mode": "100644",
+    "object": "ad7ed1dcb3fe89293333ca8276aaca8cee4f4a05"
+  },
+  "Tests/Performance/TensorGPU/TensorInk.metal": {
+    "mode": "100644",
+    "object": "14540f59878d8636cca5fcdb2a7fe97e9dc829ef"
+  },
+  "Tests/Performance/TensorGPU/main.swift": {
+    "mode": "100644",
+    "object": "00b0bfc5aff67889e75c116cfd4df2ff369f6089"
+  },
+  "Tests/Performance/TensorGPU/run.sh": {
+    "mode": "100755",
+    "object": "02c35ac63a19f5e6c0699d8260c235a55106f963"
+  },
+  "Tests/Performance/TensorTiles/README.md": {
+    "mode": "100644",
+    "object": "99221435216f3d889d856541809f10607337b4c8"
+  },
+  "Tests/Performance/TensorTiles/Results/before.png": {
+    "mode": "100644",
+    "object": "3b4ea838eae592a45ebafffabec1019ba340c519"
+  },
+  "Tests/Performance/TensorTiles/Results/binary-hashes-precleanup.txt": {
+    "mode": "100644",
+    "object": "988ea197539633b7fc2226320cf6505cdebe0173"
+  },
+  "Tests/Performance/TensorTiles/Results/binary-hashes.txt": {
+    "mode": "100644",
+    "object": "572667f5b95468cccec3e02eff89afec2e573036"
+  },
+  "Tests/Performance/TensorTiles/Results/direct-regression-environment.txt": {
+    "mode": "100644",
+    "object": "fa88b1480db13e8fba9ca979431d2d98d06aba6b"
+  },
+  "Tests/Performance/TensorTiles/Results/direct-regression.json": {
+    "mode": "100644",
+    "object": "724df6750697df032b604f8e733a8aff350592ee"
+  },
+  "Tests/Performance/TensorTiles/Results/environment-precleanup.txt": {
+    "mode": "100644",
+    "object": "47b84084fd6d1308e15bb5f294cac5643965c484"
+  },
+  "Tests/Performance/TensorTiles/Results/environment.txt": {
+    "mode": "100644",
+    "object": "6447cef5f80a73a4d3422aac857c7bc3c3979c89"
+  },
+  "Tests/Performance/TensorTiles/Results/expanded-full.png": {
+    "mode": "100644",
+    "object": "bf2dce9145e790e01c39e4f38b0455c88ec1c4ab"
+  },
+  "Tests/Performance/TensorTiles/Results/expanded-tiles.png": {
+    "mode": "100644",
+    "object": "bf2dce9145e790e01c39e4f38b0455c88ec1c4ab"
+  },
+  "Tests/Performance/TensorTiles/Results/restored.png": {
+    "mode": "100644",
+    "object": "3b4ea838eae592a45ebafffabec1019ba340c519"
+  },
+  "Tests/Performance/TensorTiles/Results/run1.json": {
+    "mode": "100644",
+    "object": "faa39163a112a9dc759c2f1dc944681b3295b2a0"
+  },
+  "Tests/Performance/TensorTiles/Results/run2.json": {
+    "mode": "100644",
+    "object": "e91112093a4681aa9a907590d4a068dc61ae6fda"
+  },
+  "Tests/Performance/TensorTiles/Results/run3.json": {
+    "mode": "100644",
+    "object": "d504b3ca46b90f3cfff49bedc179d3173549350b"
+  },
+  "Tests/Performance/TensorTiles/Results/run4.json": {
+    "mode": "100644",
+    "object": "0aa340709ebd6225b00a2adf14c70b390848e60b"
+  },
+  "Tests/Performance/TensorTiles/Results/run5.json": {
+    "mode": "100644",
+    "object": "d7ab90446590ff3d852223df2ac953ba0bdcb828"
+  },
+  "Tests/Performance/TensorTiles/Results/run6.json": {
+    "mode": "100644",
+    "object": "7aacc8742e945e187488df8b2d0dff74d732e885"
+  },
+  "Tests/Performance/TensorTiles/TileIndex.swift": {
+    "mode": "100644",
+    "object": "24958e802053f22e5167c12f91b709164a0a1925"
+  },
+  "Tests/Performance/TensorTiles/main.swift": {
+    "mode": "100644",
+    "object": "ceb048f7874b7514d8c09bb74bbe2e15ff73923a"
+  },
+  "Tests/Performance/TensorTiles/run.sh": {
+    "mode": "100755",
+    "object": "c008d68d551faf0fa115d6b658cedb425e23b290"
+  },
+  "Tests/Performance/TensorWhole/README.md": {
+    "mode": "100644",
+    "object": "f9b25327af2d0e1c07b513e63e2b23af04c8971e"
+  },
+  "Tests/Performance/TensorWhole/Results/before.png": {
+    "mode": "100644",
+    "object": "820a9fa268d36da2c5245537fba632bd2b0d976f"
+  },
+  "Tests/Performance/TensorWhole/Results/binary-hashes.txt": {
+    "mode": "100644",
+    "object": "7bc9a24cbe448832a559748e1ee30f6f63d92599"
+  },
+  "Tests/Performance/TensorWhole/Results/direct-regression-environment.txt": {
+    "mode": "100644",
+    "object": "59497319c1366007505e46e034aa293223f9794b"
+  },
+  "Tests/Performance/TensorWhole/Results/direct-regression.json": {
+    "mode": "100644",
+    "object": "6280aa85a59a85c902297129c9bcb85bd5e404e5"
+  },
+  "Tests/Performance/TensorWhole/Results/environment.txt": {
+    "mode": "100644",
+    "object": "acddab58fab6108e0f5b7823e8933530bc3cae73"
+  },
+  "Tests/Performance/TensorWhole/Results/restored.png": {
+    "mode": "100644",
+    "object": "820a9fa268d36da2c5245537fba632bd2b0d976f"
+  },
+  "Tests/Performance/TensorWhole/Results/rotate-then-stretch.png": {
+    "mode": "100644",
+    "object": "21102b05b71e6ba3577201aa7596bb6ecc4cc610"
+  },
+  "Tests/Performance/TensorWhole/Results/run1.json": {
+    "mode": "100644",
+    "object": "21b31a198332a02969450449b60061aac80b509c"
+  },
+  "Tests/Performance/TensorWhole/Results/run2.json": {
+    "mode": "100644",
+    "object": "f9539aa6688c1083d6c772ea1a0cf1173c190167"
+  },
+  "Tests/Performance/TensorWhole/Results/run3.json": {
+    "mode": "100644",
+    "object": "06bef18d6d0c3fcac1c62bae317202fd77ea6853"
+  },
+  "Tests/Performance/TensorWhole/Results/stretch-then-rotate.png": {
+    "mode": "100644",
+    "object": "e2927c1900c621b19d635cf1d3151e72d77cf2f8"
+  },
+  "Tests/Performance/TensorWhole/Results/tiles-regression-environment.txt": {
+    "mode": "100644",
+    "object": "cb91cbe3033a85327a07653dabed73b4064a46b0"
+  },
+  "Tests/Performance/TensorWhole/Results/tiles-regression.json": {
+    "mode": "100644",
+    "object": "ea57e4f04b7ce2c3673dc0060c22945a747227d2"
+  },
+  "Tests/Performance/TensorWhole/WholeInk.metal": {
+    "mode": "100644",
+    "object": "b9a1b3280f13cdf914ebe62b0fab4a87576a18a5"
+  },
+  "Tests/Performance/TensorWhole/main.swift": {
+    "mode": "100644",
+    "object": "dde2617736fb5c5cdf1af28cb72adfee9b0ab458"
+  },
+  "Tests/Performance/TensorWhole/run.sh": {
+    "mode": "100755",
+    "object": "627ad603ccf3d68b4e9d8c0569e2e369c289c492"
+  },
+  "Tests/Performance/TriangleReference.metal": {
+    "mode": "100644",
+    "object": "5803b58534980e3d33d1fbb569a4f421124595b2"
+  },
+  "Tests/Performance/run.sh": {
+    "mode": "100755",
+    "object": "26ce662b2ca74ed39c2319207fc515d05a12ab00"
+  }
+}

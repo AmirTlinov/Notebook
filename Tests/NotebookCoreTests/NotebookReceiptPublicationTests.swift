@@ -16,6 +16,78 @@ struct NotebookReceiptPublicationTests {
         after: .string(source))])
   }
 
+  @Test func sourceDigestRequiresTheLiteralOriginalFieldAndUndoKeepsItsOwnDigest() throws {
+    var original = receipt()
+    let originalField = original.changes[0]
+    original.changes[0] = .init(file: originalField.file,
+      path: [.field("files"), .member("cafe\u{301}"), .field("source")],
+      before: originalField.before, after: originalField.after)
+    let publication: NotebookReceiptPublication
+    #if DEBUG
+    let samples = NotebookPublicationCodecSamples()
+    publication = try NotebookPublicationCodecObservation.withObserver(samples.record) {
+      let publication = try NotebookReceiptPublication(original)
+      _ = try NotebookActionReadModel.Field(original.changes[0], sourceDigest: publication.sourceDigest)
+      return publication
+    }
+    #expect(samples.snapshot().documentSourceDigest.passes == 1)
+    #else
+    publication = try NotebookReceiptPublication(original)
+    #endif
+    let digest = try #require(publication.sourceDigest), field = original.changes[0]
+    #expect(digest.digest(for: field) == (try NotebookActionReadModel.Field.digest(field.after, file: field.file, path: field.path)))
+
+    func changed(file: String? = nil, path: [CollaborationPathComponent]? = nil,
+      after: JSONValue?) -> CollaborationFieldChange {
+      .init(file: file ?? field.file, path: path ?? field.path, before: field.before, after: after,
+        beforeVersion: field.beforeVersion, afterVersion: field.afterVersion)
+    }
+    var other = changed(after: .string("Caf\u{e9}"))
+    #expect(other.after == field.after)
+    #expect(digest.digest(for: other) == nil)
+    #expect(try NotebookActionReadModel.Field(other, sourceDigest: digest).afterDigest == NotebookActionReadModel.Field.digest(other.after, file: other.file, path: other.path))
+    other = changed(path: [.field("files"), .member("caf\u{e9}"), .field("source")], after: field.after)
+    #expect(other.path == field.path)
+    #expect(digest.digest(for: other) == nil)
+    other = changed(file: documentFile(UUID()), after: field.after)
+    #expect(digest.digest(for: other) == nil)
+    other = changed(after: nil)
+    #expect(digest.digest(for: other) == nil)
+
+    original.undo = .init(restored: 1, preserved: [], completedAt: .init(timeIntervalSinceReferenceDate: 1))
+    #expect(try NotebookReceiptPublication(original).sourceDigest == nil)
+  }
+
+  @Test func freshSourceDigestNeverBorrowsAPoisonedPersistedModel() throws {
+    let f = try NotebookItemLifecycleTests.Fixture(), publication = try NotebookReceiptPublication(receipt())
+    try f.store.publishRecords(writes: [publication.file: publication.value], receiptPublication: publication)
+    let model = try f.store.actionReadModel(publication.receipt.id)
+    let cursor = try f.store.currentChangeCursor(), read = try f.store.currentReadCursor()
+    #expect(throws: NotebookStorageError.corruptRecord("frozen action model: " + publication.receipt.id.uuidString.lowercased())) {
+      try f.store.commandTransaction {
+        var value = try JSONValue.encode(model), fields = try #require(value["changes"]?.array)
+        fields[0] = fields[0].setting("afterDigest", .string(String(repeating: "b", count: 64)))
+        value = value.setting("changes", .array(fields))
+        try f.store.currentSQL!.run("UPDATE action_read_models SET value=? WHERE address=?",
+          [.blob(try NotebookStore.storageEncoder.encode(value)), .text(publication.file + "#")])
+        try f.store.freezeActionResult(publication.receipt, changed: publication.receipt.changes, publication: publication)
+      }
+    }
+    #expect(try f.store.actionReadModel(publication.receipt.id) == model)
+    #expect(try f.store.savedActionResult(publication.receipt.id) == nil)
+    #expect(try f.store.currentChangeCursor() == cursor && f.store.currentReadCursor() == read)
+
+    let field = publication.receipt.changes[0]
+    let actual = CollaborationFieldChange(file: field.file, path: field.path, before: field.before,
+      after: .string("Actual different source"), beforeVersion: field.beforeVersion, afterVersion: field.afterVersion)
+    try f.store.commandTransaction {
+      try f.store.freezeActionResult(publication.receipt, changed: [actual], publication: publication)
+    }
+    let result = try #require(try f.store.savedActionResult(publication.receipt.id))
+    let changed = try #require(result["changed"]?.array.first)
+    #expect(changed["afterDigest"] == (try NotebookActionReadModel.Field.digest(actual.after, file: actual.file, path: actual.path)).map(JSONValue.string))
+  }
+
   @Test func reuseRequiresTheLiteralWholeRootAndLosslessTypedMetadata() throws {
     let publication = try NotebookReceiptPublication(receipt())
     let fragment = try #require(NotebookRecordCodec.encode(publication.value, file: publication.file).first)

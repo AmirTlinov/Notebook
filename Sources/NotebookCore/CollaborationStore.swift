@@ -691,7 +691,7 @@ extension NotebookStore {
     }
     let publication = try NotebookReceiptPublication(receipt)
     try publishCollaboration(writes: [publication.file: publication.value], receiptPublication: publication)
-    try freezeActionResult(receipt, changed: changed)
+    try freezeActionResult(receipt, changed: changed, publication: publication)
     return receipt
   }
 

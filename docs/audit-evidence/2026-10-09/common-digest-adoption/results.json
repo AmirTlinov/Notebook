@@ -1,0 +1,58 @@
+{
+  "format": 1,
+  "incoming": "64435ace8612d1530dd2c14c66eac4487c3a31ec",
+  "coherentCommonMain": "ae79dcf3a8fac1a8fd0e78374c42415b7b9d0d11",
+  "base": "c32dd89b85cf6c2a39330bf3713c5e9fcfa6e528",
+  "candidateCodeTree": "12c499d80284802d65556ce8e37b104164912bf4",
+  "exactPackageInputs": 847,
+  "allPackageBlobsAndModesMatch": true,
+  "checks": {
+    "digestRegressions": {
+      "evidence": ".build/gui494-source-digest-regressions-20261009-v2",
+      "functions": 9,
+      "cases": 21,
+      "failures": 0,
+      "skips": 0,
+      "verificationSHA256": "1c7baafd85397b2a96b73cdbfa2d8b7949516e29308d933cdb462fe4d6ffc413",
+      "executionSHA256": "afa49a3aac6ff5d42797230d0c5885a96e25f627a5f1a3586ffaab828b8beca0",
+      "sourceSHA256": "eb3d2f566bbcd9fb8f84c9417c0c241724c6beb7c2fae38cbe4403bd0b70cf37",
+      "sourceCount": 1715,
+      "sourcesUnchanged": true
+    },
+    "actualSave": {
+      "evidence": ".build/gui494-source-digest-save-4194304-20261009-v1/verification",
+      "functions": 1,
+      "cases": 1,
+      "failures": 0,
+      "skips": 0,
+      "verificationSHA256": "dd0e1d1a4907c62959a6325053641d84e2ac458e6d9b7fbf6180f54cb15b939b",
+      "executionSHA256": "0b7daa8e744baccfedbea6d760b161fefa3e7fcf3ee98f2b2b4f0e4b0b0cd403",
+      "sourceSHA256": "eb3d2f566bbcd9fb8f84c9417c0c241724c6beb7c2fae38cbe4403bd0b70cf37",
+      "sourceCount": 1715,
+      "sourcesUnchanged": true
+    },
+    "materialIntegration": {
+      "evidence": ".build/page-material-common-main-20261009-v1/verification",
+      "functions": 2,
+      "cases": 4,
+      "failed": [],
+      "skipped": [],
+      "execution": "core-execution.json",
+      "executionSHA256": "909d57a1796d6b72ce211eec1bccecb95c4be05383d757108eb161ea09513f76",
+      "verificationSHA256": "d4746f6df8ead2bfd884dd125c267301f278cb75febcd07757cdb7882275c97f",
+      "sourceSHA256": "14e6fdf4ce905a3ab9c52ba395122f457d4aa6bcf92b7fd5b0442fb73b16ceb2",
+      "sourceCount": 1715,
+      "sourcesUnchanged": true,
+      "actualSharedClaims": {
+        "acquired": 83,
+        "component": 96,
+        "lateBodyRead": false,
+        "refusal": "page_material_bytes",
+        "databaseAfterRefusal": 29,
+        "authoredSnapshotUnchanged": true
+      }
+    }
+  },
+  "scope": "Exact coherent Core previously admitted in common main; native WIP remains separate. No repetition of unchanged Core checks.",
+  "physicalAcceptance": false
+}

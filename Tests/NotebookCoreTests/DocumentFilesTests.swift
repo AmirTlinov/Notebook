@@ -73,6 +73,7 @@ struct NotebookPublicationCodecCounts: Codable, Sendable {
   }
   var documentDecode = Work(), documentEncode = Work(), filesEncode = Work()
   var receiptDecode = Work(), receiptEncode = Work()
+  var documentSourceDigest = Work()
 }
 
 #if DEBUG
@@ -87,6 +88,7 @@ final class NotebookPublicationCodecSamples: @unchecked Sendable {
     case .filesEncode: counts.filesEncode.record(sample.encodedBytes)
     case .receiptDecode: counts.receiptDecode.record(sample.encodedBytes)
     case .receiptEncode: counts.receiptEncode.record(sample.encodedBytes)
+    case .documentSourceDigest: counts.documentSourceDigest.record(sample.encodedBytes)
     }
   }
   func snapshot() -> NotebookPublicationCodecCounts {
@@ -160,6 +162,7 @@ struct DocumentFilesTests {
     #expect(counts.documentDecode.passes == 4 && counts.documentDecode.encodedBytes > 0)
     #expect(counts.receiptEncode.passes == 1 && counts.receiptEncode.encodedBytes > 0)
     #expect(counts.receiptDecode.passes == 0)
+    #expect(counts.documentSourceDigest.passes == 1 && counts.documentSourceDigest.encodedBytes > 0)
     #else
     let result = try f.store.commitDocumentSource(prepared, actor: f.actor)
     #endif
