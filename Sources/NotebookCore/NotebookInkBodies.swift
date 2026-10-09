@@ -166,6 +166,14 @@ extension NotebookSQLConnection {
   func decodedStoredFragment(from data: Data, remainingBytes: inout Int64, budget: String,
     expandingInk:Bool = true) throws -> NotebookStoredFragment {
     let raw=try decodeFragmentEnvelope(data)
+    return try expandedStoredFragment(raw, encodedBytes: data.count, remainingBytes: &remainingBytes,
+      budget: budget, expandingInk: expandingInk)
+  }
+
+  /// A typed addressed reader can borrow an already admitted envelope. The
+  /// same owner validates and charges every referenced body exactly once.
+  func expandedStoredFragment(_ raw: NotebookStoredFragment, encodedBytes: Int,
+    remainingBytes: inout Int64, budget: String, expandingInk: Bool = true) throws -> NotebookStoredFragment {
     _=try raw.inkBodyHashes
     var value=raw.value
     for path in raw.inkBodies {
@@ -194,7 +202,7 @@ extension NotebookSQLConnection {
       // EVERY expansion, even repeated references already in this cache.
       let (rounded,roundOverflow)=portableBytes.addingReportingOverflow(2)
       let (base64Bytes,base64Overflow)=(rounded/3).multipliedReportingOverflow(by:4)
-      let (valueBytes,valueOverflow)=data.count.addingReportingOverflow(base64Bytes)
+      let (valueBytes,valueOverflow)=encodedBytes.addingReportingOverflow(base64Bytes)
       guard portableBytes >= 0,!roundOverflow,!base64Overflow,!valueOverflow else {
         throw NotebookStorageError.limitExceeded(budget)
       }

@@ -106,6 +106,183 @@ private struct PageMaterialFixture {
 
 @Suite("Cold page material uses addressed geometry and one source cut")
 struct NotebookPageMaterialWindowTests {
+  @Test func twentyFourProgramWindowKeepsCanonicalAddressedClocks() throws {
+    let supplied = ProcessInfo.processInfo.environment["NOTEBOOK_CAUSAL_READ_FIXTURE"]
+    let root = supplied.map { URL(fileURLWithPath: $0) }
+      ?? FileManager.default.temporaryDirectory.appendingPathComponent("causal-window-" + UUID().uuidString)
+    defer { if supplied == nil { try? FileManager.default.removeItem(at: root) } }
+    let store = NotebookStore(root: root)
+    let actor = UUID(uuidString: "00000000-0000-4000-8000-000000000001")!
+    let itemID = UUID(uuidString: "00000000-0000-4000-8000-000000000002")!
+    let pageID = UUID(uuidString: "00000000-0000-4000-8000-000000000003")!
+    if !FileManager.default.fileExists(atPath: store.databaseURL.path) {
+      _ = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194),
+        initialNotebookID: itemID, initialPageID: pageID)
+      var page = try store.loadPage(pageID)
+      let elements: [AgentElement] = (0..<24).map { index in
+        .init(id: "load-0-\(index)", kind: .web,
+          frame: .init(x: 45 + Double(index % 4) * 190, y: 190 + Double(index / 4) * 130, width: 170, height: 110),
+          source: "Interactive load \(index)",
+          html: "<button aria-label='Load 0 control \(index)'><output>0</output></button><div id='pulse'></div>",
+          css: "html,body{margin:0;width:100%;height:100%;overflow:hidden}button{position:absolute;inset:0;border:0;background:#086fff;color:white;font:28px sans-serif}#pulse{position:absolute;bottom:2px;width:8px;height:8px;background:white;pointer-events:none;animation:pulse 1s linear infinite alternate}@keyframes pulse{from{left:2px}to{left:150px}}",
+          javaScript: "const button=document.querySelector('button');window.loadBoots=(window.loadBoots||0)+1;function draw(){button.querySelector('output').textContent=notebook.state.count;button.style.background=notebook.state.count?'#ef2218':'#086fff'}button.onclick=()=>{notebook.commit({count:notebook.state.count+1});draw()};addEventListener('notebookstate',draw);draw();notebook.ready(Promise.resolve())",
+          state: .object(["count": .number(0)]))
+      }
+      let changed = page.replaceElements(elements, actor: actor)
+      #expect(changed)
+      try store.savePage(page)
+    }
+    var windows: [NotebookPageMaterialWindow] = []
+    for iteration in 0..<(supplied == nil ? 1 : 3) {
+      let reader = NotebookReadSession(store: store), trace = PageMaterialSQLTrace()
+      let begin = ContinuousClock.now
+      let result = try reader.read { store in
+        let database = store.currentSQL!
+        trace.attach(database); defer { trace.detach(database) }
+        return try store.readPageMaterialWindow(itemID: itemID, pageID: pageID,
+          bounds: .init(x: 0, y: 0, width: 834, height: 1194))
+      }
+      let elapsed = begin.duration(to: .now)
+      print("CAUSAL_WINDOW_24 phase=\(ProcessInfo.processInfo.environment["NOTEBOOK_CAUSAL_READ_PHASE"] ?? "test") iteration=\(iteration) elapsed=\(elapsed) bodies=\(result.elements.count) sources=\(result.sources.count) sql_steps=\(trace.steps)")
+      windows.append(result)
+    }
+    let canonical = try store.loadPage(pageID)
+    for window in windows {
+      #expect(window.elements == canonical.elements)
+      #expect(window.dependencies.isEmpty)
+      for element in canonical.elements {
+        #expect(window.source(for: element.id)?.versions == canonical.collaboration?.elementVersions(id: element.id))
+      }
+    }
+  }
+
+  @Test func addressedClockReadPreservesNumericAndRetainedInkRules() throws {
+    let f = try PageMaterialFixture(); defer { f.clean() }
+    let target = CollaborationTarget(kind: .page, id: f.pageID), id = "body/~"
+    let key = fieldKey(["elements", id, "state"]), file = pageFile(f.pageID), root = pageFile(f.pageID) + "#"
+    let address = root + "/collaboration/fields/@" + fieldKey([key])
+    func put(_ value: JSONValue) throws -> Data {
+      _ = try f.store.commandTransaction {
+        try f.store.writeFragment(.init(address: address, file: file, parent: root,
+          collection: "collaboration/fields", member: key, position: 0, value: value, collections: []), database: f.store.currentSQL!)
+      }
+      return try f.store.sqlRead { try #require($0.rows("SELECT b.data FROM records r JOIN blobs b ON b.hash=r.hash WHERE r.address=?", [.text(address)]).first?[0].blob) }
+    }
+    func installEnvelope(_ value: JSONValue) throws {
+      let db = try NotebookSQLConnection(url: f.store.databaseURL, writable: true, create: false)
+      let hash = try db.putBlob(NotebookStore.storageEncoder.encode(value))
+      try db.run("UPDATE records SET hash=? WHERE address=?", [.text(hash), .text(address)])
+    }
+    func read() throws -> [String: ContentFieldVersion] { try f.store.readNativeElementVersions(target: target, id: id) }
+    for counter in [UInt64(0), VersionStamp.maximumCounter] {
+      let version = ContentFieldVersion(stamp: .init(counter: counter, actor: f.actor), human: true)
+      _ = try put(.encode(version))
+      #expect(try read() == [key: version])
+    }
+    let ordinary = try JSONValue.encode(ContentFieldVersion(stamp: .init(counter: 1, actor: f.actor), human: true))
+    let stamp = try #require(ordinary["stamp"])
+    for invalid: JSONValue in [.number(-1), .number(1.5), .number(Double(VersionStamp.maximumCounter) + 1), .bool(true), .string("1")] {
+      _ = try put(ordinary.setting("stamp", stamp.setting("counter", invalid)))
+      #expect(throws: (any Error).self) { try read() }
+    }
+    let actorKey = f.actor.uuidString.lowercased()
+    for invalid: JSONValue in [.number(-1), .number(1.5), .number(Double(VersionStamp.maximumCounter) + 1), .bool(false), .string("1")] {
+      _ = try put(ordinary.setting("observed", .object([actorKey: invalid])))
+      #expect(throws: (any Error).self) { try read() }
+    }
+    let winner = ContentFieldVersion(stamp: .init(counter: 2, actor: f.actor), human: true)
+    let hidden = ContentFieldVersion(stamp: .init(counter: 1, actor: UUID()), human: false)
+    var samples: [SpatialInkSample] = []
+    for index in 0..<128 {
+      let point = SpatialPoint(x: Double(index) / 3, y: Double(index % 17))
+      let timeOffset = Double(index) / 128
+      let force = Double(index % 7) / 8
+      samples.append(.init(point: point, timeOffset: timeOffset, width: 4,
+        opacity: 0.5, force: force, azimuth: 0, altitude: 0.5))
+    }
+    let ink = try JSONValue.encode(InkMeasurements(samples))
+    let retained = try winner.resolving(value: .string("shown"), with: hidden,
+      incomingValue: .object(["measurements": ink])).version
+    let physical = try put(.encode(retained))
+    let raw = try JSONDecoder().decode(NotebookStoredFragment.self, from: physical)
+    #expect(raw.inkBodies.count == 1)
+    #expect(try read() == [key: retained], "The losing authored ink body survives the direct clock read")
+    let envelope = try JSONDecoder().decode(JSONValue.self, from: physical)
+    for paths in [[raw.inkBodies[0], raw.inkBodies[0]], [["missing"]]] {
+      try installEnvelope(envelope.setting("inkBodies", .encode(paths)))
+      #expect(throws: (any Error).self) { try read() }
+    }
+    try installEnvelope(envelope)
+    let hash = try #require(raw.inkBodyHashes.first)
+    let db = try NotebookSQLConnection(url: f.store.databaseURL, writable: true, create: false)
+    let body = try db.blob(hash)
+    try db.run("DELETE FROM blobs WHERE hash=?", [.text(hash)])
+    #expect(throws: NotebookStorageError.blobMissing(hash)) { try read() }
+    _ = try db.putBlob(body)
+    #expect(try read() == [key: retained])
+    let removed = ContentFieldVersion(stamp: .init(counter: 3, actor: f.actor), human: true).retainingValue(.bool(false))
+    _ = try put(.encode(removed))
+    #expect(try read() == [key: removed], "Clocks for a removed body remain addressable")
+    let current = try JSONDecoder().decode(JSONValue.self, from: put(.encode(winner)))
+    for invalid in [current.setting("member", .string("different")), current.setting("position", .number(-1)),
+      current.setting("file", .string("board.json")), current.setting("parent", .string("different"))] {
+      try installEnvelope(invalid)
+      #expect(throws: (any Error).self) { try read() }
+    }
+    let oversized = winner.retainingValue(.string(String(repeating: "x", count: 1_048_576)))
+    _ = try put(.encode(oversized))
+    #expect(throws: NotebookStorageError.limitExceeded("native_element_versions")) { try read() }
+  }
+
+  @Test(arguments: [false, true])
+  func addressedBoardAndCoverClocksPermitCanonicalNativeCAS(cover: Bool) throws {
+    let f = try PageMaterialFixture(); defer { f.clean() }
+    let index = try f.store.loadIndex(), boardID = index.rootBoardID
+    let target = cover ? CollaborationTarget(kind: .cover, id: f.itemID, boardID: boardID)
+      : CollaborationTarget(kind: .board, id: boardID)
+    let element = SpatialElement(id: "body/~", surface: cover ? .cover(f.itemID) : .board(boardID),
+      kind: .nativeText, frame: .init(x: 20, y: 30, width: 140, height: 60),
+      worldOrigin: cover ? nil : .zero, source: "Original", stamp: .init(counter: 0, actor: f.actor))
+    let before = try f.store.loadBoard(items: index.items)
+    var after = before
+    let inserted = after.upsertElement(element, in: boardID, expected: nil, actor: f.actor)
+    #expect(inserted)
+    _ = try f.store.saveBoardEdits(before: before, after: after)
+    let canonical = try #require(f.store.loadBoard(items: index.items).board(boardID))
+    let source = try f.store.readNativeElementSource(target: target, id: element.id)
+    #expect(source.spatial == canonical.element(id: element.id))
+    let versions = try #require(source.versions)
+    #expect(!versions.isEmpty)
+    #expect(versions == canonical.collaboration?.elementVersions(id: element.id))
+
+    // The codec owns nesting: the board node is the physical parent while
+    // its clock address includes the embedded board document's path.
+    let parent = "board.json#/boards/@" + boardID.uuidString.lowercased()
+    let key = fieldKey(["elements", element.id, "content"])
+    let address = parent + "/board/collaboration/fields/@" + fieldKey([key])
+    let physical = try #require(f.store.storedFragments(address: address, descendants: false).first)
+    #expect(physical.parent == parent && physical.collection == "board/collaboration/fields")
+    #expect(physical.member == key && physical.position == 0 && physical.collections.isEmpty)
+
+    let result = try f.store.applyNativeElementEdits([
+      .init(kind: .updateElement, target: target, id: element.id,
+        values: ["source": .string("Changed"), "html": .string("Changed")])
+    ], summary: "Edit canonical spatial source", sources: [source], actor: f.actor)
+    let changed = try #require(result.sources.first)
+    #expect(changed.spatial?.source == "Changed")
+    #expect(changed == (try f.store.readNativeElementSource(target: target, id: element.id)))
+    let saved = try #require(f.store.loadBoard(items: index.items).board(boardID))
+    #expect(changed.versions == saved.collaboration?.elementVersions(id: element.id))
+    let cursor = try f.store.currentChangeCursor()
+    #expect(throws: CollaborationError.self) {
+      try f.store.applyNativeElementEdits([
+        .init(kind: .updateElement, target: target, id: element.id, values: ["source": .string("Stale")])
+      ], summary: "Reject stale source", sources: [source], actor: f.actor)
+    }
+    #expect(try f.store.currentChangeCursor() == cursor)
+    #expect(try f.store.readNativeElementSource(target: target, id: element.id) == changed)
+  }
+
   @Test func unadmittedReadRefusesAndIndexAdmissionPreservesContentAndCursors() throws {
     let f = try PageMaterialFixture(); defer { f.clean() }
     try f.replace([

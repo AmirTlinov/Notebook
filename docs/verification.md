@@ -523,4 +523,17 @@ After Amir confirmed Notebook Lab open with the screen on, two further native
 reads still found no connection; no new request was started without READY.
 Installed DB29/wire44/manifest26 and all history remain; format activation is
 false. [Exact installed scope and refusal](audit-evidence/2026-10-09/installed-history-readiness/results.json).
+
+## 2026-10-09: canonical addressed clocks in common main
+
+The final typed-clock slice adopts `656bb71d` with the required `88d9f3be`
+board/cover correction. It decodes ordinary clock envelopes from admitted bytes
+through ContentFieldVersion Codable; explicit ink retains its existing expansion
+and allocation owner. Parent/collection validation follows each canonical target.
+All 847 package input hashes and executable bits match the accepted final scope:
+3 methods / 4 cases PASS, including board/cover CAS and stale-source refusal.
+No additional runner was needed for the unchanged inputs. Ten paired Mac cuts
+report median 16.196→12.024 ms; this is a Core observation, with physical acceptance
+open. [Exact scopes and correction](audit-evidence/2026-10-09/causal-board-guard/results.json),
+[paired probe](audit-evidence/2026-10-09/causal-typed-read/results.json).
 NB10, optimized native/device budgets and full104 acceptance remain open.

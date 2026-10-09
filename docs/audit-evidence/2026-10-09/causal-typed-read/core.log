@@ -1,0 +1,46 @@
+Building for debugging...
+[Computing dependencies]
+[1 / 5] NotebookCore
+[3 / 7] NotebookCore
+[4 / 8] NotebookCore
+[8 / 11] NotebookCore
+[9 / 13] notebook-archive-transfer-product
+[12 / 13] NotebookArchiveTransferTests-product
+[15 / 16] NotebookCodexTests-product
+[18 / 20] NotebookCoreTests-product
+[20 / 22] NotebookCoreTests-product
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/causal-typed-read/source/Tests/NotebookCoreTests/NotebookGraphicVisibilityTests.swift:167:42: warning: no calls to throwing functions occur within 'try' expression [#UnnecessaryEffectMarker]
+165 |     func inspect(_ graph:NotebookGraphicGraph) throws {
+166 |       for id in ["a","b","link"] {
+167 |         let layout:NotebookGraphicLayout=try #require(graph.resolve(id).layout)
+    |                                          `- warning: no calls to throwing functions occur within 'try' expression [#UnnecessaryEffectMarker]
+168 |         let area=CGRect(x:layout.frame.x,y:layout.frame.y,width:layout.frame.width,height:layout.frame.height)
+169 |         let result=graph.visiblePageGraphics(page.id,in:area)
+
+[#UnnecessaryEffectMarker]: <https://docs.swift.org/compiler/documentation/diagnostics/unnecessary-effect-marker>
+[22 / 28] NotebookCoreTests-product
+[26 / 27] NotebookCoreTests-product
+[28 / 28] NotebookCoreTests-product
+[29 / 30] NotebookScriptHostTests-product
+[32 / 40] notebook-bridge-product
+[39 / 39] NotebookTypesetter-product
+[42 / 42] notebook-acceptance-product
+[47 / 47] notebook-bridge-product
+Build complete! (59,81 с)
+◇ Test run started.
+↳ Testing Library Version: 2084
+↳ Target Platform: arm64e-apple-macos14.0
+◇ Suite InkRelationPersistenceTests started.
+◇ Suite "Cold page material uses addressed geometry and one source cut" started.
+◇ Test declaredBodyPathsPreserveUnrelatedValuesAndRejectCorruptReferences() started.
+◇ Test twentyFourProgramWindowKeepsCanonicalAddressedClocks() started.
+◇ Test addressedClockReadPreservesNumericAndRetainedInkRules() started.
+CAUSAL_WINDOW_24 phase=final iteration=0 elapsed=0.028926542 seconds bodies=24 sources=24 sql_steps=18200
+CAUSAL_WINDOW_24 phase=final iteration=1 elapsed=0.025287209 seconds bodies=24 sources=24 sql_steps=18200
+CAUSAL_WINDOW_24 phase=final iteration=2 elapsed=0.027313708 seconds bodies=24 sources=24 sql_steps=18200
+✔ Test declaredBodyPathsPreserveUnrelatedValuesAndRejectCorruptReferences() passed after 0.098 seconds.
+✔ Suite InkRelationPersistenceTests passed after 0.098 seconds.
+✔ Test twentyFourProgramWindowKeepsCanonicalAddressedClocks() passed after 0.107 seconds.
+✔ Test addressedClockReadPreservesNumericAndRetainedInkRules() passed after 0.178 seconds.
+✔ Suite "Cold page material uses addressed geometry and one source cut" passed after 0.178 seconds.
+✔ Test run with 3 tests in 2 suites passed after 0.179 seconds.

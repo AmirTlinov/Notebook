@@ -1,0 +1,165 @@
+{
+  "status": "verified_focused_core",
+  "testedBase": "c32dd89b85cf6c2a39330bf3713c5e9fcfa6e528",
+  "adoptionBase": "7a19f9212136d35ecbcccaae5d60b0c05b72309d",
+  "inputCount": 847,
+  "testedSourceDigest": "a4129439cbb8ab4b6cb55feec04f7b4322208afc1c0b19e23e2dd73ccd139a70",
+  "coherentSourceDigest": "34f9eed3e58b27bddd502f39e5e06449a695f0c411f2b61c268264a5cd9473c9",
+  "productionPaths": [
+    "Sources/NotebookCore/NotebookGraphicSelection.swift",
+    "Sources/NotebookCore/NotebookInkBodies.swift"
+  ],
+  "testPaths": [
+    "Tests/NotebookCoreTests/NotebookPageMaterialWindowTests.swift"
+  ],
+  "files": {
+    "Sources/NotebookCore/NotebookGraphicSelection.swift": {
+      "baseSHA256": "034a8d7d25637ceb75ee93f40dfa9b0ebde6527c52f7470ed3054fe9e4c7acb8",
+      "candidateSHA256": "e88997e2887161d97c254733ad466c4e6c806aabf3bca2e59a9a14f124407326"
+    },
+    "Sources/NotebookCore/NotebookInkBodies.swift": {
+      "baseSHA256": "7d8c158acc01e056cbddddba7442ce0fde8bc2f1b2aea41e22a3197371820eb6",
+      "candidateSHA256": "f2a5d9b169ada4e1e825a8682dcfd4e42d24373b4140cb744c4908e56aeda773"
+    },
+    "Tests/NotebookCoreTests/NotebookPageMaterialWindowTests.swift": {
+      "baseSHA256": "6948eaa947e469f7980d7cdfb9e86aabb6b1492b8845711662a962c2b0811f62",
+      "candidateSHA256": "f61eeda475456d0df8a89fbdd6289989f022ecfe57fef61851f0c2a3c011d5bd"
+    }
+  },
+  "patch": "/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/causal-typed-read/candidate.patch",
+  "patchSHA256": "a60b97f5d4f53bc74eaff4199ab7326028afd089f32dce6c5e42d25f66d2ccdd",
+  "coherentSource": "/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/causal-typed-read/coherent-7a19",
+  "adoptedUnrelatedPaths": [
+    "Sources/NotebookCore/CollaborationStore.swift",
+    "Sources/NotebookCore/JSONValue.swift",
+    "Sources/NotebookCore/NotebookActionReadModel.swift",
+    "Sources/NotebookCore/NotebookActionResult.swift",
+    "Sources/NotebookCore/NotebookReceiptPublication.swift",
+    "Tests/NotebookCoreTests/DocumentFilesTests.swift",
+    "Tests/NotebookCoreTests/NotebookReceiptPublicationTests.swift",
+    "Tests/NotebookCoreTests/NotebookSearchIndexCostTests.swift"
+  ],
+  "trackedEdited": false,
+  "activeIndexEdited": false,
+  "HEADEdited": false,
+  "finalChecks": {
+    "receipt": "/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/causal-typed-read/final-execution.json",
+    "log": "/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/causal-typed-read/final.log",
+    "actualTests": 3,
+    "suites": 2,
+    "elapsedSeconds": 0.179,
+    "tests": [
+      "NotebookPageMaterialWindowTests/twentyFourProgramWindowKeepsCanonicalAddressedClocks",
+      "NotebookPageMaterialWindowTests/addressedClockReadPreservesNumericAndRetainedInkRules",
+      "InkRelationPersistenceTests/declaredBodyPathsPreserveUnrelatedValuesAndRejectCorruptReferences"
+    ]
+  },
+  "pairedIgnoredProbe": {
+    "log": "/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/causal-typed-read/paired.log",
+    "receipt": "/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/causal-typed-read/paired-execution.json",
+    "inputCount": 847,
+    "freshCuts": 10,
+    "rows": [
+      {
+        "reader": "previous",
+        "iteration": 0,
+        "milliseconds": 21.113,
+        "sources": 24,
+        "clocks": 168,
+        "sqlSteps": 14832
+      },
+      {
+        "reader": "direct",
+        "iteration": 1,
+        "milliseconds": 12.040083,
+        "sources": 24,
+        "clocks": 168,
+        "sqlSteps": 14832
+      },
+      {
+        "reader": "previous",
+        "iteration": 2,
+        "milliseconds": 16.195874999999997,
+        "sources": 24,
+        "clocks": 168,
+        "sqlSteps": 14832
+      },
+      {
+        "reader": "direct",
+        "iteration": 3,
+        "milliseconds": 11.165125,
+        "sources": 24,
+        "clocks": 168,
+        "sqlSteps": 14832
+      },
+      {
+        "reader": "previous",
+        "iteration": 4,
+        "milliseconds": 16.196709,
+        "sources": 24,
+        "clocks": 168,
+        "sqlSteps": 14832
+      },
+      {
+        "reader": "direct",
+        "iteration": 5,
+        "milliseconds": 11.36775,
+        "sources": 24,
+        "clocks": 168,
+        "sqlSteps": 14832
+      },
+      {
+        "reader": "previous",
+        "iteration": 6,
+        "milliseconds": 16.103625,
+        "sources": 24,
+        "clocks": 168,
+        "sqlSteps": 14832
+      },
+      {
+        "reader": "direct",
+        "iteration": 7,
+        "milliseconds": 12.023917,
+        "sources": 24,
+        "clocks": 168,
+        "sqlSteps": 14832
+      },
+      {
+        "reader": "previous",
+        "iteration": 8,
+        "milliseconds": 16.039583,
+        "sources": 24,
+        "clocks": 168,
+        "sqlSteps": 14832
+      },
+      {
+        "reader": "direct",
+        "iteration": 9,
+        "milliseconds": 12.681167,
+        "sources": 24,
+        "clocks": 168,
+        "sqlSteps": 14832
+      }
+    ],
+    "medianBeforeMilliseconds": 16.195874999999997,
+    "medianAfterMilliseconds": 12.023917,
+    "improvementMilliseconds": 4.1719579999999965,
+    "improvementPercent": 25.759386263477563,
+    "temporaryReaderRemovedFromFinal": true,
+    "finalDeltaFromPairedProduction": "read-only Task.checkCancellation restored before blob decode, matching old decodeFragmentEnvelope boundary",
+    "scope": "Mac Core addressed causal reads, not iPad first-pixel or whole-window elapsed acceptance"
+  },
+  "fixtureRecordAddressHashDigest": "0c5716d84ef9baa1e3381944702fc7758c6d32b3e85c5ed0a13ce4476585b3bf",
+  "coherentCompilation": "Not rerun: tested c32 + exactly 8 separately accepted, non-overlapping 7a19 source changes; root decides integration proof",
+  "notes": [
+    "same 1MiB native-element-version ceiling; parent transaction allocation/body allowance unchanged",
+    "ContentFieldVersion Codable remains sole clock decoder; ordinary stored envelope read directly",
+    "explicit ink body references borrow original expansion body once; no generic decoder or cache change",
+    "single existing read cut, scene dependency recording, tombstone clocks and cancellation preserved",
+    "whole-window timings in separate host runs are recorded but inconclusive under host contention"
+  ],
+  "format": 1,
+  "date": "2026-10-09",
+  "physicalAcceptance": false,
+  "currentWIPImported": false
+}
