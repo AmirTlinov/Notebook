@@ -487,3 +487,20 @@ after receipt publication69c81c90, with each immutable package unchanged. Window
 Public whole-element4MiB and window16MiB limits, DB30/wire44/manifest26 and history
 remain unchanged. [Exact scope and inputs](audit-evidence/2026-10-09/page-material-geometry/results.json).
 Installed265 and full physical acceptance remain separate.
+
+## 2026-10-09: preserve material root admission and retained geometry bounds
+
+The addressed geometry decoder binds canonical envelope metadata to its physical
+SQL row, requires the original scalar strings and uses existing source/parent,
+graphic, basis and text-style predicates. Migration schedules physical SQL addresses.
+Deleted roots remain absent. Opaque program and fragmented checkpoint bodies are
+not assembled. The geometry closure retains at most16MiB, including keys, claims
+and candidate versions; claim candidates borrow the same captured graphic buffers.
+
+An immutable847-input candidate on2c3762fb passed **11 Core functions /27 cases**:
+16malformed DB29 variants and2aggregate overflows refuse with exact rollback;
+9original migration/geometry/large-neighbour/Undo/checkpoint and100k cases pass.
+Valid8MiB HTML and fragmented state remain admitted. The1000/100000 windows retain
+6fragments/2746bytes/2492SQL VM steps. Public4MiB reads, DB30/wire44/manifest26,
+history and installed265 are unchanged. [Exact inputs and execution](audit-evidence/2026-10-09/page-material-root-admission/results.json).
+This proof does not establish native or installed-pair acceptance.

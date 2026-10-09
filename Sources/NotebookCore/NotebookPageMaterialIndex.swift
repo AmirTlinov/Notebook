@@ -40,9 +40,11 @@ extension NotebookStore {
     // Streaming addressed sources. Admission never assembles a PageDocument or
     // changes content hashes, history, membership, delivery or causal versions.
     var after = ""
-    while let row = try database.rows("SELECT r.address,b.data FROM records r JOIN blobs b ON b.hash=r.hash WHERE r.file LIKE 'pages/%' AND r.collection='elements' AND r.address>? ORDER BY r.address LIMIT 1", [.text(after)]).first {
+    while let row = try database.rows("SELECT address FROM records WHERE file LIKE 'pages/%' AND collection='elements' AND address>? ORDER BY address LIMIT 1", [.text(after)]).first {
       after = row[0].text!
-      try notePageMaterialChange(database.decodeFragmentEnvelope(row[1].blob!), database: database)
+      // Every root is dirty. Keep the physical address until the root decoder
+      // checks it; an untrusted envelope must not redirect this admission.
+      try database.noteOwner(.pageMaterial, after)
     }
     try refreshPageMaterialIndex(database: database)
     var inkAfter = ""
@@ -93,9 +95,8 @@ extension NotebookStore {
   func refreshPageMaterialIndex(database: NotebookSQLConnection) throws {
     while let address = try database.takeOwner(.pageMaterial) {
       guard try !database.hasOwner(.pageMaterialProjected, address) else { continue }
-      guard let row = try storedFragments(address: address, descendants: false).first,
-        let pageID = UUID(uuidString: URL(fileURLWithPath: row.file).deletingPathExtension().lastPathComponent) else { continue }
-      let element = try PageMaterialGeometry(row), id = element.id
+      guard let (row, element) = try PageMaterialGeometry.read(address, database: database) else { continue }
+      let pageID = element.pageID, id = element.id
       if element.placement.isGroup {
         try database.noteOwner(.pageMaterialGroup, address)
         continue
@@ -105,7 +106,7 @@ extension NotebookStore {
       }
       let bounds: CGRect?
       if let graphic = element.graphic {
-        let sources = PageMaterialGeometrySources(store: self, pageID: pageID, root: element)
+        let sources = try PageMaterialGeometrySources(store: self, pageID: pageID, root: element)
         let graph = try sources.graph()
         bounds = graph.node(id).flatMap { NotebookGraphicVisibility.bounds($0, in: graph, parent: true) }
         // The shared claim component can reveal a previously hidden body.
@@ -131,11 +132,10 @@ extension NotebookStore {
       try database.run("DELETE FROM notebook_pending_owners WHERE kind=?", [.text(NotebookPendingOwner.pageMaterialProjected.rawValue)])
     }
     while let address = try database.takeOwner(.pageMaterialGroup) {
-      guard let row = try storedFragments(address: address, descendants: false).first,
-        let pageID = UUID(uuidString: URL(fileURLWithPath: row.file).deletingPathExtension().lastPathComponent) else { continue }
-      let element = try PageMaterialGeometry(row), id = element.id
+      guard let (row, element) = try PageMaterialGeometry.read(address, database: database) else { continue }
+      let pageID = element.pageID, id = element.id
       guard element.placement.isGroup else { continue }
-      let sources = PageMaterialGeometrySources(store: self, pageID: pageID, root: element)
+      let sources = try PageMaterialGeometrySources(store: self, pageID: pageID, root: element)
       let resolver = NotebookElementPlacement.Resolver { try sources.include($0)?.placement }
       let placement = try resolver.resolve(id, source: element.placement)
       let local = try pageMaterialGroupBounds(pageID: pageID, parentID: id, database: database)
@@ -203,29 +203,85 @@ extension NotebookStore {
 /// writer. Program source and fragmented state are not geometry, and their size
 /// must not turn a bounded presentation read into a durable-write restriction.
 private struct PageMaterialGeometry {
+  static let maximumRetainedBytes = 16 * 1_024 * 1_024
+  let retainedPayloadBytes: Int
+  let pageID: UUID
   let id: String
   let placement: NotebookElementPlacement.Source
   let graphic: NotebookGraphic?
   let text: String?
   let textStyle: NativeTextStyle
 
-  init(_ fragment: NotebookStoredFragment) throws {
-    let value = fragment.value
-    guard let id = value["id"]?.string,
-      let kind = value["kind"]?.string.flatMap(AgentElementKind.init(rawValue:)),
-      let frame = try value["frame"]?.decode(PageRect.self) else {
-      throw NotebookStorageError.corruptRecord(fragment.address)
+  static func read(_ address: String, database: NotebookSQLConnection,
+    fragment: NotebookStoredFragment? = nil) throws -> (NotebookStoredFragment, Self)? {
+    // Reuse an already read claimant body, while checking its SQL identity in
+    // this same transaction. Ordinary roots need only this one addressed row.
+    let query = fragment == nil
+      ? "SELECT r.file,r.parent,r.collection,r.member,r.position,b.data FROM records r LEFT JOIN blobs b ON b.hash=r.hash WHERE r.address=?"
+      : "SELECT file,parent,collection,member,position FROM records WHERE address=?"
+    guard let record = try database.rows(query, [.text(address)]).first else { return nil }
+    let root: NotebookStoredFragment
+    if let fragment { root = fragment }
+    else {
+      guard let data = record[5].blob else { throw NotebookStorageError.corruptRecord(address) }
+      root = try database.decodedStoredFragment(from: data)
     }
+    return (root, try Self(root, address: address, record: record))
+  }
+
+  private init(_ fragment: NotebookStoredFragment, address: String, record: [NotebookSQLValue]) throws {
+    let value = fragment.value
+    guard let pageID = UUID(uuidString: URL(fileURLWithPath: fragment.file).deletingPathExtension().lastPathComponent),
+      fragment.file == pageFile(pageID), fragment.address == address,
+      fragment.parent == fragment.file + "#", fragment.collection == "elements", fragment.position >= 0,
+      record[0].text == fragment.file, record[1].text == fragment.parent,
+      record[2].text == fragment.collection, record[3].text == fragment.member,
+      record[4].integer == Int64(fragment.position),
+      let id = value["id"]?.string, !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, id.utf16.count <= 120,
+      fragment.member == collaborationIdentity(id),
+      address == fragment.file + "#/elements/@" + fieldKey([collaborationIdentity(id)]),
+      let kind = value["kind"]?.string.flatMap(AgentElementKind.init(rawValue:)),
+      let frame = try value["frame"]?.decode(PageRect.self), NotebookElementBasis.validLocalFrame(frame),
+      let source = value["source"]?.string, let html = value["html"]?.string,
+      let css = value["css"]?.string, let javaScript = value["javaScript"]?.string,
+      value.isValid else { throw NotebookStorageError.corruptRecord(address) }
     func optional<T: Decodable>(_ key: String, _ type: T.Type) throws -> T? {
       guard let field = value[key], field != .null else { return nil }
       return try field.decode(type)
     }
-    self.id = id
-    placement = try .init(frame: frame, parentID: optional("parentID", String.self),
-      basis: optional("basis", NotebookElementBasis.self), isGroup: kind == .group)
-    graphic = try optional("graphic", NotebookGraphic.self)
-    text = kind == .nativeText ? value["source"]?.string : nil
-    textStyle = try optional("textStyle", NativeTextStyle.self) ?? .standard
+    let parentID = try optional("parentID", String.self), basis = try optional("basis", NotebookElementBasis.self)
+    let graphic = try optional("graphic", NotebookGraphic.self), style = try optional("textStyle", NativeTextStyle.self)
+    let package = try optional("programPackage", String.self)
+    let fragmentedState = fragment.collections.contains { $0.path.first == "state" }
+    // Preserve the authored source/geometry contract without assembling state
+    // collections or copying an entire program into a consumer-sized read.
+    guard NotebookElementBasis.validParent(parentID, childID: id),
+      NotebookProgramPackage.validSourceReference(package, isProgram: kind == .web,
+        source: source, html: html, css: css, javaScript: javaScript),
+      (style?.isValid(for: source) ?? true), kind == .nativeText || style == nil,
+      (kind == .graphic ? graphic?.isValid == true : graphic == nil),
+      value["state"] != nil || fragmentedState,
+      (kind == .group ? basis?.isValid == true && source.isEmpty && html.isEmpty && css.isEmpty
+        && javaScript.isEmpty && value["state"] == .object([:]) && !fragmentedState : (basis?.isValid ?? true))
+    else { throw NotebookStorageError.corruptRecord(address) }
+    self.pageID = pageID; self.id = id
+    placement = .init(frame: frame, parentID: parentID, basis: basis, isGroup: kind == .group)
+    self.graphic = graphic
+    let text = kind == .nativeText ? source : nil
+    self.text = text; textStyle = style ?? .standard
+    var bytes = MemoryLayout<Self>.stride + id.utf8.count * 2
+      + (parentID?.utf8.count ?? 0) * 2 + (text?.utf8.count ?? 0) * 2
+    if let graphic { bytes += graphic.retainedPayloadBytes - MemoryLayout<NotebookGraphic>.stride }
+    if basis != nil {
+      bytes += MemoryLayout<(SpatialPoint, NotebookGraphicTransform?)>.stride + 2 * MemoryLayout<Int>.stride
+    }
+    if let format = style?.format { bytes += ((format.fontName?.utf8.count ?? 0) + (format.link?.utf8.count ?? 0)) * 2 }
+    if let runs = style?.runs {
+      bytes += runs.capacity * MemoryLayout<NativeTextRun>.stride
+      for run in runs { bytes += ((run.format.fontName?.utf8.count ?? 0) + (run.format.link?.utf8.count ?? 0)) * 2 }
+    }
+    guard bytes <= Self.maximumRetainedBytes else { throw NotebookStorageError.limitExceeded("page_material_bytes") }
+    retainedPayloadBytes = bytes
   }
 }
 
@@ -240,12 +296,28 @@ private final class PageMaterialGeometrySources {
   private var expanded = Set<String>()
   private var claimedStrokes = Set<UUID>()
   private var candidates: [String: NotebookGraphicPresentation.Candidate] = [:]
+  private var retainedBytes = 0
   var claimedElementIDs: Set<String> { Set(candidates.keys) }
 
-  init(store: NotebookStore, pageID: UUID, root: PageMaterialGeometry) {
+  init(store: NotebookStore, pageID: UUID, root: PageMaterialGeometry) throws {
     self.store = store; self.pageID = pageID
-    let key = collaborationIdentity(root.id)
-    elements = [key: root]; pending = [key]
+    elements = [:]; pending = []
+    try insert(root, key: collaborationIdentity(root.id))
+  }
+
+  private func retain(_ bytes: Int) throws {
+    guard bytes <= PageMaterialGeometry.maximumRetainedBytes - retainedBytes else {
+      throw NotebookStorageError.limitExceeded("page_material_bytes")
+    }
+    retainedBytes += bytes
+  }
+
+  private func insert(_ element: PageMaterialGeometry, key: String) throws {
+    // Include dictionary slack and the pending/visited key slots, not opaque
+    // program fields that this geometry owner never retains.
+    try retain(element.retainedPayloadBytes + key.utf8.count * 2
+      + MemoryLayout<PageMaterialGeometry>.stride + 4 * MemoryLayout<String>.stride + 64)
+    elements[key] = element; pending.append(key)
   }
 
   @discardableResult
@@ -257,12 +329,11 @@ private final class PageMaterialGeometrySources {
       throw NotebookStorageError.limitExceeded("page_material_dependencies")
     }
     let address = pageFile(pageID) + "#/elements/@" + fieldKey([key])
-    guard let row = try fragment ?? store.storedFragments(address: address, descendants: false).first else {
+    guard let (_, element) = try PageMaterialGeometry.read(address, database: store.currentSQL!, fragment: fragment) else {
+      try retain(key.utf8.count * 2 + 2 * MemoryLayout<String>.stride + 32)
       absent.insert(key); return nil
     }
-    let element = try PageMaterialGeometry(row)
-    guard collaborationIdentity(element.id) == key else { throw NotebookStorageError.corruptRecord(address) }
-    elements[key] = element; pending.append(key)
+    try insert(element, key: key)
     return element
   }
 
@@ -273,11 +344,23 @@ private final class PageMaterialGeometrySources {
       guard let graphic = element.graphic else { continue }
       let unread = Set(graphic.sourceInkIDs).subtracting(claimedStrokes)
       if !unread.isEmpty {
+        try retain(unread.count * (2 * MemoryLayout<UUID>.stride + 32))
         claimedStrokes.formUnion(unread)
         for claimant in try store.graphicClaimants(on: .page(pageID), sourceInkIDs: unread) {
-          candidates[collaborationIdentity(claimant.candidate.id)] = claimant.candidate
-          claimedStrokes.formUnion(claimant.candidate.graphic.sourceInkIDs)
-          try include(claimant.candidate.id, fragment: claimant.fragment)
+          guard let element = try include(claimant.candidate.id, fragment: claimant.fragment),
+            let graphic = element.graphic else { throw NotebookStorageError.corruptRecord(claimant.fragment.address) }
+          let key = collaborationIdentity(element.id)
+          if candidates[key] == nil {
+            try retain(key.utf8.count * 2 + 2 * (MemoryLayout<String>.stride
+              + MemoryLayout<NotebookGraphicPresentation.Candidate>.stride + 32)
+              + claimant.candidate.version.retainedPayloadBytes - MemoryLayout<ContentFieldVersion>.stride)
+          }
+          // The candidate borrows this captured body's buffers instead of
+          // retaining the claimant decoder's second graphic payload.
+          candidates[key] = .init(id: element.id, graphic: graphic, version: claimant.candidate.version)
+          let additional = Set(graphic.sourceInkIDs).subtracting(claimedStrokes)
+          try retain(additional.count * (2 * MemoryLayout<UUID>.stride + 32))
+          claimedStrokes.formUnion(additional)
         }
       }
       for binding in graphic.connection?.bindings ?? [] { try include(binding.elementID) }

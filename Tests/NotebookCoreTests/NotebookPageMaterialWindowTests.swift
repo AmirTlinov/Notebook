@@ -105,7 +105,8 @@ struct NotebookPageMaterialWindowTests {
     try f.replace([
       .init(id: "text", kind: .nativeText, frame: .init(x: 20, y: 20, width: 120, height: 40), source: "Hello", html: ""),
       .init(id: "large-program", kind: .web, frame: .init(x: 600, y: 600, width: 100, height: 100),
-        source: "Offscreen", html: String(repeating: "x", count: 8 * 1_024 * 1_024))
+        source: "Offscreen", html: String(repeating: "x", count: 8 * 1_024 * 1_024),
+        state: .object(["records": .array([.object(["id": .string("checkpoint"), "value": .number(7)])])]))
     ])
     try f.edit("text", values: ["source": .string("Accepted text")])
     let history = try f.store.nativeHistory(domain: .page(f.pageID), actor: f.actor)
@@ -134,6 +135,120 @@ struct NotebookPageMaterialWindowTests {
     #expect(throws: NotebookStorageError.limitExceeded("page_element_read")) {
       try reopened.readPageElement(pageID: f.pageID, elementID: "large-program")
     }
+  }
+
+  @Test(arguments: ["missing-source", "numeric-source", "missing-html", "numeric-css", "missing-javaScript",
+    "wrong-id", "wrong-address", "wrong-file", "wrong-parent", "wrong-member", "negative-position",
+    "sql-position", "sql-member", "sql-file", "invalid-dependency-graphic", "self-parent-graphic"])
+  func malformedCanonicalRootRefusesAdmissionWithoutChangingVersionOrContent(_ defect: String) throws {
+    let f = try PageMaterialFixture(); defer { f.clean() }
+    let id = defect == "invalid-dependency-graphic" ? "z-dependency" : "body"
+    if defect == "invalid-dependency-graphic" {
+      try f.replace([
+        .init(id: "a-edge", kind: .graphic, frame: .init(x: 10, y: 10, width: 100, height: 100), source: "", html: "",
+          graphic: .init(shape: .connector, connection: .init(start: .init(point: .zero, binding: .init(elementID: id)),
+            end: .init(point: .init(x: 1, y: 1))))),
+        .init(id: id, kind: .graphic, frame: .init(x: 600, y: 600, width: 40, height: 40), source: "", html: "",
+          graphic: .init(shape: .rectangle))
+      ])
+    } else if defect == "self-parent-graphic" {
+      try f.replace([.init(id: id, kind: .graphic, frame: .init(x: 20, y: 20, width: 120, height: 40),
+        source: "", html: "", graphic: .init(shape: .rectangle))])
+    } else {
+      let kind: AgentElementKind = ["missing-html", "numeric-css", "missing-javaScript"].contains(defect) ? .web : .nativeText
+      try f.replace([.init(id: id, kind: kind, frame: .init(x: 20, y: 20, width: 120, height: 40), source: "Hello", html: "")])
+    }
+    try retirePageMaterialFixtureTo29(f.store)
+    let db = try NotebookSQLConnection(url: f.store.databaseURL, writable: true, create: false)
+    let file = pageFile(f.pageID), address = file + "#/elements/@" + id
+    let data = try #require(db.rows("SELECT b.data FROM records r JOIN blobs b ON b.hash=r.hash WHERE r.address=?", [.text(address)]).first?[0].blob)
+    var envelope = try JSONDecoder().decode(JSONValue.self, from: data)
+    var body = try #require(envelope["value"])
+    switch defect {
+    case "missing-source": body = body.setting("source", nil)
+    case "numeric-source": body = body.setting("source", .number(7))
+    case "missing-html": body = body.setting("html", nil)
+    case "numeric-css": body = body.setting("css", .number(7))
+    case "missing-javaScript": body = body.setting("javaScript", nil)
+    case "wrong-id": body = body.setting("id", .string("different"))
+    case "wrong-address": envelope = envelope.setting("address", .string(file + "#/elements/@different"))
+    case "wrong-file": envelope = envelope.setting("file", .string(pageFile(UUID())))
+    case "wrong-parent": envelope = envelope.setting("parent", .string(file + "#/elements/@other"))
+    case "wrong-member": envelope = envelope.setting("member", .string("different"))
+    case "negative-position": envelope = envelope.setting("position", .number(-1))
+    case "self-parent-graphic": body = body.setting("parentID", .string(id))
+    case "sql-position": try db.run("UPDATE records SET position=7 WHERE address=?", [.text(address)])
+    case "sql-member": try db.run("UPDATE records SET member='different' WHERE address=?", [.text(address)])
+    case "sql-file": try db.run("UPDATE records SET file=? WHERE address=?", [.text(pageFile(UUID())), .text(address)])
+    case "invalid-dependency-graphic":
+      let graphic = try #require(body["graphic"]), style = try #require(graphic["style"])
+      body = body.setting("graphic", graphic.setting("style", style.setting("strokeWidth", .number(-1))))
+    default: Issue.record("Unknown malformed root case")
+    }
+    envelope = envelope.setting("value", body)
+    // A persisted malformed v29 row bypasses the ordinary validated writer.
+    // Admission must reject it before publishing its disposable v30 index.
+    let hash = try db.putBlob(NotebookStore.storageEncoder.encode(envelope))
+    try db.run("UPDATE records SET hash=? WHERE address=?", [.text(hash), .text(address)])
+    let before = try pageMaterialAuthoredSnapshot(db)
+    #expect(throws: NotebookStorageError.corruptRecord(address)) {
+      _ = try NotebookStore(root: f.root).prepareDatabase()
+    }
+    #expect(try db.rows("PRAGMA user_version").first?[0].integer == 29)
+    #expect(try db.rows("SELECT name FROM sqlite_master WHERE name LIKE 'page_material_%'").isEmpty)
+    #expect(try pageMaterialAuthoredSnapshot(db) == before)
+  }
+
+  @Test(arguments: ["native-text", "graphic"])
+  func retainedGeometryClosureRefusesAggregateOverflowDuringAdmission(_ material: String) throws {
+    let f = try PageMaterialFixture(); defer { f.clean() }
+    let count = material == "native-text" ? 9 : 96
+    func edgeID(_ index: Int) -> String { String(format: "edge-%03d", index) }
+    var elements: [AgentElement] = []
+    for index in 0..<count {
+      let start = NotebookGraphicConnection.Endpoint(point: .zero,
+        binding: material == "native-text" ? .init(elementID: "text-\(index)") : nil)
+      let end = NotebookGraphicConnection.Endpoint(point: .init(x: 1, y: 1),
+        binding: index + 1 < count ? .init(elementID: edgeID(index + 1)) : nil)
+      elements.append(.init(id: edgeID(index), kind: .graphic, frame: .init(x: 10, y: 10, width: 100, height: 100),
+        source: "", html: "", graphic: .init(shape: .connector, connection: .init(start: start, end: end))))
+      if material == "native-text" {
+        elements.append(.init(id: "text-\(index)", kind: .nativeText,
+          frame: .init(x: 600, y: 600, width: 100, height: 100), source: "Small", html: ""))
+      }
+    }
+    try f.replace(elements)
+    try retirePageMaterialFixtureTo29(f.store)
+    let db = try NotebookSQLConnection(url: f.store.databaseURL, writable: true, create: false)
+    let payload = String(repeating: "x", count: material == "native-text" ? 1_048_576 : 100_000)
+    var bodyBytes = 0
+    for index in 0..<count {
+      let id = material == "native-text" ? "text-\(index)" : edgeID(index)
+      let address = pageFile(f.pageID) + "#/elements/@" + id
+      let data = try #require(db.rows("SELECT b.data FROM records r JOIN blobs b ON b.hash=r.hash WHERE r.address=?", [.text(address)]).first?[0].blob)
+      let root = try db.decodeFragmentEnvelope(data)
+      let value: JSONValue
+      if material == "native-text" { value = root.value.setting("source", .string(payload)) }
+      else { value = root.value.setting("graphic", try #require(root.value["graphic"]).setting("label", .string(payload))) }
+      let changed = try NotebookStore.storageEncoder.encode(root.replacing(value: value))
+      #expect(changed.count < 4 * 1_024 * 1_024, "Each addressed body fits the unchanged public reader")
+      bodyBytes += payload.utf8.count * 2
+      try db.run("UPDATE records SET hash=? WHERE address=?", [.text(try db.putBlob(changed)), .text(address)])
+    }
+    #expect(bodyBytes > 16 * 1_024 * 1_024, "One transitive closure exceeds the source retention allowance")
+    let reader = try NotebookSQLConnection(url: f.store.databaseURL, writable: false, create: false)
+    let firstID = material == "native-text" ? "text-0" : edgeID(0)
+    let readable = try f.store.readTransaction(using: reader) { _ in
+      try f.store.readPageElement(pageID: f.pageID, elementID: firstID)
+    }
+    #expect(readable?.id == firstID)
+    let before = try pageMaterialAuthoredSnapshot(db)
+    #expect(throws: NotebookStorageError.limitExceeded("page_material_bytes")) {
+      _ = try NotebookStore(root: f.root).prepareDatabase()
+    }
+    #expect(try db.rows("PRAGMA user_version").first?[0].integer == 29)
+    #expect(try db.rows("SELECT name FROM sqlite_master WHERE name LIKE 'page_material_%'").isEmpty)
+    #expect(try pageMaterialAuthoredSnapshot(db) == before)
   }
 
   @Test func fittedTextAndTransformedGroupUseSamePlacementAsCompletePage() throws {

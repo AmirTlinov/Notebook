@@ -1,0 +1,72 @@
+{
+  "format": 1,
+  "date": "2026-10-09",
+  "base": "2c3762fbb768bcb4e75348f1d490934df43ab804",
+  "codeTree": "e21cfebe2b893228275a7fbc376027c3c65ce21a",
+  "sources": {
+    "Sources/NotebookCore/NotebookPageMaterialIndex.swift": "9ee34922c8fd1af3a406fc51cee3e7848c4bc9e18f2492681a36755963e3c2f6",
+    "Tests/NotebookCoreTests/NotebookPageMaterialWindowTests.swift": "b1f693b954d7af9d835b2c00de6c4d9971c5d57b67309b722a1b0b24eceaefa6"
+  },
+  "checks": {
+    "base": "2c3762fbb768bcb4e75348f1d490934df43ab804",
+    "tree": "e21cfebe2b893228275a7fbc376027c3c65ce21a",
+    "argv": [
+      "/Users/amir/Documents/projects/Notebook/.build/toolchains/swift-6.4.0/swift-6.4.0-RELEASE-osx-package.pkg/Payload/usr/bin/swift",
+      "test",
+      "--package-path",
+      "/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-root-guard-proof/source",
+      "--scratch-path",
+      "/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/page-material-root-guard-proof/scratch",
+      "-j",
+      "4",
+      "--filter",
+      "NotebookPageMaterialWindowTests|pageMaterialWindowAtOneHundredThousandElements|NotebookPageElementCommandTests/(insertingFragmentsDoesNotReadUnrelatedPageMaterialAndUndoKeepsItsOrder|nativeFrameCommitDoesNotReadOrRewriteInkAndLargeNeighbours|largeCurrentPageStateBorrowsTransferAdmissionAcrossFIFOAndCheckpoint)"
+    ],
+    "wrapperPID": 59513,
+    "UTCStart": "2026-10-09T12:23:54Z",
+    "packageInputCount": 847,
+    "exitCode": 0,
+    "seconds": 188.69249983300688,
+    "inputsUnchanged": true,
+    "UTCEnd": "2026-10-09T12:27:02Z",
+    "functions": 11,
+    "cases": 27,
+    "failures": 0,
+    "skips": 0,
+    "suites": 2,
+    "scope": "16 malformed canonical roots +2 aggregate geometry overflows +9 original geometry/migration/100k/large-neighbour/Undo/checkpoint cases."
+  },
+  "boundedWindow": {
+    "elements": [
+      1000,
+      100000
+    ],
+    "fragments": [
+      6,
+      6
+    ],
+    "wireBytes": [
+      2746,
+      2746
+    ],
+    "sqlVMSteps": [
+      2492,
+      2492
+    ]
+  },
+  "contract": {
+    "canonicalRootAndSQLMetadataBound": true,
+    "requiredScalarStrings": true,
+    "sharedParentGraphicBasisTextStylePredicates": true,
+    "retainedGeometryLimitBytes": 16777216,
+    "opaqueProgramAndCheckpointBodiesAssembled": false,
+    "large8MiBProgramAndFragmentedCheckpointAdmission": true,
+    "public4MiBReaderUnchanged": true,
+    "migrationRefusalRollsBackVersionAndContent": true,
+    "database": 30,
+    "wire": 44,
+    "manifest": 26
+  },
+  "physicalAcceptance": false,
+  "installedPair": 265
+}
