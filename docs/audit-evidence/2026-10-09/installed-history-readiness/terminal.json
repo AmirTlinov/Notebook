@@ -1,0 +1,66 @@
+{
+  "localRootsSent": false,
+  "peerStreams": [
+    {
+      "pageCount": "0",
+      "stream": "acceptedTransactions",
+      "complete": false,
+      "entryCount": "0",
+      "confirmed": false
+    },
+    {
+      "pageCount": "0",
+      "complete": false,
+      "stream": "physicalClosures",
+      "entryCount": "0",
+      "confirmed": false
+    },
+    {
+      "pageCount": "0",
+      "stream": "sourceOriginalRoots",
+      "complete": false,
+      "entryCount": "0",
+      "confirmed": false
+    },
+    {
+      "pageCount": "0",
+      "stream": "replicaInventory",
+      "complete": false,
+      "entryCount": "0",
+      "confirmed": false
+    },
+    {
+      "pageCount": "0",
+      "complete": false,
+      "stream": "replicaControl",
+      "entryCount": "0",
+      "confirmed": false
+    },
+    {
+      "pageCount": "0",
+      "stream": "fleet",
+      "complete": false,
+      "entryCount": "0",
+      "confirmed": false
+    }
+  ],
+  "error": {
+    "code": "staleCut",
+    "message": "History observation refused: connectionChanged."
+  },
+  "deviceIDs": [
+    "29DC77FE-8777-41EC-BE98-704F4668A2F4",
+    "FE3F4542-687E-4827-921B-7CF9D5659BA4"
+  ],
+  "firstCause": {
+    "originJournalGeneration": "FE3F4542-687E-4827-921B-7CF9D5659BA4",
+    "stage": "negotiating",
+    "code": "staleCut",
+    "originDeviceID": "FE3F4542-687E-4827-921B-7CF9D5659BA4",
+    "reason": "connectionChanged"
+  },
+  "state": "failed",
+  "requestID": "666AA952-11D4-4532-9597-7B0C7E5273E4",
+  "stage": "resuming",
+  "formatTransitionAuthorized": false
+}

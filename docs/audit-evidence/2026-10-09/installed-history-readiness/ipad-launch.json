@@ -1,0 +1,56 @@
+{
+  "info" : {
+    "arguments" : [
+      "devicectl",
+      "device",
+      "process",
+      "launch",
+      "--device",
+      "00008103-001E059934D9001E",
+      "--json-output",
+      ".build/gui535-joint265-20261009-v1/ipad-launch.json",
+      "com.amirtlinov.notebook.preview"
+    ],
+    "commandType" : "devicectl.device.process.launch",
+    "environment" : {
+      "TERM" : "dumb"
+    },
+    "jsonVersion" : 5,
+    "outcome" : "success",
+    "version" : "642.16"
+  },
+  "result" : {
+    "deviceIdentifier" : "9CF2C22D-1CC6-573F-B27D-7EB0C81D2DD9",
+    "launchOptions" : {
+      "activatedWhenStarted" : true,
+      "arguments" : [
+
+      ],
+      "environmentVariables" : {
+        "TERM" : "dumb"
+      },
+      "platformSpecificOptions" : {
+
+      },
+      "startStopped" : false,
+      "terminateExistingInstances" : false,
+      "user" : {
+        "active" : true
+      }
+    },
+    "process" : {
+      "auditToken" : [
+        4294967295,
+        501,
+        501,
+        501,
+        501,
+        17470,
+        0,
+        40307
+      ],
+      "executable" : "file:///private/var/containers/Bundle/Application/0D61885C-D19D-46BE-9EEB-EB3AB8098345/Notebook.app/Notebook",
+      "processIdentifier" : 17470
+    }
+  }
+}

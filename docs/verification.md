@@ -511,4 +511,16 @@ and causal connector Undo. Of 847 package inputs, 839 match the streaming proof;
 the other eight belong to the separately accepted source-digest slice. Final
 sources are unchanged across this combined check. No physical acceptance claimed.
 [Bindings and exact scope](audit-evidence/2026-10-09/page-material-common-main/results.json).
+
+## 2026-10-09: installed two-device history observation
+
+One joint request on production pair265 reached negotiation and failed with the
+preserved Mac `staleCut / connectionChanged` cause. The platform log records
+`awdl0` losing its route at 13:12:03.912 UTC and TCP keepalive timeout at
+13:12:08.553 UTC; the same route failure occurred before the request. No roots
+were exchanged. Cleanup completed and fresh Mac reads show authorship open.
+After Amir confirmed Notebook Lab open with the screen on, two further native
+reads still found no connection; no new request was started without READY.
+Installed DB29/wire44/manifest26 and all history remain; format activation is
+false. [Exact installed scope and refusal](audit-evidence/2026-10-09/installed-history-readiness/results.json).
 NB10, optimized native/device budgets and full104 acceptance remain open.

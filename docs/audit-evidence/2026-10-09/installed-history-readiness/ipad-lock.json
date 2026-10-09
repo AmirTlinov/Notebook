@@ -1,0 +1,26 @@
+{
+  "info" : {
+    "arguments" : [
+      "devicectl",
+      "device",
+      "info",
+      "lockState",
+      "--device",
+      "00008103-001E059934D9001E",
+      "--json-output",
+      ".build/gui535-joint265-20261009-v1/ipad-lock.json"
+    ],
+    "commandType" : "devicectl.device.info.lockState",
+    "environment" : {
+      "TERM" : "dumb"
+    },
+    "jsonVersion" : 5,
+    "outcome" : "success",
+    "version" : "642.16"
+  },
+  "result" : {
+    "deviceIdentifier" : "9CF2C22D-1CC6-573F-B27D-7EB0C81D2DD9",
+    "passcodeRequired" : false,
+    "unlockedSinceBoot" : true
+  }
+}

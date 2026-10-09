@@ -1,0 +1,78 @@
+{
+  "format": 1,
+  "date": "2026-10-09",
+  "issue": "GUI-535",
+  "installedPair": 265,
+  "scope": "One live joint request through the installed admitted Mac MCP and production iPad; current main Core verification is a separate scope.",
+  "requestID": "666aa952-11d4-4532-9597-7b0c7e5273e4",
+  "startedAtUTC": "2026-10-09 13:12:01 UTC",
+  "workspaceID": "54349F3B-9E0A-4DEA-B990-40CAE04EF45E",
+  "deviceIDs": [
+    "29DC77FE-8777-41EC-BE98-704F4668A2F4",
+    "FE3F4542-687E-4827-921B-7CF9D5659BA4"
+  ],
+  "before": {
+    "nativePhase": "open",
+    "readySelectedConnection": true,
+    "pendingOffers": 0,
+    "pendingIncoming": 0,
+    "pendingAcknowledgements": 0,
+    "pendingBlobRequests": 0
+  },
+  "terminal": {
+    "state": "failed",
+    "stage": "resuming",
+    "firstCause": {
+      "originJournalGeneration": "FE3F4542-687E-4827-921B-7CF9D5659BA4",
+      "stage": "negotiating",
+      "code": "staleCut",
+      "originDeviceID": "FE3F4542-687E-4827-921B-7CF9D5659BA4",
+      "reason": "connectionChanged"
+    },
+    "peerRootsConfirmed": 0,
+    "localRootsSent": false,
+    "formatTransitionAuthorized": false,
+    "nativePhaseAfter": "open",
+    "reportMeaning": "Refusal preserved. Terminal state means coordination cleanup finished; stage retains the last resuming label. No sealed twelve-root report."
+  },
+  "transport": {
+    "platformLogClock": "Europe/Moscow UTC+03; original local timestamps retained in excerpt",
+    "routeLostUTC": "2026-10-09T13:12:03.912Z",
+    "keepaliveTimeoutUTC": "2026-10-09T13:12:08.553Z",
+    "interface": "awdl0",
+    "platformReason": "No network route; Operation timed out",
+    "sameRouteLossBeforeRequestUTC": "2026-10-09T13:11:40.834Z",
+    "preexistingRouteLossDoesNotEstablishHistoryProtocolDefect": true
+  },
+  "foregroundObservation": {
+    "userConfirmedAppOpenAndScreenOn": true,
+    "twoFreshNativeReadsHaveNoConnections": true,
+    "newRequestStarted": false,
+    "authoredAdmission": "open"
+  },
+  "formats": {
+    "database": 29,
+    "wire": 44,
+    "manifest": 26
+  },
+  "signedInstalledSource": {
+    "evidence": ".build/releases/gui535-265-v1/build.json",
+    "buildSHA256": "52ceaebd33f917800839b345c7637ae6e37a3f8b149b69deadf4a54a5c2b5fc6",
+    "installationSHA256": "55b6ea8df6450b85bea548040725c1edbbe28cbc8d4a1e4d4df301b4567e627e"
+  },
+  "rawLocalEvidence": {
+    "start": ".build/gui535-joint265-20261009-v1/start.json",
+    "terminal": ".build/gui535-joint265-20261009-v1/terminal.json",
+    "network": ".build/gui535-joint265-20261009-v1/mac-network.log",
+    "foreground": ".build/gui535-joint265-20261009-v2/foreground-observation.json"
+  },
+  "files": {
+    "ipad-lock.json": "8bff195dc8fb8b5192113bd4501d2d871fb9160b9a0c30bf9cba7e51af9fa79a",
+    "ipad-launch.json": "1da0b5966e9eceedf307d899bc8f2e73ca396cbcaf60bfc4a5635bb72dba5a9d",
+    "terminal.json": "356dec0b146464488faafa9b053352762107f331a2883cf3bbeb81d03e1b9222",
+    "network-excerpt.log": "b614903194938c7cfbc80cb84d0be2518707a5e400361c7c27a254e4e36ff15f"
+  },
+  "historyRetention": "indefinite",
+  "formatActivation": false,
+  "remaining": "Restore a stable installed peer connection, then repeat one source-bound joint request; birth/event implementation and guarded activation remain open."
+}
