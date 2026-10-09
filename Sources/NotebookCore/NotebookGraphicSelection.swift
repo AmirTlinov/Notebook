@@ -90,9 +90,64 @@ extension NotebookStore {
     let root = target.kind == .page ? pageFile(target.id) + "#"
       : "board.json#/boards/@" + (target.boardID ?? target.id).uuidString.lowercased() + "/board"
     let keys = CollaborativeContent.elementVersionKeys(id: id)
-    let rows = try boundedStoredFragments(keys.map { (root + "/collaboration/fields/@" + fieldKey([$0]), false) },
-      maximumCount: keys.count, maximumBytes: 1_048_576, budget: "native_element_versions")
-    return try Dictionary(uniqueKeysWithValues: rows.map { ($0.member, try $0.value.decode(ContentFieldVersion.self)) })
+    let file = target.kind == .page ? pageFile(target.id) : "board.json"
+    return try sqlRead { database in
+      var remainingBytes: Int64 = 1_048_576
+      var rows: [(key: String, address: String, hash: String)] = []
+      // Length admission covers every requested clock before any body is read.
+      // The same addressed dependencies still belong to the caller's WAL cut.
+      for key in keys {
+        let address = root + "/collaboration/fields/@" + fieldKey([key])
+        let found = try database.rows("SELECT r.address,r.hash,length(b.data) FROM records r LEFT JOIN blobs b ON b.hash=r.hash WHERE r.address=?", [.text(address)])
+        try database.sceneReadRecorder?.records(address, descendants: false, rows: found)
+        guard let row = found.first else { continue }
+        guard let bytes = row[2].integer, bytes >= 0 else { throw NotebookStorageError.corruptRecord(address) }
+        guard bytes <= remainingBytes else { throw NotebookStorageError.limitExceeded("native_element_versions") }
+        remainingBytes -= bytes
+        rows.append((key, address, row[1].text!))
+      }
+      var versions: [String: ContentFieldVersion] = [:]
+      for row in rows {
+        if !database.writable { try Task.checkCancellation() }
+        let data = try database.blob(row.hash)
+        try database.admitJSONDecode(data)
+        let payload = try JSONDecoder().decode(NotebookNativeElementVersionPayload.self, from: data)
+        let version: ContentFieldVersion
+        switch payload {
+        case .clock(let fragment):
+          guard fragment.address == row.address, fragment.file == file, fragment.parent == root,
+            fragment.collection == "collaboration/fields", fragment.member == row.key,
+            fragment.position == 0, fragment.collections.isEmpty else { throw NotebookStorageError.corruptRecord(row.address) }
+          version = fragment.value
+        case .referenced(let raw):
+          guard raw.address == row.address, raw.file == file, raw.parent == root,
+            raw.collection == "collaboration/fields", raw.member == row.key,
+            raw.position == 0, raw.collections.isEmpty else { throw NotebookStorageError.corruptRecord(row.address) }
+          let fragment = try database.expandedStoredFragment(raw, encodedBytes: data.count,
+            remainingBytes: &remainingBytes, budget: "native_element_versions")
+          version = try fragment.value.decode(ContentFieldVersion.self)
+        }
+        guard version.isValid else { throw NotebookStorageError.corruptRecord(row.address) }
+        versions[row.key] = version
+      }
+      return versions
+    }
+  }
+}
+
+/// Ordinary clocks use their sole Codable owner directly. Only an explicit
+/// physical ink reference requires the existing JSON body-expansion owner;
+/// decoding failures never select another interpretation of a clock.
+private enum NotebookNativeElementVersionPayload: Decodable {
+  case clock(NotebookStoredPayload<ContentFieldVersion>)
+  case referenced(NotebookStoredFragment)
+  private enum CodingKeys: String, CodingKey { case inkBodies }
+
+  init(from decoder: Decoder) throws {
+    let fields = try decoder.container(keyedBy: CodingKeys.self)
+    let paths = try fields.decodeIfPresent([[String]].self, forKey: .inkBodies) ?? []
+    if paths.isEmpty { self = .clock(try NotebookStoredPayload<ContentFieldVersion>(from: decoder)) }
+    else { self = .referenced(try NotebookStoredFragment(from: decoder)) }
   }
 }
 

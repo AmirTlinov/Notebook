@@ -1,0 +1,35 @@
+Building for debugging...
+[Computing dependencies]
+[1 / 3] NotebookCoreTests-product
+[3 / 5] NotebookCoreTests-product
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/causal-typed-read/source/Tests/NotebookCoreTests/NotebookGraphicVisibilityTests.swift:167:42: warning: no calls to throwing functions occur within 'try' expression [#UnnecessaryEffectMarker]
+165 |     func inspect(_ graph:NotebookGraphicGraph) throws {
+166 |       for id in ["a","b","link"] {
+167 |         let layout:NotebookGraphicLayout=try #require(graph.resolve(id).layout)
+    |                                          `- warning: no calls to throwing functions occur within 'try' expression [#UnnecessaryEffectMarker]
+168 |         let area=CGRect(x:layout.frame.x,y:layout.frame.y,width:layout.frame.width,height:layout.frame.height)
+169 |         let result=graph.visiblePageGraphics(page.id,in:area)
+
+[#UnnecessaryEffectMarker]: <https://docs.swift.org/compiler/documentation/diagnostics/unnecessary-effect-marker>
+[5 / 11] NotebookCoreTests-product
+[9 / 10] NotebookCoreTests-product
+[11 / 11] NotebookCoreTests-product
+Build complete! (52,51 с)
+◇ Test run started.
+↳ Testing Library Version: 2084
+↳ Target Platform: arm64e-apple-macos14.0
+◇ Suite "Cold page material uses addressed geometry and one source cut" started.
+◇ Test pairedAddressedClockProbe() started.
+CAUSAL_PAIRED_24 kind=previous iteration=0 elapsed=0.021113 seconds sources=24 clocks=168 sql_steps=14832
+CAUSAL_PAIRED_24 kind=direct iteration=1 elapsed=0.012040083 seconds sources=24 clocks=168 sql_steps=14832
+CAUSAL_PAIRED_24 kind=previous iteration=2 elapsed=0.016195875 seconds sources=24 clocks=168 sql_steps=14832
+CAUSAL_PAIRED_24 kind=direct iteration=3 elapsed=0.011165125 seconds sources=24 clocks=168 sql_steps=14832
+CAUSAL_PAIRED_24 kind=previous iteration=4 elapsed=0.016196709 seconds sources=24 clocks=168 sql_steps=14832
+CAUSAL_PAIRED_24 kind=direct iteration=5 elapsed=0.01136775 seconds sources=24 clocks=168 sql_steps=14832
+CAUSAL_PAIRED_24 kind=previous iteration=6 elapsed=0.016103625 seconds sources=24 clocks=168 sql_steps=14832
+CAUSAL_PAIRED_24 kind=direct iteration=7 elapsed=0.012023917 seconds sources=24 clocks=168 sql_steps=14832
+CAUSAL_PAIRED_24 kind=previous iteration=8 elapsed=0.016039583 seconds sources=24 clocks=168 sql_steps=14832
+CAUSAL_PAIRED_24 kind=direct iteration=9 elapsed=0.012681167 seconds sources=24 clocks=168 sql_steps=14832
+✔ Test pairedAddressedClockProbe() passed after 0.187 seconds.
+✔ Suite "Cold page material uses addressed geometry and one source cut" passed after 0.187 seconds.
+✔ Test run with 1 test in 1 suite passed after 0.187 seconds.

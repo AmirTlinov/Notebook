@@ -530,3 +530,20 @@ candidate passed9functions/21cases, one actual4MiB Save and the focused material
 integration2functions/4cases. [Input binding and actual scopes](audit-evidence/2026-10-09/common-digest-adoption/results.json).
 Native WIP and installed265 acceptance remain separate; no unchanged Core check
 was repeated to adopt this identical candidate.
+
+## 2026-10-09: addressed clocks decode through their existing typed owner
+
+The native element reader decodes ordinary causal clocks directly from admitted
+physical bytes with ContentFieldVersion Codable. Explicit ink references reuse
+one decoded envelope through the existing expansion owner. The1MiB ceiling,
+parent allowance, same WAL cut, dependency records and cancellation remain.
+
+An immutable847-input candidate passed3focused Core checks:24-program window
+matches canonical clocks; numeric/max-counter, hidden ink heads, corrupt/missing
+references, tombstones and read overflow preserve their contracts. Ten alternating
+same-process reads of24IDs/168clocks take the same14832SQL VM steps; median
+16.196→12.024ms in the Mac Core probe. The final candidate restores the original
+read cancellation check after that probe; final correctness is checked on its
+exact bytes. The temporary prior-reader comparison is excluded from production.
+[Exact sources and scope](audit-evidence/2026-10-09/causal-typed-read/results.json).
+Physical cold-opening benefit remains to be measured; board projection is unchanged.
