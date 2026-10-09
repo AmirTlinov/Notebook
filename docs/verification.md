@@ -547,3 +547,15 @@ read cancellation check after that probe; final correctness is checked on its
 exact bytes. The temporary prior-reader comparison is excluded from production.
 [Exact sources and scope](audit-evidence/2026-10-09/causal-typed-read/results.json).
 Physical cold-opening benefit remains to be measured; board projection is unchanged.
+
+## 2026-10-09: preserve canonical board and cover clock nesting
+
+The typed addressed reader validates physical metadata for each surface. Page
+clocks are direct children of the page; board/cover clocks belong to the board
+node and its board/collaboration/fields collection. Their point addresses retain
+the embedded /board path. The existing decoder, WAL and byte guards are unchanged.
+
+An immutable847-input candidate passed3methods/4cases: board and cover canonical
+source/versions read, successful CAS and stale-source refusal; page24 clocks,
+numeric/retained ink/malformed envelopes/1MiB bounds. [Exact proof](audit-evidence/2026-10-09/causal-board-guard/results.json).
+This corrects the page-only metadata assumption in656bb71d before acceptance.

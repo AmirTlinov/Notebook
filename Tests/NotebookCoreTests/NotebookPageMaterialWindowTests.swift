@@ -234,6 +234,55 @@ struct NotebookPageMaterialWindowTests {
     #expect(throws: NotebookStorageError.limitExceeded("native_element_versions")) { try read() }
   }
 
+  @Test(arguments: [false, true])
+  func addressedBoardAndCoverClocksPermitCanonicalNativeCAS(cover: Bool) throws {
+    let f = try PageMaterialFixture(); defer { f.clean() }
+    let index = try f.store.loadIndex(), boardID = index.rootBoardID
+    let target = cover ? CollaborationTarget(kind: .cover, id: f.itemID, boardID: boardID)
+      : CollaborationTarget(kind: .board, id: boardID)
+    let element = SpatialElement(id: "body/~", surface: cover ? .cover(f.itemID) : .board(boardID),
+      kind: .nativeText, frame: .init(x: 20, y: 30, width: 140, height: 60),
+      worldOrigin: cover ? nil : .zero, source: "Original", stamp: .init(counter: 0, actor: f.actor))
+    let before = try f.store.loadBoard(items: index.items)
+    var after = before
+    let inserted = after.upsertElement(element, in: boardID, expected: nil, actor: f.actor)
+    #expect(inserted)
+    _ = try f.store.saveBoardEdits(before: before, after: after)
+    let canonical = try #require(f.store.loadBoard(items: index.items).board(boardID))
+    let source = try f.store.readNativeElementSource(target: target, id: element.id)
+    #expect(source.spatial == canonical.element(id: element.id))
+    let versions = try #require(source.versions)
+    #expect(!versions.isEmpty)
+    #expect(versions == canonical.collaboration?.elementVersions(id: element.id))
+
+    // The codec owns nesting: the board node is the physical parent while
+    // its clock address includes the embedded board document's path.
+    let parent = "board.json#/boards/@" + boardID.uuidString.lowercased()
+    let key = fieldKey(["elements", element.id, "content"])
+    let address = parent + "/board/collaboration/fields/@" + fieldKey([key])
+    let physical = try #require(f.store.storedFragments(address: address, descendants: false).first)
+    #expect(physical.parent == parent && physical.collection == "board/collaboration/fields")
+    #expect(physical.member == key && physical.position == 0 && physical.collections.isEmpty)
+
+    let result = try f.store.applyNativeElementEdits([
+      .init(kind: .updateElement, target: target, id: element.id,
+        values: ["source": .string("Changed"), "html": .string("Changed")])
+    ], summary: "Edit canonical spatial source", sources: [source], actor: f.actor)
+    let changed = try #require(result.sources.first)
+    #expect(changed.spatial?.source == "Changed")
+    #expect(changed == (try f.store.readNativeElementSource(target: target, id: element.id)))
+    let saved = try #require(f.store.loadBoard(items: index.items).board(boardID))
+    #expect(changed.versions == saved.collaboration?.elementVersions(id: element.id))
+    let cursor = try f.store.currentChangeCursor()
+    #expect(throws: CollaborationError.self) {
+      try f.store.applyNativeElementEdits([
+        .init(kind: .updateElement, target: target, id: element.id, values: ["source": .string("Stale")])
+      ], summary: "Reject stale source", sources: [source], actor: f.actor)
+    }
+    #expect(try f.store.currentChangeCursor() == cursor)
+    #expect(try f.store.readNativeElementSource(target: target, id: element.id) == changed)
+  }
+
   @Test func unadmittedReadRefusesAndIndexAdmissionPreservesContentAndCursors() throws {
     let f = try PageMaterialFixture(); defer { f.clean() }
     try f.replace([

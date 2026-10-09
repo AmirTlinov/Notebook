@@ -87,8 +87,10 @@ extension NotebookStore {
   }
 
   func readNativeElementVersions(target: CollaborationTarget, id: String) throws -> [String: ContentFieldVersion] {
-    let root = target.kind == .page ? pageFile(target.id) + "#"
-      : "board.json#/boards/@" + (target.boardID ?? target.id).uuidString.lowercased() + "/board"
+    let parent = target.kind == .page ? pageFile(target.id) + "#"
+      : "board.json#/boards/@" + (target.boardID ?? target.id).uuidString.lowercased()
+    let root = target.kind == .page ? parent : parent + "/board"
+    let collection = target.kind == .page ? "collaboration/fields" : "board/collaboration/fields"
     let keys = CollaborativeContent.elementVersionKeys(id: id)
     let file = target.kind == .page ? pageFile(target.id) : "board.json"
     return try sqlRead { database in
@@ -115,13 +117,13 @@ extension NotebookStore {
         let version: ContentFieldVersion
         switch payload {
         case .clock(let fragment):
-          guard fragment.address == row.address, fragment.file == file, fragment.parent == root,
-            fragment.collection == "collaboration/fields", fragment.member == row.key,
+          guard fragment.address == row.address, fragment.file == file, fragment.parent == parent,
+            fragment.collection == collection, fragment.member == row.key,
             fragment.position == 0, fragment.collections.isEmpty else { throw NotebookStorageError.corruptRecord(row.address) }
           version = fragment.value
         case .referenced(let raw):
-          guard raw.address == row.address, raw.file == file, raw.parent == root,
-            raw.collection == "collaboration/fields", raw.member == row.key,
+          guard raw.address == row.address, raw.file == file, raw.parent == parent,
+            raw.collection == collection, raw.member == row.key,
             raw.position == 0, raw.collections.isEmpty else { throw NotebookStorageError.corruptRecord(row.address) }
           let fragment = try database.expandedStoredFragment(raw, encodedBytes: data.count,
             remainingBytes: &remainingBytes, budget: "native_element_versions")

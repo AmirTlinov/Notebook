@@ -1,0 +1,42 @@
+{
+  "status": "fixed-tested-frozen",
+  "base": "656bb71d13899f7287f1d14bbdc6e07bcdceae46",
+  "inputCount": 847,
+  "sourceInputsUnchanged": true,
+  "candidateOnlyChanges": [
+    "Sources/NotebookCore/NotebookGraphicSelection.swift",
+    "Tests/NotebookCoreTests/NotebookPageMaterialWindowTests.swift"
+  ],
+  "workingWIPPreserved": true,
+  "proof": "Reversing only the bounded owner delta reproduces both exact pre-edit working file hashes. Isolated base differs in only the two owned paths.",
+  "workingFiles": {
+    "Sources/NotebookCore/NotebookGraphicSelection.swift": {
+      "beforeSHA256": "729105845411e3d9da9aefb22e09d5a78202d3eff8d39722c51db447434c3c3d",
+      "afterSHA256": "195789ff914e4e276ca6d7ae7fb3583bb85c2b9fdd4db813ee59e9d4d7419446",
+      "isolatedSHA256": "aca1ac1b0be4d60783d0c872b54b4cfdd1f75efd1f8893510c7ccccc93df998e"
+    },
+    "Tests/NotebookCoreTests/NotebookPageMaterialWindowTests.swift": {
+      "beforeSHA256": "f61eeda475456d0df8a89fbdd6289989f022ecfe57fef61851f0c2a3c011d5bd",
+      "afterSHA256": "3a9a9c56e125719e4cd64f126e282ca612febb062c5f79348f75bdc9e4689b37",
+      "isolatedSHA256": "3a9a9c56e125719e4cd64f126e282ca612febb062c5f79348f75bdc9e4689b37"
+    }
+  },
+  "productionChanges": "Physical parent and collection are selected by target kind; point address remains unchanged. Both direct and explicit-ink envelopes use the same canonical metadata checks.",
+  "targetedSelectors": [
+    "NotebookPageMaterialWindowTests/twentyFourProgramWindowKeepsCanonicalAddressedClocks",
+    "NotebookPageMaterialWindowTests/addressedClockReadPreservesNumericAndRetainedInkRules",
+    "NotebookPageMaterialWindowTests/addressedBoardAndCoverClocksPermitCanonicalNativeCAS"
+  ],
+  "testMethods": 3,
+  "actualCases": 4,
+  "log": "/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/causal-board-guard/test.log",
+  "execution": "/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/causal-board-guard/execution.json",
+  "patch": "/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/causal-board-guard/candidate.patch",
+  "patchSHA256": "8aa2f2b57dd060a06fcb70e0096bbb7618849515067d038040ae81f016717bbd",
+  "indexEdited": false,
+  "HEADEdited": false,
+  "nativeOrDeviceRun": false,
+  "format": 1,
+  "date": "2026-10-09",
+  "physicalAcceptance": false
+}

@@ -1,0 +1,31 @@
+Building for debugging...
+[Computing dependencies]
+[3 / 12] NotebookCoreTests-product
+[5 / 14] NotebookCoreTests-product
+/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/causal-board-guard/source/Tests/NotebookCoreTests/NotebookGraphicVisibilityTests.swift:167:42: warning: no calls to throwing functions occur within 'try' expression [#UnnecessaryEffectMarker]
+165 |     func inspect(_ graph:NotebookGraphicGraph) throws {
+166 |       for id in ["a","b","link"] {
+167 |         let layout:NotebookGraphicLayout=try #require(graph.resolve(id).layout)
+    |                                          `- warning: no calls to throwing functions occur within 'try' expression [#UnnecessaryEffectMarker]
+168 |         let area=CGRect(x:layout.frame.x,y:layout.frame.y,width:layout.frame.width,height:layout.frame.height)
+169 |         let result=graph.visiblePageGraphics(page.id,in:area)
+
+[#UnnecessaryEffectMarker]: <https://docs.swift.org/compiler/documentation/diagnostics/unnecessary-effect-marker>
+[10 / 12] NotebookCoreTests-product
+[12 / 12] NotebookCoreTests-product
+Build complete! (43,76 с)
+◇ Test run started.
+↳ Testing Library Version: 2084
+↳ Target Platform: arm64e-apple-macos14.0
+◇ Suite "Cold page material uses addressed geometry and one source cut" started.
+◇ Test addressedBoardAndCoverClocksPermitCanonicalNativeCAS(cover:) started.
+◇ Test twentyFourProgramWindowKeepsCanonicalAddressedClocks() started.
+◇ Test addressedClockReadPreservesNumericAndRetainedInkRules() started.
+◇ Test case passing 1 argument cover → true to addressedBoardAndCoverClocksPermitCanonicalNativeCAS(cover:) started.
+◇ Test case passing 1 argument cover → false to addressedBoardAndCoverClocksPermitCanonicalNativeCAS(cover:) started.
+CAUSAL_WINDOW_24 phase=test iteration=0 elapsed=0.018704166 seconds bodies=24 sources=24 sql_steps=18200
+✔ Test addressedBoardAndCoverClocksPermitCanonicalNativeCAS(cover:) with 2 test cases passed after 0.130 seconds.
+✔ Test twentyFourProgramWindowKeepsCanonicalAddressedClocks() passed after 0.138 seconds.
+✔ Test addressedClockReadPreservesNumericAndRetainedInkRules() passed after 0.159 seconds.
+✔ Suite "Cold page material uses addressed geometry and one source cut" passed after 0.160 seconds.
+✔ Test run with 3 tests in 1 suite passed after 0.160 seconds.
