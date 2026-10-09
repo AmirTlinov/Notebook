@@ -32,16 +32,16 @@ final class DocumentResourceLeaseTests: XCTestCase {
     let before = resources.reservedBytes
     view.refine()
     XCTAssertEqual(resources.reservedBytes, before, "Offscreen refinement cannot consume snapshot admission")
-    let web = try XCTUnwrap(fixture.coordinator.webView)
+    let web = try XCTUnwrap(fixture.coordinator.view)
     for width in [256, 1024] {
       fixture.coordinator.update(document: fixture.document, state: fixture.state, selectedPageIndex: 0,
-        capturesSnapshot: false, onRenderReady: .init { _ in }, onPageLayout: { _ in },
-        onStateChange: { _, _ in nil }, paperPreparationPixelWidth: width)
+        onPageLayout: { _ in }, paperPreparationPixelWidth: width,
+        onPreparationFailure: { _ in }, onLinkActivation: { _ in }, preparationRequestID: nil)
       await waitUntil(timeout: .seconds(3)) {
         fixture.coordinator.hasCanonicalPixels && view.raster?.image.width == width
       }
-      XCTAssertTrue(fixture.coordinator.webView === web,
-        "Thumbnail-to-paper promotion must honor resolution without replacing its browser")
+      XCTAssertTrue(fixture.coordinator.view === web,
+        "Thumbnail-to-paper promotion must honor resolution without replacing its native view")
     }
     fixture.host.frame.origin = .zero
     fixture.host.layoutIfNeeded()
@@ -72,21 +72,21 @@ final class DocumentResourceLeaseTests: XCTestCase {
     await waitUntil(timeout: .seconds(6)) {
       outgoing.coordinator.hasCanonicalPixels && incoming.coordinator.hasCanonicalPixels
     }
-    let oldWeb = try XCTUnwrap(outgoing.coordinator.webView)
-    let newWeb = try XCTUnwrap(incoming.coordinator.webView)
+    let oldWeb = try XCTUnwrap(outgoing.coordinator.view)
+    let newWeb = try XCTUnwrap(incoming.coordinator.view)
     let size = newWeb.bounds.size
     // A live page landing replaces the physical host before the departed
     // coordinator is either reused for preparation or reclaimed by its pool.
     incoming.coordinator.mount(in: outgoing.host, physicalSize: size, isInteractive: true, priority: .currentPage)
-    XCTAssertTrue(outgoing.host.ownsSurface(newWeb))
+    XCTAssertTrue(outgoing.host.ownsPaper(newWeb))
     XCTAssertFalse(oldWeb.isDescendant(of: outgoing.host))
     if reuse {
-      let preparation = DocumentWebHost(); preparation.frame = incoming.host.frame
+      let preparation = DocumentPageHost(); preparation.frame = incoming.host.frame
       container.addSubview(preparation)
       outgoing.coordinator.mount(in: preparation, physicalSize: size, isInteractive: false, priority: .neighbor)
-      XCTAssertTrue(preparation.ownsSurface(oldWeb))
+      XCTAssertTrue(preparation.ownsPaper(oldWeb))
     } else { outgoing.coordinator.invalidate() }
-    XCTAssertTrue(outgoing.host.ownsSurface(newWeb), "A retiring coordinator can remove only its own physical WebKit")
+    XCTAssertTrue(outgoing.host.ownsPaper(newWeb), "A retiring coordinator can remove only its own native paper")
     XCTAssertTrue(newWeb.window === window, "The incoming live paper must remain in the native window")
     XCTAssertTrue(incoming.coordinator.hasCanonicalPixels)
     let installed = try XCTUnwrap(incoming.coordinator.installedPaper)
@@ -102,11 +102,9 @@ final class DocumentResourceLeaseTests: XCTestCase {
     defer { fixture.coordinator.invalidate(); window.isHidden = true }
     await waitUntil(timeout: .seconds(6)) { fixture.coordinator.hasCanonicalPixels }
     XCTAssertTrue(fixture.coordinator.hasCanonicalPixels)
-    let web = try XCTUnwrap(fixture.coordinator.webView)
-    XCTAssertFalse(web.scrollView.isScrollEnabled, "The loaded browser must not take the native page's pan")
-    let oldEditor = try await web.evaluateJavaScript("document.querySelector('textarea') === null") as? Bool
-    XCTAssertEqual(oldEditor, true, "The native source editor is outside the paper's gesture owner")
-    XCTAssertFalse(web.scrollView.isScrollEnabled)
+    XCTAssertTrue(descendants(fixture.host).isEmpty)
+    XCTAssertFalse(fixture.coordinator.view.isUserInteractionEnabled)
+    XCTAssertTrue(fixture.host.hasCanonicalPaper(fixture.coordinator.view))
   }
 
   func testProducerServesExactPageDemandWithoutExpandingTheSceneWindowAgain() async throws {
@@ -140,7 +138,7 @@ final class DocumentResourceLeaseTests: XCTestCase {
     XCTAssertEqual(source.measurementCount, 1)
   }
 
-  func testRequiredSourcePreparationRecoversOnTheSameWebKitWhenActualBytesAreReleased() async throws {
+  func testRequiredSourcePreparationRecoversOnTheSamePaperWhenActualBytesAreReleased() async throws {
     let resources = SceneRenderResources(profile: .interactive)
     let blocker = try XCTUnwrap(resources.reserveDerivedBytes(resources.passiveByteLimit - 2_048, priority: .passive))
     let document = DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "body", source:
@@ -150,35 +148,32 @@ final class DocumentResourceLeaseTests: XCTestCase {
     defer { blocker.release(); fixture.coordinator.invalidate(); window.isHidden = true }
     await waitUntil(timeout: .seconds(6)) { resources.lastRasterRefusal != nil }
     let source = try XCTUnwrap(fixture.coordinator.payload?.source)
-    let web = try XCTUnwrap(fixture.coordinator.webView)
+    let web = try XCTUnwrap(fixture.coordinator.view)
     let runtime = fixture.coordinator.payload?.runtimeID
     let refusal = try XCTUnwrap(resources.lastRasterRefusal).generation
-    XCTAssertFalse(fixture.coordinator.renderIsReady)
+    XCTAssertFalse(fixture.coordinator.hasCanonicalPixels)
     XCTAssertNil(fixture.coordinator.acquisitionError,
       "Temporary source admission is loading, not a poisoned source or a destroyed runtime")
     for _ in 0..<20 { await Task.yield() }
     XCTAssertEqual(resources.lastRasterRefusal?.generation, refusal)
     blocker.release()
-    await waitUntil(timeout: .seconds(6)) { fixture.coordinator.renderIsReady || fixture.coordinator.acquisitionError != nil }
-    XCTAssertTrue(fixture.coordinator.renderIsReady)
+    await waitUntil(timeout: .seconds(6)) { fixture.coordinator.hasCanonicalPixels || fixture.coordinator.acquisitionError != nil }
+    XCTAssertTrue(fixture.coordinator.hasCanonicalPixels)
     XCTAssertNil(fixture.coordinator.acquisitionError)
-    XCTAssertTrue(fixture.coordinator.webView === web)
+    XCTAssertTrue(fixture.coordinator.view === web)
     XCTAssertTrue(fixture.coordinator.payload?.source === source)
     XCTAssertEqual(fixture.coordinator.payload?.runtimeID, runtime)
     XCTAssertEqual(source.preparationCount, 1)
     XCTAssertEqual(source.measurementCount, 1)
-    let receipt = try await web.evaluateJavaScript("notebookRenderer.pageReceipt()") as? [String: Any]
-    XCTAssertEqual(receipt?["pageIndex"] as? Int, 0)
-    XCTAssertEqual(receipt?["layoutCanonical"] as? Bool, true)
+    XCTAssertEqual(web.raster?.page.pageIndex, 0)
+    XCTAssertTrue(fixture.coordinator.hasCanonicalPixels)
   }
 
   func testRetiringTheMeasurementHostPreservesAnAlreadyWaitingSecondReader() async throws {
     let resources = SceneRenderResources(profile: .interactive)
     let document = DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "body", source:
       "\\section{Surviving reader}\\hypertarget{surviving-reader}{}\n\n" + String(repeating: "One source can serve another physical reader. ", count: 160))])
-    let sourceBytes = try canonicalDocumentJSON(DocumentSourceSnapshot(document).message).utf8.count
-    let blocker = try XCTUnwrap(resources.reserveDerivedBytes(resources.passiveByteLimit - sourceBytes * 2 - 4_096,
-      priority: .passive))
+    let blocker = try XCTUnwrap(resources.reserveDerivedBytes(resources.passiveByteLimit - 1, priority: .passive))
     let first = fixture(resources: resources, interactive: true, document: document)
     let window = try show(first.host)
     defer { blocker.release(); first.coordinator.invalidate(); window.isHidden = true }
@@ -186,8 +181,8 @@ final class DocumentResourceLeaseTests: XCTestCase {
     await waitUntil(timeout: .seconds(6)) {
       resources.pendingDerivedRequestCount == 1 && source.pendingPreparationReaderCount == 1
     }
-    // The first physical WebKit is definitely the retired measurement owner;
-    // the second reader is introduced only after that owner's real refusal.
+    // The second paper reader joins the same pending native print allocation
+    // only after the first reader's real admission refusal.
     let second = fixture(resources: resources, interactive: true, document: document,
       store: first.coordinator.programStore)
     defer { second.coordinator.invalidate() }
@@ -197,25 +192,25 @@ final class DocumentResourceLeaseTests: XCTestCase {
     await waitUntil(timeout: .seconds(6)) {
       resources.pendingDerivedRequestCount == 1 && source.pendingPreparationReaderCount == 2
     }
-    let survivingWeb = try XCTUnwrap(second.coordinator.webView)
+    let survivingWeb = try XCTUnwrap(second.coordinator.view)
     let survivingRuntime = second.coordinator.payload?.runtimeID
     first.coordinator.invalidate()
     await waitUntil(timeout: .seconds(6)) {
       source.pendingPreparationReaderCount == 1 && resources.pendingDerivedRequestCount == 1
-        && resources.activeWebSurfaceCount == 1
+        && resources.activeWebSurfaceCount == 0
     }
-    XCTAssertNil(first.coordinator.webView)
+    XCTAssertNil(first.coordinator.view.raster)
     XCTAssertNil(second.coordinator.acquisitionError)
     blocker.release()
-    await waitUntil(timeout: .seconds(6)) { second.coordinator.renderIsReady || second.coordinator.acquisitionError != nil }
-    XCTAssertTrue(second.coordinator.renderIsReady)
+    await waitUntil(timeout: .seconds(6)) { second.coordinator.hasCanonicalPixels || second.coordinator.acquisitionError != nil }
+    XCTAssertTrue(second.coordinator.hasCanonicalPixels)
     XCTAssertNil(second.coordinator.acquisitionError)
-    XCTAssertTrue(second.coordinator.webView === survivingWeb)
+    XCTAssertTrue(second.coordinator.view === survivingWeb)
     XCTAssertEqual(second.coordinator.payload?.runtimeID, survivingRuntime)
     XCTAssertTrue(second.coordinator.payload?.source === source)
     XCTAssertEqual(source.pendingPreparationReaderCount, 0)
     XCTAssertEqual(resources.pendingDerivedRequestCount, 0)
-    XCTAssertEqual(resources.activeWebSurfaceCount, 1)
+    XCTAssertEqual(resources.activeWebSurfaceCount, 0)
   }
 
   func testClosingADocumentDuringByteAdmissionCancelsItsActualPendingPreparation() async throws {
@@ -230,7 +225,7 @@ final class DocumentResourceLeaseTests: XCTestCase {
     let refusal = resources.lastRasterRefusal?.generation
     blocker.release()
     for _ in 0..<20 { await Task.yield() }
-    XCTAssertNil(fixture.coordinator.webView)
+    XCTAssertNil(fixture.coordinator.view.raster)
     XCTAssertNil(fixture.coordinator.payload)
     XCTAssertEqual(resources.pendingDerivedRequestCount, 0)
     XCTAssertEqual(resources.lastRasterRefusal?.generation, refusal)
@@ -249,126 +244,34 @@ final class DocumentResourceLeaseTests: XCTestCase {
     let window = try show(fixture.host)
     defer { fixture.coordinator.invalidate(); window.isHidden = true }
     await waitUntil(timeout: .seconds(8), message: {
-      "ready=\(fixture.coordinator.renderIsReady) error=\(String(describing: fixture.coordinator.acquisitionError)) peak=\(resources.peakAccountedBytes)"
-    }) { fixture.coordinator.renderIsReady || fixture.coordinator.acquisitionError != nil }
+      "ready=\(fixture.coordinator.hasCanonicalPixels) error=\(String(describing: fixture.coordinator.acquisitionError)) peak=\(resources.peakAccountedBytes)"
+    }) { fixture.coordinator.hasCanonicalPixels || fixture.coordinator.acquisitionError != nil }
     XCTAssertNil(fixture.coordinator.acquisitionError)
-    XCTAssertTrue(fixture.coordinator.renderIsReady)
+    XCTAssertTrue(fixture.coordinator.hasCanonicalPixels)
     XCTAssertGreaterThan(pageCount, 1)
     XCTAssertEqual(fixture.coordinator.payload?.source.preparationCount, 1)
-    XCTAssertEqual(resources.activeWebSurfaceCount, 1)
+    XCTAssertEqual(resources.activeWebSurfaceCount, 0)
     XCTAssertLessThan(resources.peakAccountedBytes, sceneBytes + 48 * 1024 * 1024,
       "Bounded PDF decode, paper pixels and hit regions stay within the passive scene allowance")
     XCTAssertEqual(scene.byteCount, sceneBytes)
     XCTAssertFalse(scene.isReleased, "Preparation cannot evict the shown scene")
   }
 
-  func testASeventhDocumentWaitsWithoutCreatingWebKitAndCancellationReleasesItsRequest() async throws {
-    let resources = SceneRenderResources(maximumWebSurfaces: 6)
-    var held: [WebSurfaceLease] = []
-    for _ in 0..<6 { held.append(try await resources.acquireWebSurface(priority: .currentPage)) }
-    defer { held.forEach { $0.release() } }
-    let fixture = fixture(resources: resources, interactive: true)
-    await waitUntil { resources.pendingWebRequestCount == 1 }
-    XCTAssertNil(fixture.coordinator.webView)
-    XCTAssertFalse(fixture.coordinator.renderIsReady)
-    XCTAssertEqual(resources.activeWebSurfaceCount, 6)
-    fixture.coordinator.invalidate()
-    fixture.coordinator.invalidate()
-    await waitUntil { resources.pendingWebRequestCount == 0 }
-    held.removeLast().release()
-    await Task.yield()
-    XCTAssertEqual(resources.activeWebSurfaceCount, 5)
-    XCTAssertNil(fixture.coordinator.webView, "An abandoned queue entry cannot create a late document surface")
-  }
-
-  func testCurrentPageReceivesTheReleasedSlotBeforeQueuedNeighbour() async throws {
-    let resources = SceneRenderResources(maximumWebSurfaces: 1)
-    let blocker = try await resources.acquireWebSurface(priority: .background)
-    let neighbor = fixture(resources: resources, interactive: false)
-    await waitUntil { resources.pendingWebRequestCount == 1 }
-    let current = fixture(resources: resources, interactive: true)
-    await waitUntil { resources.pendingWebRequestCount == 2 }
-    blocker.release()
-    await waitUntil { current.coordinator.webView != nil }
-    XCTAssertNil(neighbor.coordinator.webView)
-    XCTAssertEqual(resources.activeWebSurfaceCount, 1)
-    current.coordinator.invalidate()
-    await waitUntil { neighbor.coordinator.webView != nil }
-    XCTAssertEqual(resources.activeWebSurfaceCount, 1)
-    neighbor.coordinator.invalidate()
-    XCTAssertEqual(resources.activeWebSurfaceCount, 0)
-  }
-
-  func testReadyDocumentKeepsItsLeasedWebKitWhenItBecomesTheNeighbourInTheCurl() async throws {
+  func testReadyDocumentKeepsItsNativePaperWhenItBecomesTheNeighbourInTheCurl() async throws {
     let resources = SceneRenderResources(maximumWebSurfaces: 1)
     let fixture = fixture(resources: resources, interactive: true)
     let window = try show(fixture.host)
     defer { fixture.coordinator.invalidate(); window.isHidden = true }
-    await waitUntil(timeout: .seconds(8)) { fixture.coordinator.renderIsReady }
-    let original = try XCTUnwrap(fixture.coordinator.webView)
+    await waitUntil(timeout: .seconds(8)) { fixture.coordinator.hasCanonicalPixels }
+    let original = try XCTUnwrap(fixture.coordinator.view)
     let paper = WorkspaceItemGeometry.uncompiledDocument
     fixture.coordinator.mount(in: fixture.host, physicalSize: .init(width: paper.width, height: paper.height),
       isInteractive: false, priority: .neighbor)
-    XCTAssertTrue(fixture.coordinator.webView === original)
-    XCTAssertEqual(resources.activeWebSurfaceCount, 1)
-    XCTAssertEqual(resources.pendingWebRequestCount, 0)
-    XCTAssertFalse(fixture.coordinator.acceptsInput)
-    XCTAssertTrue(fixture.coordinator.renderIsReady)
-  }
-
-  func testLateMessagesCannotPublishOrWriteAfterDismantleAndOldProgramTokenIsRejected() async throws {
-    let resources = SceneRenderResources(maximumWebSurfaces: 1)
-    var states: [JSONValue] = [], readies: [Bool] = []
-    let document = DocumentTestFiles.document(actor: UUID(), contents: [
-      .program(id: "control", html: "<p>State owner</p>", javaScript: """
-        addEventListener('message',event=>{
-          if(event.data?.fixtureStep===2)notebook.commit({step:2});
-        });
-        notebook.ready(Promise.resolve());
-        """, height: 100)
-    ])
-    let actor = UUID()
-    var journal = DocumentStateJournal(id: document.id, actor: actor)
-    let fixture = fixture(resources: resources, interactive: true, document: document,
-      ready: { readies.append($0) }, state: { program, value in
-        states.append(value)
-        journal.commit(instanceID: program.id, value: value, actor: actor)
-        return journal.records.first { $0.id == program.id }?.valueVersion
-      })
-    let window = try show(fixture.host)
-    defer { fixture.coordinator.invalidate(); window.isHidden = true }
-    await waitUntil(timeout: .seconds(8)) { fixture.coordinator.renderIsReady }
-    let web = try XCTUnwrap(fixture.coordinator.webView)
-    let payload = try XCTUnwrap(fixture.coordinator.payload)
-    let token = try XCTUnwrap(payload.blockTokens["control"])
-    func state(_ token: String, revision: Int) -> [String: Any] {
-      ["kind": "state", "documentID": document.id.uuidString, "runtimeID": payload.runtimeID.uuidString,
-        "blockID": "control", "blockToken": token,
-        "snapshot": ["revision": String(revision), "units": 10, "cost": 144]]
-    }
-    fixture.coordinator.receive(body: state("old-token", revision: 1), from: web)
-    XCTAssertTrue(states.isEmpty)
-    _ = try await web.evaluateJavaScript("document.querySelector('iframe').contentWindow.postMessage({fixtureStep:2},'*');true")
-    await waitUntil { states.count == 1 }
-    let drained = try await web.callAsyncJavaScript("return await notebookRenderer.finishAcceptedPrograms();",
-      arguments: [:], in: nil, contentWorld: .page) as? [[String: Any]]
-    XCTAssertEqual(drained?.first?["acceptedOnly"] as? Bool, true)
-    XCTAssertNil(fixture.coordinator.acquisitionError)
-    XCTAssertEqual(states, [.object(["step": .number(2)])], "The active program's real state route is connected")
-    let frame = try await web.evaluateJavaScript("notebookRenderer.pageReceipt()") as? [String: Any]
-    var lateFrame = try XCTUnwrap(frame)
-    lateFrame["kind"] = "rendered"
-    fixture.coordinator.invalidate()
-    let readyCount = readies.count
-    fixture.coordinator.receive(body: state(token, revision: 2), from: web)
-    fixture.coordinator.receive(body: lateFrame, from: web)
-    fixture.coordinator.webView(web, didFinish: nil)
-    try await Task.sleep(for: .milliseconds(60))
-    XCTAssertEqual(states, [.object(["step": .number(2)])])
-    XCTAssertEqual(readies.count, readyCount)
-    XCTAssertFalse(fixture.coordinator.renderIsReady)
+    XCTAssertTrue(fixture.coordinator.view === original)
     XCTAssertEqual(resources.activeWebSurfaceCount, 0)
-    XCTAssertNil(fixture.coordinator.webView)
+    XCTAssertEqual(resources.pendingWebRequestCount, 0)
+    XCTAssertFalse(fixture.coordinator.nativeInputIsReady(in: fixture.host))
+    XCTAssertTrue(fixture.coordinator.hasCanonicalPixels)
   }
 
   func testChangingDocumentOwnerWithEqualVersionStampsReplacesItsPayload() async throws {
@@ -378,8 +281,8 @@ final class DocumentResourceLeaseTests: XCTestCase {
     let other = DocumentTestFiles.document(actor: fixture.document.contentStamp.actor,
       contents: [.tex(id: "body", source: "A different physical owner")])
     let state = DocumentStateJournal(id: other.id, actor: fixture.state.stamp.actor)
-    fixture.coordinator.update(document: other, state: state, selectedPageIndex: 0, capturesSnapshot: false,
-      onRenderReady: .init { _ in }, onPageLayout: { _ in },  onStateChange: { _, _ in nil })
+    fixture.coordinator.update(document: other, state: state, selectedPageIndex: 0, onPageLayout: { _ in },
+      onPreparationFailure: { _ in }, onLinkActivation: { _ in }, preparationRequestID: nil)
     XCTAssertEqual(fixture.coordinator.payload?.documentID, other.id)
     XCTAssertEqual(fixture.coordinator.payload?.source.document.files.first { $0.id == "body" }?.source, "A different physical owner")
   }
@@ -398,7 +301,7 @@ final class DocumentResourceLeaseTests: XCTestCase {
       controller.update(ownerID: document.id, sequenceRevision: "fixture-order", pageCount: 8, selectedIndex: committed,
         navigationIsEnabled: true, pageIsInteractive: true, canBeginNavigation: { true },
         page: { index, current, readiness in
-          AnyView(DocumentWebView(document: document, state: state, isInteractive: current,
+          AnyView(DocumentPageView(document: document, state: state, isInteractive: current,
             selectedPageIndex: index, capturesSnapshot: false, onRenderReady: readiness,
             onPageLayout: { _ in }, onLinkActivation: { _ in nil },  onStateChange: { _, _ in nil }, resources: resources, isCurrent: current))
         }, onCommit: { index, _ in committed = index }, onTransitioningChange: { _ in })
@@ -425,14 +328,13 @@ final class DocumentResourceLeaseTests: XCTestCase {
       configure()
       XCTAssertEqual(controller.displayedIndex, expected)
       XCTAssertEqual(committed, expected)
-      XCTAssertLessThanOrEqual(resources.activeWebSurfaceCount, 2,
-        "The current paper and one non-executing preparation surface are the bounded physical window")
+      XCTAssertEqual(resources.activeWebSurfaceCount, 0,
+        "Plain document navigation consumes no program executor")
       XCTAssertLessThanOrEqual(controller.cachedPageIdentities.count, 4,
         "Settled live pages are the current page, its neighbours and one directional prewarm, not traversal history")
       let web = try await livePage(expected, in: next.view,
         diagnostics: { DocumentPagePresentationOwner.presentationDiagnostic(documentID: document.id, resources: resources) })
-      let receipt = try await web.evaluateJavaScript("window.notebookRenderer.pageReceipt()") as? [String: Any]
-      XCTAssertEqual(receipt?["pageIndex"] as? Int, expected,
+      XCTAssertEqual(web.raster?.page.pageIndex, expected,
         "The prepared next controller contains its own physical document page, not page zero")
     }
   }
@@ -450,7 +352,7 @@ final class DocumentResourceLeaseTests: XCTestCase {
     let window = UIWindow(windowScene: scene), controller = IPadPageTurnController()
     var commits: [Int] = [], selected = 0
     var layout: DocumentPageLayout?, request: DocumentPageNavigationRequest?, fulfilledRequest: UUID?
-    var preparedTarget: WKWebView?, preparedTargetRuntimeID: UUID?
+    var preparedTarget: DocumentPaperView?
     func configure() {
       controller.update(ownerID: document.id, sequenceRevision: revision, pageCount: layout?.pageCount ?? 16, selectedIndex: selected,
         navigationIsEnabled: true, pageIsInteractive: true, canBeginNavigation: { true },
@@ -461,16 +363,12 @@ final class DocumentResourceLeaseTests: XCTestCase {
             if ready, index == 9, preparedTarget == nil, controller.displayedIndex != 9 {
               // Observe the actual live destination before readiness lets the
               // native controller land it; do not substitute the outgoing shell.
-              preparedTarget = self.descendants(controller.view).first {
-                guard let renderer = $0.navigationDelegate as? DocumentWebCoordinator else { return false }
-                return renderer.payload?.pageIndex == index && renderer.hasCanonicalPixels
-              }
-              preparedTargetRuntimeID = (preparedTarget?.navigationDelegate as? DocumentWebCoordinator)?.payload?.runtimeID
+              preparedTarget = self.papers(controller.view).first { $0.raster?.page.pageIndex == index }
               XCTAssertNotNil(preparedTarget)
             }
             readiness(ready)
           }
-          return AnyView(DocumentWebView(document: document, state: state, isInteractive: current,
+          return AnyView(DocumentPageView(document: document, state: state, isInteractive: current,
             selectedPageIndex: index, capturesSnapshot: false, onRenderReady: observedReadiness,
             onPageLayout: { layout = $0 }, onLinkActivation: { _ in nil }, onStateChange: { _, _ in nil }, resources: resources, isCurrent: current))
         }, onCommit: { _, _ in XCTFail("A document landing uses its source-bound receipt") }, onTransitioningChange: { _ in },
@@ -491,14 +389,14 @@ final class DocumentResourceLeaseTests: XCTestCase {
     }) {
       // One installed input surface and one reclaimable preparation executor
       // serve the whole bounded window; neighbours themselves remain pixels.
-      guard resources.activeWebSurfaceCount - resources.activeBackgroundWebSurfaceCount == 1 else { return false }
+      guard resources.activeWebSurfaceCount == 0 else { return false }
       destination = controller.sheetController(controller.sheetController, after: source)
       return destination != nil
     }
     XCTAssertEqual(try XCTUnwrap(layout).pageCount, 16)
     let landing = try XCTUnwrap(destination)
     let preparedWeb = try await livePage(0, in: source.view)
-    let sharedSource = try XCTUnwrap((preparedWeb.navigationDelegate as? DocumentWebCoordinator)?.payload?.source)
+    let sharedSource = DocumentRenderRegistry.shared.session(documentID: document.id, resources: resources).source(document)
     XCTAssertTrue(descendants(landing.view).isEmpty, "A ready neighbouring physical sheet uses passive pixels from this runtime")
     let operation = try PageTurnFrameFixture.begin(on: controller, target: landing)
     let frozenWindow = controller.cachedPageIdentities
@@ -507,8 +405,8 @@ final class DocumentResourceLeaseTests: XCTestCase {
       configure()
       await Task.yield()
       XCTAssertEqual(controller.cachedPageIdentities, frozenWindow)
-      XCTAssertEqual(resources.activeWebSurfaceCount - resources.activeBackgroundWebSurfaceCount, 1)
-      XCTAssertLessThanOrEqual(peak.maximum, 2)
+      XCTAssertEqual(resources.activeWebSurfaceCount, 0)
+      XCTAssertEqual(peak.maximum, 0)
     }
     let latestRequest = try XCTUnwrap(request).id
     PageTurnFrameFixture.finish(on: controller, operation: operation, completed: true)
@@ -525,15 +423,12 @@ final class DocumentResourceLeaseTests: XCTestCase {
       diagnostics: { DocumentPagePresentationOwner.presentationDiagnostic(documentID: document.id, resources: resources) })
     XCTAssertFalse(try XCTUnwrap(preparedTarget) === preparedWeb,
       "A distant live target prepares without replacing the current paper before its native handoff")
-    XCTAssertTrue(web === preparedTarget, "The landing adopts the exact prepared WebKit, not another shell")
-    let renderer = try XCTUnwrap(web.navigationDelegate as? DocumentWebCoordinator)
-    XCTAssertEqual(renderer.payload?.runtimeID, preparedTargetRuntimeID)
-    XCTAssertTrue(renderer.payload?.source === sharedSource)
-    let receipt = try await web.evaluateJavaScript("window.notebookRenderer.pageReceipt()") as? [String: Any]
-    XCTAssertEqual(receipt?["pageIndex"] as? Int, 9)
+    XCTAssertTrue(web === preparedTarget, "The landing adopts the exact prepared native paper")
+    XCTAssertEqual(web.raster?.sourceKey, sharedSource.message.key)
+    XCTAssertEqual(web.raster?.page.pageIndex, 9)
     peak.sample()
-    XCTAssertLessThanOrEqual(peak.maximum, 2,
-      "Every physical handoff retains one current paper and at most one reusable preparation executor")
+    XCTAssertEqual(peak.maximum, 0,
+      "Every physical handoff uses the shared native PDF")
     XCTAssertLessThanOrEqual(controller.cachedPageIdentities.count, 4)
   }
 
@@ -545,11 +440,11 @@ final class DocumentResourceLeaseTests: XCTestCase {
     let root = UIViewController()
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let window = UIWindow(windowScene: scene); window.rootViewController = root; window.makeKeyAndVisible()
-    let current = DocumentPhysicalPageCoordinator(), paper = DocumentWebHost()
+    let current = DocumentPhysicalPageCoordinator(), paper = DocumentPageHost()
     let coordinators = (0..<4).map { _ in DocumentPhysicalPageCoordinator() }
-    let hosts = (0..<4).map { _ in DocumentWebHost() }
+    let hosts = (0..<4).map { _ in DocumentPageHost() }
     var ready: Set<Int> = [], failures: [String] = []
-    func present(_ coordinator: DocumentPhysicalPageCoordinator, host: DocumentWebHost, index: Int, thumbnail: Bool) {
+    func present(_ coordinator: DocumentPhysicalPageCoordinator, host: DocumentPageHost, index: Int, thumbnail: Bool) {
       let key = thumbnail ? index : -1
       coordinator.update(.init(document: document, state: state, pageIndex: index,
         isCurrent: !thumbnail, isVisible: true, isInteractive: !thumbnail, pageTurnActive: false,
@@ -588,7 +483,7 @@ final class DocumentResourceLeaseTests: XCTestCase {
     XCTAssertEqual(resources.rasterAdmission.pinnedCount, 1)
   }
 
-  func testSixThumbnailsAndThreePhysicalPagesShareOneDocumentRuntime() async throws {
+  func testSixThumbnailsAndThreePhysicalPagesShareOneCanonicalSourceWithoutWebKit() async throws {
     let resources = SceneRenderResources(maximumWebSurfaces: 6, maximumBackgroundWebSurfaces: 2)
     let paragraphs = (0..<120).map { "Paragraph \($0). " + String(repeating: "A preview preserves the physical page. ", count: 12) }.joined(separator: "\n\n")
     let document = DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "body", source: paragraphs)])
@@ -598,7 +493,7 @@ final class DocumentResourceLeaseTests: XCTestCase {
     func content(previews: Bool) -> AnyView {
       AnyView(ZStack {
         ForEach(0..<3, id: \.self) { index in
-          DocumentWebView(document: document, state: state, isInteractive: index == 0,
+          DocumentPageView(document: document, state: state, isInteractive: index == 0,
             selectedPageIndex: index, capturesSnapshot: false,
             onRenderReady: .init { if $0 { liveReady.insert(index) } else { liveReady.remove(index) } },
             onPageLayout: { _ in }, onLinkActivation: { _ in nil },  onStateChange: { _, _ in nil }, resources: resources, isCurrent: index == 0)
@@ -619,7 +514,7 @@ final class DocumentResourceLeaseTests: XCTestCase {
     window.rootViewController = controller; window.makeKeyAndVisible()
     defer { window.isHidden = true; window.rootViewController = nil }
     await waitUntil(timeout: .seconds(10), message: { "Live pages \(liveReady.sorted()); \(DocumentPagePresentationOwner.presentationDiagnostic(documentID: document.id, resources: resources))" }) { liveReady.count == 3 }
-    XCTAssertEqual(resources.activeWebSurfaceCount - resources.activeBackgroundWebSurfaceCount, 1)
+    XCTAssertEqual(resources.activeWebSurfaceCount, 0)
     let sourceBytes = resources.reservedBytes
     XCTAssertGreaterThan(sourceBytes, 0)
     controller.rootView = content(previews: true)
@@ -629,15 +524,12 @@ final class DocumentResourceLeaseTests: XCTestCase {
     }) {
       peakWeb = max(peakWeb, resources.activeWebSurfaceCount)
       peakPreparation = max(peakPreparation, resources.activeBackgroundWebSurfaceCount)
-      return previewReady.count == 6 && resources.activeWebSurfaceCount - resources.activeBackgroundWebSurfaceCount == 1 && resources.pendingWebRequestCount == 0
+      return previewReady.count == 6 && resources.activeWebSurfaceCount == 0 && resources.pendingWebRequestCount == 0
     }
-    XCTAssertLessThanOrEqual(peakWeb, 3,
-      "Current paper, one passive paper, and an inert measurement owner may overlap during preparation")
+    XCTAssertEqual(peakWeb, 0,
+      "Native PDF preparation is independent of program execution slots")
     XCTAssertLessThanOrEqual(peakPreparation, 2)
-    XCTAssertEqual(descendants(controller.view).filter { web in
-      guard let host = web.superview?.superview as? DocumentWebHost else { return false }
-      return host.hasInteractiveSurface(web)
-    }.count, 1, "Only the installed paper admits input; passive preparation and previews cannot")
+    XCTAssertTrue(descendants(controller.view).isEmpty, "Plain paper and previews require no WebKit")
     XCTAssertLessThanOrEqual(resources.activeWebSurfaceCount, 2)
     XCTAssertEqual(liveReady.count, 3)
     for index in 0..<6 {
@@ -649,13 +541,13 @@ final class DocumentResourceLeaseTests: XCTestCase {
         XCTAssertLessThanOrEqual(try XCTUnwrap(raster.image.cgImage).width, 256)
         XCTAssertNil(resources.retainRaster(for: source, minimumScale: 1), "A preview cannot certify exact paper-resolution export")
       }
-      XCTAssertEqual(DocumentRenderRegistry.shared.entry(document: document, pageIndex: index)?.token, token)
+      XCTAssertEqual(DocumentRenderRegistry.shared.entry(document: document, pageIndex: index)?.pageIndex, index)
       raster.release()
     }
     controller.rootView = content(previews: false)
     let source = DocumentRenderRegistry.shared.session(documentID: document.id, resources: resources).source(document)
     await waitUntil(message: { "Retained page packets after thumbnail removal: \(source.retainedPageIndices.sorted())" }) {
-      resources.activeWebSurfaceCount - resources.activeBackgroundWebSurfaceCount == 1 && resources.pendingWebRequestCount == 0
+      resources.activeWebSurfaceCount == 0 && resources.pendingWebRequestCount == 0
         && source.retainedPageIndices.isSubset(of: Set(0...3))
     }
     XCTAssertTrue(source.retainedPageIndices.isSubset(of: Set(0...3)),
@@ -675,35 +567,6 @@ final class DocumentResourceLeaseTests: XCTestCase {
     await source.discardIdlePreparation()
     XCTAssertLessThan(resources.reservedBytes, beforeReclaim,
       "The canonical index and unused page packets have a real memory lifecycle")
-  }
-
-  func testInitialInteractiveCommitBelongsToTheActiveRuntimeBeforeItsFirstFrame() async throws {
-    let resources = SceneRenderResources(maximumWebSurfaces: 2)
-    let document = DocumentTestFiles.document(actor: UUID(), contents: [
-      .program(id: "initial", html: "<p>Initial state</p>", css: "",
-        javaScript: "notebook.commit({ready:true});notebook.ready(Promise.resolve())", initialState: .null, height: 100)
-    ])
-    var activeStates: [JSONValue] = [], passiveStates: [JSONValue] = [], readyAtCommit: [Bool] = []
-    var activeCoordinator: DocumentWebCoordinator?
-    let active = fixture(resources: resources, interactive: true, document: document,
-      state: { _, value in
-        activeStates.append(value)
-        readyAtCommit.append(activeCoordinator?.renderIsReady ?? true)
-        return nil
-      })
-    activeCoordinator = active.coordinator
-    let passive = fixture(resources: resources, interactive: false, document: document,
-      state: { _, value in passiveStates.append(value); return nil })
-    let window = try show(active.host)
-    let container = try XCTUnwrap(window.rootViewController?.view)
-    container.addSubview(passive.host); passive.host.frame = container.bounds
-    defer { active.coordinator.invalidate(); passive.coordinator.invalidate(); window.isHidden = true }
-    await waitUntil(timeout: .seconds(8)) {
-      active.coordinator.renderIsReady && passive.coordinator.renderIsReady && activeStates.count == 1
-    }
-    XCTAssertEqual(activeStates, [.object(["ready": .bool(true)])])
-    XCTAssertEqual(readyAtCommit, [false], "Initial execution can commit before a finished frame exists")
-    XCTAssertTrue(passiveStates.isEmpty, "A neighbour or preview cannot publish autonomous state into the document")
   }
 
   func testFailedThumbnailPreparationReleasesSlotsAndDoesNotRetryOnViewUpdates() async throws {
@@ -746,30 +609,25 @@ final class DocumentResourceLeaseTests: XCTestCase {
     (view as? WKWebView).map { [$0] } ?? view.subviews.flatMap(descendants)
   }
 
-  private func livePage(_ index: Int, in view: UIView, diagnostics: () -> String = { "" }) async throws -> WKWebView {
+  private func papers(_ view: UIView) -> [DocumentPaperView] {
+    (view as? DocumentPaperView).map { [$0] } ?? view.subviews.flatMap(papers)
+  }
+
+  private func livePage(_ index: Int, in view: UIView, diagnostics: () -> String = { "" }) async throws -> DocumentPaperView {
     let deadline = ContinuousClock.now + .seconds(8)
-    while ContinuousClock.now < deadline {
-      for web in descendants(view) {
-        var ancestor: UIView? = web
-        var acceptsInput = true
-        while let next = ancestor { acceptsInput = acceptsInput && next.isUserInteractionEnabled; ancestor = next.superview }
-        if acceptsInput,
-          let receipt = try? await web.evaluateJavaScript("notebookRenderer.pageReceipt()") as? [String: Any],
-          receipt["pageIndex"] as? Int == index, receipt["layoutCanonical"] as? Bool == true { return web }
-      }
+    while .now < deadline {
+      if let paper = papers(view).first(where: { paper in
+        guard paper.raster?.page.pageIndex == index else { return false }
+        var ancestor = paper.superview
+        while let next = ancestor {
+          if let host = next as? DocumentPageHost { return host.hasCanonicalPaper(paper) && host.isUserInteractionEnabled }
+          ancestor = next.superview
+        }
+        return false
+      }) { return paper }
       try await Task.sleep(for: .milliseconds(10))
     }
-    var observed: [String] = []
-    for web in descendants(view) {
-      var path: [String] = [], ancestor: UIView? = web
-      while let node = ancestor { path.append("\(type(of: node)):\(node.isUserInteractionEnabled)"); ancestor = node.superview }
-      let receipt = try? await web.evaluateJavaScript("JSON.stringify(notebookRenderer.pageReceipt())")
-      observed.append("\(path.joined(separator: "/")): \(String(describing: receipt))")
-    }
-    func hierarchy(_ node: UIView) -> String {
-      "\(type(of: node))@\(ObjectIdentifier(node))[\(node.subviews.map(hierarchy).joined(separator: ","))]"
-    }
-    XCTFail("The selected physical page \(index) did not restore its exact live cut before admitting input: \(observed); tree=\(hierarchy(view)); owner=\(diagnostics())")
+    XCTFail("Physical page \(index) has no native canonical input cut: \(diagnostics())")
     throw DocumentSessionError.invalidLayout
   }
 
@@ -778,7 +636,7 @@ final class DocumentResourceLeaseTests: XCTestCase {
     layout: @escaping (DocumentPageLayout) -> Void = { _ in },
     ready: @escaping @MainActor @Sendable (Bool) -> Void = { _ in },
     state stateChange: @escaping (DocumentProgramSource, JSONValue) -> ContentFieldVersion? = { _,_ in nil })
-      -> (document: DocumentDocument, state: DocumentStateJournal, coordinator: DocumentWebCoordinator, host: DocumentWebHost) {
+      -> (document: DocumentDocument, state: DocumentStateJournal, coordinator: DocumentPaperCoordinator, host: DocumentPageHost) {
     let document = suppliedDocument ?? DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "body", source: "\\section{A real document page}\\hypertarget{a-real-document-page}{}\n\nA bounded WebKit owner.")])
     let state = DocumentStateJournal(id: document.id, actor: UUID())
     let store: NotebookStore
@@ -788,18 +646,19 @@ final class DocumentResourceLeaseTests: XCTestCase {
       try! store.prepare()
       addTeardownBlock { try? FileManager.default.removeItem(at: store.root) }
     }
-    let coordinator = DocumentWebCoordinator(resources: resources, onRenderReady: .init(ready),
-      onPageLayout: layout,  onStateChange: stateChange)
+    let session = DocumentRenderRegistry.shared.session(documentID: document.id, resources: resources)
+    let coordinator = DocumentPaperCoordinator(resources: resources, renderSession: session)
     coordinator.programStore = store
-    coordinator.update(document: document, state: state, selectedPageIndex: 0, capturesSnapshot: false,
-      onRenderReady: .init(ready), onPageLayout: layout,  onStateChange: stateChange)
-    let host = DocumentWebHost(), paper = WorkspaceItemGeometry.uncompiledDocument
+    coordinator.onPaperReady = { ready(true) }
+    coordinator.update(document: document, state: state, selectedPageIndex: 0, onPageLayout: layout,
+      onPreparationFailure: { _ in }, onLinkActivation: { _ in }, preparationRequestID: nil)
+    let host = DocumentPageHost(), paper = WorkspaceItemGeometry.uncompiledDocument
     coordinator.mount(in: host, physicalSize: .init(width: paper.width, height: paper.height),
       isInteractive: interactive, priority: interactive ? .currentPage : .neighbor)
     return (document, state, coordinator, host)
   }
 
-  private func show(_ host: DocumentWebHost) throws -> UIWindow {
+  private func show(_ host: DocumentPageHost) throws -> UIWindow {
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let window = UIWindow(windowScene: scene), controller = UIViewController()
     window.rootViewController = controller

@@ -1,7 +1,6 @@
 import NotebookCore
 import PDFKit
 import UIKit
-import WebKit
 import XCTest
 @testable import Notebook
 
@@ -34,7 +33,7 @@ final class DocumentSaveTransitionTests: XCTestCase {
     }
     let initial = try XCTUnwrap(model.presence), center = try XCTUnwrap(model.board?.focusedCenter(of: id))
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
-    let window = UIWindow(windowScene: scene), rootController = UIViewController(), host = DocumentWebHost()
+    let window = UIWindow(windowScene: scene), rootController = UIViewController(), host = DocumentPageHost()
     let previous = scene.windows.first { $0.isKeyWindow }
     window.rootViewController = rootController; window.makeKeyAndVisible()
     let viewport = SpatialPoint(x: window.bounds.width, y: window.bounds.height), geometry = model.itemGeometry(id)
@@ -57,19 +56,12 @@ final class DocumentSaveTransitionTests: XCTestCase {
          onLinkActivation: { _ in }, snapshotPixelWidth: nil,
         onPreparationFailure: { _ in }, programStore: model.store), in: host, resources: resources)
     }
-    func paper() -> WKWebView? {
-      func find(_ view: UIView) -> WKWebView? {
-        if let web = view as? WKWebView, host.ownsSurface(web) { return web }
-        for child in view.subviews {
-          if let found = find(child) { return found }
-        }
-        return nil
-      }
-      return find(host)
+    func paper() -> DocumentPaperView? {
+      host.subviews.compactMap { $0 as? DocumentPaperView }.first { host.hasCanonicalPaper($0) }
     }
     try update()
-    await wait { (paper()?.navigationDelegate as? DocumentWebCoordinator)?.hasCanonicalPixels == true && host.isUserInteractionEnabled }
-    let web = try XCTUnwrap(paper())
+    await wait { paper()?.raster != nil && host.isUserInteractionEnabled }
+    let installed = try XCTUnwrap(paper())
     let current = try XCTUnwrap(model.documents[id])
     let block = try XCTUnwrap(current.files.first { $0.id == "body" })
     let editor = DocumentSourceEditorSession(request: .init(documentID: id, file: block,
@@ -80,7 +72,7 @@ final class DocumentSaveTransitionTests: XCTestCase {
     XCTAssertEqual(model.documentSavePresentation?.source, "\\section{Saved by the sole writer}\\hypertarget{saved-by-the-sole-writer}{}")
     let savedDocument = try await model.performStoreCommand { try $0.loadDocument(id) }
     XCTAssertEqual(savedDocument.files.first { $0.id == "body" }?.source, "\\section{Saved by the sole writer}\\hypertarget{saved-by-the-sole-writer}{}")
-    // The exact new source exists in SQLite, but has not been sent to this WK.
+    // The exact new source exists in SQLite, but has not been installed on this paper.
     XCTAssertFalse(DocumentRenderRegistry.shared.hasLiveSurface(document: savedDocument,
       state: try XCTUnwrap(model.documentStates[id]), pageIndex: 0))
     physical.invalidate()
@@ -95,9 +87,9 @@ final class DocumentSaveTransitionTests: XCTestCase {
       XCTAssertTrue(DocumentRenderRegistry.shared.hasLiveSurface(document: savedDocument,
         state: try XCTUnwrap(model.documentStates[id]), pageIndex: 0, scope: .paper))
     }
-    XCTAssertTrue(paper() === web, "A host gap is not a document close or a replacement WK runtime")
-    let rendered = try await web.evaluateJavaScript("!document.querySelector('textarea') && notebookRenderer.presentationReceipt() !== null")
-    XCTAssertEqual(rendered as? Bool, true)
+    XCTAssertTrue(paper() === installed, "A host gap retains the same paper owner")
+    XCTAssertEqual(paper()?.raster?.page.artifact.document, savedDocument)
+    XCTAssertFalse(host.subviews.contains { $0 is UITextView }, "Only canonical PDF pixels enter the paper")
     let print = try await DocumentCanonicalPrint.store.artifact(for: savedDocument)
     XCTAssertTrue(PDFDocument(data: print.pdf)?.string?.contains("Saved by the sole writer") == true)
     XCTAssertNil(model.documentSavePresentation?.source, "Only a proven native installation releases the retained saved text")

@@ -3,8 +3,8 @@ import NotebookCore
 import NotebookTypesetter
 import WebKit
 
-/// One mounted document shares immutable bridge inputs. The page coordinators
-/// still own their existing WebKit instances; this session never creates one.
+/// Mounted pages and requested exports share immutable source and state cuts.
+/// This session owns no presentation or executable program instance.
 @MainActor
 final class DocumentRenderSession {
   let documentID: UUID
@@ -51,47 +51,29 @@ final class DocumentRenderSession {
   }
 }
 
-struct DocumentSourceMessage: Encodable, Sendable {
+struct DocumentSourceMessage: Sendable {
   let key: String
   let documentID: UUID
-  let paper: DocumentPaperLayout
-  let files: [DocumentFile]
-  let programs: [DocumentProgramSource]
-  let programHeights: [String: Double]
-  private enum CodingKeys: String, CodingKey { case key, documentID, paper, files, programs, programHeights }
-  func encode(to encoder: Encoder) throws {
-    var c = encoder.container(keyedBy: CodingKeys.self)
-    try c.encode(key, forKey: .key); try c.encode(documentID, forKey: .documentID)
-    try c.encode(paper, forKey: .paper)
-    // The browser needs addresses, never another editable copy of source bytes.
-    try c.encode(files.map { ["id": $0.id, "path": $0.path] }, forKey: .files)
-    try c.encode(programHeights, forKey: .programHeights)
-    try c.encode(programs.map { program in JSONValue.object([
-      "id": .string(program.id), "path": .string(program.path), "programPackage": .string(program.programPackage),
-      "initialState": program.initialState, "sourceBasis": .string(program.sourceBasis)]) }, forKey: .programs)
-  }
 }
 
-struct DocumentStateMessage: Encodable, Sendable {
+struct DocumentStateMessage: Sendable {
   let key: String
   let documentID: UUID
   let states: [String: JSONValue]
   let versions: [String: ContentFieldVersion]
 }
 
-/// Pages share one immutable source. Its body crosses the browser boundary
-/// only as addressed page metadata; the native editor reads the actual files.
+/// Pages share immutable source, native print geometry and addressed programs.
 @MainActor
 final class DocumentSourceSnapshot {
   private let key = UUID().uuidString
   let document: DocumentDocument
   private let store: NotebookStore?
-  var message: DocumentSourceMessage { .init(key: key, documentID: document.id, paper: paper(on: 0), files: document.files, programs: programs, programHeights: layout?.programHeights(ids: programIDs) ?? [:]) }
+  var message: DocumentSourceMessage { .init(key: key, documentID: document.id) }
   let stamp: VersionStamp
   var programs: [DocumentProgramSource] { preparation?.programs ?? [] }
   var programIDs: Set<String> { preparation?.programIDs ?? [] }
   var programFailures: [String: String] { preparation?.programFailures ?? [:] }
-  private var blockIDs: Set<String> { Set(document.files.map(\.id)).union(programIDs) }
   private(set) var layout: DocumentLayoutRecord?
   private var preparation: DocumentPagePreparation?
   private var reuse: DocumentPrintReuse?
@@ -99,7 +81,7 @@ final class DocumentSourceSnapshot {
   private var layoutObservers: [UUID: (DocumentLayoutRecord) -> Void] = [:]
   var onProgramsChanged: () -> Void = {}
   private(set) var preparationCount = 0
-  private var receiptLayoutMismatch: String?
+  private var layoutMismatch: String?
 
   init(_ document: DocumentDocument, store: NotebookStore? = nil, reuse: DocumentPrintReuse? = nil) {
     self.document = document; self.store = store; stamp = document.contentStamp; self.reuse = reuse
@@ -143,8 +125,7 @@ final class DocumentSourceSnapshot {
       preparation?.onProgramsChanged = { [weak self] in self?.onProgramsChanged() }
       preparation?.onLayoutAccepted = { [weak self] record in
         guard let self else { return }
-        if let layout, layout !== record { guard layout.matches(record) else { throw DocumentSessionError.inconsistentLayout } }
-        else { layout = record }
+        try acceptPreparedLayout(record)
         for observer in Array(layoutObservers.values) { observer(layout!) }
       }
     }
@@ -169,18 +150,22 @@ final class DocumentSourceSnapshot {
 
   private func acceptPreparedLayout() throws {
     guard let measured = preparation?.layout else { throw DocumentSessionError.invalidLayout }
+    try acceptPreparedLayout(measured)
+  }
+
+  func acceptPreparedLayout(_ measured: DocumentLayoutRecord) throws {
     if let layout, layout !== measured, !layout.matches(measured) {
-      receiptLayoutMismatch = "handoff pages=\(layout.pageCount)/\(measured.pageCount); old=\(Array(layout.regions.prefix(3))); new=\(Array(measured.regions.prefix(3)))"
+      layoutMismatch = "handoff pages=\(layout.pageCount)/\(measured.pageCount); old=\(Array(layout.regions.prefix(3))); new=\(Array(measured.regions.prefix(3)))"
       throw DocumentSessionError.inconsistentLayout
     }
     layout = layout ?? measured
   }
 
   func retainPage(_ index: Int, hostID: UUID) { preparation?.retainPage(index, hostID: hostID) }
-  func releasePage(hostID: UUID, in web: WKWebView?) {
+  func releasePage(hostID: UUID, in web: WKWebView?, retiring: Bool = false) {
     // An idle executor releases page demand, not its mounted source metadata.
     // A physical WebKit/source retirement ends the observer as well.
-    if web != nil { layoutObservers[hostID] = nil }
+    if web != nil || retiring { layoutObservers[hostID] = nil }
     preparation?.releasePage(hostID: hostID, in: web)
   }
   func discardIdlePreparation() async { await preparation?.discardIdlePreparation() }
@@ -192,34 +177,13 @@ final class DocumentSourceSnapshot {
   var preparationPhasesMS: [String: Double] { preparation?.preparationPhasesMS ?? [:] }
   var preparationBeganAt: TimeInterval? { preparation?.preparationBeganAt }
   var preparationCompletedAt: TimeInterval? { preparation?.preparationCompletedAt }
-  var lastPreparationLayoutMismatch: String? { receiptLayoutMismatch ?? preparation?.lastLayoutMismatch }
+  var lastPreparationLayoutMismatch: String? { layoutMismatch ?? preparation?.lastLayoutMismatch }
 
   func retryPagePreparation(_ pageIndex: Int) {
     if preparation?.failed == true { preparation = nil }
     else { preparation?.retryPage(pageIndex) }
   }
 
-  func acceptLayout(_ receipt: NSDictionary, geometry: WorkspaceItemGeometry) throws -> DocumentLayoutRecord {
-    guard let scope = receipt["layoutScope"] as? String, scope == "source" || scope == "page",
-      scope != "page" || layout != nil else { throw DocumentSessionError.invalidLayout }
-    let measured = try DocumentLayoutRecord(receipt: receipt, sourceKey: message.key, blockIDs: blockIDs, geometry: geometry)
-    if let layout {
-      if receipt["layoutScope"] as? String == "page" {
-        guard let index = receipt["pageIndex"] as? Int, (0..<layout.pageCount).contains(index),
-          layout.matches(measured, pageIndex: index) else {
-          let page = receipt["pageIndex"] as? Int
-          receiptLayoutMismatch = "installed page=\(String(describing: page)); pages=\(layout.pageCount)/\(measured.pageCount); old=\(Array(layout.regions.filter { $0.pageIndex == page }.prefix(3))); new=\(Array(measured.regions.prefix(3)))"
-          throw DocumentSessionError.inconsistentLayout
-        }
-      } else if !layout.matches(measured) {
-        receiptLayoutMismatch = "source receipt pages=\(layout.pageCount)/\(measured.pageCount); old=\(Array(layout.regions.prefix(3))); new=\(Array(measured.regions.prefix(3)))"
-        throw DocumentSessionError.inconsistentLayout
-      }
-      return layout
-    }
-    layout = measured
-    return measured
-  }
 
 }
 
@@ -227,8 +191,6 @@ final class DocumentSourceSnapshot {
 final class DocumentStateSnapshot {
   let message: DocumentStateMessage
   let records: [DocumentStateRecord]
-  private var encoding: Task<NotebookProgramStateEncoding, Error>?
-  private(set) var encodingCount = 0
 
   init(documentID: UUID, records: [DocumentStateRecord]) {
     self.records = records
@@ -237,25 +199,7 @@ final class DocumentStateSnapshot {
       versions: Dictionary(uniqueKeysWithValues: records.map { ($0.id, $0.valueVersion) }))
   }
 
-  func encodedState(resources: SceneRenderResources) async throws -> NotebookProgramStateEncoding {
-    if encoding == nil {
-      encodingCount += 1
-      let message = message
-      encoding = Task { @MainActor in
-        let value: JSONValue = .object(["key": .string(message.key), "documentID": .string(message.documentID.uuidString),
-          "states": .object(message.states), "versions": try .encode(message.versions)])
-        return try await NotebookProgramStateEncoding.prepare(value, resources: resources)
-      }
-    }
-    return try await encoding!.value
-  }
 
-  isolated deinit { encoding?.cancel() }
-}
-
-func canonicalDocumentJSON<T: Encodable>(_ value: T) throws -> String {
-  let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
-  return String(decoding: try encoder.encode(value), as: UTF8.self)
 }
 
 enum DocumentSessionError: Error, LocalizedError {

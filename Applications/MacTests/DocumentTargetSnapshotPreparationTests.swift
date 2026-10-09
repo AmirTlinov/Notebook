@@ -8,11 +8,11 @@ import XCTest
 final class DocumentTargetSnapshotPreparationTests: XCTestCase {
   func testHeadlessPressureWithdrawsOptionalQueueButKeepsRequiredPreparation() async throws {
     let resources = SceneRenderResources(byteLimit: 64 * 1024 * 1024, maximumBackgroundWebSurfaces: 1)
-    let blocker = BackgroundPaper(resources: resources)
+    let blocker = try BackgroundProgram(resources: resources)
     defer { blocker.close() }
-    try await waitUntil { blocker.coordinator.hasCanonicalPixels }
-    let optionalDocument = DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "body", source: "Optional current view")])
-    let requiredDocument = DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "body", source: "Accepted target")])
+    try await waitUntil { blocker.coordinator.ready }
+    let optionalDocument = DocumentTestFiles.document(actor: UUID(), contents: [.program(id: "body", html: "Optional current view", height: 100)])
+    let requiredDocument = DocumentTestFiles.document(actor: UUID(), contents: [.program(id: "body", html: "Accepted target", height: 100)])
     let optionalState = DocumentStateJournal(id: optionalDocument.id, actor: UUID())
     let requiredState = DocumentStateJournal(id: requiredDocument.id, actor: UUID())
     var optionalRaster: RasterLease?, requiredRaster: RasterLease?
@@ -20,12 +20,12 @@ final class DocumentTargetSnapshotPreparationTests: XCTestCase {
     let optional = Task { @MainActor in
       defer { optionalFinished = true }
       optionalRaster = try await DocumentSnapshotCache.shared.prepare(document: optionalDocument, state: optionalState,
-        pageIndex: 0, resources: resources, pixelWidth: 160, purpose: { .optional })
+        pageIndex: 0, resources: resources, programStore: blocker.store, pixelWidth: 160, purpose: { .optional })
     }
     let required = Task { @MainActor in
       defer { requiredFinished = true }
       requiredRaster = try await DocumentSnapshotCache.shared.prepare(document: requiredDocument, state: requiredState,
-        pageIndex: 0, resources: resources, pixelWidth: 160)
+        pageIndex: 0, resources: resources, programStore: blocker.store, pixelWidth: 160)
     }
     defer { optional.cancel(); required.cancel() }
     addTeardownBlock { @MainActor in
@@ -148,80 +148,8 @@ final class DocumentTargetSnapshotPreparationTests: XCTestCase {
     XCTAssertEqual(resources.reservedBytes, baseline)
   }
 
-  func testBorrowedProducerRevokesOptionalCaptureButPreservesItsJoinedRequiredReader() async throws {
-    let resources = SceneRenderResources(byteLimit: 32 * 1024 * 1024)
-    let paper = BackgroundPaper(resources: resources)
-    defer { paper.close() }
-    try await waitUntil { paper.coordinator.hasCanonicalPixels }
-    let web = try XCTUnwrap(paper.coordinator.webView)
-    let held = try XCTUnwrap(resources.reserveDerivedBytes(resources.byteLimit - resources.reservedBytes - 1_000_000, priority: .passive))
-    defer { held.release() }
-    var firstRaster: RasterLease?, secondRaster: RasterLease?, requiredRaster: RasterLease?
-    var firstFinished = false, secondFinished = false, requiredFinished = false, requiredJoined = false
-    let first = Task { @MainActor in
-      defer { firstFinished = true }
-      firstRaster = try await paper.coordinator.retainPreparedSnapshot(pixelWidth: 512,
-        force: true, waitsForRasterAdmission: true, purpose: { .optional })
-    }
-    var second: Task<Void, any Error>?, required: Task<Void, any Error>?
-    defer { first.cancel(); second?.cancel(); required?.cancel() }
-    addTeardownBlock { @MainActor in
-      first.cancel(); second?.cancel(); required?.cancel(); held.release(); paper.close()
-      _ = await first.result
-      if let second { _ = await second.result }
-      if let required { _ = await required.result }
-      firstRaster?.release(); secondRaster?.release(); requiredRaster?.release()
-    }
-    try await waitUntil { paper.coordinator.pendingRasterSnapshot != nil }
-    first.cancel()
-    resources.handleMemoryPressure(.warning)
-    XCTAssertNil(paper.coordinator.pendingRasterSnapshot, "Revocation retires the optional reservation waiter synchronously")
-    resources.handleMemoryPressure(.normal)
-    try await waitUntil { firstFinished }
-    do { try await first.value; XCTFail("A revoked claim resumed when pressure became normal") }
-    catch { XCTAssertTrue(error is CancellationError, "\(error)") }
-    XCTAssertNil(firstRaster)
-    XCTAssertTrue(paper.coordinator.webView === web)
-    XCTAssertTrue(paper.coordinator.hasCanonicalPixels)
-    XCTAssertEqual(resources.rasterCount, 0)
-    second = Task { @MainActor in
-      defer { secondFinished = true }
-      secondRaster = try await paper.coordinator.retainPreparedSnapshot(pixelWidth: 512,
-        force: true, waitsForRasterAdmission: true, purpose: { .optional })
-    }
-    try await waitUntil { paper.coordinator.pendingRasterSnapshot != nil }
-    let demand = try XCTUnwrap(paper.coordinator.pendingRasterSnapshot)
-    required = Task { @MainActor in
-      defer { requiredFinished = true }
-      requiredRaster = try await paper.coordinator.retainPreparedSnapshot(pixelWidth: 512, waitsForRasterAdmission: true,
-        purpose: { requiredJoined = true; return .required })
-    }
-    // While pressure is normal, this closure is first read by the actual shared
-    // job's add(claim), before its first await; the role is already latched here.
-    try await waitUntil { requiredJoined }
-    resources.handleMemoryPressure(.warning)
-    second?.cancel()
-    XCTAssertNotNil(paper.coordinator.pendingRasterSnapshot, "A required borrower keeps the exact reservation waiter")
-    held.release()
-    try await waitUntil { requiredFinished && secondFinished }
-    let requiredTask = try XCTUnwrap(required), optionalTask = try XCTUnwrap(second)
-    try await requiredTask.value
-    do { try await optionalTask.value; XCTFail("The cancelled optional borrower received the required reader's output") }
-    catch { XCTAssertTrue(error is CancellationError, "\(error)") }
-    XCTAssertNil(secondRaster)
-    let raster = try XCTUnwrap(requiredRaster)
-    XCTAssertEqual(raster.source, demand.source)
-    XCTAssertTrue(paper.coordinator.webView === web, "Pressure never invalidates the borrowed live producer")
-    XCTAssertTrue(paper.coordinator.hasCanonicalPixels)
-    XCTAssertNil(paper.coordinator.pendingRasterSnapshot)
-    XCTAssertEqual(resources.activeWebSurfaceCount, 1)
-    try attach(["fixture": "borrowed-reader-required-latch", "firstRevoked": firstFinished && firstRaster == nil,
-      "requiredJoined": requiredJoined, "requiredFinished": requiredFinished, "optionalFinished": secondFinished,
-      "samePhysicalProducer": paper.coordinator.webView === web, "activeWeb": resources.activeWebSurfaceCount,
-      "captureBytes": demand.bytes], name: "borrowed-reader-pressure-result")
-  }
 
-  func testMemoryPressureCancelsAutomaticReadButKeepsDurableTargetUntilNormalResumes() async throws {
+  func testMemoryPressureCancelsRequestedViewButKeepsDurableTargetUntilNormalResumes() async throws {
     let resources = SceneRenderResources.shared
     let previousPressure = resources.memoryPressureLevel
     resources.handleMemoryPressure(.normal)
@@ -333,20 +261,49 @@ final class DocumentTargetSnapshotPreparationTests: XCTestCase {
 
   func testExtendedColorSnapshotFitsItsGrantBeforePublication() async throws {
     let resources = SceneRenderResources(byteLimit: 32 * 1024 * 1024)
-    let paper = BackgroundPaper(resources: resources)
-    defer { paper.close() }
-    try await waitUntil { paper.coordinator.hasCanonicalPixels }
-    let size = try XCTUnwrap(paper.coordinator.webView).bounds.size
+    let program = try BackgroundProgram(resources: resources)
+    defer { program.close() }
+    try await waitUntil { program.coordinator.ready }
+    let size = program.coordinator.viewportSize
     let width = 256, height = Int(ceil(256 * size.height / size.width))
     let bytes = try XCTUnwrap(SceneRenderResources.estimatedRasterBytes(pixelWidth: width, pixelHeight: height,
       bytesPerPixel: SceneRenderResources.webSnapshotBytesPerPixel))
     let before = resources.reservedBytes
-    let lease = try await paper.coordinator.retainPreparedSnapshot(pixelWidth: width, force: true)
+    var captureGrant: Int?
+    program.coordinator.snapshotSubmission = { web, configuration, completion in
+      captureGrant = resources.reservedBytes - before
+      web.takeSnapshot(with: configuration, completionHandler: completion)
+    }
+    let lease = try await program.coordinator.capture(sourceOffset: 0, height: size.height, pixelWidth: width)
     defer { lease.release() }
     let bitmap = try XCTUnwrap(lease.image.cgImage(forProposedRect: nil, context: nil, hints: nil))
-    XCTAssertLessThanOrEqual(bitmap.bytesPerRow * bitmap.height * 2, bytes)
-    XCTAssertLessThanOrEqual(resources.peakAccountedBytes, before + bytes)
+    let grant = try XCTUnwrap(captureGrant, "The padded capture must own its complete grant before WebKit")
+    XCTAssertGreaterThanOrEqual(grant, bytes)
+    XCTAssertEqual(bitmap.width, width); XCTAssertEqual(bitmap.height, height)
+    XCTAssertLessThanOrEqual(bitmap.bytesPerRow * bitmap.height * 2, grant)
+    XCTAssertLessThanOrEqual(resources.peakAccountedBytes, before + grant)
     XCTAssertEqual(resources.reservedBytes, before)
+
+    let space = try XCTUnwrap(CGColorSpace(name: CGColorSpace.extendedLinearSRGB))
+    let info = CGBitmapInfo.floatComponents.union(.byteOrder16Little).rawValue | CGImageAlphaInfo.premultipliedLast.rawValue
+    let context = try XCTUnwrap(CGContext(data: nil, width: width, height: height, bitsPerComponent: 16,
+      bytesPerRow: 0, space: space, bitmapInfo: info))
+    context.setFillColor(try XCTUnwrap(CGColor(colorSpace: space, components: [1.5, 0.25, 0.5, 1])))
+    context.fill(.init(x: 0, y: 0, width: width, height: height))
+    let extended = try XCTUnwrap(context.makeImage())
+    let normalized = try XCTUnwrap(NSImage.normalizedSnapshot(extended,
+      region: .init(x: 0.25, y: 0.5, width: Double(width) - 0.5, height: Double(height) - 1),
+      pixelSize: .init(width: width, height: height), logicalSize: size))
+    let cropped = try XCTUnwrap(normalized.cgImage(forProposedRect: nil, context: nil, hints: nil))
+    XCTAssertEqual(cropped.bitsPerComponent, extended.bitsPerComponent)
+    XCTAssertEqual(cropped.bitsPerPixel, 64)
+    XCTAssertEqual(cropped.bitmapInfo, extended.bitmapInfo)
+    XCTAssertEqual(cropped.colorSpace?.name, extended.colorSpace?.name)
+    XCTAssertLessThanOrEqual(cropped.bytesPerRow * cropped.height * 2, grant)
+    let data = try XCTUnwrap(cropped.dataProvider?.data), samples = try XCTUnwrap(CFDataGetBytePtr(data))
+    let center = (height / 2) * cropped.bytesPerRow + (width / 2) * 8
+    let red = Float16(bitPattern: UInt16(samples[center]) | UInt16(samples[center + 1]) << 8)
+    XCTAssertEqual(Float(red), 1.5, accuracy: 0.001, "The fractional cut must not clamp extended color to RGBA8")
   }
 
   func testActualNewDocumentPreparesItsOwnRequestedRasterWithoutASeededCache() async throws {
@@ -361,16 +318,16 @@ final class DocumentTargetSnapshotPreparationTests: XCTestCase {
   func testQueuedDocumentPreparationSurvivesRealBackgroundCapacityRelease() async throws {
     let resources = SceneRenderResources.shared
     try await waitUntil { resources.activeBackgroundWebSurfaceCount == 0 && resources.pendingWebRequestCount == 0 }
-    let blockers = (0..<resources.maximumBackgroundWebSurfaces).map { _ in BackgroundPaper() }
+    let blockers = try (0..<resources.maximumBackgroundWebSurfaces).map { _ in try BackgroundProgram() }
     defer { blockers.forEach { $0.close() } }
-    try await waitUntil { blockers.allSatisfy { $0.coordinator.hasCanonicalPixels } }
+    try await waitUntil { blockers.allSatisfy { $0.coordinator.ready } }
     XCTAssertEqual(resources.activeBackgroundWebSurfaceCount, resources.maximumBackgroundWebSurfaces)
-    let document = DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "body", source: "\\section{Waiting for physical capacity}")])
+    let document = DocumentTestFiles.document(actor: UUID(), contents: [.program(id: "body", html: "Waiting for physical capacity", height: 100)])
     let state = DocumentStateJournal(id: document.id, actor: UUID())
     let started = ProcessInfo.processInfo.systemUptime
     var completedAt: Double?, releasedAt: Double?, failure: Error?, result: RasterLease?
     let preparation = Task { @MainActor in
-      do { result = try await DocumentSnapshotCache.shared.prepare(document: document, state: state, pageIndex: 0) }
+      do { result = try await DocumentSnapshotCache.shared.prepare(document: document, state: state, pageIndex: 0, programStore: blockers[0].store) }
       catch { failure = error }
       completedAt = ProcessInfo.processInfo.systemUptime
     }
@@ -400,14 +357,14 @@ final class DocumentTargetSnapshotPreparationTests: XCTestCase {
   func testCancellationRetiresQueuedPreparationWithoutAWebKitOrLateImage() async throws {
     let resources = SceneRenderResources.shared
     try await waitUntil { resources.activeBackgroundWebSurfaceCount == 0 && resources.pendingWebRequestCount == 0 }
-    let blockers = (0..<resources.maximumBackgroundWebSurfaces).map { _ in BackgroundPaper() }
+    let blockers = try (0..<resources.maximumBackgroundWebSurfaces).map { _ in try BackgroundProgram() }
     defer { blockers.forEach { $0.close() } }
-    try await waitUntil { blockers.allSatisfy { $0.coordinator.hasCanonicalPixels } }
-    let document = DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "body", source: "Never admitted")])
+    try await waitUntil { blockers.allSatisfy { $0.coordinator.ready } }
+    let document = DocumentTestFiles.document(actor: UUID(), contents: [.program(id: "body", html: "Never admitted", height: 100)])
     let state = DocumentStateJournal(id: document.id, actor: UUID())
     let source = SceneRasterSource.document(id: document.id,
       token: DocumentSnapshotCache.token(document: document, state: state, pageIndex: 0))
-    let preparation = Task { try await DocumentSnapshotCache.shared.prepare(document: document, state: state, pageIndex: 0) }
+    let preparation = Task { try await DocumentSnapshotCache.shared.prepare(document: document, state: state, pageIndex: 0, programStore: blockers[0].store) }
     defer { preparation.cancel() }
     try await waitUntil { resources.pendingWebRequestCount == 1 }
     preparation.cancel()
@@ -438,108 +395,57 @@ final class DocumentTargetSnapshotPreparationTests: XCTestCase {
     try await check(contents: Self.publicContents, name: "accessory-no-own-visible-window")
   }
 
-  func testCapturePressureKeepsTheSameProducerUntilItsWholeRasterFits() async throws {
+  func testCapturePressureKeepsThePreparedSourceUntilItsWholeRasterFits() async throws {
     let resources = SceneRenderResources(byteLimit: 32 * 1024 * 1024)
-    let paper = BackgroundPaper(resources: resources)
-    defer { paper.close() }
-    try await waitUntil { paper.coordinator.hasCanonicalPixels }
-    let web = try XCTUnwrap(paper.coordinator.webView)
-    _ = try await web.evaluateJavaScript("window.snapshotContinuity='kept-before-admission'")
-    let measurements = try XCTUnwrap(paper.coordinator.payload).source.measurementCount
+    let paper = nativePaper(resources: resources); defer { paper.close() }
+    try await paper.prepare()
+    let source = paper.source, measurements = source.measurementCount
     let held = try XCTUnwrap(resources.reserveDerivedBytes(resources.byteLimit - resources.reservedBytes - 1_000_000, priority: .passive))
     let small = try XCTUnwrap(resources.reserveDerivedBytes(100_000, priority: .passive))
     defer { held.release(); small.release() }
-    let capture = Task { try await paper.coordinator.retainPreparedSnapshot(pixelWidth: 512,
-      force: true, waitsForRasterAdmission: true) }
+    let capture = Task { try await paper.retainPreparedSnapshot(pixelWidth: 512, waitsForRasterAdmission: true) }
     defer { capture.cancel() }
-    try await waitUntil { paper.coordinator.pendingRasterSnapshot != nil }
-    let demand = try XCTUnwrap(paper.coordinator.pendingRasterSnapshot)
-    XCTAssertGreaterThan(demand.bytes, 1_000_000)
-    XCTAssertEqual(resources.activeBackgroundWebSurfaceCount, 1)
-    XCTAssertTrue(paper.coordinator.webView === web)
-    small.release()
-    try await Task.sleep(for: .milliseconds(50))
-    XCTAssertNotNil(paper.coordinator.pendingRasterSnapshot, "A partial improvement does not admit the whole raster")
-    XCTAssertTrue(paper.coordinator.hasCanonicalPixels)
-    XCTAssertTrue(paper.coordinator.webView === web)
-    XCTAssertEqual(resources.rasterCount, 0)
+    try await waitUntil { paper.isWaitingForRasterAdmission }
+    small.release(); try await Task.sleep(for: .milliseconds(50))
+    XCTAssertTrue(paper.isWaitingForRasterAdmission)
+    XCTAssertEqual(resources.activeWebSurfaceCount, 0)
     held.release()
-    let lease = try await capture.value
-    defer { lease.release() }
-    XCTAssertEqual(lease.source, demand.source)
-    XCTAssertNil(paper.coordinator.pendingRasterSnapshot)
-    XCTAssertTrue(paper.coordinator.webView === web)
-    XCTAssertEqual(paper.coordinator.payload?.source.measurementCount, measurements)
-    let continuity = try await web.evaluateJavaScript("window.snapshotContinuity") as? String
-    XCTAssertEqual(continuity, "kept-before-admission")
-    let proof = XCTAttachment(image: lease.image); proof.name = "same-producer-after-raster-admission"
-    proof.lifetime = .keepAlways; add(proof)
+    let raster = try await capture.value; defer { raster.release() }
+    XCTAssertFalse(paper.isWaitingForRasterAdmission)
+    XCTAssertTrue(paper.source === source); XCTAssertEqual(source.measurementCount, measurements)
   }
 
   func testStoppingAProducerCancelsItsPendingCaptureBeforeCapacityReturns() async throws {
     let resources = SceneRenderResources(byteLimit: 32 * 1024 * 1024)
-    let paper = BackgroundPaper(resources: resources)
-    defer { paper.close() }
-    try await waitUntil { paper.coordinator.hasCanonicalPixels }
+    let paper = nativePaper(resources: resources); defer { paper.close() }
+    try await paper.prepare()
     let held = try XCTUnwrap(resources.reserveDerivedBytes(resources.byteLimit - resources.reservedBytes - 1_000_000, priority: .passive))
     defer { held.release() }
-    let capture = Task { try await paper.coordinator.retainPreparedSnapshot(pixelWidth: 512,
-      force: true, waitsForRasterAdmission: true) }
-    try await waitUntil { paper.coordinator.pendingRasterSnapshot != nil }
-    let demand = try XCTUnwrap(paper.coordinator.pendingRasterSnapshot)
+    let capture = Task { try await paper.retainPreparedSnapshot(pixelWidth: 512, waitsForRasterAdmission: true) }
+    try await waitUntil { paper.isWaitingForRasterAdmission }
     paper.close()
-    do { let unexpected = try await capture.value; unexpected.release(); XCTFail("Stopped producer returned an image") }
+    do { let unexpected = try await capture.value; unexpected.release(); XCTFail("Retired image request published pixels") }
     catch { XCTAssertTrue(error is CancellationError, "\(error)") }
-    XCTAssertNil(paper.coordinator.pendingRasterSnapshot)
     held.release()
-    try await waitUntil { resources.activeWebSurfaceCount == 0 && resources.reservedBytes == 0 }
-    XCTAssertNil(resources.retainRaster(for: demand.source))
+    XCTAssertFalse(paper.isWaitingForRasterAdmission)
+    XCTAssertEqual(resources.rasterCount, 0)
   }
 
   func testImpossibleCaptureDoesNotCreateAPermanentAdmissionWaiter() async throws {
     let resources = SceneRenderResources(byteLimit: 32 * 1024 * 1024)
-    let paper = BackgroundPaper(resources: resources)
-    defer { paper.close() }
-    try await waitUntil { paper.coordinator.hasCanonicalPixels }
+    let paper = nativePaper(resources: resources); defer { paper.close() }
+    try await paper.prepare()
     do {
-      let unexpected = try await paper.coordinator.retainPreparedSnapshot(pixelWidth: 8192,
-        force: true, waitsForRasterAdmission: true)
+      let unexpected = try await paper.retainPreparedSnapshot(pixelWidth: 8192, waitsForRasterAdmission: true)
       unexpected.release(); XCTFail("An impossible capture exceeded its fixed budget")
     } catch { XCTAssertEqual(error as? SceneRenderError, .resourceLimit) }
-    XCTAssertNil(paper.coordinator.pendingRasterSnapshot)
-    XCTAssertTrue(paper.coordinator.hasCanonicalPixels)
-    XCTAssertEqual(resources.rasterCount, 0)
+    XCTAssertFalse(paper.isWaitingForRasterAdmission); XCTAssertEqual(resources.rasterCount, 0)
   }
 
-  func testTerminalWebFailureDuringCaptureAdmissionKeepsItsActualError() async throws {
-    let resources = SceneRenderResources(byteLimit: 32 * 1024 * 1024)
-    let paper = BackgroundPaper(resources: resources)
-    defer { paper.close() }
-    try await waitUntil { paper.coordinator.hasCanonicalPixels }
-    let held = try XCTUnwrap(resources.reserveDerivedBytes(resources.byteLimit - resources.reservedBytes - 1_000_000, priority: .passive))
-    defer { held.release() }
-    let capture = Task { try await paper.coordinator.retainPreparedSnapshot(pixelWidth: 512,
-      force: true, waitsForRasterAdmission: true) }
-    try await waitUntil { paper.coordinator.pendingRasterSnapshot != nil }
-    let demand = try XCTUnwrap(paper.coordinator.pendingRasterSnapshot)
-    let error = NSError(domain: "NotebookSnapshotTerminalFailure", code: 71,
-      userInfo: [NSLocalizedDescriptionKey: "Terminal source failure during capture admission"])
-    // A public delegate seam on a real, already-ready WK. This does not claim
-    // that the OS killed a process or that navigation itself was reproduced.
-    paper.coordinator.webView(try XCTUnwrap(paper.coordinator.webView),
-      didFailProvisionalNavigation: nil, withError: error)
-    do { let unexpected = try await capture.value; unexpected.release(); XCTFail("A failed source returned pixels") }
-    catch let observed as NSError {
-      XCTAssertEqual(observed.domain, error.domain)
-      XCTAssertEqual(observed.code, error.code)
-    }
-    XCTAssertNil(paper.coordinator.pendingRasterSnapshot)
-    XCTAssertNil(paper.coordinator.webView)
-    XCTAssertFalse(paper.coordinator.hasCanonicalPixels)
-    held.release()
-    paper.close()
-    try await waitUntil { resources.activeWebSurfaceCount == 0 && resources.reservedBytes == 0 }
-    XCTAssertNil(resources.retainRaster(for: demand.source))
+  private func nativePaper(resources: SceneRenderResources) -> DocumentPageRaster {
+    let document = DocumentTestFiles.document(contents: [.tex(id: "body", source: "A native prepared paper")])
+    return DocumentPageRaster(document: document, state: .init(id: document.id, actor: UUID()), pageIndex: 0,
+      resources: resources, programStore: nil, isolationID: nil, renderSession: nil, purpose: { .required })
   }
 
   func testActualBrokenImageReturnsItsRenderFailureRatherThanReaderCancellation() async throws {
@@ -579,11 +485,11 @@ final class DocumentTargetSnapshotPreparationTests: XCTestCase {
     }
     defer { try? attach(["events": events, "lastPhase": phase], name: "queued-target-owner-boundaries") }
     try await waitUntil { resources.activeBackgroundWebSurfaceCount == 0 && resources.pendingWebRequestCount == 0 }
-    let blockers = (0..<resources.maximumBackgroundWebSurfaces).map { _ in BackgroundPaper() }
+    let blockers = try (0..<resources.maximumBackgroundWebSurfaces).map { _ in try BackgroundProgram() }
     defer { blockers.forEach { $0.close() } }
     do {
       mark("await_actual_blocker_pixels")
-      try await waitUntil { blockers.allSatisfy { $0.coordinator.hasCanonicalPixels } }
+      try await waitUntil { blockers.allSatisfy { $0.coordinator.ready } }
       let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
       let store = NotebookStore(root: directory), actor = UUID()
       mark("create_store")
@@ -592,7 +498,7 @@ final class DocumentTargetSnapshotPreparationTests: XCTestCase {
       var board = try store.loadBoard(items: workspace.items)
       mark("create_document")
       let item = try XCTUnwrap(workspace.createDocument(title: "Queued target", actor: actor))
-      let document = DocumentTestFiles.document(id: item.id, actor: actor, contents: [.tex(id: "body", source: "\\section{A real queued target}")])
+      let document = DocumentTestFiles.document(id: item.id, actor: actor, contents: [.program(id: "body", html: "A real queued target", height: 100)])
       XCTAssertTrue(board.addItem(item.id, to: workspace.rootBoardID, near: .zero, actor: actor))
       mark("publish_document_bundle")
       try store.saveDocumentWorkspaceBundle(index: workspace, document: document,
@@ -642,31 +548,27 @@ final class DocumentTargetSnapshotPreparationTests: XCTestCase {
     }
   }
 
-  @MainActor private final class BackgroundPaper {
-    let coordinator: DocumentWebCoordinator
-    let host = DocumentWebHost()
-    let window: NSWindow
-    private var closed = false
-    init(resources: SceneRenderResources = .shared) {
-      let document = DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "body", source: "\\section{An actual retained background paper}")])
-      let state = DocumentStateJournal(id: document.id, actor: UUID())
-      let ready = PageTurnReadiness { _ in }
-      coordinator = DocumentWebCoordinator(resources: resources, onRenderReady: ready, onPageLayout: { _ in },
-         onStateChange: { _, _ in nil })
-      let geometry = WorkspaceItemGeometry.uncompiledDocument
-      window = NSWindow(contentRect: .init(x: -20_000, y: -20_000, width: geometry.width, height: geometry.height),
-        styleMask: .borderless, backing: .buffered, defer: false)
-      window.isReleasedWhenClosed = false; window.contentView = host; window.orderBack(nil)
-      coordinator.update(document: document, state: state, selectedPageIndex: 0, capturesSnapshot: false,
-        onRenderReady: ready, onPageLayout: { _ in },  onStateChange: { _, _ in nil })
-      coordinator.mount(in: host, physicalSize: .init(width: geometry.width, height: geometry.height),
-        isInteractive: false, priority: .background)
+  @MainActor private final class BackgroundProgram {
+    let coordinator: DocumentBlockRuntime
+    let store: NotebookStore
+    private var window: NSWindow?
+    init(resources: SceneRenderResources = .shared) throws {
+      store = NotebookStore(root: FileManager.default.temporaryDirectory.appendingPathComponent("background-program-" + UUID().uuidString))
+      _ = try store.initializeWorkspace(actor: UUID(), pageSize: .init(width: 834, height: 1194))
+      let document = DocumentTestFiles.document(contents: [.program(id: "blocker", html: "<p>A retained browser</p>", height: 100)])
+      let program = try store.documentProgramSource(document: document, instanceID: "blocker", path: "programs/blocker")
+      coordinator = DocumentBlockRuntime(documentID: document.id, program: program, value: program.initialState,
+        stateVersion: nil, width: 600, height: 100, resources: resources, programStore: store)
+      coordinator.requiresStateAcceptance = false
+      coordinator.onMount = { [weak self] web, size in
+        let window = NSWindow(contentRect: .init(x: -20_000, y: -20_000, width: size.width, height: size.height),
+          styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = web; window.orderBack(nil); self?.window = window
+      }
+      coordinator.start(priority: .background)
     }
-    func close() {
-      guard !closed else { return }
-      closed = true
-      coordinator.invalidate(); window.orderOut(nil); window.close()
-    }
+    func close() { coordinator.stop(); window?.orderOut(nil); window?.close(); window = nil }
+    isolated deinit { close(); try? FileManager.default.removeItem(at: store.root) }
   }
 
   private func waitUntil(_ condition: () -> Bool, file: StaticString = #filePath, line: UInt = #line) async throws {

@@ -9,6 +9,237 @@ import XCTest
 
 @MainActor
 final class DocumentProgramOwnerTests: XCTestCase {
+  func testAuthorWorldCannotForgeExternalProgramLinkAuthority() async throws {
+    let document = DocumentTestFiles.document(contents: [
+      .program(id: "links", html: "<a id='outside' href='https://example.com/original'>Outside</a> <a id='inside' href='#target'>Inside</a>", height: 90),
+      .tex(id: "target", source: "\\section{Target}\\hypertarget{target}{}")])
+    let fixture = try ProgramFixture(document: document, showsNeighbour: false)
+    defer { fixture.close() }
+    try await wait(message: { fixture.diagnostics }) {
+      fixture.ready[0] == true && fixture.canonicalPaper(in: 0) && fixture.web(block: "links") != nil
+    }
+    let web = try XCTUnwrap(fixture.web(block: "links"))
+    let runtime = try XCTUnwrap(web.navigationDelegate as? DocumentBlockRuntime)
+    let initialURL = web.url
+    let initialFragment = try await web.evaluateJavaScript("location.hash") as? String
+    XCTAssertNotNil(runtime.onLinkAdmission(false), "Forgery must reach a genuinely admitted installation")
+    let probe = try await web.callAsyncJavaScript("""
+      const external=document.getElementById('outside');
+      let targetDefault=null,windowDefault=null;
+      external.addEventListener('click',event=>{targetDefault=event.defaultPrevented;external.href='https://example.com/swapped';});
+      addEventListener('click',event=>{windowDefault=event.defaultPrevented;});
+      const forge=href=>webkit.messageHandlers.documentProgram.postMessage({runtimeID,kind:'link',href,userActivated:true,sequence:1});
+      forge(external.getAttribute('href'));
+      external.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,pointerId:1,isPrimary:true,button:0}));
+      external.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,pointerId:1,isPrimary:true,button:0}));
+      external.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,key:'Enter'}));
+      external.click();
+      const frame=document.createElement('iframe');document.body.appendChild(frame);
+      const frameBridge=!!frame.contentWindow?.webkit?.messageHandlers.documentProgram;
+      if(frameBridge)frame.contentWindow.webkit.messageHandlers.documentProgram.postMessage({runtimeID,kind:'link',href:'#target',userActivated:true});
+      const isolated=!!webkit.messageHandlers.documentLinkActivation;
+      const installationVisible=typeof window.notebookInstallLinkOrigin!=='undefined';
+      await new Promise(resolve=>setTimeout(resolve,30));
+      forge('https://example.com/replayed');
+      return {isolated,installationVisible,frameBridge,targetDefault,windowDefault};
+      """, arguments: ["runtimeID": runtime.id.uuidString], in: nil, contentWorld: .page) as? [String: Any]
+    XCTAssertEqual(probe?["isolated"] as? Bool, false, "The author world cannot enter the trusted handler")
+    XCTAssertEqual(probe?["installationVisible"] as? Bool, false, "Native correlation stays outside the author world")
+    XCTAssertEqual(probe?["frameBridge"] as? Bool, true, "The negative frame probe must actually post from a child frame")
+    XCTAssertEqual(probe?["targetDefault"] as? Bool, false, "Capture must not suppress an author's guarded click handler")
+    XCTAssertEqual(probe?["windowDefault"] as? Bool, false, "An author's window handler must keep the event's default state too")
+    _ = try await web.evaluateJavaScript("document.getElementById('inside').click();true")
+    try await wait(message: { fixture.diagnostics }) { fixture.linkActivations.count == 1 }
+    guard case .page = fixture.linkActivations[0].destination else { return XCTFail("Only the current internal scripted route may be delivered") }
+    XCTAssertFalse(fixture.linkActivations[0].consumeExternalAuthority())
+    let resultingFragment = try await web.evaluateJavaScript("location.hash") as? String
+    XCTAssertEqual(resultingFragment, initialFragment, "The native navigation delegate must refuse the program's own fragment navigation")
+    XCTAssertEqual(web.url, initialURL)
+
+    // Exercise the real native contact callback against the loaded subtree;
+    // this is an admission oracle, not a synthesized UITouch or human proof.
+    fixture.hosts[0].programOverlay.onContactChange("links", true)
+    fixture.setInteractive(false)
+    XCTAssertNotNil(runtime.onLinkAdmission(true))
+    XCTAssertNil(runtime.onLinkAdmission(false))
+    _ = try await web.evaluateJavaScript("document.getElementById('inside').click();true")
+    fixture.hosts[0].programOverlay.onContactChange("other", true)
+    XCTAssertNil(runtime.onLinkAdmission(true), "A different native contact cannot admit this program")
+    fixture.hosts[0].programOverlay.onContactChange("other", false)
+    fixture.hosts[0].programOverlay.onContactChange("links", false)
+    fixture.setInteractive(true)
+    _ = try await web.evaluateJavaScript("document.getElementById('inside').click();true")
+    try await wait(message: { fixture.diagnostics }) { fixture.linkActivations.count == 2 }
+    XCTAssertTrue(fixture.linkActivations.allSatisfy { if case .page = $0.destination { true } else { false } })
+  }
+
+  func testIsolatedProgramReceiptSurvivesDelayedIPCAndDrainsStateBeforeItsOneShotDestination() async throws {
+    let document = DocumentTestFiles.document(contents: [
+      .program(id: "links", html: "<a id='outside' href='https://example.com/original'>Outside</a> <a id='inside' href='#target'>Inside</a>",
+        initialState: .object(["count": .number(0)]), height: 90),
+      .tex(id: "target", source: "\\section{Target}\\hypertarget{target}{}")])
+    let fixture = try ProgramFixture(document: document, showsNeighbour: false)
+    defer { fixture.close() }
+    try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.web(block: "links") != nil }
+    let web = try XCTUnwrap(fixture.web(block: "links"))
+    let installation = try await isolatedLinkInstallation(in: web)
+    let runtime = try XCTUnwrap(web.navigationDelegate as? DocumentBlockRuntime)
+    let admitted = try XCTUnwrap(runtime.onLinkAdmission(false))
+    var observedAcceptance = false
+    fixture.onStateAccepted = { block in
+      guard block == "links" else { return }
+      observedAcceptance = true
+      XCTAssertTrue(admitted.isCurrent(), "The accepted writer cannot retire its installed origin while its ACK closes new input")
+      let token = try? await web.callAsyncJavaScript("return window.notebookInstallLinkOrigin();",
+        arguments: [:], in: nil, contentWorld: .world(name: "Notebook.DocumentLinkActivation"))
+      XCTAssertEqual(token as? String, installation, "The writer's publication keeps the same physical installation")
+    }
+    fixture.hosts[0].programOverlay.onContactChange("links", true)
+    fixture.setInteractive(false)
+    fixture.hosts[0].programOverlay.onContactChange("links", false)
+    // Native test code enters the isolated world to exercise delayed IPC and
+    // its transport lifetime. Author JS cannot do this; actual trusted event
+    // capture still requires the separate finger/key/VoiceOver scenario.
+    try await postIsolatedLinkMessages([
+      ["kind": "begin", "sequence": "1", "contact": "accessibility", "installation": installation, "href": "https://example.com/closed"],
+      ["kind": "activate", "sequence": "1"],
+      ["kind": "begin", "sequence": "2", "contact": "pointer", "installation": installation, "href": "https://example.com/original"]], in: web)
+    let committed = try await web.evaluateJavaScript("""
+      const original=documentProgram;
+      window.documentProgram=Object.create(original,{readSnapshot:{value:argument=>{
+        if(window.allowPull)return original.readSnapshot(argument);
+        window.pullStarted=true;
+        return new Promise(resolve=>{window.releasePull=()=>{window.allowPull=true;resolve(original.readSnapshot(argument))}});
+      }}});
+      document.getElementById('outside').href='https://example.com/swapped';
+      notebook.commit({count:1});
+      """) as? Bool
+    XCTAssertEqual(committed, true)
+    try await postIsolatedLinkMessages([["kind": "activate", "sequence": "2"]], in: web)
+    let pullDeadline = ContinuousClock.now + .seconds(5)
+    var pullStarted = false
+    while .now < pullDeadline {
+      pullStarted = try await web.evaluateJavaScript("window.pullStarted===true") as? Bool == true
+      if pullStarted { break }
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    XCTAssertTrue(pullStarted, fixture.diagnostics)
+    guard pullStarted else { throw DocumentSessionError.invalidLayout }
+    XCTAssertTrue(fixture.linkActivations.isEmpty, "The same accepted state writer must finish before terminal delivery")
+    _ = try await web.evaluateJavaScript("window.releasePull();true")
+    try await wait(message: { fixture.diagnostics }) { fixture.linkActivations.count == 1 && fixture.number("links", field: "count") == 1 }
+    XCTAssertTrue(observedAcceptance)
+    let activation = fixture.linkActivations[0]
+    XCTAssertEqual(activation.destination, .external(URL(string: "https://example.com/original")!))
+    XCTAssertTrue(activation.consumeExternalAuthority())
+    XCTAssertFalse(activation.consumeExternalAuthority())
+    let stableInstallation = try await isolatedLinkInstallation(in: web)
+    XCTAssertEqual(stableInstallation, installation, "State acceptance and input-policy changes keep the exact installed origin")
+    try await postIsolatedLinkMessages([
+      ["kind": "activate", "sequence": "2"],
+      ["kind": "begin", "sequence": "3", "contact": "pointer", "installation": installation, "href": "https://example.com/replayed"],
+      ["kind": "activate", "sequence": "3"]], in: web)
+    fixture.setInteractive(true)
+    fixture.hosts[0].programOverlay.onContactChange("links", true)
+    try await postIsolatedLinkMessages([["kind": "begin", "sequence": "4", "contact": "pointer", "installation": installation, "href": "https://example.com/retired"]], in: web)
+    fixture.hosts[0].programOverlay.onContactChange("links", false)
+    fixture.replaceSource(fileID: "links-html", source: "<a id='inside' href='#target'>Replacement source</a>")
+    _ = try await web.callAsyncJavaScript("""
+      try{webkit.messageHandlers.documentLinkActivation.postMessage({kind:'activate',sequence:'4'});}catch{}
+      return true;
+      """, arguments: [:], in: nil, contentWorld: .world(name: "Notebook.DocumentLinkActivation"))
+    try await wait(message: { fixture.diagnostics }) {
+      fixture.ready[0] == true && fixture.web(block: "links") != nil && fixture.web(block: "links") !== web
+    }
+    let replacement = try XCTUnwrap(fixture.web(block: "links"))
+    _ = try await replacement.evaluateJavaScript("document.getElementById('inside').click();true")
+    try await wait(message: { fixture.diagnostics }) { fixture.linkActivations.count == 2 }
+    guard case .page = fixture.linkActivations[1].destination else { return XCTFail("A retired executor must not publish another external destination") }
+  }
+
+  func testIsolatedInstallationCorrelationRejectsOldPaperAndRetiredNativeEntry() async throws {
+    let document = try DocumentTestFiles.document(contents: [
+      .program(id: "links", html: "<a href='https://example.com/current'>Outside</a>", height: 90),
+      .tex(id: "target", source: "An original paper source around the unchanged program.")]).materializingCausalVersions()
+    let fixture = try ProgramFixture(document: document, showsNeighbour: false)
+    let owner = DocumentPagePresentationOwner.shared(documentID: document.id, resources: fixture.resources)
+    let lifetime = owner.retainOpenDocument()
+    defer { fixture.close(); lifetime.close() }
+    try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.web(block: "links") != nil }
+    let web = try XCTUnwrap(fixture.web(block: "links")), first = try await isolatedLinkInstallation(in: web)
+    let basis = try XCTUnwrap((web.navigationDelegate as? DocumentBlockRuntime)?.sourceBasis)
+    fixture.replaceSource(fileID: "target", source: "A new paper source keeps the same accepted program files and viewport.")
+    try await wait(message: { fixture.diagnostics }) { fixture.canonicalPaper(in: 0) && fixture.web(block: "links") === web }
+    XCTAssertEqual((web.navigationDelegate as? DocumentBlockRuntime)?.sourceBasis, basis)
+    let second = try await isolatedLinkInstallation(in: web, after: first)
+    try await postIsolatedLinkMessages([
+      ["kind": "begin", "sequence": "1", "contact": "key", "installation": second,
+        "capturedAt": Date().timeIntervalSince1970 * 1_000 - 11_000, "href": "https://example.com/expired"],
+      ["kind": "activate", "sequence": "1"],
+      ["kind": "begin", "sequence": "2", "contact": "key", "installation": first, "href": "https://example.com/old-paper"],
+      ["kind": "activate", "sequence": "2"],
+      ["kind": "begin", "sequence": "3", "contact": "accessibility", "installation": second, "href": "https://example.com/current"],
+      ["kind": "activate", "sequence": "3"]], in: web)
+    try await wait(message: { fixture.diagnostics }) { fixture.linkActivations.count == 1 }
+    XCTAssertEqual(fixture.linkActivations[0].destination, .external(URL(string: "https://example.com/current")!))
+    XCTAssertTrue(fixture.linkActivations[0].origin.source.matches(fixture.document))
+    XCTAssertTrue(fixture.linkActivations[0].consumeExternalAuthority())
+
+    fixture.hosts[0].programOverlay.onContactChange("links", true)
+    fixture.hosts[0].programOverlay.onContactChange("links", false)
+    try await postIsolatedLinkMessages([
+      ["kind": "begin", "sequence": "4", "contact": "pointer", "installation": first, "href": "https://example.com/old-pointer"],
+      ["kind": "activate", "sequence": "4"],
+      ["kind": "begin", "sequence": "5", "contact": "pointer", "installation": second, "href": "https://example.com/current-pointer"],
+      ["kind": "activate", "sequence": "5"]], in: web)
+    try await wait(message: { fixture.diagnostics }) { fixture.linkActivations.count == 2 }
+    XCTAssertEqual(fixture.linkActivations[1].destination, .external(URL(string: "https://example.com/current-pointer")!),
+      "An old installation message cannot consume a newer native contact receipt")
+    let retiredGrant = fixture.linkActivations[1]
+    let retiredAdmission = try XCTUnwrap((web.navigationDelegate as? DocumentBlockRuntime)?.onLinkAdmission(false))
+    XCTAssertTrue(retiredAdmission.isCurrent())
+
+    // The model's real open-document lifetime keeps the existing executor;
+    // ending its native Entry still irreversibly revokes the previous token.
+    lifetime.parkForReturn(); fixture.retirePresentation(0)
+    await owner.observePendingPresentationWork()
+    lifetime.resume(); fixture.restorePresentation(0)
+    try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.web(block: "links") === web }
+    let returned = try await isolatedLinkInstallation(in: web, after: second)
+    XCTAssertFalse(retiredAdmission.isCurrent(), "A retired native Entry cannot revive through its reused coordinator ID")
+    XCTAssertFalse(retiredGrant.consumeExternalAuthority(), "A delivered grant remains revoked after the same heap and paper return")
+    try await postIsolatedLinkMessages([
+      ["kind": "begin", "sequence": "6", "contact": "key", "installation": second, "href": "https://example.com/retired-entry"],
+      ["kind": "activate", "sequence": "6"],
+      ["kind": "begin", "sequence": "7", "contact": "key", "installation": returned, "href": "https://example.com/returned"],
+      ["kind": "activate", "sequence": "7"]], in: web)
+    try await wait(message: { fixture.diagnostics }) { fixture.linkActivations.count == 3 }
+    XCTAssertEqual(fixture.linkActivations[2].destination, .external(URL(string: "https://example.com/returned")!))
+  }
+
+  private func isolatedLinkInstallation(in web: WKWebView, after previous: String? = nil) async throws -> String {
+    let deadline = ContinuousClock.now + .seconds(5)
+    while .now < deadline {
+      let raw = try await web.callAsyncJavaScript("return window.notebookInstallLinkOrigin();",
+        arguments: [:], in: nil, contentWorld: .world(name: "Notebook.DocumentLinkActivation"))
+      if let token = raw as? String, token != previous { return token }
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    XCTFail("The actual installed program did not publish its native origin correlation")
+    throw DocumentSessionError.invalidLayout
+  }
+
+  private func postIsolatedLinkMessages(_ messages: [[String: Any]], in web: WKWebView) async throws {
+    _ = try await web.callAsyncJavaScript("""
+      for(const source of messages){
+        const message={...source};
+        if(message.kind==='begin'&&message.capturedAt===undefined)message.capturedAt=Date.now();
+        webkit.messageHandlers.documentLinkActivation.postMessage(message);
+      }
+      return true;
+      """, arguments: ["messages": messages], in: nil, contentWorld: .world(name: "Notebook.DocumentLinkActivation"))
+  }
+
   func testSameSourceResizeKeepsTheHeapAndItsAcceptedSnapshotThroughTheWriterBoundary() async throws {
     let actor = UUID(), root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -32,12 +263,10 @@ final class DocumentProgramOwnerTests: XCTestCase {
     owner.onMount = { web, size in web.frame = .init(origin: .zero, size: size); container.view.addSubview(web) }
     let paper = DocumentPaperLayout(widthPoints: 720, heightPoints: 400), activity = PageTurnActivity()
     func refresh() throws {
-      let layout = try DocumentLayoutRecord(receipt: ["sourceKey": "geometry", "layoutScope": "source", "layoutCanonical": true,
-        "pageCount": 1, "width": paper.surfaceWidth, "height": paper.surfaceHeight,
-        "pages": [["widthPoints": paper.widthPoints, "heightPoints": paper.heightPoints]],
-        "regions": [["kind": "program", "id": "geometry", "pageIndex": 0, "x": 0.0, "y": 0.0, "width": width,
-          "height": height, "sourceOffset": 0.0]], "anchors": [], "reading": []] as NSDictionary,
-        sourceKey: "geometry", blockIDs: ["geometry"], geometry: paper.geometry)
+      let layout = try DocumentLayoutFixture.make(pages: [paper], regions: [
+        .init(kind: .program, id: "geometry", pageIndex: 0,
+          frame: .init(x: 0, y: 0, width: width, height: height), sourceOffset: 0)
+      ])
       let input = DocumentPagePresentation(document: document, state: state, pageIndex: 0, isCurrent: true,
         isVisible: true, isInteractive: true, pageTurnActive: false, onRenderReady: .init(activity: activity) { _ in },
         onPageLayout: { _ in }, onStateChange: { source, value in
@@ -122,12 +351,10 @@ final class DocumentProgramOwnerTests: XCTestCase {
     owner.onMount = { web, size in mounts += 1; web.frame = .init(origin: .zero, size: size); container.view.addSubview(web) }
     let paper = DocumentPaperLayout(widthPoints: 720, heightPoints: 400), activity = PageTurnActivity()
     func refresh() throws {
-      let layout = try DocumentLayoutRecord(receipt: ["sourceKey": "failed", "layoutScope": "source", "layoutCanonical": true,
-        "pageCount": 1, "width": paper.surfaceWidth, "height": paper.surfaceHeight,
-        "pages": [["widthPoints": paper.widthPoints, "heightPoints": paper.heightPoints]],
-        "regions": [["kind": "program", "id": "failed", "pageIndex": 0, "x": 0.0, "y": 0.0, "width": 360.0,
-          "height": height, "sourceOffset": 0.0]], "anchors": [], "reading": []] as NSDictionary,
-        sourceKey: "failed", blockIDs: ["failed"], geometry: paper.geometry)
+      let layout = try DocumentLayoutFixture.make(pages: [paper], regions: [
+        .init(kind: .program, id: "failed", pageIndex: 0,
+          frame: .init(x: 0, y: 0, width: 360, height: height), sourceOffset: 0)
+      ])
       let input = DocumentPagePresentation(document: document, state: state, pageIndex: 0, isCurrent: true,
         isVisible: true, isInteractive: true, pageTurnActive: false, onRenderReady: .init(activity: activity) { _ in },
         onPageLayout: { _ in }, onStateChange: { _, _ in nil }, onLinkActivation: { _ in }, snapshotPixelWidth: nil,
@@ -491,7 +718,6 @@ final class DocumentProgramOwnerTests: XCTestCase {
     defer { fixture.close() }
     try await wait(message: { fixture.diagnostics }) { fixture.canonicalPaper(in: 0) }
     let original = try XCTUnwrap(fixture.retainedPaper), web = try XCTUnwrap(fixture.paper(in: 0))
-    let coordinator = try XCTUnwrap(web.navigationDelegate as? DocumentWebCoordinator)
     // Code hides the current paper without closing it or handing its pixels
     // to a thumbnail. Physical invisibility must not erase its last good page.
     fixture.hosts[0].alpha = 0; fixture.setVisible(false)
@@ -504,8 +730,8 @@ final class DocumentProgramOwnerTests: XCTestCase {
     fixture.window.layoutIfNeeded()
     XCTAssertTrue(fixture.paper(in: 0) === web)
     XCTAssertFalse(fixture.canonicalPaper(in: 0), "Old pixels cannot acknowledge a failed source as current")
-    XCTAssertTrue(coordinator.retainsPreviousPrint)
-    XCTAssertEqual(coordinator.retainedGeometry(on: 0), .document(widthPoints: 720, heightPoints: 400))
+    XCTAssertEqual(original.page.width, 720, accuracy: 0.001)
+    XCTAssertEqual(original.page.height, 400, accuracy: 0.001)
     XCTAssertEqual(web.bounds.width / web.bounds.height, 720.0 / 400, accuracy: 0.0001)
     XCTAssertEqual(fixture.document.files.first { $0.id == "body" }?.source, "\\NotebookUndefinedCommand")
     func labels(_ view: UIView) -> [UILabel] { (view as? UILabel).map { [$0] } ?? view.subviews.flatMap(labels) }
@@ -520,7 +746,6 @@ final class DocumentProgramOwnerTests: XCTestCase {
     fixture.replaceSource(fileID: "body", source: "A repaired and saved printed page.")
     try await wait(message: { fixture.diagnostics }) { fixture.canonicalPaper(in: 0) }
     XCTAssertTrue(fixture.paper(in: 0) === web)
-    XCTAssertFalse(coordinator.retainsPreviousPrint)
     XCTAssertNotEqual(fixture.retainedPaper?.page.artifact.pdf, original.page.artifact.pdf)
     XCTAssertFalse(labels(fixture.hosts[0]).contains { $0.text?.contains("предыдущая сборка") == true })
   }
@@ -537,14 +762,12 @@ final class DocumentProgramOwnerTests: XCTestCase {
       .program(id: "far", html: "<button>Far control</button>", height: 100)])
     let fixture = try ProgramFixture(document: document)
     defer { fixture.close() }
-    // The paper's DOM receipt has its own completion boundary beside the program.
     try await wait(message: { fixture.diagnostics }) {
       fixture.ready[0] == true && fixture.ready[1] == true && fixture.web(block: "counter") != nil
         && fixture.canonicalPaper(in: 0)
     }
     let paper = try XCTUnwrap(fixture.paper(in: 0)), program = try XCTUnwrap(fixture.web(block: "counter"))
-    let coordinator = try XCTUnwrap(paper.navigationDelegate as? DocumentWebCoordinator)
-    let old = try await paper.evaluateJavaScript("notebookRenderer.pageReceipt().generation") as? String
+    let old = try XCTUnwrap(paper.raster)
     let neighbour = try XCTUnwrap(fixture.hosts[1].snapshotEntryID)
     let token = fixture.token(page: 1)
     let owner = DocumentPagePresentationOwner.shared(documentID: document.id, resources: fixture.resources)
@@ -553,7 +776,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
     await owner.observePendingPresentationWork()
     XCTAssertEqual(fixture.hosts[1].snapshotEntryID, neighbour)
     XCTAssertEqual(fixture.token(page: 1), token)
-    XCTAssertTrue(coordinator.payload?.state.records.isEmpty == true)
+    XCTAssertTrue(fixture.presents(.paper))
     fixture.replaceState(blockID: "counter", value: .object(["count": .number(9)]))
     XCTAssertFalse(fixture.isPresented, "Admission to a block's state application is not its painted frame")
     try await wait(message: { fixture.diagnostics }) { fixture.isPresented }
@@ -561,8 +784,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
     XCTAssertEqual(shown, "9")
     fixture.replaceState(blockID: "far", value: .object(["checked": .bool(true)]))
     await owner.observePendingPresentationWork()
-    let generation = try await paper.evaluateJavaScript("notebookRenderer.pageReceipt().generation") as? String
-    XCTAssertEqual(generation, old)
+    XCTAssertTrue(paper.raster === old)
     XCTAssertTrue(fixture.paper(in: 0) === paper && fixture.web(block: "counter") === program)
     XCTAssertEqual(fixture.hosts[1].snapshotEntryID, neighbour)
     XCTAssertEqual(fixture.token(page: 1), token)
@@ -593,7 +815,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
     XCTAssertNil(try DocumentPagePresentationOwner.capturePresented(documentID: document.id, pageIndex: 0,
       token: fixture.currentToken, region: bad, resources: fixture.resources), "Unavailable selected pixels cannot be invented")
     XCTAssertFalse(fixture.presents(.region(.init(x: -1, y: 0, width: 100, height: 100))))
-    XCTAssertEqual(fixture.resources.activeWebSurfaceCount, 2, "A failed program cannot retain the slot needed by its neighbour")
+    XCTAssertEqual(fixture.resources.activeWebSurfaceCount, 1, "A failed program cannot retain the slot needed by its neighbour")
     XCTAssertTrue(fixture.preparationErrors.isEmpty, "A program failure is local, not a failure of independent paper")
     let web = try XCTUnwrap(fixture.web(block: "good"))
     _ = try await web.evaluateJavaScript("document.querySelector('button').click();true")
@@ -608,14 +830,6 @@ final class DocumentProgramOwnerTests: XCTestCase {
     defer { fixture.close() }
     try await wait(message: { fixture.diagnostics }) { fixture.canonicalPaper(in: 0) }
     let source = DocumentRenderRegistry.shared.session(documentID: document.id, resources: fixture.resources).source(document)
-    // Canonical layout is demand-driven. A far link asks its existing source
-    // owner for the remaining index; waiting alone does not schedule that work.
-    let paper = try XCTUnwrap(fixture.paper(in: 0))
-    let renderer = try XCTUnwrap(paper.navigationDelegate as? DocumentWebCoordinator)
-    // The native paper may be mounted before its source receipt authorizes links.
-    try await wait(message: { fixture.diagnostics }) { renderer.currentLinkOrigin != nil }
-    renderer.resolveLink("#bad", origin: try XCTUnwrap(renderer.currentLinkOrigin)) { _ in }
-    try await wait(message: { fixture.diagnostics }) { source.layout != nil }
     let layout = try XCTUnwrap(source.layout)
     let target = try XCTUnwrap(layout.regions.first { $0.id == "bad" }?.pageIndex)
     XCTAssertGreaterThan(target, 1)
@@ -673,73 +887,37 @@ final class DocumentProgramOwnerTests: XCTestCase {
   }
 
   func testDistantLivePaperTransfersWithoutSnapshotOrASecondRender() async throws {
-    let document = DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "body", source:
-      "\\hyperlink{far}{Far}\n\n" + String(repeating: "Physical paper keeps its canonical geometry and links.\n\n", count: 160)
-      + "\n\n\\section{Far}\\hypertarget{far}{}\n\n\\hyperlink{body}{Return}")])
+    let document = DocumentTestFiles.document(contents: [.tex(id: "body", source:
+      "\\hyperlink{far}{Far}\n\n" + String(repeating: "Physical paper preserves native links.\n\n", count: 160)
+      + "\\section{Far}\\hypertarget{far}{}")])
     let measurements = DocumentPresentationRecorder(enabled: true)
     let fixture = try ProgramFixture(document: document, measurements: measurements, showsNeighbour: false)
     defer { fixture.close() }
-    try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.canonicalPaper(in: 0) }
-    let original = try XCTUnwrap(fixture.paper(in: 0))
-    let originalProjection = ObjectIdentifier(try XCTUnwrap(original.superview))
-    let originalWindow = try XCTUnwrap(original.window)
+    try await wait(message: { fixture.diagnostics }) { fixture.canonicalPaper(in: 0) && fixture.ready[0] == true }
     let source = DocumentRenderRegistry.shared.session(documentID: document.id, resources: fixture.resources).source(document)
-    let target = try XCTUnwrap(source.layout.map { $0.pageCount - 1 })
-    XCTAssertGreaterThan(target, 1)
-    let measurementCount = source.measurementCount
+    let target = try XCTUnwrap(source.layout).pageCount - 1
+    let count = source.measurementCount
     let request = measurements.request(documentID: document.id, pageIndex: target, cause: .page)
     fixture.activity.prepare(target, presentation: .live)
     let demand = try XCTUnwrap(fixture.activity.preparationDemand)
     fixture.showPages(current: 0, neighbour: target); fixture.restorePresentation(1)
     try await wait(message: { fixture.diagnostics }) { fixture.ready[1] == true && fixture.canonicalPaper(in: 1) }
-    let incoming = try XCTUnwrap(fixture.paper(in: 1))
-    let before = try await incoming.evaluateJavaScript("notebookRenderer.pageReceipt()") as? [String: Any]
-    XCTAssertFalse(incoming === original)
+    let incoming = try XCTUnwrap(fixture.paper(in: 1)), raster = try XCTUnwrap(incoming.raster)
     XCTAssertFalse(fixture.hosts[1].hasSnapshot)
-    XCTAssertEqual(fixture.resources.rasterAdmission.pinnedCount, 0, "Live landing must not allocate a full-page bridge image")
-    XCTAssertTrue(fixture.hosts[0].isUserInteractionEnabled)
-    XCTAssertFalse(fixture.hosts[1].isUserInteractionEnabled)
+    XCTAssertEqual(fixture.resources.rasterAdmission.pinnedCount, 0)
+    XCTAssertEqual(fixture.resources.activeWebSurfaceCount, 0)
     let attempt = try XCTUnwrap(measurements.records.first { $0.id == request }?.landingAttempts.last)
     XCTAssertEqual(attempt.stage, .completed); XCTAssertNil(attempt.captureStartedAt)
-
-    fixture.activity.update(true)
-    fixture.activity.didInstall(demand); fixture.activity.prepare(nil); fixture.activity.update(false)
-    fixture.retirePresentation(0)
-    XCTAssertEqual(original.superview.map(ObjectIdentifier.init), originalProjection,
-      "Retiring the old page shell transfers its existing projection, not just a detached WebKit reference")
-    XCTAssertTrue(original.window === originalWindow,
-      "The installed distant target keeps the reusable source shell in the same native window")
-    let owner = DocumentPagePresentationOwner.shared(documentID: document.id, resources: fixture.resources)
-    await owner.observePendingPresentationWork()
-    XCTAssertTrue(fixture.paper(in: 1) === incoming, "Native completion retains the target while SwiftUI current input is delayed")
-    fixture.select(1)
-    try await wait(message: { fixture.diagnostics }) {
-      fixture.canonicalPaper(in: 1) && (incoming.navigationDelegate as? DocumentWebCoordinator)?.nativeInputIsReady(in: fixture.hosts[1]) == true
-    }
+    fixture.activity.update(true); fixture.activity.didInstall(demand)
+    fixture.activity.prepare(nil); fixture.activity.update(false); fixture.retirePresentation(0)
+    await DocumentPagePresentationOwner.shared(documentID: document.id, resources: fixture.resources).observePendingPresentationWork()
     XCTAssertTrue(fixture.paper(in: 1) === incoming)
-    let after = try await incoming.evaluateJavaScript("notebookRenderer.pageReceipt()") as? [String: Any]
-    XCTAssertEqual(after?["generation"] as? String, before?["generation"] as? String)
-    XCTAssertEqual(after?["runtimeID"] as? String, before?["runtimeID"] as? String)
-    XCTAssertEqual(after?["renderToken"] as? String, fixture.currentToken)
-    XCTAssertEqual(source.measurementCount, measurementCount)
-    XCTAssertFalse(fixture.hosts[1].hasSnapshot)
-    let image = XCTAttachment(image: try fixture.windowImage())
-    image.name = "live-distant-paper-without-snapshot"; image.lifetime = .keepAlways; add(image)
-
-    fixture.activity.prepare(0, presentation: .live); fixture.restorePresentation(0)
-    let returning = try XCTUnwrap(fixture.activity.preparationDemand)
-    try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.canonicalPaper(in: 0) }
-    XCTAssertTrue(fixture.paper(in: 0) === original, "Return reuses the other existing paper shell")
-    fixture.activity.update(true); fixture.activity.didInstall(returning)
-    fixture.select(0); fixture.activity.prepare(nil); fixture.activity.update(false)
-    try await wait(message: { fixture.diagnostics }) {
-      fixture.canonicalPaper(in: 0) && (original.navigationDelegate as? DocumentWebCoordinator)?.nativeInputIsReady(in: fixture.hosts[0]) == true
-    }
-    XCTAssertTrue(fixture.preparationErrors.isEmpty, fixture.diagnostics)
-    fixture.close()
-    try await wait(message: { fixture.diagnostics }) {
-      fixture.resources.activeWebSurfaceCount == 0 && fixture.resources.rasterAdmission.pinnedCount == 0
-    }
+    fixture.select(1)
+    try await wait(message: { fixture.diagnostics }) { fixture.presents(.paper) && fixture.hosts[1].isUserInteractionEnabled }
+    XCTAssertTrue(fixture.paper(in: 1) === incoming && incoming.raster === raster)
+    XCTAssertEqual(source.measurementCount, count)
+    XCTAssertEqual(raster.page.pageIndex, target)
+    XCTAssertTrue(fixture.preparationErrors.isEmpty)
   }
 
   func testRetainedOverviewThumbnailCannotConsumeTheLivePageLanding() async throws {
@@ -754,7 +932,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
     let target = try XCTUnwrap(source.layout.map { $0.pageCount - 1 })
     XCTAssertGreaterThan(target, 1)
     let owner = DocumentPagePresentationOwner.shared(documentID: document.id, resources: fixture.resources)
-    let thumbnail = DocumentWebHost(), thumbnailCoordinator = DocumentPhysicalPageCoordinator()
+    let thumbnail = DocumentPageHost(), thumbnailCoordinator = DocumentPhysicalPageCoordinator()
     defer { thumbnailCoordinator.invalidate(); thumbnail.removeFromSuperview() }
     thumbnail.frame = .init(x: 0, y: 700, width: 120, height: 170)
     fixture.window.rootViewController!.view.addSubview(thumbnail)
@@ -781,37 +959,37 @@ final class DocumentProgramOwnerTests: XCTestCase {
     fixture.activity.update(true); fixture.activity.didInstall(demand)
     fixture.select(1); fixture.activity.prepare(nil); fixture.activity.update(false)
     try await wait(message: { fixture.diagnostics }) {
-      fixture.canonicalPaper(in: 1) && (incoming.navigationDelegate as? DocumentWebCoordinator)?.nativeInputIsReady(in: fixture.hosts[1]) == true
+      fixture.canonicalPaper(in: 1) && fixture.hosts[1].isUserInteractionEnabled && fixture.hosts[1].hasCanonicalPaper(incoming)
     }
     XCTAssertTrue(thumbnail.hasSnapshot)
     XCTAssertTrue(fixture.preparationErrors.isEmpty, fixture.diagnostics)
   }
 
-  func testLiveTargetSupersessionAndCloseCancelItsQueuedAdmission() async throws {
-    let document = DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "body", source:
-      "\\section{Current}\\hypertarget{current}{}\n\n" + String(repeating: "An accepted target does not retire the visible page.\n\n", count: 180)
-      + "\n\n\\section{Far}\\hypertarget{far}{}")])
+  func testLiveTargetSupersessionKeepsCurrentPaperWithoutWebAdmission() async throws {
+    let document = DocumentTestFiles.document(contents: [.tex(id: "body", source:
+      String(repeating: "An accepted native target preserves the visible page.\n\n", count: 180))])
     let resources = SceneRenderResources(maximumWebSurfaces: 1, reservedInteractiveSlots: 0)
+    let blocker = try await resources.acquireWebSurface(priority: .input)
+    defer { blocker.release() }
     let fixture = try ProgramFixture(document: document, resources: resources, showsNeighbour: false)
     defer { fixture.close() }
     try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.canonicalPaper(in: 0) }
     let current = try XCTUnwrap(fixture.paper(in: 0))
     let source = DocumentRenderRegistry.shared.session(documentID: document.id, resources: resources).source(document)
-    let target = try XCTUnwrap(source.layout.map { $0.pageCount - 1 })
+    let target = try XCTUnwrap(source.layout).pageCount - 1
     XCTAssertGreaterThan(target, 2)
-    let owner = DocumentPagePresentationOwner.shared(documentID: document.id, resources: resources)
     fixture.activity.prepare(target, presentation: .live)
     fixture.showPages(current: 0, neighbour: target); fixture.restorePresentation(1)
-    try await wait(message: { fixture.diagnostics }) { owner.pendingPassivePageIndex == target && resources.pendingWebRequestCount == 1 }
     fixture.activity.prepare(target - 1, presentation: .live)
     fixture.showPages(current: 0, neighbour: target - 1)
-    try await wait(message: { fixture.diagnostics }) { owner.pendingPassivePageIndex == target - 1 && resources.pendingWebRequestCount == 1 }
+    try await wait(message: { fixture.diagnostics }) { fixture.ready[1] == true && fixture.canonicalPaper(in: 1) }
+    XCTAssertEqual(fixture.paper(in: 1)?.raster?.page.pageIndex, target - 1)
     XCTAssertTrue(fixture.paper(in: 0) === current)
     XCTAssertTrue(fixture.hosts[0].isUserInteractionEnabled)
-    XCTAssertFalse(fixture.ready[1] == true)
-    fixture.close()
-    try await wait(message: { fixture.diagnostics }) { resources.pendingWebRequestCount == 0 && resources.activeWebSurfaceCount == 0 }
-    XCTAssertTrue(fixture.preparationErrors.isEmpty, fixture.diagnostics)
+    XCTAssertEqual(resources.pendingWebRequestCount, 0)
+    XCTAssertEqual(resources.activeWebSurfaceCount, 1, "Only the independent blocker occupies WebKit")
+    fixture.close(); blocker.release()
+    try await wait(message: { fixture.diagnostics }) { resources.activeWebSurfaceCount == 0 }
   }
 
   func testPlainNeighbourUsesItsSingleGrantedRasterSlot() async throws {
@@ -843,16 +1021,15 @@ final class DocumentProgramOwnerTests: XCTestCase {
     await DocumentPagePresentationOwner.shared(documentID: document.id, resources: fixture.resources)
       .observePendingPresentationWork()
     let web = try XCTUnwrap(fixture.paper(in: 0))
-    let renderer = try XCTUnwrap(web.navigationDelegate as? DocumentWebCoordinator)
-    let source = try XCTUnwrap(renderer.payload?.source)
+    let source = DocumentRenderRegistry.shared.session(documentID: document.id, resources: fixture.resources).source(document)
     let paper = try XCTUnwrap(source.layout).paper(on: 0)
     XCTAssertEqual(paper.widthPoints, 612, accuracy: 0.001)
     XCTAssertEqual(paper.heightPoints, 792, accuracy: 0.001)
     XCTAssertFalse(host.hasCanonicalPaperProjection)
     XCTAssertFalse(fixture.ready[0] == true)
     XCTAssertFalse(fixture.presents(.paper))
-    XCTAssertFalse(renderer.nativeInputIsReady(in: host))
-    XCTAssertNotNil(renderer.installedPaper, "Native source preparation does not wait for its host rectangle")
+    XCTAssertFalse(host.isUserInteractionEnabled)
+    XCTAssertNotNil(web.raster, "Native source preparation does not wait for its host rectangle")
     do {
       _ = try await fixture.turnFrame(in: 0, priority: .input)
       XCTFail("An actual turn must not capture paper projected into a different physical rectangle")
@@ -863,10 +1040,10 @@ final class DocumentProgramOwnerTests: XCTestCase {
     host.setNeedsLayout(); host.layoutIfNeeded()
     try await wait(message: { fixture.diagnostics }) {
       host.hasCanonicalPaperProjection && fixture.ready[0] == true && fixture.presents(.paper)
-        && renderer.nativeInputIsReady(in: host)
+        && host.isUserInteractionEnabled
     }
     XCTAssertTrue(fixture.paper(in: 0) === web, "Geometry installation preserves the accepted native runtime")
-    XCTAssertTrue(renderer.payload?.source === source)
+    XCTAssertEqual(web.raster?.sourceKey, source.message.key)
     let prepared = try await fixture.turnFrame(in: 0, priority: .input)
     XCTAssertGreaterThan(prepared.logicalSize.width, 0)
     XCTAssertEqual(source.measurementCount, 1)
@@ -890,8 +1067,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
     let fixture = try ProgramFixture(document: document, resources: resources, showsNeighbour: false, programStore: store)
     defer { fixture.close() }
     try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.canonicalPaper(in: 0) }
-    let renderer = try XCTUnwrap(fixture.paper(in: 0)?.navigationDelegate as? DocumentWebCoordinator)
-    XCTAssertTrue(renderer.payload?.source === source, "Mounting borrows the accepted source instead of starting another preparation")
+    XCTAssertEqual(fixture.paper(in: 0)?.raster?.sourceKey, source.message.key, "Mounting borrows the accepted source")
     XCTAssertEqual(source.measurementCount, 1)
     XCTAssertEqual(opening.outcome, .completed, "The exact native source demand ends the temporary opening reader")
     opening.close()
@@ -904,94 +1080,28 @@ final class DocumentProgramOwnerTests: XCTestCase {
     let document = DocumentTestFiles.document(contents: [.tex(id: "body", source: original)])
     let fixture = try ProgramFixture(document: document)
     defer { fixture.close() }
-    let owner = DocumentPagePresentationOwner.shared(documentID: document.id, resources: fixture.resources)
-    var materialEvents: [String] = []
-    XCTAssertNil(NotebookNavigationObservation.onPageMaterialPreparation)
-    NotebookNavigationObservation.onPageMaterialPreparation = { stage, entry, _, frame, operation, time in
-      guard materialEvents.count < 40 else { return }
-      materialEvents.append("\(time) \(stage) entry=\(entry) frame=\(String(describing: frame)) operation=\(String(describing: operation))")
-    }
-    defer {
-      NotebookNavigationObservation.onPageMaterialPreparation = nil
-      let attachment = XCTAttachment(string: materialEvents.joined(separator: "\n"))
-      attachment.name = "Document static turn material identity"
-      attachment.lifetime = .keepAlways
-      add(attachment)
-    }
-    try await wait(message: { fixture.diagnostics }) {
-      fixture.ready[0] == true && fixture.ready[1] == true && fixture.canonicalPaper(in: 0)
-    }
+    try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.ready[1] == true && fixture.canonicalPaper(in: 0) }
     let first = try await fixture.turnFrame(in: 0), neighbour = try await fixture.turnFrame(in: 1)
-    let picture = try XCTUnwrap(fixture.resources.image(for: .document(id: document.id, token: fixture.token(page: 1)))?.cgImage)
-    let density = fixture.hosts[1].projectedPixelScale(for: neighbour.logicalSize)
-    XCTAssertGreaterThanOrEqual(picture.width, Int(ceil(neighbour.logicalSize.width * density)))
-    XCTAssertGreaterThanOrEqual(picture.height, Int(ceil(neighbour.logicalSize.height * density)),
-      "The passive picture must cover the same integral extent required after its native landing")
     let sameFirst = try await fixture.turnFrame(in: 0), sameNeighbour = try await fixture.turnFrame(in: 1)
-    XCTAssertTrue(first === sameFirst)
-    XCTAssertTrue(neighbour === sameNeighbour)
-    let web = try XCTUnwrap(fixture.paper(in: 0))
-    let renderer = try XCTUnwrap(web.navigationDelegate as? DocumentWebCoordinator)
-    // Hold the real transparent-shell publication, never its native flags.
-    // Native landing and a subsequent source edit must still produce exact
-    // physical cuts while the previous JS evaluation owns its pending reply.
-    _ = try await web.evaluateJavaScript("""
-      window.savedTurnPresentPage=window.notebookRenderer.presentPage;
-      window.heldTurnPage=new Promise(resolve=>{window.releaseTurnPage=resolve;});
-      window.turnPageEntered=new Promise(resolve=>{window.didEnterTurnPage=resolve;});
-      window.notebookRenderer.presentPage=async frame=>{
-        window.didEnterTurnPage();await window.heldTurnPage;
-        return window.savedTurnPresentPage(frame);
-      };true
-      """)
-    defer {
-      web.evaluateJavaScript("window.notebookRenderer.presentPage=window.savedTurnPresentPage;window.releaseTurnPage?.();true")
-    }
-    var shellIsHeld = false
-    web.callAsyncJavaScript("await window.turnPageEntered;return true;", arguments: [:], in: nil, in: .page) { result in
-      shellIsHeld = (try? result.get()) as? Bool == true
-    }
-    materialEvents.append("before landing \(owner.turnFrameDiagnostic(page: 1))")
+    XCTAssertTrue(first === sameFirst); XCTAssertTrue(neighbour === sameNeighbour)
     fixture.select(1)
-    materialEvents.append("selected \(owner.turnFrameDiagnostic(page: 1))")
-    try await wait(message: { fixture.diagnostics }) {
-      shellIsHeld && renderer.paperIsReady && renderer.payload?.pageIndex == 1
-        && fixture.ready[1] == true && !fixture.hosts[1].hasSnapshot
-    }
-    XCTAssertFalse(renderer.hasCanonicalPixels)
-    XCTAssertFalse(renderer.nativeInputIsReady(in: fixture.hosts[1]))
-    XCTAssertFalse(fixture.presents(.paper), "A native turn cut cannot acknowledge transparent DOM links")
-    materialEvents.append("native landing before DOM \(owner.turnFrameDiagnostic(page: 1))")
+    try await wait(message: { fixture.diagnostics }) { fixture.presents(.paper) && !fixture.hosts[1].hasSnapshot }
     let landed = try await fixture.turnFrame(in: 1)
-    materialEvents.append("acquired landing \(owner.turnFrameDiagnostic(page: 1))")
-    XCTAssertTrue(landed === neighbour, "Landing on unchanged plain paper keeps its resident GPU material")
+    XCTAssertTrue(landed === neighbour, "Unchanged native landing keeps resident GPU material")
     fixture.setInteractive(false); fixture.setInteractive(true)
-    let afterInputPolicy = try await fixture.turnFrame(in: 1)
-    XCTAssertTrue(afterInputPolicy === landed)
-    let oldSource = try XCTUnwrap(renderer.payload?.source)
+    let policy = try await fixture.turnFrame(in: 1); XCTAssertTrue(policy === landed)
     fixture.replaceSource(fileID: "body", source: original + " A changed printed sentence.")
     do {
       _ = try await fixture.turnFrame(in: 1, priority: .input)
-      XCTFail("A previous native paper cannot supply a cut for the replacement source")
-    } catch {
-      XCTAssertEqual(error as? SceneRenderError, .snapshotPending("document_installed_slots"))
-    }
-    try await wait(message: { fixture.diagnostics }) {
-      renderer.paperIsReady && renderer.payload?.source !== oldSource && fixture.ready[1] == true
-        && renderer.payload?.source.matches(fixture.document) == true && !fixture.hosts[1].hasSnapshot
-    }
-    XCTAssertFalse(renderer.hasCanonicalPixels, "The earlier real shell call is still held")
+      XCTFail("The preceding source cannot supply the replacement's turn cut")
+    } catch { XCTAssertEqual(error as? SceneRenderError, .snapshotPending("document_installed_slots")) }
+    try await wait(message: { fixture.diagnostics }) { fixture.presents(.paper) && fixture.canonicalPaper(in: 1) }
     let edited = try await fixture.turnFrame(in: 1), sameEdited = try await fixture.turnFrame(in: 1)
-    XCTAssertFalse(edited === landed, "A source binding cannot reuse the preceding page frame")
-    XCTAssertTrue(edited === sameEdited)
-    let currentPaper = try XCTUnwrap(renderer.installedPaper)
-    let printedText = PDFDocument(data: currentPaper.page.artifact.pdf)?.page(at: currentPaper.page.pageIndex)?.string
-    XCTAssertTrue(printedText?.contains("changed printed sentence") == true)
-    _ = try await web.evaluateJavaScript("window.notebookRenderer.presentPage=window.savedTurnPresentPage;window.releaseTurnPage();true")
-    try await wait(message: { fixture.diagnostics }) {
-      fixture.canonicalPaper(in: 1) && renderer.nativeInputIsReady(in: fixture.hosts[1])
-    }
-    XCTAssertTrue(renderer.installedPaper === currentPaper, "The later DOM receipt must not replace accepted native paper")
+    XCTAssertFalse(edited === landed); XCTAssertTrue(edited === sameEdited)
+    let current = try XCTUnwrap(fixture.installedPaper)
+    let text = PDFDocument(data: current.page.artifact.pdf)?.page(at: current.page.pageIndex)?.string
+    XCTAssertTrue(text?.contains("changed printed sentence") == true)
+    XCTAssertEqual(fixture.resources.activeWebSurfaceCount, 0)
   }
 
   func testLiveProgramTurnTakesANewLocalCutWithoutCheckpointOrRuntimeReplacement() async throws {
@@ -1017,7 +1127,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
     window.rootViewController = controller; window.makeKeyAndVisible()
     defer { window.isHidden = true }
     let camera = UIView(frame: .init(x: 0, y: 0, width: 1_600, height: 2_000))
-    let host = DocumentWebHost()
+    let host = DocumentPageHost()
     host.frame = .init(x: 0, y: 0, width: 800, height: 1_000)
     controller.view.addSubview(camera); camera.addSubview(host)
     let physical = CGSize(width: 400, height: 500)
@@ -1040,7 +1150,6 @@ final class DocumentProgramOwnerTests: XCTestCase {
         && fixture.canonicalPaper(in: 0)
     }
     let web = try XCTUnwrap(fixture.paper(in: 0))
-    let renderer = try XCTUnwrap(web.navigationDelegate as? DocumentWebCoordinator)
     let snapshotID = try XCTUnwrap(fixture.hosts[1].snapshotEntryID)
     XCTAssertTrue(fixture.hosts[1].hasVisibleSnapshot)
     // The same screen rectangle is not proof that UIKit displays this page:
@@ -1067,108 +1176,27 @@ final class DocumentProgramOwnerTests: XCTestCase {
     XCTAssertNil(fixture.hosts[1].snapshotEntryID)
     XCTAssertEqual(fixture.ready[1], false)
     XCTAssertTrue(fixture.paper(in: 0) === web)
-    XCTAssertTrue(renderer.nativeInputIsReady(in: fixture.hosts[0]))
+    XCTAssertTrue(fixture.hosts[0].isUserInteractionEnabled)
     XCTAssertEqual(fixture.ready[0], true)
   }
 
   func testFallbackPixelsDenyNewNativeHitsUntilCanonicalPaperIsInstalled() async throws {
-    let document = DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "body", source: "\\section{Installed paper}\\hypertarget{installed-paper}{}\n\n\\hyperlink{target}{Target}\n\n\\section{Target}\\hypertarget{target}{}")])
+    let document = DocumentTestFiles.document(contents: [.tex(id: "body", source: "\\hyperlink{target}{Target}\\section{Target}\\hypertarget{target}{}")])
     let fixture = try ProgramFixture(document: document, showsNeighbour: false)
     defer { fixture.close() }
-    try await wait(message: { fixture.diagnostics }) { fixture.canonicalPaper(in: 0) }
-    let web = try XCTUnwrap(fixture.paper(in: 0))
-    let coordinator = try XCTUnwrap(web.navigationDelegate as? DocumentWebCoordinator)
-    let raster = try await coordinator.retainPreparedSnapshot(pixelWidth: 128)
-    defer { raster.release(); coordinator.releasePreparedSnapshot() }
-    let host = fixture.hosts[0]
-    host.installSnapshot(raster)
-    coordinator.updateInputAdmission(in: host, isInteractive: true)
+    try await wait(message: { fixture.diagnostics }) { fixture.presents(.paper) }
+    let paper = try XCTUnwrap(fixture.paper(in: 0)), host = fixture.hosts[0]
+    let raster = try await fixture.captureCurrent(); defer { raster.release() }
+    host.installSnapshot(raster); fixture.setInteractive(true)
     XCTAssertTrue(host.hasSnapshot)
-    XCTAssertTrue(coordinator.hasCanonicalPixels, "Prepared DOM alone does not admit a gesture")
-    XCTAssertFalse(coordinator.acceptsInput)
-    XCTAssertFalse(coordinator.nativeInputIsReady(in: host))
-    let hit = fixture.window.hitTest(host.convert(CGPoint(x: host.bounds.midX, y: host.bounds.midY), to: fixture.window), with: nil)
-    XCTAssertFalse(hit === web || hit?.isDescendant(of: web) == true,
-      "A visible snapshot must never route the first native hit into its hidden DOM")
-    host.removeFallback()
-    coordinator.updateInputAdmission(in: host, isInteractive: true)
-    XCTAssertTrue(coordinator.acceptsInput)
-    XCTAssertTrue(coordinator.nativeInputIsReady(in: host))
-    XCTAssertTrue(fixture.paper(in: 0) === web)
-    try await fixture.assertPaperReceivesNativeHit(web)
-  }
-
-  func testFailureOfPreviousSourceDoesNotPoisonTheSamePageAfterEditing() async throws {
-    func hasRetry(_ view: UIView) -> Bool {
-      if let button = view as? UIButton,
-        (button.title(for: .normal) ?? button.configuration?.title) == "Повторить" { return !button.isHidden }
-      return view.subviews.contains(where: hasRetry)
-    }
-    let document = DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "body", source: "\\section{First source}\\hypertarget{first-source}{}")])
-    let fixture = try ProgramFixture(document: document, showsNeighbour: false)
-    defer { fixture.close() }
-    try await wait(message: { fixture.diagnostics }) { fixture.canonicalPaper(in: 0) }
-    let originalPaper = try XCTUnwrap(fixture.retainedPaper)
-    let web = try XCTUnwrap(fixture.paper(in: 0))
-    let coordinator = try XCTUnwrap(web.navigationDelegate as? DocumentWebCoordinator)
-    coordinator.webView(web, didFail: nil, withError: NSError(domain: "SourceFailureContract", code: 1))
-    try await wait(message: { fixture.diagnostics }) { !fixture.preparationErrors.isEmpty }
-    let owner = DocumentPagePresentationOwner.shared(documentID: document.id, resources: fixture.resources)
-    await owner.observePendingPresentationWork()
-    XCTAssertEqual(fixture.preparationErrors.count, 1)
-    XCTAssertTrue(fixture.retainedPaper === originalPaper, "Interaction failure must retain the readable native paper")
-    XCTAssertTrue(hasRetry(fixture.hosts[0]))
-    XCTAssertFalse(coordinator.nativeInputIsReady(in: fixture.hosts[0]))
-    fixture.replaceSource(fileID: "body", source: "\\section{Repaired source}\\hypertarget{repaired-source}{}\n\nThe same page number now has a different version.")
-    try await wait(message: { fixture.diagnostics }) { fixture.canonicalPaper(in: 0) }
-    try await wait(message: { fixture.diagnostics }) {
-      guard let web = fixture.paper(in: 0), let renderer = web.navigationDelegate as? DocumentWebCoordinator else { return false }
-      return renderer.nativeInputIsReady(in: fixture.hosts[0])
-    }
-    let replacement = try XCTUnwrap(fixture.paper(in: 0))
-    let installed = try XCTUnwrap(fixture.installedPaper)
-    let text = PDFDocument(data: installed.page.artifact.pdf)?.page(at: installed.page.pageIndex)?.string
-    XCTAssertTrue(text?.contains("Repaired source") == true)
-    XCTAssertTrue((replacement.navigationDelegate as? DocumentWebCoordinator)?.nativeInputIsReady(in: fixture.hosts[0]) == true)
-    XCTAssertFalse(hasRetry(fixture.hosts[0]))
-    XCTAssertEqual(fixture.preparationErrors.count, 1, "The repaired source must not inherit its predecessor's failure")
-  }
-
-  func testProsePagePreparationReusesItsIdleExecutorAcrossDifferentTargets() async throws {
-    let text = (0..<70).map { "Paragraph \($0). " + String(repeating: "A measured page keeps reusable preparation. ", count: 12) }.joined(separator: "\n\n")
-    let fixture = try ProgramFixture(document: DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "body", source: text)]))
-    defer { fixture.close() }
-    let owner = DocumentPagePresentationOwner.shared(documentID: fixture.document.id, resources: fixture.resources)
-    try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.paper(in: 0) != nil }
-    func allWeb(_ view: UIView) -> [WKWebView] {
-      (view as? WKWebView).map { [$0] } ?? view.subviews.flatMap(allWeb)
-    }
-    let current = try XCTUnwrap(fixture.paper(in: 0))
-    try await wait(message: { fixture.diagnostics }) { allWeb(fixture.hosts[0]).contains { $0 !== current } }
-    let preparer = try XCTUnwrap(allWeb(fixture.hosts[0]).first { $0 !== current })
-    XCTAssertFalse((preparer.navigationDelegate as? DocumentWebCoordinator)?.hasCanonicalPixels == true)
-    let identity = ObjectIdentifier(preparer)
-    fixture.showPages(current: 0, neighbour: 3)
-    try await wait(message: { fixture.diagnostics }) { fixture.ready[1] == true }
-    await owner.observePendingPresentationWork()
-    XCTAssertTrue(allWeb(fixture.hosts[0]).contains { ObjectIdentifier($0) == identity })
-    XCTAssertEqual((preparer.navigationDelegate as? DocumentWebCoordinator)?.payload?.pageIndex, 3)
-    fixture.showPages(current: 0, neighbour: 2)
-    try await wait(message: { fixture.diagnostics }) { fixture.ready[1] == true }
-    await owner.observePendingPresentationWork()
-    XCTAssertTrue(allWeb(fixture.hosts[0]).contains { ObjectIdentifier($0) == identity })
-    XCTAssertEqual((preparer.navigationDelegate as? DocumentWebCoordinator)?.payload?.pageIndex, 2)
-    let renderer = try XCTUnwrap(preparer.navigationDelegate as? DocumentWebCoordinator)
-    // Reclaiming the preparer must preserve an already admitted input owner.
-    try await wait(message: { fixture.diagnostics }) {
-      fixture.canonicalPaper(in: 0)
-        && (current.navigationDelegate as? DocumentWebCoordinator)?.nativeInputIsReady(in: fixture.hosts[0]) == true
-    }
-    renderer.webViewWebContentProcessDidTerminate(preparer)
-    try await wait(message: { fixture.diagnostics }) { fixture.resources.activeWebSurfaceCount == 1 }
-    XCTAssertTrue(renderer.isInvalidated, "A dead idle executor does not restart without an unsatisfied page demand")
-    XCTAssertTrue(fixture.paper(in: 0) === current)
-    XCTAssertTrue((current.navigationDelegate as? DocumentWebCoordinator)?.nativeInputIsReady(in: fixture.hosts[0]) == true)
+    XCTAssertNotNil(paper.raster)
+    XCTAssertFalse(fixture.presents(.paper))
+    try await fixture.assertPaperRejectsNativeHit(paper)
+    XCTAssertFalse(try XCTUnwrap(fixture.link(in: paper)).accessibilityActivate())
+    host.removeFallback(); fixture.setInteractive(true)
+    try await wait(message: { fixture.diagnostics }) { fixture.presents(.paper) && host.isUserInteractionEnabled }
+    XCTAssertTrue(fixture.paper(in: 0) === paper)
+    try await fixture.assertPaperReceivesNativeHit(paper)
   }
 
   func testSourceReplacementReleasesUnusablePicturesBeforePreparingNewSource() async throws {
@@ -1194,87 +1222,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
     XCTAssertTrue(fixture.preparationErrors.isEmpty, fixture.diagnostics)
   }
 
-  func testPressureParksNeighbourAndPromotesItsSameAdmissionToAnAcceptedTarget() async throws {
-    let document = DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "body", source:
-      "\\section{Current}\\hypertarget{current}{}Current paper remains interactive."
-      + "\\newpage\\section{Neighbour}\\hypertarget{neighbour}{}The accepted target keeps its original queue place.")])
-    let resources = SceneRenderResources(maximumWebSurfaces: 2, reservedInteractiveSlots: 0)
-    let fixture = try ProgramFixture(document: document, resources: resources, showsNeighbour: false)
-    defer { fixture.close() }
-    try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.canonicalPaper(in: 0) }
-    let current = WeakDocumentPaper(fixture.paper(in: 0))
-    let currentID = ObjectIdentifier(try XCTUnwrap(current.value))
-    _ = try await XCTUnwrap(current.value).evaluateJavaScript("window.pressureDocument=document;window.pressureValue=47;true")
-    let owner = DocumentPagePresentationOwner.shared(documentID: document.id, resources: resources)
-    let source = DocumentRenderRegistry.shared.session(documentID: document.id, resources: resources).source(document)
-    XCTAssertEqual(source.layout?.pageCount, 2)
-    let blocker = DocumentWebCoordinator(resources: resources, onRenderReady: .init { _ in },
-      onPageLayout: { _ in }, onStateChange: { _, _ in nil })
-    let blockerHost = DocumentWebHost()
-    fixture.window.rootViewController?.view.addSubview(blockerHost)
-    blockerHost.frame = .init(x: 720, y: 0, width: 240, height: 340)
-    let blockerDocument = DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "blocker", source: "An independently admitted paper holds the second slot.")])
-    blocker.update(document: blockerDocument, state: .init(id: blockerDocument.id, actor: UUID()),
-      selectedPageIndex: 0, capturesSnapshot: false, onRenderReady: .init { _ in },
-      onPageLayout: { _ in }, onStateChange: { _, _ in nil })
-    let geometry = DocumentRenderRegistry.shared.geometry(document: blockerDocument, pageIndex: 0)
-    blocker.mount(in: blockerHost, physicalSize: .init(width: geometry.width, height: geometry.height),
-      isInteractive: true, priority: .currentPage)
-    defer { blocker.invalidate(); blockerHost.removeFromSuperview() }
-    try await wait(message: { fixture.diagnostics }) { blocker.hasCanonicalPixels && resources.activeWebSurfaceCount == 2 }
-    fixture.restorePresentation(1)
-    try await wait(message: { fixture.diagnostics }) { owner.pendingPassivePageIndex == 1 && resources.pendingWebRequestCount == 1 }
-    let optionalID = try XCTUnwrap(owner.pendingPassiveSurfaceRequestID)
 
-    resources.handleMemoryPressure(.warning)
-    try await wait(message: { fixture.diagnostics }) {
-      resources.pendingWebRequestCount == 0 && owner.pendingPassiveSurfaceRequestID == nil
-    }
-    await owner.observePendingPresentationWork()
-    XCTAssertNil(owner.pendingPassiveSurfaceRequestID)
-    XCTAssertTrue(fixture.canonicalPaper(in: 0))
-    XCTAssertEqual(ObjectIdentifier(try XCTUnwrap(current.value)), currentID)
-    XCTAssertTrue(fixture.preparationErrors.isEmpty, fixture.diagnostics)
-    resources.handleMemoryPressure(.critical)
-    await owner.observePendingPresentationWork()
-    try await wait(message: { fixture.diagnostics }) {
-      fixture.snapshot(in: 1) == nil && resources.pendingReclamationCount == 0 && resources.pendingWebRequestCount == 0
-    }
-    XCTAssertEqual(resources.pendingWebRequestCount, 0, "A latched pressure event cannot resume optional admission")
-
-    resources.handleMemoryPressure(.normal)
-    try await wait(message: { fixture.diagnostics }) { owner.pendingPassivePageIndex == 1 && resources.pendingWebRequestCount == 1 }
-    let resumedID = try XCTUnwrap(owner.pendingPassiveSurfaceRequestID)
-    XCTAssertNotEqual(resumedID, optionalID)
-    XCTAssertTrue(DocumentRenderRegistry.shared.session(documentID: document.id, resources: resources).source(document) === source,
-      "Normal pressure resumes the same source without a terminal preparation failure")
-    fixture.activity.prepare(1, presentation: .live)
-    XCTAssertEqual(owner.pendingPassiveSurfaceRequestID, resumedID,
-      "Accepting this exact neighbour promotes its original admission")
-    resources.handleMemoryPressure(.warning)
-    XCTAssertEqual(resources.pendingWebRequestCount, 1, "The offscreen accepted target is required under pressure")
-    XCTAssertEqual(owner.pendingPassiveSurfaceRequestID, resumedID)
-    XCTAssertTrue(fixture.canonicalPaper(in: 0))
-    let heap = try await XCTUnwrap(current.value).evaluateJavaScript("pressureDocument===document && pressureValue===47")
-    XCTAssertEqual(heap as? Bool, true)
-    XCTAssertTrue(blocker.hasCanonicalPixels, "Pressure keeps independently admitted physical owners")
-
-    blocker.invalidate(); blockerHost.removeFromSuperview()
-    try await wait(message: { fixture.diagnostics }) { fixture.ready[1] == true && fixture.canonicalPaper(in: 1) }
-    let incoming = WeakDocumentPaper(fixture.paper(in: 1))
-    let incomingID = ObjectIdentifier(try XCTUnwrap(incoming.value))
-    let demand = try XCTUnwrap(fixture.activity.preparationDemand)
-    fixture.activity.update(true); fixture.activity.didInstall(demand)
-    fixture.select(1); fixture.activity.prepare(nil); fixture.activity.update(false)
-    try await wait(message: { fixture.diagnostics }) {
-      fixture.canonicalPaper(in: 1) && (incoming.value?.navigationDelegate as? DocumentWebCoordinator)?.nativeInputIsReady(in: fixture.hosts[1]) == true
-    }
-    XCTAssertEqual(ObjectIdentifier(try XCTUnwrap(fixture.paper(in: 1))), incomingID,
-      "Native landing uses the admitted target without rebuilding its WebKit")
-    XCTAssertTrue(fixture.preparationErrors.isEmpty, fixture.diagnostics)
-    fixture.close()
-    try await wait(message: { fixture.diagnostics }) { resources.pendingWebRequestCount == 0 && resources.activeWebSurfaceCount == 0 }
-  }
 
   func testRequiredRemountOutlivesItsWithdrawnNativeSubscriber() async throws {
     let document = DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "body", source:
@@ -1291,9 +1239,8 @@ final class DocumentProgramOwnerTests: XCTestCase {
     let held = try XCTUnwrap(resources.reserveDerivedBytes(min(admission.byteLimit - admission.heldBytes,
       admission.passiveByteLimit - admission.pinnedBytes - admission.passiveReservedBytes), priority: .passive))
     defer { held.release() }
-    let renderer = DocumentWebCoordinator(resources: resources, renderSession: session, onRenderReady: .init { _ in },
-      onPageLayout: { _ in }, onStateChange: { _, _ in nil })
-    let targetHost = DocumentWebHost()
+    let renderer = DocumentPaperCoordinator(resources: resources, renderSession: session)
+    let targetHost = DocumentPageHost()
     fixture.window.rootViewController?.view.addSubview(targetHost)
     targetHost.frame = .init(x: 720, y: 0, width: 240, height: 340)
     defer { renderer.onPresentationChange = {}; renderer.invalidate(); targetHost.removeFromSuperview() }
@@ -1303,9 +1250,8 @@ final class DocumentProgramOwnerTests: XCTestCase {
     targetHost.frame.size.height = targetHost.bounds.width * size.height / size.width
     targetHost.setNeedsLayout(); targetHost.layoutIfNeeded()
     renderer.update(document: document, state: .init(id: document.id, actor: UUID()),
-      selectedPageIndex: 1, capturesSnapshot: false, onRenderReady: .init { _ in },
-      onPageLayout: { _ in }, onStateChange: { _, _ in nil },
-      onPreparationFailure: { failures.append(String(describing: $0)) }, preparationRequestID: UUID())
+      selectedPageIndex: 1, onPageLayout: { _ in },
+      onPreparationFailure: { failures.append(String(describing: $0)) }, onLinkActivation: { _ in }, preparationRequestID: UUID())
     renderer.onPresentationChange = { [weak renderer] in
       guard let renderer, withdrawals == 0, renderer.acquisitionError is CancellationError else { return }
       withdrawals += 1
@@ -1315,10 +1261,10 @@ final class DocumentProgramOwnerTests: XCTestCase {
     }
     renderer.mount(in: targetHost, physicalSize: size, isInteractive: false, priority: .visible, purpose: { .optional })
     try await wait(message: { fixture.diagnostics }) {
-      renderer.webView != nil && renderer.installedPaper == nil && resources.pendingDerivedRequestCount > 0
-        && renderer.pagePreparationTrace?.phasesMS["frameTaskAt"] != nil
+      renderer.installedPaper == nil && resources.pendingDerivedRequestCount > 0
+        && renderer.pagePreparationTrace?.phasesMS["preparedPageStartAt"] != nil
     }
-    let admitted = WeakDocumentPaper(renderer.webView)
+    let admitted = WeakDocumentPaper(renderer.view)
     let admittedID = ObjectIdentifier(try XCTUnwrap(admitted.value))
     let token = try XCTUnwrap(renderer.payload?.renderToken)
     resources.handleMemoryPressure(.warning)
@@ -1334,7 +1280,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
     XCTAssertEqual(withdrawals, 1)
     XCTAssertTrue(failures.isEmpty, "The retired optional subscriber cannot fail the required remount: \(failures)")
     XCTAssertNil(renderer.acquisitionError)
-    XCTAssertEqual(ObjectIdentifier(try XCTUnwrap(renderer.webView)), admittedID)
+    XCTAssertEqual(ObjectIdentifier(renderer.view), admittedID)
     XCTAssertTrue(renderer.nativeInputIsReady(in: targetHost))
     XCTAssertTrue(fixture.canonicalPaper(in: 0))
     XCTAssertTrue(session.source(document) === source)
@@ -1342,195 +1288,72 @@ final class DocumentProgramOwnerTests: XCTestCase {
     try await wait(message: { fixture.diagnostics }) { resources.activeWebSurfaceCount == 0 && resources.pendingWebRequestCount == 0 }
   }
 
-  func testAcceptedDistantTargetPreemptsARealQueuedNeighbourWithoutRetiringCurrentPaper() async throws {
-    let document = DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "body", source:
-      "\\section{Current}\\hypertarget{current}{}Current paper remains interactive."
-      + "\\newpage\\section{Speculative neighbour}The existing passive request targets this page."
-      + "\\newpage\\section{Alternate target}A later accepted navigation can replace the distant target."
-      + "\\newpage\\section{Destination}\\hypertarget{destination}{}The selected distant target owns admission.")])
-    let resources = SceneRenderResources(maximumWebSurfaces: 2, reservedInteractiveSlots: 0)
-    let fixture = try ProgramFixture(document: document, resources: resources, showsNeighbour: false)
-    defer { fixture.close() }
-    try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.canonicalPaper(in: 0) }
-    let owner = DocumentPagePresentationOwner.shared(documentID: document.id, resources: resources)
-    let layout = try XCTUnwrap(DocumentRenderRegistry.shared.session(documentID: document.id, resources: resources).source(document).layout)
-    let target = layout.pageCount - 1
-    XCTAssertGreaterThan(target, 2)
-    let current = WeakDocumentPaper(fixture.paper(in: 0))
-    let identity = ObjectIdentifier(try XCTUnwrap(current.value))
-    _ = try await XCTUnwrap(current.value).evaluateJavaScript("window.priorityDocument=document;window.priorityValue=47;true")
-    // Hold a real second admitted WebKit. The passive owner must queue through
-    // SceneRenderResources, rather than a manufactured renderer-ready callback.
-    let blocker = DocumentWebCoordinator(resources: resources, onRenderReady: .init { _ in },
-      onPageLayout: { _ in },  onStateChange: { _, _ in nil })
-    let blockerHost = DocumentWebHost()
-    fixture.window.rootViewController?.view.addSubview(blockerHost)
-    blockerHost.frame = .init(x: 720, y: 0, width: 240, height: 340)
-    let blockerDocument = DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "blocker", source: "\\section{Another active paper}\\hypertarget{another-active-paper}{}")])
-    blocker.update(document: blockerDocument, state: .init(id: blockerDocument.id, actor: UUID()),
-      selectedPageIndex: 0, capturesSnapshot: false, onRenderReady: .init { _ in },
-      onPageLayout: { _ in },  onStateChange: { _, _ in nil })
-    let geometry = DocumentRenderRegistry.shared.geometry(document: blockerDocument, pageIndex: 0)
-    blocker.mount(in: blockerHost, physicalSize: .init(width: geometry.width, height: geometry.height),
-      isInteractive: true, priority: .currentPage)
-    defer { blocker.invalidate(); blockerHost.removeFromSuperview() }
-    try await wait(message: { fixture.diagnostics }) { blocker.hasCanonicalPixels && resources.activeWebSurfaceCount == 2 }
-    XCTAssertNotNil(blocker.webView)
 
-    fixture.restorePresentation(1)
-    try await wait(message: { fixture.diagnostics }) { owner.pendingPassivePageIndex == 1 && resources.pendingWebRequestCount == 1 }
-    fixture.activity.prepare(target)
-    let acceptedID = try XCTUnwrap(fixture.activity.preparationDemand?.id)
-    fixture.showPages(current: 0, neighbour: target)
-    fixture.activity.prepare(target)
-    XCTAssertEqual(fixture.activity.preparationDemand?.id, acceptedID)
-    // This assertion runs before releasing the real blocker. The old owner
-    // stays on page 1 until its deadline, exposing the causal scheduling defect.
-    let priorityDeadline = ContinuousClock.now + .seconds(2)
-    while owner.pendingPassivePageIndex != target, ContinuousClock.now < priorityDeadline {
-      try await Task.sleep(for: .milliseconds(10))
-    }
-    XCTAssertEqual(owner.pendingPassivePageIndex, target, "Accepted navigation must replace the queued neighbour before admission becomes available")
-    guard owner.pendingPassivePageIndex == target else { return }
-    XCTAssertEqual(resources.pendingWebRequestCount, 1, "Supersession removes the obsolete physical request")
-    XCTAssertEqual(ObjectIdentifier(try XCTUnwrap(current.value)), identity)
-    XCTAssertTrue(fixture.canonicalPaper(in: 0))
-    XCTAssertTrue((current.value?.navigationDelegate as? DocumentWebCoordinator)?.acceptsInput == true)
 
-    fixture.activity.prepare(target - 1)
-    fixture.showPages(current: 0, neighbour: target - 1)
-    try await wait(message: { fixture.diagnostics }) { owner.pendingPassivePageIndex == target - 1 && resources.pendingWebRequestCount == 1 }
-    XCTAssertNotEqual(fixture.activity.preparationDemand?.id, acceptedID)
-    fixture.activity.prepare(nil)
-    fixture.retirePresentation(1)
-    try await wait(message: { fixture.diagnostics }) { resources.pendingWebRequestCount == 0 }
-    XCTAssertEqual(resources.activeWebSurfaceCount, 2, "Cancelling a queued landing cannot evict either active paper")
-    fixture.activity.prepare(target)
-    fixture.showPages(current: 0, neighbour: target)
-    fixture.restorePresentation(1)
-    try await wait(message: { fixture.diagnostics }) { owner.pendingPassivePageIndex == target && resources.pendingWebRequestCount == 1 }
-
-    blocker.invalidate(); blockerHost.removeFromSuperview()
-    try await wait(message: { fixture.diagnostics }) { fixture.ready[1] == true && fixture.snapshot(in: 1) != nil }
-    fixture.select(1); fixture.activity.prepare(nil)
-    try await wait(message: { fixture.diagnostics }) { fixture.ready[1] == true && fixture.canonicalPaper(in: 1) }
-    XCTAssertEqual(ObjectIdentifier(try XCTUnwrap(fixture.paper(in: 1))), identity)
-    let retained = try await XCTUnwrap(current.value).evaluateJavaScript("priorityDocument===document && priorityValue===47")
-    XCTAssertEqual(retained as? Bool, true)
-    XCTAssertTrue(fixture.preparationErrors.isEmpty, fixture.diagnostics)
-    fixture.close()
-    try await wait(message: { fixture.diagnostics }) { resources.activeWebSurfaceCount == 0 && resources.pendingWebRequestCount == 0 }
-  }
-
-  func testCurrentCanonicalPaperAdmitsInputWithoutChangingItsRuntimeOrMeasurement() async throws {
-    let document = DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "body", source:
-      "\\hyperlink{target}{Go to target}\n\n\\section{Target}\\hypertarget{target}{}\n\nA current paper is prepared before its opening settles.")])
+  func testCurrentCanonicalPaperAdmitsInputWithoutChangingItsMaterialOrMeasurement() async throws {
+    let document = DocumentTestFiles.document(contents: [.tex(id: "body", source:
+      "\\hyperlink{target}{Target}\\section{Target}\\hypertarget{target}{}")])
     let recorder = DocumentPresentationRecorder(enabled: true)
     _ = recorder.request(documentID: document.id, pageIndex: 0, cause: .open)
     let fixture = try ProgramFixture(document: document, measurements: recorder, interactive: false)
     defer { fixture.close() }
-    var navigations = 0
-    fixture.replaceLinkNavigation { _ in navigations += 1 }
+    var navigations = 0; fixture.replaceLinkNavigation { _ in navigations += 1 }
     try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && recorder.records.last?.contentReadyAt != nil }
-    let web = try XCTUnwrap(fixture.paper(in: 0))
-    let coordinator = try XCTUnwrap(web.navigationDelegate as? DocumentWebCoordinator)
+    let paper = try XCTUnwrap(fixture.paper(in: 0)), raster = try XCTUnwrap(paper.raster)
     let source = DocumentRenderRegistry.shared.session(documentID: document.id, resources: fixture.resources).source(document)
-    let measurement = source.measurementCount
-    let canonical = try await web.evaluateJavaScript("window.inputOwnerDocument=document; window.inputOwnerState={value:17}; JSON.stringify(notebookRenderer.pageReceipt())") as? String
-    XCTAssertTrue(coordinator.hasCanonicalPixels)
-    XCTAssertFalse(coordinator.acceptsInput)
-    XCTAssertFalse(fixture.hosts[0].hasInteractiveSurface(web))
-    XCTAssertTrue(try XCTUnwrap(web.superview).accessibilityElementsHidden)
-    XCTAssertNil(recorder.records.last?.installedAt, "Canonical pixels alone cannot certify a first working page")
-    _ = try await web.evaluateJavaScript("document.querySelector('a').click(); true")
-    // A JS click is only a bridge-admission probe. Native hit routing below and
-    // the separately required Simulator touch scenario prove different things.
-    try await Task.sleep(for: .milliseconds(30))
-    XCTAssertEqual(navigations, 0)
-
+    let count = source.measurementCount
+    XCTAssertFalse(try XCTUnwrap(fixture.link(in: paper)).accessibilityActivate())
+    XCTAssertNil(recorder.records.last?.installedAt)
     fixture.setInteractive(true)
-    XCTAssertTrue(coordinator.acceptsInput)
-    XCTAssertTrue(coordinator.nativeInputIsReady(in: fixture.hosts[0]))
-    XCTAssertNotNil(recorder.records.last?.installedAt,
-      "The input owner's event records installation before any polling task can run")
-    XCTAssertFalse(try XCTUnwrap(web.superview).accessibilityElementsHidden)
-    try await fixture.assertPaperReceivesNativeHit(web)
-    _ = try await web.evaluateJavaScript("document.querySelector('a').click(); true")
-    try await wait(message: { fixture.diagnostics }) { navigations == 1 && recorder.records.last?.installedAt != nil }
-
+    XCTAssertNotNil(recorder.records.last?.installedAt)
+    try await fixture.assertPaperReceivesNativeHit(paper)
+    try fixture.activateLink(in: paper); XCTAssertEqual(navigations, 1)
     fixture.setInteractive(false)
-    XCTAssertFalse(coordinator.acceptsInput)
-    XCTAssertFalse(coordinator.nativeInputIsReady(in: fixture.hosts[0]))
-    XCTAssertTrue(try XCTUnwrap(web.superview).accessibilityElementsHidden)
-    fixture.setInteractive(true)
-    XCTAssertTrue(coordinator.nativeInputIsReady(in: fixture.hosts[0]))
-    _ = try await web.evaluateJavaScript("document.querySelector('a').click(); true")
-    try await wait(message: { fixture.diagnostics }) { navigations == 2 }
-    XCTAssertTrue(fixture.paper(in: 0) === web)
-    let retained = try await web.evaluateJavaScript("inputOwnerDocument===document && inputOwnerState.value===17")
-    XCTAssertEqual(retained as? Bool, true)
-    let after = try await web.evaluateJavaScript("JSON.stringify(notebookRenderer.pageReceipt())") as? String
-    XCTAssertEqual(after, canonical)
-    XCTAssertEqual(source.measurementCount, measurement)
-    XCTAssertTrue(fixture.preparationErrors.isEmpty, fixture.diagnostics)
+    try await fixture.assertPaperRejectsNativeHit(paper)
+    XCTAssertFalse(try XCTUnwrap(fixture.link(in: paper)).accessibilityActivate())
+    fixture.setInteractive(true); try fixture.activateLink(in: paper)
+    XCTAssertEqual(navigations, 2)
+    XCTAssertTrue(fixture.paper(in: 0) === paper && paper.raster === raster)
+    XCTAssertEqual(source.measurementCount, count)
+    XCTAssertEqual(fixture.resources.activeWebSurfaceCount, 0)
   }
 
   func testInputPolicyChangedDuringSourcePreparationReachesTheSamePaper() async throws {
-    let document = DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "body", source: "\\section{Early opening}\\hypertarget{early-opening}{}\n\n\\hyperlink{target}{Target}\n\n\\section{Target}\\hypertarget{target}{}")])
-    let fixture = try ProgramFixture(document: document, interactive: false)
+    let document = DocumentTestFiles.document(contents: [.tex(id: "body", source:
+      "\\hyperlink{target}{Target}\\section{Target}\\hypertarget{target}{}")])
+    let fixture = try ProgramFixture(document: document, interactive: false, showsNeighbour: false)
     defer { fixture.close() }
-    try await wait(message: { fixture.diagnostics }) { fixture.paper(in: 0) != nil }
-    let web = try XCTUnwrap(fixture.paper(in: 0))
-    let coordinator = try XCTUnwrap(web.navigationDelegate as? DocumentWebCoordinator)
-    XCTAssertFalse(coordinator.hasCanonicalPixels, "The policy changes during real initial preparation")
-    let runtimeID = coordinator.payload?.runtimeID
     fixture.setInteractive(true)
-    XCTAssertFalse(coordinator.acceptsInput, "The input request survives preparation but cannot admit a hit before installation")
-    try await wait(message: { fixture.diagnostics }) { coordinator.nativeInputIsReady(in: fixture.hosts[0]) && fixture.ready[0] == true }
-    XCTAssertTrue(fixture.paper(in: 0) === web)
-    XCTAssertEqual(coordinator.payload?.runtimeID, runtimeID)
-    XCTAssertEqual(coordinator.payload?.renderToken, fixture.currentToken)
+    XCTAssertFalse(fixture.hosts[0].isUserInteractionEnabled)
+    try await wait(message: { fixture.diagnostics }) { fixture.canonicalPaper(in: 0) && fixture.hosts[0].isUserInteractionEnabled }
+    let paper = try XCTUnwrap(fixture.paper(in: 0))
+    try await fixture.assertPaperReceivesNativeHit(paper)
     let source = DocumentRenderRegistry.shared.session(documentID: document.id, resources: fixture.resources).source(document)
     XCTAssertEqual(source.measurementCount, 1)
-    try await fixture.assertPaperReceivesNativeHit(web)
+    XCTAssertEqual(fixture.resources.activeWebSurfaceCount, 0)
   }
 
-  func testDisablingNewNativeInputRejectsProgrammaticClickDuringAContact() async throws {
-    let document = DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "body", source: "\\hyperlink{target}{Target}\n\n\\section{Target}\\hypertarget{target}{}")])
+  func testDisablingNewNativeInputRejectsNewActivationDuringAContact() async throws {
+    let document = DocumentTestFiles.document(contents: [.tex(id: "body", source:
+      "\\hyperlink{target}{Target}\\section{Target}\\hypertarget{target}{}")])
     let fixture = try ProgramFixture(document: document)
     defer { fixture.close() }
     var admittedCalls = 0, laterCalls = 0
     fixture.replaceLinkNavigation { _ in admittedCalls += 1 }
-    // The contact starts only after this paper owns native hit admission.
-    try await wait(message: { fixture.diagnostics }) {
-      guard let renderer = fixture.paper(in: 0)?.navigationDelegate as? DocumentWebCoordinator else { return false }
-      return fixture.ready[0] == true && fixture.canonicalPaper(in: 0)
-        && renderer.nativeInputIsReady(in: fixture.hosts[0])
-    }
-    let web = try XCTUnwrap(fixture.paper(in: 0))
-    let coordinator = try XCTUnwrap(web.navigationDelegate as? DocumentWebCoordinator)
-    // This is the native contact-observer delivery seam against a real loaded
-    // paper; it does not synthesize a UITouch or claim a physical gesture test.
+    try await wait(message: { fixture.diagnostics }) { fixture.canonicalPaper(in: 0) && fixture.hosts[0].isUserInteractionEnabled }
+    let paper = try XCTUnwrap(fixture.paper(in: 0))
     fixture.hosts[0].onContactChange(true)
-    fixture.setInteractive(false)
-    fixture.replaceLinkNavigation { _ in laterCalls += 1 }
-    XCTAssertFalse(coordinator.nativeInputIsReady(in: fixture.hosts[0]))
-    try await fixture.assertPaperRejectsNativeHit(web)
-    _ = try await web.evaluateJavaScript("document.querySelector('a').click(); true")
-    try await Task.sleep(for: .milliseconds(30))
-    XCTAssertEqual(admittedCalls, 0, "A programmatic click cannot spend an earlier user contact")
-    XCTAssertEqual(laterCalls, 0)
-    fixture.hosts[0].onContactChange(false)
-    XCTAssertFalse(coordinator.acceptsInput)
-    XCTAssertFalse(coordinator.nativeInputIsReady(in: fixture.hosts[0]))
-    fixture.setInteractive(true)
-    _ = try await web.evaluateJavaScript("document.querySelector('a').click(); true")
-    try await wait(message: { fixture.diagnostics }) { laterCalls == 1 }
-    XCTAssertTrue(fixture.paper(in: 0) === web)
-    XCTAssertEqual(admittedCalls, 0)
+    fixture.setInteractive(false); fixture.replaceLinkNavigation { _ in laterCalls += 1 }
+    try await fixture.assertPaperRejectsNativeHit(paper)
+    XCTAssertFalse(try XCTUnwrap(fixture.link(in: paper)).accessibilityActivate())
+    XCTAssertEqual(admittedCalls, 0); XCTAssertEqual(laterCalls, 0)
+    fixture.hosts[0].onContactChange(false); fixture.setInteractive(true)
+    try fixture.activateLink(in: paper)
+    XCTAssertEqual(laterCalls, 1); XCTAssertEqual(admittedCalls, 0)
+    XCTAssertTrue(fixture.paper(in: 0) === paper)
   }
 
-  func testAcceptedProgramStateDoesNotRevokeTheSameSourceInputWhilePaperEchoWaits() async throws {
+  func testAcceptedProgramStateDoesNotRevokeTheSameSourceInput() async throws {
     let document = DocumentTestFiles.document(actor: UUID(), contents: [
       .tex(id: "heading", source: "\\section{A stable input owner}\\hypertarget{a-stable-input-owner}{}"),
       .program(id: "counter", html: "<button>Increment</button><output>0</output>",
@@ -1547,17 +1370,15 @@ final class DocumentProgramOwnerTests: XCTestCase {
       fixture.ready[0] == true && fixture.web(block: "counter") != nil && fixture.canonicalPaper(in: 0)
     }
     let web = try XCTUnwrap(fixture.web(block: "counter")), paper = try XCTUnwrap(fixture.paper(in: 0))
-    let coordinator = try XCTUnwrap(paper.navigationDelegate as? DocumentWebCoordinator)
-    let oldToken = try XCTUnwrap(coordinator.payload?.renderToken)
-    // Hold the existing page owner, so the real JS state receipt reaches the
-    // input projection before the asynchronous paper echo can catch up.
+    let oldToken = fixture.currentToken, raster = try XCTUnwrap(paper.raster)
+    // A held physical turn keeps the installed native input owner.
     fixture.activity.update(true)
     defer { fixture.activity.update(false) }
     _ = try await web.evaluateJavaScript("document.querySelector('button').click();true")
     try await wait(message: { fixture.diagnostics }) { fixture.number("counter", field: "count") == 1 }
     XCTAssertNotEqual(fixture.currentToken, oldToken)
-    XCTAssertEqual(coordinator.payload?.renderToken, oldToken)
-    XCTAssertTrue(coordinator.acceptsInput)
+    XCTAssertTrue(paper.raster === raster)
+    XCTAssertTrue(fixture.presents(.paper))
     XCTAssertTrue(fixture.hosts[0].isUserInteractionEnabled)
     let rawRect = try await web.evaluateJavaScript("(()=>{const r=document.querySelector('button').getBoundingClientRect();return [r.x+r.width/2,r.y+r.height/2]})()")
     let rect = try XCTUnwrap(rawRect as? [Double])
@@ -1571,193 +1392,73 @@ final class DocumentProgramOwnerTests: XCTestCase {
   }
 
   func testRetiredOutgoingPageTransfersItsActualPaperToThePreparedDistantPage() async throws {
-    let document = DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "body", source:
-      "\\hyperlink{far}{Far chapter}\n\n" + (0..<35).map { "Paragraph \($0). " + String(repeating: "A physical page transfer preserves the installed WebKit. ", count: 8) }.joined(separator: "\n\n")
-      + "\n\n\\section{Far}\\hypertarget{far}{}\n\n\\hyperlink{body}{Return}")])
+    let document = DocumentTestFiles.document(contents: [.tex(id: "body", source:
+      "First page.\\newpage Intermediate page.\\newpage Last page.")])
     let fixture = try ProgramFixture(document: document)
     defer { fixture.close() }
-    var phase = "initial"
-    defer {
-      let attachment = XCTAttachment(string: "phase=\(phase) \(fixture.diagnostics)\n" + DocumentPagePresentationOwner.presentationDiagnostic(documentID: document.id, resources: fixture.resources))
-      attachment.name = "paper-transfer-final-owner"; attachment.lifetime = .keepAlways; add(attachment)
-    }
-    try await wait(message: { fixture.diagnostics }) {
-      fixture.ready[0] == true && fixture.hosts[0].isUserInteractionEnabled && fixture.canonicalPaper(in: 0)
-    }
+    try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.canonicalPaper(in: 0) }
     let source = DocumentRenderRegistry.shared.session(documentID: document.id, resources: fixture.resources).source(document)
-    let destination = try XCTUnwrap(source.layout.map { $0.pageCount - 1 })
-    XCTAssertGreaterThan(destination, 1)
+    let destination = try XCTUnwrap(source.layout).pageCount - 1
     fixture.showPages(current: 0, neighbour: destination)
-    phase = "distant-preparation"
-    try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.ready[1] == true && fixture.snapshot(in: 1) != nil }
-    let originalPaper = WeakDocumentPaper(fixture.paper(in: 0))
-    let originalIdentity = ObjectIdentifier(try XCTUnwrap(originalPaper.value))
-    phase = "mark-original-runtime"
-    let originalReceipt = try await XCTUnwrap(originalPaper.value).evaluateJavaScript("window.handoffDocument=document; window.handoffState={value:17}; notebookRenderer.pageReceipt()") as? [String: Any]
-    // UIKit can dismantle a distant outgoing page before the replacement
-    // current-page input reaches its surviving, already prepared controller.
-    fixture.retirePresentation(0)
-    fixture.select(1)
-    phase = "retired-outgoing-awaiting-distant"
-    XCTAssertNotNil(originalPaper.value, "The owner must retain the actual runtime between native hosts; the test keeps only a weak reference")
-    // A passive snapshot's ready flag survives the mount. Read this retained
-    // runtime only after its own canonical frame is installed above the fallback.
+    try await wait(message: { fixture.diagnostics }) { fixture.ready[1] == true && fixture.hosts[1].hasSnapshot }
+    let original = WeakDocumentPaper(fixture.paper(in: 0))
+    fixture.retirePresentation(0); fixture.select(1)
     try await wait(message: { fixture.diagnostics }) {
-      guard let web = fixture.paper(in: 1), let renderer = web.navigationDelegate as? DocumentWebCoordinator else { return false }
-      return fixture.ready[1] == true && fixture.canonicalPaper(in: 1)
-        && !fixture.hosts[1].hasSnapshot && renderer.nativeInputIsReady(in: fixture.hosts[1])
+      fixture.canonicalPaper(in: 1) && !fixture.hosts[1].hasSnapshot && fixture.hosts[1].isUserInteractionEnabled
     }
-    let incoming = try XCTUnwrap(fixture.paper(in: 1))
-    phase = "reading-installed-distant"
-    XCTAssertEqual(ObjectIdentifier(incoming), originalIdentity)
-    let retained = try await incoming.evaluateJavaScript("handoffDocument===document && handoffState.value===17")
-    XCTAssertEqual(retained as? Bool, true)
-    let receipt = try await incoming.evaluateJavaScript("notebookRenderer.pageReceipt()") as? [String: Any]
-    XCTAssertEqual(receipt?["pageIndex"] as? Int, destination)
-    XCTAssertEqual(receipt?["presentationKind"] as? String, "canonical")
-    XCTAssertEqual(receipt?["renderToken"] as? String, fixture.currentToken)
-    XCTAssertEqual(receipt?["runtimeID"] as? String, originalReceipt?["runtimeID"] as? String)
-    XCTAssertEqual(receipt?["sourceKey"] as? String, originalReceipt?["sourceKey"] as? String)
-    XCTAssertEqual(receipt?["stateKey"] as? String, originalReceipt?["stateKey"] as? String)
+    XCTAssertTrue(fixture.paper(in: 1) === original.value)
+    XCTAssertEqual(fixture.paper(in: 1)?.raster?.sourceKey, source.message.key)
+    XCTAssertEqual(source.measurementCount, 1)
+    fixture.restorePresentation(0); fixture.select(0)
+    try await wait(message: { fixture.diagnostics }) { fixture.canonicalPaper(in: 0) && fixture.hosts[0].isUserInteractionEnabled }
+    XCTAssertTrue(fixture.paper(in: 0) === original.value)
+    XCTAssertEqual(fixture.resources.activeWebSurfaceCount, 0)
     XCTAssertTrue(fixture.preparationErrors.isEmpty, fixture.diagnostics)
-    let distantImage = XCTAttachment(image: try fixture.windowImage())
-    distantImage.name = "paper-transfer-distant-same-runtime"; distantImage.lifetime = .keepAlways; add(distantImage)
-    fixture.restorePresentation(0)
-    fixture.select(0)
-    phase = "returning-to-first"
-    try await wait(message: { fixture.diagnostics }) {
-      guard let web = fixture.paper(in: 0), let renderer = web.navigationDelegate as? DocumentWebCoordinator else { return false }
-      return fixture.ready[0] == true && fixture.canonicalPaper(in: 0)
-        && !fixture.hosts[0].hasSnapshot && renderer.nativeInputIsReady(in: fixture.hosts[0])
-    }
-    XCTAssertEqual(ObjectIdentifier(try XCTUnwrap(fixture.paper(in: 0))), originalIdentity)
-    let returned = try await incoming.evaluateJavaScript("notebookRenderer.pageReceipt()") as? [String: Any]
-    XCTAssertEqual(returned?["pageIndex"] as? Int, 0)
-    XCTAssertEqual(returned?["renderToken"] as? String, fixture.currentToken)
-    XCTAssertTrue(fixture.preparationErrors.isEmpty, fixture.diagnostics)
-    let returnImage = XCTAttachment(image: try fixture.windowImage())
-    returnImage.name = "paper-transfer-return-same-runtime"; returnImage.lifetime = .keepAlways; add(returnImage)
-    phase = "completed"
   }
 
-  func testDelayedIncomingCurrentPageKeepsOpenDocumentRuntimeUntilExplicitClose() async throws {
-    let document = DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "body", source:
-      "\\hyperlink{far}{Far}The current page owns its runtime."
-      + "\\newpage\\section{Intermediate}The far destination is not the adjacent page."
-      + "\\newpage\\section{Far}\\hypertarget{far}{}The native handoff retains the current heap.\\hyperlink{body}{Return}")])
+  func testDelayedIncomingCurrentPageKeepsOpenDocumentPaperUntilExplicitClose() async throws {
+    let document = DocumentTestFiles.document(contents: [.tex(id: "body", source:
+      "First page.\\newpage Intermediate page.\\newpage Last page.")])
     let fixture = try ProgramFixture(document: document)
     defer { fixture.close() }
-    var phase = "initial_ready", caughtError = "none"
-    defer {
-      let proof = XCTAttachment(string: "phase=\(phase) error=\(caughtError)\n\(fixture.diagnostics)\n" +
-        DocumentPagePresentationOwner.presentationDiagnostic(documentID: document.id, resources: fixture.resources))
-      proof.name = "delayed-current-gap-boundary"; proof.lifetime = .keepAlways; add(proof)
-    }
-    do {
-      try await wait(message: { fixture.diagnostics }) {
-        fixture.ready[0] == true && fixture.hosts[0].isUserInteractionEnabled && fixture.canonicalPaper(in: 0)
-      }
-      phase = "resolve_measured_target"
-      let destination = try XCTUnwrap(DocumentRenderRegistry.shared.session(documentID: document.id,
-        resources: fixture.resources).source(document).layout.map { $0.pageCount - 1 })
-      XCTAssertGreaterThan(destination, 1)
-      phase = "prepare_passive_target"
-      fixture.showPages(current: 0, neighbour: destination)
-      try await wait(message: { fixture.diagnostics }) { fixture.ready[1] == true && fixture.snapshot(in: 1) != nil }
-      let original = WeakDocumentPaper(fixture.paper(in: 0))
-      let identity = ObjectIdentifier(try XCTUnwrap(original.value))
-      phase = "read_original_javascript_receipt"
-      let originalRaw = try await XCTUnwrap(original.value).evaluateJavaScript(
-        "window.delayedHandoffDocument=document; window.delayedHandoffValue=29; notebookRenderer.pageReceipt()")
-      let receipt = try XCTUnwrap(originalRaw as? [String: Any])
-      let runtimeID = try XCTUnwrap(receipt["runtimeID"] as? String)
-      let sourceKey = try XCTUnwrap(receipt["sourceKey"] as? String)
-      XCTAssertFalse(runtimeID.isEmpty); XCTAssertFalse(sourceKey.isEmpty)
-      let owner = DocumentPagePresentationOwner.shared(documentID: document.id, resources: fixture.resources)
-
-      phase = "retire_original_presentation"
-      fixture.retirePresentation(0)
-      // The incoming native host is real and already has its passive pixels.
-      // Let the existing owner task actually finish before SwiftUI supplies its
-      // new isCurrent input. No ready callback or elapsed-time substitute is used.
-      phase = "yield_before_existing_work_drain"
-      await Task.yield()
-      phase = "drain_existing_presentation_work"
-      await owner.observePendingPresentationWork()
-      phase = "assert_original_after_drain"
-      XCTAssertNotNil(original.value, "A gap in physical current-page publication must not close the open document runtime")
-      phase = "select_prepared_target"
-      fixture.select(1)
-      try await wait(message: { fixture.diagnostics }) { fixture.ready[1] == true && fixture.hosts[1].isUserInteractionEnabled && fixture.paper(in: 1) != nil }
-      XCTAssertEqual(ObjectIdentifier(try XCTUnwrap(fixture.paper(in: 1))), identity)
-      // The earlier passive picture may still have a true readiness callback.
-      // Keep the identity assertion above; only read JavaScript after the actual
-      // installed paper has accepted this page's canonical frame.
-      phase = "await_actual_canonical_target"
-      try await wait(message: { fixture.diagnostics }) { fixture.canonicalPaper(in: 1) }
-      XCTAssertEqual(ObjectIdentifier(try XCTUnwrap(fixture.paper(in: 1))), identity)
-      phase = "read_returned_javascript_receipt"
-      let returnedRaw = try await XCTUnwrap(fixture.paper(in: 1)).evaluateJavaScript("notebookRenderer.pageReceipt()")
-      let returned = try XCTUnwrap(returnedRaw as? [String: Any])
-      XCTAssertEqual(try XCTUnwrap(returned["runtimeID"] as? String), runtimeID)
-      XCTAssertEqual(try XCTUnwrap(returned["sourceKey"] as? String), sourceKey)
-      phase = "read_preserved_javascript_marker"
-      let preserved = try await XCTUnwrap(fixture.paper(in: 1)).evaluateJavaScript(
-        "window.delayedHandoffDocument===document && window.delayedHandoffValue===29")
-      XCTAssertEqual(preserved as? Bool, true)
-      XCTAssertEqual(DocumentRenderRegistry.shared.session(documentID: document.id,
-        resources: fixture.resources).source(document).measurementCount, 1)
-
-      phase = "explicit_close"
-      fixture.close()
-      try await wait(message: { fixture.diagnostics }) {
-        original.value == nil && fixture.resources.activeWebSurfaceCount == 0 && fixture.resources.pendingWebRequestCount == 0
-      }
-      XCTAssertEqual(fixture.resources.rasterAdmission.pinnedBytes, 0)
-      phase = "complete"
-    } catch {
-      let native = error as NSError
-      caughtError = "type=\(String(reflecting: type(of: error))) domain=\(native.domain) code=\(native.code) description=\(String(describing: error))"
-      throw error
-    }
+    try await wait(message: { fixture.diagnostics }) { fixture.canonicalPaper(in: 0) && fixture.hosts[0].isUserInteractionEnabled }
+    let source = DocumentRenderRegistry.shared.session(documentID: document.id, resources: fixture.resources).source(document)
+    let target = try XCTUnwrap(source.layout).pageCount - 1
+    fixture.showPages(current: 0, neighbour: target)
+    try await wait(message: { fixture.diagnostics }) { fixture.ready[1] == true && fixture.hosts[1].hasSnapshot }
+    let original = WeakDocumentPaper(fixture.paper(in: 0))
+    let owner = DocumentPagePresentationOwner.shared(documentID: document.id, resources: fixture.resources)
+    fixture.retirePresentation(0)
+    await owner.observePendingPresentationWork()
+    XCTAssertNotNil(original.value)
+    fixture.select(1)
+    try await wait(message: { fixture.diagnostics }) { fixture.canonicalPaper(in: 1) && fixture.hosts[1].isUserInteractionEnabled }
+    XCTAssertTrue(fixture.paper(in: 1) === original.value)
+    XCTAssertEqual(source.measurementCount, 1)
+    fixture.close()
+    try await wait(message: { fixture.diagnostics }) { original.value == nil }
+    XCTAssertEqual(fixture.resources.activeWebSurfaceCount, 0)
+    XCTAssertEqual(fixture.resources.rasterAdmission.pinnedBytes, 0)
   }
 
   func testReturnToDocumentReattachesPreparedWorkingPaperWithoutRebuildingIt() async throws {
-    let document = DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "body", source:
-      "\\section{Return here}\\hypertarget{return-here}{}\n\nA prepared formula \\(x^2 + y^2\\) and editable source.")])
+    let document = DocumentTestFiles.document(contents: [.tex(id: "body", source: "A prepared formula \\(x^2 + y^2\\) and editable source.")])
     let fixture = try ProgramFixture(document: document, showsNeighbour: false)
     let owner = DocumentPagePresentationOwner.shared(documentID: document.id, resources: fixture.resources)
     let lifetime = owner.retainOpenDocument()
     defer { fixture.close(); lifetime.close() }
     try await wait(message: { fixture.diagnostics }) { fixture.canonicalPaper(in: 0) && fixture.hosts[0].isUserInteractionEnabled }
-    let web = try XCTUnwrap(fixture.paper(in: 0))
-    let original = try await web.evaluateJavaScript("JSON.stringify(notebookRenderer.pageReceipt().work)") as? String
-    let source = try XCTUnwrap((web.navigationDelegate as? DocumentWebCoordinator)?.payload?.source)
-    let measurements = source.measurementCount, fragments = source.compiledPageCount
-    lifetime.parkForReturn()
-    fixture.retirePresentation(0)
+    let paper = try XCTUnwrap(fixture.paper(in: 0)), raster = try XCTUnwrap(fixture.retainedPaper)
+    let source = DocumentRenderRegistry.shared.session(documentID: document.id, resources: fixture.resources).source(document)
+    let measurements = source.measurementCount
+    lifetime.parkForReturn(); fixture.retirePresentation(0)
     await owner.observePendingPresentationWork()
-    XCTAssertFalse(web.isDescendant(of: fixture.hosts[0]))
-    lifetime.resume()
-    fixture.restorePresentation(0)
-    try await wait(message: { fixture.diagnostics }) { fixture.paper(in: 0) === web && fixture.hosts[0].isUserInteractionEnabled }
-    let returned = try await web.evaluateJavaScript("JSON.stringify(notebookRenderer.pageReceipt().work)") as? String
-    XCTAssertEqual(returned, original, "Return attaches the existing DOM; parsing, math, layout and page installation do not run again")
+    XCTAssertFalse(paper.isDescendant(of: fixture.hosts[0]))
+    lifetime.resume(); fixture.restorePresentation(0)
+    try await wait(message: { fixture.diagnostics }) { fixture.paper(in: 0) === paper && fixture.hosts[0].isUserInteractionEnabled }
+    XCTAssertTrue(paper.raster === raster)
     XCTAssertEqual(source.measurementCount, measurements)
-    XCTAssertEqual(source.compiledPageCount, fragments)
-    let requested = expectation(description: "Native source is addressed by returned paper")
-    let observer = NotificationCenter.default.addObserver(forName: DocumentSourceRequest.notification, object: nil, queue: .main) { note in
-      guard let request = note.object as? DocumentSourceRequest, request.documentID == document.id else { return }
-      XCTAssertEqual(request.source, document.files.first { $0.id == "body" }?.source)
-      requested.fulfill()
-    }
-    defer { NotificationCenter.default.removeObserver(observer) }
-    _ = try await web.evaluateJavaScript("""
-      const block=document.querySelector('[data-block-id=body]'), rect=block.getBoundingClientRect();
-      block.dispatchEvent(new MouseEvent('dblclick',{bubbles:true,clientX:rect.left+5,clientY:rect.top+5}));true;
-      """)
-    await fulfillment(of: [requested], timeout: 3)
-
+    XCTAssertEqual(fixture.resources.activeWebSurfaceCount, 0)
   }
 
   func testCodeModeKeepsTheSameFrozenHeapThroughSourceChangesAndDelayedPersistence() async throws {
@@ -2096,29 +1797,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
     XCTAssertEqual(fixture.resources.rasterAdmission.pinnedBytes, 0)
   }
 
-  func testNativeFailureDuringPaperTransferRetiresOnlyItsParkedRuntimeAndAdmission() async throws {
-    let document = DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "body", source: "\\section{A ready paper}\\hypertarget{a-ready-paper}{}\n\nA terminal event can arrive before its replacement host is current.")])
-    let fixture = try ProgramFixture(document: document)
-    defer { fixture.close() }
-    try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.paper(in: 0) != nil }
-    let runtime = WeakDocumentPaper(fixture.paper(in: 0))
-    fixture.activity.update(true)
-    fixture.retirePresentation(0)
-    XCTAssertNotNil(runtime.value)
-    try await wait(message: { fixture.diagnostics }) {
-      runtime.value != nil && fixture.resources.activeWebSurfaceCount == 1 && fixture.resources.pendingWebRequestCount == 0
-    }
-    // Public navigation-delegate failure against the real prepared WK. This
-    // deterministic lifecycle seam does not claim an actual OS process crash.
-    if let web = runtime.value {
-      let coordinator = try XCTUnwrap(web.navigationDelegate as? DocumentWebCoordinator)
-      coordinator.webView(web, didFail: nil,
-        withError: NSError(domain: "DocumentPaperTransferContract", code: 1))
-    }
-    try await wait(message: { fixture.diagnostics }) {
-      runtime.value == nil && fixture.resources.activeWebSurfaceCount == 0 && fixture.resources.pendingWebRequestCount == 0
-    }
-  }
+
 
   func testMeasuredLayoutUpdatesLinkCallbackWithoutReloadingTheCanonicalPaper() async throws {
     let document = DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "body", source:
@@ -2136,30 +1815,27 @@ final class DocumentProgramOwnerTests: XCTestCase {
       fixture.ready[0] == true && fixture.hosts[0].isUserInteractionEnabled && fixture.canonicalPaper(in: 0)
     }
     let paper = try XCTUnwrap(fixture.paper(in: 0))
-    let before = try await paper.evaluateJavaScript("window.callbackTestDocument=document; JSON.stringify(notebookRenderer.pageReceipt())")
+    let before = try XCTUnwrap(paper.raster)
     let source = DocumentRenderRegistry.shared.session(documentID: document.id, resources: fixture.resources).source(document)
     let measuredCount = try XCTUnwrap(source.layout?.pageCount)
     XCTAssertGreaterThan(measuredCount, 1)
-    _ = try await paper.evaluateJavaScript("document.querySelector('a[href^=\"#notebook-print-page-\"]').click(); true")
+    try fixture.activateLink(in: paper)
     try await wait(message: { fixture.diagnostics }) { initialCalls == 1 }
     XCTAssertNil(acceptedPage, "The initial one-page closure rejects the later measured destination")
     fixture.replaceLinkNavigation { destination in
       if case .page(let page) = destination, page >= 0, page < measuredCount { acceptedPage = page }
     }
-    _ = try await paper.evaluateJavaScript("document.querySelector('a[href^=\"#notebook-print-page-\"]').click(); true")
+    try fixture.activateLink(in: paper)
     try await wait(message: { fixture.diagnostics }) { acceptedPage != nil }
     XCTAssertEqual(initialCalls, 1, "The old captured layout callback is retired by the same-entry update")
     XCTAssertGreaterThan(try XCTUnwrap(acceptedPage), 0)
     XCTAssertTrue(fixture.paper(in: 0) === paper)
-    let sameDocument = try await paper.evaluateJavaScript("callbackTestDocument===document")
-    XCTAssertEqual(sameDocument as? Bool, true)
-    let after = try await paper.evaluateJavaScript("JSON.stringify(notebookRenderer.pageReceipt())")
-    XCTAssertEqual(after as? String, before as? String, "Callback refresh cannot change the frame generation, source or canonical receipt")
+    XCTAssertTrue(paper.raster === before, "Refreshing a callback preserves the exact installed PDF cut")
   }
 
   func testLoadingCaptionUsesItsTextWidthAndWrapsWithinThePhysicalPage() throws {
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
-    let window = UIWindow(windowScene: scene), controller = UIViewController(), host = DocumentWebHost()
+    let window = UIWindow(windowScene: scene), controller = UIViewController(), host = DocumentPageHost()
     window.rootViewController = controller; controller.view.backgroundColor = .systemGray6
     controller.view.addSubview(host); window.makeKeyAndVisible()
     defer { host.removeLoading(); window.isHidden = true; window.rootViewController = nil }
@@ -2191,8 +1867,8 @@ final class DocumentProgramOwnerTests: XCTestCase {
     }
   }
 
-  func testCurrentPagePreparationMetadataComesFromItsActualWebKitGeneration() async throws {
-    let document = DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "body", source: "\\section{Observed document}\\hypertarget{observed-document}{}\n\nA real canonical page.")])
+  func testCurrentPagePreparationMetadataComesFromItsActualNativeInstallation() async throws {
+    let document = DocumentTestFiles.document(contents: [.tex(id: "body", source: "A real canonical page.")])
     let recorder = DocumentPresentationRecorder(enabled: true)
     let request = try XCTUnwrap(recorder.request(documentID: document.id, pageIndex: 0, cause: .open))
     let fixture = try ProgramFixture(document: document, measurements: recorder)
@@ -2200,27 +1876,17 @@ final class DocumentProgramOwnerTests: XCTestCase {
     try await wait(message: { fixture.diagnostics }) { recorder.records.last?.installedAt != nil }
     let record = try XCTUnwrap(recorder.records.last), identity = try XCTUnwrap(record.pagePreparationIdentity)
     XCTAssertEqual(identity.requestID, request)
-    XCTAssertEqual(identity.token, fixture.currentToken)
     XCTAssertEqual(identity.documentID, document.id)
+    XCTAssertEqual(identity.sourceKey, fixture.paper(in: 0)?.raster?.sourceKey)
     let phases = try XCTUnwrap(record.pagePreparationPhasesMS)
-    for stage in ["payloadConfiguredAt", "mountAt", "admissionRequestedAt", "admittedAt", "frameTaskAt",
-      "preparedPageStartAt", "preparedPageReadyAt", "pageSourceEncodedAt", "stateEncodedAt", "frameEncodedAt",
-      "frameEvaluationStartAt", "renderStartedAt", "renderedAt", "pageReceiptRequestedAt", "pageReceiptReturnedAt", "layoutReceiptAcceptedAt", "canonicalReadyAt"] {
+    for stage in ["payloadConfiguredAt", "mountAt", "preparedPageStartAt", "preparedPageReadyAt", "paperInstalledAt", "canonicalReadyAt"] {
       XCTAssertNotNil(phases[stage], stage)
     }
-    XCTAssertTrue(phases["shellNavigationFinishedAt"] != nil || phases["shellReadyMessageAt"] != nil)
-    // Native PDF preparation starts independently of interaction admission.
-    XCTAssertLessThanOrEqual(try XCTUnwrap(phases["payloadConfiguredAt"]), try XCTUnwrap(phases["preparedPageStartAt"]))
-    XCTAssertLessThanOrEqual(try XCTUnwrap(phases["admittedAt"]), try XCTUnwrap(phases["frameEvaluationStartAt"]))
-    XCTAssertLessThanOrEqual(try XCTUnwrap(phases["preparedPageReadyAt"]), try XCTUnwrap(phases["frameEvaluationStartAt"]))
-    XCTAssertLessThanOrEqual(try XCTUnwrap(phases["pageReceiptRequestedAt"]), try XCTUnwrap(phases["pageReceiptReturnedAt"]))
-    XCTAssertLessThanOrEqual(try XCTUnwrap(phases["pageReceiptReturnedAt"]), try XCTUnwrap(phases["layoutReceiptAcceptedAt"]))
-    XCTAssertLessThanOrEqual(try XCTUnwrap(phases["layoutReceiptAcceptedAt"]), try XCTUnwrap(phases["canonicalReadyAt"]))
+    XCTAssertNil(phases["frameEvaluationStartAt"])
+    XCTAssertLessThanOrEqual(try XCTUnwrap(phases["preparedPageReadyAt"]), try XCTUnwrap(phases["paperInstalledAt"]))
     XCTAssertLessThanOrEqual(identity.configuredAt + (try XCTUnwrap(phases["canonicalReadyAt"])) / 1_000,
       try XCTUnwrap(record.contentReadyAt))
-    let receipt = try await XCTUnwrap(fixture.paper(in: 0)).evaluateJavaScript("notebookRenderer.pageReceipt()") as? [String: Any]
-    XCTAssertEqual(receipt?["generation"] as? String, identity.generation)
-    XCTAssertEqual(receipt?["renderToken"] as? String, identity.token)
+    XCTAssertEqual(fixture.resources.activeWebSurfaceCount, 0)
   }
 
   func testTallProgramHasOneContextAcrossPassivePagesCurlAndIndexReclamation() async throws {
@@ -2267,8 +1933,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
     fixture.select(0)
     try await Task.sleep(for: .milliseconds(150))
     XCTAssertTrue(fixture.web(in: 1) === web, "An accepted native curl keeps the exact runtime at its previous host until completion")
-    let lockedPage = try await XCTUnwrap(fixture.paper(in: 1)).evaluateJavaScript("notebookRenderer.pageReceipt().pageIndex")
-    XCTAssertEqual(lockedPage as? Int, 1)
+    XCTAssertEqual(fixture.paper(in: 1)?.raster?.page.pageIndex, 1)
     fixture.activity.update(false)
     try await wait(message: { fixture.diagnostics }) { fixture.web(in: 0) === web && fixture.ready[0] == true && fixture.hosts[0].isUserInteractionEnabled && fixture.web(in: 0) != nil }
     try await fixture.message("increment", in: web)
@@ -2293,12 +1958,11 @@ final class DocumentProgramOwnerTests: XCTestCase {
     XCTAssertTrue(fixture.hosts[1].hasSnapshot, "An unresolved author ready promise leaves an explicit status in the turn frame")
     XCTAssertTrue(fixture.hosts[0].isUserInteractionEnabled)
     XCTAssertTrue(fixture.web(in: 0) === web)
-    let page = try await XCTUnwrap(fixture.paper(in: 0)).evaluateJavaScript("notebookRenderer.pageReceipt().pageIndex")
-    XCTAssertEqual(page as? Int, 0)
+    XCTAssertEqual(fixture.paper(in: 0)?.raster?.page.pageIndex, 0)
     XCTAssertLessThanOrEqual(fixture.resources.activeWebSurfaceCount, 4)
   }
 
-  func testLeavingTheProgramWindowCheckpointsStateBeforeRetirementAndRestoresItsIdentity() async throws {
+  func testLeavingTheProgramWindowCheckpointsAndReturnsToTheSameResidentHeap() async throws {
     let program: (String) -> DocumentTestFiles = { id in
       .program(id: id, html: "<button>Count</button>", css: "", javaScript: """
       let count=notebook.state.count||0;const nonce=crypto.randomUUID();
@@ -2317,18 +1981,11 @@ final class DocumentProgramOwnerTests: XCTestCase {
     try await wait(message: { fixture.diagnostics }) { fixture.value("program")?["count"] == .number(1) }
     fixture.showPages(current: 4, neighbour: 3)
     try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.hosts[0].isUserInteractionEnabled && fixture.checkpoints.contains("program") }
-    let retirementDeadline = ContinuousClock.now + .seconds(5)
-    var exists = true
-    repeat {
-      exists = web.superview != nil
-      if exists { try await Task.sleep(for: .milliseconds(10)) }
-    } while exists && ContinuousClock.now < retirementDeadline
-    XCTAssertFalse(exists, "A program outside the physical working window retires only after its accepted explicit state is checkpointed")
     fixture.showPages(current: 0, neighbour: 1)
-    try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.hosts[0].isUserInteractionEnabled && fixture.value("program")?["mounts"] == .number(2) }
-    XCTAssertTrue(fixture.web(in: 0) !== web, "Retired explicit state creates one replacement context on return")
+    try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.hosts[0].isUserInteractionEnabled && fixture.web(in: 0) === web }
+    XCTAssertEqual(fixture.value("program")?["mounts"], .number(1))
     XCTAssertEqual(fixture.value("program")?["count"], .number(1))
-    XCTAssertNotEqual(fixture.value("program")?["nonce"], firstNonce)
+    XCTAssertEqual(fixture.value("program")?["nonce"], firstNonce)
     XCTAssertLessThanOrEqual(fixture.resources.activeWebSurfaceCount, 4)
   }
 
@@ -2455,12 +2112,12 @@ final class DocumentProgramOwnerTests: XCTestCase {
     attachment.name = "stationary-document-refined-after-admission"; attachment.lifetime = .keepAlways; add(attachment)
   }
 
-  func testAnOffscreenProgramReleasesItsExecutorAfterWritingEvenWhenNoRasterCanBeAdmitted() async throws {
+  func testPressureReleasesAnOffscreenProgramAfterWritingWithoutRequiringRasterAdmission() async throws {
     let document = DocumentTestFiles.document(actor: UUID(), contents: (0..<4).map { index in
       .program(id: "program-\(index)", html: "<button>Control \(index)</button>",
         javaScript: "notebook.commit({accepted:1});notebook.ready(Promise.resolve());", height: 100)
     })
-    let resources = SceneRenderResources(maximumRasterCount: 0)
+    let resources = SceneRenderResources(maximumWebSurfaces: 3, maximumRasterCount: 0, reservedInteractiveSlots: 0)
     let fixture = try ProgramFixture(document: document, resources: resources, showsNeighbour: false)
     defer { fixture.close() }
     try await wait(message: { fixture.diagnostics }) { (0..<3).allSatisfy { fixture.web(block: "program-\($0)") != nil } }
@@ -2468,12 +2125,12 @@ final class DocumentProgramOwnerTests: XCTestCase {
     // The fourth control is no longer held behind the removed three-program
     // quota. Its presence cannot stand in for completion of the others' writes.
     try await wait(message: { fixture.diagnostics }) {
-      fixture.web(block: "program-3") != nil && resources.activeWebSurfaceCount <= 2
+      fixture.web(block: "program-3") != nil && resources.activeWebSurfaceCount == 3
         && (0..<3).allSatisfy { fixture.checkpointValues["program-\($0)"]?["accepted"] == .number(1) }
     }
     XCTAssertTrue((0..<3).allSatisfy { fixture.checkpointValues["program-\($0)"]?["accepted"] == .number(1) })
     XCTAssertEqual(resources.rasterAdmission.pinnedCount, 0)
-    XCTAssertLessThanOrEqual(resources.activeWebSurfaceCount, 2)
+    XCTAssertEqual(resources.activeWebSurfaceCount, 3)
     XCTAssertTrue(fixture.presents(.paper))
   }
 
@@ -2487,17 +2144,16 @@ final class DocumentProgramOwnerTests: XCTestCase {
       notebook.ready(Promise.resolve());
       """, initialState: .object(["count": .number(0)]), height: 90)
     })
-    let fixture = try ProgramFixture(document: document, resources: SceneRenderResources(maximumWebSurfaces: 10), showsNeighbour: false)
+    let fixture = try ProgramFixture(document: document, resources: SceneRenderResources(maximumWebSurfaces: 9), showsNeighbour: false)
     defer { fixture.close() }
-    // One physical paper and one transient-preparation reserve leave the
-    // remaining ordinary scene slots to already visible input owners.
-    let liveCapacity = fixture.resources.maximumWebSurfaces - 2
+    // Native paper needs no WebKit admission; one slot remains for transient preparation.
+    let liveCapacity = fixture.resources.maximumWebSurfaces - 1
     XCTAssertGreaterThanOrEqual(liveCapacity, 4)
     try await wait(message: { fixture.diagnostics }) {
       (0..<9).filter { fixture.web(block: "program-\($0)") != nil }.count == liveCapacity
         && fixture.resources.pendingWebRequestCount == 9 - liveCapacity
     }
-    XCTAssertEqual(fixture.resources.activeWebSurfaceCount, liveCapacity + 1)
+    XCTAssertEqual(fixture.resources.activeWebSurfaceCount, liveCapacity)
     // Admission preserves arrival order after each program's state encoding.
     let pendingID = try XCTUnwrap((0..<9).map { "program-\($0)" }.first { fixture.web(block: $0) == nil })
     XCTAssertFalse(fixture.hasProgramAction(pendingID), "Waiting is not a fake control or an activation button")
@@ -2599,7 +2255,7 @@ final class ProgramFixture {
   private(set) var document: DocumentDocument
   let resources: SceneRenderResources
   let activity = PageTurnActivity()
-  let hosts = [DocumentWebHost(), DocumentWebHost()]
+  let hosts = [DocumentPageHost(), DocumentPageHost()]
   private let coordinators = [DocumentPhysicalPageCoordinator(), DocumentPhysicalPageCoordinator()]
   private let actor = UUID()
   let window: UIWindow
@@ -2608,6 +2264,7 @@ final class ProgramFixture {
   private let programStore: NotebookStore
   private let ownedStoreDirectory: URL?
   private var linkNavigation: (DocumentLinkDestination) -> Void = { _ in }
+  private(set) var linkActivations: [DocumentLinkActivation] = []
   private var selected = 0
   private var interactive: Bool
   private var visible = true
@@ -2619,6 +2276,7 @@ final class ProgramFixture {
   var checkpoints: Set<String> = []
   var checkpointValues: [String: JSONValue] = [:]
   var onCheckpoint: (String) async -> Void = { _ in }
+  var onStateAccepted: (String) async -> Void = { _ in }
   var acceptsCheckpoints = true
   var preparationErrors: [String] = []
   var diagnostics: String {
@@ -2686,9 +2344,8 @@ final class ProgramFixture {
     try await XCTUnwrap(frameReadiness[index]).acquireFrame(priority: priority)
   }
   func canonicalPaper(in index: Int) -> Bool {
-    guard let web = paper(in: index), let coordinator = web.navigationDelegate as? DocumentWebCoordinator else { return false }
-    return coordinator.hasCanonicalPixels && coordinator.payload?.pageIndex == pageIndices[index]
-      && coordinator.payload?.renderToken == DocumentSnapshotCache.paperToken(sourceRevision: document.contentStamp.revision, pageIndex: pageIndices[index])
+    guard let raster = paper(in: index)?.raster else { return false }
+    return raster.page.pageIndex == pageIndices[index] && raster.page.artifact.document == document
   }
   func select(_ index: Int) { selected = index; refresh() }
   func setVisible(_ value: Bool) { visible = value; refresh() }
@@ -2709,13 +2366,15 @@ final class ProgramFixture {
       coordinator.update(.init(document: document, state: state, pageIndex: pageIndices[index], isCurrent: selected == index && !thumbnailPresentations.contains(index),
         isVisible: visible, isInteractive: visible && selected == index && interactive && !thumbnailPresentations.contains(index), pageTurnActive: false,
         onRenderReady: readiness,
-        onPageLayout: { _ in },
+        onPageLayout: { [weak self] layout in self?.installPageGeometry(layout, at: index) },
         onStateChange: { [weak self] program, value in
           guard let self else { return nil }
           _ = state.commit(instanceID: program.id, value: value, actor: actor)
           let accepted = state.records.first { $0.id == program.id }?.valueVersion
-          refresh(); return accepted
-        },    onLinkActivation: { [weak self] in self?.linkNavigation($0.destination) },
+          refresh(); await onStateAccepted(program.id); return accepted
+        },    onLinkActivation: { [weak self] activation in
+          self?.linkActivations.append(activation); self?.linkNavigation(activation.destination)
+        },
         snapshotPixelWidth: thumbnailPresentations.contains(index) ? 256 : nil, onPreparationFailure: { [weak self] error in
           self?.preparationErrors.append("page \(index): \(error)")
         },
@@ -2731,6 +2390,15 @@ final class ProgramFixture {
           refresh(); return accepted
         }, measurements: measurements, programStore: programStore), in: hosts[index], resources: resources)
     }
+  }
+
+  private func installPageGeometry(_ layout: DocumentPageLayout, at index: Int) {
+    guard layout.sourceRevision == DocumentPageNavigation.sourceRevision(document), let record = layout.record else { return }
+    let geometry = record.paper(on: pageIndices[index]).geometry, host = hosts[index]
+    let height = host.bounds.width * geometry.height / geometry.width
+    guard host.bounds.height != height else { return }
+    host.frame.size.height = height
+    host.setNeedsLayout(); host.layoutIfNeeded()
   }
 
   func value(_ block: String) -> JSONValue? { state.records.first { $0.id == block }?.value }
@@ -2781,21 +2449,26 @@ final class ProgramFixture {
     window.rootViewController!.view.addSubview(hosts[0]); visibleClip?.removeFromSuperview(); visibleClip = nil
     hosts[0].frame.origin = .zero; window.layoutIfNeeded(); refresh()
   }
-  func paper(in index: Int) -> WKWebView? { descendants(hosts[index]).first { hosts[index].ownsSurface($0) } }
-  func assertPaperReceivesNativeHit(_ web: WKWebView, file: StaticString = #filePath, line: UInt = #line) async throws {
-    let point = try await web.evaluateJavaScript("(()=>{const r=document.querySelector('a').getBoundingClientRect(); return [r.x+r.width/2,r.y+r.height/2]})()") as? [Double]
-    let location = try XCTUnwrap(point, file: file, line: line)
-    XCTAssertEqual(location.count, 2, file: file, line: line)
-    window.layoutIfNeeded()
-    let hit = window.hitTest(web.convert(.init(x: location[0], y: location[1]), to: window), with: nil)
-    XCTAssertTrue(hit === web || hit?.isDescendant(of: web) == true,
-      "The actual native route at the visible link must reach this WebKit subtree, got \(String(describing: hit))", file: file, line: line)
+  func paper(in index: Int) -> DocumentPaperView? { views(hosts[index]).compactMap { $0 as? DocumentPaperView }.first }
+  func link(in paper: DocumentPaperView) -> UIButton? {
+    guard let host = paper.superview else { return nil }
+    return views(host).compactMap { $0 as? UIButton }.first { $0.accessibilityIdentifier == "document-link" }
   }
-  func assertPaperRejectsNativeHit(_ web: WKWebView, file: StaticString = #filePath, line: UInt = #line) async throws {
-    let point = try await web.evaluateJavaScript("(()=>{const r=document.querySelector('a').getBoundingClientRect(); return [r.x+r.width/2,r.y+r.height/2]})()") as? [Double]
-    let location = try XCTUnwrap(point, file: file, line: line)
-    let hit = window.hitTest(web.convert(.init(x: location[0], y: location[1]), to: window), with: nil)
-    XCTAssertFalse(hit === web || hit?.isDescendant(of: web) == true,
+  func activateLink(in paper: DocumentPaperView) throws {
+    XCTAssertTrue(try XCTUnwrap(link(in: paper)).accessibilityActivate())
+  }
+  private func views(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(views) }
+  func assertPaperReceivesNativeHit(_ paper: DocumentPaperView, file: StaticString = #filePath, line: UInt = #line) async throws {
+    let button = try XCTUnwrap(link(in: paper), file: file, line: line)
+    window.layoutIfNeeded()
+    let hit = window.hitTest(button.convert(.init(x: button.bounds.midX, y: button.bounds.midY), to: window), with: nil)
+    XCTAssertTrue(hit === button || hit?.isDescendant(of: button) == true,
+      "The actual native route must reach the installed PDF link, got \(String(describing: hit))", file: file, line: line)
+  }
+  func assertPaperRejectsNativeHit(_ paper: DocumentPaperView, file: StaticString = #filePath, line: UInt = #line) async throws {
+    let button = try XCTUnwrap(link(in: paper), file: file, line: line)
+    let hit = window.hitTest(button.convert(.init(x: button.bounds.midX, y: button.bounds.midY), to: window), with: nil)
+    XCTAssertFalse(hit === button || hit?.isDescendant(of: button) == true,
       "Disabling new input must close the real native hit-test route", file: file, line: line)
   }
   private func descendants(_ view: UIView) -> [WKWebView] {
@@ -2836,6 +2509,6 @@ final class ProgramFixture {
 
 @MainActor
 private final class WeakDocumentPaper {
-  weak var value: WKWebView?
-  init(_ value: WKWebView?) { self.value = value }
+  weak var value: UIView?
+  init(_ value: UIView?) { self.value = value }
 }

@@ -12,7 +12,7 @@ final class PhysicalWebViewportTests: XCTestCase {
     window.rootViewController = controller
     window.makeKeyAndVisible()
     defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
-    let source = DocumentWebHost(), target = DocumentWebHost(), web = WindowTrackingDocumentWebView()
+    let source = DocumentPageHost(), target = DocumentPageHost(), web = WindowTrackingDocumentPageView()
     let size = CGSize(width: 240, height: 320)
     for (index, host) in [source, target].enumerated() {
       controller.view.addSubview(host)
@@ -108,7 +108,7 @@ final class PhysicalWebViewportTests: XCTestCase {
 }
 
 @MainActor
-private final class WindowTrackingDocumentWebView: WKWebView {
+private final class WindowTrackingDocumentPageView: WKWebView {
   var windowDetachments = 0
   override func didMoveToWindow() {
     super.didMoveToWindow()

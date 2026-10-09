@@ -67,7 +67,11 @@ struct PreparedAgentElementView: View {
   let preparations: PageAgentPreparationOwner?
   @State private var standaloneOwner = PreparedAgentElementPreparationOwner()
   @State private var consumer = PreparedAgentElementPreparationOwner.Consumer()
-  private var owner: PreparedAgentElementPreparationOwner { preparations?.owner(for: element.id) ?? standaloneOwner }
+  private var owner: PreparedAgentElementPreparationOwner {
+    if let preparations { return preparations.owner(for: element.id) }
+    if element.requiresLiveRuntime { return SceneRenderResources.shared.programPreparation(focus: focus, model: model) }
+    return standaloneOwner
+  }
 
   init(element: AgentElement, allowsInteraction: Bool, inputEnabled: Bool = true,
     allowsProgramExecution: Bool = true, capturePolicy: AgentSnapshotPolicy? = nil, focus: InteractiveElementReference,
@@ -142,7 +146,7 @@ struct PreparedAgentElementView: View {
       if let web = owner.web, let session = owner.session, session.lease === web {
         owner.runtimeView(web, session: session, basis: configuration.demand.basis)
           .id(web.id)
-          .allowsHitTesting(isActive && inputEnabled && owner.liveProgram == AgentProgramSource(element))
+          .allowsHitTesting(isActive && inputEnabled && owner.permitsRuntimeInput)
       }
       // Keep the accepted pixels above the new native surface until its
       // exact first paint. WebKit stays visible underneath, so installation
@@ -211,8 +215,13 @@ struct PreparedAgentElementView: View {
       owner.accept(configuration)
     }
     .onDisappear {
-      owner.detach(consumer)
-      if preparations == nil { owner.retire(); standaloneOwner = PreparedAgentElementPreparationOwner() }
+      let departing = consumer.owner ?? owner
+      departing.detach(consumer)
+      if preparations == nil {
+        if element.requiresLiveRuntime {
+          SceneRenderResources.shared.leaveProgramPreparation(departing, focus: focus, model: model)
+        } else { departing.retire(); standaloneOwner = PreparedAgentElementPreparationOwner() }
+      }
     }
   }
 }

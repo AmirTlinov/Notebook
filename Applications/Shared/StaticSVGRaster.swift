@@ -70,7 +70,7 @@ enum StaticSVGRaster {
       #if os(iOS)
       let image = UIImage(cgImage: cg, scale: pixels.width / crop.width, orientation: .up)
       #else
-      let image = NSImage(cgImage: cg, size: crop.size)
+      let image = NSImage(raster: cg, logicalSize: crop.size)
       #endif
       // Keep drawing and minification on the same worker. Returning to the UI
       // between them puts every dense-page image behind another layout cycle.

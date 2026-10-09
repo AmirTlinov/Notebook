@@ -6,11 +6,7 @@ import XCTest
 final class DocumentSnapshotTests: XCTestCase {
   @MainActor
   private func measuredLayout(_ document: DocumentDocument) throws -> DocumentLayoutRecord {
-    let paper = DocumentPaperLayout.uncompiled, geometry = paper.geometry
-    return try DocumentLayoutRecord(receipt: ["sourceKey": "cache-fixture", "layoutScope": "source", "layoutCanonical": true, "anchors": [], "reading": [],
-      "pageCount": 3, "width": geometry.width, "height": geometry.height,
-      "pages": Array(repeating: ["widthPoints": paper.widthPoints, "heightPoints": paper.heightPoints], count: 3), "regions": []] as NSDictionary,
-      sourceKey: "cache-fixture", blockIDs: Set(document.files.map(\.id)), geometry: geometry)
+    try DocumentLayoutFixture.make(pages: Array(repeating: .uncompiled, count: 3))
   }
 
   private func bitmap(width: Int, height: Int) -> NSImage {

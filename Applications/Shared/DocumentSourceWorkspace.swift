@@ -174,7 +174,7 @@ final class DocumentSourceEditorSession {
   }
   func reconcile(_ document: DocumentDocument) {
     if let file = document.files.first(where: { $0.id == fileID }) { path = file.path }
-    guard !saving, DocumentFile.sourcesAreEqual(text, base), document.id == documentID,
+    guard !saving, !composing, DocumentFile.sourcesAreEqual(text, base), document.id == documentID,
       let current = source(in: document), current.version != version else { return }
     base = current.text; text = base; version = current.version
     sessionID = UUID(); sequence = 0; notice = nil; navigate(selection.location)
@@ -221,6 +221,9 @@ struct DocumentSourceWorkspace<Paper: View>: View {
   @State private var filePath = ""
   @State private var fileOperation: FileOperation?
   private enum FileOperation: String, Identifiable { case create, rename; var id: String { rawValue } }
+  private enum FileAction { case open(String), create, rename }
+  @State private var filePickerPresented = false
+  @State private var pendingFileAction: (documentID: UUID, action: FileAction)?
   @State private var comparison = false
   @State private var printStatus = ""
   @State private var diagnostics: [NotebookPrintDiagnostic] = []
@@ -279,14 +282,20 @@ struct DocumentSourceWorkspace<Paper: View>: View {
         if !allowed, mode == .beside { mode = .code }
       }
       .onChange(of: document) { _, value in if let value { session?.reconcile(value) } }
-      .onChange(of: document?.id) { _, _ in session?.finish(); session = nil; resourceID = nil; mode = .paper }
+      .onChange(of: document?.id) { _, _ in
+        pendingFileAction = nil; filePickerPresented = false
+        session?.finish(); session = nil; resourceID = nil; mode = .paper
+      }
       .onReceive(NotificationCenter.default.publisher(for: DocumentSourceRequest.notification)) { note in
         guard let request = note.object as? DocumentSourceRequest, request.documentID == model.activeDocument?.id else { return }
         open(request); if mode == .paper { mode = allowsBeside ? .beside : .code }
       }
       .onChange(of: document, initial: true) { _, value in preparePrint(value) }
     }
-    .onDisappear { session?.finish(); printTask?.cancel(); printTask = nil }
+    .onDisappear {
+      pendingFileAction = nil; filePickerPresented = false
+      session?.finish(); printTask?.cancel(); printTask = nil
+    }
     .sheet(isPresented: $comparison) {
       VStack(alignment: .leading, spacing: 12) {
         Text("Версии исходника").font(.headline)
@@ -359,21 +368,18 @@ struct DocumentSourceWorkspace<Paper: View>: View {
     HStack(spacing: 10) {
       DocumentViewModePicker(mode: $mode, allowsBeside: allowsBeside)
         .frame(width: allowsBeside ? 216 : 144)
-      Menu {
-        ForEach(document.files.sorted { $0.path < $1.path }) { file in
-          Button(file.path) {
-            open(.init(documentID: document.id, file: file, version: document.fileVersion(fileID: file.id)))
-            if mode == .paper { mode = allowsBeside ? .beside : .code }
-          }
-        }
-        Divider()
-        Button("Новый файл…") { filePath = ""; fileOperation = .create }
-        Button("Переименовать…") { filePath = session?.path ?? document.files.first { $0.id == resourceID }?.path ?? document.entrypoint; fileOperation = .rename }
+      Button {
+        pendingFileAction = nil; filePickerPresented = true
       } label: {
         Label("Файлы документа", systemImage: "doc.text")
           .labelStyle(.iconOnly).frame(width: 44, height: 44)
           .contentShape(Rectangle())
       }.accessibilityIdentifier("document-source-menu")
+        .popover(isPresented: $filePickerPresented, attachmentAnchor: .rect(.bounds), arrowEdge: .top) {
+          filePicker(document)
+            .presentationCompactAdaptation(.popover)
+            .onDisappear(perform: completeFileAction)
+        }
     }.padding(.horizontal, 6).frame(height: 44).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
     .accessibilityElement(children: .contain).accessibilityIdentifier("document-source-header")
     .sheet(item: $fileOperation) { operation in
@@ -388,6 +394,42 @@ struct DocumentSourceWorkspace<Paper: View>: View {
             .disabled(filePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
       }.padding(20).frame(minWidth: 400)
+    }
+  }
+  private func filePicker(_ document: DocumentDocument) -> some View {
+    let files = document.files.sorted { $0.path < $1.path }
+    return List {
+      ForEach(files) { file in
+        Button(file.path) { chooseFileAction(.open(file.id), documentID: document.id) }
+      }
+      Section {
+        Button("Новый файл…") { chooseFileAction(.create, documentID: document.id) }
+        Button("Переименовать…") { chooseFileAction(.rename, documentID: document.id) }
+      }
+    }
+    .listStyle(.plain)
+    .frame(width: 360, height: min(480, CGFloat(files.count + 2) * 48 + 16))
+    .accessibilityIdentifier("document-source-file-picker")
+  }
+  private func chooseFileAction(_ action: FileAction, documentID: UUID) {
+    pendingFileAction = (documentID, action)
+    filePickerPresented = false
+  }
+  private func completeFileAction() {
+    guard !filePickerPresented, let pending = pendingFileAction else { return }
+    pendingFileAction = nil
+    guard let document = model.activeDocument, document.id == pending.documentID else { return }
+    // Retire the picker before navigating the editor or presenting a file sheet.
+    switch pending.action {
+    case .open(let fileID):
+      guard let file = document.files.first(where: { $0.id == fileID }) else { return }
+      open(.init(documentID: document.id, file: file, version: document.fileVersion(fileID: file.id)))
+      if mode == .paper { mode = allowsBeside ? .beside : .code }
+    case .create:
+      filePath = ""; fileOperation = .create
+    case .rename:
+      filePath = session?.path ?? document.files.first { $0.id == resourceID }?.path ?? document.entrypoint
+      fileOperation = .rename
     }
   }
   private func changeFile(_ operation: FileOperation, document: DocumentDocument) {

@@ -53,7 +53,7 @@ final class NotebookDocumentOpeningTests: XCTestCase {
         paper.window === window {
         var ancestor = paper.superview
         while let native = ancestor {
-          if let host = native as? DocumentWebHost {
+          if let host = native as? DocumentPageHost {
             return !host.hasSnapshot && host.hasCanonicalPaperProjection
           }
           ancestor = native.superview
@@ -161,38 +161,6 @@ final class NotebookDocumentOpeningTests: XCTestCase {
     capturePhases.name = "document-window-observation-cost"; capturePhases.lifetime = .keepAlways; add(capturePhases)
   }
 
-  func testAcceptedNavigationDoesNotStartAnOptionalShellBeforeItsResolverRuns() async throws {
-    let (model, first, _) = try await fixture()
-    let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
-    let previous = window.windowScene?.windows.first(where: \.isKeyWindow)
-    window.rootViewController = UIHostingController(rootView: SpatialWorkspaceView().environment(model).ignoresSafeArea())
-    window.makeKeyAndVisible()
-    defer {
-      model.cancelRequestedNavigation()
-      window.isHidden = true; window.rootViewController = nil; previous?.makeKey()
-      model.compositionTiles.cancelPreparation()
-    }
-    let deadline = ContinuousClock.now + .seconds(10)
-    while model.compositionTiles.published?.isPaintInstalled != true, ContinuousClock.now < deadline {
-      try await Task.sleep(for: .milliseconds(20))
-    }
-    let cohort = try XCTUnwrap(model.compositionTiles.published)
-    XCTAssertTrue(cohort.isPaintInstalled)
-    let visible = try XCTUnwrap(model.presence)
-    let resources = SceneRenderResources.shared
-    resources.documentShellPreparation?.retireUnused()
-    model.requestShow(.init(target: .init(kind: .document, id: first.id), revision: first.contentStamp.revision))
-    XCTAssertNotNil(model.requestedReference)
-    XCTAssertEqual(model.presencePhase, .settled, "The resolver has not yet moved the camera")
-    model.prepareCommonDocumentShellIfIdle(presence: visible, cohort: cohort)
-    XCTAssertNil(resources.documentShellPreparation?.unusedCoordinator,
-      "Accepted navigation is not an idle opportunity, even before its first camera sample")
-    model.cancelRequestedNavigation()
-    model.prepareCommonDocumentShellIfIdle(presence: visible, cohort: cohort)
-    XCTAssertNotNil(resources.documentShellPreparation?.unusedCoordinator,
-      "The same installed board can prepare its optional shell after cancellation")
-  }
-
   func testOpenedDocumentOwnsPixelsHitTestingAndAttentionAboveAnOverlappingCoverWithoutMovingIt() async throws {
     let (model, first, second) = try await fixture()
     model.moveItem(second.id, to: .zero)
@@ -233,10 +201,11 @@ final class NotebookDocumentOpeningTests: XCTestCase {
     XCTAssertGreaterThan(rank, Double(cohort.plan.bands.filter { $0.plane == .board(boardID) }.map(\.rank).max() ?? 0))
     let point = CGPoint(x: window.bounds.midX, y: window.bounds.midY)
     let hit = try XCTUnwrap(window.hitTest(point, with: nil))
-    let web = try XCTUnwrap(views(host.view).compactMap { $0 as? WKWebView }.first {
-      $0.navigationDelegate is DocumentWebCoordinator && hit.isDescendant(of: $0)
-    }, "The native contact must reach the opened document, not its overlapping neighbour")
-    XCTAssertGreaterThan(web.convert(web.bounds, to: window).intersection(window.bounds).width, 100)
+    let paperHost = try XCTUnwrap(views(host.view).compactMap { $0 as? DocumentPageHost }.first { container in
+      container.hasCanonicalPaperProjection && hit.isDescendant(of: container)
+        && views(container).compactMap { $0 as? DocumentPaperView }.contains { $0.raster?.page.artifact.document.id == first.id }
+    }, "The contact must reach the opened native paper above its overlapping neighbour")
+    XCTAssertGreaterThan(paperHost.convert(paperHost.bounds, to: window).intersection(window.bounds).width, 100)
     let image = UIGraphicsImageRenderer(size: window.bounds.size).image { _ in
       window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
     }

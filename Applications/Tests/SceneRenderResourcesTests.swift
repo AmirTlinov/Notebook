@@ -722,12 +722,7 @@ final class SceneRenderResourcesTests: XCTestCase {
   @MainActor
   func testRasterEvictionReleasesItsSharedLayoutBeforeReadmittingDerivedBytes() throws {
     let resources = SceneRenderResources(byteLimit: 64 * 1024, profile: .headless)
-    let geometry = WorkspaceItemGeometry.uncompiledDocument
-    var layout: DocumentLayoutRecord? = try DocumentLayoutRecord(receipt: [
-      "sourceKey": "source", "layoutScope": "source", "layoutCanonical": true, "anchors": [], "reading": [], "pageCount": 1,
-      "pages": [["widthPoints": DocumentPaperLayout.uncompiled.widthPoints, "heightPoints": DocumentPaperLayout.uncompiled.heightPoints]],
-      "width": geometry.width, "height": geometry.height, "regions": []
-    ] as NSDictionary, sourceKey: "source", blockIDs: [], geometry: geometry,
+    var layout: DocumentLayoutRecord? = try DocumentLayoutFixture.make(
       reservation: try XCTUnwrap(resources.reserveDerivedBytes(48 * 1024, priority: .passive)))
     weak let measured = layout
     let source = SceneRasterSource.document(id: UUID(), token: "measured")

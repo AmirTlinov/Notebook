@@ -1,150 +1,91 @@
-import Foundation
-import NotebookCore
-import WebKit
-import XCTest
 #if os(iOS)
+import NotebookCore
 import UIKit
-#else
-import AppKit
-#endif
+import XCTest
 @testable import Notebook
 
 @MainActor
 final class DocumentPresentationWaitTests: XCTestCase {
-  func testUnconfirmedAdmittedSurfaceKeepsTheCoordinatorsExecutionDeadline() async throws {
-    let (renderer, _) = makeRenderer()
-    defer { renderer.invalidate() }
-    // A native surface exists, but there is no canonical receipt. A legacy
-    // render-ready flag must not leave the event subscription without an end.
-    let web = WKWebView(), host = DocumentWebHost()
-    let token = try XCTUnwrap(renderer.payload?.renderToken)
-    let finished = expectation(description: "coordinator execution deadline")
-    let task = Task { @MainActor in
-      do { try await renderer.awaitPresentation(token: token); XCTFail("Unconfirmed surface became ready") }
-      catch { XCTAssertEqual(error as? SceneRenderError, .snapshotPending("document_preparation_timeout")) }
-      finished.fulfill()
-    }
-    defer { task.cancel() }
-    try await subscribed(renderer)
-    renderer.webView = web; renderer.renderIsReady = true
-    renderer.mount(in: host, physicalSize: .init(width: 400, height: 566), isInteractive: false, priority: .currentPage)
-    await fulfillment(of: [finished], timeout: 10)
-    XCTAssertEqual(renderer.pendingPresentationRequestCount, 0)
+  func testNativeCanonicalInstallationCompletesTheExactRequest() async throws {
+    let fixture = try Fixture()
+    defer { fixture.close() }
+    let token = try XCTUnwrap(fixture.renderer.payload?.renderToken)
+    let request = Task { @MainActor in try await fixture.renderer.awaitPresentation(token: token) }
+    defer { request.cancel() }
+    try await subscribed(fixture.renderer)
+    fixture.blocker.release()
+    try await request.value
+    XCTAssertTrue(fixture.renderer.hasCanonicalPixels)
+    XCTAssertTrue(fixture.host.hasCanonicalPaper(fixture.renderer.view))
+    XCTAssertEqual(fixture.renderer.payload?.renderToken, token)
+    XCTAssertEqual(fixture.renderer.pendingPresentationRequestCount, 0)
+    XCTAssertEqual(fixture.resources.activeWebSurfaceCount, 0)
   }
 
-  func testNativeCanonicalReceiptCompletesTheExactRequest() async throws {
-    let (renderer, _) = makeRenderer()
-    let host = DocumentWebHost(), geometry = WorkspaceItemGeometry.uncompiledDocument
-    #if os(iOS)
-    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
-    let window = UIWindow(windowScene: scene), controller = UIViewController()
-    window.rootViewController = controller; controller.view.addSubview(host)
-    host.frame = .init(x: 0, y: 0, width: 400, height: 566)
-    window.makeKeyAndVisible()
-    defer { renderer.invalidate(); window.isHidden = true; window.rootViewController = nil }
-    #else
-    let window = NSWindow(contentRect: .init(x: 0, y: 0, width: 400, height: 566),
-      styleMask: [.titled], backing: .buffered, defer: false)
-    window.contentView = host; window.makeKeyAndOrderFront(nil)
-    defer { renderer.invalidate(); window.orderOut(nil); window.contentView = nil }
-    #endif
-    let finished = expectation(description: "canonical request")
-    let token = try XCTUnwrap(renderer.payload?.renderToken)
-    let task = Task { @MainActor in
-      do { try await renderer.awaitPresentation(token: token) }
-      catch { XCTFail("Canonical request failed: \(error)") }
-      finished.fulfill()
-    }
-    defer { task.cancel() }
-    try await subscribed(renderer)
-    renderer.mount(in: host, physicalSize: .init(width: geometry.width, height: geometry.height),
-      isInteractive: false, priority: .currentPage)
-    await fulfillment(of: [finished], timeout: 10)
-    XCTAssertTrue(renderer.hasCanonicalPixels)
-    XCTAssertEqual(renderer.payload?.renderToken, token)
-    XCTAssertEqual(renderer.pendingPresentationRequestCount, 0)
+  func testSourceReplacementCancelsOnlyTheOldVersion() async throws {
+    let fixture = try Fixture()
+    defer { fixture.close() }
+    let token = try XCTUnwrap(fixture.renderer.payload?.renderToken)
+    let request = Task { @MainActor in try await fixture.renderer.awaitPresentation(token: token) }
+    defer { request.cancel() }
+    try await subscribed(fixture.renderer)
+    var document = fixture.document
+    XCTAssertTrue(document.replaceFileSource(id: "body", source: "Replacement source", actor: UUID()))
+    fixture.update(document)
+    do { try await request.value; XCTFail("A superseded reader completed") }
+    catch { XCTAssertTrue(error is CancellationError) }
+    XCTAssertEqual(fixture.renderer.pendingPresentationRequestCount, 0)
+    XCTAssertNotEqual(fixture.renderer.payload?.renderToken, token)
   }
 
-  func testSourceReplacementCancelsTheOldVersionRatherThanWaitingForTheNewOne() async throws {
-    let (renderer, document) = makeRenderer()
-    defer { renderer.invalidate() }
-    let finished = expectation(description: "superseded request")
-    let token = try XCTUnwrap(renderer.payload?.renderToken)
-    let task = Task { @MainActor in
-      do { try await renderer.awaitPresentation(token: token); XCTFail("Superseded request became ready") }
-      catch { XCTAssertTrue(error is CancellationError) }
-      finished.fulfill()
-    }
-    defer { task.cancel() }
-    try await subscribed(renderer)
-    var changed = document
-    XCTAssertTrue(changed.replaceFileSource(id: "body", source: "\\section{Replaced source}\\hypertarget{replaced-source}{}", actor: UUID()))
-    update(renderer, document: changed)
-    await fulfillment(of: [finished], timeout: 1)
-    XCTAssertEqual(renderer.pendingPresentationRequestCount, 0)
-    XCTAssertNotEqual(renderer.payload?.renderToken, token)
-  }
-
-  func testCancellingOneReaderDoesNotCancelAnotherReadersRequest() async throws {
-    let (renderer, _) = makeRenderer()
-    defer { renderer.invalidate() }
-    let token = try XCTUnwrap(renderer.payload?.renderToken)
-    let finished = expectation(description: "cancelled reader")
-    let first = Task { @MainActor in
-      do { try await renderer.awaitPresentation(token: token); XCTFail("Cancelled reader became ready") }
-      catch { XCTAssertTrue(error is CancellationError) }
-      finished.fulfill()
-    }
-    let second = Task { @MainActor in try await renderer.awaitPresentation(token: token) }
+  func testCancellingOneReaderPreservesAnotherReadersPreparation() async throws {
+    let fixture = try Fixture()
+    defer { fixture.close() }
+    let token = try XCTUnwrap(fixture.renderer.payload?.renderToken)
+    let first = Task { @MainActor in try await fixture.renderer.awaitPresentation(token: token) }
+    let second = Task { @MainActor in try await fixture.renderer.awaitPresentation(token: token) }
     defer { first.cancel(); second.cancel() }
-    try await subscribed(renderer, count: 2)
+    try await subscribed(fixture.renderer, count: 2)
     first.cancel()
-    await fulfillment(of: [finished], timeout: 1)
-    XCTAssertEqual(renderer.pendingPresentationRequestCount, 1)
-    renderer.invalidate()
-    if case .success = await second.result { XCTFail("Closed request became ready") }
-    XCTAssertEqual(renderer.pendingPresentationRequestCount, 0)
+    do { try await first.value; XCTFail("A cancelled reader completed") }
+    catch { XCTAssertTrue(error is CancellationError) }
+    XCTAssertEqual(fixture.renderer.pendingPresentationRequestCount, 1)
+    fixture.blocker.release()
+    try await second.value
+    XCTAssertTrue(fixture.renderer.hasCanonicalPixels)
+    XCTAssertEqual(fixture.renderer.pendingPresentationRequestCount, 0)
   }
 
-  func testNativeFailureCompletesTheWaitWithItsDefinedError() async throws {
-    let (renderer, _) = makeRenderer()
-    defer { renderer.invalidate() }
-    let web = WKWebView()
-    renderer.webView = web
-    let failure = NSError(domain: "DocumentPresentationWaitTests", code: 37)
-    let finished = expectation(description: "native failure")
-    let token = try XCTUnwrap(renderer.payload?.renderToken)
-    let task = Task { @MainActor in
-      do { try await renderer.awaitPresentation(token: token); XCTFail("Failed request became ready") }
-      catch { XCTAssertEqual(error as NSError, failure) }
-      finished.fulfill()
-    }
-    defer { task.cancel() }
-    try await subscribed(renderer)
-    renderer.webView(web, didFailProvisionalNavigation: nil, withError: failure)
-    await fulfillment(of: [finished], timeout: 1)
-    XCTAssertEqual(renderer.pendingPresentationRequestCount, 0)
-  }
-
-  private func makeRenderer() -> (DocumentWebCoordinator, DocumentDocument) {
-    let renderer = DocumentWebCoordinator(resources: SceneRenderResources(), onRenderReady: .init { _ in },
-      onPageLayout: { _ in },  onStateChange: { _, _ in nil })
-    let document = DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "body", source: "\\section{Ready from a native receipt}\\hypertarget{ready-from-a-native-receipt}{}")])
-    update(renderer, document: document)
-    return (renderer, document)
-  }
-
-  private func update(_ renderer: DocumentWebCoordinator, document: DocumentDocument) {
-    renderer.update(document: document, state: .init(id: document.id, actor: UUID()),
-      selectedPageIndex: 0, capturesSnapshot: false, onRenderReady: .init { _ in },
-      onPageLayout: { _ in },  onStateChange: { _, _ in nil })
-  }
-
-  private func subscribed(_ renderer: DocumentWebCoordinator, count: Int = 1) async throws {
+  private func subscribed(_ renderer: DocumentPaperCoordinator, count: Int = 1) async throws {
     let deadline = ContinuousClock.now + .seconds(2)
-    while renderer.pendingPresentationRequestCount != count, ContinuousClock.now < deadline { await Task.yield() }
+    while renderer.pendingPresentationRequestCount != count, .now < deadline { await Task.yield() }
     XCTAssertEqual(renderer.pendingPresentationRequestCount, count)
     if renderer.pendingPresentationRequestCount != count { throw CancellationError() }
   }
-}
 
+  @MainActor private final class Fixture {
+    let resources = SceneRenderResources(profile: .interactive)
+    let document = DocumentTestFiles.document(contents: [.tex(id: "body", source: "The exact native print cut.")])
+    let renderer: DocumentPaperCoordinator
+    let blocker: RasterReservation
+    let host = DocumentPageHost()
+    let window: UIWindow
+    init() throws {
+      blocker = try XCTUnwrap(resources.reserveDerivedBytes(resources.passiveByteLimit - 1, priority: .passive))
+      renderer = .init(resources: resources, renderSession: .init(documentID: document.id))
+      let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+      window = UIWindow(windowScene: scene)
+      let controller = UIViewController(); controller.view = host
+      window.rootViewController = controller; window.makeKeyAndVisible()
+      update(document)
+      let size = WorkspaceItemGeometry.uncompiledDocument
+      renderer.mount(in: host, physicalSize: .init(width: size.width, height: size.height), isInteractive: true, priority: .currentPage)
+    }
+    func update(_ document: DocumentDocument) {
+      renderer.update(document: document, state: .init(id: document.id, actor: UUID()), selectedPageIndex: 0,
+        onPageLayout: { _ in }, onPreparationFailure: { _ in }, onLinkActivation: { _ in }, preparationRequestID: nil)
+    }
+    func close() { blocker.release(); renderer.invalidate(); window.isHidden = true; window.rootViewController = nil }
+  }
+}
+#endif

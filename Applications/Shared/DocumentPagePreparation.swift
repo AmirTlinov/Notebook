@@ -10,110 +10,17 @@ private func printPreparationMilliseconds(since start: ContinuousClock.Instant) 
   return Double(elapsed.seconds)*1000 + Double(elapsed.attoseconds)/1e15
 }
 
-struct DocumentBrowserRegion: Codable, Sendable {
-  var kind: DocumentRegionKind = .file
-  let id: String
-  let pageIndex: Int
-  let x: Double
-  let y: Double
-  let width: Double
-  let height: Double
-  let sourceOffset: Double
-}
-
-struct DocumentBrowserDiagnostic: Codable, Sendable {
-  let kind: String
-  let message: String
-  let blockID: String?
-  var fileID: String? = nil
-  var path: String? = nil
-  var line: Int? = nil
-}
-
-struct DocumentPageFragment: Codable, Sendable {
-  let format: Int
-  let sourceKey: String
-  let pageIndex: Int
-  let width: Double
-  let height: Double
-  let contentTop: Double
-  let contentBottom: Double
-  let blockIDs: [String]
-  let regions: [DocumentBrowserRegion]
-  let html: String
-  let nodeCount: Int
-  let utf8Bytes: Int
-}
-
-
-@MainActor
-final class DocumentPageMessage {
-  let json: String
-  private let reservation: RasterReservation
-  init(json: String, reservation: RasterReservation) { self.json = json; self.reservation = reservation }
-  isolated deinit { reservation.release() }
-}
-
 @MainActor
 final class DocumentPreparedPage {
-  let fragment: DocumentPageFragment
   let printed: DocumentPrintedPage
-  private let source: DocumentSourceMessage
-  private let pageCount: Int
+  let navigation: DocumentPrintNavigation
+  let regions: [DocumentBlockRegion]
+  var size: CGSize { .init(width: printed.width * DocumentPaperLayout.pointsToSurface,
+    height: printed.height * DocumentPaperLayout.pointsToSurface) }
   private let reservation: RasterReservation
-  init(fragment: DocumentPageFragment, printed: DocumentPrintedPage, source: DocumentSourceMessage,
-    pageCount: Int, reservation: RasterReservation) {
-    self.fragment = fragment; self.printed = printed; self.source = source
-    self.pageCount = pageCount; self.reservation = reservation
-  }
-  func encodedMessage(resources: SceneRenderResources, programs: [DocumentProgramSource] = [], failures: [String: String] = [:], externalPrograms: Bool = false, onAdmissionWait: (Bool) -> Void = { _ in }) async throws -> DocumentPageMessage {
-    struct Envelope: Encodable {
-      let source: DocumentSourceMessage; let fragment: DocumentPageFragment; let pageCount: Int
-      let layoutComplete = true; let diagnostics: [DocumentBrowserDiagnostic]
-    }
-    func jsonByteBound(_ value: JSONValue) -> Int {
-      switch value {
-      case .null, .bool: 5
-      case .number: 32
-      case .string(let text): text.utf8.count*6+2
-      case .array(let values): values.reduce(2) { $0 + jsonByteBound($1) + 1 }
-      case .object(let values): values.reduce(2) { $0 + $1.key.utf8.count*6 + jsonByteBound($1.value) + 4 }
-      }
-    }
-    let ids = Set(fragment.regions.filter { $0.kind == .program }.map(\.id))
-    let source = DocumentSourceMessage(key: source.key, documentID: source.documentID, paper: source.paper,
-      files: source.files, programs: externalPrograms ? [] : programs.filter { ids.contains($0.id) },
-      programHeights: source.programHeights.filter { ids.contains($0.key) })
-    let failures = failures.filter { ids.contains($0.key) }
-    let programDiagnostics = failures.keys.sorted().map { DocumentBrowserDiagnostic(kind: "error",
-      message: String(failures[$0]!.prefix(16_384)), blockID: $0) }
-    var html = fragment.html
-    if !externalPrograms {
-      func escape(_ value: String) -> String { value.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: "\"", with: "&quot;") }
-      for region in fragment.regions where region.kind == .program {
-        guard let failure = failures[region.id] else { continue }
-        html += "<div role=\"alert\" style=\"position:absolute;left:\(region.x)px;top:\(region.y)px;width:\(region.width)px;height:\(region.height)px;overflow:hidden\">\(escape(String(failure.prefix(16_384))))</div>"
-      }
-    }
-    let fragment = DocumentPageFragment(format: fragment.format, sourceKey: fragment.sourceKey,
-      pageIndex: fragment.pageIndex, width: fragment.width, height: fragment.height,
-      contentTop: fragment.contentTop, contentBottom: fragment.contentBottom, blockIDs: fragment.blockIDs,
-      regions: fragment.regions, html: html, nodeCount: fragment.nodeCount, utf8Bytes: html.utf8.count)
-    let bytes = source.files.reduce(fragment.utf8Bytes + 16_384) { $0 + $1.id.utf8.count*6 + $1.path.utf8.count*6 + 256 }
-    let admittedBytes = source.programs.reduce(bytes) {
-      $0 + jsonByteBound($1.initialState) + ($1.id.utf8.count + $1.path.utf8.count)*6 + 1024
-    }
-    guard admittedBytes <= 16*1024*1024 else { throw SceneRenderError.resourceLimit }
-    let charge = try await resources.acquirePassiveDerivedBytes(admittedBytes*4, onDeferred: { onAdmissionWait(true) })
-    defer { onAdmissionWait(false) }
-    do {
-      let diagnostics = printed.artifact.diagnostics.map { DocumentBrowserDiagnostic(kind: $0.severity, message: $0.message, blockID: nil, fileID: $0.fileID, path: $0.path, line: $0.line) } + programDiagnostics
-      let value = Envelope(source: source, fragment: fragment, pageCount: pageCount, diagnostics: diagnostics)
-      let json = try await Task.detached { try canonicalDocumentJSON(value) }.value
-      try Task.checkCancellation()
-      guard json.utf8.count <= admittedBytes*2 else { throw SceneRenderError.resourceLimit }
-      return .init(json: json, reservation: charge)
-    } catch { charge.release(); throw error }
+  init(printed: DocumentPrintedPage, navigation: DocumentPrintNavigation,
+    regions: [DocumentBlockRegion], reservation: RasterReservation) {
+    self.printed = printed; self.navigation = navigation; self.regions = regions; self.reservation = reservation
   }
   isolated deinit { reservation.release() }
 }
@@ -123,7 +30,6 @@ final class DocumentPreparedPage {
 struct DocumentPreparedLayout: Sendable {
   let pages: [DocumentPaperLayout]
   let regions: [DocumentBlockRegion]
-  let browserRegions: [DocumentBrowserRegion]
   let pageRanges: [Int: Range<Int>]
   let reading: DocumentReadingIndex
   let readingFileOrder: [String]
@@ -135,21 +41,49 @@ struct DocumentPreparedLayout: Sendable {
       + lineIndices.values.reduce(0) { $0 + $1.starts.count*MemoryLayout<Int>.stride }
       + slots.values.reduce(0) { $0 + $1.count*128 }
   }
+  init(pages: [DocumentPaperLayout], regions: [DocumentBlockRegion], fileIDs: Set<String>,
+    reading: [DocumentReadingIndex.Segment] = [], anchors: [String: Int] = [:],
+    lineIndices: [String: DocumentPrintLineIndex] = [:], slots: [Int: [DocumentPrintInteractiveRegion]] = [:]) throws {
+    let pageCount = pages.count
+    guard (1...4096).contains(pageCount), pages.allSatisfy({
+      $0.widthPoints.isFinite && $0.heightPoints.isFinite && $0.widthPoints > 0 && $0.heightPoints > 0
+        && $0.widthPoints <= 14_400 && $0.heightPoints <= 14_400
+    }), anchors.count <= 16_384, anchors.reduce(0, { $0 + $1.key.utf8.count }) <= 1024*1024,
+      anchors.allSatisfy({ !$0.key.isEmpty && $0.key.utf8.count <= 4096 && (0..<pageCount).contains($0.value) })
+    else { throw DocumentSessionError.invalidLayout }
+    var pageRanges: [Int: Range<Int>] = [:]
+    var previousPage = 0
+    for (index, region) in regions.enumerated() {
+      let page = region.pageIndex, frame = region.frame
+      guard (0..<pageCount).contains(page), page >= previousPage,
+        frame.x.isFinite, frame.x >= 0, frame.y.isFinite, frame.y >= 0,
+        frame.width.isFinite, frame.width > 0, frame.height.isFinite, frame.height > 0,
+        region.sourceOffset.isFinite, region.sourceOffset >= 0, (region.sourceOffset+frame.height).isFinite,
+        frame.x+frame.width <= pages[page].surfaceWidth+0.03125,
+        frame.y+frame.height <= pages[page].surfaceHeight+0.03125 else { throw DocumentSessionError.invalidLayout }
+      previousPage = page
+      pageRanges[page] = (pageRanges[page]?.lowerBound ?? index)..<(index+1)
+    }
+    var seen: Set<String> = []
+    readingFileOrder = regions.filter { $0.kind == .file }.sorted {
+      ($0.pageIndex, $0.frame.y, $0.frame.x) < ($1.pageIndex, $1.frame.y, $1.frame.x)
+    }.compactMap { seen.insert($0.id).inserted ? $0.id : nil }
+    self.pages = pages; self.regions = regions; self.pageRanges = pageRanges
+    self.reading = try .init(segments: reading, fileIDs: fileIDs, pageCount: pageCount)
+    self.anchors = anchors; self.lineIndices = lineIndices; self.slots = slots
+  }
+
   init(_ value: NotebookPrintedDocument, document: DocumentDocument, pageCount: Int,
     locations: [DocumentPrintLocation], anchors: [String: Int]) throws {
     let scale = DocumentPaperLayout.pointsToSurface
-    var regions: [DocumentBrowserRegion] = [], reading: [DocumentReadingIndex.Segment] = []
+    var regions: [DocumentBlockRegion] = [], reading: [DocumentReadingIndex.Segment] = []
     let byPage = Dictionary(grouping: locations, by: \.pageIndex)
     let files = Dictionary(uniqueKeysWithValues: document.files.map { ($0.id, $0) })
     let indexedFiles = Set(value.sourceMap.files.map(\.fileID))
     let lineIndices = Dictionary(uniqueKeysWithValues: document.files.filter { $0.resource == nil && indexedFiles.contains($0.id) }.map { ($0.id, DocumentPrintLineIndex($0.source)) })
     let slots = Dictionary(grouping: value.interactiveRegions, by: \.pageIndex)
     guard (1...4096).contains(pageCount), value.pages.count == pageCount else { throw DocumentSessionError.invalidLayout }
-    let papers = try value.pages.map { page -> DocumentPaperLayout in
-      guard page.width.isFinite, page.height.isFinite, page.width > 0, page.height > 0,
-        page.width <= 14_400, page.height <= 14_400 else { throw DocumentSessionError.invalidLayout }
-      return .init(widthPoints: page.width, heightPoints: page.height)
-    }
+    let papers = value.pages.map { DocumentPaperLayout(widthPoints: $0.width, heightPoints: $0.height) }
     for index in 0..<pageCount {
       try Task.checkCancellation()
       let paper = papers[index]
@@ -160,49 +94,29 @@ struct DocumentPreparedLayout: Sendable {
         for entry in entries { bounds = bounds.union(CGRect(x: entry.x, y: entry.y, width: entry.width, height: entry.height)) }
         bounds = bounds.intersection(CGRect(x: 0, y: 0, width: paper.widthPoints, height: paper.heightPoints))
         guard !bounds.isNull, bounds.width > 0, bounds.height > 0 else { continue }
-        let region = DocumentBrowserRegion(id: id, pageIndex: index, x: bounds.minX*scale, y: bounds.minY*scale,
-          width: bounds.width*scale, height: bounds.height*scale, sourceOffset: 0)
+        let region = DocumentBlockRegion(id: id, pageIndex: index, frame: .init(x: bounds.minX*scale, y: bounds.minY*scale,
+          width: bounds.width*scale, height: bounds.height*scale), sourceOffset: 0)
         regions.append(region)
         let line = entries.map(\.line).min() ?? 1
         guard let lines = lineIndices[id] else { continue }
         let range = lines.range(line: line), offset = range.location
         let fragment = (file.source as NSString).substring(with: range)
         let node = SHA256.hash(data: Data(fragment.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
-        reading.append(.init(fileID: id, nodeID: node, textOffset: offset, start: 0, end: max(1, fragment.utf16.count), pageIndex: index, y: region.y))
+        reading.append(.init(fileID: id, nodeID: node, textOffset: offset, start: 0, end: max(1, fragment.utf16.count), pageIndex: index, y: region.frame.y))
       }
       for slot in slots[index] ?? [] {
-        regions.append(.init(kind: .program, id: slot.instanceID, pageIndex: index, x: slot.x*scale, y: slot.y*scale,
-          width: slot.width*scale, height: slot.height*scale, sourceOffset: slot.viewportY*scale))
+        regions.append(.init(kind: .program, id: slot.instanceID, pageIndex: index, frame: .init(x: slot.x*scale, y: slot.y*scale,
+          width: slot.width*scale, height: slot.height*scale), sourceOffset: slot.viewportY*scale))
       }
     }
     if regions.isEmpty, let file = document.files.first(where: { $0.path == document.entrypoint }) {
-      regions = [.init(id: file.id, pageIndex: 0, x: 0, y: 0,
-        width: papers[0].surfaceWidth, height: papers[0].surfaceHeight, sourceOffset: 0)]
+      regions = [.init(id: file.id, pageIndex: 0, frame: .init(x: 0, y: 0,
+        width: papers[0].surfaceWidth, height: papers[0].surfaceHeight), sourceOffset: 0)]
     }
     var anchors = anchors
     for index in 0..<pageCount { anchors["notebook-print-page-\(index)"] = index }
-    guard anchors.count <= 16_384, anchors.reduce(0, { $0 + $1.key.utf8.count }) <= 1024*1024,
-      anchors.allSatisfy({ !$0.key.isEmpty && $0.key.utf8.count <= 4096 && (0..<pageCount).contains($0.value) })
-    else { throw DocumentSessionError.invalidLayout }
-    var pageRanges: [Int: Range<Int>] = [:]
-    let nativeRegions = try regions.enumerated().map { index, region -> DocumentBlockRegion in
-      let page = region.pageIndex
-      guard (0..<pageCount).contains(page), region.x.isFinite, region.x >= 0, region.y.isFinite, region.y >= 0,
-        region.width.isFinite, region.width > 0, region.height.isFinite, region.height > 0,
-        region.sourceOffset.isFinite, region.sourceOffset >= 0, (region.sourceOffset+region.height).isFinite,
-        region.x+region.width <= papers[page].surfaceWidth+0.03125,
-        region.y+region.height <= papers[page].surfaceHeight+0.03125 else { throw DocumentSessionError.invalidLayout }
-      pageRanges[page] = (pageRanges[page]?.lowerBound ?? index)..<(index+1)
-      return .init(kind: region.kind, id: region.id, pageIndex: page,
-        frame: .init(x: region.x, y: region.y, width: region.width, height: region.height), sourceOffset: region.sourceOffset)
-    }
-    var seen: Set<String> = []
-    readingFileOrder = nativeRegions.filter { $0.kind == .file }.sorted {
-      ($0.pageIndex, $0.frame.y, $0.frame.x) < ($1.pageIndex, $1.frame.y, $1.frame.x)
-    }.compactMap { seen.insert($0.id).inserted ? $0.id : nil }
-    self.pages = papers; self.regions = nativeRegions; browserRegions = regions; self.pageRanges = pageRanges
-    self.reading = try .init(segments: reading, fileIDs: Set(files.keys), pageCount: pageCount)
-    self.anchors = anchors; self.lineIndices = lineIndices; self.slots = slots
+    try self.init(pages: papers, regions: regions, fileIDs: Set(files.keys), reading: reading,
+      anchors: anchors, lineIndices: lineIndices, slots: slots)
   }
 }
 
@@ -212,7 +126,6 @@ struct DocumentPreparedLayout: Sendable {
 struct DocumentPrintReuse {
   let source: DocumentPrintedSource
   let layout: DocumentLayoutRecord
-  let regions: [DocumentBrowserRegion]
   func matches(_ artifact: NotebookPrintedDocument) -> Bool {
     guard source.artifact.pixelIdentity == artifact.pixelIdentity, source.artifact.syncTeX == artifact.syncTeX else { return false }
     let paths = Set(source.artifact.dependencies.lookups.filter { $0.kind == .path }.map(\.path))
@@ -238,7 +151,7 @@ final class DocumentPagePreparation {
   private var reuse: DocumentPrintReuse?
   var printReuse: DocumentPrintReuse? {
     guard let printSource, let layout else { return nil }
-    return .init(source: printSource, layout: layout, regions: browserRegions)
+    return .init(source: printSource, layout: layout)
   }
   private var artifact: NotebookPrintedDocument? { printSource?.artifact }
   private var pages: [Int: DocumentPreparedPage] = [:]
@@ -257,7 +170,6 @@ final class DocumentPagePreparation {
   private var programSourceFailures: [String: String] = [:]
   private var programRequests: [String: Set<String>] = [:]
   var onProgramsChanged: () -> Void = {}
-  private var browserRegions: [DocumentBrowserRegion] = []
   private(set) var layout: DocumentLayoutRecord?
   private(set) var measurementCount = 0
   private(set) var compiledPageCount = 0
@@ -289,7 +201,6 @@ final class DocumentPagePreparation {
     guard readers.isEmpty, demand.isEmpty else { return }
     preparation?.cancel(); preparation = nil; compilerDemand = nil; pages.removeAll(); printSource = nil; reuse = nil
     pageOperations.values.forEach { $0.task.cancel() }; pageOperations.removeAll()
-    browserRegions.removeAll()
     programTasks.values.forEach { $0.task.cancel() }; programTasks.removeAll(); programs.removeAll()
     programSources.removeAll(); programSourceFailures.removeAll(); programRequests.removeAll(); programFailures.removeAll()
   }
@@ -347,7 +258,7 @@ final class DocumentPagePreparation {
     if let previous = reuse, previous.matches(value) {
       let rebound = DocumentLayoutRecord(rebinding: previous.layout, buildID: value.buildID)
       printSource = previous.source.rebinding(value)
-      layout = rebound; browserRegions = previous.regions; reuse = nil
+      layout = rebound; reuse = nil
       try onLayoutAccepted(rebound)
       preparationPhasesMS["canonicalPrint"] = printPreparationMilliseconds(since: start)
       preparationCompletedAt = ProcessInfo.processInfo.systemUptime
@@ -389,8 +300,8 @@ final class DocumentPagePreparation {
       guard resources.resizePassiveDerivedReservation(charge, to: max(1, cost)) else { throw SceneRenderError.resourceLimit }
       let printed = DocumentPrintedSource(artifact: value, locations: addresses, pdf: pdf, reservation: charge,
         lineIndices: prepared.lineIndices, slots: prepared.slots)
-      let measured = DocumentLayoutRecord(prepared: prepared, buildID: value.buildID, source: printed)
-      printSource = printed; layout = measured; browserRegions = prepared.browserRegions
+      let measured = DocumentLayoutRecord(prepared: prepared, buildID: value.buildID, allocation: printed.allocation)
+      printSource = printed; layout = measured
       try onLayoutAccepted(measured)
       preparationPhasesMS["canonicalPrint"] = printPreparationMilliseconds(since: start)
       preparationCompletedAt = ProcessInfo.processInfo.systemUptime
@@ -446,35 +357,15 @@ final class DocumentPagePreparation {
       try DocumentPrintNavigation.read(document, pages: artifact.pages, pageIndices: [index])
     }
     try Task.checkCancellation()
-    let regions = Array(browserRegions[layout.range(on: index)]), ids = Set(regions.map(\.id))
-    let files = document.files.filter { ids.contains($0.id) }
-    func escape(_ value: String) -> String { value.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "\"", with: "&quot;").replacingOccurrences(of: "<", with: "&lt;") }
-    var html = regions.map { region in
-      let interactive = region.kind == .program
-      let accessibility = interactive ? "" : " role=\"button\" tabindex=\"0\" aria-label=\"Исходник: \(escape(files.first { $0.id == region.id }?.path ?? region.id))\""
-      let failure = (interactive ? programFailures[region.id] : nil).map { "<p role=\"alert\">" + escape($0) + "</p>" } ?? ""
-      return "<section class=\"block \(interactive ? "interactive" : "editable")\" data-block-id=\"\(escape(region.id))\" data-kind=\"\(interactive ? "interactive" : "tex")\"\(accessibility) style=\"position:absolute;left:\(region.x)px;top:\(region.y)px;width:\(region.width)px;height:\(region.height)px;margin:0\">\(failure)</section>"
-    }.joined()
-    let scale = DocumentPaperLayout.pointsToSurface
-    for link in navigation.links {
-      let box = link.rect
-      html += "<a href=\"\(escape(link.href))\" aria-label=\"\(escape(link.label))\" style=\"position:absolute;left:\(box.minX*scale)px;top:\(box.minY*scale)px;width:\(box.width*scale)px;height:\(box.height*scale)px;z-index:2\"></a>"
-    }
-    if let text = navigation.pageText[index] {
-      html += "<div role=\"article\" style=\"position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);pointer-events:none\">\(escape(text))</div>"
-    }
-    let charge = try await resources.acquirePassiveDerivedBytes(html.utf8.count + regions.count*256 + 4096, onDeferred: { onAdmissionWait(true) })
+    let regions = layout.regions(on: index)
+    let navigationBytes = navigation.links.reduce(0) { $0 + $1.href.utf8.count + $1.label.utf8.count + 128 }
+      + navigation.pageText.values.reduce(0) { $0 + $1.utf8.count }
+    let charge = try await resources.acquirePassiveDerivedBytes(navigationBytes + regions.count*512 + 4096, onDeferred: { onAdmissionWait(true) })
     defer { onAdmissionWait(false) }
     do { try Task.checkCancellation() } catch { charge.release(); throw error }
-    let fragment = DocumentPageFragment(format: 1, sourceKey: sourceKey, pageIndex: index,
-      width: paper.surfaceWidth, height: paper.surfaceHeight, contentTop: 0,
-      contentBottom: paper.surfaceHeight, blockIDs: Array(ids).sorted(), regions: regions, html: html,
-      nodeCount: regions.count, utf8Bytes: html.utf8.count)
     let printed = DocumentPrintedPage(source: printSource, pageIndex: index, width: paper.widthPoints, height: paper.heightPoints)
-    let local = DocumentSourceMessage(key: sourceKey, documentID: document.id, paper: paper,
-      files: files, programs: [], programHeights: layout.programHeights(ids: programIDs))
-    let page = DocumentPreparedPage(fragment: fragment, printed: printed, source: local, pageCount: layout.pageCount,
-      reservation: charge)
+    let page = DocumentPreparedPage(printed: printed, navigation: navigation,
+      regions: Array(layout.regions(on: index)), reservation: charge)
     return page
   }
   /// Executable packages are materialized only for demanded program slots.

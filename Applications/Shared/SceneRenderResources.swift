@@ -376,6 +376,21 @@ final class SceneRenderResources {
   var allowsOptionalPreparation: Bool { memoryPressureLevel == .normal }
   private(set) var optionalPreparationGeneration: UInt64 = 0
   private(set) var lastMemoryPressureDiagnostic: SceneMemoryPressureDiagnostic?
+  /// Native projections borrow these addressed owners. Hidden entries are
+  /// retained only while they own a real paused executor from this allocator.
+  struct ProgramPreparationKey: Hashable {
+    let model: ObjectIdentifier
+    let focus: InteractiveElementReference
+  }
+  final class ProgramPreparation {
+    weak var model: NotebookAppModel?
+    let owner: PreparedAgentElementPreparationOwner
+    var isMounted = true
+    init(model: NotebookAppModel, owner: PreparedAgentElementPreparationOwner) {
+      self.model = model; self.owner = owner
+    }
+  }
+  @ObservationIgnored var programPreparations: [ProgramPreparationKey: ProgramPreparation] = [:]
   @ObservationIgnored private var memoryPressureAdapter: SceneMemoryPressureAdapter?
   @ObservationIgnored private var pressureTrim: Task<Void, Never>?
   @ObservationIgnored private var pressureAttemptedResources: Set<UUID> = []
@@ -393,7 +408,6 @@ final class SceneRenderResources {
     for task in pending { await task.value }
   }
   @ObservationIgnored private var isReclaimingIdleResources = false
-  @ObservationIgnored weak var documentShellPreparation: DocumentShellPreparation?
   @ObservationIgnored private var isReclaimingIdleWeb = false
   private struct IdleWebSurface {
     let order: UInt64

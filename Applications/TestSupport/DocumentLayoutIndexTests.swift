@@ -8,17 +8,12 @@ final class DocumentLayoutIndexTests: XCTestCase {
     let count = 100_000, programCount = 1_000
     let paper = DocumentPaperLayout(widthPoints: 720, heightPoints: 400)
     let ids = (0..<programCount).map { "program-\($0)" }
-    let regions: [[String: Any]] = (0..<count).map { index in
-      ["kind": index == count - 1 ? "file" : "program", "id": ids[index % programCount],
-        "pageIndex": index / 100, "x": 0.0, "y": 0.0,
-        "width": index < programCount ? 100.0 + Double(index % 3) : 200.0,
-        "height": 10.0, "sourceOffset": Double(index / programCount) * 10]
+    let regions: [DocumentBlockRegion] = (0..<count).map { index in
+      .init(kind: index == count - 1 ? .file : .program, id: ids[index % programCount], pageIndex: index / 100,
+        frame: .init(x: 0, y: 0, width: index < programCount ? 100.0 + Double(index % 3) : 200,
+          height: 10), sourceOffset: Double(index / programCount) * 10)
     }
-    let layout = try DocumentLayoutRecord(receipt: ["sourceKey": "large-layout", "layoutScope": "source",
-      "layoutCanonical": true, "pageCount": count / 100, "width": paper.surfaceWidth, "height": paper.surfaceHeight,
-      "pages": Array(repeating: ["widthPoints": paper.widthPoints, "heightPoints": paper.heightPoints], count: count / 100),
-      "regions": regions, "anchors": [], "reading": []] as NSDictionary,
-      sourceKey: "large-layout", blockIDs: Set(ids), geometry: paper.geometry)
+    let layout = try DocumentLayoutFixture.make(pages: Array(repeating: paper, count: count / 100), regions: regions)
     for (index, id) in ids.enumerated() {
       XCTAssertEqual(layout.programSize(id), .init(width: 100 + Double(index % 3), height: index == programCount - 1 ? 990 : 1_000))
     }

@@ -730,34 +730,23 @@ class SelectionTests(unittest.TestCase):
         self.assertFalse(plan["unclassified"])
 
     def test_document_markup_does_not_run_ui_gestures(self):
-        self.change("Applications/WebResources/document-shell.html")
+        self.change("Applications/Shared/DocumentPaperInteractionView.swift")
         plan = verify.make_plan(self.root)
-        self.assertEqual(plan["profiles"], ["document-web"])
+        self.assertEqual(plan["profiles"], ["document-paper"])
         self.assertFalse(any(s.startswith("NotebookUITests") for s in plan["checks"]["ipad"]))
 
-    def test_each_browser_contract_selects_web_boundaries_not_all_documents(self):
-        paths = ["Tests/NotebookDocumentAcceptance/test_link_activation.mjs",
-                 "Tests/NotebookDocumentAcceptance/test_page_phase_observation.mjs"]
-        for path in paths:
-            with self.subTest(path=path):
-                self.assertEqual(verify.owners(path), ["document-web"])
-        plan = verify.make_plan(self.root, profiles=["document-web"], only=True)
-        self.assertEqual(plan["checks"]["commands"], ["document-browser"])
-        for suite in ("DocumentShellPreparationTests", "DocumentPrintImageTests", "DocumentLinkActivationTests"):
-            self.assertIn("NotebookTests/" + suite, plan["checks"]["ipad"])
-        self.assertEqual(verify.owners("Tests/NotebookDocumentAcceptance/test_system_trace.py"), ["acceptance-bootstrap"])
-
-    def test_document_shell_selects_four_native_boundaries_and_js_not_storage_or_full_ui(self):
-        self.change("Applications/WebResources/document-shell.html")
+    def test_native_paper_selects_its_source_and_activation_boundaries(self):
+        self.change("Applications/Shared/DocumentPaperInteractionView.swift")
         plan = verify.make_plan(self.root)
-        self.assertEqual(plan["profiles"], ["document-web"])
-        self.assertEqual(plan["checks"]["commands"], ["document-browser"])
+        self.assertEqual(plan["profiles"], ["document-paper"])
+        self.assertEqual(plan["checks"]["commands"], [])
         self.assertEqual(plan["checks"]["core"], [])
         self.assertEqual(plan["checks"]["mac"], ["NotebookMacTests/DocumentRuntimeTests"])
         self.assertEqual(plan["checks"]["ipad"], ["NotebookTests/DocumentLinkActivationTests",
-            "NotebookTests/DocumentPrintImageTests", "NotebookTests/DocumentShellPreparationTests"])
+            "NotebookTests/DocumentPaperCoordinatorTests", "NotebookTests/DocumentPrintImageTests"])
         scenario = verify.UI + "testDocumentLinksOpenTheMeasuredDistantPageAndReturnToContents"
         self.assertIn(scenario, verify.make_plan(self.root, tests=[scenario])["checks"]["ipad"])
+        self.assertEqual(verify.owners("Tests/NotebookDocumentAcceptance/test_system_trace.py"), ["acceptance-bootstrap"])
 
     def test_new_native_owner_uses_existing_same_named_tests_without_a_map_entry(self):
         for path in ("Applications/Tests/NewOwnerTests.swift", "Applications/MacTests/NewOwnerTests.swift"):
@@ -834,7 +823,7 @@ class SelectionTests(unittest.TestCase):
         self.assertIn("Applications/Shared/NotebookPageAddress.swift", plan["unclassified"])
         self.assertNotIn("NotebookTests/NotebookPageAddressTests", plan["checks"]["ipad"])
 
-    def test_browser_contract_runner_executes_the_shipped_listener_and_refuses_any_failure(self):
+    def test_node_contract_runner_executes_the_selected_script_and_refuses_any_failure(self):
         for path in ("Sources/Fixture.swift", "MCP/fixture.ts", "docs/fixture.md"):
             self.change(path, "source inventory fixture\n")
         self.change("Applications/notebook_node_reporter.mjs", (ROOT / "Applications/notebook_node_reporter.mjs").read_text())
@@ -842,6 +831,9 @@ class SelectionTests(unittest.TestCase):
         # every version probe and contract process below.
         node = release.shutil.which("node")
         self.assertIsNotNone(node)
+        actual_node_version = subprocess.check_output([node, "--version"], text=True).strip()
+        self.codex_runtime, self.codex_archives, self.codex_files = codex_fixture.source(
+            self.root, node_version=actual_node_version)
         node_bytes = Path(node).read_bytes()
         self.codex_files["node"] = (node_bytes, 0o755)
         entry = next(entry for entry in self.codex_runtime["entries"] if entry["path"] == "node")
@@ -858,10 +850,9 @@ class SelectionTests(unittest.TestCase):
                 options["stdout"].write(json.dumps(codex_fixture.report(self.codex_stage, self.codex_runtime)).encode())
                 return subprocess.CompletedProcess(argv, 0)
             return subprocess.run(argv, **options)
-        paths = ["Tests/NotebookDocumentAcceptance/test_link_activation.mjs",
-                 "Tests/NotebookDocumentAcceptance/test_page_phase_observation.mjs"]
+        paths = ["Tests/NotebookVoiceHarness/audio.test.mjs"]
         plan = {"unclassified": [], "manualSelection": True,
-                "checks": {"core": [], "mac": [], "ipad": [], "commands": ["document-browser"]}}
+                "checks": {"core": [], "mac": [], "ipad": [], "commands": ["voice-audio"]}}
         for failed in (None, *paths):
             with self.subTest(failed=failed):
                 for index, path in enumerate(paths):
@@ -873,22 +864,22 @@ class SelectionTests(unittest.TestCase):
                         receipt = verify.run_selected(self.root, plan, evidence)
                         self.assertEqual(receipt["status"], "passed")
                         completed = json.loads((evidence / "completed.json").read_text())
-                        self.assertEqual(completed["checks"]["document-browser"]["planned"], completed["checks"]["document-browser"]["executed"])
+                        self.assertEqual(completed["checks"]["voice-audio"]["planned"], completed["checks"]["voice-audio"]["executed"])
                     else:
                         with self.assertRaises(release.ReleaseError): verify.run_selected(self.root, plan, evidence)
                         self.assertFalse((evidence / "completed.json").exists())
                         self.assertFalse((evidence / "verification.json").exists())
                 commands = json.loads((evidence / "commands.json").read_text())
-                expected = ["codex-resources", "toolchain-python", "toolchain-node", "document-browser"]
+                expected = ["codex-resources", "toolchain-python", "toolchain-node", "voice-audio"]
                 if failed is None:
                     expected.extend(("toolchain-after-python", "toolchain-after-node"))
                 self.assertEqual([entry["label"] for entry in commands], expected)
-                browser = next(entry for entry in commands if entry["label"] == "document-browser")
-                self.assertEqual(browser["argv"], verify.document_browser_arguments(self.root))
+                browser = next(entry for entry in commands if entry["label"] == "voice-audio")
+                self.assertEqual(browser["argv"], verify.portable_arguments(self.root, Path("/unused"), "voice-audio")[0])
                 self.assertEqual(browser["exitCode"] == 0, failed is None)
                 self.assertTrue(browser["environment"]["PATH"].startswith(str(self.codex_stage) + os.pathsep))
                 self.assertEqual(release.read_json(evidence / "toolchain.json")["node"], self.codex_runtime["node"])
-                output = (evidence / "document-browser.stdout.log").read_text()
+                output = (evidence / "voice-audio.stdout.log").read_text()
                 for index in range(len(paths)): self.assertIn("required-contract-" + str(index), output)
                 if failed is None:
                     verify.validate_selected(self.root, evidence, receipt)
@@ -899,14 +890,14 @@ class SelectionTests(unittest.TestCase):
                     # substituted script by keeping only the command label.
                     for omitted in paths:
                         narrowed = copy.deepcopy(commands)
-                        next(entry for entry in narrowed if entry["label"] == "document-browser")["argv"].remove(str(self.root / omitted))
+                        next(entry for entry in narrowed if entry["label"] == "voice-audio")["argv"].remove(str(self.root / omitted))
                         release.write_json(evidence / "commands.json", narrowed)
                         changed = {**receipt, "artifacts": release.verification_artifacts(evidence, full=False)}
                         with self.assertRaisesRegex(release.ReleaseError, "другой набор"):
                             verify.validate_selected(self.root, evidence, changed)
                     release.write_json(evidence / "commands.json", commands)
                     substituted = copy.deepcopy(commands)
-                    next(entry for entry in substituted if entry["label"] == "document-browser")["cwd"] = str(self.root / "different-source")
+                    next(entry for entry in substituted if entry["label"] == "voice-audio")["cwd"] = str(self.root / "different-source")
                     release.write_json(evidence / "commands.json", substituted)
                     changed = {**receipt, "artifacts": release.verification_artifacts(evidence, full=False)}
                     with self.assertRaisesRegex(release.ReleaseError, "другой набор"):
@@ -963,7 +954,7 @@ class SelectionTests(unittest.TestCase):
             self.assertIn("navigation-ux", verify.owners("Applications/Shared/" + name))
 
     def test_explicit_only_does_not_append_suites_and_records_unclassified_files(self):
-        self.change("Applications/WebResources/document-shell.html")
+        self.change("Applications/Shared/DocumentPaperInteractionView.swift")
         self.change("Applications/MacTests/DocumentSnapshotTests.swift")
         scenario = "NotebookMacTests/DocumentLinkNavigationTests"
         plan = verify.make_plan(self.root, tests=[scenario], only=True)
@@ -1007,10 +998,10 @@ class SelectionTests(unittest.TestCase):
     def test_staged_deleted_and_untracked_paths_are_not_lost(self):
         self.change("Applications/iPad/NotebookChatPanel.swift"); self.git("add", ".")
         self.git("rm", "Package.swift")
-        self.change("Applications/WebResources/document-shell.html")
+        self.change("Applications/Shared/DocumentPaperInteractionView.swift")
         plan = verify.make_plan(self.root)
         self.assertIn("Package.swift", plan["unclassified"])
-        self.assertEqual(set(plan["profiles"]), {"chat", "chat-touch", "document-web"})
+        self.assertEqual(set(plan["profiles"]), {"chat", "chat-touch", "document-paper"})
 
     def test_committed_change_uses_explicit_base(self):
         self.change("Applications/iPad/NotebookChatPanel.swift"); self.git("add", "."); self.git("commit", "-qm", "edit")

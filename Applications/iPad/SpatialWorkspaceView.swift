@@ -310,7 +310,6 @@ struct SpatialWorkspaceView: View {
         }
           NotebookDisplayConfirmation(preparedSource:model.preparedCollaborationVersion) {
             guard cameraGesture == nil, !settling, !pageTurnIsActive, !contentGestureActive else { return false }
-            model.prepareCommonDocumentShellIfIdle(presence: presence, cohort: cohort)
             return model.confirmVisibleActions(presence: presence, scene: workset, cohort: cohort)
           }.allowsHitTesting(false)
 
@@ -1836,7 +1835,7 @@ private struct WorkspaceSceneItem: View {
     onRenderReady: PageTurnReadiness
   ) -> AnyView {
     AnyView(
-      DocumentWebView(
+      DocumentPageView(
         document: document,
         state: state,
         isInteractive: isCurrent && contentIsInteractive,

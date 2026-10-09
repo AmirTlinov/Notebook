@@ -401,23 +401,10 @@ final class ProgramAssetTests: XCTestCase {
 
     let document = DocumentTestFiles.document(actor: UUID(), contents: [try packaged(id: "compiled", fixture: f, height: 600)])
     let state = DocumentStateJournal(id: document.id, actor: UUID())
-    let owner = DocumentWebCoordinator(resources: resources, onRenderReady: .init { _ in }, onPageLayout: { _ in }, onStateChange: { _, _ in nil })
-    owner.programStore = f.store
-    let host = DocumentWebHost(), closeHost = try mount(host)
-    defer { owner.invalidate(); closeHost() }
-    owner.update(document: document, state: state, selectedPageIndex: 0, capturesSnapshot: false,
-      onRenderReady: .init { _ in }, onPageLayout: { _ in }, onStateChange: { _, _ in nil })
-    owner.mount(in: host, physicalSize: .init(width: 595, height: 842), isInteractive: true, priority: .currentPage)
-    try await wait { owner.hasCanonicalPixels || owner.acquisitionError != nil }; XCTAssertTrue(owner.hasCanonicalPixels); XCTAssertNil(owner.acquisitionError)
-    var checkpoint: JSONValue?
-    var checkpointJournal = DocumentStateJournal(id: document.id, actor: UUID())
-    owner.onStateCheckpoint = { id, value, _, _ in
-      checkpoint = value
-      _ = checkpointJournal.commit(instanceID: id, value: value, actor: checkpointJournal.stamp.actor)
-      return checkpointJournal.records.first { $0.id == id }?.valueVersion
-    }
-    let accepted = await owner.checkpointPrograms(resume: true)
-    XCTAssertTrue(accepted); XCTAssertEqual(checkpoint?["x"], .number(2))
+    let (owner, closeHost) = try await documentRuntime(document, blockID: "compiled", store: f.store, resources: resources)
+    defer { owner.stop(); closeHost() }
+    let checkpoint = try await owner.checkpoint()
+    XCTAssertEqual(checkpoint["x"], .number(2))
   }
 
   func testDenseSignalPackageUsesOfflinePlotMathJaxRangesAndLatestCheckpoint() async throws {
@@ -567,24 +554,10 @@ final class ProgramAssetTests: XCTestCase {
 
     // The document owner loads the identical package, not a second 3D renderer implementation.
     let document = DocumentTestFiles.document(actor: UUID(), contents: [try packaged(id: "gears", fixture: f, initialState: checkpoint, height: 900)])
-    let journal = DocumentStateJournal(id: document.id, actor: UUID())
-    let docOwner = DocumentWebCoordinator(resources: resources, onRenderReady: .init { _ in }, onPageLayout: { _ in }, onStateChange: { _, _ in nil })
-    docOwner.programStore = f.store
-    docOwner.update(document: document, state: journal, selectedPageIndex: 0, capturesSnapshot: false,
-      onRenderReady: .init { _ in }, onPageLayout: { _ in }, onStateChange: { _, _ in nil })
-    let host = DocumentWebHost(), closeHost = try mount(host); defer { docOwner.invalidate(); closeHost() }
-    docOwner.mount(in: host, physicalSize: .init(width: 595, height: 842), isInteractive: true, priority: .currentPage)
-    try await wait { docOwner.hasCanonicalPixels || docOwner.acquisitionError != nil }
-    XCTAssertTrue(docOwner.hasCanonicalPixels); XCTAssertNil(docOwner.acquisitionError)
-    var saved: JSONValue?
-    var checkpointJournal = DocumentStateJournal(id: document.id, actor: UUID())
-    docOwner.onStateCheckpoint = { id, value, _, _ in
-      saved = value
-      _ = checkpointJournal.commit(instanceID: id, value: value, actor: checkpointJournal.stamp.actor)
-      return checkpointJournal.records.first { $0.id == id }?.valueVersion
-    }
-    let accepted = await docOwner.checkpointPrograms(resume: true)
-    XCTAssertTrue(accepted); XCTAssertEqual(saved?["selected"], .string("output")); XCTAssertEqual(saved?["reveal"], .number(0.8))
+    let (docOwner, closeHost) = try await documentRuntime(document, blockID: "gears", store: f.store, resources: resources)
+    defer { docOwner.stop(); closeHost() }
+    let saved = try await docOwner.checkpoint()
+    XCTAssertEqual(saved["selected"], .string("output")); XCTAssertEqual(saved["reveal"], .number(0.8))
   }
 
   func testThreeDimensionalFailuresRetryAndDisposalStayLocal() async throws {
@@ -1054,63 +1027,50 @@ final class ProgramAssetTests: XCTestCase {
   }
   #endif
 
-  func testDocumentIframePackageUsesExistingParentStateAndLifecycleOwner() async throws {
+  func testDocumentPackageUsesIsolatedProgramLifecycleAndRetainsIdentityAcrossPaperEdits() async throws {
     let f = try fixture(largeAsset: false); defer { f.close() }
-    let document = DocumentTestFiles.document(actor: UUID(), contents: [try packaged(id: "asset", fixture: f, height: 180)])
-    let state = DocumentStateJournal(id: document.id, actor: UUID()), resources = SceneRenderResources()
-    let coordinator = DocumentWebCoordinator(resources: resources, onRenderReady: .init { _ in }, onPageLayout: { _ in }, onStateChange: { _, _ in nil })
-    coordinator.programStore = f.store
-    let host = DocumentWebHost(), close = try mount(host)
-    defer { coordinator.invalidate(); close() }
-    coordinator.update(document: document, state: state, selectedPageIndex: 0, capturesSnapshot: false,
-      onRenderReady: .init { _ in }, onPageLayout: { _ in }, onStateChange: { _, _ in nil })
-    coordinator.mount(in: host, physicalSize: .init(width: 595, height: 842), isInteractive: true, priority: .currentPage)
-    try await wait { coordinator.hasCanonicalPixels || coordinator.acquisitionError != nil }
-    let web = try XCTUnwrap(coordinator.webView, String(describing: coordinator.acquisitionError))
-    let receipt = try await web.evaluateJavaScript("JSON.stringify(notebookRenderer.pageReceipt())")
-    XCTAssertTrue(coordinator.hasCanonicalPixels, String(describing: receipt)); XCTAssertNil(coordinator.acquisitionError)
-    XCTAssertEqual(coordinator.programAssets.scopeCount, 1)
-    // The sandbox prevents the parent from reading child DOM; readiness comes
-    // from the authenticated existing iframe bridge, not a cross-origin bypass.
-    let started = try await web.evaluateJavaScript("notebookRenderer.pageReceipt().programs[0].readiness") as? String
-    XCTAssertEqual(started, "declared", String(describing: receipt))
-    var checkpoint: JSONValue?
-    var checkpointJournal = DocumentStateJournal(id: document.id, actor: UUID())
-    coordinator.onStateCheckpoint = { id, value, _, _ in
-      checkpoint = value
-      _ = checkpointJournal.commit(instanceID: id, value: value, actor: checkpointJournal.stamp.actor)
-      return checkpointJournal.records.first { $0.id == id }?.valueVersion
-    }
-    let accepted = await coordinator.checkpointPrograms(resume: true)
-    XCTAssertTrue(accepted); XCTAssertEqual(checkpoint?["assetAnswer"], .number(42)); XCTAssertEqual(checkpoint?["parentIsolated"], .bool(true))
-    let iframeURL = try await web.evaluateJavaScript("document.querySelector('iframe').src") as? String
-    var changed = document
-    let main = try XCTUnwrap(changed.files.first { $0.path == "main.tex" })
-    _ = changed.replaceFileSource(id: main.id,
+    var document = DocumentTestFiles.document(actor: UUID(), contents: [try packaged(id: "asset", fixture: f, height: 180)])
+    let resources = SceneRenderResources()
+    let (owner, close) = try await documentRuntime(document, blockID: "asset", store: f.store, resources: resources)
+    defer { owner.stop(); close() }
+    let web = try XCTUnwrap(owner.webView)
+    try await assertProgram(web)
+    let checkpoint = try await owner.checkpoint()
+    XCTAssertEqual(checkpoint["assetAnswer"], .number(42))
+    XCTAssertFalse(web.configuration.websiteDataStore.isPersistent)
+    let main = try XCTUnwrap(document.files.first { $0.path == "main.tex" })
+    _ = document.replaceFileSource(id: main.id,
       source: main.source.replacingOccurrences(of: "\\begin{document}", with: "\\begin{document} Independent text.\\par"), actor: UUID())
-    coordinator.update(document: changed, state: state, selectedPageIndex: 0, capturesSnapshot: false,
-      onRenderReady: .init { _ in }, onPageLayout: { _ in }, onStateChange: { _, _ in nil })
-    try await wait { coordinator.hasCanonicalPixels || coordinator.acquisitionError != nil }
-    XCTAssertTrue(coordinator.hasCanonicalPixels, String(describing: coordinator.acquisitionError))
-    let afterURL = try await web.evaluateJavaScript("document.querySelector('iframe').src") as? String
-    XCTAssertEqual(afterURL, iframeURL, "Independent text retains the same capability and running program")
-    XCTAssertEqual(coordinator.programAssets.scopeCount, 1)
+    let same = try f.store.documentProgramSource(document: document, instanceID: "asset", path: packagePath(f))
+    XCTAssertTrue(owner.matches(same), "Paper edits preserve the existing executable identity")
     let htmlPath = packagePath(f) + "/" + (f.package.html ?? "view.html")
-    let html = try XCTUnwrap(changed.files.first { $0.path == htmlPath })
-    let replacement = DocumentFile(id: html.id, path: html.path, source: "<strong>File replacement</strong>")
-    let jsPath = packagePath(f) + "/" + (f.package.javaScript ?? "main.js")
-    let js = try XCTUnwrap(changed.files.first { $0.path == jsPath })
-    let ready = DocumentFile(id: js.id, path: js.path, source: "notebook.ready(Promise.resolve());")
-    _ = changed.replaceContent(files: changed.files.map { $0.id == html.id ? replacement : $0.id == js.id ? ready : $0 }, actor: UUID())
-    coordinator.update(document: changed, state: state, selectedPageIndex: 0, capturesSnapshot: false,
-      onRenderReady: .init { _ in }, onPageLayout: { _ in }, onStateChange: { _, _ in nil })
-    try await wait { coordinator.hasCanonicalPixels || coordinator.acquisitionError != nil }
-    XCTAssertTrue(coordinator.hasCanonicalPixels, String(describing: coordinator.acquisitionError))
-    let replacementURL = try await web.evaluateJavaScript("document.querySelector('iframe').src") as? String
-    XCTAssertNotEqual(replacementURL, iframeURL, "Changed file bytes revoke the old execution namespace")
-    XCTAssertEqual(coordinator.programAssets.scopeCount, 1, "There is only one package-backed owner after source replacement")
-    coordinator.invalidate(); XCTAssertEqual(coordinator.programAssets.scopeCount, 0); XCTAssertEqual(coordinator.programAssets.activeReadCount, 0)
+    let html = try XCTUnwrap(document.files.first { $0.path == htmlPath })
+    _ = document.replaceFileSource(id: html.id, source: "<strong>Replacement</strong>", actor: UUID())
+    let changed = try f.store.documentProgramSource(document: document, instanceID: "asset", path: packagePath(f))
+    XCTAssertFalse(owner.matches(changed), "Executable replacement creates another owner")
+    XCTAssertTrue(owner.webView === web)
+    owner.stop(); XCTAssertEqual(resources.activeWebSurfaceCount, 0)
   }
+
+  private func documentRuntime(_ document: DocumentDocument, blockID: String, store: NotebookStore,
+    resources: SceneRenderResources) async throws -> (DocumentBlockRuntime, () -> Void) {
+    let config = try XCTUnwrap(document.files.first { $0.path.hasSuffix("program.json") })
+    let path = String(config.path.dropLast("/program.json".count))
+    let program = try store.documentProgramSource(document: document, instanceID: blockID, path: path)
+    let owner = DocumentBlockRuntime(documentID: document.id, program: program,
+      value: program.initialState, stateVersion: nil, width: 600, height: 900, resources: resources, programStore: store)
+    owner.requiresStateAcceptance = false
+    let host = PlatformView(), close = try mount(host)
+    owner.onMount = { web, size in host.addSubview(web); web.frame = .init(origin: .zero, size: size) }
+    owner.start(priority: .input)
+    do {
+      try await wait { owner.ready || owner.failure != nil }
+      if let failure = owner.failure { throw failure }
+      XCTAssertTrue(owner.ready)
+      return (owner, close)
+    } catch { owner.stop(); close(); throw error }
+  }
+
 }
 
 #if os(macOS)

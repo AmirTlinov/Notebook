@@ -24,16 +24,9 @@ NATIVE_IPAD_UI_RUNNER = release.CANONICAL + ".uitests.xctrunner"
 from notebook_check_registry import CHECKS, COMMANDS, PROFILES, full_checks, native, selected_checks
 import notebook_check_reports as reports
 
-DOCUMENT_BROWSER_CONTRACTS = tuple(value for value in COMMANDS["document-browser"].command if value.endswith(".mjs"))
-
-
 
 def git(root, *args):
     return subprocess.check_output(["git", "-C", str(root), *args])
-
-
-def document_browser_arguments(root):
-    return portable_arguments(root, Path("/unused"), "document-browser")[0]
 
 
 def changed_files(root, base):
@@ -51,9 +44,9 @@ def owners(path):
         return ["verification"]
     if path.startswith("MCP/"):
         return ["mcp"]
-    if path in DOCUMENT_BROWSER_CONTRACTS or (path.startswith("Applications/WebResources/")
-                                             and Path(path).name.startswith("document-")):
-        return ["document-web"]
+    if (path.startswith("Applications/WebResources/") and Path(path).name.startswith("document-")) or Path(path).name in (
+            "DocumentPaperCoordinator.swift", "DocumentPaperInteractionView.swift", "DocumentPageHost.swift", "DocumentPaperView.swift"):
+        return ["document-paper"]
     if path.startswith("Tests/NotebookDocumentAcceptance/"):
         return ["acceptance-bootstrap"]
     name = Path(path).name

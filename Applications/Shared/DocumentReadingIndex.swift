@@ -1,5 +1,4 @@
 import Foundation
-import CoreFoundation
 import NotebookCore
 
 /// The canonical print's compact source addresses. Its owning DocumentLayoutRecord keeps
@@ -17,34 +16,6 @@ struct DocumentReadingIndex: Equatable, Sendable {
   let segments: [Segment]
   private let pages: [Int: [Int]]
   private let files: [String: [Int]]
-
-  init(rows: [[Any]], fileIDs: Set<String>, pageCount: Int, scale: Double) throws {
-    guard rows.count <= 524_288, scale.isFinite, scale > 0 else { throw DocumentSessionError.invalidLayout }
-    var segments: [Segment] = []
-    for row in rows {
-      guard row.count == 7, let file = row[0] as? String, fileIDs.contains(file),
-        let node = row[1] as? String, node.utf8.count == 16,
-        node.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else {
-        throw DocumentSessionError.invalidLayout
-      }
-      func integer(_ index: Int) throws -> Int {
-        guard let value = row[index] as? NSNumber, CFGetTypeID(value) != CFBooleanGetTypeID(),
-          let number = Int(exactly: value.doubleValue), (0...Int(Int32.max)).contains(number) else {
-          throw DocumentSessionError.invalidLayout
-        }
-        return number
-      }
-      let offset = try integer(2), start = try integer(3), end = try integer(4), page = try integer(5)
-      guard start < end, offset <= Int(Int32.max) - end, page < pageCount,
-        let number = row[6] as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
-        number.doubleValue.isFinite, number.doubleValue >= 0, (number.doubleValue * scale).isFinite else {
-        throw DocumentSessionError.invalidLayout
-      }
-      segments.append(.init(fileID: file, nodeID: node, textOffset: offset,
-        start: start, end: end, pageIndex: page, y: number.doubleValue * scale))
-    }
-    try self.init(segments: segments, fileIDs: fileIDs, pageCount: pageCount)
-  }
 
   init(segments: [Segment], fileIDs: Set<String>, pageCount: Int) throws {
     guard segments.count <= 524_288 else { throw DocumentSessionError.invalidLayout }

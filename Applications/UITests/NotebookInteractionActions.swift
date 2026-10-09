@@ -75,10 +75,13 @@ import XCTest
   func selectNotebookDocumentFile(_ path: String, in app: XCUIApplication) {
     let menu = app.buttons["document-source-menu"]
     XCTAssertTrue(menu.waitForExistence(timeout: 5)); menu.tap()
-    // File-selection actions belong to the presented menu's collection.
-    let file = app.collectionViews.buttons[path]
+    let picker = app.descendants(matching: .any).matching(identifier: "document-source-file-picker").firstMatch
+    XCTAssertTrue(picker.waitForExistence(timeout: 5))
+    let file = picker.buttons[path]
     XCTAssertTrue(file.waitForExistence(timeout: 5)); XCTAssertTrue(file.isHittable)
     file.tap()
+    XCTAssertTrue(picker.waitForNonExistence(timeout: 5),
+      "The selected file picker must close before the next editor contact")
   }
   func rotateNotebook(to orientation: UIDeviceOrientation, in app: XCUIApplication) {
     XCTAssertTrue(app.wait(for: .runningForeground, timeout: 12))
@@ -106,6 +109,18 @@ import XCTest
     // timeout looking for a command which has not been presented yet.
     let more=panel.buttons["selection-more-actions"]
     if more.exists && more.isHittable { more.tap() }
+    else if app.menuItems.firstMatch.exists {
+      // UIKit pages its edit menu separately from the canvas More button.
+      var previousPage: [String] = []
+      for _ in 0..<3 {
+        let page=app.menuItems.allElementsBoundByIndex.filter { $0.isHittable }.map(\.label)
+        let next=app.buttons["Next Page"].firstMatch
+        guard !page.isEmpty,page != previousPage,next.exists,next.isHittable else { break }
+        previousPage=page
+        next.tap()
+        if action.exists && action.isHittable { action.tap();return }
+      }
+    }
     if action.waitForExistence(timeout:3) && action.isHittable { action.tap();return }
     XCTFail("Context action unavailable: \(title)\n\(app.debugDescription)")
   }

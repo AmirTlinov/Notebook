@@ -13,22 +13,19 @@ struct DocumentPDFVector: Sendable {
   let storage: RasterReservation?
 }
 
-extension DocumentWebCoordinator {
+extension DocumentPageRaster {
   /// Read optional replacement regions from the same stopped model that just
   /// produced the canonical raster. Unsupported authors return an empty list;
   /// declared but invalid vectors fail the job, never silently become pixels.
   func exportPDFVectors(pointScale: Double) async throws -> DocumentPDFVectors {
     struct Layer: Decodable { let svg: String; let frame: PageRect }
-    guard exportSnapshotID != nil, let before = payload, !isInvalidated,
-      let webView, let layout = before.source.layout else { throw CancellationError() }
-    let regions = layout.regions(on: before.pageIndex).filter { $0.kind == .program }
+    guard isolationID != nil, let layout else { throw CancellationError() }
+    let regions = layout.regions(on: pageIndex).filter { $0.kind == .program }
     var values: [DocumentPDFVector] = [], storage: RasterReservation?, bytes = 0
     do {
-      for program in before.source.programs where regions.contains(where: { $0.id == program.id }) {
-        let layers = try await NotebookProgramBridge.lifecycle("exportProgram", controller: "notebookRenderer",
-          argument: .object(["format": .string("pdf"), "blockID": .string(program.id),
-            "state": before.states[program.id] ?? program.initialState]), in: webView).decode([Layer].self)
-        guard !isInvalidated, payload?.renderToken == before.renderToken else { throw CancellationError() }
+      for program in source.programs where regions.contains(where: { $0.id == program.id }) {
+        try Task.checkCancellation()
+        let layers = try (programVectors[program.id] ?? .array([])).decode([Layer].self)
         let fragments = regions.filter { $0.id == program.id }
         guard layers.count <= 16, let fragment = fragments.first else { throw SceneRenderError.resourceLimit }
         var preceding: [CGRect] = []
@@ -42,7 +39,7 @@ extension DocumentWebCoordinator {
           preceding.append(rect)
           let svg = Data(layer.svg.utf8); try NotebookExportSVG.validate(svg)
           if storage == nil {
-            guard let reserved = resourceOwner.reserveDerivedBytes(8*1024*1024, priority: .passive) else { throw SceneRenderError.resourceLimit }
+            guard let reserved = resources.reserveDerivedBytes(8*1024*1024, priority: .passive) else { throw SceneRenderError.resourceLimit }
             storage = reserved
           }
           let pdf = try await DocumentCanonicalPrint.store.vectorPDF(svg, priority: .export)

@@ -24,7 +24,7 @@ final class DocumentGeometryTests: XCTestCase {
       let ready = expectation(description: "Готовый WebKit-лист \(name)")
       var completed = false
       let host = UIHostingController(
-        rootView: DocumentWebView(
+        rootView: DocumentPageView(
           document: document, state: state, isInteractive: true,
           selectedPageIndex: 0, capturesSnapshot: false,
           onRenderReady: PageTurnReadiness { value in

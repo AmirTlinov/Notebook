@@ -4,25 +4,17 @@ import XCTest
 
 @MainActor
 final class DocumentRenderSessionTests: XCTestCase {
-  private func coordinator(resources: SceneRenderResources, document: DocumentDocument, state: DocumentStateJournal, page: Int = 0) -> DocumentWebCoordinator {
-    let value = DocumentWebCoordinator(resources: resources, onRenderReady: .init { _ in },
-      onPageLayout: { _ in },  onStateChange: { _, _ in nil })
-    update(value, document: document, state: state, page: page)
-    return value
-  }
-
-  private func update(_ value: DocumentWebCoordinator, document: DocumentDocument, state: DocumentStateJournal, page: Int = 0) {
-    value.update(document: document, state: state, selectedPageIndex: page, capturesSnapshot: false,
-      onRenderReady: .init { _ in }, onPageLayout: { _ in },  onStateChange: { _, _ in nil })
-  }
-
   func testClosedMultiPageProgramExportSharesOnePDFSyncTeXPreparation() async throws {
     let document = DocumentTestFiles.document(actor: UUID(), contents: [.program(id: "long-program",
       html: "<div style='height:1800px;background:linear-gradient(red,blue)'></div>",
       javaScript: "notebook.exportFrame(() => null); notebook.ready(Promise.resolve());", height: 1800)])
     let state = DocumentStateJournal(id: document.id, actor: UUID())
     let resources = SceneRenderResources(), session = DocumentRenderSession(documentID: document.id)
-    let source = session.source(document)
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("shared-print-store-" + UUID().uuidString)
+    let store = NotebookStore(root: root)
+    _ = try store.initializeWorkspace(actor: UUID(), pageSize: .init(width: 834, height: 1194))
+    defer { try? FileManager.default.removeItem(at: root) }
+    let source = session.source(document, store: store)
     let printed: DocumentPrintedSource
     do { printed = try await source.printedSource(resources: resources) }
     catch {
@@ -37,12 +29,12 @@ final class DocumentRenderSessionTests: XCTestCase {
     let composer=try await PrintedPDFComposer.open(printed.pdf,outputURL:output)
     for index in 0..<pageCount {
       do { try await DocumentSnapshotCache.shared.withPreparedPage(document: document, state: state, pageIndex: index,
-        resources: resources, programStore: nil, isolationID: isolation, renderSession: session) { coordinator in
+        resources: resources, programStore: store, isolationID: isolation, renderSession: session) { coordinator in
         let pixels = try await coordinator.retainPreparedSnapshot(pixelWidth: 160, force: true, waitsForRasterAdmission: true)
         defer { pixels.release() }
-        XCTAssertTrue(coordinator.payload?.source === source,
+        XCTAssertTrue(coordinator.source === source,
           "The isolated page heap must use the export-owned immutable print source")
-        let rendered=try XCTUnwrap(coordinator.payload?.source)
+        let rendered=coordinator.source
         let current=try await rendered.printedSource(resources:resources)
         XCTAssertTrue(current === printed)
         XCTAssertTrue(current.pdf === printed.pdf)
@@ -60,91 +52,55 @@ final class DocumentRenderSessionTests: XCTestCase {
     XCTAssertEqual(openings,1,"Composition does not open its own copy of the common PDF")
   }
 
-  func testFourPagesShareExactlyOneImmutableSourceAndStateEncodingWithoutAllocatingWebKit() async throws {
+  func testFourPagesShareExactlyOneImmutableSourceAndStateWithoutAllocatingWebKit() async throws {
     let document = DocumentTestFiles.document(actor: UUID(), contents: (0..<512).map { .tex(id: "block-\($0)", source: "Source \($0)") })
     let state = DocumentStateJournal(id: document.id, actor: UUID()), resources = SceneRenderResources()
-    let pages = (0..<4).map { coordinator(resources: resources, document: document, state: state, page: $0) }
-    defer { pages.forEach { $0.invalidate() } }
-    let first = try XCTUnwrap(pages[0].payload)
-    for page in pages {
-      XCTAssertTrue(page.payload?.source === first.source)
-      XCTAssertTrue(page.payload?.state === first.state)
-      XCTAssertTrue(page.renderSession === pages[0].renderSession)
-      XCTAssertNil(page.webView)
-    }
-    async let stateA = first.state.encodedState(resources: resources)
-    async let stateB = first.state.encodedState(resources: resources)
-    let encoded = try await (stateA, stateB)
-    XCTAssertTrue(encoded.0 === encoded.1)
-    XCTAssertEqual(first.state.encodingCount, 1)
-    XCTAssertEqual(first.source.preparedSourceBlockCount, 0,
-      "Mounting neighbours does not encode or transfer the source before a page demand")
+    let session = DocumentRenderSession(documentID: document.id)
+    let sources = (0..<4).map { _ in session.source(document) }
+    let first = session.state(state)
+    for source in sources { XCTAssertTrue(source === sources[0]); XCTAssertTrue(session.state(state) === first) }
+    XCTAssertEqual(sources[0].preparedSourceBlockCount, 0)
     XCTAssertEqual(resources.activeWebSurfaceCount, 0)
   }
 
   func testEqualMaxSourceStampDoesNotAliasDifferentContentOrChangeTheOldNeighbor() throws {
-    let actor = UUID(), id = UUID(), resources = SceneRenderResources()
+    let actor = UUID(), id = UUID()
     let before = DocumentTestFiles.document(id: id, actor: actor, contents: [.tex(id: "body", source: "Before")])
     let after = DocumentTestFiles.document(id: id, actor: actor, contents: [.tex(id: "body", source: "After")])
-    let state = DocumentStateJournal(id: id, actor: actor)
     XCTAssertEqual(before.contentStamp, after.contentStamp)
-    let current = coordinator(resources: resources, document: before, state: state)
-    let neighbor = coordinator(resources: resources, document: before, state: state, page: 1)
-    defer { current.invalidate(); neighbor.invalidate() }
-    let original = try XCTUnwrap(current.payload?.source)
-    update(current, document: after, state: state)
-    XCTAssertFalse(current.payload?.source === original)
-    XCTAssertTrue(neighbor.payload?.source === original)
-    XCTAssertEqual(neighbor.payload?.source.document.files.first { $0.id == "body" }?.source, "Before")
-    XCTAssertEqual(current.payload?.source.document.files.first { $0.id == "body" }?.source, "After")
-    XCTAssertTrue(current.renderSession?.source(before) === original,
-      "Interning another value at the same stamp must not replace the old immutable version")
+    let session = DocumentRenderSession(documentID: id), original = session.source(before)
+    let replacement = session.source(after)
+    XCTAssertFalse(replacement === original)
+    XCTAssertEqual(original.document.files.first { $0.id == "body" }?.source, "Before")
+    XCTAssertEqual(replacement.document.files.first { $0.id == "body" }?.source, "After")
+    XCTAssertTrue(session.source(before) === original)
   }
 
   func testEqualMaxStateStampDoesNotAliasDifferentRecordsOrRewriteTheOldSnapshot() throws {
-    let actor = UUID(), document = DocumentTestFiles.document(actor: UUID(), contents: [.program(id: "body", html: "<button>Control</button>", height: 100)]), resources = SceneRenderResources()
-    let stamp = VersionStamp(counter: 0, actor: actor)
-    let before = DocumentStateJournal(id: document.id, actor: actor, records: [.init(id: "body", value: .number(1), stamp: stamp)])
-    let after = DocumentStateJournal(id: document.id, actor: actor, records: [.init(id: "body", value: .number(2), stamp: stamp)])
+    let actor = UUID(), id = UUID(), stamp = VersionStamp(counter: 0, actor: UUID())
+    let before = DocumentStateJournal(id: id, actor: actor, records: [.init(id: "body", value: .number(1), stamp: stamp)])
+    let after = DocumentStateJournal(id: id, actor: actor, records: [.init(id: "body", value: .number(2), stamp: stamp)])
     XCTAssertEqual(before.stamp, after.stamp)
-    let current = coordinator(resources: resources, document: document, state: before)
-    let neighbor = coordinator(resources: resources, document: document, state: before, page: 1)
-    defer { current.invalidate(); neighbor.invalidate() }
-    let first = try XCTUnwrap(current.payload)
-    update(current, document: document, state: after)
-    XCTAssertTrue(current.payload?.source === first.source)
-    XCTAssertFalse(current.payload?.state === first.state)
-    XCTAssertTrue(neighbor.payload?.state === first.state)
-    XCTAssertEqual(first.states["body"], .number(1))
-    XCTAssertEqual(current.payload?.states["body"], .number(2))
-    XCTAssertEqual(current.payload?.blockTokens, first.blockTokens)
+    let session = DocumentRenderSession(documentID: id), first = session.state(before), next = session.state(after)
+    XCTAssertFalse(first === next); XCTAssertTrue(session.state(before) === first)
+    XCTAssertEqual(first.message.states["body"], .number(1)); XCTAssertEqual(next.message.states["body"], .number(2))
   }
 
-  func testAPageReceiptCannotCreateAFullLayoutOrNameAnAbsentPage() throws {
+  func testPagePublicationRequiresAnAcceptedPhysicalLayoutAndAnExistingPage() throws {
     let document = DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "body", source: "Body")])
-    let source = DocumentRenderSession(documentID: document.id).source(document)
-    let paper = DocumentPaperLayout(widthPoints: 720, heightPoints: 400), geometry = paper.geometry
-    var receipt: [String: Any] = ["sourceKey": source.message.key, "layoutScope": "page", "layoutCanonical": true, "anchors": [], "reading": [],
-      "pageIndex": 0, "pageCount": 1, "width": geometry.width, "height": geometry.height,
-      "widthPoints": paper.widthPoints, "heightPoints": paper.heightPoints,
-      "pages": [["widthPoints": paper.widthPoints, "heightPoints": paper.heightPoints]], "regions": []]
-    XCTAssertThrowsError(try source.acceptLayout(receipt as NSDictionary, geometry: geometry))
+    let source = DocumentRenderSession(documentID: document.id).source(document), registry = DocumentRenderRegistry()
+    XCTAssertThrowsError(try registry.publishNative(source: source, token: "unprepared", pageIndex: 0))
     XCTAssertNil(source.layout)
-    receipt["layoutScope"] = "source"
-    let full = try source.acceptLayout(receipt as NSDictionary, geometry: geometry)
-    receipt["layoutScope"] = "page"; receipt["pageIndex"] = 1
-    XCTAssertThrowsError(try source.acceptLayout(receipt as NSDictionary, geometry: geometry))
+    let paper = DocumentPaperLayout(widthPoints: 720, heightPoints: 400)
+    let full = try DocumentLayoutFixture.make(pages: [paper])
+    try source.acceptPreparedLayout(full)
+    XCTAssertThrowsError(try registry.publishNative(source: source, token: "absent-page", pageIndex: 1))
     XCTAssertTrue(source.layout === full)
-    receipt["pageIndex"] = 0
-    XCTAssertTrue(try source.acceptLayout(receipt as NSDictionary, geometry: geometry) === full)
-    XCTAssertEqual(full.paper(on: 0), paper, "The page preserves exact PDF dimensions, not an inverse projection")
+    try registry.publishNative(source: source, token: "physical-page", pageIndex: 0)
+    XCTAssertTrue(registry.entry(document: document, pageIndex: 0)?.layout === full)
+    XCTAssertEqual(full.paper(on: 0), paper)
     XCTAssertEqual(full.paper(on: 0).widthPoints, 720)
     XCTAssertEqual(full.paper(on: 0).heightPoints, 400)
-    receipt["widthPoints"] = paper.widthPoints.nextDown
-    XCTAssertThrowsError(try source.acceptLayout(receipt as NSDictionary, geometry: geometry))
-    receipt["widthPoints"] = paper.widthPoints
-    receipt["layoutScope"] = "partial-but-pretending"
-    XCTAssertThrowsError(try source.acceptLayout(receipt as NSDictionary, geometry: geometry))
   }
 
   func testStateProjectionSharesUnchangedProgramsAcrossJournalVersions() throws {
@@ -168,19 +124,18 @@ final class DocumentRenderSessionTests: XCTestCase {
     let document = DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "body", source: "Body")])
     let state = DocumentStateJournal(id: document.id, actor: UUID())
     let session = registry.session(documentID: document.id, resources: resources), source = session.source(document)
-    let paper = DocumentPaperLayout.uncompiled, geometry = paper.geometry
-    func receipt(height: Double) -> NSDictionary {
-      ["sourceKey": source.message.key, "layoutScope": "source", "layoutCanonical": true, "anchors": [], "reading": [], "pageIndex": 0, "pageCount": 1,
-        "width": geometry.width, "height": geometry.height,
-        "pages": [["widthPoints": paper.widthPoints, "heightPoints": paper.heightPoints]],
-        "regions": [["id": "body", "pageIndex": 0, "x": 70.0, "y": 70.0, "width": 200.0, "height": height, "sourceOffset": 0.0]]]
+    func layout(height: Double) throws -> DocumentLayoutRecord {
+      try DocumentLayoutFixture.make(regions: [.init(id: "body", pageIndex: 0,
+        frame: .init(x: 70, y: 70, width: 200, height: height), sourceOffset: 0)])
     }
     let token = DocumentSnapshotCache.token(document: document, state: state, pageIndex: 0)
-    try registry.publish(documentID: document.id, token: token, source: source, receipt: receipt(height: 100), geometry: geometry)
+    try source.acceptPreparedLayout(layout(height: 100))
+    try registry.publishNative(source: source, token: token, pageIndex: 0)
     let first = try XCTUnwrap(source.layout)
-    try registry.publish(documentID: document.id, token: token, source: source, receipt: receipt(height: 100), geometry: geometry)
+    try source.acceptPreparedLayout(layout(height: 100))
+    try registry.publishNative(source: source, token: token, pageIndex: 0)
     XCTAssertTrue(source.layout === first)
-    XCTAssertThrowsError(try registry.publish(documentID: document.id, token: token, source: source, receipt: receipt(height: 101), geometry: geometry)) { error in
+    XCTAssertThrowsError(try source.acceptPreparedLayout(layout(height: 101))) { error in
       XCTAssertEqual(error.localizedDescription, "document_layout_inconsistent")
     }
     XCTAssertTrue(source.layout === first)

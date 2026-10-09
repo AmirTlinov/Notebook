@@ -143,7 +143,9 @@ import XCTest
     XCTAssertTrue(editor.waitForExistence(timeout: 10), app.debugDescription)
     let original = editor.value as? String
     XCTAssertTrue(original?.contains("Живая математика") == true)
-    editor.tap()
+    // The native editor is the measured hit target, but its default AX point
+    // can be {-1, -1} after the file menu. Touch the visible body directly.
+    editor.coordinate(withNormalizedOffset: .init(dx: 0.35, dy: 0.25)).tap()
     editor.typeText("%Canonical source edit\n\n")
     XCTAssertTrue((editor.value as? String)?.contains("Canonical source edit") == true)
     XCTAssertTrue(app.staticTexts["Сохранено"].waitForExistence(timeout: 15), app.debugDescription)

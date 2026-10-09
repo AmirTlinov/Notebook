@@ -148,7 +148,7 @@ enum PageVisionRenderer {
     guard !page.drawingData.isEmpty else { return nil }
     let drawing = try PageInkDrawing.decode(page.drawingData).presenting(excluding: page.graphicPresentation.suppressedInkIDs)
     guard let raster = InkRasterRenderer.shared.page(drawing, size: bounds.size) else { throw RenderError.bitmapAllocation }
-    return NSImage(cgImage:raster,size:bounds.size)
+    return NSImage(raster: raster, logicalSize: bounds.size)
   }
 
   private static func bitmap(

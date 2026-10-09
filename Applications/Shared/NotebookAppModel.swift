@@ -1225,7 +1225,6 @@ final class NotebookAppModel: NotebookWorkspaceLifecycle {
     weak var value: (any NotebookScenePresentationOwner)?
   }
   @ObservationIgnored private var scenePresentationOwners: [ObjectIdentifier: WeakScenePresentationOwner] = [:]
-  @ObservationIgnored private var documentShellPreparation: DocumentShellPreparation?
   private var preparationIsForeground = true
   @ObservationIgnored private var programBoundaryTask: Task<Bool, Never>?
   @ObservationIgnored private var shutdownTask: Task<Bool, Never>?
@@ -1390,6 +1389,10 @@ final class NotebookAppModel: NotebookWorkspaceLifecycle {
         #endif
       })
     scenePublication.onPrepared = { [weak self] in self?.publishPreparedSceneIfPossible() }
+    compositionTiles.onPublished = { [weak self] cohort in
+      guard let self else { return }
+      SceneRenderResources.shared.preparePrograms(in: cohort, model: self)
+    }
     inputGate.bindNewContactAdmission { [weak self] in
       self?.loadState == .ready && self?.permitsAuthoredWork == true
     }
@@ -1905,7 +1908,6 @@ final class NotebookAppModel: NotebookWorkspaceLifecycle {
       abortBootstrapPreparations()
       NotebookNavigationObservation.webPreparation("startup_failure_executors_aborted", ownerID: actorID)
       cancelDocumentOpening()
-      documentShellPreparation?.stop(); documentShellPreparation = nil
       let owners = scenePresentationOwners.values.compactMap(\.value)
       scenePresentationOwners.removeAll()
       for owner in owners { owner.uninstall() }
@@ -1923,6 +1925,7 @@ final class NotebookAppModel: NotebookWorkspaceLifecycle {
 
   private func abortBootstrapPreparations() {
     AgentWebCoordinator.abortBootstrapPreparations(ownedBy: self)
+    SceneRenderResources.shared.retireProgramPreparations(ownedBy: self)
     #if os(iOS)
       openDocumentPresentation?.abortBootstrapPreparation(); openDocumentPresentation = nil
       returnDocumentPresentation?.abortBootstrapPreparation(); returnDocumentPresentation = nil
@@ -2613,6 +2616,7 @@ final class NotebookAppModel: NotebookWorkspaceLifecycle {
       let layout = origin.source.layout,
       let presence, presence.mode == .document, presence.focusedItemID == documentID,
       presence.openProgress >= 0.999, presence.documentPageIndex == origin.pageIndex else { return nil }
+    if case .external = activation.destination, !activation.consumeExternalAuthority() { return nil }
     if case .page(let target) = activation.destination {
       guard target >= 0, target < layout.pageCount else { return nil }
       if target != presence.documentPageIndex {
@@ -5986,32 +5990,6 @@ final class NotebookAppModel: NotebookWorkspaceLifecycle {
     #endif
   }
 
-  /// This opportunity comes from the native board confirmation path. Prepared
-  /// rasters or a SwiftUI appearance alone cannot start optional WebKit work.
-  func prepareCommonDocumentShellIfIdle(presence visible: SessionPresence, cohort: SceneCompositionCohort?) {
-    #if os(iOS)
-      guard preparationIsForeground, UIApplication.shared.applicationState == .active,
-        !isClosing, permitsOptionalPreparation, requestedReference == nil, requestedReturn == nil,
-        presence == visible,
-        visible.openProgress <= 0, let cohort, cohort.isPaintInstalled,
-        cohort.plan.rootBoardID == visible.boardID,
-        compositionTiles.published === cohort else { return }
-      if documentShellPreparation == nil || documentShellPreparation?.isStopped == true {
-        let resources = SceneRenderResources.shared
-        let owner = resources.documentShellPreparation ?? DocumentShellPreparation(resources: resources)
-        documentShellPreparation = owner
-        owner.onTransition = { [weak self] observation in
-          self?.observeNavigation("common_shell_" + observation.event, fields: [
-            "shellID": .string(observation.shellID.uuidString),
-            "surfaceLeaseID": .string(observation.leaseID.uuidString),
-            "webIdentity": observation.webIdentity.map(JSONValue.string) ?? .null,
-            "commonRuntimeReady": .bool(observation.commonRuntimeReady)])
-        }
-      }
-      documentShellPreparation?.prepareIfIdle()
-    #endif
-  }
-
   private func checkpointPrograms(resume: Bool) async -> Bool {
     let spatial = Task { @MainActor in await AgentWebCoordinator.checkpointPrograms(ownedBy: self, resume: resume) }
     let document = Task { @MainActor in await DocumentRenderRegistry.shared.checkpointPrograms(resume: resume) }
@@ -6054,13 +6032,11 @@ final class NotebookAppModel: NotebookWorkspaceLifecycle {
       return saved
     }
     if !foreground { agentFeedback.stop() }
-    if foreground { documentShellPreparation?.allowPreparationAfterForeground() }
-    else {
+    if !foreground {
       // A system dialog can deactivate the scene before native ink obtains a
       // window. Retire that candidate, not the last installed composition.
       // The observed foreground admission restarts the view's same scene task.
       compositionTiles.cancelPreparation()
-      documentShellPreparation?.retireUnused()
     }
   }
 
@@ -6554,7 +6530,6 @@ final class NotebookAppModel: NotebookWorkspaceLifecycle {
       drawingTools.cancel()
       cancelRequestedNavigation()
       cancelDocumentOpening()
-      documentShellPreparation?.stop(); documentShellPreparation = nil
       presentationPlayer.interrupt("closing")
       NotebookNavigationObservation.webPreparation("shutdown_startup_join", ownerID: actorID)
       if let startupTask { await startupTask.value }
@@ -6594,6 +6569,7 @@ final class NotebookAppModel: NotebookWorkspaceLifecycle {
         returnDocumentPresentation?.close(); returnDocumentPresentation = nil
       #endif
       workspaceRuntime.beginDraining()
+      SceneRenderResources.shared.retireProgramPreparations(ownedBy: self)
       peerPublication.stop()
       inputGate.onActivityChange = nil
       inputGate.onNewAcceptedContact = nil

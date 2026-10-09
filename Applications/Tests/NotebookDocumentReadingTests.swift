@@ -315,22 +315,20 @@ final class NotebookDocumentReadingTests: XCTestCase {
   }
 
   private func layout(_ document: DocumentDocument, target: Int, papers: [DocumentPaperLayout]? = nil, publishes: Bool = false) throws -> DocumentPageLayout {
-    let geometry = WorkspaceItemGeometry.uncompiledDocument, id = try XCTUnwrap(document.files.first?.id)
+    let id = try XCTUnwrap(document.files.first?.id)
     let source = DocumentPageNavigation.sourceRevision(document)
-    let regions: [[String: Any]] = [0, target].map { page in
-      ["id": id, "pageIndex": page, "x": 20.0, "y": 30.0, "width": 100.0, "height": 100.0,
-       "sourceOffset": Double(page) * 100]
+    let regions: [DocumentBlockRegion] = [0, target].map { page in
+      .init(id: id, pageIndex: page, frame: .init(x: 20, y: 30, width: 100, height: 100), sourceOffset: Double(page) * 100)
     }
-    let snapshot = DocumentSourceSnapshot(document)
-    let receipt: NSDictionary = ["sourceKey": snapshot.message.key, "layoutScope": "source", "layoutCanonical": true, "pageIndex": target,
-      "pages": (papers ?? Array(repeating: .uncompiled, count: target + 1)).map { ["widthPoints": $0.widthPoints, "heightPoints": $0.heightPoints] },
-      "pageCount": target + 1, "width": geometry.width, "height": geometry.height, "regions": regions, "anchors": [],
-      "reading": [[id, "1111111111111111", 0, 0, 10, 0, 30.0],
-        [id, "2222222222222222", target * 100, 0, 10, target, 30.0]]]
-    let record = try snapshot.acceptLayout(receipt, geometry: geometry)
+    let record = try DocumentLayoutFixture.make(pages: papers ?? Array(repeating: .uncompiled, count: target + 1),
+      regions: regions, reading: [
+        .init(fileID: id, nodeID: "1111111111111111", textOffset: 0, start: 0, end: 10, pageIndex: 0, y: 30),
+        .init(fileID: id, nodeID: "2222222222222222", textOffset: target * 100, start: 0, end: 10, pageIndex: target, y: 30)
+      ])
     if publishes {
-      try DocumentRenderRegistry.shared.publish(documentID: document.id, token: "reading-fixture",
-        source: snapshot, receipt: receipt, geometry: geometry)
+      let snapshot = DocumentSourceSnapshot(document)
+      try snapshot.acceptPreparedLayout(record)
+      try DocumentRenderRegistry.shared.publishNative(source: snapshot, token: "reading-fixture", pageIndex: target)
     }
     return .init(pageCount: record.pageCount, sourceRevision: source, record: record)
   }

@@ -824,6 +824,7 @@ final class SceneCompositionTiles {
   // Optional read-only phase observation; nil in the application. This records
   // existing awaits without adding a scheduling or publication path.
   @ObservationIgnored var onPreparationPhase: ((UUID, String) -> Void)?
+  @ObservationIgnored var onPublished: ((SceneCompositionCohort) -> Void)?
   @ObservationIgnored private var task: Task<Void, Never>?
   @ObservationIgnored private var inFlight: [UUID: Task<Void, Never>] = [:]
   @ObservationIgnored private var stopped = false
@@ -1237,6 +1238,7 @@ final class SceneCompositionTiles {
                 runtimeOwners: runtimeOwners,
                 tileSources: renderer.tileSources, tilePresenters: tilePresenters)
             #endif
+            if let cohort = self?.published { self?.onPublished?(cohort) }
             self?.consumeSourceChanges(sourceChanges, receipts: receipts, rasters: renderer.sourceRasters)
             self?.onPreparationPhase?(id, "published")
             rasters.removeAll(); liveRasters.removeAll()

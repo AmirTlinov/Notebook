@@ -1,7 +1,6 @@
 import NotebookCore
 import SwiftUI
 import UIKit
-import WebKit
 import XCTest
 @testable import Notebook
 
@@ -41,9 +40,10 @@ final class SceneTileConfigurationLifetimeTests: XCTestCase {
     window.frame = .init(x: 0, y: 0, width: 834, height: 1194)
     window.rootViewController = host; window.makeKeyAndVisible()
     defer { window.isHidden = true; window.rootViewController = nil }
-    func paper(in view: UIView) -> WKWebView? {
-      if let web = view as? WKWebView, let owner = web.navigationDelegate as? DocumentWebCoordinator,
-        owner.payload?.source.message.documentID == documentID, owner.hasCanonicalPixels { return web }
+    func paper(in view: UIView) -> DocumentPaperView? {
+      if let paper = view as? DocumentPaperView, let raster = paper.raster,
+        raster.page.artifact.document.id == documentID,
+        (paper.superview as? DocumentPageHost)?.hasCanonicalPaper(paper) == true { return paper }
       for child in view.subviews {
         if let found = paper(in: child) { return found }
       }
@@ -55,7 +55,7 @@ final class SceneTileConfigurationLifetimeTests: XCTestCase {
       guard .now < firstDeadline else { XCTFail("Initial physical scene did not install"); return }
       try await Task.sleep(for: .milliseconds(10))
     }
-    let web = paper(in: host.view)
+    let installed = paper(in: host.view)
     weak let old = model.compositionTiles.published
     let frame = try XCTUnwrap(old?.frame), revision = try XCTUnwrap(old?.plan.revision)
     let source = SceneCompositionSource(index: frame.index, hierarchy: try XCTUnwrap(model.boardHierarchy),
@@ -73,9 +73,9 @@ final class SceneTileConfigurationLifetimeTests: XCTestCase {
     XCTAssertNil(old, "Unchanged item callbacks and cached ForEach closures cannot own an obsolete whole scene")
     XCTAssertTrue(model.compositionTiles.published?.isPaintInstalled == true)
     if openDocument {
-      XCTAssertNotNil(web)
-      XCTAssertTrue(paper(in: host.view) === web, "Releasing obsolete paint must not replace the open browser")
-      XCTAssertTrue((web?.navigationDelegate as? DocumentWebCoordinator)?.hasCanonicalPixels == true)
+      XCTAssertNotNil(installed)
+      XCTAssertTrue(paper(in: host.view) === installed, "Releasing obsolete paint retains the open native paper")
+      XCTAssertEqual(installed?.raster?.page.artifact.document.id, documentID)
     }
   }
 

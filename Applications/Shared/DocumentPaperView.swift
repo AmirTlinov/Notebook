@@ -20,6 +20,7 @@ final class DocumentPaperRaster {
     isolated deinit { reservation.release() }
   }
   private let storage: Storage
+  var accountedByteCount: Int { storage.reservation.byteCount }
   init(page: DocumentPrintedPage, sourceKey: String, image: CGImage, reservation: RasterReservation) {
     self.page = page; self.sourceKey = sourceKey; self.image = image; storage = Storage(reservation)
   }

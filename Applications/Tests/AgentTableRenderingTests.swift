@@ -1,4 +1,5 @@
 import NotebookCore
+import PDFKit
 import SwiftUI
 import UIKit
 import WebKit
@@ -52,8 +53,11 @@ final class AgentTableRenderingTests: XCTestCase {
         ($0.navigationDelegate as? AgentWebCoordinator)?.installation(for: tableSource)?.isInstalled == true
       }
     }
-    func documentWebViews() -> [WKWebView] {
-      webViews(host.view).filter { $0.navigationDelegate is DocumentWebCoordinator }
+    func documentPaperViews() -> [DocumentPaperView] {
+      func find(_ view: UIView) -> [DocumentPaperView] {
+        (view as? DocumentPaperView).map { [$0] } ?? view.subviews.flatMap(find)
+      }
+      return find(host.view).filter { ($0.superview as? DocumentPageHost)?.hasCanonicalPaper($0) == true }
     }
     var returnedRuntimeToken: String?
     // The second enlargement stays inside the former 1.6x coverage shortcut.
@@ -72,8 +76,8 @@ final class AgentTableRenderingTests: XCTestCase {
         var text = ""
         while !text.contains("Возвращение к чёткой таблице"), ContinuousClock.now < deadline {
           try await Task.sleep(for: .milliseconds(30))
-          if let web = documentWebViews().first {
-            text = (try? await web.evaluateJavaScript("document.querySelector('#document')?.innerText ?? ''")) as? String ?? ""
+          if let paper = documentPaperViews().first {
+            text = paper.raster.map { PDFDocument(data: $0.page.artifact.pdf)?.string ?? "" } ?? ""
           }
         }
         XCTAssertTrue(text.contains("Возвращение к чёткой таблице"), "The real document must render before testing its return")
@@ -99,10 +103,10 @@ final class AgentTableRenderingTests: XCTestCase {
       }
       XCTAssertFalse(model.scenePreparationPending, model.compositionTiles.failure ?? "Table preparation did not finish")
       let releaseDeadline = ContinuousClock.now + .seconds(3)
-      while !documentWebViews().isEmpty, ContinuousClock.now < releaseDeadline {
+      while !documentPaperViews().isEmpty, ContinuousClock.now < releaseDeadline {
         try await Task.sleep(for: .milliseconds(20))
       }
-      XCTAssertTrue(documentWebViews().isEmpty, "A closed selected document cannot retain invisible live pages over the board")
+      XCTAssertTrue(documentPaperViews().isEmpty, "A closed selected document cannot retain invisible live pages over the board")
       let closedCover = try XCTUnwrap(model.compositionTiles.published?.frame.workset(boardID: boardID).items.first { $0.id == documentID })
       XCTAssertTrue(WorkspaceSceneProjection.mountsContent(of: closedCover, in: presence),
         "The visible closed cover remains mounted; culling must not hide a page lifetime defect")

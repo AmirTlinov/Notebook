@@ -11,13 +11,9 @@ final class DocumentReadingPublicationTests: XCTestCase {
     try await fixture.start()
     let document = try XCTUnwrap(model.activeDocument), block = try XCTUnwrap(document.files.first)
     let source = DocumentPageNavigation.sourceRevision(document), controller = UUID()
-    let paper = DocumentPaperLayout.uncompiled, geometry = paper.geometry
-    let record = try DocumentLayoutRecord(receipt: ["sourceKey": source, "layoutScope": "source", "layoutCanonical": true,
-      "pageCount": 1, "width": geometry.width, "height": geometry.height,
-      "pages": [["widthPoints": paper.widthPoints, "heightPoints": paper.heightPoints]],
-      "regions": [["id": block.id, "pageIndex": 0, "x": 20.0, "y": 30.0, "width": 100.0, "height": 100.0, "sourceOffset": 0.0]],
-      "anchors": [], "reading": [[block.id, "1111111111111111", 0, 0, 10, 0, 30.0]]] as NSDictionary,
-      sourceKey: source, blockIDs: [block.id], geometry: geometry)
+    let record = try DocumentLayoutFixture.make(regions: [
+      .init(id: block.id, pageIndex: 0, frame: .init(x: 20, y: 30, width: 100, height: 100), sourceOffset: 0)
+    ], reading: [.init(fileID: block.id, nodeID: "1111111111111111", textOffset: 0, start: 0, end: 10, pageIndex: 0, y: 30)])
     model.acceptDocumentReadingLayout(.init(pageCount: 1, sourceRevision: source, record: record), documentID: document.id)
     model.bindDocumentPageController(controller, documentID: document.id, source: source)
     XCTAssertTrue(model.acceptDocumentPageLanding(.init(controllerID: controller, documentID: document.id,

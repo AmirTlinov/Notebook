@@ -1,6 +1,5 @@
 import NotebookCore
 import UIKit
-import WebKit
 import XCTest
 @testable import Notebook
 
@@ -29,19 +28,15 @@ final class DocumentEditorDisplayReceiptTests: XCTestCase {
     await model.prepareDocumentOpening(id, pageIndex: 0)?.value
     await model.finishPendingPersistence()
     let initial = try XCTUnwrap(model.documents[id]), target = CollaborationTarget(kind: .document, id: id)
-    // Use the real scene and its admitted item, not an unrelated WebKit floating
-    // above an uninstalled scene projection. No duplicate document renderer.
     let window = try await mountNotebookScene(model)
-    func find(_ view: UIView) -> WKWebView? {
-      if let web = view as? WKWebView, let renderer = web.navigationDelegate as? DocumentWebCoordinator,
-        renderer.payload?.documentID == id, renderer.hasCanonicalPixels, renderer.acceptsInput { return web }
-      for child in view.subviews {
-        if let found = find(child) { return found }
-      }
+    func find(_ view: UIView) -> DocumentPaperView? {
+      if let paper = view as? DocumentPaperView, paper.raster?.page.artifact.document.id == id,
+        (paper.superview as? DocumentPageHost)?.hasCanonicalPaper(paper) == true { return paper }
+      for child in view.subviews { if let found = find(child) { return found } }
       return nil
     }
     await wait { find(window) != nil }
-    let web = try XCTUnwrap(find(window)), coordinator = try XCTUnwrap(web.navigationDelegate as? DocumentWebCoordinator)
+    let paper = try XCTUnwrap(find(window))
     let editor = DocumentSourceEditorSession(request: .init(documentID: id,
       file: try XCTUnwrap(initial.files.first { $0.id == "body" }),
       version: initial.fileVersion(fileID: "body"), offset: 0), model: model)
@@ -56,8 +51,8 @@ final class DocumentEditorDisplayReceiptTests: XCTestCase {
     await model.finishPendingPersistence()
     let document = try XCTUnwrap(model.documents[id]), state = try XCTUnwrap(model.documentStates[id])
     XCTAssertEqual(document.files.first { $0.id == "body" }?.source, "\\section{Результат агента}")
-    await wait { coordinator.payload?.source.matches(document) == true && coordinator.renderIsReady }
-    XCTAssertTrue(coordinator.hasCanonicalPixels)
+    await wait { paper.raster?.page.artifact.document == document && (paper.superview as? DocumentPageHost)?.hasCanonicalPaper(paper) == true }
+    XCTAssertEqual(paper.raster?.page.artifact.document, document)
     XCTAssertEqual(editor.text, "Мой незавершённый текст")
     XCTAssertEqual(try model.store.documentEditingSessions().last?.selectionStart, 3)
     await model.refreshCollaborationDetails()
@@ -71,7 +66,7 @@ final class DocumentEditorDisplayReceiptTests: XCTestCase {
     let afterClose = try await model.performStoreCommand { try $0.deviceActionReceipts(actionIDs: [action.id]) }
     XCTAssertTrue(try XCTUnwrap(afterClose.first).displayComplete,
       "The native draft is not part of the printed page; only installed canonical pixels confirm the action")
-    XCTAssertTrue(coordinator.webView === web)
+    XCTAssertTrue(find(window) === paper)
     await wait { model.compositionTiles.published?.isPaintInstalled == true }
     let presence = try XCTUnwrap(model.presence), cohort = try XCTUnwrap(model.compositionTiles.published)
     XCTAssertTrue(cohort.plan.presentations[.board(presence.boardID)] != nil)

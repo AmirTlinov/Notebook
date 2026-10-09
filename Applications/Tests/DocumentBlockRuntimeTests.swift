@@ -95,6 +95,66 @@ final class DocumentBlockRuntimeTests: XCTestCase {
     XCTAssertEqual(next, true, "Returning restores admission in the same heap, without rerunning the author")
   }
 
+  func testAuthorFailureAndRetryJoinTheInFlightCheckpointBeforeReplacingItsHeap() async throws {
+    for pauseSucceeds in [false, true] {
+      let completion = pauseSucceeds ? "resolve()" : "reject(new Error('author pause failed'))"
+      let fixture = try RuntimeFixture(program: .program(id: "failure-during-checkpoint", html: "<output>Saved</output>", javaScript: """
+        window.pauseEntered=false;
+        notebook.lifecycle({pause:()=>new Promise((resolve,reject)=>{
+          window.pauseEntered=true;
+          window.releasePause=()=>\(completion);
+        }),checkpoint:()=>notebook.state});
+        notebook.ready(Promise.resolve());
+        """, height: 120))
+      defer { fixture.close() }
+      try await fixture.waitUntilReady()
+      let runtime = fixture.runtime, web = try XCTUnwrap(runtime.webView)
+      let accepted = try await web.evaluateJavaScript("notebook.commit({saved:1})") as? Bool
+      XCTAssertEqual(accepted, true)
+      try await wait { runtime.acceptedStateVersion != nil }
+      let version = runtime.acceptedStateVersion
+      let mount = runtime.onMount, persist = runtime.onStateCheckpoint
+      var mounts = 1, checkpoints = 0, retryRequested = false
+      runtime.onMount = { web, size in mounts += 1; mount(web, size) }
+      runtime.onStateCheckpoint = { value, basis in
+        checkpoints += 1
+        return try await persist(value, basis)
+      }
+      runtime.onChange = { [weak runtime] in
+        guard let runtime, runtime.failure != nil, !retryRequested else { return }
+        retryRequested = true
+        runtime.retry()
+      }
+      let closing = Task { @MainActor in try await runtime.checkpoint() }
+      var paused = false
+      let deadline = ContinuousClock.now + .seconds(5)
+      while !paused, ContinuousClock.now < deadline {
+        paused = try await web.evaluateJavaScript("window.pauseEntered") as? Bool == true
+        if !paused { try await Task.sleep(for: .milliseconds(5)) }
+      }
+      XCTAssertTrue(paused)
+      _ = try await web.evaluateJavaScript("setTimeout(()=>{throw new Error('author failed during checkpoint')},0);true")
+      try await wait { retryRequested }
+      // The failure and Retry have run, but the author's real pause is still
+      // pending. Neither may start a second retirement task for this heap.
+      try await Task.sleep(for: .milliseconds(100))
+      XCTAssertTrue(runtime.webView === web)
+      XCTAssertEqual(mounts, 1)
+      XCTAssertEqual(runtime.acceptedStateVersion, version)
+
+      _ = try await web.evaluateJavaScript("window.releasePause();true")
+      let saved = try await closing.value
+      XCTAssertEqual(saved, .object(["saved": .number(1)]))
+      try await fixture.waitUntilReady()
+      XCTAssertFalse(runtime.webView === web)
+      XCTAssertEqual(mounts, 2, "One completed boundary admits exactly one Retry executor")
+      XCTAssertEqual(checkpoints, pauseSucceeds ? 1 : 0,
+        "Only a successful author pause reaches its checkpoint writer, exactly once")
+      XCTAssertEqual(runtime.acceptedStateVersion, version)
+      XCTAssertEqual(fixture.resources.activeWebSurfaceCount, 1)
+    }
+  }
+
   func testLCCircuitQuarterPeriodsAndCheckpointUseTheShippedAuthorSources() async throws {
     func source(_ suffix: String) throws -> String {
       let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "lc", withExtension: suffix, subdirectory: "animation"))

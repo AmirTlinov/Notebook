@@ -30,16 +30,52 @@ final class SceneCompositionTests: XCTestCase {
   @MainActor
   func testMountingAnAdmittedProgramKeepsItsPublishedCohort() async throws {
     let fixture = Fixture(count: 1, side: 64, html: "<input value='Retained draft'>")
-    let resources = SceneRenderResources(), coordinator = SceneCompositionTiles(resources: resources)
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let store = NotebookStore(root: root)
+    let page = PageDocument(id: try XCTUnwrap(fixture.workspace.selectedPageID),
+      size: NotebookAppModel.defaultPageSize, actor: fixture.workspace.stamp.actor)
+    try store.saveWorkspaceBundle(index: fixture.workspace, page: page, board: fixture.hierarchy)
+    try store.savePresence(fixture.presence)
+    let model = NotebookAppModel(store: store, startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let resources = SceneRenderResources(maximumWebSurfaces: 1), coordinator = SceneCompositionTiles(resources: resources)
     addTeardownBlock { @MainActor in await coordinator.stop() }
+    defer { resources.retireProgramPreparations(ownedBy: model) }
+    let element = fixture.elements[0], rendered = agentElementSnapshotSource(element)
+    let focus = InteractiveElementReference.board(boardID: fixture.presence.boardID, elementID: element.id)
+    let occupied = try await resources.acquireWebSurface(priority: .input)
+    defer { occupied.release() }
+    // Ordinary representable acceptance still leaves its UI transaction
+    // before entering the allocator. Cancelling here never creates a browser.
+    let deferredOwner = PreparedAgentElementPreparationOwner(resources: resources)
+    deferredOwner.accept(.init(model: model, demand: .init(source: rendered,
+      basis: model.programStateBasis(focus: focus, rendered: rendered), active: true,
+      inputEnabled: false, focused: false, permitsPreparation: true, policy: .exact(scale: 1),
+      capture: nil, fallbackEntryID: nil, runtimeFailure: nil), focus: focus,
+      pageTurnActivity: nil, rasterPreparation: nil, cohort: nil, onState: { _, _ in false }))
+    XCTAssertEqual(resources.pendingWebRequestCount, 0)
+    deferredOwner.retire()
+    var acceptedPublications = 0
+    coordinator.onPublished = { cohort in
+      resources.preparePrograms(in: cohort, model: model)
+      XCTAssertEqual(resources.pendingWebRequestCount, 1,
+        "The validated cohort must enqueue its owner before yielding to a later SwiftUI mount")
+      acceptedPublications += 1
+    }
     let source = fixture.source(), frame = fixture.frame()
     coordinator.prepare(source: source, presence: fixture.presence, frame: frame, pinned: [], displayScale: 1)
     try await waitUntil { coordinator.published != nil && !coordinator.isPreparing }
+    coordinator.onPublished = nil
+    XCTAssertEqual(acceptedPublications, 1)
     let initial = try XCTUnwrap(coordinator.published)
-    let element = fixture.elements[0]
-    let focus = InteractiveElementReference.board(boardID: fixture.presence.boardID, elementID: element.id)
-    let lease = try await resources.acquireWebSurface(priority: .liveProgram, source: focus)
-    defer { lease.release() }
+    let preparation = resources.programPreparation(focus: focus, model: model)
+    XCTAssertNil(preparation.session, "Waiting retains its request without constructing beyond the shared allowance")
+    occupied.release()
+    await preparation.waitForPreparation()
+    let session = try XCTUnwrap(preparation.session), lease = session.lease
+    XCTAssertNotNil(session.coordinator.loadToken, "The original grant starts its one source navigation")
+    XCTAssertTrue(resources.programPreparation(focus: focus, model: model) === preparation)
     XCTAssertNotNil(coordinator.registerRuntimeSource(focus: focus, source: agentElementSnapshotSource(element),
       policy: .exact(scale: 1), leaseID: lease.id, cohort: initial))
     var preparationPhases = 0

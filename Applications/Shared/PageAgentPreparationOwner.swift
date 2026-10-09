@@ -2,7 +2,7 @@ import NotebookCore
 import SwiftUI
 
 /// One accepted slot owns preparation per addressed element. Native hosts
-/// borrow it; only source removal or read-window retirement is terminal.
+/// borrow it; window exit pauses a resident program, source removal retires it.
 @MainActor
 final class PageAgentPreparationOwner {
   private struct PageDemand: Equatable {
@@ -24,6 +24,7 @@ final class PageAgentPreparationOwner {
   private var acceptedPage: PageDocument?
   private let resources: SceneRenderResources
   private var elements: [String: PreparedAgentElementPreparationOwner] = [:]
+  private var windowIDs: Set<String> = []
   private var pageID: UUID?
   private weak var boundActivity: PageTurnActivity?
   private var boundPageIndex: Int?
@@ -48,13 +49,22 @@ final class PageAgentPreparationOwner {
       .intersection(CGRect(x: 0, y: 0, width: page.size.width, height: page.size.height))
   }
   private(set) var isRetired = false
+  var residentProgramIDs: Set<String> { Set(elements.compactMap { $0.value.session == nil ? nil : $0.key }) }
 
   init(resources: SceneRenderResources = .shared) { self.resources = resources }
 
   func owner(for id: String) -> PreparedAgentElementPreparationOwner {
     if let owner = elements[id] { return owner }
     let owner = PreparedAgentElementPreparationOwner(resources: resources)
-    if isRetired { owner.retire() } else { elements[id] = owner }
+    if isRetired { owner.retire() }
+    else {
+      elements[id] = owner
+      owner.onResidentRelease = { [weak self, weak owner] in
+        guard let self, let owner, self.elements[id] === owner,
+          !self.windowIDs.contains(id), !owner.hasAttachedConsumer else { return }
+        self.elements.removeValue(forKey: id); owner.retire(afterUpdate: true)
+      }
+    }
     return owner
   }
 
@@ -73,7 +83,10 @@ final class PageAgentPreparationOwner {
     let next = model.pageGraphicDisplay(page, in: nil)
     let old = previous.map { model.pageGraphicDisplay($0, in: nil) }
     for (id, owner) in elements {
-      guard let source = page.element(id: id), source.graphic == nil, source.kind != .nativeText,
+      guard let source = page.element(id: id) else {
+        withdrawFromWindow(id, owner: owner, source: page.nativeElementSource(id: id)); continue
+      }
+      guard source.graphic == nil, source.kind != .nativeText,
         let presentation = model.elementPresentation(.page(pageID: page.id, elementID: id), graph: next.graph),
         let demand = owner.demand else {
         elements.removeValue(forKey: id)?.retire(afterUpdate: true); continue
@@ -118,8 +131,6 @@ final class PageAgentPreparationOwner {
     let sources = display.elements.filter { $0.graphic == nil && $0.kind != .nativeText }
     let visible = updateViewport(page: page, model: model, display: display,
       visibleRegion: visibleRegion, context: rasterPreparation)
-    let kept = Set(sources.map(\.id))
-    for id in Array(elements.keys) where !kept.contains(id) { elements.removeValue(forKey: id)?.retire(afterUpdate: true) }
     // Enqueue visible demands first as well: the first executor can start
     // before later preparation tasks have reached the queue.
     let orderedSources = sources.filter { visible.contains($0.id) } + sources.filter { !visible.contains($0.id) }
@@ -156,6 +167,14 @@ final class PageAgentPreparationOwner {
     visibleRegion: CGRect?, context: PageRasterPreparation.Context?) -> Set<String> {
     guard !isRetired else { return [] }
     let sources = display.elements.filter { $0.graphic == nil && $0.kind != .nativeText }
+    // A reopened page can mount before early preparation. Its actual bounded
+    // viewport owns membership too: reclaiming WebKit must not retire the
+    // accepted raster still borrowed by that physical page.
+    windowIDs = Set(sources.map(\.id))
+    for (id, owner) in elements where !windowIDs.contains(id) {
+      withdrawFromWindow(id, owner: owner, source: page.nativeElementSource(id: id))
+    }
+    if pageID == nil { pageID = page.id }
     let visible = Set(sources.compactMap { source -> String? in
       guard let visibleRegion, let presentation = model.elementPresentation(.page(pageID: page.id, elementID: source.id), graph: display.graph),
         visibleRegion.intersects(presentation.bounds) else { return nil }
@@ -169,8 +188,17 @@ final class PageAgentPreparationOwner {
     return visible
   }
 
+  private func withdrawFromWindow(_ id: String, owner: PreparedAgentElementPreparationOwner,
+    source: NotebookNativeElementSource?) {
+    // A missing body in a finite window says nothing about deletion. Only an
+    // addressed tombstone may revoke its last accepted heap and writer.
+    let removed = source?.page == nil && source?.versions?.isEmpty == false
+    guard removed || !owner.leaveViewport() else { return }
+    elements.removeValue(forKey: id)?.retire(afterUpdate: true)
+  }
+
   private func removeAll(afterUpdate: Bool) {
-    let previous = elements; elements.removeAll()
+    let previous = elements; elements.removeAll(); windowIDs.removeAll()
     for owner in previous.values { owner.retire(afterUpdate: afterUpdate) }
   }
   func retire(afterUpdate: Bool = false) {

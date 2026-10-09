@@ -37,7 +37,7 @@ struct DocumentPagePresentation {
 final class DocumentPhysicalPageCoordinator {
   let id = UUID()
   private var owner: DocumentPagePresentationOwner?
-  func update(_ input: DocumentPagePresentation, in host: DocumentWebHost, resources: SceneRenderResources) {
+  func update(_ input: DocumentPagePresentation, in host: DocumentPageHost, resources: SceneRenderResources) {
     if owner?.documentID != input.document.id || owner?.resources !== resources {
       owner?.unregister(id)
       owner = DocumentPagePresentationOwner.shared(documentID: input.document.id, resources: resources)
@@ -82,7 +82,7 @@ final class DocumentPagePresentationOwner {
   }
   @MainActor private final class Entry {
     let id: UUID
-    weak var host: DocumentWebHost?
+    weak var host: DocumentPageHost?
     var input: DocumentPagePresentation
     var activity: PageTurnActivity?
     var activityObserver: UUID?
@@ -109,7 +109,7 @@ final class DocumentPagePresentationOwner {
     }
     private var readiness: PageTurnReadiness.State?
     private weak var readinessHandler: PageTurnReadiness?
-    init(id: UUID, input: DocumentPagePresentation, host: DocumentWebHost) {
+    init(id: UUID, input: DocumentPagePresentation, host: DocumentPageHost) {
       self.id = id; self.input = input; self.host = host
     }
     func stopObserving() {
@@ -137,14 +137,6 @@ final class DocumentPagePresentationOwner {
     let id: UUID
     let page: Int
     let source: VersionStamp
-  }
-  /// UIKit may retire the outgoing page before publishing the incoming current
-  /// host. During that handoff the document owner, rather than either page,
-  /// retains the admitted WebKit and its immutable bridge state.
-  private struct PaperTransfer {
-    let renderer: DocumentWebCoordinator
-    let web: WKWebView
-    let admission: WebSurfaceBorrow
   }
   private static var owners: [Key: WeakOwner] = [:]
   /// An open document outlives any one SwiftUI/UIKit representation. This
@@ -345,7 +337,16 @@ final class DocumentPagePresentationOwner {
     let entries = owner.entries.values.map { entry in
       "\(entry.id):page=\(entry.input.pageIndex),current=\(entry.input.isCurrent),host=\(entry.host.map { String(describing: ObjectIdentifier($0)) } ?? "nil"),window=\(entry.host?.window != nil)"
     }.sorted()
-    return "current=\(String(describing: owner.current?.id)) mounted=\(String(describing: owner.mountedID)) entries=\(entries) paperPage=\(String(describing: owner.paper.payload?.pageIndex)) canonical=\(owner.paper.hasCanonicalPixels) paper=\(path(owner.paper.webView)) paperToken=\(owner.paper.payload?.renderToken ?? "nil") currentToken=\(owner.current?.input.token ?? "nil") work=\(String(describing: owner.workID)) needsWork=\(owner.needsWork) passivePage=\(String(describing: owner.passive?.payload?.pageIndex)) passiveStage=\(owner.passiveStage) passiveCanonical=\(owner.passive?.hasCanonicalPixels == true) passiveError=\(String(describing: owner.passive?.acquisitionError)) passiveView=\(path(owner.passive?.webView)) pictures=\(owner.pictures.mapValues { "\($0.raster.image.cgImage?.width ?? 0)x\($0.raster.image.cgImage?.height ?? 0)" }) admission=\(owner.resources.rasterAdmission) pendingReaders=\(owner.source?.pendingPreparationReaderCount ?? 0) gesture=\(owner.gestureLocked) focused=\(owner.programOwner.hasFocus) terminal=\(owner.terminalFailures.sorted()) pressure=\(owner.failures.keys.sorted())"
+    return "current=\(String(describing: owner.current?.id)) mounted=\(String(describing: owner.mountedID)) entries=\(entries) paperPage=\(String(describing: owner.paper.payload?.pageIndex)) canonical=\(owner.paper.hasCanonicalPixels) paper=\(path(owner.paper.view)) paperToken=\(owner.paper.payload?.renderToken ?? "nil") currentToken=\(owner.current?.input.token ?? "nil") work=\(String(describing: owner.workID)) needsWork=\(owner.needsWork) passivePage=\(String(describing: owner.passive?.payload?.pageIndex)) passiveStage=\(owner.passiveStage) passiveCanonical=\(owner.passive?.hasCanonicalPixels == true) passiveError=\(String(describing: owner.passive?.acquisitionError)) passiveView=\(path(owner.passive?.view)) pictures=\(owner.pictures.mapValues { "\($0.raster.image.cgImage?.width ?? 0)x\($0.raster.image.cgImage?.height ?? 0)" }) admission=\(owner.resources.rasterAdmission) pendingReaders=\(owner.source?.pendingPreparationReaderCount ?? 0) gesture=\(owner.gestureLocked) focused=\(owner.programOwner.hasFocus) terminal=\(owner.terminalFailures.sorted()) pressure=\(owner.failures.keys.sorted())"
+  }
+
+  static func program(documentID: UUID, id: String) -> DocumentProgramSource? {
+    programs(documentID: documentID).first { $0.id == id }
+  }
+  static func programs(documentID: UUID) -> [DocumentProgramSource] {
+    owners.values.compactMap(\.value).first {
+      !$0.stopped && $0.documentID == documentID && $0.hasOpenDocumentPresentations
+    }?.source?.programs ?? []
   }
 
   /// Submission freezes the installed native paper and all clipped program
@@ -403,10 +404,9 @@ final class DocumentPagePresentationOwner {
   private var entries: [UUID: Entry] = [:]
   private var selectedID: UUID?
   private var mountedID: UUID?
-  private var paper: DocumentWebCoordinator!
-  private var paperTransfer: PaperTransfer?
-  private var passive: DocumentWebCoordinator?
-  private let passiveHost = DocumentWebHost()
+  private var paper: DocumentPaperCoordinator!
+  private var passive: DocumentPaperCoordinator?
+  private let passiveHost = DocumentPageHost()
   private enum PassiveStage { case idle, preparing, capturing, staged }
   private var passiveStage = PassiveStage.idle
   private struct StagedPaper {
@@ -436,7 +436,6 @@ final class DocumentPagePresentationOwner {
   /// The configured passive request, including a real queued WebKit admission.
   /// This observation neither starts preparation nor changes readiness.
   var pendingPassivePageIndex: Int? { passive?.payload?.pageIndex }
-  var pendingPassiveSurfaceRequestID: UUID? { passive?.pendingSurfaceRequestID }
 
   private init(documentID: UUID, resources: SceneRenderResources) {
     self.documentID = documentID; self.resources = resources
@@ -452,15 +451,37 @@ final class DocumentPagePresentationOwner {
       guard let host = self?.driver?.host else { return }
       host.installProgramOverlay(); host.programOverlay.park(web, fullSize: size)
     }
-    programOwner.onLink = { [weak self] block, version, href in
+    programOwner.onLinkAdmission = { [weak self] block, version, includingAcceptedContact in
       guard let self, let current, current.id == mountedID, let host = current.host,
+        current.input.isInteractive || (includingAcceptedContact && contacts.contains(block)),
+        contacts.subtracting([block]).isEmpty,
+        !entries.values.contains(where: { $0.activity?.isTransitioning == true || $0.input.pageTurnActive }),
         source?.program(block)?.sourceBasis == version,
         let origin = paper.currentLinkOrigin, let layout = origin.source.layout,
         origin.source.matches(current.input.document), origin.pageIndex == current.input.pageIndex,
         layout.blockIDs(on: [origin.pageIndex], kind: .program).contains(block),
+        let placement = placements(on: current).first(where: { $0.blockID == block }),
         host.programOverlay.isPresenting(placements(on: current), paperSize: physicalSize(current.input),
-          passive: passivePlacements(on: current)) else { return }
-      paper.resolveLink(href, origin: origin, deliver: current.input.onLinkActivation)
+          passive: passivePlacements(on: current)) else { return nil }
+      let entryID = current.id, rect = placement.rect, offset = placement.sourceOffset, size = placement.fullSize
+      return .init(origin: origin, isCurrent: { [weak self, weak entry = current, weak host, weak web = placement.webView] in
+        guard let self, let entry, let host, let web, let current = self.current,
+          entries[entryID] === entry, current === entry,
+          current.id == mountedID,
+          current.host === host, source?.program(block)?.sourceBasis == version,
+          let installedOrigin = paper.currentLinkOrigin, installedOrigin.hasSamePresentation(as: origin),
+          origin.source.matches(current.input.document), origin.pageIndex == current.input.pageIndex,
+          let installed = placements(on: current).first(where: { $0.blockID == block }),
+          installed.webView === web, installed.rect == rect,
+          installed.sourceOffset == offset, installed.fullSize == size else { return false }
+        return host.programOverlay.hasInstalledOrigin(placements(on: current), paperSize: physicalSize(current.input),
+          passive: passivePlacements(on: current))
+      })
+    }
+    programOwner.onLink = { [weak self] _, _, activation in
+      guard let self, let current, current.id == mountedID,
+        let origin = paper.currentLinkOrigin, origin.hasSamePresentation(as: activation.origin) else { return }
+      current.input.onLinkActivation(activation)
     }
     reclamationOwner = resources.registerReclamationOwner { [weak self] in self?.reclamationCandidates() ?? [] }
     observe("document_owner_created")
@@ -490,10 +511,10 @@ final class DocumentPagePresentationOwner {
   }
 
   private func observe(_ stage: String, entryID: UUID? = nil, page: Int? = nil,
-    reason: String? = nil, renderer: DocumentWebCoordinator? = nil) {
+    reason: String? = nil, renderer: DocumentPaperCoordinator? = nil) {
     guard NotebookNavigationObservation.enabled else { return }
     func uuid(_ id: UUID?) -> JSONValue { id.map { .string($0.uuidString) } ?? .null }
-    func rendererValue(_ value: DocumentWebCoordinator?) -> JSONValue {
+    func rendererValue(_ value: DocumentPaperCoordinator?) -> JSONValue {
       guard let value else { return .null }
       return .object(["objectID": .string(String(describing: ObjectIdentifier(value))),
         "coordinatorID": uuid(value.pagePreparationTrace?.identity.coordinatorID),
@@ -511,7 +532,7 @@ final class DocumentPagePresentationOwner {
       "preparationDemandID": uuid(preparationDemand?.id),
       "preparationTarget": preparationDemand.map { .number(Double($0.pageIndex)) } ?? .null,
       "gestureLocked": .bool(gestureLocked), "inputLocked": .bool(inputLocked),
-      "parkedPaper": .bool(paperTransfer != nil), "openDocument": .bool(hasOpenDocumentPresentations),
+      "openDocument": .bool(hasOpenDocumentPresentations),
       "paper": rendererValue(paper),
       "passive": rendererValue(passive), "operationRenderer": rendererValue(renderer),
       "sourceKey": source.map { .string($0.message.key) } ?? .null,
@@ -528,15 +549,36 @@ final class DocumentPagePresentationOwner {
       documentID: documentID, fields: details)
   }
 
-  private func makePaper() -> DocumentWebCoordinator {
-    let renderer = DocumentWebCoordinator(resources: resources, renderSession: renderSession, onRenderReady: .init { _ in },
-      onPageLayout: { _ in },  onStateChange: { _, _ in nil })
+  private func makePaper() -> DocumentPaperCoordinator {
+    let renderer = DocumentPaperCoordinator(resources: resources, renderSession: renderSession)
     bindPaper(renderer)
     return renderer
   }
 
-  private func bindPaper(_ renderer: DocumentWebCoordinator) {
-    renderer.externallyHostedPrograms = true
+  private func bindPaper(_ renderer: DocumentPaperCoordinator) {
+    renderer.isCurrentPresentation = { [weak self, weak renderer] in
+      guard let self, !stopped, let renderer, paper === renderer, let entry = current,
+        entries[entry.id] === entry, mountedID == entry.id, entry.input.isVisible,
+        entry.host?.ownsPaper(renderer.view) == true, let printed = renderer.view.raster?.page else { return false }
+      return printed.artifact.document.id == entry.input.document.id && printed.pageIndex == entry.input.pageIndex
+    }
+    renderer.onLinkAdmission = { [weak self, weak renderer] origin in
+      guard let self, !stopped, let renderer, paper === renderer, let entry = current,
+        entries[entry.id] === entry, mountedID == entry.id, let host = entry.host,
+        entry.input.isVisible, entry.input.isInteractive, renderer.nativeInputIsReady(in: host),
+        origin.source.matches(entry.input.document), origin.pageIndex == entry.input.pageIndex,
+        let installed = renderer.currentLinkOrigin, installed.hasSamePresentation(as: origin) else { return nil }
+      // An unregistered physical Entry stays retired even when return reuses
+      // the coordinator UUID, host, source and all of its installed pixels.
+      return .init(origin: origin, isCurrent: { [weak self, weak entry, weak host, weak renderer] in
+        guard let self, !stopped, let entry, let host, let renderer,
+          entries[entry.id] === entry, current === entry, mountedID == entry.id,
+          entry.host === host, paper === renderer, host.hasCanonicalPaper(renderer.view),
+          origin.source.matches(entry.input.document), origin.pageIndex == entry.input.pageIndex,
+          let installed = renderer.currentLinkOrigin else { return false }
+        return installed.hasSamePresentation(as: origin)
+      })
+    }
     renderer.onPaperReady = { [weak self, weak renderer] in
       guard let self, let renderer, paper === renderer, let current,
         current.id == mountedID, renderer.payload?.source.matches(current.input.document) == true,
@@ -544,25 +586,7 @@ final class DocumentPagePresentationOwner {
       refreshProgramDemand()
       installPrograms(on: current)
     }
-    renderer.onSurfaceRetirement = { [weak self, weak renderer] web in
-      guard let self, let renderer, let transfer = paperTransfer,
-        transfer.renderer === renderer, transfer.web === web else { return }
-      paperTransfer = nil
-    }
     renderer.onPresentationChange = { [weak self] in self?.schedule() }
-    renderer.onBeforeRuntimeRestart = { [weak self, weak renderer] in
-      guard let self, let renderer else { return }
-      if passive === renderer {
-        if passiveStage == .idle { retirePassiveRenderer(); schedule() }
-        else { renderer.offerIdleReclamation(nil) }
-        // Active preparation keeps this coordinator's own bounded recovery
-        // counter and target; it never restarts from the current paper's input.
-        return
-      }
-      guard renderer === paper, let input = current?.input else { return }
-      work?.cancel(); work = nil; workID = nil
-      configure(renderer, input: input, page: input.pageIndex); schedule()
-    }
   }
 
   private var current: Entry? {
@@ -586,14 +610,14 @@ final class DocumentPagePresentationOwner {
       programOwner.parkForReturn()
       paper.offerIdleReclamation { [weak self] in
         guard let self, holdsReturnPaper else { return }
-        paper.invalidate(); paperTransfer = nil; paper = makePaper()
+        paper.invalidate(); paper = makePaper()
       }
       return
     }
     guard !hasOpenDocumentPresentations,
-      paper.payload != nil || paperTransfer != nil || mountedID != nil else { return }
+      paper.payload != nil || mountedID != nil else { return }
     observe("document_paper_replace", reason: "last_full_presentation_closed")
-    paper.invalidate(); paperTransfer = nil; paper = makePaper(); mountedID = nil
+    paper.invalidate(); paper = makePaper(); mountedID = nil
   }
   private var currentTarget: CurrentTarget? {
     current.map { .init(id: $0.id, page: $0.input.pageIndex, source: $0.input.document.contentStamp) }
@@ -621,7 +645,7 @@ final class DocumentPagePresentationOwner {
       && passive?.payload?.source.matches(entry.input.document) == true
   }
 
-  func update(_ id: UUID, input: DocumentPagePresentation, host: DocumentWebHost) {
+  func update(_ id: UUID, input: DocumentPagePresentation, host: DocumentPageHost) {
     guard !stopped else { return }
     // Only a matching pending action is observed. Its target may still be a
     // prewarming native host; selection is the result of that preparation.
@@ -686,7 +710,7 @@ final class DocumentPagePresentationOwner {
       source?.releasePage(hostID: id, in: nil)
       entry.releaseTurnFrame()
       host.removeFallback(); entry.publishReadiness(false)
-      if let passive, passive.webView?.window == nil {
+      if let passive, passive.view.window == nil {
         work?.cancel(); work = nil; workID = nil
         captureTail?.cancel(); captureTail = nil; captureID = nil
         retirePassiveRenderer()
@@ -729,7 +753,7 @@ final class DocumentPagePresentationOwner {
     let sourceChanged = current.map { current in
       passive?.payload.map { !$0.source.matches(current.input.document) } ?? false
     } ?? false
-    if passiveStage == .capturing || sourceChanged || passive?.webView == nil { retirePassiveRenderer() }
+    if passiveStage == .capturing || sourceChanged || passive?.isMounted != true { retirePassiveRenderer() }
     else if let passive { offerPassiveRenderer(passive) }
   }
 
@@ -741,7 +765,7 @@ final class DocumentPagePresentationOwner {
     passiveHost.removeFromSuperview()
   }
 
-  private func offerPassiveRenderer(_ renderer: DocumentWebCoordinator) {
+  private func offerPassiveRenderer(_ renderer: DocumentPaperCoordinator) {
     guard passive === renderer, stagedPaper == nil else { return }
     passiveStage = .idle
     renderer.releasePreparedPageDemand()
@@ -771,7 +795,10 @@ final class DocumentPagePresentationOwner {
   }
 
   private func contact(_ id: String, active: Bool) {
-    if active { contacts.insert(id) }
+    if active {
+      contacts.insert(id)
+      programOwner.runtime(for: id)?.beginNativeLinkContact()
+    }
     else { contacts.remove(id); refreshMountedInput(); schedule() }
   }
 
@@ -781,7 +808,10 @@ final class DocumentPagePresentationOwner {
   /// New hits follow the current policy; link completion has a stable model owner.
   private func refreshMountedInput() {
     guard !stopped, let id = mountedID, let entry = entries[id],
-      let host = entry.host else { return }
+      let host = entry.host else {
+      for runtime in programOwner.activeRuntimes { runtime.publishLinkInstallation(origin: nil, entryID: nil, host: nil, placement: nil) }
+      return
+    }
     let input = entry.input
     // Program state and its paint receipt belong to each retained runtime;
     // independent state changes never send another frame through the paper.
@@ -793,6 +823,14 @@ final class DocumentPagePresentationOwner {
     }
     paper.updateInputAdmission(in: host,
       isInteractive: matches && input.isVisible && input.isInteractive)
+    let live = placements(on: entry)
+    let origin = matches && paper.currentLinkOrigin?.source.matches(input.document) == true
+      && host.programOverlay.hasInstalledOrigin(live, paperSize: physicalSize(input), passive: passivePlacements(on: entry))
+      ? paper.currentLinkOrigin : nil
+    for runtime in programOwner.activeRuntimes {
+      runtime.publishLinkInstallation(origin: origin, entryID: entry.id, host: host.programOverlay,
+        placement: live.first { $0.blockID == runtime.program.id })
+    }
     recordInstallation(on: entry)
   }
 
@@ -812,21 +850,10 @@ final class DocumentPagePresentationOwner {
     let previousTarget = currentTarget
     guard let entry = entries.removeValue(forKey: id) else { return }
     observe("physical_page_unregister", entryID: id, page: entry.input.pageIndex)
-    if mountedID == id, let web = paper.webView, entry.host?.ownsSurface(web) == true,
-      let admission = paper.borrowSurfaceForTransfer(web) {
-      paperTransfer = .init(renderer: paper, web: web, admission: admission)
-      if let stagedPaper, let incoming = entries[stagedPaper.entryID], hasStagedPaper(for: incoming),
-        incoming.activity?.installedPreparation?.id == stagedPaper.demandID,
-        let destination = incoming.host, destination.window != nil {
-        // UIKit has actually completed this non-curl landing. Keep the retired
-        // paper's existing physical subtree in that same window, without a
-        // render/mount or an intermediate WebKit detach. Its next passive
-        // request reuses this projection; the idle resource offer may retire it.
-        destination.installPreparationHost(passiveHost, size: physicalSize(entry.input))
-        passiveHost.install(web, size: physicalSize(entry.input))
-      }
+    if mountedID == id {
+      mountedID = nil
+      for runtime in programOwner.activeRuntimes { runtime.publishLinkInstallation(origin: nil, entryID: nil, host: nil, placement: nil) }
     }
-    if mountedID == id { mountedID = nil }
     entry.releaseTurnFrame()
     entry.stopObserving(); entry.host?.releasePresentationCallbacks(for: id)
     // SwiftUI/UIKit can retain the departed host after its coordinator ends.
@@ -949,57 +976,37 @@ final class DocumentPagePresentationOwner {
         if let picture = picture(for: old) { old.host?.installSnapshot(picture.raster) }
         else {
           // UIKit has finished the accepted curl before this transfer. The
-          // departed shell is prepared by the passive renderer before another
-          // gesture may select it, never by blocking on its detached WebKit.
+          // departed page is prepared by the passive renderer before another
+          // gesture may select it.
           old.publishReadiness(false); old.host?.showLoading()
         }
       }
       try Task.checkCancellation()
       guard !inputLocked, entry.input.token == input.token else { return }
       if hasStagedPaper(for: entry) || (passiveStage == .preparing && passiveMatches(entry)), let incoming = passive {
-        // A matching destination keeps its paper coordinator and any queued
-        // admission. A prepared live landing additionally keeps its canonical
+        // A matching destination keeps its paper coordinator. A prepared
+        // live landing additionally keeps its canonical
         // pixels in the native container through this exchange.
         let outgoing = paper!
         stagedPaper = nil; passive = nil
         paper = incoming
         outgoing.releaseInputOwnership()
         // UIKit has already installed the incoming host. Parking the retired
-        // WebKit here would synchronously rebuild an offscreen viewport before
-        // admitting the person's input. Keep its existing idle lease; the next
+        // paper here would synchronously rebuild an offscreen viewport before
+        // admitting the person's input. Keep its existing material; the next
         // actual passive request mounts it, or the resource owner reclaims it.
         passive = outgoing; offerPassiveRenderer(outgoing)
-        paperTransfer = nil
         observe("document_live_target_adopted", entryID: entry.id, page: input.pageIndex, renderer: incoming)
       }
       // Blur/draft flushing may have yielded while SwiftUI refreshed callbacks
       // for this same source token. Configure from the current entry so that
       // resuming preparation cannot restore the pre-await navigation closure.
-      func mountCurrentPaper(_ renderer: DocumentWebCoordinator) {
-        if paper !== renderer {
-          observe("document_paper_replace", reason: "adopt_common_shell", renderer: renderer)
-          paper.invalidate(); paper = renderer; bindPaper(renderer)
-        }
-        configure(renderer, input: entry.input, page: input.pageIndex)
-        renderer.holdsEditingOwnership = entry.input.isInteractive
-        renderer.preservesFallback = true
-        renderer.mount(in: host, physicalSize: physicalSize(entry.input), isInteractive: entry.input.isInteractive, priority: .currentPage)
-      }
-      // Only the first real current paper consumes an unused common shell.
-      // Its preparation host survives this entire synchronous configure/mount;
-      // passive neighbouring pictures never consume it.
-      let adopted = paper.payload == nil && paper.webView == nil
-        && resources.documentShellPreparation?.adoptForCurrentPage(mountCurrentPaper) == true
-      if !adopted { mountCurrentPaper(paper) }
+      configure(paper, input: entry.input, page: input.pageIndex)
+      paper.preservesFallback = true
+      paper.mount(in: host, physicalSize: physicalSize(entry.input), isInteractive: entry.input.isInteractive, priority: .currentPage)
       mountedID = entry.id
       observe("document_current_mounted", entryID: entry.id, page: input.pageIndex)
       refreshMountedInput()
-      if let transfer = paperTransfer,
-        transfer.renderer !== paper || transfer.web !== paper.webView || host.ownsSurface(transfer.web) {
-        // Installation synchronously gives the incoming native subtree the
-        // same runtime. A replaced/failed renderer cannot keep a departed one.
-        paperTransfer = nil
-      }
       try await paper.awaitPaperReady(token: input.paperToken)
     } else if current == nil, source == nil {
       guard permitsPreparation(of: entry) else { return }
@@ -1168,7 +1175,7 @@ final class DocumentPagePresentationOwner {
   private func hasStagedPaper(for entry: Entry) -> Bool {
     guard let stagedPaper, stagedPaper.entryID == entry.id, stagedPaper.token == entry.input.token,
       let passive, passive.payload?.renderToken == entry.input.paperToken, passive.hasCanonicalPixels,
-      let web = passive.webView, entry.host?.ownsSurface(web) == true else { return false }
+      entry.host?.ownsPaper(passive.view) == true else { return false }
     return true
   }
 
@@ -1177,25 +1184,23 @@ final class DocumentPagePresentationOwner {
       && preparationDemand?.pageIndex == entry.input.pageIndex && source?.layout != nil
   }
 
-  private func passiveRenderer(in host: DocumentWebHost, input: DocumentPagePresentation) -> DocumentWebCoordinator {
+  private func passiveRenderer(in host: DocumentPageHost, input: DocumentPagePresentation) -> DocumentPaperCoordinator {
     host.installPreparationHost(passiveHost, size: physicalSize(input))
     passiveStage = .preparing
     if let passive { passive.offerIdleReclamation(nil); return passive }
     let renderer = makePaper(); passive = renderer; return renderer
   }
 
-  private func configure(_ renderer: DocumentWebCoordinator, input: DocumentPagePresentation, page: Int, paperPixelWidth: Int = 1024) {
+  private func configure(_ renderer: DocumentPaperCoordinator, input: DocumentPagePresentation, page: Int, paperPixelWidth: Int = 1024) {
     renderer.programStore = input.programStore
-    renderer.update(document: input.document, state: input.state, selectedPageIndex: page, capturesSnapshot: false,
-      onRenderReady: .init { _ in }, onPageLayout: { [weak self] layout in
+    renderer.update(document: input.document, state: input.state, selectedPageIndex: page,
+      onPageLayout: { [weak self] layout in
         self?.entries.values.forEach { $0.input.onPageLayout(layout) }
-      },  onStateChange: { _, _ in nil },
+      },
       paperPreparationPixelWidth: input.snapshotPixelWidth ?? paperPixelWidth,
       onPreparationFailure: { [weak self, weak renderer] error in
         guard let self, !stopped, let renderer, paper === renderer, let current,
           renderer.payload?.renderToken == current.input.paperToken else { return }
-        // Native paper may already be ready when its interaction surface
-        // fails. Its independent waiter cannot publish that failure for us.
         show(error, on: current)
       },
       onLinkActivation: input.onLinkActivation,
@@ -1314,17 +1319,21 @@ final class DocumentPagePresentationOwner {
     refreshResidentTurnFrames()
     installationGeneration &+= 1
     let installedToken = entry.input.token
+    let installedPaperToken = entry.input.paperToken
     let installation = host.programOverlay.installation(for: placements, paperSize: physicalSize(entry.input), passive: passive)
     let isInstalled: @MainActor (DocumentPresentationScope) -> Bool = { [weak self, weak host, weak entry] scope in
         guard let self, let host, let entry else { return false }
-        return current?.id == entry.id && entry.input.token == installedToken
-          && paper.payload?.renderToken == entry.input.paperToken && mountedID == entry.id && host.window?.isKeyWindow == true
-          && !host.hasSnapshot && host.hasCanonicalPaperProjection && paper.hasCanonicalPixels
-          && programsReady(on: entry.input.pageIndex, scope: scope)
+        guard current?.id == entry.id, entry.input.paperToken == installedPaperToken,
+          paper.payload?.renderToken == installedPaperToken, mountedID == entry.id,
+          host.hasCanonicalPaper(paper.view), paper.installedPaper?.page.pageIndex == entry.input.pageIndex,
+          paper.hasCanonicalPixels else { return false }
+        if case .paper = scope { return true }
+        return entry.input.token == installedToken && programsReady(on: entry.input.pageIndex, scope: scope)
           && installation.isInstalled
       }
     DocumentRenderRegistry.shared.publishLive(documentID: documentID, token: installedToken,
       pageIndex: entry.input.pageIndex, hostID: installationID, generation: installationGeneration,
+      paperToken: installedPaperToken,
       paper: { [weak self] in self?.paper.installedPaper }, isAttached: isInstalled)
     if paper.hasCanonicalPixels, let measurements = entry.input.measurements, measurements.enabled {
       if NotebookNavigationObservation.enabled {
@@ -1377,7 +1386,7 @@ final class DocumentPagePresentationOwner {
       return .init(blockID: region.id, webView: web,
         rect: .init(x: region.frame.x, y: region.frame.y, width: region.frame.width, height: region.frame.height),
         sourceOffset: region.sourceOffset, fullSize: web.bounds.size,
-        allowsInteraction: !programOwner.isRetiring(region.id) && programOwner.pauseFailure(for: region.id) == nil)
+        allowsInteraction: programOwner.allowsInteraction(region.id))
     }
   }
 
@@ -1429,7 +1438,7 @@ final class DocumentPagePresentationOwner {
     }
     guard mountedID == entry.id, !host.hasSnapshot, paper.paperIsReady, host.hasCanonicalPaperProjection,
       paper.payload?.renderToken == entry.input.paperToken, paper.installedPaper != nil,
-      let web = paper.webView, host.ownsSurface(web) else { return false }
+      host.ownsPaper(paper.view) else { return false }
     let live = placements(on: entry), passive = passivePlacements(on: entry), pending = pendingPlacements(on: entry)
     let covered = Set(live.map(\.blockID)).union(passive.map(\.blockID)).union(pending.map(\.blockID))
     return layout.blockIDs(on: [entry.input.pageIndex], kind: .program).isSubset(of: covered)
@@ -1454,7 +1463,7 @@ final class DocumentPagePresentationOwner {
     }
   }
 
-  private func capture(_ entry: Entry, using renderer: DocumentWebCoordinator) async throws -> RasterLease {
+  private func capture(_ entry: Entry, using renderer: DocumentPaperCoordinator) async throws -> RasterLease {
     let preceding = captureTail, operation = UUID(), token = entry.input.token
     let task = Task { @MainActor [self] in
       if let preceding { _ = try? await preceding.value }
@@ -1789,7 +1798,7 @@ final class DocumentPagePresentationOwner {
     return .init(images: images, retained: retained)
   }
 
-  private func capturePixels(_ entry: Entry, using renderer: DocumentWebCoordinator) async throws -> RasterLease {
+  private func capturePixels(_ entry: Entry, using renderer: DocumentPaperCoordinator) async throws -> RasterLease {
     guard let layout = source?.layout, let paper = renderer.installedPaper else { throw SceneRenderError.snapshotPending("document_paper") }
     let input = entry.input, token = input.token, physical = physicalSize(input)
     let width = captureWidth(entry), height = Int(ceil(Double(width)*physical.height/physical.width))
@@ -1982,7 +1991,6 @@ final class DocumentPagePresentationOwner {
     entries.values.forEach { $0.releaseTurnFrame() }
     programDemandTask?.cancel(); programDemandTask = nil; programDemandKey = nil; work?.cancel(); work = nil; captureTail?.cancel(); captureTail = nil
     paper?.invalidate(); passive?.invalidate(); programOwner.stop()
-    paperTransfer = nil
     stagedPaper = nil
     pictures.removeAll(); passiveHost.removeFromSuperview()
     if let reclamationOwner { resources.unregisterReclamationOwner(reclamationOwner); self.reclamationOwner = nil }
@@ -1993,7 +2001,6 @@ final class DocumentPagePresentationOwner {
     observe("document_owner_deinit")
     DocumentRenderRegistry.shared.revokeLive(hostID: installationID, through: installationGeneration)
     programDemandTask?.cancel(); work?.cancel(); paper?.invalidate(); passive?.invalidate(); programOwner.stop()
-    paperTransfer = nil
     if let admissionObserver { NotificationCenter.default.removeObserver(admissionObserver) }
     if let reclamationOwner { resources.unregisterReclamationOwner(reclamationOwner) }
     entries.values.forEach { $0.stopObserving(); $0.releaseTurnFrame() }

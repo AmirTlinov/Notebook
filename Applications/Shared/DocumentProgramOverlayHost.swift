@@ -143,13 +143,21 @@ final class DocumentProgramOverlayHost: UIView {
     presentationFailure(placements, paperSize: paperSize, passive: passive) == nil
   }
 
+  /// An admitted action belongs to these physical views through its own state
+  /// acknowledgement. Temporarily closing new input does not replace them.
+  func hasInstalledOrigin(_ placements: [DocumentProgramPlacement], paperSize: CGSize,
+    passive: [DocumentProgramPassivePlacement] = []) -> Bool {
+    presentationFailure(placements, paperSize: paperSize,
+      passiveIdentities: passive.map(DocumentProgramPassiveIdentity.init), matchesInteraction: false) == nil
+  }
+
   func presentationFailure(_ placements: [DocumentProgramPlacement], paperSize: CGSize,
     passive: [DocumentProgramPassivePlacement] = []) -> String? {
     presentationFailure(placements, paperSize: paperSize, passiveIdentities: passive.map(DocumentProgramPassiveIdentity.init))
   }
 
   fileprivate func presentationFailure(_ placements: [DocumentProgramPlacement], paperSize: CGSize,
-    passiveIdentities: [DocumentProgramPassiveIdentity]) -> String? {
+    passiveIdentities: [DocumentProgramPassiveIdentity], matchesInteraction: Bool = true) -> String? {
     guard let window else { return "detached" }
     guard self.paperSize == paperSize else { return "paper-size: \(self.paperSize) != \(paperSize)" }
     guard !bounds.isEmpty, !convert(bounds, to: window).intersection(window.bounds).isEmpty else { return "outside-window" }
@@ -172,7 +180,9 @@ final class DocumentProgramOverlayHost: UIView {
         return "program-bounds: \(placement.webView.bounds) != \(placement.fullSize)"
       }
       guard Self.sameGeometry(placement.webView.frame, frame) else { return "program-frame: \(placement.webView.frame) != \(frame)" }
-      guard clip.allowsInteraction == placement.allowsInteraction else { return "program-interaction: \(placement.blockID)" }
+      if matchesInteraction, clip.allowsInteraction != placement.allowsInteraction {
+        return "program-interaction: \(placement.blockID)"
+      }
     }
     for expected in passiveIdentities {
       guard let clip = passiveClips[expected.blockID], clip.superview === paper,

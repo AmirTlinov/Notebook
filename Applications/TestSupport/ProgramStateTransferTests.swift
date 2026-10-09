@@ -11,7 +11,7 @@ final class ProgramStateTransferTests: XCTestCase {
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
     retainNotebookUntilTeardown(model, removing: root)
     await model.start(pageSize: NotebookAppModel.defaultPageSize)
-    var page = try XCTUnwrap(model.activePage)
+    var page = try model.store.loadPage(XCTUnwrap(model.activePage).id)
     let element = AgentElement(id: "early", kind: .web, frame: .init(x: 0, y: 0, width: 160, height: 120), source: "Early state", html: "<output>Early</output>")
     page.replaceElements([element], actor: model.actorID)
     try model.store.savePage(page); await model.reloadExternalChanges()?.value
@@ -172,7 +172,7 @@ final class ProgramStateTransferTests: XCTestCase {
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
     retainNotebookUntilTeardown(model, removing: root)
     await model.start(pageSize: NotebookAppModel.defaultPageSize)
-    var page = try XCTUnwrap(model.activePage)
+    var page = try model.store.loadPage(XCTUnwrap(model.activePage).id)
     let element = AgentElement(id: "program", kind: .web, frame: .init(x: 0, y: 0, width: 160, height: 120),
       source: "Original", html: "<button>Original</button>")
     page.replaceElements([element], actor: model.actorID)

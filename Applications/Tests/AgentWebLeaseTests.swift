@@ -178,7 +178,7 @@ final class AgentWebLeaseTests: XCTestCase {
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
     retainNotebookUntilTeardown(model, removing: root)
     await model.start(pageSize: NotebookAppModel.defaultPageSize)
-    var page = try XCTUnwrap(model.activePage)
+    var page = try model.store.loadPage(XCTUnwrap(model.activePage).id)
     let source = AgentElement(id: "pre-navigation", kind: .web,
       frame: .init(x: 0, y: 0, width: 32, height: 32), source: "Background during initial admission",
       html: "<output>Ready</output>", javaScript: "window.boots=(window.boots||0)+1;notebook.ready(Promise.resolve())",
@@ -301,7 +301,7 @@ final class AgentWebLeaseTests: XCTestCase {
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
     retainNotebookUntilTeardown(model, removing: root)
     await model.start(pageSize: NotebookAppModel.defaultPageSize)
-    var page = try XCTUnwrap(model.activePage)
+    var page = try model.store.loadPage(XCTUnwrap(model.activePage).id)
     let source = AgentElement(id: "early", kind: .web, frame: .init(x: 0, y: 0, width: 160, height: 120),
       source: "Early state", html: "<output>Early</output>", javaScript: "notebook.ready(new Promise(()=>{})); window.earlyAccepted=notebook.commit({early:1});")
     page.replaceElements([source], actor: model.actorID)

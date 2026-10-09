@@ -148,7 +148,7 @@ Endpoint требует receipt своей операции. Неподвижн�
 публикация принадлежат `SheetCurlMetalView`. `PageTurnOutputHost` владеет местом
 монтажа в установленной непрозрачной canonical paper под её существующим clip.
 `PagePresentationNativeView` предоставляет фон под `GridPaperView`;
-`DocumentWebHost` проверяет соответствующий native print. Прозрачный WebKit,
+`DocumentPageHost` проверяет соответствующий native print. Прозрачный WebKit,
 snapshot или error/loading поверхность такого допуска не дают.
 
 Только OS-показанный endpoint паркуется у этой бумаги. После GPU fence и

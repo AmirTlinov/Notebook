@@ -25,14 +25,10 @@ final class DocumentProgramIdentityTests: XCTestCase {
     let files = [DocumentFile(id: "main", path: "main.tex", source: "\\documentclass{article}\\begin{document}Text\\end{document}")]
       + (1..<DocumentDocument.maximumFileCount).map { DocumentFile(id: "file-\($0)", path: "sections/file-\($0).tex", source: "Source \($0)") }
     let document = DocumentDocument(actor: UUID(), files: files), resources = SceneRenderResources()
-    let coordinator = DocumentWebCoordinator(resources: resources, onRenderReady: .init { _ in },
-      onPageLayout: { _ in }, onStateChange: { _, _ in nil })
-    defer { coordinator.invalidate() }
-    coordinator.update(document: document, state: .init(id: document.id, actor: UUID()), selectedPageIndex: 0, capturesSnapshot: false,
-      onRenderReady: .init { _ in }, onPageLayout: { _ in }, onStateChange: { _, _ in nil })
-    XCTAssertEqual(coordinator.payload?.source.document.files.count, DocumentDocument.maximumFileCount)
-    XCTAssertTrue(coordinator.payload?.programs.isEmpty == true)
-    XCTAssertNil(coordinator.webView)
+    let source = DocumentRenderSession(documentID: document.id).source(document)
+    XCTAssertEqual(source.document.files.count, DocumentDocument.maximumFileCount)
+    XCTAssertTrue(source.programs.isEmpty)
+    XCTAssertNil(source.layout)
     XCTAssertEqual(resources.activeWebSurfaceCount, 0)
   }
 

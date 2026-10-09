@@ -77,6 +77,10 @@ final class PreparedAgentElementPreparationOwner {
   private(set) var liveProgram: AgentProgramSource?
   private var failedPaintRuntime: RuntimePaintIdentity?
   private var runtimeWasPresented = false
+  private var pausedResident = false
+  private var retriesResidentCheckpoint = false
+  private var residentCheckpointAccepted = false
+  @ObservationIgnored var onResidentRelease: (@MainActor () -> Void)?
   @ObservationIgnored private var runtimeAddress: SceneSourceAddress?
   @ObservationIgnored private var runtimeLeaseID: UUID?
   private(set) var failure: String?
@@ -86,7 +90,9 @@ final class PreparedAgentElementPreparationOwner {
   #if DEBUG
   @ObservationIgnored private var rejectedWebAdmission: String?
   func diagnostic() -> String {
-    "active=\(demand?.active == true),web=\(web != nil),live=\(showsLiveProgram),failure=\(failure ?? "none"),rejection=\(rejectedWebAdmission ?? "none")"
+    let exactRaster = demand.map { raster?.image(for: $0.policy.rasterSource(for: $0.source),
+      minimumScale: $0.policy.minimumScale(for: $0.source)) != nil } ?? false
+    return "request=\(request?.uuidString ?? "none"),active=\(demand?.active == true),web=\(web?.id.uuidString ?? "none"),live=\(showsLiveProgram),paused=\(pausedResident),checkpointAccepted=\(residentCheckpointAccepted),raster=\(raster?.entryID.uuidString ?? "none"),exactRaster=\(exactRaster),task=\(task != nil),failure=\(failure ?? "none"),rejection=\(rejectedWebAdmission ?? "none"),runtime=[\(session?.coordinator.preparationDiagnostic() ?? "absent")]"
   }
   #endif
   #if os(iOS)
@@ -161,6 +167,17 @@ final class PreparedAgentElementPreparationOwner {
   /// A changed demand cancels only this owner's subscriber; submitted native
   /// work remains charged until its existing physical completion fence.
   func accept(_ configuration: Configuration) {
+    accept(configuration, startsImmediately: false)
+  }
+
+  /// The validated scene producer calls this outside SwiftUI's update. Start
+  /// its existing admitted owner before mounting can occupy the next UI turn.
+  func acceptPublishedCohort(_ configuration: Configuration) {
+    precondition(configuration.cohort != nil)
+    accept(configuration, startsImmediately: true)
+  }
+
+  private func accept(_ configuration: Configuration, startsImmediately: Bool) {
     guard !isRetired else { return }
     var configuration = configuration
     if let current = demand, let basis = current.basis,
@@ -186,8 +203,44 @@ final class PreparedAgentElementPreparationOwner {
       // its queue position, timeout or in-flight passive WebKit capture.
       if let request { resources.updatePendingWebPriority(request, priority: configuration.demand.webPriority) }
       updateInteraction()
-    } else { restart() }
+    } else { restart(startsImmediately: startsImmediately) }
   }
+  /// Window absence does not remove an authored program. Keep its real heap
+  /// until the allocator requests this paused lease or the source is deleted.
+  @discardableResult
+  func leaveViewport() -> Bool {
+    guard !isRetired, let previous = configuration, let current = demand,
+      current.source.requiresLiveRuntime, session != nil, web != nil else { return false }
+    if previous.model?.interactiveElementFocus == previous.focus { return true }
+    accept(.init(model: previous.model, demand: .init(source: current.source, basis: current.basis,
+      active: false, inputEnabled: false, focused: false, permitsPreparation: current.permitsPreparation,
+      policy: current.policy, capture: current.capture, fallbackEntryID: current.fallbackEntryID, runtimeFailure: current.runtimeFailure),
+      focus: previous.focus, pageTurnActivity: previous.pageTurnActivity, rasterPreparation: previous.rasterPreparation,
+      cohort: previous.cohort, onState: previous.onState))
+    return true
+  }
+
+  private func offerResidentReclamation() {
+    guard pausedResident, residentCheckpointAccepted, failure == nil, let demand, let web, let session,
+      session.coordinator.hasPausedViewportSource(demand.source),
+      raster?.image(for: demand.policy.rasterSource(for: demand.source),
+        minimumScale: demand.policy.minimumScale(for: demand.source)) != nil,
+      !session.coordinator.isPinnedForAttention else { return }
+    web.offerIdleReclamation { [weak self, weak session] in
+      guard let self, let session else { return }
+      guard !self.isRetired, self.session === session, let current = self.demand,
+        self.pausedResident, self.residentCheckpointAccepted, self.failure == nil, !current.active, !current.focused,
+        session.coordinator.hasPausedViewportSource(current.source),
+        self.raster?.image(for: current.policy.rasterSource(for: current.source),
+          minimumScale: current.policy.minimumScale(for: current.source)) != nil,
+        !session.coordinator.isPinnedForAttention else { session.lease.cancelIdleReclamation(); return }
+      NotebookNavigationObservation.webPreparation("viewport_heap_reclaimed", ownerID: session.lease.id, sourceID: current.source.id)
+      self.retireRuntime(); self.releaseWeb(); self.liveProgram = nil
+      self.runtimeWasPresented = false; self.pausedResident = false; self.residentCheckpointAccepted = false
+      self.onResidentRelease?()
+    }
+  }
+
   private func updateInteraction() {
     guard interactionUpdate == nil else { return }
     let request = request
@@ -219,17 +272,26 @@ final class PreparedAgentElementPreparationOwner {
     configuration = .init(model: previous.model, demand: previous.demand, focus: previous.focus,
       pageTurnActivity: activity, rasterPreparation: context, cohort: previous.cohort, onState: previous.onState)
   }
-  private func restart() {
+  private func restart(startsImmediately: Bool = false) {
     guard !isRetired, demand != nil else { return }
+    if pausedResident, task != nil, let web {
+      NotebookNavigationObservation.webPreparation("viewport_demand_replaced", ownerID: web.id, sourceID: demand?.source.id)
+    }
     rasterAdmissionObservation = nil
     interactionUpdate?.cancel(); interactionUpdate = nil
-    task?.cancel(); let id = UUID(); request = id
-    task = Task { @MainActor [weak self] in
+    task?.cancel(); task = nil; let id = UUID(); request = id
+    var completed = false
+    let operation: @MainActor () async -> Void = { [weak self] in
+      defer { completed = true }
       guard let self, self.request == id else { return }
       self.observeResourcesIfNeeded()
       await self.prepare()
       if self.request == id { self.task = nil }
     }
+    let next = startsImmediately ? Task.immediate(operation: operation) : Task(operation: operation)
+    // An immediate grant may complete before its task handle is returned.
+    // Do not retain that finished task or overwrite a reentrant replacement.
+    if !completed, request == id { task = next }
   }
   func waitForPreparation() async { await task?.value }
   func attach(_ consumer: Consumer) {
@@ -237,6 +299,7 @@ final class PreparedAgentElementPreparationOwner {
     self.consumer = consumer; consumer.owner = self
     if let lastFailure { consumer.onFailure(lastFailure) }
   }
+  var hasAttachedConsumer: Bool { consumer?.owner === self }
   func detach(_ consumer: Consumer) {
     guard self.consumer === consumer, consumer.owner === self else { return }
     self.consumer = nil; consumer.owner = nil; consumer.onRenderReady(false)
@@ -262,6 +325,11 @@ final class PreparedAgentElementPreparationOwner {
   func retryPreparation() {
     guard !isRetired, configuration?.model != nil else { return }
     if let address = sourceAddress, runtimeFailure != nil { model.compositionTiles.retrySource(address) }
+    if pausedResident {
+      session?.coordinator.retryCheckpointAdmission()
+      retriesResidentCheckpoint = demand?.active == true
+      if demand?.active == false { pausedResident = false }
+    }
     failedSource = nil; failure = nil; lastFailure = nil; restart()
   }
   private func observeResourcesIfNeeded() {
@@ -297,6 +365,9 @@ final class PreparedAgentElementPreparationOwner {
   }
   func retire(afterUpdate: Bool = false) {
     guard !isRetired else { return }
+    if let session {
+      NotebookNavigationObservation.webPreparation("viewport_owner_retired", ownerID: session.lease.id, sourceID: demand?.source.id)
+    }
     isRetired = true; request = nil; task?.cancel(); task = nil
     rasterAdmissionObservation = nil
     #if os(iOS)
@@ -323,6 +394,7 @@ final class PreparedAgentElementPreparationOwner {
     #endif
     if consumer?.owner === self { consumer?.onRenderReady(false); consumer?.owner = nil }; consumer = nil
     session = nil; web = nil; raster = nil; preparedSource = nil; liveProgram = nil
+    pausedResident = false; retriesResidentCheckpoint = false; residentCheckpointAccepted = false; onResidentRelease?(); onResidentRelease = nil
     nativeRuntimeToken = nil; paintedRuntime = nil; configuration = nil; demand = nil
   }
   isolated deinit { retire() }
@@ -356,7 +428,11 @@ final class PreparedAgentElementPreparationOwner {
     if task == nil { restart() }
   }
   private func retireSession() {
-    let previous = session; session = nil; previous?.retire()
+    let previous = session; session = nil
+    if let previous {
+      NotebookNavigationObservation.webPreparation("viewport_session_retired", ownerID: previous.lease.id, sourceID: demand?.source.id)
+      previous.retire()
+    }
   }
 
   private var model: NotebookAppModel { configuration!.model! }
@@ -379,6 +455,7 @@ final class PreparedAgentElementPreparationOwner {
   var showsLiveProgram: Bool {
     web != nil && (isActive || runtimeWasPresented) && liveProgram == AgentProgramSource(element)
   }
+  var permitsRuntimeInput: Bool { showsLiveProgram && !pausedResident }
   var hasPaintedLiveProgram: Bool {
     return nativeRuntimeToken != nil
       && paintedRuntime?.runtimeToken == nativeRuntimeToken
@@ -499,7 +576,7 @@ final class PreparedAgentElementPreparationOwner {
     let policy = snapshotPolicy, source = rasterSource, scale = requiredScale
     let installationContext = installationContext, resources = resources
     return AgentWebElementView(element: element, stateBasis: basis, programOwner: model,
-      allowsStateCommits: isActive && hasFocus, session: session, snapshotPolicy: policy,
+      allowsStateCommits: isActive && hasFocus && !pausedResident, session: session, snapshotPolicy: policy,
       preparesPassiveSnapshot: !isActive || bridgesFirstLivePaint,
       showsContent: showsLiveProgram, focus: focus,
       onRenderReady: { [weak owner, weak model] ready in
@@ -509,7 +586,7 @@ final class PreparedAgentElementPreparationOwner {
           if let address = owner.runtimeAddress { model.compositionTiles.runtimeSourceBecameReady(address, leaseID: web.id, source: element) }
           if owner.raster?.entryID != next.entryID { owner.raster = next }
           owner.preparedSource = element; owner.failure = nil; owner.failedSource = nil
-          if !current.active && !owner.runtimeWasPresented {
+          if !current.active && !owner.runtimeWasPresented && !owner.pausedResident {
             owner.retireRuntime(); owner.releaseWeb()
           }
         } else if !ready, owner.preparedSource != element { owner.publishReady(false) }
@@ -520,6 +597,7 @@ final class PreparedAgentElementPreparationOwner {
         let next = ready ? AgentProgramSource(element) : nil
         if owner.liveProgram != next { owner.liveProgram = next }
         if !ready { owner.nativeRuntimeToken = nil; owner.paintedRuntime = nil }
+        if owner.pausedResident { owner.offerResidentReclamation() }
       }, onInteraction: { [weak owner, weak model] in
         guard let owner, let model, owner.demand?.active == true, owner.demand?.inputEnabled == true,
           owner.liveProgram == AgentProgramSource(element), owner.web?.id == web.id else { return }
@@ -565,7 +643,9 @@ final class PreparedAgentElementPreparationOwner {
         owner.failedSource = owned ? nil : event.source
         owner.failedCapturePolicy = event.policy
         owner.failedCapture = event.diagnostic.kind == "resource_limit" ? event : nil
-        if event.policy == nil || !current.active || owner.liveProgram != AgentProgramSource(element) {
+        // A late passive capture failure cannot discard the stopped heap
+        // while its checkpoint/image boundary is still held for Retry.
+        if event.policy == nil || (!owner.pausedResident && (!current.active || owner.liveProgram != AgentProgramSource(element))) {
           owner.liveProgram = nil; owner.runtimeWasPresented = false
           owner.retireRuntime(); owner.releaseWeb()
         }
@@ -575,6 +655,7 @@ final class PreparedAgentElementPreparationOwner {
   }
 
   private func releaseWeb() {
+    web?.cancelIdleReclamation()
     retireSession()
     web = nil
   }
@@ -626,47 +707,91 @@ final class PreparedAgentElementPreparationOwner {
     guard !Task.isCancelled, !isRetired, configuration?.model != nil, model.shutdownPhase != .stopped,
       let request, let demand else { return }
     let model = model, focus = focus, rasterPreparation = rasterPreparation
-    if !demand.active, runtimeWasPresented, let retiring = web,
-      liveProgram == AgentProgramSource(demand.source) {
-      // The departing page first saves its frozen model. Its already accepted
-      // turn keeps the displayed cut; passive image admission cannot retain a
-      // browser after the addressed writer has accepted that model.
-      do {
-        let accepted = try await AgentWebCoordinator.checkpointStateCurrent(focus: focus, element: demand.source, persist: { value, basis, admittedBytes in
-          guard let accepted = try await model.checkpointProgramState(focus: focus, rendered: demand.source, value: value, basis: basis, admittedStateBytes: admittedBytes) else {
-            throw NotebookProgramCheckpointError.superseded
+    if let liveProgram, liveProgram != AgentProgramSource(demand.source) {
+      pausedResident = false; retriesResidentCheckpoint = false; residentCheckpointAccepted = false; runtimeWasPresented = false
+      retireRuntime(); releaseWeb(); self.liveProgram = nil
+    }
+    if let session, let web, demand.source.requiresLiveRuntime,
+      liveProgram == AgentProgramSource(demand.source) || runtimeWasPresented || pausedResident {
+      if demand.active, pausedResident {
+        web.cancelIdleReclamation()
+        // Apply a newer accepted source/state while input is still fenced.
+        runtimeView(web, session: session, basis: demand.basis).prepare()
+        let resumed = await session.coordinator.resumeForViewport(retryCheckpoint: retriesResidentCheckpoint)
+        guard !Task.isCancelled, self.request == request, self.session === session else { return }
+        retriesResidentCheckpoint = false
+        guard resumed else { failure = "Не удалось возобновить программу"; return }
+        pausedResident = false; residentCheckpointAccepted = false; failure = nil
+      } else if !demand.active {
+        if !pausedResident || !residentCheckpointAccepted
+          || !session.coordinator.hasPausedViewportSource(demand.source)
+          || raster?.image(for: demand.policy.rasterSource(for: demand.source),
+            minimumScale: demand.policy.minimumScale(for: demand.source)) == nil {
+          web.cancelIdleReclamation()
+          pausedResident = true; residentCheckpointAccepted = false
+          var preparingCheckpointImage = false
+          do {
+            let accepted = try await session.coordinator.pauseForViewport()
+            guard !isRetired, self.session === session else { return }
+            if accepted == nil, session.coordinator.pausedViewportHasNoHeap {
+              guard !Task.isCancelled, self.request == request, self.demand?.active == false else { return }
+              retireRuntime(); releaseWeb(); liveProgram = nil
+              runtimeWasPresented = false; pausedResident = false; failure = nil
+              onResidentRelease?()
+              return
+            }
+            if let accepted, let previous = configuration, let current = self.demand,
+              AgentProgramSource(current.source) == AgentProgramSource(accepted.source),
+              current.basis == nil || !current.basis!.hasNewerState(than: accepted.basis) {
+              preparingCheckpointImage = true
+              let next = current.accepting(source: current.source.updating(state: accepted.source.state), basis: accepted.basis)
+              self.demand = next
+              configuration = .init(model: previous.model, demand: next, focus: previous.focus,
+                pageTurnActivity: previous.pageTurnActivity, rasterPreparation: previous.rasterPreparation,
+                cohort: previous.cohort, onState: previous.onState)
+              var captured = resources.retainRaster(for: next.policy.rasterSource(for: next.source),
+                minimumScale: next.policy.minimumScale(for: next.source))
+              if captured == nil { captured = try await session.coordinator.capturePausedViewport(next.source) }
+              guard !Task.isCancelled, self.request == request, !isRetired, self.session === session,
+                self.demand?.source == next.source, self.demand?.policy == next.policy,
+                self.demand?.active == false, session.coordinator.hasPausedViewportSource(next.source)
+              else {
+                NotebookNavigationObservation.webPreparation("viewport_preparation_changed", ownerID: web.id, sourceID: next.source.id)
+                captured?.release(); return
+              }
+              guard let captured else { throw SceneRenderError.snapshotPending("paused_viewport_pixels_" + next.source.id) }
+              raster = captured; preparedSource = next.source
+            }
+            guard !Task.isCancelled, self.request == request else { return }
+            guard let current = self.demand, !current.active,
+              session.coordinator.hasPausedViewportSource(current.source),
+              raster?.image(for: current.policy.rasterSource(for: current.source),
+                minimumScale: current.policy.minimumScale(for: current.source)) != nil else {
+              throw SceneRenderError.snapshotPending("paused_viewport_pixels_" + demand.source.id)
+            }
+            residentCheckpointAccepted = true; failure = nil; failedSource = nil
+            NotebookNavigationObservation.webPreparation("viewport_image_retained", ownerID: web.id, sourceID: current.source.id)
+          } catch {
+            guard !Task.isCancelled, self.request == request, !isRetired, self.session === session else { return }
+            let reason = (error as? SceneRenderError).map { String(describing: $0) } ?? String(reflecting: type(of: error))
+            NotebookNavigationObservation.webPreparation("viewport_preparation_failed:\(reason.prefix(128))", ownerID: web.id, sourceID: demand.source.id)
+            if case SceneRenderError.resourceLimit = error {
+              failure = "Недостаточно ресурсов для изображения"
+            } else {
+              failure = preparingCheckpointImage
+                ? "Не удалось подготовить изображение программы" : "Не удалось сохранить состояние программы"
+            }
+            // Keep the same heap when either its writer or exact image is
+            // refused; Retry resumes this boundary without another executor.
+            return
           }
-          return accepted
-        }, resources: resources)
-        guard !Task.isCancelled, self.request == request,
-          self.web?.id == retiring.id, self.demand?.active == false else {
-          await AgentWebCoordinator.resumeCurrent(focus: focus); return
         }
-        if let captured = resources.retainRaster(for: demand.policy.rasterSource(for: accepted.source),
-          minimumScale: demand.policy.minimumScale(for: accepted.source)) {
-          raster = captured; preparedSource = accepted.source
-        }
-        failure = nil; failedSource = nil
-        if let configuration = self.configuration {
-          accept(.init(model: configuration.model,
-            demand: configuration.demand.accepting(source: accepted.source, basis: accepted.basis),
-            focus: configuration.focus, pageTurnActivity: configuration.pageTurnActivity,
-            rasterPreparation: configuration.rasterPreparation, cohort: configuration.cohort, onState: configuration.onState))
-        }
-      } catch {
-        guard !Task.isCancelled, self.request == request,
-          self.web?.id == retiring.id, self.demand?.active == false else { return }
-        failure = "Не удалось сохранить состояние программы"
-        // Writer refusal is not permission to destroy a live browser context.
+        guard !Task.isCancelled, self.request == request, self.demand?.active == false else { return }
+        retireRuntime()
+        web.updatePriority(.neighbor)
+        offerResidentReclamation()
         return
       }
-      runtimeWasPresented = false; retireRuntime(); releaseWeb(); liveProgram = nil
-      if failure != nil || preparedSource != self.demand?.source { publishReady(false) }
-      if self.request == request,
-        preparedSource != self.demand?.source || raster?.image(for: rasterSource, minimumScale: requiredScale) == nil {
-        restart()
-      }
-      return
     }
     if preparedSource != demand.source || raster?.source != rasterSource || (raster?.pixelScale ?? 0) + 0.000_001 < requiredScale {
       adoptPreparedRaster()
@@ -676,7 +801,7 @@ final class PreparedAgentElementPreparationOwner {
     failedSource = nil; failedCapturePolicy = nil; failedCapture = nil
     failure = nil
     if preparedSource != demand.source { publishReady(false) }
-    if !demand.active && preparedSource == demand.source {
+    if !demand.active && preparedSource == demand.source && !pausedResident {
       retireRuntime(); releaseWeb(); liveProgram = nil; runtimeWasPresented = false; return
     }
     if let web, let session = session {

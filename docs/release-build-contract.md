@@ -33,7 +33,7 @@ Use `--base HEAD^`, for example, to describe the last committed slice.
   of ten repetitions, or missing measurements. A relative Xcode
   baseline cannot waive the absolute limit; release validation rechecks it.
 - An unmapped native source seeks a matching `*Tests.swift` on its platform.
-  `document-web` covers JavaScript contracts and four native WebKit boundaries;
+  `document-paper` covers native PDF, interaction and activation boundaries;
   `documents` is the broader integration profile.
 - `unclassified` files require engineering selection, not a compulsory map entry.
   Explicit selection retains them in the receipt; unresolved automatic selection

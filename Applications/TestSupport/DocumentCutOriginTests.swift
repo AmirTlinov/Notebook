@@ -5,77 +5,50 @@ import XCTest
 
 @MainActor
 final class DocumentCutOriginTests: XCTestCase {
-  private let geometry = WorkspaceItemGeometry.uncompiledDocument
-
-  private func region(page: Int, offset: Any = 0.0, scale: Double = 1, kind: String = "program") -> [String: Any] {
-    ["kind": kind, "id": "program", "pageIndex": page, "x": 20.0 / scale, "y": 20.0 / scale,
-      "width": 600.0 / scale, "height": 900.0 / scale, "sourceOffset": offset]
+  private func region(page: Int, offset: Double = 0) -> DocumentBlockRegion {
+    .init(kind: .program, id: "program", pageIndex: page,
+      frame: .init(x: 20, y: 20, width: 600, height: 900), sourceOffset: offset)
   }
 
-  private func receipt(_ regions: [[String: Any]], key: String = "source", scale: Double = 1,
-    page: Int? = nil) -> NSDictionary {
-    var value: [String: Any] = ["sourceKey": key, "layoutCanonical": true, "anchors": [], "reading": [], "pageCount": 2,
-      "layoutScope": page == nil ? "source" : "page",
-      "width": geometry.width / scale, "height": geometry.height / scale, "regions": regions]
-    let paper = DocumentPaperLayout.uncompiled
-    if let page {
-      value["pageIndex"] = page; value["widthPoints"] = paper.widthPoints; value["heightPoints"] = paper.heightPoints
-    } else { value["pages"] = Array(repeating: ["widthPoints": paper.widthPoints, "heightPoints": paper.heightPoints], count: 2) }
-    return value as NSDictionary
-  }
-
-  private func layout(_ receipt: NSDictionary) throws -> DocumentLayoutRecord {
-    try DocumentLayoutRecord(receipt: receipt, sourceKey: "source", blockIDs: ["program"], geometry: geometry)
+  private func layout(offset: Double = 900, papers: [DocumentPaperLayout]? = nil) throws -> DocumentLayoutRecord {
+    try DocumentLayoutFixture.make(pages: papers ?? Array(repeating: .uncompiled, count: 2),
+      regions: [region(page: 0), region(page: 1, offset: offset)])
   }
 
   func testAContinuationNamesItsSourceCutNotOnlyThePaperRectangle() throws {
-    let full = try layout(receipt([region(page: 0), region(page: 1, offset: 900.0)]))
-    let correct = try layout(receipt([region(page: 1, offset: 900.0)], page: 1))
-    XCTAssertTrue(full.matches(correct, pageIndex: 1))
+    let full = try layout()
+    XCTAssertEqual(full.regions(on: 1).first?.sourceOffset, 900)
+    XCTAssertEqual(full.programSize("program"), .init(width: 600, height: 1800))
+    XCTAssertTrue(full.matches(try layout()))
     for wrongOffset in [0.0, 899.0, 901.0, 1800.0] {
-      let wrong = try layout(receipt([region(page: 1, offset: wrongOffset)], page: 1))
-      XCTAssertFalse(full.matches(wrong, pageIndex: 1),
-        "The same paper rectangle cannot substitute another piece of the program")
+      let wrong = try layout(offset: wrongOffset)
+      XCTAssertFalse(full.matches(wrong), "The same paper rectangle cannot substitute another program cut")
+      XCTAssertNotEqual(full.regions, wrong.regions)
     }
   }
 
-  func testChangingOnlyTheSourceOriginChangesTheWholeLayoutIdentity() throws {
-    let full = try layout(receipt([region(page: 0), region(page: 1, offset: 900.0)]))
-    let shifted = try layout(receipt([region(page: 0), region(page: 1, offset: 910.0)]))
-    XCTAssertFalse(full.matches(shifted))
-    XCTAssertNotEqual(full.regions, shifted.regions)
+  func testPhysicalPDFGeometryRemainsPartOfTheAcceptedSource() throws {
+    let physical = try layout(), paper = DocumentPaperLayout.uncompiled
+    let differentPaper = DocumentPaperLayout(widthPoints: paper.widthPoints.nextUp, heightPoints: paper.heightPoints)
+    let other = try layout(papers: [paper, differentPaper])
+    XCTAssertFalse(physical.matches(other), "Exact PDF dimensions remain independent of camera projection")
   }
 
-  func testPageReceiptCannotRescaleThePDFGeometryOrItsProgramCut() throws {
-    let physical = try layout(receipt([region(page: 1, offset: 900.0)], page: 1))
-    XCTAssertThrowsError(try layout(receipt([region(page: 1, offset: 450.0, scale: 2)], scale: 2, page: 1)),
-      "Camera projection cannot become a second physical page geometry")
-    let shifted = try layout(receipt([region(page: 1, offset: 450.0)], page: 1))
-    XCTAssertFalse(physical.matches(shifted), "The viewport cut remains in the same physical units as its rectangle")
-  }
-
-  func testAnOriginCannotBeMissingNegativeNonfiniteOrAnUnrepresentablePhysicalAddress() throws {
-    var missing = region(page: 1); missing.removeValue(forKey: "sourceOffset")
-    XCTAssertThrowsError(try layout(receipt([missing], page: 1)))
-    let invalidOffsets: [Any] = [-1.0, Double.nan, Double.infinity, -Double.infinity, "900", NSNull(), true, false]
-    for offset in invalidOffsets {
-      XCTAssertThrowsError(try layout(receipt([region(page: 1, offset: offset)], page: 1)))
+  func testNativeLayoutRejectsInvalidCutOriginsBeforeTheyReachAProgram() throws {
+    for offset in [-1.0, Double.nan, Double.infinity, -Double.infinity] {
+      XCTAssertThrowsError(try layout(offset: offset))
     }
-    var impossibleScale = try XCTUnwrap(receipt([region(page: 1, offset: Double.greatestFiniteMagnitude)], page: 1) as? [String: Any])
-    impossibleScale["height"] = geometry.height / 2
-    var tiny = region(page: 1, offset: Double.greatestFiniteMagnitude)
-    tiny["height"] = 100.0
-    impossibleScale["regions"] = [tiny]
-    XCTAssertThrowsError(try layout(impossibleScale as NSDictionary))
+    XCTAssertThrowsError(try DocumentLayoutFixture.make(pages: [.uncompiled, .uncompiled],
+      regions: [region(page: 1, offset: 900), region(page: 0)]), "A page range cannot contain a different page")
   }
 
   func testARejectedNeighborCannotReplaceTheAcceptedSourceLayout() throws {
     let document = DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "program", source: "Physical continuation")])
-    let source = DocumentSourceSnapshot(document), key = source.message.key
-    let accepted = try source.acceptLayout(receipt([region(page: 0, kind: "file"), region(page: 1, offset: 900.0, kind: "file")], key: key), geometry: geometry)
-    XCTAssertThrowsError(try source.acceptLayout(receipt([region(page: 1, offset: 0.0, kind: "file")], key: key, page: 1), geometry: geometry))
+    let source = DocumentSourceSnapshot(document), accepted = try layout()
+    try source.acceptPreparedLayout(accepted)
+    XCTAssertThrowsError(try source.acceptPreparedLayout(layout(offset: 0)))
     XCTAssertTrue(source.layout === accepted)
-    let neighbor = try source.acceptLayout(receipt([region(page: 1, offset: 900.0, kind: "file")], key: key, page: 1), geometry: geometry)
-    XCTAssertTrue(neighbor === accepted)
+    try source.acceptPreparedLayout(layout())
+    XCTAssertTrue(source.layout === accepted)
   }
 }

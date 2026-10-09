@@ -160,7 +160,7 @@ final class PreparedAgentElementViewTests: XCTestCase {
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
     retainNotebookUntilTeardown(model, removing: root)
     await model.start(pageSize: .init(width: 834, height: 1194))
-    var page = try XCTUnwrap(model.activePage)
+    var page = try model.store.loadPage(XCTUnwrap(model.activePage).id)
     let source = AgentElement(id: "retained", kind: .web,
       frame: .init(x: 20, y: 20, width: 160, height: 120), source: "Retained runtime",
       html: "<button>Retained</button>", javaScript: "window.retainedRuntime = true;")
@@ -1529,7 +1529,7 @@ final class PreparedAgentElementViewTests: XCTestCase {
     let model = makeModel()
     let pageSize = PageSize(width: 834, height: 1194)
     await model.start(pageSize: pageSize)
-    var page = try XCTUnwrap(model.activePage)
+    var page = try model.store.loadPage(XCTUnwrap(model.activePage).id)
     let source = AgentElement(id: UUID().uuidString, kind: .web,
       frame: .init(x: 0, y: 0, width: pageSize.width, height: pageSize.height),
       source: "Large vector coordinates on a physical notebook page", html: """
@@ -1618,7 +1618,7 @@ final class PreparedAgentElementViewTests: XCTestCase {
   func testFourVisiblePageProgramsAreReadyWithoutViewportActivation() async throws {
     let model = makeModel()
     await model.start(pageSize: .init(width: 400, height: 320))
-    var page = try XCTUnwrap(model.activePage)
+    var page = try model.store.loadPage(XCTUnwrap(model.activePage).id)
     let pageID = page.id
     let elements = (0..<4).map { index in
       AgentElement(id: "program-\(index)-" + pageID.uuidString, kind: .web,
@@ -1758,7 +1758,7 @@ final class PreparedAgentElementViewTests: XCTestCase {
   func testVisibleControlsPrepareBeforeFocusAndTransferOnlyTheirWriteOwnership() async throws {
     let model = makeModel()
     await model.start(pageSize: .init(width: 400, height: 320))
-    var page = try XCTUnwrap(model.activePage)
+    var page = try model.store.loadPage(XCTUnwrap(model.activePage).id)
     let pageID = page.id
     let first = element(id: UUID().uuidString, source: "first", interactive: true)
     let second = element(id: UUID().uuidString, source: "second", interactive: true)
@@ -1887,7 +1887,7 @@ final class PreparedAgentElementViewTests: XCTestCase {
     let model = makeModel()
     await model.start(pageSize: NotebookAppModel.defaultPageSize)
     let source = element(id: UUID().uuidString, source: "current page timer", interactive: true)
-    var page = try XCTUnwrap(model.activePage)
+    var page = try model.store.loadPage(XCTUnwrap(model.activePage).id)
     page.replaceElements([source], actor: model.actorID)
     try model.store.savePage(page)
     await model.reloadExternalChanges()?.value
@@ -1921,9 +1921,10 @@ final class PreparedAgentElementViewTests: XCTestCase {
     let witnessAfterGesture = try await running.evaluateJavaScript("window.pageLifetimeWitness") as? Int
     XCTAssertEqual(witnessAfterGesture, 42)
     host.controller.rootView = content(current: false, input: false)
-    try await waitUntil("A neighboring page releases its runtime and keeps only prepared pixels") {
-      self.webViews(in: host.controller.view).isEmpty
+    try await waitUntil("A neighboring page pauses its retained runtime") {
+      (running.navigationDelegate as? AgentWebCoordinator)?.isViewportPaused == true
     }
+    XCTAssertTrue(webViews(in: host.controller.view).first === running)
   }
 
   @MainActor
@@ -1939,7 +1940,7 @@ final class PreparedAgentElementViewTests: XCTestCase {
           notebook.ready(Promise.resolve());
           """, state: .object(["phase": .number(0)]))
     }
-    var page = try XCTUnwrap(model.activePage)
+    var page = try model.store.loadPage(XCTUnwrap(model.activePage).id)
     page.replaceElements(sources, actor: model.actorID)
     try model.store.savePage(page); await model.reloadExternalChanges()?.value
     let resources = SceneRenderResources(maximumWebSurfaces: 4)
@@ -1978,7 +1979,7 @@ final class PreparedAgentElementViewTests: XCTestCase {
   }
 
   @MainActor
-  func testRetiringPageProgramWritesItsFrozenModelAndRestoresThatMoment() async throws {
+  func testDepartingPageProgramWritesItsFrozenModelAndReturnsToTheSameHeap() async throws {
     let model = makeModel()
     await model.start(pageSize: NotebookAppModel.defaultPageSize)
     let source = AgentElement(id: "checkpoint-model", kind: .web,
@@ -1993,7 +1994,7 @@ final class PreparedAgentElementViewTests: XCTestCase {
         addEventListener('notebookstate',()=>{phase=notebook.state.phase;draw()});
         notebook.ready(Promise.resolve().then(draw));
         """, state: .object(["phase": .number(0)]))
-    var page = try XCTUnwrap(model.activePage)
+    var page = try model.store.loadPage(XCTUnwrap(model.activePage).id)
     page.replaceElements([source], actor: model.actorID)
     try model.store.savePage(page); await model.reloadExternalChanges()?.value
     let initialStamp = try XCTUnwrap(model.pages[page.id]).agentStamp
@@ -2032,8 +2033,11 @@ final class PreparedAgentElementViewTests: XCTestCase {
     XCTAssertNil(resources.reserveWebSnapshot(pixelSize: .init(width: 480, height: 240)),
       "This departure has no admission for an optional passive picture")
     host.controller.rootView = content(current: false)
-    try await waitUntil("The accepted model releases its browser even while its passive picture has no admission") {
-      self.webViews(in: host.controller.view).isEmpty
+    try await waitUntil("The viewport boundary accepts its stopped model without passive picture admission") {
+      guard (running.navigationDelegate as? AgentWebCoordinator)?.isViewportPaused == true,
+        let value = try? model.store.loadPage(page.id).element(id: source.id)?.state,
+        case .number(let phase) = value["phase"] else { return false }
+      return phase > stoppedPhase
     }
     let saved = try XCTUnwrap(try model.store.loadPage(page.id).elements.first { $0.id == source.id })
     guard case .number(let phase) = saved.state["phase"] else { return XCTFail("The model phase must be explicit") }
@@ -2049,7 +2053,7 @@ final class PreparedAgentElementViewTests: XCTestCase {
       return owner.hasLiveSource(saved)
     }
     let returned = try XCTUnwrap(webViews(in: host.controller.view).first)
-    XCTAssertFalse(returned === running)
+    XCTAssertTrue(returned === running, "Viewport return preserves the accepted heap without allocator pressure")
     let shown = try await returned.evaluateJavaScript("Number(document.querySelector('output').textContent)") as? Double
     XCTAssertEqual(shown, phase)
   }
@@ -2059,18 +2063,18 @@ final class PreparedAgentElementViewTests: XCTestCase {
     let model = makeModel()
     await model.start(pageSize: NotebookAppModel.defaultPageSize)
     let source = element(id: UUID().uuidString, source: "passive", interactive: true)
-    var page = try XCTUnwrap(model.activePage)
+    var page = try model.store.loadPage(XCTUnwrap(model.activePage).id)
     page.replaceElements([source], actor: model.actorID)
     try model.store.savePage(page)
     model.reloadExternalChanges()
     await model.finishPendingPersistence()
-    page = try XCTUnwrap(model.pages[page.id])
-    XCTAssertEqual(page.elements, [source])
-    let originalStamp = page.agentStamp
+    let acceptedPage = try XCTUnwrap(model.pages[page.id])
+    XCTAssertEqual(acceptedPage.elements, [source])
+    let originalStamp = acceptedPage.agentStamp
     XCTAssertTrue(SceneRenderResources.shared.store(raster(), for: source))
     model.interactiveElementFocus = .page(pageID: page.id, elementID: source.id)
     var ready = false
-    let host = try SurfaceHost(content: AnyView(PageSurface(page: page, isCurrent: false, isInteractive: false,
+    let host = try SurfaceHost(content: AnyView(PageSurface(page: acceptedPage, isCurrent: false, isInteractive: false,
       isVisible: true, onRenderReady: .init { ready = $0 })
       .environment(model)))
     defer { host.close() }

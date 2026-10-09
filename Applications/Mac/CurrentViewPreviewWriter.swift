@@ -355,7 +355,7 @@ enum CurrentViewPreviewWriter {
     guard rect.minX >= 0, rect.minY >= 0, rect.maxX <= Double(image.width), rect.maxY <= Double(image.height),
       let cropped = image.cropping(to: rect), let png = NSBitmapImageRep(cgImage: cropped).representation(using: .png, properties: [:])
     else { throw PreviewError.invalidSurface }
-    return RasterSnapshot(image: NSImage(cgImage: cropped, size: .init(width: region.width, height: region.height)), png: png)
+    return RasterSnapshot(image: NSImage(raster: cropped, logicalSize: .init(width: region.width, height: region.height)), png: png)
   }
 
   @MainActor

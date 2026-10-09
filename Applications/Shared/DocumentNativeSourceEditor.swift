@@ -42,7 +42,14 @@ struct DocumentNativeSourceEditor: UIViewRepresentable {
   var revealSelection: ((NSRange) -> Void)? = nil
   func makeCoordinator() -> Coordinator { Coordinator(session) }
   func makeUIView(context: Context) -> SourceTextView {
-    let view = SourceTextView(usingTextLayoutManager: false)
+    // A UIKit class factory can call this Swift subclass before its stored
+    // properties are initialized. The designated initializer keeps TextKit 1
+    // and initializes the editor's state before UIKit's responder callbacks.
+    let storage = NSTextStorage(), layout = NSLayoutManager()
+    let container = NSTextContainer(size: .init(width: 0, height: CGFloat.greatestFiniteMagnitude))
+    container.widthTracksTextView = true
+    layout.addTextContainer(container); storage.addLayoutManager(layout)
+    let view = SourceTextView(frame: .zero, textContainer: container)
     view.delegate = context.coordinator; view.sourceUndo = { session.undo() }; view.sourceRedo = { session.redo() }
     view.sourceRevealSelection = revealSelection
     view.font = .monospacedSystemFont(ofSize: 15, weight: .regular)
@@ -58,7 +65,7 @@ struct DocumentNativeSourceEditor: UIViewRepresentable {
       UIBarButtonItem(title: "{}", primaryAction: UIAction { [weak view] _ in view?.insertText("{}") }),
       UIBarButtonItem(title: "Дополнить", primaryAction: UIAction { [weak view] _ in view?.completeCommand() }),
       UIBarButtonItem(systemItem: .flexibleSpace),
-      UIBarButtonItem(title: "Готово", primaryAction: UIAction { [weak view] _ in view?.resignFirstResponder(); session.finish() })]
+      UIBarButtonItem(title: "Готово", primaryAction: UIAction { [weak view] _ in _ = view?.resignFirstResponder(); session.finish() })]
     view.inputAccessoryView = bar
     context.coordinator.navigation = session.navigation
     view.initialScroll = session.restoredScroll
@@ -70,12 +77,12 @@ struct DocumentNativeSourceEditor: UIViewRepresentable {
     if !DocumentFile.sourcesAreEqual(view.text, session.text), view.markedTextRange == nil {
       view.text = session.text; SourceSyntax.highlight(view.textStorage, around: session.selection, full: true)
     }
-    if owner.navigation != session.navigation {
+    if owner.navigation != session.navigation, view.markedTextRange == nil {
       view.initialScroll = nil
       owner.navigation = session.navigation; view.selectedRange = session.selection; SourceSyntax.highlight(view.textStorage, around: session.selection); view.scrollRangeToVisible(session.selection)
     }
   }
-  static func dismantleUIView(_ view: SourceTextView, coordinator: Coordinator) { coordinator.changed(view); view.delegate = nil; view.resignFirstResponder() }
+  static func dismantleUIView(_ view: SourceTextView, coordinator: Coordinator) { coordinator.changed(view); view.delegate = nil; _ = view.resignFirstResponder() }
   @MainActor final class Coordinator: NSObject, UITextViewDelegate {
     let session: DocumentSourceEditorSession
     var applying = false
@@ -224,7 +231,7 @@ struct DocumentNativeSourceEditor: NSViewRepresentable {
     if !DocumentFile.sourcesAreEqual(view.string, session.text), !view.hasMarkedText() {
       view.string = session.text; SourceSyntax.highlight(view.textStorage!, around: session.selection, full: true)
     }
-    if owner.navigation != session.navigation {
+    if owner.navigation != session.navigation, !view.hasMarkedText() {
       view.initialScroll = nil
       owner.navigation = session.navigation; view.setSelectedRange(session.selection); SourceSyntax.highlight(view.textStorage!, around: session.selection); view.scrollRangeToVisible(session.selection)
     }

@@ -651,56 +651,7 @@ test('actual spatial and block-runtime adapters transport checkpoint credit whil
   }
 });
 
-test('actual document iframe and shell forward credit through the token-bound request channel while paused',async()=>{
-  const messages:any[]=[],shellListeners=new Map<string,Function>(),childListeners=new Map<string,Function>();
-  const shell=createContext({setTimeout,clearTimeout,crypto,addEventListener:(name:string,fn:Function)=>shellListeners.set(name,fn),
-    webkit:{messageHandlers:{notebook:{postMessage:(m:any)=>messages.push(m)}}}});shell.window=shell;
-  const child=createContext({setTimeout,clearTimeout,AbortController,CustomEvent,queueMicrotask,dispatchEvent:()=>{},
-    addEventListener:(name:string,fn:Function)=>childListeners.set(name,fn),document:{activeElement:null}});child.window=child;child.parent=shell;
-  shell.postMessage=(message:any)=>shellListeners.get('message')?.({source:child,data:message});
-  child.postMessage=(message:any)=>{void childListeners.get('message')?.({source:shell,data:message});};
-  const runtime={token:'current',transportReady:false,isStarted:true,visible:false,frame:{contentWindow:child}};
-  shell.interactiveFrames=new Map([['block',runtime]]);shell.payload={documentID:'document',runtimeID:'native'};
-  const html=readFileSync(new URL('../../Applications/WebResources/document-shell.html',import.meta.url),'utf8');
-  const bridgeStart=html.indexOf('      const bridge = (message) => {');const bridgeEnd=html.indexOf('      // Native paper',bridgeStart);
-  const requestsStart=html.indexOf('      const programRequest = '),requestsEnd=html.indexOf('      const positionInteractiveFrames',requestsStart);
-  const listenerStart=html.indexOf("      addEventListener('message', event => {"),listenerEnd=html.indexOf("      addEventListener('dragstart'",listenerStart);
-  runInContext(`const diagnostic=()=>{};const refreshSourcePresentation=()=>{};${html.slice(bridgeStart,bridgeEnd)}
-    ${html.slice(requestsStart,requestsEnd)}${html.slice(listenerStart,listenerEnd)}
-    globalThis.requestProgram=transferProgramState;`,shell);
-  runInContext(source,child);
-  const installer=readFileSync(new URL('../../Applications/WebResources/document-program.js',import.meta.url),'utf8');runInContext(installer,child);
-  child.capture=(options:any)=>{const owner=child.createNotebookProgram(options);child.owner=owner;return owner;};
-  runInContext(`installNotebookDocumentProgram({blockID:'block',token:'current',state:null,stateCredit:0,requiresReady:false},capture);`,child);
-  const owner=child.owner;owner.setCommitEnabled(false);const calls=trackJSON(child);let checkpoints=0;
-  child.notebook.lifecycle({checkpoint:()=>({phase:++checkpoints})});
-  const pending=shell.requestProgram('block','current','notebook-suspend',null);
-  await new Promise(resolve=>setTimeout(resolve,0));
-  const credit=messages.find(m=>m.kind==='stateCredit');assert.ok(credit);assert.equal(credit.blockToken,'current');
-  assert.equal(calls.stringify,0);assert.equal(calls.parse,0);
-  assert.throws(()=>shell.requestProgram('block','old','notebook-state-credit',credit.bytes),/program_superseded/);
-  await shell.requestProgram('block','current','notebook-state-credit',credit.bytes);
-  const descriptor=await pending;
-  assert.match(descriptor.revision,/^frozen:[1-9][0-9]*$/);assert.equal(checkpoints,1);assert.equal(calls.stringify,0);assert.equal(calls.parse,1);
-  assert.deepEqual(JSON.parse(await shell.requestProgram('block','current','notebook-snapshot',{revision:descriptor.revision,offset:0})),{phase:1});
-  assert.equal(owner.api.commit({phase:99}),false);
-});
 
-test('native credit admission is source-bound and independent from ordinary commit enablement in all three adapters',()=>{
-  const spatial=readFileSync(new URL('../../Applications/Shared/AgentWebElementView.swift',import.meta.url),'utf8');
-  const block=readFileSync(new URL('../../Applications/Shared/DocumentBlockRuntime.swift',import.meta.url),'utf8');
-  const paper=readFileSync(new URL('../../Applications/Shared/DocumentWebView.swift',import.meta.url),'utf8');
-  const clauses=[
-    spatial.slice(spatial.indexOf('} else if object["kind"] as? String == "stateCredit"'),spatial.indexOf('} else if object["kind"] as? String == "state",')),
-    block.slice(block.indexOf('    case "stateCredit":'),block.indexOf('    case "state":',block.indexOf('    case "stateCredit":'))),
-    paper.slice(paper.indexOf('    case "stateCredit":'),paper.indexOf('    case "state":',paper.indexOf('    case "stateCredit":')))
-  ] as const;
-  for(const clause of clauses) {
-    assert.match(clause,/requestCredit\(bytes\)/);assert.doesNotMatch(clause,/snapshotOnly|allowsStateCommits|requestedInput|ownsProgramState|programsVisible/);
-  }
-  assert.match(clauses[0],/expectedToken: token/);assert.match(clauses[2],/token == blockTokens\[blockID\]/);
-  assert.match(clauses[2],/operation: "notebook-state-credit"/);
-});
 
 test('frozen read addresses are immutable, retryable and cannot alias a resumed checkpoint', async () => {
   let phase = 1, reads = 0, rejectResume = false;
@@ -728,40 +679,6 @@ test('frozen read addresses are immutable, retryable and cannot alias a resumed 
     'Disposing author work must preserve the admitted immutable transport');
 });
 
-test('the unchanged document adapter round-trips frozen identities and rejects an old resumed window', async () => {
-  const adapter = readFileSync(new URL('../../Applications/WebResources/document-program.js', import.meta.url), 'utf8');
-  const handlers = new Map<string, (event: any) => Promise<void>>(), messages: any[] = [];
-  const parent = {postMessage:(message: any) => messages.push(message)};
-  const context = createContext({setTimeout,clearTimeout,AbortController,CustomEvent,queueMicrotask,parent,
-    window:{},document:{activeElement:null},dispatchEvent:()=>{},
-    addEventListener:(name: string, handler: (event: any) => Promise<void>) => handlers.set(name,handler)});
-  runInContext(source + adapter + `
-    installNotebookDocumentProgram({blockID:'program',token:'token',state:{phase:0},requiresReady:false,stateCredit:65536},createNotebookProgram);
-  `,context);
-  let phase = 1, checkpoints = 0, failResume = false, sequence = 0;
-  context.window.notebook.lifecycle({checkpoint:() => { checkpoints++; return {phase}; },resume:() => {
-    if (failResume) throw new Error('resume refused');
-  }});
-  const send = async (channel: string, argument?: unknown) => {
-    const requestID = String(++sequence);
-    await handlers.get('message')!({source:parent,data:{channel,token:'token',requestID,argument}});
-    return messages.findLast(message => message.requestID === requestID);
-  };
-  const first = (await send('notebook-suspend')).state;
-  assert.equal(JSON.parse((await send('notebook-snapshot',{revision:first.revision})).result).phase,1);
-  failResume = true;
-  assert.match((await send('notebook-resume')).message,/resume refused/);
-  assert.equal((await send('notebook-suspend')).state.revision,first.revision);
-  assert.equal(checkpoints,1);
-  failResume = false; await send('notebook-resume'); phase = 2;
-  const second = (await send('notebook-suspend')).state;
-  assert.notEqual(second.revision,first.revision);
-  assert.equal((await send('notebook-snapshot',{revision:first.revision})).channel,'notebook-program-error');
-  assert.equal(JSON.parse((await send('notebook-snapshot',{revision:second.revision})).result).phase,2);
-  await send('notebook-dispose');
-  assert.equal(JSON.parse((await send('notebook-snapshot',{revision:second.revision})).result).phase,2,
-    'The unchanged failed-author adapter must still drain its frozen descriptor');
-});
 
 test('frozen-address revocation leaves accepted numeric FIFO snapshots readable until their idempotent ACK', async () => {
   const {program,api} = fixture({stateTransport:{credit:65536,onSnapshot:()=>{},requestCredit:()=>{}}});
