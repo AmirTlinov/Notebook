@@ -37,7 +37,10 @@ extension NotebookStore {
       guard let fragment = try storedFragments(address: address, descendants: false).first,
         let graphic = try fragment.value["graphic"]?.decode(NotebookGraphic.self),
         let surface = try fragment.value["surface"]?.decode(SurfaceID.self) else { continue }
-      let claimants = try graphicClaimants(on: surface, sourceInkIDs: Set(graphic.sourceInkIDs))
+      // Index publication needs the complete component's winner before it
+      // changes any derived entry; only this consumer retains its inputs.
+      var claimants: [GraphicClaimant] = []
+      try forEachGraphicClaimant(on: surface, sourceInkIDs: Set(graphic.sourceInkIDs)) { claimants.append($0) }
       let presentation = NotebookGraphicPresentation(claimants.map(\.candidate))
       let affected = claimants.isEmpty ? [fragment] : claimants.map(\.fragment)
       for affected in affected {

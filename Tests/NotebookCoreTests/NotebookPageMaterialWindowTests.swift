@@ -9,6 +9,11 @@ import Testing
 final class PageMaterialSQLTrace {
   private(set) var steps = 0
   private var statements: [String: (expanded: String, steps: Int)] = [:]
+  private var bodyQueries = Set<String>()
+  func acquiredBody(at address: String) -> Bool {
+    let literal = "'" + address.replacingOccurrences(of: "'", with: "''") + "'"
+    return bodyQueries.contains { $0.contains(literal) }
+  }
   func attach(_ database: NotebookSQLConnection) {
     var statement = sqlite3_next_stmt(database.handle, nil)
     while let current = statement {
@@ -27,8 +32,9 @@ final class PageMaterialSQLTrace {
     steps += count
     guard let sql = sqlite3_sql(statement), let expanded = sqlite3_expanded_sql(statement) else { return }
     defer { sqlite3_free(expanded) }
-    let query = String(cString: sql)
-    statements[query] = (String(cString: expanded), (statements[query]?.steps ?? 0) + count)
+    let query = String(cString: sql), bound = String(cString: expanded)
+    statements[query] = (bound, (statements[query]?.steps ?? 0) + count)
+    if query.contains("b.data") { bodyQueries.insert(bound) }
   }
   func reportPlans(_ store: NotebookStore, label: String) throws {
     try store.readTransaction { _ in
@@ -199,13 +205,18 @@ struct NotebookPageMaterialWindowTests {
     #expect(try pageMaterialAuthoredSnapshot(db) == before)
   }
 
-  @Test(arguments: ["native-text", "graphic"])
+  @Test(arguments: ["native-text", "graphic", "shared-ink"])
   func retainedGeometryClosureRefusesAggregateOverflowDuringAdmission(_ material: String) throws {
     let f = try PageMaterialFixture(); defer { f.clean() }
-    let count = material == "native-text" ? 9 : 96
+    let count = material == "native-text" ? 9 : 96, sharedInk = UUID()
     func edgeID(_ index: Int) -> String { String(format: "edge-%03d", index) }
     var elements: [AgentElement] = []
     for index in 0..<count {
+      if material == "shared-ink" {
+        elements.append(.init(id: edgeID(index), kind: .graphic, frame: .init(x: 10, y: 10, width: 100, height: 100),
+          source: "", html: "", graphic: .init(shape: .rectangle, sourceInkIDs: [sharedInk])))
+        continue
+      }
       let start = NotebookGraphicConnection.Endpoint(point: .zero,
         binding: material == "native-text" ? .init(elementID: "text-\(index)") : nil)
       let end = NotebookGraphicConnection.Endpoint(point: .init(x: 1, y: 1),
@@ -243,8 +254,17 @@ struct NotebookPageMaterialWindowTests {
     }
     #expect(readable?.id == firstID)
     let before = try pageMaterialAuthoredSnapshot(db)
+    let trace = material == "shared-ink" ? PageMaterialSQLTrace() : nil
+    trace?.attach(db)
     #expect(throws: NotebookStorageError.limitExceeded("page_material_bytes")) {
-      _ = try NotebookStore(root: f.root).prepareDatabase()
+      _ = try NotebookStore(root: f.root).prepareDatabase(reusing: db)
+    }
+    trace?.detach(db)
+    if let trace {
+      let acquired = (0..<count).filter { trace.acquiredBody(at: pageFile(f.pageID) + "#/elements/@" + edgeID($0)) }
+      #expect(acquired.first == 0 && acquired.count < count)
+      #expect(!acquired.contains(count - 1), "The closure refuses before acquiring the rest of the claim component")
+      print("PAGE_MATERIAL_SHARED_CLAIM acquired=\(acquired.count) component=\(count) late_body_read=\(acquired.contains(count - 1))")
     }
     #expect(try db.rows("PRAGMA user_version").first?[0].integer == 29)
     #expect(try db.rows("SELECT name FROM sqlite_master WHERE name LIKE 'page_material_%'").isEmpty)

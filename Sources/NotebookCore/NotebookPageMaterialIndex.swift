@@ -346,7 +346,7 @@ private final class PageMaterialGeometrySources {
       if !unread.isEmpty {
         try retain(unread.count * (2 * MemoryLayout<UUID>.stride + 32))
         claimedStrokes.formUnion(unread)
-        for claimant in try store.graphicClaimants(on: .page(pageID), sourceInkIDs: unread) {
+        try store.forEachGraphicClaimant(on: .page(pageID), sourceInkIDs: unread) { claimant in
           guard let element = try include(claimant.candidate.id, fragment: claimant.fragment),
             let graphic = element.graphic else { throw NotebookStorageError.corruptRecord(claimant.fragment.address) }
           let key = collaborationIdentity(element.id)

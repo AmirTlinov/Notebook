@@ -504,3 +504,18 @@ Valid8MiB HTML and fragmented state remain admitted. The1000/100000 windows reta
 6fragments/2746bytes/2492SQL VM steps. Public4MiB reads, DB30/wire44/manifest26,
 history and installed265 are unchanged. [Exact inputs and execution](audit-evidence/2026-10-09/page-material-root-admission/results.json).
 This proof does not establish native or installed-pair acceptance.
+
+## 2026-10-09: stop claim acquisition at the material budget
+
+The existing claim owner now hands one addressed claimant to its consumer before
+reading the next body. All seven consumers use this traversal; the former eager
+array path is removed. Page material admission and window readers stop immediately
+on their retention refusal. Claim ordering, transitive closure and arbitration
+remain unchanged.
+
+An immutable847-input candidate on63fcfe3e passed **8 Core tests /2 suites**.
+The96-object shared-ink component refuses with page_material_bytes after83 bodies;
+the final body is never read, and DB29/authored content roll back exactly. Native
+CAS, page/board conversion-delete-Undo, concurrent arbitration and scene dependency
+witnesses pass. [Exact inputs and execution](audit-evidence/2026-10-09/page-material-claim-streaming/results.json).
+This is focused Core verification; installed-pair acceptance remains open.
