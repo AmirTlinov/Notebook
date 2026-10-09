@@ -87,6 +87,22 @@ writer1618 мс, ink wait1675 мс: задержка остаётся следу
 Installed265 сохранена; physical iPad и полная приёмка этого слайса открыты.
 [Результат, лимиты и исходный compiler refusal](audit-evidence/2026-10-09/native-source-save/results.json).
 
+**9 октября, общий Core и source/history:** bounded page material/ink windows
+и publication cut объединены с native Save. Source dot сохраняет буквальный UTF-8
+включая losing heads; отказ доставки откатывает весь cut. Уже принятый native
+результат доходит до редактора и при отказе live reconciliation. Frozen result
+использует существующий hash-bound action model. Смешанный append Undo проверяет
+удаление каждой страницы по фактическому inverse и сохраняет продолженные соседние.
+**90 Core functions /117 cases, два100k сценария,9 native Mac и2 MCP cases PASS**,
+0 failures/skips/runtime warnings;1703 входа `95647088…` неизменны. При1000 и100000
+элементах material window читает6 fragments/2746B/2492VMsteps; ink window —
+10/5319B/2362VMsteps. Три fresh-process Debug Save подтвердили один delivery hash;
+4MiB writer1299,56мс, competing ink1358,71мс. NB10 остаётся открытой.
+DB30 перестраивает только производные индексы; wire44/manifest26 сохранены.
+Physical8/8 на exact680 source подтверждает прежний Save; новые изменения требуют
+отдельного iPad прогона. Installed265 сохранена.
+[Исходные отказы, scopes и измерения](audit-evidence/2026-10-09/common-source-and-history/results.json).
+
 GUI-541 уже в общей `main`: плагины, marketplace-регистрации, панель, браузерная
 отрисовка и Swift WASM адаптер удалены; GUI-539 отменён. Историческая подписанная
 пара262 и sandbox repair сборщика описаны

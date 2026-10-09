@@ -6,12 +6,13 @@ import Testing
 struct NotebookAppendedPageUndoTests {
   private typealias Fixture = NotebookItemLifecycleTests.Fixture
 
-  private func append(_ f: Fixture, stroke: UUID? = nil) throws -> (CollaborationReceipt, UUID) {
+  private func append(_ f: Fixture, stroke: UUID? = nil, additionalPage: UUID? = nil) throws -> (CollaborationReceipt, UUID) {
     let extent = try #require(try f.store.readItemLifecycle(f.itemID)), pageID = UUID()
     var command = NotebookCommand(command: .read); command.readSnapshots = true
     command.queries = [try JSONValue.object(["kind": .string("itemLifecycle"), "id": try .encode(f.itemID)]).decode(NotebookReadQuery.self)]
     let basis = try #require(try NotebookCommandDispatcher(store: f.store).handle(command).array.first?["basis"]?.decode(NotebookReadBasis.self))
     var operations = [CollaborationOperation(kind: .appendPage, target: extent.target, id: pageID.uuidString, values: [:])]
+    if let additionalPage { operations.append(.init(kind: .appendPage, target: extent.target, id: additionalPage.uuidString, values: [:])) }
     if let stroke {
       operations.append(.init(kind: .appendInkStroke, target: .init(kind: .page, id: pageID), id: stroke.uuidString,
         values: ["points": .array([.object(["x": .number(12), "y": .number(18)])])]))
@@ -147,5 +148,69 @@ struct NotebookAppendedPageUndoTests {
     var absent = receipt; absent.lifecycleInverse = nil
     #expect(throws: NotebookStorageError.self) { _ = try remove(f, receipt: absent) }
     #expect(try f.store.loadPage(f.pageID).id == f.pageID)
+  }
+
+  @Test(arguments: ["duplicate", "continuedSibling", "unrelated", "malformed"])
+  func claimedPageRemovalRequiresItsOwnCapturedEvidenceAndRollsBackTheWriter(fault: String) throws {
+    let f = try Fixture(), continuedPage = UUID()
+    let (original, removedPage) = try append(f, additionalPage: continuedPage)
+    try f.write(continuedPage, text: "This sibling has an accepted human continuation")
+    let accepted = try f.store.undoCollaborationAction(original.id, actor: UUID())
+    let removal = try #require(accepted.undo?.lifecycleChanges?.first)
+    #expect(accepted.undo?.lifecycleChanges?.count == 1 && removal.pageID == removedPage)
+    #expect(accepted.undo?.preservedLifecycle == [removal.target])
+    #expect(try f.store.ownerItemID(ofPage: removedPage) == nil)
+    #expect(try f.store.ownerItemID(ofPage: continuedPage) == f.itemID)
+    let file = "collaboration/actions/" + accepted.id.uuidString.lowercased() + ".json", address = file + "#"
+    let raw = try f.store.storedValue(file), model = try f.store.actionReadModel(accepted.id)
+    let result = try f.store.savedActionResult(accepted.id, version: model.actionVersion)
+    let cursor = try f.store.currentChangeCursor(), readCursor = try f.store.currentReadCursor()
+    let page = try f.store.loadPage(continuedPage), header = try f.store.readItemHeader(f.itemID)
+    func hashes() throws -> [[String]] {
+      try f.store.readTransaction { store in
+        try store.currentSQL!.rows("SELECT address,hash FROM records ORDER BY address").map { [$0[0].text!, $0[1].text!] }
+      }
+    }
+    func proofs() throws -> [[String]] {
+      try f.store.readTransaction { store in
+        try store.currentSQL!.rows("SELECT field,version,value FROM action_field_restorations WHERE address=? ORDER BY field",
+          [.text(address)]).map { [$0[0].text!, $0[1].text!, $0[2].blob!.base64EncodedString()] }
+      }
+    }
+    let beforeHashes = try hashes(), beforeProofs = try proofs()
+    var forged = accepted
+    switch fault {
+    case "duplicate": forged.undo?.lifecycleChanges = [removal, removal]
+    case "continuedSibling":
+      // It really was born in this action and has the same cover, but the
+      // authenticated inverse removed neither its membership nor its body.
+      forged.undo?.lifecycleChanges = [removal, .init(kind: .removePage, target: removal.target,
+        pageID: continuedPage, item: removal.item)]
+    case "unrelated":
+      forged.undo?.lifecycleChanges = [removal, .init(kind: .removePage, target: removal.target,
+        pageID: f.pageID, item: removal.item)]
+    case "malformed":
+      forged.undo?.lifecycleChanges = [.init(kind: .removePage, target: removal.target, pageID: nil, item: removal.item)]
+    default: Issue.record("Unexpected removal fault"); throw CancellationError()
+    }
+    do {
+      try f.store.commandTransaction {
+        try f.write(continuedPage, text: "This later write must roll back with the forged receipt")
+        try f.store.publishRecords(writes: [file: try .encode(forged)])
+      }
+      Issue.record("An unauthenticated page removal must refuse the entire writer cut")
+    } catch let error as NotebookStorageError {
+      let reason = fault == "continuedSibling" ? "append restoration evidence" : "append restoration scope"
+      #expect(error == .invalidTransaction(reason))
+    }
+    #expect(try f.store.currentChangeCursor() == cursor)
+    #expect(try f.store.currentReadCursor() == readCursor)
+    #expect(try f.store.storedValue(file) == raw)
+    #expect(try f.store.actionReadModel(accepted.id) == model)
+    #expect(try f.store.savedActionResult(accepted.id, version: model.actionVersion) == result)
+    #expect(try f.store.loadPage(continuedPage) == page)
+    #expect(try f.store.readItemHeader(f.itemID) == header)
+    #expect(try hashes() == beforeHashes)
+    #expect(try proofs() == beforeProofs)
   }
 }

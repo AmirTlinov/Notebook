@@ -56,16 +56,21 @@ extension NotebookStore {
   }
 
   func freezeActionResult(_ receipt: CollaborationReceipt, changed: [CollaborationFieldChange]) throws {
-    let version = try receipt.deliveryVersion(), prefix = try actionVersionPrefix(receipt.id, version)
+    guard currentSQL?.writable == true else { throw NotebookStorageError.readOnlyTransaction }
+    let refusal = NotebookStorageError.corruptRecord("frozen action model: " + receipt.id.uuidString.lowercased())
+    guard let model = try actionReadModelIfPresent(receipt.id),
+      frozenActionModel(model, matches: receipt) else { throw refusal }
+    let version = model.actionVersion, prefix = try actionVersionPrefix(receipt.id, version)
     if try hasStoredValue(prefix + "result.json") { return }
-    let model = try NotebookActionReadModel(receipt)
     let basis = NotebookReadBasis(workspaceID: try workspaceHeader().workspaceID, owners: receipt.revisions)
     var values = try changed.map { field -> JSONValue in
       var value: [String: JSONValue] = ["file": .string(field.file), "path": try .encode(field.path),
         "change": .string(field.after == nil ? "deleted" : "updated"),
         "afterDigest": try NotebookActionReadModel.Field.digest(field.after, file: field.file, path: field.path).map(JSONValue.string) ?? .null]
       if let after = field.after {
-        if try Self.storageEncoder.encode(after).count <= 2048 { value["value"] = after }
+        if case .string(let text) = after, text.utf8.count > 2048 {
+          value["valueOmitted"] = .bool(true)
+        } else if try Self.storageEncoder.encode(after).count <= 2048 { value["value"] = after }
         else { value["valueOmitted"] = .bool(true) }
       }
       return .object(value)
@@ -97,6 +102,32 @@ extension NotebookStore {
       writes["local/action-results/\(receipt.id.uuidString.lowercased())/original.json"] = .string(version)
     }
     try publishRecords(writes: writes)
+  }
+
+  /// Publication has already derived this compact model from the receipt's
+  /// exact stored root. Reuse that binding in this same writer cut; neither a
+  /// missing index nor an old phase may synthesize new frozen evidence.
+  private func frozenActionModel(_ model: NotebookActionReadModel, matches receipt: CollaborationReceipt) -> Bool {
+    guard model.id == receipt.id, model.createdAt == receipt.createdAt,
+      model.author == receipt.author, model.requestFingerprint == receipt.requestFingerprint,
+      model.revisions == receipt.revisions, model.summary == receipt.summary,
+      model.action.resolvedContextID == receipt.action.resolvedContextID,
+      model.action.references == receipt.action.references,
+      model.lifecycleChanges == receipt.lifecycleChanges,
+      model.action.operations.count == receipt.action.operations.count,
+      zip(model.action.operations, receipt.action.operations).allSatisfy({
+        $0.kind == $1.kind && $0.target == $1.target && $0.id == $1.id
+      }), model.changes.count == receipt.changes.count,
+      zip(model.changes, receipt.changes).allSatisfy({ $0.file == $1.file && $0.path == $1.path }) else { return false }
+    switch (model.undo, receipt.undo) {
+    case (nil, nil): return true
+    case (.some(let model), .some(let undo)):
+      return model.restored == undo.restored && model.completedAt == undo.completedAt
+        && model.dependencies == undo.dependencies && model.preservedLifecycle == undo.preservedLifecycle
+        && model.lifecycleChanges == undo.lifecycleChanges && model.preserved.count == undo.preserved.count
+        && zip(model.preserved, undo.preserved).allSatisfy { $0.file == $1.file && $0.path == $1.path }
+    default: return false
+    }
   }
 
   public func savedActionResult(_ id: UUID, version: String? = nil) throws -> JSONValue? {
