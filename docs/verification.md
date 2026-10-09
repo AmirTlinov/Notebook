@@ -471,3 +471,16 @@ The actual writer stack, failed symbolication attempt, load contexts and raw
 results remain in [exact evidence](audit-evidence/2026-10-09/receipt-publication-material/results.json).
 NB10, optimized native/device budgets and full104 acceptance remain open.
 Installed265/DB29 and code DB30/wire44/manifest26 are unchanged.
+
+## 2026-10-09: actual Save CPU and allocation attribution
+
+The unchanged receipt slice was profiled in one isolated Debug 4 MiB Save with
+competing ink: **1 function / 1 case PASS**. Instruments recorded 469 one-ms CPU
+samples under `commitDocumentSource` and 79,449 heap allocation events, displayed
+as 568.06 MB cumulatively, under that unique call stack. Inclusive parent/child
+values overlap; allocation totals are not live peaks or whole BEGIN/COMMIT totals.
+The canonical-verified binary and all 1715 source inputs `4d82eb3b…` are unchanged.
+Recorded writer hold was 504.73 ms with instrumentation; this is attribution,
+not a new latency comparison. The insufficient two-sample attempt and failed
+direct-helper launch remain accounted for in [exact evidence](audit-evidence/2026-10-09/receipt-writer-profile/results.json).
+NB10, optimized native/device budgets and full104 acceptance remain open.

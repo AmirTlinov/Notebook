@@ -1,0 +1,278 @@
+{
+  "format": 1,
+  "baseCommit": "3593128886862b2b3910edd4d5dba7e9f0f433a5",
+  "source": {
+    "sha256": "4d82eb3b3b61c3a43cde6c2fde4f44d9b3591ac10fc39641c2164d802034c599",
+    "count": 1715,
+    "beforeEqualsAfter": true,
+    "currentEqualsRecorded": true,
+    "packageBinding": "847 Package/Sources/Tests inputs and executable bits bound to 35931288 in receipt-publication-material/results.json; 7 native WIP paths are outside this Core slice."
+  },
+  "execution": {
+    "functions": 1,
+    "cases": 1,
+    "failed": 0,
+    "skipped": 0,
+    "route": "Direct launch of unchanged canonical-verified SwiftPM helper and Debug test binary under xctrace; no build, native runner, device attach or installed container access.",
+    "helperSHA256": "20e9193cf06b4d286850afc072787f0c97b70a1ed249216ab033518ab7cf1885",
+    "testBinarySHA256": "b32c43c3ad9293e88ed2d703de75212304c3c92196f267c47685cbe33e574ca6"
+  },
+  "trace": {
+    "localPath": ".build/gui494-receipt-instruments-4194304-20261009-v2/allocations.trace",
+    "template": "Allocations",
+    "additionalInstrument": "Time Profiler",
+    "processPID": 95546,
+    "files": 192,
+    "bytes": 68386318,
+    "fileInventorySHA256": "ef5385ff27d5c48b8c1b36d70fd5700dd84bee1d781f3c9ab7711380cf3ae2fb",
+    "inventoryLocalPath": ".build/gui494-receipt-instruments-4194304-20261009-v2/trace-files.json",
+    "inventoryScope": "Trace directory after native UI inspection; .DS_Store excluded. Raw capture retained locally, not committed as binary."
+  },
+  "cpu": {
+    "scope": "Only time-profile rows for pid95546 whose resolved stack contains NotebookStore.commitDocumentSource(_:actor:). This test calls Save once. Method-attributed samples, not whole BEGIN/COMMIT CPU percentage.",
+    "xmlTable": "time-profile",
+    "allRows": 2155,
+    "rowsWithoutBacktrace": 7,
+    "actualSaveRows": 469,
+    "inclusiveWeightNanoseconds": 469000000,
+    "threadID": 35398150,
+    "sampleRelativeTimeNanosecondsRange": [
+      2415990166,
+      2893992875
+    ],
+    "selectedInclusiveFunctions": [
+      {
+        "name": "NotebookStore.commitDocumentSource(_:actor:)",
+        "inclusiveWeightNs": 469000000,
+        "rows": 469
+      },
+      {
+        "name": "JSONEncoder.encode<A>(_:)",
+        "inclusiveWeightNs": 185000000,
+        "rows": 185
+      },
+      {
+        "name": "NotebookStore.writeFragment(_:data:hash:database:migratingInk:preparedSearch:receiptPublication:)",
+        "inclusiveWeightNs": 138000000,
+        "rows": 138
+      },
+      {
+        "name": "NotebookStore.finishCollaboration(after:receipt:revisedTargets:changed:)",
+        "inclusiveWeightNs": 137000000,
+        "rows": 137
+      },
+      {
+        "name": "NotebookStore.documentSourceForEdit(_:finish:)",
+        "inclusiveWeightNs": 81000000,
+        "rows": 81
+      },
+      {
+        "name": "NotebookStore.installSearchIndex(_:input:previousFolded:database:)",
+        "inclusiveWeightNs": 63000000,
+        "rows": 63
+      },
+      {
+        "name": "NotebookStore.actionSourceProjection(_:receipt:references:)",
+        "inclusiveWeightNs": 60000000,
+        "rows": 60
+      },
+      {
+        "name": "NotebookSQLConnection.encodedStoredFragment(_:)",
+        "inclusiveWeightNs": 53000000,
+        "rows": 53
+      },
+      {
+        "name": "NativeJSONPhase.string(_:)",
+        "inclusiveWeightNs": 43000000,
+        "rows": 43
+      },
+      {
+        "name": "NotebookReceiptPublication.init(_:)",
+        "inclusiveWeightNs": 42000000,
+        "rows": 42
+      },
+      {
+        "name": "NotebookSQLConnection.decodeFragmentEnvelope(_:)",
+        "inclusiveWeightNs": 19000000,
+        "rows": 19
+      },
+      {
+        "name": "static NotebookActionReadModel.Field.digest(_:file:path:)",
+        "inclusiveWeightNs": 16000000,
+        "rows": 16
+      },
+      {
+        "name": "NotebookStore.freezeActionResult(_:changed:)",
+        "inclusiveWeightNs": 11000000,
+        "rows": 11
+      },
+      {
+        "name": "NotebookActionReadModel.Field.init(_:)",
+        "inclusiveWeightNs": 8000000,
+        "rows": 8
+      },
+      {
+        "name": "closure #1 in NotebookStore.freezeActionResult(_:changed:)",
+        "inclusiveWeightNs": 8000000,
+        "rows": 8
+      }
+    ],
+    "warning": "Ancestor/descendant weights overlap; do not add them. Sample-relative time is not substituted for DispatchTime BEGIN/COMMIT."
+  },
+  "heapAllocations": {
+    "source": "Native Instruments Allocations Call Trees; excerpts allocations.ax.txt. Allocation events are not exposed as a table in this trace-toc XML.",
+    "observedUtc": "2026-10-09T12:23:02Z",
+    "filter": "Involves Symbol=commitDocumentSource; Focus on subtree=NotebookStore.commitDocumentSource(_:actor:); All Allocations; All Heap Allocations; Hide System Libraries; Flatten Recursion",
+    "scope": "All recorded heap events whose stack includes the unique Save call, including freed blocks. No inspection time range is selected. Excludes setup/post-call wait; excludes writer BEGIN/COMMIT work outside Save method.",
+    "count": 79449,
+    "displayedCumulativeBytes": "568.06 MB",
+    "exactBytesNotExported": true,
+    "notPeakMemory": true,
+    "notWholeWriterAllocationTotal": true,
+    "directChildren": [
+      {
+        "name": "applyCollaborationActionImmediately",
+        "bytesDisplayed": "357.14 MB",
+        "count": 62887
+      },
+      {
+        "name": "documentSourceForEdit",
+        "bytesDisplayed": "76.90 MB",
+        "count": 7967
+      },
+      {
+        "name": "publishCollaboration (outer draft update)",
+        "bytesDisplayed": "76.86 MB",
+        "count": 6134
+      },
+      {
+        "name": "JSONValue.encode",
+        "bytesDisplayed": "56.53 MB",
+        "count": 1683
+      }
+    ],
+    "heaviestStackExcerpt": {
+      "indexActionReadModelBytesDisplayed": "52.18 MB",
+      "notebookActionDeliveryVersionBytesDisplayed": "40.01 MB"
+    },
+    "warning": "Displayed units and precision are native UI values; no conversion to exact bytes. Heaviest stack is one path, not all sibling owners. Parent/child totals overlap."
+  },
+  "actualSave": {
+    "writerHoldMilliseconds": 504.725459,
+    "begin": {
+      "clock": "DispatchTime.uptimeNanoseconds",
+      "phase": "begin",
+      "pid": "95546",
+      "uptimeNanoseconds": "501370722205166"
+    },
+    "commit": {
+      "clock": "DispatchTime.uptimeNanoseconds",
+      "phase": "commit",
+      "pid": "95546",
+      "uptimeNanoseconds": "501371226930625"
+    },
+    "interpretation": "Instrumented single run for attribution; not matched latency improvement, optimized/native budgets, p95 or physical acceptance."
+  },
+  "priorAttempts": [
+    {
+      "localPath": ".build/gui494-receipt-profile-after-4194304-20261009-v1",
+      "coreCasePass": true,
+      "sampleExitCode": 0,
+      "samplesPerThread": 2,
+      "interpretation": "Tool window inside writer, but only two snapshots per thread: insufficient after-profile attribution; nominal1ms is not observed density.",
+      "files": [
+        {
+          "path": ".build/gui494-receipt-profile-after-4194304-20261009-v1/context.json",
+          "sha256": "e9b3edc9291e37c94867ab48d69d7e12330f27ca818b2c2661ce6849329495c2"
+        },
+        {
+          "path": ".build/gui494-receipt-profile-after-4194304-20261009-v1/writer.sample.txt",
+          "sha256": "44f468b9deb15b946a3119a0177fd1fedb6496feb739ab0e1550bdf6bba45222"
+        },
+        {
+          "path": ".build/gui494-receipt-profile-after-4194304-20261009-v1/verification/core-execution.json",
+          "sha256": "0b7daa8e744baccfedbea6d760b161fefa3e7fcf3ee98f2b2b4f0e4b0b0cd403"
+        }
+      ]
+    },
+    {
+      "localPath": ".build/gui494-receipt-instruments-4194304-20261009-v1",
+      "exitCode": 54,
+      "coreCasePass": false,
+      "beginCommitObserved": false,
+      "reason": "Helper dlopen failed before tests; XCTest framework/library paths normally provided by SwiftPM were omitted. v2 supplies both DYLD paths.",
+      "files": [
+        {
+          "path": ".build/gui494-receipt-instruments-4194304-20261009-v1/context.json",
+          "sha256": "127962f98554b5ca3bcccf2a69fcfe02dd40179c225052ba08cd089c3df42240"
+        },
+        {
+          "path": ".build/gui494-receipt-instruments-4194304-20261009-v1/target.stdout.log",
+          "sha256": "76e591edb64d5bd638d529097ebd45f72bf1e5c7bc1f8441c0c650dda2878c16"
+        },
+        {
+          "path": ".build/gui494-receipt-instruments-4194304-20261009-v1/xctrace.stderr.log",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ]
+    }
+  ],
+  "rawArtifacts": [
+    {
+      "path": ".build/gui494-receipt-instruments-4194304-20261009-v2/time-profile.xml",
+      "bytes": 1988630,
+      "sha256": "8a3cff64d1bc1ac8f2bef63e823fb5f2a1f9754685d3b847228e8301c6fdc9a1"
+    },
+    {
+      "path": ".build/gui494-receipt-instruments-4194304-20261009-v2/toc.xml",
+      "bytes": 8985,
+      "sha256": "3689f345e44d9332d1a8b859868bb2a5f898aebcc624baf55017dd6657e242e3"
+    },
+    {
+      "path": ".build/gui494-receipt-instruments-4194304-20261009-v2/writer-time-profile-summary.json",
+      "bytes": 29262,
+      "sha256": "5dc1e54cab0486aefcccf3d3b62c4e384ffef9b09b1b1d7256eb76f701b76cb6"
+    },
+    {
+      "path": ".build/gui494-receipt-instruments-4194304-20261009-v2/writer-time-profile-rows.json",
+      "bytes": 2623931,
+      "sha256": "fa0b35c93a30399ba0f81fdcd62fba6b7dcc043d9334c747da89354256f5482c"
+    },
+    {
+      "path": ".build/gui494-receipt-instruments-4194304-20261009-v2/target.stdout.log",
+      "bytes": 2738,
+      "sha256": "be455026dc89aeccbb65da5ea5153dd80f61a3a2581d9ab8df007ebe22943e05"
+    },
+    {
+      "path": ".build/gui494-receipt-instruments-4194304-20261009-v2/xctrace.stdout.log",
+      "bytes": 292,
+      "sha256": "f5083f6b2d3e9a15ab0f9585e743bbe69529470418c8bd03df9573cce5b89a00"
+    },
+    {
+      "path": ".build/gui494-receipt-instruments-4194304-20261009-v2/xctrace.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": ".build/gui494-receipt-instruments-4194304-20261009-v2/core-NotebookCoreTests-events.jsonl",
+      "bytes": 2811,
+      "sha256": "fc729609330977bcffb3b01e1cc9b600dd69d3c4680eb56f5d2ae56fb550cddf"
+    },
+    {
+      "path": ".build/gui494-receipt-instruments-4194304-20261009-v2/source-before.json",
+      "bytes": 327791,
+      "sha256": "1a486ac31feac15808a067533fcda6043ad9d32bc10bde8c3faa2876f1a8bae0"
+    },
+    {
+      "path": ".build/gui494-receipt-instruments-4194304-20261009-v2/source-after.json",
+      "bytes": 327791,
+      "sha256": "1a486ac31feac15808a067533fcda6043ad9d32bc10bde8c3faa2876f1a8bae0"
+    },
+    {
+      "path": ".build/gui494-receipt-instruments-4194304-20261009-v2/trace-files.json",
+      "bytes": 35000,
+      "sha256": "a0e4e92c834ec222598a056f89778a7c286ae761595bf33fb8b97879119d40f9"
+    }
+  ],
+  "open": "NB10 writer cost and optimized native/device budgets remain open. No physical acceptance or full104 completion. Installed production265/DB29 and code DB30/wire44/manifest26 unchanged."
+}

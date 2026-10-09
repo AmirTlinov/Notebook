@@ -1,0 +1,65 @@
+Native Instruments AX excerpts, observed 2026-10-09 12:23:02 UTC.
+Trace: .build/gui494-receipt-instruments-4194304-20261009-v2/allocations.trace
+Run 1, process swiftpm-testing-helper 95546.
+Call Trees; Involves Symbol token entered as commitDocumentSource;
+Focus on subtree: NotebookStore.commitDocumentSource(_:actor:).
+All Allocations; All Heap Allocations; Hide System Libraries; Flatten Recursion.
+No inspection time range is selected. These are call-stack-attributed events,
+not a whole BEGIN/COMMIT allocation total or a live/peak memory measurement.
+MB/KB labels and rounded precision below are preserved as displayed.
+
+143 row (selected, expanded) Secondary Actions: Collapse, Value: 568.06 MB     100.0%
+79449
+NotebookStore.commitDocumentSource(_:actor:)   NotebookCoreTests
+145 row (selectable, expanded) Secondary Actions: Collapse, Value: 568.06 MB      99.9%
+79448
+NotebookStore.commandTransaction<A>(advancesReadRevision:readAllowance:preparedDatabase:acceptedWitness:_:)   NotebookCoreTests
+149 row (selectable, expanded) Secondary Actions: Collapse, Value: 568.06 MB      99.9%
+79448
+closure #1 in NotebookStore.commitDocumentSource(_:actor:)   NotebookCoreTests
+151 row (selectable, expanded) Secondary Actions: Collapse, Value: 357.14 MB      62.8%
+62887
+NotebookStore.applyCollaborationActionImmediately(_:actor:requestFingerprint:human:nativeInputOwner:repeating:programResources:preparedSearch:sourceFinish:)   NotebookCoreTests
+159 row (selectable, expanded) Secondary Actions: Collapse, Value: 285.20 MB      50.2%
+33590
+NotebookStore.commitCollaboration(before:after:receipt:revisedTargets:preparedSearch:)   NotebookCoreTests
+161 row (selectable, collapsed) Secondary Actions: Expand, Value: 202.96 MB      35.7%
+16930
+NotebookStore.finishCollaboration(after:receipt:revisedTargets:changed:)   NotebookCoreTests
+163 row (selectable, collapsed) Secondary Actions: Expand, Value: 82.04 MB      14.4%
+14955
+NotebookSQLConnection.withActionRecordCapture<A>(actionID:_:)   NotebookCoreTests
+169 row (selectable, collapsed) Secondary Actions: Expand, Value: 43.67 MB       7.6%
+1969
+applyOperations #1 () in closure #1 in NotebookStore.applyCollaborationActionImmediately(_:actor:requestFingerprint:human:nativeInputOwner:repeating:programResources:preparedSearch:sourceFinish:)   NotebookCoreTests
+171 row (selectable, collapsed) Secondary Actions: Expand, Value: 14.87 MB       2.6%
+17515
+NotebookStore.actionSourceProjection(_:receipt:references:)   NotebookCoreTests
+173 row (selectable, collapsed) Secondary Actions: Expand, Value: 12.36 MB       2.1%
+2302
+CollaborationWorkspace.validate(scope:)   NotebookCoreTests
+207 row (selectable, collapsed) Secondary Actions: Expand, Value: 76.90 MB      13.5%
+7967
+NotebookStore.documentSourceForEdit(_:finish:)   NotebookCoreTests
+209 row (selectable, collapsed) Secondary Actions: Expand, Value: 76.86 MB      13.5%
+6134
+NotebookStore.publishCollaboration(writes:removals:receiptPublication:)   NotebookCoreTests
+211 row (selectable, collapsed) Secondary Actions: Expand, Value: 56.53 MB       9.9%
+1683
+static JSONValue.encode<A>(_:)   NotebookCoreTests
+
+Earlier native Heaviest Stack Trace, same Save filter and heap lifespan/type:
+568.06 MB     NotebookStore.commitDocumentSource(_:actor:)
+357.14 MB     NotebookStore.applyCollaborationActionImmediately(_:actor:requestFingerprint:human:nativeInputOwner:repeating:programResources:preparedSearch:sourceFinish:)
+285.20 MB     NotebookStore.commitCollaboration(before:after:receipt:revisedTargets:preparedSearch:)
+202.96 MB     NotebookStore.finishCollaboration(after:receipt:revisedTargets:changed:)
+125.37 MB     NotebookStore.publishCollaboration(writes:removals:receiptPublication:)
+85.21 MB      NotebookStore.writeFragment(_:data:hash:database:migratingInk:preparedSearch:receiptPublication:)
+52.30 MB      NotebookStore.updateAddressIndexes(_:database:receiptRoot:)
+52.18 MB      NotebookStore.indexActionReadModel(_:address:database:receiptRoot:)
+51.97 MB      NotebookActionReadModel.init(_:)
+40.01 MB      notebookActionDeliveryVersion(_:)
+40.01 MB      collaborationHash<A>(_:observingEncodedBytes:)
+40.01 MB      JSONEncoder.encode<A>(_:)
+
+Ancestor/descendant values are inclusive and overlap. Do not sum them.
