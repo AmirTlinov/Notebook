@@ -62,7 +62,7 @@ struct NotebookReplicaInventoryTests {
         let database = try #require(f.store.currentSQL)
         let cut = try query.replicaInventoryCut()
         #expect(cut.workspaceID == f.workspaceID && cut.borrowedSnapshotID == database.readSnapshotIdentity)
-        #expect(cut.databaseVersion == 29 && cut.wireVersion == 44 && cut.manifestVersion == 26)
+        #expect(cut.databaseVersion == 30 && cut.wireVersion == 44 && cut.manifestVersion == 26)
         #expect(cut.journalGenerationStatus == .missing && cut.journalGeneration == nil)
         #expect(cut.acceptedLocalPrefix?.sequence == f.head)
         #expect(cut.cloud.status == .unconfigured && cut.cloud.enabled == false)

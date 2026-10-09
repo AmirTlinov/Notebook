@@ -179,8 +179,43 @@ struct NotebookSpatialInkCommandTests {
       let first = try store.readChangedAddresses(after: before, through: store.currentChangeCursor())
       #expect(Set(first.addresses) == ["spatial-ink.json#", address, address + "/spans"])
       #expect(try store.readSpatialInk(surfaces: [surfaces[0], surfaces[1]]).actions == [action])
+      let source = try #require(try store.spatialInkHistoryStates(ids: [action.id])[action.id])
+      #expect(source.surfaces == Set(surfaces))
+      let allowance = NotebookSpatialInkCommand.stateWriteAllowance(for: source.surfaces)
+      #expect(allowance.executionBytes * 5 < 256 * 1_024 * 1_024,
+        "Two queued Undo/Redo pairs and another Undo fit the unchanged native queue")
+      #expect(NotebookSpatialInkCommand.stateWriteAllowance(for: [.codeFragment(UUID())]).executionBytes
+        == NotebookNativeWriteAllowance.maximumExecutionBytes)
+      // A saved history may still contain retired identities. Exercise the
+      // admitted directory byte bound and maximum UUID sets on both owners.
+      let prior: [PencilUndoHistory.Entry] = (0..<31).map { _ in .ink(Set((0..<32).map { _ in UUID() })) }
+      let history = prior + [.ink([action.id])]
+      let redo: [PencilUndoHistory.Entry] = (0..<32).map { _ in .command(UUID()) }
+      try store.commandTransaction {
+        for domain in [PencilUndoHistory.Domain.board(header.rootBoardID), .cover(cover)] {
+          for (prefix, entries) in [("native_history:", history), ("native_redo:", redo)] {
+            let encoded = String(decoding: try NotebookStore.storageEncoder.encode(entries), as: UTF8.self)
+            let padded = encoded + String(repeating: " ", count: NotebookStore.nativeHistoryMaximumDirectoryBytes - encoded.utf8.count)
+            try store.currentSQL!.run("INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+              [.text(prefix + actor.uuidString.lowercased() + ":" + domain.key), .text(padded)])
+          }
+        }
+      }
       let stamp = try store.currentChangeCursor()
-      let undone = try store.commitSpatialInk(state(action, counter: 2))
+      var undone = appended
+      for (index, active) in [false, true, false, true, false].enumerated() {
+        let next = VersionStamp(counter: UInt64(index + 2), actor: actor)
+        let command = NotebookSpatialInkCommand.state(actionID: action.id, creationStamp: action.stamp,
+          expectedStateStamp: undone.stateStamp, isActive: active, stateStamp: next,
+          journalStamp: next, nativeRedo: active)
+        undone = try store.withNativeWriteAllowance(allowance) { try store.commitSpatialInk(command) }
+        #expect(undone == command.expectedResult)
+        #expect(try hash(address + "/spans", store: store) == spansHash)
+        for domain in [PencilUndoHistory.Domain.board(header.rootBoardID), .cover(cover)] {
+          #expect(try store.nativeHistory(domain: domain, actor: actor) == (active ? [.ink([action.id])] : []))
+          #expect(try store.nativeRedoHistory(domain: domain, actor: actor) == (active ? [] : [.inkRedo([action.id], next)]))
+        }
+      }
       #expect(!undone.isActive)
       #expect(try hash(address + "/spans", store: store) == spansHash)
       let changes = try store.readChangedAddresses(after: stamp, through: store.currentChangeCursor())

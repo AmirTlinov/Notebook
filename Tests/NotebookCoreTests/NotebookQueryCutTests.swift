@@ -31,6 +31,7 @@ struct NotebookQueryCutTests {
         #expect(ink.isEmpty && pixelsCurrent && inkCurrent)
         return cut
       }
+      expectExpired { _ = try expired.pendingTargetRenderRequests() }
       expectExpired { _ = try expired.loadPage(pageID) }
       expectExpired { _ = try expired.referenceRevision(target: target) }
       expectExpired { _ = try expired.handle(read) }

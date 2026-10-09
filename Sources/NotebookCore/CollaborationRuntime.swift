@@ -402,15 +402,25 @@ extension NotebookStore {
       try? FileManager.default.removeItem(at: targetPNGURL(obsolete.id))
       try? FileManager.default.removeItem(at: targetReceiptURL(obsolete.id))
     }
-    if let previous = try storedValue(logicalAddress(url)) { return try previous.decode(TargetRenderRequest.self) }
+    if let previous = try storedValue(logicalAddress(url)) {
+      // A removed derivative reopens the same request, independently of its
+      // age. The metadata index is local work state, not replicated content.
+      if !FileManager.default.fileExists(atPath: targetReceiptURL(request.id).path) {
+        try commandTransaction {
+          try currentSQL!.run("UPDATE metadata_index SET status='pending' WHERE address=? AND kind='renderRequest'",
+            [.text(logicalAddress(url) + "#")])
+        }
+      }
+      return try previous.decode(TargetRenderRequest.self)
+    }
     try publishRecords(writes: [logicalAddress(url): try .encode(request)])
     return request
   }
 
-  public func targetRenderRequests(target: CollaborationTarget? = nil, afterID: UUID? = nil, limit: Int = 80) throws -> [TargetRenderRequest] {
+  public func targetRenderRequests(target: CollaborationTarget? = nil, afterID: UUID? = nil, pendingOnly: Bool = false, limit: Int = 80) throws -> [TargetRenderRequest] {
     guard (1...128).contains(limit) else { throw NotebookStorageError.limitExceeded("render_request_page") }
     return try readTransaction { _ in
-      var clause = "", arguments: [NotebookSQLValue] = []
+      var clause = pendingOnly ? " AND status='pending'" : "", arguments: [NotebookSQLValue] = []
       if let target { clause += " AND context_id=?"; arguments.append(.text(Self.renderTargetKey(target))) }
       if let afterID {
         let address = "collaboration/render-requests/" + afterID.uuidString.lowercased() + ".json#"
@@ -423,6 +433,16 @@ extension NotebookStore {
         guard let value = try storedValue(String(row[0].text!.dropLast())) else { throw NotebookStorageError.corruptRecord("render request") }
         return try value.decode(TargetRenderRequest.self)
       }
+    }
+  }
+
+  /// Repair local scheduling metadata after an interrupted receipt write or
+  /// index rebuild. A historical terminal receipt is never rewritten.
+  public func reconcileTargetRenderStatus(_ request: TargetRenderRequest) throws {
+    guard let receipt = try loadTargetRenderReceipt(request.id), receipt.request == request else { return }
+    try commandTransaction {
+      try currentSQL!.run("UPDATE metadata_index SET status=? WHERE address=? AND kind='renderRequest'",
+        [.text(receipt.status), .text("collaboration/render-requests/" + request.id.uuidString.lowercased() + ".json#")])
     }
   }
 

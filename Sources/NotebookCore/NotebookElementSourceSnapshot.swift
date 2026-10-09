@@ -29,12 +29,18 @@ public struct NotebookElementSourceSnapshot: Sendable {
     source = .spatial(elements,lookup,metadata)
   }
   private init(source:Source) {self.source=source}
+  init(pageMaterial: NotebookPageMaterialWindow) {
+    let entries = pageMaterial.sources.mapValues { Entry(page: $0.page, spatial: nil, versions: $0.versions) }
+    let present = Set(pageMaterial.sourceOrder.map(collaborationIdentity))
+    let order = pageMaterial.sourceOrder + entries.keys.filter { !present.contains($0) }.sorted()
+    self = Self.captured(entries, order: order)
+  }
 
   /// Call with the scene's bounded candidate/dependency closure. The returned
   /// cut retains those bodies only, never the whole page/board or its frontier.
   public func capturing(_ ids:Set<String>)->Self {
     let order=orderedIDs(ids)
-    var entries:[String:Entry]=[:],bytes=128,bodyBytes=0,causalBytes=0,editableCount=0
+    var entries:[String:Entry]=[:]
     for id in order {
       let entry:Entry
       switch source {
@@ -47,6 +53,13 @@ public struct NotebookElementSourceSnapshot: Sendable {
         guard let value=values[collaborationIdentity(id)] else {continue};entry=value
       }
       entries[collaborationIdentity(id)]=entry
+    }
+    return Self.captured(entries, order: order)
+  }
+  private static func captured(_ entries: [String: Entry], order: [String]) -> Self {
+    var bytes=128,bodyBytes=0,causalBytes=0,editableCount=0
+    for id in order {
+      guard let entry = entries[collaborationIdentity(id)] else { continue }
       let body=NotebookNativeElementSource.retainedPayloadBytes(id:id,page:entry.page,spatial:entry.spatial)
       let full=NotebookNativeElementSource.retainedPayloadBytes(id:id,page:entry.page,spatial:entry.spatial,versions:entry.versions)
       bytes += full+id.utf8.count*4

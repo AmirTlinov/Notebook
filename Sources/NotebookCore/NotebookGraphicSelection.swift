@@ -86,7 +86,7 @@ extension NotebookStore {
       versions: versions)
   }
 
-  private func readNativeElementVersions(target: CollaborationTarget, id: String) throws -> [String: ContentFieldVersion] {
+  func readNativeElementVersions(target: CollaborationTarget, id: String) throws -> [String: ContentFieldVersion] {
     let root = target.kind == .page ? pageFile(target.id) + "#"
       : "board.json#/boards/@" + (target.boardID ?? target.id).uuidString.lowercased() + "/board"
     let keys = CollaborativeContent.elementVersionKeys(id: id)

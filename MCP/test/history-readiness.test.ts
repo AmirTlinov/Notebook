@@ -128,7 +128,7 @@ test('readonly replica and physical history snapshots keep exact cuts, bounded e
     const cut=await snapshot(store,{kind:'replicaInventory'});
     assert.equal(cut.data.mode,'cut');
     assert.equal(cut.data.cut.readRevision,cut.cursor);
-    assert.equal(cut.data.cut.databaseVersion,29);
+    assert.equal(cut.data.cut.databaseVersion,30);
     assert.equal(cut.data.cut.wireVersion,44);
     assert.equal(cut.data.cut.manifestVersion,26);
     assert.equal(cut.data.cut.controlObservation.scope,'reusedReaderConnection');

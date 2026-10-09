@@ -17,6 +17,22 @@ public enum NotebookSpatialInkCommand: Sendable {
       return .init(actionID: id, creationStamp: creation, isActive: active, stateStamp: state, journalStamp: journal)
     }
   }
+
+  /// The fixed contact header and complete owner set suffice for an inverse;
+  /// immutable spans, samples and eraser targets stay unread. A code fragment
+  /// still resolves its file through the reviewed source and keeps full credit.
+  public static func stateWriteAllowance(for surfaces: Set<SurfaceID>) -> NotebookNativeWriteAllowance {
+    guard !surfaces.isEmpty, surfaces.allSatisfy({ $0.kind == .board || $0.kind == .cover }) else { return .init() }
+    let fixed = 8 * 1_024 * 1_024
+    // Each owner reads Undo/Redo and, on Redo, its exact gate: at most three
+    // 64 KiB directories. SQL buffers consume a tenth of execution credit.
+    // The remaining credit covers their bounded 32 entries × 32 UUIDs, decode
+    // and encode copies. Duplicate spans never add another history owner.
+    let perOwner = NotebookStore.nativeHistoryMaximumDirectoryBytes * 64
+    let maximum = NotebookNativeWriteAllowance.maximumExecutionBytes
+    guard surfaces.count <= (maximum - fixed) / perOwner else { return .init() }
+    return .init(executionBytes: fixed + surfaces.count * perOwner)
+  }
 }
 
 /// The accepted metadata reports a concurrent state or clock without returning

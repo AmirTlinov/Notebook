@@ -98,7 +98,7 @@ struct NotebookSearchRecipeTests {
     _ = try NotebookStore(root: store.root).prepareDatabase()
     #expect(try snapshot(store) == before)
     try fixture.requireHits()
-    #expect(try store.sqlRead { try $0.rows("PRAGMA user_version").first?[0].integer } == 29)
+    #expect(try store.sqlRead { try $0.rows("PRAGMA user_version").first?[0].integer } == NotebookStore.currentDatabaseVersion)
     #expect(try store.sqlRead { try $0.rows("SELECT value FROM metadata WHERE key='search_recipe'").first?[0].text } == "1")
     let stale = try JSONEncoder().encode(oldToken).base64EncodedString()
     do { _ = try store.search("Needle", limit: 1, next: stale); Issue.record("A cursor from the previous recipe was accepted") }
@@ -169,7 +169,7 @@ struct NotebookSearchRecipeTests {
     let fixture = try Fixture(), store = fixture.store, database = try store.prepareDatabase()
     try database.run("UPDATE metadata SET value='999' WHERE key='search_recipe'")
     #expect(throws: NotebookStorageError.unsupportedFormat) { _ = try store.prepareDatabase() }
-    #expect(try database.rows("PRAGMA user_version").first?[0].integer == 29)
+    #expect(try database.rows("PRAGMA user_version").first?[0].integer == NotebookStore.currentDatabaseVersion)
   }
 
   private func snapshot(_ store: NotebookStore) throws -> [[String]] {

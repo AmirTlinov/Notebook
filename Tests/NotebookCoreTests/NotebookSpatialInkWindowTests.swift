@@ -280,7 +280,7 @@ struct NotebookSpatialInkWindowTests {
       let restoredSpatial = try reopened.readSpatialInk(surfaces: [surface])
       let restoredPage = try reopened.loadPage(pageID)
       try restoredPage.prepareInkForPresentation()
-      #expect(try reopened.sqlRead { try $0.rows("PRAGMA user_version").first?[0].integer } == 27)
+      #expect(try reopened.sqlRead { try $0.rows("PRAGMA user_version").first?[0].integer } == NotebookStore.currentDatabaseVersion)
       #expect(try reopened.archiveContentProof() == proof && reopened.currentChangeCursor() == cursor)
       #expect(restoredSpatial.actions == spatial.actions && restoredPage.preparedInkDrawing == drawing)
       #expect(selectedSpatial.matches(restoredSpatial) && topSpatial.matches(restoredSpatial))

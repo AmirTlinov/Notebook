@@ -192,6 +192,7 @@ extension NotebookStore {
 
   private static func installSearchRecipe(database: NotebookSQLConnection) throws {
     for event in ["INSERT", "UPDATE", "DELETE"] {
+      try database.run("DROP TRIGGER IF EXISTS search_recipe_\(event.lowercased())")
       try database.run("""
         CREATE TRIGGER search_recipe_\(event.lowercased()) BEFORE \(event) ON search_entries BEGIN
         SELECT CASE WHEN notebook_search_recipe()!=\(searchRecipe) THEN RAISE(ABORT,'search recipe mismatch') END;

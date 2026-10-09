@@ -15,6 +15,34 @@ public enum NotebookPageInkCommand:Sendable {
     case .setActive(_,let active): self = .state(change.expectedVisibility,isActive:active,baseStamp:change.baseStamp,stamp:change.stamp,nativeRedo:nativeRedo)
     }
   }
+
+  /// Visibility rewrites addressed headers and native history, never samples.
+  /// Known target metadata can tighten the finish credit before an inverse is
+  /// accepted. Large legacy headers retain the existing maximum and its SQL
+  /// refusal boundary; a measurement count cannot enlarge this reservation.
+  public static func stateWriteAllowance(for actions: some Sequence<PageInkAction>) -> NotebookNativeWriteAllowance {
+    let maximum = NotebookNativeWriteAllowance.maximumExecutionBytes
+    var execution = 8 * 1_024 * 1_024 // Owner headers, bounded history, SQL/TEMP and codec bookkeeping.
+    for action in actions {
+      var wire = 2_048, tokens = 128, retained = 0
+      for target in action.elementTargets ?? [] {
+        let value = target.writeAllowance
+        wire += value.wireBytes + 1; tokens += value.jsonTokens; retained += value.retainedBytes
+        // Saturate before arithmetic can exceed even the existing allowance.
+        if wire > maximum / 40 || tokens > maximum / (5 * 512) || retained > maximum / 3 {
+          return .init()
+        }
+      }
+      // The old header is decoded at the addressed read and immutable-header
+      // check. Five decode footprints also cover visibility/target projection
+      // and encoding copies. SQL's source share is one tenth of execution.
+      let decoded = wire * 8 + tokens * 512
+      let header = max(wire * 40, decoded * 5 + retained * 3)
+      guard header <= maximum - execution else { return .init() }
+      execution += header
+    }
+    return .init(executionBytes: execution)
+  }
 }
 
 public struct NotebookPageInkResult:Equatable,Sendable { public let stamp:VersionStamp }

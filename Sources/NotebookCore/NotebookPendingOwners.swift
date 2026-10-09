@@ -6,6 +6,7 @@ enum NotebookPendingOwner: String {
   case boardPrefix, referenceTouched, referencePending
   case documentFile
   case graphic, elementGroup, lifecycleFile
+  case pageMaterial, pageMaterialGroup, pageMaterialProjected
   case actionLifecycleFile, actionLifecycleElement
 }
 

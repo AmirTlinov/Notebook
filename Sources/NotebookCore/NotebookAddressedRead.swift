@@ -191,6 +191,7 @@ extension NotebookStore {
   }
 
   func updateAddressIndexes(_ fragment: NotebookStoredFragment, database: NotebookSQLConnection) throws {
+    try notePageMaterialChange(fragment, database: database)
     try noteGraphicIndexChange(fragment, database: database)
     if fragment.file.hasPrefix("pages/"), fragment.collection == "actions" {
       try indexPageInkOrder(fragment, database: database)
@@ -198,6 +199,10 @@ extension NotebookStore {
     if fragment.file.hasPrefix("pages/"), fragment.collection == "actions", fragment.value["tool"]?.string == "eraser" {
       try indexPageElementErasures(fragment,database:database)
       try indexPageInkWindow(fragment,database:database)
+    }
+    if fragment.file.hasPrefix("pages/"), fragment.collection == "actions", fragment.value["tool"]?.string == "pen",
+      try pageMaterialIndexIsAdmitted(database) {
+      try indexPageInkWindow(fragment, database: database)
     }
     if (fragment.file.hasPrefix("pages/") && fragment.collection == "elements")
       || (fragment.file == "board.json" && fragment.collection == "board/elements") {

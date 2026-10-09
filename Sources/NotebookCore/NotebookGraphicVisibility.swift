@@ -219,7 +219,7 @@ final class NotebookGraphicVisibility: Sendable {
       resolvedGraphics:resolved,overflow:overflow,boundsIndexBytes:bytes)
   }
 
-  private static func bounds(_ node:NotebookGraphicGraph.Node,in graph:NotebookGraphicGraph,parent:Bool) -> CGRect? {
+  static func bounds(_ node:NotebookGraphicGraph.Node,in graph:NotebookGraphicGraph,parent:Bool) -> CGRect? {
     guard node.shown else { return nil }
     let graphic=node.graphic,t=parent ? node.placement.localTransform : node.placement.transform
     if graphic.connection != nil {
@@ -241,6 +241,7 @@ final class NotebookGraphicVisibility: Sendable {
       // overflow of an unusually thick stroke on a very small object.
       body=CGRect(origin:.zero,size:size).insetBy(dx:-graphic.style.strokeWidth/2,dy:-graphic.style.strokeWidth/2)
     }
+    if let label = NotebookGraphicGeometry.labelBounds(graphic, layout: nil, size: size) { body = body.union(label) }
     if let mask=graphic.mask {
       // The same relative region narrows disclosure for CPU and GPU. Holes
       // remain exact-query work; this bound never expands measured cutouts.
@@ -248,12 +249,12 @@ final class NotebookGraphicVisibility: Sendable {
     }
     return body.isNull ? nil : outward(body,through:t)
   }
-  private static func intersects(_ a:CGRect,_ b:CGRect) -> Bool {
+  static func intersects(_ a:CGRect,_ b:CGRect) -> Bool {
     a.maxX>=b.minX && a.minX<=b.maxX && a.maxY>=b.minY && a.minY<=b.maxY
   }
   /// Conservative arithmetic margin, including cancellation in the inverse
   /// map. A non-finite coarse query visits the branch rather than dropping it.
-  private static func outward(_ rect:CGRect,through t:CGAffineTransform) -> CGRect {
+  static func outward(_ rect:CGRect,through t:CGAffineTransform) -> CGRect {
     guard !rect.isNull else { return .null }
     guard !rect.isInfinite else { return .infinite }
     let value=rect.applying(t)

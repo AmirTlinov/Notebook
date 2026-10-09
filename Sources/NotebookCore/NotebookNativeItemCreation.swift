@@ -43,6 +43,15 @@ public struct NotebookNativeItemCreation: Sendable {
   public let actor: UUID
   public let kind: Kind
   public var cost: Cost { Self.cost(for: kind) }
+  public var nativeHistoryDomains: Set<PencilUndoHistory.Domain> {
+    var domains: Set<PencilUndoHistory.Domain> = [.board(boardID), .cover(itemID)]
+    switch kind {
+    case .notebook: if let pageID { domains.insert(.page(pageID)) }
+    case .document: domains.insert(.document(itemID))
+    case .board: domains.insert(.board(itemID))
+    }
+    return domains
+  }
 
   public init(kind: Kind, workspaceID: UUID, boardID: UUID, center: WorldPoint,
     actor: UUID, actionID: UUID = UUID()) throws {
@@ -98,8 +107,7 @@ public struct NotebookNativeItemCreation: Sendable {
           let expected = try store.readBasis(targets: [target, .init(kind: .workspace, id: header.rootBoardID)]).owners
           receipt = try store.applyNativeAction(.init(id: actionID, summary: "Создание предмета",
             expected: expected, operations: [operation]), actor: actor, requestFingerprint: fingerprint)
-          let presence = try store.loadPresence()
-          if presence.boardID == boardID {
+          if let presence = try store.readPresenceIfAvailable(), presence.boardID == boardID {
             selected = presence.selecting(itemID: itemID, pageID: pageID)
             try store.savePresence(selected!)
           }

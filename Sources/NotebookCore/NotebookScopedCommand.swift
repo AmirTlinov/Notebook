@@ -172,6 +172,10 @@ extension NotebookStore {
         ? database.rows("SELECT address,file,collection,member,hash FROM records WHERE address=?", [.text(address)]) : descendants
       for row in rows {
         let address = row[0].text!, file = row[1].text!, collection = row[2].text!, member = row[3].text!
+        if file.hasPrefix("pages/"), ["elements", "collaboration/fields"].contains(collection),
+          let fragment = try storedFragments(address: address, descendants: false).first {
+          try notePageMaterialChange(fragment, database: database)
+        }
         if file == "board.json", collection == "board/elements",
           let fragment = try storedFragments(address: address, descendants: false).first {
           try noteGraphicIndexChange(fragment, database: database)

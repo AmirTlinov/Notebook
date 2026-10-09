@@ -240,50 +240,7 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
     return try prepareInkChange(mutation,stamp:stamp,projection:projection)
   }
   private func prepareInkChange(_ mutation:PageInkMutation,stamp:VersionStamp,projection:PageInkPreparedProjection) throws -> PreparedPageInkChange {
-    try Task.checkCancellation()
-    let current = projection.drawing
-    let effective: PageInkMutation, expected: [UUID: PageInkVisibility]
-    switch mutation {
-    case .append(let action):
-      if let prior = current.action(id: action.id) {
-        _ = try current.appending(action) // Still validate immutable identity on a retry.
-        return .init(pageID:id,baseStamp:drawingStamp,stamp:drawingStamp,drawing:current,
-          mutation:.append(prior),erasureDirectory:projection.erasures,contactIndex:projection.contactIndex)
-      }
-      guard action.isActive else { throw PageInkDrawing.InkError.invalidDrawing }
-      effective = mutation; expected = [:]
-    case .setActive(let ids, let active):
-      expected = Dictionary(uniqueKeysWithValues:ids.compactMap { id in
-        guard let action = current.action(id:id), action.isActive != active else { return nil }
-        return (id,action.visibility)
-      })
-      effective = .setActive(Set(expected.keys),active)
-      if expected.isEmpty {
-        return .init(pageID:id,baseStamp:drawingStamp,stamp:drawingStamp,drawing:current,
-          mutation:effective,erasureDirectory:projection.erasures,contactIndex:projection.contactIndex)
-      }
-    }
-    let frontier = max(drawingStamp.counter, expected.values.compactMap { $0.stateStamp?.counter }.max() ?? 0)
-    guard frontier < VersionStamp.maximumCounter,
-      stamp.counter <= VersionStamp.maximumCounter else { throw PageInkDrawing.InkError.invalidDrawing }
-    let next = VersionStamp(counter:max(frontier+1,stamp.counter),actor:stamp.actor)
-    let drawing: PageInkDrawing, accepted: PageInkMutation
-    switch effective {
-    case .append(let action):
-      drawing = try current.appending(action.settingVisibility(.init(isActive:true,stateStamp:next)))
-      accepted = .append(drawing.action(id:action.id)!)
-    case .setActive(let ids,let active):
-      drawing = try current.settingActive(active,for:ids,stamp:next); accepted = effective
-    }
-    try Task.checkCancellation()
-    var contactIndex=projection.contactIndex
-    switch accepted {
-    case .append(let action):contactIndex.append(action)
-    case .setActive(let ids,let active):contactIndex.setActive(active,for:ids)
-    }
-    return .init(pageID:id,baseStamp:drawingStamp,stamp:next,drawing:drawing,
-      mutation:accepted,expectedVisibility:expected,
-      erasureDirectory:projection.erasures.applying(accepted,drawing:drawing),contactIndex:contactIndex)
+    try inkSource.prepareChange(pageID: id, mutation: mutation, stamp: stamp, projection: projection)
   }
 
   @discardableResult
@@ -618,7 +575,7 @@ public struct PageInkSource:Sendable {
   var preparedProjection:PageInkPreparedProjection? {source.prepared}
   func prepare() throws -> PageInkPreparedProjection {try source.prepare()}
   public func prepareForPresentation() throws {_ = try source.prepare()}
-  fileprivate init(source:PageInkDrawingCache.Source) { self.source=source }
+  init(source:PageInkDrawingCache.Source) { self.source=source }
   public func drawing() throws -> PageInkDrawing { try source.drawing() }
 }
 
@@ -644,5 +601,75 @@ public struct PreparedPageInkChange: Sendable {
     self.drawing = drawing;self.mutation=mutation;self.expectedVisibility=expectedVisibility
     source = .init(stamp:stamp,drawing:drawing,erasures:erasureDirectory,contactIndex:contactIndex)
     self.erasureDirectory=erasureDirectory;self.contactIndex=contactIndex
+  }
+}
+
+extension PageInkSource {
+  func prepareChange(pageID: UUID, mutation: PageInkMutation, stamp: VersionStamp,
+    projection: PageInkPreparedProjection, sequenceFrontier: UInt64 = 0,
+    requiresRetainedActions: Bool = false) throws -> PreparedPageInkChange {
+    try Task.checkCancellation()
+    let current = projection.drawing
+    let effective: PageInkMutation, expected: [UUID: PageInkVisibility]
+    switch mutation {
+    case .append(let action):
+      if let prior = current.action(id: action.id) {
+        _ = try current.appending(action) // Still validate immutable identity on a retry.
+        return .init(pageID:pageID,baseStamp:self.stamp,stamp:self.stamp,drawing:current,
+          mutation:.append(prior),erasureDirectory:projection.erasures,contactIndex:projection.contactIndex)
+      }
+      guard action.isActive else { throw PageInkDrawing.InkError.invalidDrawing }
+      effective = mutation; expected = [:]
+    case .setActive(let ids, let active):
+      if requiresRetainedActions, !ids.allSatisfy({ current.action(id: $0) != nil }) {
+        throw CollaborationError("ink_not_ready", "Для отмены нужно адресно подготовить исходные штрихи.")
+      }
+      expected = Dictionary(uniqueKeysWithValues:ids.compactMap { id in
+        guard let action = current.action(id:id), action.isActive != active else { return nil }
+        return (id,action.visibility)
+      })
+      effective = .setActive(Set(expected.keys),active)
+      if expected.isEmpty {
+        return .init(pageID:pageID,baseStamp:self.stamp,stamp:self.stamp,drawing:current,
+          mutation:effective,erasureDirectory:projection.erasures,contactIndex:projection.contactIndex)
+      }
+    }
+    let frontier = max(self.stamp.counter, expected.values.compactMap { $0.stateStamp?.counter }.max() ?? 0)
+    guard frontier < VersionStamp.maximumCounter,
+      stamp.counter <= VersionStamp.maximumCounter else { throw PageInkDrawing.InkError.invalidDrawing }
+    let next = VersionStamp(counter:max(frontier+1,stamp.counter),actor:stamp.actor)
+    let drawing: PageInkDrawing, accepted: PageInkMutation
+    switch effective {
+    case .append(let action):
+      drawing = try current.appending(action.settingVisibility(.init(isActive:true,stateStamp:next)), after: sequenceFrontier)
+      accepted = .append(drawing.action(id:action.id)!)
+    case .setActive(let ids,let active):
+      drawing = try current.settingActive(active,for:ids,stamp:next); accepted = effective
+    }
+    try Task.checkCancellation()
+    var contactIndex=projection.contactIndex
+    switch accepted {
+    case .append(let action):contactIndex.append(action)
+    case .setActive(let ids,let active):contactIndex.setActive(active,for:ids)
+    }
+    return .init(pageID:pageID,baseStamp:self.stamp,stamp:next,drawing:drawing,
+      mutation:accepted,expectedVisibility:expected,
+      erasureDirectory:projection.erasures.applying(accepted,drawing:drawing),contactIndex:contactIndex)
+  }
+
+}
+
+extension PageDocument {
+  public func frozenForPresentation() -> any NotebookPagePresentationSource {
+    var value = self
+    value.inkDrawingCache = .init(source: inkSource.source)
+    return value
+  }
+  public func referenceRevision(elementID: String? = nil) throws -> String {
+    if let elementID {
+      guard let element = element(id: elementID) else { throw CollaborationError("target_missing", "Элемент листа отсутствует.") }
+      return try collaborationHash(JSONValue.encode(element).setting("frame", nil))
+    }
+    return try NotebookStore.completePageReferenceRevision(target: .init(kind: .page, id: id), value: .encode(self))
   }
 }
