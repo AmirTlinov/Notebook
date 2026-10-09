@@ -1,5 +1,35 @@
 import Foundation
 
+#if DEBUG
+/// Counts actual codec work on the synchronous source writer. Observing bytes
+/// borrows the buffer already required by the codec; it never encodes a sample.
+enum NotebookDocumentCodecObservation {
+  enum Phase: String, Sendable { case documentDecode, documentEncode, filesEncode }
+  struct Sample: Sendable {
+    let phase: Phase
+    let encodedBytes: Int
+  }
+  private final class Box {
+    let observer: @Sendable (Sample) -> Void
+    init(_ observer: @escaping @Sendable (Sample) -> Void) { self.observer = observer }
+  }
+  private static let key = "notebook.document-codec.debug-observer"
+  static func withObserver<T>(_ observer: @escaping @Sendable (Sample) -> Void,
+    operation: () throws -> T) rethrows -> T {
+    let thread = Thread.current, previous = thread.threadDictionary[key]
+    thread.threadDictionary[key] = Box(observer)
+    defer {
+      if let previous { thread.threadDictionary[key] = previous }
+      else { thread.threadDictionary.removeObject(forKey: key) }
+    }
+    return try operation()
+  }
+  static var observer: (@Sendable (Sample) -> Void)? {
+    (Thread.current.threadDictionary[key] as? Box)?.observer
+  }
+}
+#endif
+
 public enum JSONValue: Codable, Equatable, Sendable {
   case null
   case bool(Bool)
@@ -40,7 +70,15 @@ public enum JSONValue: Codable, Equatable, Sendable {
   }
 
   public static func encode<T: Encodable>(_ value: T) throws -> JSONValue {
-    try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(value))
+    let data = try JSONEncoder().encode(value)
+    #if DEBUG
+    if T.self == DocumentDocument.self || T.self == [DocumentFile].self,
+      let observer = NotebookDocumentCodecObservation.observer {
+      let phase: NotebookDocumentCodecObservation.Phase = T.self == DocumentDocument.self ? .documentEncode : .filesEncode
+      observer(.init(phase: phase, encodedBytes: data.count))
+    }
+    #endif
+    return try JSONDecoder().decode(JSONValue.self, from: data)
   }
 
   /// Reconstitutes the typed owner and runs that owner's decoding checks.
@@ -48,7 +86,13 @@ public enum JSONValue: Codable, Equatable, Sendable {
     try decode(type,sharing:.init())
   }
   func decode<T: Decodable>(_ type: T.Type, sharing: InkRelationDecoding) throws -> T {
-    try InkRelationDecoding.decoder(sharing:sharing).decode(type, from: JSONEncoder().encode(self))
+    let data = try JSONEncoder().encode(self)
+    #if DEBUG
+    if type == DocumentDocument.self, let observer = NotebookDocumentCodecObservation.observer {
+      observer(.init(phase: .documentDecode, encodedBytes: data.count))
+    }
+    #endif
+    return try InkRelationDecoding.decoder(sharing:sharing).decode(type, from: data)
   }
 
   public var isValid: Bool {

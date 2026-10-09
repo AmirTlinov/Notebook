@@ -65,6 +65,34 @@ final class DocumentFileFixture {
   }
 }
 
+struct NotebookDocumentCodecCounts: Codable, Sendable {
+  struct Work: Codable, Sendable {
+    var passes = 0
+    var encodedBytes: Int64 = 0
+    mutating func record(_ bytes: Int) { passes += 1; encodedBytes += Int64(bytes) }
+  }
+  var documentDecode = Work(), documentEncode = Work(), filesEncode = Work()
+}
+
+#if DEBUG
+final class NotebookDocumentCodecSamples: @unchecked Sendable {
+  private let lock = NSLock()
+  private var counts = NotebookDocumentCodecCounts()
+  func record(_ sample: NotebookDocumentCodecObservation.Sample) {
+    lock.lock(); defer { lock.unlock() }
+    switch sample.phase {
+    case .documentDecode: counts.documentDecode.record(sample.encodedBytes)
+    case .documentEncode: counts.documentEncode.record(sample.encodedBytes)
+    case .filesEncode: counts.filesEncode.record(sample.encodedBytes)
+    }
+  }
+  func snapshot() -> NotebookDocumentCodecCounts {
+    lock.lock(); defer { lock.unlock() }
+    return counts
+  }
+}
+#endif
+
 @Suite("File-backed LaTeX: one writer, exact files and independent programs", .serialized)
 struct DocumentFilesTests {
   private final class SourceBlobCopies {
@@ -118,8 +146,20 @@ struct DocumentFilesTests {
     try f.store.saveDocumentDraft(.init(edit: edit, selectionStart: 2, selectionEnd: 2))
     _ = try f.apply([f.patch(neighbor, to: "Independent")])
     let prepared = try f.prepare(edit)
+    #if DEBUG
+    let codec = NotebookDocumentCodecSamples()
+    let result = try NotebookDocumentCodecObservation.withObserver(codec.record) {
+      try f.store.commitDocumentSource(prepared, actor: f.actor)
+    }
+    let counts = codec.snapshot()
+    // Both source SQL cuts and one action candidate remain. Receipt revision
+    // also decodes its bounded, source-free content header.
+    #expect(counts.documentDecode.passes == 4 && counts.documentDecode.encodedBytes > 0)
+    #else
     let result = try f.store.commitDocumentSource(prepared, actor: f.actor)
+    #endif
     #expect(result.status == .committed && result.publication?.file.source == edit.source)
+    #expect(try f.file("main").sourceVersion == result.publication?.sourceVersion)
     #expect(try f.store.commitDocumentSource(prepared, actor: f.actor) == result)
     let reopened = NotebookStore(root: f.root)
     #expect(try reopened.readDocumentFile(documentID: f.id, fileID: "main")?.file.source == edit.source)

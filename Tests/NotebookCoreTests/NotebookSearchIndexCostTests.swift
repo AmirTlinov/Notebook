@@ -195,12 +195,13 @@ struct NotebookSearchIndexCostTests {
     let sourceBytes: Int, writerHoldMilliseconds: Double, coordinationMilliseconds: Double
     let preparation: Preparation
     let receiptDeliveryVersionPasses: Int?, receiptDeliveryHashInputBytes: Int64?
+    let documentCodec: NotebookDocumentCodecCounts?
     let writerVMSteps: Int64, writerStatements: Int
     let mallocLiveBlocksAtSQLPeak: UInt32, mallocLiveBytesAtSQLPeak: UInt64
     let sqliteBytesAtSQLPeak: Int64, sqliteHighWaterBytes: Int64, databaseCacheBytesAtSQLPeak: Int32, statementBytesAtSQLPeak: Int32
     let before: Memory, after: Memory, processPeakRSSBytes: Int64
     let inkAttemptMilliseconds: Double, inkSaved: Bool, inkFailure: String?, inkWriterHoldMilliseconds: Double?
-    let measurement = "Native document-source Save: immutable search preparation completes before BEGIN IMMEDIATE; the mandatory prepared command then commits source, search index, action and draft receipt together. Writer hold is completed BEGIN to completed COMMIT, including instrumentation and coordinated competing ink attempt. Preparation memory is a terminal live sample; malloc peaks are sampled at SQL PROFILE, not total allocation events. Process RSS high water includes setup. Admission costs are code-derived credits, not observed RSS."
+    let measurement = "Native document-source Save: immutable search preparation completes before BEGIN IMMEDIATE; the mandatory prepared command then commits source, search index, action and draft receipt together. Writer hold is completed BEGIN to completed COMMIT, including instrumentation and coordinated competing ink attempt. Preparation memory is a terminal live sample; malloc peaks are sampled at SQL PROFILE, not total allocation events. Process RSS high water includes setup. Admission costs are code-derived credits, not observed RSS. Debug documentCodec counts actual typed document decode and document/files encode passes; encodedBytes borrow each codec's already required JSONEncoder output, include its escaped envelope and metadata, and perform no measuring encode."
   }
 
   @Test func multilingualOneCharacterEditMeasuresTheActualWriterAndCompetingInk() async throws {
@@ -259,6 +260,7 @@ struct NotebookSearchIndexCostTests {
     }
     #if DEBUG
       let deliveryWork = DeliveryWork(actionID: edit.sessionID)
+      let codecWork = NotebookDocumentCodecSamples()
     #endif
     do {
       let save = {
@@ -267,7 +269,9 @@ struct NotebookSearchIndexCostTests {
         }
       }
       #if DEBUG
-        let result = try NotebookActionDeliveryObservation.withObserver(deliveryWork.record, operation: save)
+        let result = try NotebookDocumentCodecObservation.withObserver(codecWork.record) {
+          try NotebookActionDeliveryObservation.withObserver(deliveryWork.record, operation: save)
+        }
       #else
         let result = try save()
       #endif
@@ -283,14 +287,19 @@ struct NotebookSearchIndexCostTests {
       let delivery = deliveryWork.snapshot()
       #expect(delivery.passes == 1 && delivery.bytes > 0)
       let receiptPasses: Int? = delivery.passes, receiptBytes: Int64? = delivery.bytes
+      let codec = codecWork.snapshot()
+      let documentCodec: NotebookDocumentCodecCounts? = codec
+      #expect(codec.documentDecode.passes > 0 && codec.documentDecode.encodedBytes > 0)
     #else
       let receiptPasses: Int? = nil, receiptBytes: Int64? = nil
+      let documentCodec: NotebookDocumentCodecCounts? = nil
     #endif
     var usage = rusage(); getrusage(RUSAGE_SELF, &usage)
     let result = Result(sourceBytes: count, writerHoldMilliseconds: held,
       coordinationMilliseconds: Double(trace.coordinationNanoseconds) / 1_000_000,
       preparation: preparation,
       receiptDeliveryVersionPasses: receiptPasses, receiptDeliveryHashInputBytes: receiptBytes,
+      documentCodec: documentCodec,
       writerVMSteps: trace.vmSteps, writerStatements: trace.statements,
       mallocLiveBlocksAtSQLPeak: trace.liveBlocksPeak, mallocLiveBytesAtSQLPeak: trace.liveBytesPeak,
       sqliteBytesAtSQLPeak: trace.sqliteBytesPeak, sqliteHighWaterBytes: sqlite3_memory_highwater(0),
