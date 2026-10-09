@@ -483,4 +483,16 @@ The canonical-verified binary and all 1715 source inputs `4d82eb3b…` are uncha
 Recorded writer hold was 504.73 ms with instrumentation; this is attribution,
 not a new latency comparison. The insufficient two-sample attempt and failed
 direct-helper launch remain accounted for in [exact evidence](audit-evidence/2026-10-09/receipt-writer-profile/results.json).
+
+## 2026-10-09: original source digest handoff
+
+The existing local receipt material carries one freshly computed source digest
+through index publication and result freeze. Each consumer binds literal UTF-8
+and address; freeze validates the hash-bound model, and Undo hashes its actual
+restoration. Nine selected functions / 21 cases pass, including poisoned model
+rollback, Unicode, ineligible roots and exact Undo omission limits. One actual
+4 MiB Save plus competing ink passes and observes one source-digest pass over
+4,194,306 encoded bytes. Debug writer hold is 567.57 ms; this single run does not
+establish a latency improvement. Sources remain unchanged across both scopes.
+[Exact outputs and scope](audit-evidence/2026-10-09/source-digest-handoff/results.json).
 NB10, optimized native/device budgets and full104 acceptance remain open.

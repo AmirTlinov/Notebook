@@ -39,13 +39,66 @@ public struct NotebookActionReadModel: Codable, Equatable, Sendable, Identifiabl
     let afterDigest: String?
     let retiredPlacement: Bool
 
-    init(_ field: CollaborationFieldChange) throws {
+    /// A fresh digest of one original document-source field. The source is an
+    /// immutable alias, and literal binding gates reuse at each consumer.
+    struct SourceDigest {
+      private let file: String
+      private let path: [CollaborationPathComponent]
+      private let source: String
+      private let value: String
+
+      private init(_ field: CollaborationFieldChange, source: String, digest: String) {
+        file = field.file; path = field.path; self.source = source; value = digest
+      }
+
+      static func original(_ receipt: CollaborationReceipt) throws -> Self? {
+        guard receipt.undo == nil else { return nil }
+        let sources = receipt.changes.filter { documentSource($0) != nil }
+        guard sources.count == 1, let source = documentSource(sources[0]),
+          let digest = try Field.digest(sources[0].after, file: sources[0].file, path: sources[0].path) else { return nil }
+        return .init(sources[0], source: source, digest: digest)
+      }
+
+      private static func documentSource(_ field: CollaborationFieldChange) -> String? {
+        guard let id = UUID(uuidString: URL(fileURLWithPath: field.file).deletingPathExtension().lastPathComponent),
+          field.file == documentFile(id), field.path.count == 3,
+          field.path[0] == .field("files"), case .member = field.path[1], field.path[2] == .field("source"),
+          case .string(let source) = field.after else { return nil }
+        return source
+      }
+
+      func digest(for changed: CollaborationFieldChange) -> String? {
+        guard DocumentFile.sourcesAreEqual(file, changed.file), path.count == changed.path.count,
+          zip(path, changed.path).allSatisfy({ left, right in
+            switch (left, right) {
+            case (.field(let left), .field(let right)), (.member(let left), .member(let right)):
+              return DocumentFile.sourcesAreEqual(left, right)
+            default: return false
+            }
+          }), case .string(let changedSource) = changed.after,
+          DocumentFile.sourcesAreEqual(source, changedSource) else { return nil }
+        return value
+      }
+    }
+
+    init(_ field: CollaborationFieldChange, sourceDigest: SourceDigest? = nil) throws {
       file = field.file; path = field.path
-      afterDigest = try Self.digest(field.after, file: file, path: path)
+      afterDigest = try sourceDigest?.digest(for: field) ?? Self.digest(field.after, file: file, path: path)
       retiredPlacement = usesRetiredPlacementOwner(field)
     }
     static func digest(_ value: JSONValue?, file: String, path: [CollaborationPathComponent]) throws -> String? {
-      try collaborationComparable(value, file: file, path: path).map(collaborationHash)
+      try collaborationComparable(value, file: file, path: path).map { value in
+        #if DEBUG
+        try collaborationHash(value, observingEncodedBytes: { bytes in
+          if case .string = value, path.count == 3, path[0] == .field("files"),
+            case .member = path[1], path[2] == .field("source"), file.hasPrefix("documents/") {
+            NotebookPublicationCodecObservation.observer?(.init(phase: .documentSourceDigest, encodedBytes: bytes))
+          }
+        })
+        #else
+        try collaborationHash(value)
+        #endif
+      }
     }
   }
 
@@ -75,19 +128,19 @@ public struct NotebookActionReadModel: Codable, Equatable, Sendable, Identifiabl
   }
 
   init(_ root: NotebookReceiptPublication.Root) throws {
-    try self.init(root.receipt, version: notebookActionDeliveryVersion(root.value))
+    try self.init(root.receipt, version: notebookActionDeliveryVersion(root.value), sourceDigest: root.sourceDigest)
   }
 
-  private init(_ receipt: CollaborationReceipt, version: String) throws {
+  private init(_ receipt: CollaborationReceipt, version: String, sourceDigest: Field.SourceDigest? = nil) throws {
     id = receipt.id; actionVersion = version
     action = try .init(summary: receipt.summary, resolvedContextID: receipt.action.resolvedContextID,
       references: receipt.action.references, operations: receipt.action.operations.map(Operation.init))
     author = receipt.author
     createdAt = receipt.createdAt; requestFingerprint = receipt.requestFingerprint
-    revisions = receipt.revisions; changes = try receipt.changes.map(Field.init)
+    revisions = receipt.revisions; changes = try receipt.changes.map { try Field($0, sourceDigest: sourceDigest) }
     lifecycleChanges = receipt.lifecycleChanges
     undo = try receipt.undo.map { try .init(restored: $0.restored, completedAt: $0.completedAt,
-      preserved: $0.preserved.map(Field.init), dependencies:$0.dependencies,
+      preserved: $0.preserved.map { try Field($0) }, dependencies:$0.dependencies,
       preservedLifecycle:$0.preservedLifecycle, lifecycleChanges:$0.lifecycleChanges) }
   }
 

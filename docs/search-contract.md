@@ -73,6 +73,12 @@ literal keys and strings, matching number bits and exactly represented typed
 integers. The index binds to that root's written hash. Incoming or ineligible roots
 retain the same typed validation; no material survives the command.
 
+For one original document-source change, that material also carries the fresh
+field digest. The index and frozen result reuse it only for the same file, path
+and literal UTF-8 source. Freeze still reads the hash-bound SQL model and refuses
+a different indexed digest; the index never supplies the result's digest. Undo
+and unmatched fields compute the digest of their actual written value.
+
 The isolated NB10 probe is `NotebookSearchIndexCostTests` with
 `NOTEBOOK_SEARCH_TRACE_BYTES=1024`, `1048576`, or `4194304`, once per process.
 It traces actual BEGIN IMMEDIATE→COMMIT, VM steps, allocator live memory, SQLite
@@ -80,8 +86,8 @@ memory and a competing accepted ink command. PROFILE tracing preserves the
 progress handler. Sampled live allocation peaks are distinct from total
 allocation events; RSS high water includes fixture setup.
 In Debug, `publicationCodec` counts actual document/receipt decodes and
-document/files/receipt encodes, borrowing required buffers without a measuring
-encode. `NOTEBOOK_SEARCH_TRACE_SQL_MEMORY=0` disables per-statement memory probes
+document/files/receipt encodes and source-digest passes, borrowing required buffers
+without a measuring encode. `NOTEBOOK_SEARCH_TRACE_SQL_MEMORY=0` disables per-statement memory probes
 for latency attribution; unobserved SQL peak fields are omitted. SQL trace/VM
 counts and competing ink remain. Reduced codec work alone does not establish
 lower latency.

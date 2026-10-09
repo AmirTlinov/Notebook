@@ -4,7 +4,7 @@ import Foundation
 /// Counts actual publication codec work on the synchronous writer. Observing bytes
 /// borrows the buffer already required by the codec; it never encodes a sample.
 enum NotebookPublicationCodecObservation {
-  enum Phase: String, Sendable { case documentDecode, documentEncode, filesEncode, receiptDecode, receiptEncode }
+  enum Phase: String, Sendable { case documentDecode, documentEncode, filesEncode, receiptDecode, receiptEncode, documentSourceDigest }
   struct Sample: Sendable {
     let phase: Phase
     let encodedBytes: Int

@@ -1,0 +1,80 @@
+{
+  "format": 1,
+  "date": "2026-10-09",
+  "issue": "GUI-494",
+  "register": [
+    "NB10"
+  ],
+  "baseCommit": "df73dba67c9977acf20ff995ada29fb54fa80fb8",
+  "result": "One fresh original source digest crosses receipt publication, index and frozen result; actual Undo retains its own digest.",
+  "owned": {
+    "Sources/NotebookCore/CollaborationStore.swift": "c8b5ba4edbd48e9f593b997fd744b1386d72cd29f2476292868841e996a58b33",
+    "Sources/NotebookCore/JSONValue.swift": "d96a32a6466d4143fcb911208b34c6c8e06524d0aa4c077e54642641a950ab16",
+    "Sources/NotebookCore/NotebookActionReadModel.swift": "23e1a434078cfcf70135ac54200db4a37165eff416c177d41454f381a709f9ad",
+    "Sources/NotebookCore/NotebookActionResult.swift": "67f226fd961e64464e5d74122777d04f02426771982eb6444a831001bb312990",
+    "Sources/NotebookCore/NotebookReceiptPublication.swift": "56b505e9d342bb09d2a0db64d055c54f0a9869c1c9596482298481b420ef1813",
+    "Tests/NotebookCoreTests/DocumentFilesTests.swift": "5dc3c0c90ac67e000264add3e43ebe4eb4ee8aac2cff18322745abad3a30173a",
+    "Tests/NotebookCoreTests/NotebookReceiptPublicationTests.swift": "459f7d8c4ef7464a25a3ac47ffe7dae5fb1349e4ed3944fa1796a1ab081649d0",
+    "Tests/NotebookCoreTests/NotebookSearchIndexCostTests.swift": "b8da2404a009293e2888953044c6a263bb95cc8a3a000cd29d523603e943532b"
+  },
+  "packageInputs": {
+    "count": 847,
+    "sha256": "2f2beaade7a1e4ab9f6c69497f5e8fa5b381e573aad479b2fd69eff159f304ff",
+    "method": "SHA256 of sorted-key compact JSON of source-before files filtered to Package.swift, Sources/ and Tests/, preserving order and executable bits."
+  },
+  "contract": [
+    "Digest constructed from the original typed field; same file/path and literal UTF-8 source required at both consumers.",
+    "Freeze retains the records.hash-bound SQL model read and refuses a poisoned indexed digest; persisted digest never supplies result evidence.",
+    "Undo and unmatched actual changes compute their own existing digest. Raw, split and lossy-scalar roots keep decoding and refusal semantics.",
+    "Material survives only the synchronous writer; all history, DB30/wire44/manifest26 and installed production pair265 remain unchanged."
+  ],
+  "checks": {
+    "regressions": {
+      "evidence": ".build/gui494-source-digest-regressions-20261009-v2",
+      "functions": 9,
+      "cases": 21,
+      "failures": 0,
+      "skips": 0,
+      "verificationSHA256": "1c7baafd85397b2a96b73cdbfa2d8b7949516e29308d933cdb462fe4d6ffc413",
+      "executionSHA256": "afa49a3aac6ff5d42797230d0c5885a96e25f627a5f1a3586ffaab828b8beca0",
+      "sourceSHA256": "eb3d2f566bbcd9fb8f84c9417c0c241724c6beb7c2fae38cbe4403bd0b70cf37",
+      "sourceCount": 1715,
+      "sourcesUnchanged": true
+    },
+    "actualSave": {
+      "evidence": ".build/gui494-source-digest-save-4194304-20261009-v1/verification",
+      "functions": 1,
+      "cases": 1,
+      "failures": 0,
+      "skips": 0,
+      "verificationSHA256": "dd0e1d1a4907c62959a6325053641d84e2ac458e6d9b7fbf6180f54cb15b939b",
+      "executionSHA256": "0b7daa8e744baccfedbea6d760b161fefa3e7fcf3ee98f2b2b4f0e4b0b0cd403",
+      "sourceSHA256": "eb3d2f566bbcd9fb8f84c9417c0c241724c6beb7c2fae38cbe4403bd0b70cf37",
+      "sourceCount": 1715,
+      "sourcesUnchanged": true
+    }
+  },
+  "actualSave": {
+    "raw": "actual-save.json",
+    "sha256": "4138f3f7ab6458d88501d9cb1d4a3864d72c3529aeb95ef24bd7989a8bf7851d",
+    "sourceBytes": 4194304,
+    "sourceDigest": {
+      "encodedBytes": 4194306,
+      "passes": 1
+    },
+    "writerHoldMilliseconds": 567.571125,
+    "inkAttemptMilliseconds": 674.368125,
+    "inkSaved": true,
+    "sqlMemorySampling": false,
+    "scope": "One Debug actual Save; no latency improvement established and no Release or physical acceptance claimed."
+  },
+  "failedAttempts": [
+    {
+      "evidence": ".build/gui494-source-digest-regressions-20261009-v1",
+      "phase": "Core inventory build",
+      "error": "New tests assigned immutable CollaborationFieldChange fields; fixed by constructing immutable values. Production compiled; no tests executed in that attempt."
+    }
+  ],
+  "physicalAcceptance": false,
+  "remaining": "NB10 writer cost, optimized native/device budgets and full 104-row joint acceptance remain open."
+}

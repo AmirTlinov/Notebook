@@ -55,7 +55,8 @@ extension NotebookStore {
     return "local/action-results/\(id.uuidString.lowercased())/\(version)/"
   }
 
-  func freezeActionResult(_ receipt: CollaborationReceipt, changed: [CollaborationFieldChange]) throws {
+  func freezeActionResult(_ receipt: CollaborationReceipt, changed: [CollaborationFieldChange],
+    publication: NotebookReceiptPublication? = nil) throws {
     guard currentSQL?.writable == true else { throw NotebookStorageError.readOnlyTransaction }
     let refusal = NotebookStorageError.corruptRecord("frozen action model: " + receipt.id.uuidString.lowercased())
     guard let model = try actionReadModelIfPresent(receipt.id),
@@ -64,9 +65,15 @@ extension NotebookStore {
     if try hasStoredValue(prefix + "result.json") { return }
     let basis = NotebookReadBasis(workspaceID: try workspaceHeader().workspaceID, owners: receipt.revisions)
     var values = try changed.map { field -> JSONValue in
+      let freshDigest = receipt.undo == nil ? publication?.sourceDigest?.digest(for: field) : nil
+      if let freshDigest {
+        guard model.changes.contains(where: { $0.file == field.file && $0.path == field.path && $0.afterDigest == freshDigest }) else {
+          throw refusal
+        }
+      }
       var value: [String: JSONValue] = ["file": .string(field.file), "path": try .encode(field.path),
         "change": .string(field.after == nil ? "deleted" : "updated"),
-        "afterDigest": try NotebookActionReadModel.Field.digest(field.after, file: field.file, path: field.path).map(JSONValue.string) ?? .null]
+        "afterDigest": try (freshDigest ?? NotebookActionReadModel.Field.digest(field.after, file: field.file, path: field.path)).map(JSONValue.string) ?? .null]
       if let after = field.after {
         if case .string(let text) = after, text.utf8.count > 2048 {
           value["valueOmitted"] = .bool(true)

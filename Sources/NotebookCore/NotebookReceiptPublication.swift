@@ -5,6 +5,7 @@ import Foundation
 struct NotebookReceiptPublication {
   let receipt: CollaborationReceipt
   let value: JSONValue
+  let sourceDigest: NotebookActionReadModel.Field.SourceDigest?
   private let hasExactTypedScalars: Bool
   var file: String { "collaboration/actions/" + receipt.id.uuidString.lowercased() + ".json" }
 
@@ -12,6 +13,7 @@ struct NotebookReceiptPublication {
     self.receipt = receipt
     value = try .encode(receipt)
     hasExactTypedScalars = Self.hasExactTypedScalars(receipt)
+    sourceDigest = hasExactTypedScalars ? try .original(receipt) : nil
   }
 
   /// A bound view of this same material, created only for an unchanged whole
@@ -21,6 +23,7 @@ struct NotebookReceiptPublication {
     let hash: String
     var receipt: CollaborationReceipt { publication.receipt }
     var value: JSONValue { publication.value }
+    var sourceDigest: NotebookActionReadModel.Field.SourceDigest? { publication.sourceDigest }
     var address: String { publication.file + "#" }
   }
 
