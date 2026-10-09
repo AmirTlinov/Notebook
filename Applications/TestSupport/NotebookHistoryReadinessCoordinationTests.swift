@@ -15,8 +15,15 @@ final class NotebookHistoryReadinessCoordinationTests: XCTestCase {
     let firstSuite = "Notebook.HistoryCoordination.First.\(UUID())", secondSuite = "Notebook.HistoryCoordination.Second.\(UUID())"
     let firstPreferences = try XCTUnwrap(UserDefaults(suiteName: firstSuite))
     let secondPreferences = try XCTUnwrap(UserDefaults(suiteName: secondSuite))
-    let first = NotebookAppModel(store: firstStore, startsNearbySync: false, preferences: firstPreferences, persistenceQueue: firstWriter)
-    let second = NotebookAppModel(store: secondStore, startsNearbySync: false, preferences: secondPreferences, persistenceQueue: secondWriter)
+    let firstOwner = makeHistoryFixtureWorkspace(store: firstStore, preferences: firstPreferences, persistence: firstWriter)
+    let secondOwner = makeHistoryFixtureWorkspace(store: secondStore, preferences: secondPreferences, persistence: secondWriter)
+    let first = firstOwner.workspaceRuntime, second = secondOwner.workspaceRuntime
+    #if os(macOS)
+      XCTAssertTrue(firstOwner is NotebookHeadlessWorkspace)
+      XCTAssertTrue(secondOwner is NotebookHeadlessWorkspace)
+      let physicalOwners = SceneRenderResources.shared.activePhysicalOwnerCount
+      let webSurfaces = SceneRenderResources.shared.activeWebSurfaceCount
+    #endif
     var listener: NWListener?
     var transports: [NearbySync] = []
     var accountServices: [HistoryCoordinationAccountService] = []
@@ -26,7 +33,7 @@ final class NotebookHistoryReadinessCoordinationTests: XCTestCase {
       let firstObserver = Task { await first.historyReadiness.stopAndJoin() }
       let secondObserver = Task { await second.historyReadiness.stopAndJoin() }
       await firstObserver.value; await secondObserver.value
-      let firstStopped = await first.shutdown(), secondStopped = await second.shutdown()
+      let firstStopped = await firstOwner.shutdown(), secondStopped = await secondOwner.shutdown()
       for transport in transports {
         let drained = await transport.stopAndDrain(); XCTAssertTrue(drained)
       }
@@ -39,7 +46,7 @@ final class NotebookHistoryReadinessCoordinationTests: XCTestCase {
     do {
       // Fresh test-only bootstrap follows the existing latency fixture. All
       // observed work below uses these two models' sole Queue/reader adapters.
-      let header = try firstStore.initializeWorkspace(actor: first.actorID, pageSize: NotebookAppModel.defaultPageSize)
+      let header = try firstStore.initializeWorkspace(actor: first.actorID, pageSize: NotebookWorkspaceIdentity.defaultPageSize)
       try secondStore.prepareEmptyWorkspace(workspaceID: header.workspaceID)
       let initialSource = try firstStore.replicationSource(deviceID: first.actorID)
       _ = try secondStore.admitReplicationSource(initialSource)
@@ -58,10 +65,10 @@ final class NotebookHistoryReadinessCoordinationTests: XCTestCase {
         guard complete else { throw NotebookTransportError.invalidBlob }
         _ = try secondStore.applyDelivery(.init(source: initialSource, change: change))
       }
-      await first.start(pageSize: NotebookAppModel.defaultPageSize)
-      await second.start(pageSize: NotebookAppModel.defaultPageSize)
-      await first.finishStartup(); await second.finishStartup()
-      let firstSaved = await first.finishPendingPersistence(), secondSaved = await second.finishPendingPersistence()
+      await firstOwner.start(pageSize: NotebookWorkspaceIdentity.defaultPageSize)
+      await secondOwner.start(pageSize: NotebookWorkspaceIdentity.defaultPageSize)
+      await firstOwner.finishStartup(); await secondOwner.finishStartup()
+      let firstSaved = await firstOwner.finishPendingInteraction(), secondSaved = await secondOwner.finishPendingInteraction()
       XCTAssertTrue(firstSaved); XCTAssertTrue(secondSaved)
       XCTAssertEqual(first.admittedWorkspaceID, header.workspaceID)
       XCTAssertEqual(second.admittedWorkspaceID, header.workspaceID)
@@ -79,43 +86,38 @@ final class NotebookHistoryReadinessCoordinationTests: XCTestCase {
       accountServices = [firstService, secondService]
       let firstTrust = HistoryCoordinationTrust(device: firstDevice, directory: directory)
       let secondTrust = HistoryCoordinationTrust(device: secondDevice, directory: directory)
-      let firstStorage = try await first.makeTransportStorage(), secondStorage = try await second.makeTransportStorage()
+      let firstStorage = try await first.connection.makeTransportStorage(), secondStorage = try await second.connection.makeTransportStorage()
       let firstSync = NearbySync(role: .macListener, identity: firstIdentity, storage: firstStorage,
         stagingRoot: firstStore.root.appendingPathComponent("transfer-staging"), trustStore: firstTrust)
       let secondSync = NearbySync(role: .iPadConnector, identity: secondIdentity, storage: secondStorage,
         stagingRoot: secondStore.root.appendingPathComponent("transfer-staging"), trustStore: secondTrust)
       transports = [firstSync, secondSync]
       var observedSeals: Set<UUID> = [], receivedRoots: [UUID: Int] = [:]
-      func bind(_ model: NotebookAppModel, writer: NotebookPersistenceQueue, sync: NearbySync,
+      func bind(_ runtime: NotebookWorkspaceRuntime, writer: NotebookPersistenceQueue, sync: NearbySync,
         service: HistoryCoordinationAccountService) {
-        // This account fixture seam installs the same model.sync. The callback
-        // wiring below is the production startTrustedSync path, observed only.
-        sync.onHistoryControl = { [weak model] control, peer, generation in
-          guard let model else { return }
-          if case .sealed(let request, let seal) = model.historyReadiness.phase {
+        runtime.connection.startFixture(sync, service: service)
+        // Observe the production callback rather than reimplementing its
+        // readiness/connection fanout in this fixture.
+        let receive = sync.onHistoryControl
+        sync.onHistoryControl = { [weak runtime] control, peer, generation in
+          guard let runtime else { return }
+          if case .sealed(let request, let seal) = runtime.historyReadiness.phase {
             XCTAssertTrue(writer.ownsWorkspaceSelectionSeal(seal))
-            XCTAssertTrue(model.ownsHistoryWriterSeal(request: request, seal: seal))
-            observedSeals.insert(model.actorID)
+            XCTAssertTrue(runtime.ownsHistoryWriterSeal(request: request, seal: seal))
+            observedSeals.insert(runtime.actorID)
           }
-          if case .root = control { receivedRoots[model.actorID, default: 0] += 1 }
-          model.historyReadiness.receive(control, peerID: peer, connectionID: generation, model: model)
+          if case .root = control { receivedRoots[runtime.actorID, default: 0] += 1 }
+          receive?(control, peer, generation)
         }
-        sync.onHistoryProgress = { [weak model] _, peer, generation in
-          model?.historyReadiness.deliveryProgress(peerID: peer, connectionID: generation)
-        }
-        sync.onDisconnect = { [weak model] peer, generation in
-          model?.historyReadiness.deliveryDisconnected(peerID: peer, connectionID: generation)
-        }
-        model.startFixtureAccountConnection(sync, service: service)
       }
       await firstSync.start(); await secondSync.start()
       firstSync.browser?.cancel(); secondSync.browser?.cancel()
       bind(first, writer: firstWriter, sync: firstSync, service: firstService)
       bind(second, writer: secondWriter, sync: secondSync, service: secondService)
       try await waitUntil("Both actual account owners install the directory's same saved credential") {
-        first.accountConnection?.status == .ready && second.accountConnection?.status == .ready
+        first.connection.accountConnection?.status == .ready && second.connection.accountConnection?.status == .ready
       }
-      let firstAccount = try XCTUnwrap(first.accountConnection), secondAccount = try XCTUnwrap(second.accountConnection)
+      let firstAccount = try XCTUnwrap(first.connection.accountConnection), secondAccount = try XCTUnwrap(second.connection.accountConnection)
       let firstCredential = try XCTUnwrap(firstSync.savedTrust.records.first)
       let secondCredential = try XCTUnwrap(secondSync.savedTrust.records.first)
       XCTAssertEqual(firstCredential.credentialID, secondCredential.credentialID)
@@ -144,16 +146,16 @@ final class NotebookHistoryReadinessCoordinationTests: XCTestCase {
       let secondConnection = try XCTUnwrap(secondSync.historyBoundaryObservation(for: first.actorID)).connectionID
       XCTAssertTrue(try first.historyTransportOwner() === firstSync)
       XCTAssertTrue(try second.historyTransportOwner() === secondSync)
-      let firstBorn = await first.createBoard(at: .zero), secondBorn = await second.createBoard(at: .init(x: 500, y: 0))
+      let firstBorn = try await createHistoryFixtureItem(first, kind: .board, at: .zero), secondBorn = try await createHistoryFixtureItem(second, kind: .board, at: .init(x: 500, y: 0))
       let firstItem = try XCTUnwrap(firstBorn), secondItem = try XCTUnwrap(secondBorn)
-      let firstTail = await first.finishPendingPersistence(), secondTail = await second.finishPendingPersistence()
+      let firstTail = await firstOwner.finishPendingInteraction(), secondTail = await secondOwner.finishPendingInteraction()
       XCTAssertTrue(firstTail); XCTAssertTrue(secondTail)
       let firstRead = try await first.observeHistorySource { try $0.replicaInventoryCut() }
       let secondRead = try await second.observeHistorySource { try $0.replicaInventoryCut() }
       secondService.holdNextDirectoryRead()
       let requestID = UUID()
       let queued = try first.historyReadiness.handle(.init(operation: .start, requestID: requestID,
-        deviceIDs: [first.actorID, second.actorID]), model: first)
+        deviceIDs: [first.actorID, second.actorID]), runtime: first)
       XCTAssertEqual(queued["state"]?.stringValue, "queued")
       try await waitUntil("The prepared frame enters the same TLS session while its native directory read is held") {
         secondService.directoryReadIsHeld
@@ -211,16 +213,16 @@ final class NotebookHistoryReadinessCoordinationTests: XCTestCase {
         let itemIDs = Set(try model.store.loadIndex().items.map(\.id))
         XCTAssertTrue(itemIDs.contains(firstItem)); XCTAssertTrue(itemIDs.contains(secondItem))
       }
-      XCTAssertTrue(first.accountConnection === firstAccount); XCTAssertTrue(second.accountConnection === secondAccount)
+      XCTAssertTrue(first.connection.accountConnection === firstAccount); XCTAssertTrue(second.connection.accountConnection === secondAccount)
       XCTAssertEqual(firstSync.savedTrust.records, originalFirstTrust.records)
       XCTAssertEqual(secondSync.savedTrust.records, originalSecondTrust.records)
       XCTAssertEqual(firstSync.savedTrust.account, originalFirstTrust.account)
       XCTAssertEqual(secondSync.savedTrust.account, originalSecondTrust.account)
       XCTAssertEqual(firstSync.historyBoundaryObservation(for: second.actorID)?.connectionID, firstConnection)
       XCTAssertEqual(secondSync.historyBoundaryObservation(for: first.actorID)?.connectionID, secondConnection)
-      let resumedBirth = await first.createBoard(at: .init(x: 1000, y: 0))
+      let resumedBirth = try await createHistoryFixtureItem(first, kind: .board, at: .init(x: 1000, y: 0))
       let resumedItem = try XCTUnwrap(resumedBirth)
-      let resumedSaved = await first.finishPendingPersistence(); XCTAssertTrue(resumedSaved)
+      let resumedSaved = await firstOwner.finishPendingInteraction(); XCTAssertTrue(resumedSaved)
       try await waitUntil("The same resumed TLS owner delivers the next accepted native creation") {
         try second.store.readItemHeader(resumedItem) != nil
       }
@@ -228,6 +230,51 @@ final class NotebookHistoryReadinessCoordinationTests: XCTestCase {
       XCTAssertTrue(try second.historyTransportOwner() === secondSync)
       let attachment = XCTAttachment(data: try JSONEncoder().encode(firstReport), uniformTypeIdentifier: "public.json")
       attachment.name = "history-coordination-metadata-only"; attachment.lifetime = .keepAlways; add(attachment)
+
+      // A storage failure retains one accepted author and its original queue.
+      // Readiness must refuse that unfinished prefix without replacing the
+      // headless reader, trust or selected TLS session; Retry saves that author.
+      let retryEnabled = NotebookPersistenceFenceContract.Signal<Bool>()
+      defer { retryEnabled.set(true); first.retryPendingPersistence() }
+      let originalReader = first.commandReader, originalTransportReader = first.connection.transportReader
+      let retryPlan = try NotebookNativeItemCreation(kind: .board, workspaceID: header.workspaceID,
+        boardID: header.rootBoardID, center: .init(x: 1500, y: 0), actor: first.actorID)
+      let retryCommand = retryPlan.command()
+      let accepted = Task {
+        try await firstWriter.submit(publishesChanges: true) { store in
+          guard retryEnabled.value == true else { throw CocoaError(.fileWriteNoPermission) }
+          return try retryCommand.apply(to: store)
+        }
+      }
+      try await waitUntil("The original accepted writer reports the actual storage fault") { firstWriter.failure != nil }
+      let failedPrefix = await firstWriter.flush(); XCTAssertFalse(failedPrefix)
+      let blockedID = UUID()
+      _ = try first.historyReadiness.handle(.init(operation: .start, requestID: blockedID,
+        deviceIDs: [first.actorID, second.actorID]), runtime: first)
+      try await waitUntil("Readiness refuses the unsaved prefix and releases both original owners") {
+        first.historyReadiness.coordination?.id == blockedID && first.historyReadiness.coordination?.task == nil
+          && second.historyReadiness.coordination?.task == nil
+      }
+      XCTAssertNotNil(first.historyReadiness.coordination?.failure)
+      XCTAssertEqual(first.historyReadiness.phase, .open)
+      XCTAssertTrue(first.persistence === firstWriter)
+      XCTAssertTrue(first.commandReader === originalReader)
+      XCTAssertTrue(first.connection.transportReader === originalTransportReader)
+      XCTAssertTrue(try first.historyTransportOwner() === firstSync)
+      XCTAssertEqual(firstSync.historyBoundaryObservation(for: second.actorID)?.connectionID, firstConnection)
+      retryEnabled.set(true); first.retryPendingPersistence()
+      _ = try await accepted.value
+      let recovered = try await first.observeHistorySource { try $0.replicaInventoryCut() }
+      XCTAssertEqual(recovered.connectionLifetimeID, firstRead.connectionLifetimeID)
+      XCTAssertNotNil(try firstStore.readItemHeader(retryPlan.itemID))
+      try await waitUntil("The same TLS session delivers the retained author after explicit Retry") {
+        try secondStore.readItemHeader(retryPlan.itemID) != nil
+      }
+      XCTAssertEqual(firstSync.historyBoundaryObservation(for: second.actorID)?.connectionID, firstConnection)
+      #if os(macOS)
+        XCTAssertEqual(SceneRenderResources.shared.activePhysicalOwnerCount, physicalOwners)
+        XCTAssertEqual(SceneRenderResources.shared.activeWebSurfaceCount, webSurfaces)
+      #endif
 
       // Damage one actual accepted raw manifest only on the responder, through
       // its sole queue before observation. Prefix/UUID facts remain authentic;
@@ -244,7 +291,7 @@ final class NotebookHistoryReadinessCoordinationTests: XCTestCase {
         return (first.transactionID, first.manifestHash)
       }
       let poisonedTransaction = poisoned.value.0, poisonedHash = poisoned.value.1
-      let originalBytes = try await second.performStoreCommand { store in
+      let originalBytes = try await second.persistence.submit(writesStore: true) { store in
         try Self.replaceFixtureBlob(store: store, hash: poisonedHash, bytes: Data("damaged-history-manifest".utf8))
       }
       // The second directory observation is the actual post-seal fleet read.
@@ -253,7 +300,7 @@ final class NotebookHistoryReadinessCoordinationTests: XCTestCase {
       secondService.holdNextDirectoryRead(after: 1)
       let refusedID = UUID()
       _ = try first.historyReadiness.handle(.init(operation: .start, requestID: refusedID,
-        deviceIDs: [first.actorID, second.actorID]), model: first)
+        deviceIDs: [first.actorID, second.actorID]), runtime: first)
       try await waitUntil("The responder holds its actual sealed fleet read while receiving the initiator's pages") {
         guard secondService.directoryReadIsHeld,
           case .sealed = second.historyReadiness.phase,
@@ -288,7 +335,7 @@ final class NotebookHistoryReadinessCoordinationTests: XCTestCase {
       XCTAssertTrue(try first.historyTransportOwner() === firstSync); XCTAssertTrue(try second.historyTransportOwner() === secondSync)
       XCTAssertEqual(firstSync.historyBoundaryObservation(for: second.actorID)?.connectionID, firstConnection)
       XCTAssertEqual(secondSync.historyBoundaryObservation(for: first.actorID)?.connectionID, secondConnection)
-      _ = try await second.performStoreCommand { store in
+      _ = try await second.persistence.submit(writesStore: true) { store in
         try Self.replaceFixtureBlob(store: store, hash: poisonedHash, bytes: originalBytes)
       }
 
@@ -297,7 +344,7 @@ final class NotebookHistoryReadinessCoordinationTests: XCTestCase {
       secondService.holdNextDirectoryRead()
       let cancelledID = UUID()
       _ = try first.historyReadiness.handle(.init(operation: .start, requestID: cancelledID,
-        deviceIDs: [first.actorID, second.actorID]), model: first)
+        deviceIDs: [first.actorID, second.actorID]), runtime: first)
       try await waitUntil("The second real request reaches the held responder") {
         secondService.directoryReadIsHeld
           && secondSync.historyBoundaryObservation(for: first.actorID)?.peerPrepared?.requestID == cancelledID

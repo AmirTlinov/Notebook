@@ -10,6 +10,7 @@ public final class NotebookScriptCoordinator {
   public typealias Reader = @Sendable (@escaping @Sendable (NotebookQueryCut) throws -> JSONValue) async throws -> JSONValue
   public typealias Persistence = @Sendable (@escaping @Sendable (NotebookStore) throws -> JSONValue) async throws -> JSONValue
   public typealias CanonicalExport = @MainActor (NotebookExportCut, NotebookExportOptions, UUID) async throws -> NotebookExportReceipt
+  let prepareCurrentView: @MainActor () async -> Void
   let canonicalExport: CanonicalExport
   let command: Command
   let reader: Reader
@@ -36,6 +37,13 @@ public final class NotebookScriptCoordinator {
   private var admissions = 0
   private var admissionWaiters: [CheckedContinuation<Void, Never>] = []
 
+  /// A history seal may begin only after this execution owner can no longer
+  /// enqueue an accepted effect, event or terminal receipt.
+  public var hasPendingWorkspaceWork: Bool {
+    admissions > 0 || !waiting.isEmpty || active != nil || runningTask != nil
+      || inFlightEffects > 0 || !effectTasks.isEmpty || exportAdmissions > 0 || !exportTasks.isEmpty
+  }
+
   /// A client attachment, not a run result cache. Registration precedes the
   /// async journal read, so a terminal write cannot fall into a read/wait gap.
   @MainActor final class RunCompletionWaiter {
@@ -59,8 +67,10 @@ public final class NotebookScriptCoordinator {
 
   public init(command: @escaping Command, reader: @escaping Reader, persistence: @escaping Persistence, workingDirectory: URL,
     canonicalExport: @escaping CanonicalExport = { _, _, _ in throw CollaborationError("print_owner_unavailable", "Владелец печатного макета недоступен.") },
+    prepareCurrentView: @escaping @MainActor () async -> Void = {},
     userServiceName: String = NotebookScriptServiceNames.user,
     markupServiceName: String = NotebookScriptServiceNames.markup) {
+    self.prepareCurrentView = prepareCurrentView
     self.canonicalExport = canonicalExport
     self.command = command; self.reader = reader; self.persistence = persistence; self.workingDirectory = workingDirectory
     self.userServiceName = userServiceName; self.markupServiceName = markupServiceName

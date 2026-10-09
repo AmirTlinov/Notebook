@@ -278,10 +278,12 @@ final class DocumentTargetSnapshotPreparationTests: XCTestCase {
         "pressure": String(describing: resources.memoryPressureLevel), "reconciliationSeconds": 3_600]
     }
     do {
-      // AppModel starts the sole real publisher; the exact-root configuration
-      // holds its second serial read, after it has discovered the page source.
+      // Image demand enters the shared workspace service. The exact-root
+      // configuration holds its second read after discovering the page source.
       try await fixture.start(pageSize: size)
-      phase = "automatic-read-and-durable-target-held"
+      let imageRequest = Task { await fixture.model.prepareCurrentView() }
+      defer { imageRequest.cancel() }
+      phase = "requested-read-and-durable-target-held"
       try await waitUntil { reading.entered.value == true && targetContinuation != nil }
       XCTAssertNil(try fixture.store.loadCurrentViewReceipt())
       XCTAssertNil(try fixture.store.loadTargetRenderReceipt(request.id))
@@ -310,8 +312,10 @@ final class DocumentTargetSnapshotPreparationTests: XCTestCase {
       XCTAssertEqual(artifact.path, fixture.store.previewURL(pageID).path)
       XCTAssertNotNil(NSImage(contentsOfFile: artifact.path))
       XCTAssertNil(try fixture.store.loadCurrentViewReceipt(), "The durable target does not revive optional current-view publication")
-      phase = "normal-event-resumes-without-timer"
+      await imageRequest.value
+      phase = "next-request-after-pressure"
       resources.handleMemoryPressure(.normal)
+      await fixture.model.prepareCurrentView()
       try await waitUntil { (try? fixture.store.loadCurrentViewReceipt()) != nil }
       let currentReceipt = try XCTUnwrap(fixture.store.loadCurrentViewReceipt())
       XCTAssertEqual(currentReceipt.presence.notebookPageID, pageID)

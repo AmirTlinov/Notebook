@@ -29,16 +29,16 @@ enum NotebookRuntime {
 
 @MainActor
 final class NotebookRuntimeLifecycle: NSObject, NSApplicationDelegate {
-  let launch: NotebookApplicationLaunch
+  let launch: NotebookWorkspaceLaunch<NotebookHeadlessWorkspace>
   private var launchTask: Task<Void, Never>?
   private var terminationTask: Task<Void, Never>?
   private var terminationSignals: [DispatchSourceSignal] = []
   private let isRunningTests: Bool
 
-  init(launch: NotebookApplicationLaunch? = nil) {
+  init(launch: NotebookWorkspaceLaunch<NotebookHeadlessWorkspace>? = nil) {
     isRunningTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
-    self.launch = launch ?? NotebookAcceptanceConfiguration.requestedLaunch()
-      ?? (isRunningTests ? NotebookApplicationLaunch(fixture: nil) : NotebookApplicationLaunch())
+    self.launch = launch ?? NotebookAcceptanceConfiguration.requestedLaunch(for: NotebookHeadlessWorkspace.self)
+      ?? (isRunningTests ? NotebookWorkspaceLaunch<NotebookHeadlessWorkspace>(fixture: nil) : NotebookWorkspaceLaunch<NotebookHeadlessWorkspace>())
     super.init()
   }
 
@@ -69,7 +69,7 @@ final class NotebookRuntimeLifecycle: NSObject, NSApplicationDelegate {
         Self.requestTermination()
         return
       }
-      await launch.model?.start(pageSize: NotebookAppModel.defaultPageSize)
+      await launch.model?.start(pageSize: NotebookHeadlessWorkspace.defaultPageSize)
     }
   }
 

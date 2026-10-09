@@ -76,11 +76,16 @@ struct NotebookAcceptanceConfiguration: Codable, Equatable, Sendable {
 
   @MainActor static func requestedLaunch(environment: [String: String] = ProcessInfo.processInfo.environment,
     bundle: Bundle = .main) -> NotebookApplicationLaunch? {
+    requestedLaunch(for: NotebookAppModel.self, environment: environment, bundle: bundle)
+  }
+
+  @MainActor static func requestedLaunch<Owner: NotebookWorkspaceLifecycle>(for owner: Owner.Type, environment: [String: String] = ProcessInfo.processInfo.environment,
+    bundle: Bundle = .main) -> NotebookWorkspaceLaunch<Owner>? {
     let enabled = (bundle.object(forInfoDictionaryKey: "NotebookAcceptanceEnabled") as? Bool) == true
       || (bundle.object(forInfoDictionaryKey: "NotebookAcceptanceEnabled") as? String) == "YES"
     guard let path = environment[environmentKey] else {
       return requiresManifest(bundleID: bundle.bundleIdentifier, enabled: enabled)
-        ? NotebookApplicationLaunch(failure: "Для изолированного стенда требуется конфигурация запуска.") : nil
+        ? NotebookWorkspaceLaunch<Owner>(failure: "Для изолированного стенда требуется конфигурация запуска.") : nil
     }
     do {
       let manifest = try Self.manifestURL(path)
@@ -94,7 +99,7 @@ struct NotebookAcceptanceConfiguration: Codable, Equatable, Sendable {
       #else
         guard config.role == .iPad else { throw NotebookStorageError.invalidTransaction("acceptance role mismatch") }
       #endif
-      return NotebookApplicationLaunch(root: config.rootURL) { store, _ in
+      return NotebookWorkspaceLaunch<Owner>(root: config.rootURL) { store, _ in
         guard try store.workspaceHeader().workspaceID == config.workspaceID,
           let defaults = UserDefaults(suiteName: config.defaultsSuite) else {
           throw NotebookStorageError.invalidTransaction("acceptance checkpoint identity mismatch")
@@ -104,12 +109,14 @@ struct NotebookAcceptanceConfiguration: Codable, Equatable, Sendable {
           throw NotebookStorageError.invalidTransaction("acceptance actor identity changed")
         }
         defaults.set(config.actorID.uuidString, forKey: key)
-        return NotebookAppModel(store: store, startsNearbySync: true,
-          commandSocketURL: config.socket.map { URL(fileURLWithPath: $0) },
-          preferences: defaults, pairingService: config.keychainService, acceptance: config)
+        return Owner.open(.init(store: store, persistence: NotebookPersistenceQueue(store: store),
+          commandSocketURL: config.socket.map { URL(fileURLWithPath: $0) }, allowsCodexRegistration: false,
+          pairingActivationID: nil, opensDefaultAccountWorkspace: false, requiresExistingAccountContent: false,
+          expectedWorkspaceID: config.workspaceID, preferences: defaults, pairingService: config.keychainService,
+          acceptance: config))
       }
     } catch {
-      return NotebookApplicationLaunch(failure: "Изолированный стенд не запущен: \(error.localizedDescription)")
+      return NotebookWorkspaceLaunch<Owner>(failure: "Изолированный стенд не запущен: \(error.localizedDescription)")
     }
   }
 

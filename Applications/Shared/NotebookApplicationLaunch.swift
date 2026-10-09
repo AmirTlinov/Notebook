@@ -5,11 +5,13 @@ import NotebookCore
 import Observation
 import OSLog
 
+typealias NotebookApplicationLaunch = NotebookWorkspaceLaunch<NotebookAppModel>
+
 /// The application cannot construct a store-owning model before archive
 /// activation. Fixtures inject their own model and never inspect production.
 @MainActor @Observable
-final class NotebookApplicationLaunch {
-  private(set) var model: NotebookAppModel?
+final class NotebookWorkspaceLaunch<Owner: NotebookWorkspaceLifecycle> {
+  private(set) var model: Owner?
   private(set) var activation: NotebookArchiveLaunch = .unchanged
   private(set) var failure: String?
   private(set) var isChecking = false
@@ -21,6 +23,11 @@ final class NotebookApplicationLaunch {
   private(set) var catalogAccount: String?
   private(set) var hasNoWorkspace = false
   private var readingCatalog = false
+  private struct PeerRetirementRequest: Decodable, Sendable {
+    let peerID: UUID
+    let workspaceID: UUID
+    let expectedCursor: UInt64
+  }
   private struct WorkspaceRetirement {
     let revision: String?
     let isCurrent: @MainActor @Sendable () -> Bool
@@ -40,19 +47,19 @@ final class NotebookApplicationLaunch {
       case opening
       case selecting(NotebookWorkspaceLibrary.SelectionTicket)
       case publishing
-      case retiring(NotebookAppModel, discardCandidate: Bool)
+      case retiring(Owner, discardCandidate: Bool)
     }
     let id: UUID
-    let model: NotebookAppModel
-    let previous: NotebookAppModel?
-    let transition: NotebookAppModel.AutomaticWorkspaceTransition?
+    let model: Owner
+    let previous: Owner?
+    let transition: NotebookWorkspaceTransition?
     let creating: Bool
     let wasRetained: Bool
     let task: Task<Void, Never>
     var manualSeal: UUID?
     var stage: Stage = .opening
 
-    var retirementOwner: NotebookAppModel? {
+    var retirementOwner: Owner? {
       if case .retiring(let owner, _) = stage { owner } else { nil }
     }
   }
@@ -62,7 +69,7 @@ final class NotebookApplicationLaunch {
 
   /// Every lifecycle operation visits the same retained model owners, even
   /// before a candidate is selected or after its source starts retirement.
-  private var ownedWorkspaceModels: [NotebookAppModel] {
+  private var ownedWorkspaceModels: [Owner] {
     var owners = model.map { [$0] } ?? []
     #if os(macOS)
       owners.append(contentsOf: retainedModels.values)
@@ -78,19 +85,19 @@ final class NotebookApplicationLaunch {
   #if os(macOS)
     private let workspaceWriters = NotebookWorkspaceWriters()
     @ObservationIgnored private(set) lazy var codexHost = NotebookCodexHost(workspaceWriters: workspaceWriters)
-    private var retainedModels: [UUID: NotebookAppModel] = [:]
+    private var retainedModels: [UUID: Owner] = [:]
     private var defaultCommandServer: NotebookIPCServer?
     private(set) var existingRuntimeSocketURL: URL?
     private var archiveAdmitted = false
     private var runtimeIsStopping = false
     private var runtimeNeedsRecovery = false
     private final class WorkspaceDrain {
-      var models: [NotebookAppModel]
+      var models: [Owner]
       var task: Task<Void, Never>?
-      init(models: [NotebookAppModel]) { self.models = models }
+      init(models: [Owner]) { self.models = models }
     }
     @ObservationIgnored private var workspaceDrain: WorkspaceDrain?
-    private var recoveryWorkspaceModels: [NotebookAppModel] {
+    private var recoveryWorkspaceModels: [Owner] {
       var seen = Set<ObjectIdentifier>()
       // Retirement can remove a candidate from the live registry before its
       // host's published FileWork reports a storage failure. Retry still owns
@@ -105,7 +112,7 @@ final class NotebookApplicationLaunch {
 
   private let root: URL
   private let target: NotebookArchiveTarget?
-  private let makeModel: ((NotebookStore, UUID?) throws -> NotebookAppModel)?
+  private let makeModel: ((NotebookStore, UUID?) throws -> Owner)?
   private let isFixture: Bool
   private let arguments: [String]
   private enum SwitchCancellation: Error { case acceptedLocalWork }
@@ -114,7 +121,7 @@ final class NotebookApplicationLaunch {
     arguments: [String] = ProcessInfo.processInfo.arguments,
     runtimeSocketURL: URL? = nil,
     libraryOwner: NotebookWorkspaceLibrary? = nil,
-    makeModel: ((NotebookStore, UUID?) throws -> NotebookAppModel)? = nil) {
+    makeModel: ((NotebookStore, UUID?) throws -> Owner)? = nil) {
     self.root = root; self.target = target; self.makeModel = makeModel; isFixture = false
     library = libraryOwner ?? .init(originalRoot: root)
     self.arguments = arguments
@@ -127,7 +134,7 @@ final class NotebookApplicationLaunch {
     #endif
   }
 
-  init(fixture model: NotebookAppModel?) {
+  init(fixture model: Owner?) {
     self.model = model; root = URL(fileURLWithPath: "/unused-notebook-fixture")
     library = .init(originalRoot: root)
     target = nil; makeModel = nil; isFixture = true; arguments = []
@@ -230,7 +237,7 @@ final class NotebookApplicationLaunch {
   }
 
   private var workspaceAuthoredAdmissionError: CollaborationError? {
-    ownedWorkspaceModels.lazy.compactMap { $0.historyReadiness.authoredAdmissionError }.first
+    ownedWorkspaceModels.lazy.compactMap { $0.workspaceRuntime.historyReadiness.authoredAdmissionError }.first
   }
 
   private func requireWorkspaceAuthoredAdmission() throws {
@@ -274,7 +281,7 @@ final class NotebookApplicationLaunch {
         }
         workspaceError = nil
         var error: String?
-        var selectedModel: NotebookAppModel?
+        var selectedModel: Owner?
         do {
           switch request.action {
           case .list: await refreshWorkspaces()
@@ -342,7 +349,7 @@ final class NotebookApplicationLaunch {
       }
     }
 
-    private func workspaceModel(_ id: UUID) -> NotebookAppModel? {
+    private func workspaceModel(_ id: UUID) -> Owner? {
       if workspaceOpening?.id == id { return workspaceOpening?.model }
       if model?.admittedWorkspaceID == id { return model }
       return retainedModels[id]
@@ -353,7 +360,7 @@ final class NotebookApplicationLaunch {
         ?? workspaceWriters.persistenceQueues.lazy.compactMap(\.failure).first
     }
 
-    private func runtimeStatus(model observedModel: NotebookAppModel? = nil) -> NotebookRuntimeBootstrapStatus {
+    private func runtimeStatus(model observedModel: Owner? = nil) -> NotebookRuntimeBootstrapStatus {
       let model = observedModel ?? self.model
       let state: NotebookRuntimeBootstrapStatus.State
       let detail: String?
@@ -425,7 +432,7 @@ final class NotebookApplicationLaunch {
       }
       failure = nil
       await start()
-      await model?.start(pageSize: NotebookAppModel.defaultPageSize)
+      await model?.start(pageSize: Owner.defaultPageSize)
       if hasNoWorkspace { await refreshWorkspaces() }
     }
 
@@ -571,22 +578,21 @@ final class NotebookApplicationLaunch {
   private func retireRequestedPeer() async throws {
     let flag = "--notebook-retire-peer"
     guard let index = arguments.firstIndex(of: flag) else { return }
-    struct Request: Decodable { let peerID: UUID; let workspaceID: UUID; let expectedCursor: UInt64 }
     guard arguments.filter({ $0 == flag }).count == 1, index + 1 < arguments.count,
       arguments[index + 1].utf8.count <= 1024 else { throw NotebookStorageError.invalidTransaction("peer retirement request") }
-    let request = try JSONDecoder().decode(Request.self, from: Data(arguments[index + 1].utf8))
+    let request = try JSONDecoder().decode(PeerRetirementRequest.self, from: Data(arguments[index + 1].utf8))
     let snapshot = try await library.snapshot(), catalog = snapshot.catalog
     guard catalog.selectedID == request.workspaceID, !catalog.deleting.contains(request.workspaceID),
       catalog.pendingCloudDeletion[request.workspaceID] == nil else { throw NotebookStorageError.transactionConflict }
     guard let location = snapshot.roots[request.workspaceID] else { throw NotebookStoreError.workspaceChanged }
-    try await Task.detached {
+    _ = try await Task.detached {
       try NotebookStore(root: location).retireReplicationPeer(request.peerID,
         workspaceID: request.workspaceID, expectedCursor: request.expectedCursor)
     }.value
   }
 
   private func makeWorkspaceModel(store: NotebookStore, opensDefaultAccountWorkspace: Bool = false,
-    requiresExistingAccountContent: Bool = false, expectedWorkspaceID: UUID? = nil) throws -> NotebookAppModel {
+    requiresExistingAccountContent: Bool = false, expectedWorkspaceID: UUID? = nil) throws -> Owner {
     if let makeModel {
       let model = try makeModel(store, pairingActivationID)
       if let expectedWorkspaceID { try model.admitWorkspaceIdentity(expectedWorkspaceID) }
@@ -594,23 +600,17 @@ final class NotebookApplicationLaunch {
       return model
     }
     #if os(macOS)
-      let writer: NotebookPersistenceQueue? = workspaceWriters.persistence(for: store)
+      let writer = workspaceWriters.persistence(for: store)
       let socketID = SHA256.hash(data: Data(store.root.standardizedFileURL.path.utf8)).prefix(12).map { String(format: "%02x", $0) }.joined()
       let socket = NotebookIPC.defaultSocketURL.deletingLastPathComponent().appendingPathComponent(socketID + ".sock")
     #else
       let writer = NotebookPersistenceQueue(store: store, acceptedWitnessLease: runtimeLease)
+      let socket: URL? = nil
     #endif
-    #if os(macOS)
-      let model = NotebookAppModel(store: store, commandSocketURL: socket, allowsCodexRegistration: allowsCodexRegistration,
-        pairingActivationID: pairingActivationID, opensDefaultAccountWorkspace: opensDefaultAccountWorkspace,
-        requiresExistingAccountContent: requiresExistingAccountContent, expectedWorkspaceID: expectedWorkspaceID,
-        persistenceQueue: writer)
-    #else
-    let model = NotebookAppModel(store: store, allowsCodexRegistration: allowsCodexRegistration,
-      pairingActivationID: pairingActivationID, opensDefaultAccountWorkspace: opensDefaultAccountWorkspace,
-      requiresExistingAccountContent: requiresExistingAccountContent, expectedWorkspaceID: expectedWorkspaceID,
-      persistenceQueue: writer)
-    #endif
+    let model = Owner.open(.init(store: store, persistence: writer, commandSocketURL: socket,
+      allowsCodexRegistration: allowsCodexRegistration, pairingActivationID: pairingActivationID,
+      opensDefaultAccountWorkspace: opensDefaultAccountWorkspace,
+      requiresExistingAccountContent: requiresExistingAccountContent, expectedWorkspaceID: expectedWorkspaceID))
     #if os(macOS)
       model.codexHost = codexHost
     #endif
@@ -638,7 +638,7 @@ final class NotebookApplicationLaunch {
     return true
   }
 
-  private func drainWorkspaceModels(_ owners: [NotebookAppModel]) async -> Bool {
+  private func drainWorkspaceModels(_ owners: [Owner]) async -> Bool {
     if case .selecting = workspaceOpening?.stage {
       _ = await finishCatalogSelection()
       if case .selecting = workspaceOpening?.stage { return false }
@@ -650,8 +650,8 @@ final class NotebookApplicationLaunch {
     return await finishRetiringWorkspace()
   }
 
-  private func bindHistoryReadinessLifecycle(_ model: NotebookAppModel) {
-    model.historyReadinessLifecycleIsBusy = { [weak self, weak model] in
+  private func bindHistoryReadinessLifecycle(_ model: Owner) {
+    model.workspaceRuntime.historyReadinessLifecycleIsBusy = { [weak self, weak model] in
       guard let self, let model, !self.isChecking, !self.readingCatalog, self.workspaceOpening == nil,
         self.ownedWorkspaceModels.contains(where: { $0 === model }) else { return true }
       #if os(macOS)
@@ -665,7 +665,7 @@ final class NotebookApplicationLaunch {
   private func installWorkspaceSelection() {
     guard let model else { return }
     bindHistoryReadinessLifecycle(model)
-    model.openWorkspaceLibrary = { [weak self] tab in self?.workspaceTab = tab; self?.showsWorkspaces = true }
+    (model as? NotebookAppModel)?.openWorkspaceLibrary = { [weak self] tab in self?.workspaceTab = tab; self?.showsWorkspaces = true }
     guard !isFixture else { return }
     if let id = model.admittedWorkspaceID, let entry = librarySnapshot?.catalog.entries.first(where: { $0.id == id }) {
       model.workspaceName = entry.name
@@ -724,7 +724,7 @@ final class NotebookApplicationLaunch {
     if let error = workspaceAuthoredAdmissionError { workspaceError = error.localizedDescription; return }
     let previous = model
     isChecking = true; catalogGeneration = UUID()
-    var transition: NotebookAppModel.AutomaticWorkspaceTransition?
+    var transition: NotebookWorkspaceTransition?
     var openingOwnsTransition = false
     defer {
       if !openingOwnsTransition, let transition { previous?.rollbackAutomaticWorkspaceSwitch(transition) }
@@ -782,7 +782,7 @@ final class NotebookApplicationLaunch {
       let task = Task { [self] in
         do {
           try requireWorkspaceAuthoredAdmission()
-          await next.start(pageSize: NotebookAppModel.defaultPageSize)
+          await next.start(pageSize: Owner.defaultPageSize)
           await next.finishStartup()
           try requireWorkspaceAuthoredAdmission()
           guard next.loadState == .ready || next.awaitingAccountContent else { throw NotebookTransportError.storageUnavailable }
@@ -833,7 +833,7 @@ final class NotebookApplicationLaunch {
     }
   }
 
-  private func clearWorkspaceOpening(_ candidate: NotebookAppModel) {
+  private func clearWorkspaceOpening(_ candidate: Owner) {
     guard workspaceOpening?.model === candidate else { return }
     workspaceOpening = nil
   }

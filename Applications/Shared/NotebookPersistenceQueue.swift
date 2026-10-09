@@ -8,14 +8,14 @@ final class NotebookPersistenceQueue {
   enum Owner: Hashable {
     case fileDraft(String), fileWindow(UUID?), chatPanel(UUID?), runCommand(String)
     case fileObservation(String), fileSubmission(UUID), chatDraft(UUID?), chatSubmission(UUID)
-    case fileReceipt(String)
+    case fileReceipt(String), deliveryReceipt
     case page(UUID), pageInk(UUID), document(UUID), documentState(UUID), documentDraft(UUID), documentReading(UUID)
     case board, spatialInk(UUID), presence, peerPresence(UUID), inputActivity(UUID)
     case elementState(UUID, String)
     case peerSession(UUID), command(NotebookCommand.Kind)
 
     var isOrderingFence: Bool {
-      switch self { case .peerSession, .command: true; default: false }
+      switch self { case .peerSession, .command, .deliveryReceipt: true; default: false }
     }
 
     var writesStore: Bool {
@@ -25,7 +25,7 @@ final class NotebookPersistenceQueue {
 
     var publishesDurableChanges: Bool {
       switch self {
-      case .page, .pageInk, .document, .documentState, .board, .spatialInk, .elementState, .fileReceipt: true
+      case .page, .pageInk, .document, .documentState, .board, .spatialInk, .elementState, .fileReceipt, .deliveryReceipt: true
       case .presence, .peerPresence, .inputActivity, .documentDraft, .documentReading,
         .fileDraft, .fileWindow, .fileObservation, .fileSubmission, .chatDraft, .chatSubmission,
         .chatPanel, .runCommand, .peerSession: false
@@ -42,7 +42,7 @@ final class NotebookPersistenceQueue {
     }
 
     var admitsAuthoredWork: Bool {
-      if case .fileReceipt = self { return false }
+      switch self { case .fileReceipt, .deliveryReceipt: return false; default: break }
       if publishesDurableChanges { return true }
       switch self {
       case .documentDraft, .fileDraft, .fileSubmission, .chatDraft, .chatSubmission: return true

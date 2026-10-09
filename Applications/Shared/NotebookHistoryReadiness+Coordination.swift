@@ -176,7 +176,7 @@ extension NotebookHistoryReadiness {
     }
   }
 
-  func handle(_ input: NotebookHistoryReadinessRequest, model: NotebookAppModel) throws -> JSONValue {
+  func handle(_ input: NotebookHistoryReadinessRequest, runtime: NotebookWorkspaceRuntime) throws -> JSONValue {
     try input.validate()
     if let current = coordination, current.id == input.requestID {
       if input.operation == .start, Set(input.deviceIDs ?? []) != current.devices {
@@ -190,22 +190,22 @@ extension NotebookHistoryReadiness {
     }
     guard phase == .open, coordination?.task == nil else { throw NotebookTransportError.historyReadinessPending }
     let current = Coordination(id: input.requestID, devices: Set(input.deviceIDs!), initiatedHere: true,
-      localDeviceID: model.actorID)
+      localDeviceID: runtime.actorID)
     coordination = current
-    launch(current, model: model)
+    launch(current, runtime: runtime)
     return current.value()
   }
 
   func receive(_ control: NotebookHistoryControl, peerID: UUID, connectionID: UUID,
-    model: NotebookAppModel) {
+    runtime: NotebookWorkspaceRuntime) {
     do {
       try control.validate()
       if case .prepare(let preparation) = control, coordination?.id != preparation.requestID {
         guard phase == .open, coordination?.task == nil,
-          preparation.endpoint(for: model.actorID) != nil, preparation.endpoint(for: peerID) != nil else {
+          preparation.endpoint(for: runtime.actorID) != nil, preparation.endpoint(for: peerID) != nil else {
           throw NotebookTransportError.historyReadinessPending
         }
-        let sync = try model.historyTransportOwner()
+        let sync = try runtime.historyTransportOwner()
         guard sync.historyBoundaryObservation(for: peerID)?.connectionID == connectionID else {
           throw NotebookTransportError.historyCutStale
         }
@@ -214,9 +214,9 @@ extension NotebookHistoryReadiness {
         try sync.admitHistoryPreparation(preparation)
         let current = Coordination(id: preparation.requestID,
           devices: Set(preparation.endpoints.map { $0.identity.deviceID }), initiatedHere: false,
-          localDeviceID: model.actorID)
+          localDeviceID: runtime.actorID)
         current.preparation = preparation; current.connectionID = connectionID
-        coordination = current; launch(current, model: model)
+        coordination = current; launch(current, runtime: runtime)
         return
       }
       guard let current = coordination, current.id == control.requestID, current.task != nil,
@@ -305,14 +305,14 @@ extension NotebookHistoryReadiness {
     await task?.value
   }
 
-  private func launch(_ current: Coordination, model: NotebookAppModel) {
-    current.task = Task { @MainActor [self, model] in
-      do { try await run(current, model: model) }
+  private func launch(_ current: Coordination, runtime: NotebookWorkspaceRuntime) {
+    current.task = Task { @MainActor [self, runtime] in
+      do { try await run(current, runtime: runtime) }
       catch { current.recordFailure(error) }
       current.state = "resuming"
       current.stage = .resuming
       // Cancellation closes this observer, not any already accepted writer.
-      let cleanup = Task { @MainActor in await self.resume(current, model: model) }
+      let cleanup = Task { @MainActor in await self.resume(current, runtime: runtime) }
       await cleanup.value
       current.deadline?.cancel(); current.deadline = nil
       current.state = current.failure is CancellationError ? "cancelled" : current.failure == nil ? "completed" : "failed"
@@ -326,11 +326,11 @@ extension NotebookHistoryReadiness {
     }
   }
 
-  private func run(_ current: Coordination, model: NotebookAppModel) async throws {
-    let sync = try model.historyTransportOwner()
-    let fleet = try await model.observeHistoryFleet()
-    guard current.devices.count == 2, current.devices.contains(model.actorID),
-      let peerID = current.devices.first(where: { $0 != model.actorID }),
+  private func run(_ current: Coordination, runtime: NotebookWorkspaceRuntime) async throws {
+    let sync = try runtime.historyTransportOwner()
+    let fleet = try await runtime.observeHistoryFleet()
+    guard current.devices.count == 2, current.devices.contains(runtime.actorID),
+      let peerID = current.devices.first(where: { $0 != runtime.actorID }),
       let connection = fleet.connections.first(where: { $0.selected && $0.ready && $0.peer?.deviceID == peerID }),
       let peer = connection.peer, let credential = connection.credentialID,
       let localGeneration = connection.localJournalGeneration,
@@ -351,9 +351,9 @@ extension NotebookHistoryReadiness {
     if current.initiatedHere { try sync.proposeHistoryPreparation(preparation) }
     current.state = "draining"
     current.stage = .draining
-    current.request = try await model.beginHistoryReadiness(preparation)
+    current.request = try await runtime.beginHistoryReadiness(preparation)
     current.stage = .negotiating
-    let scope = try await negotiate(current, model: model, sync: sync, peerID: peerID)
+    let scope = try await negotiate(current, runtime: runtime, sync: sync, peerID: peerID)
     current.scope = scope
     let remoteSource = NotebookReplicationSource(deviceID: peerID, generation: remoteGeneration)
     for stream in NotebookHistoryStreamAccumulator.streams {
@@ -365,11 +365,11 @@ extension NotebookHistoryReadiness {
     try await sync.quiesceHistoryControl(scope)
     guard let request = current.request else { throw NotebookTransportError.historyCutStale }
     current.stage = .sealing
-    let seal = try await model.sealHistoryWriter(request: request, scope: scope)
-    let fleetWitness = try await model.captureHistoryFleet()
+    let seal = try await runtime.sealHistoryWriter(request: request, scope: scope)
+    let fleetWitness = try await runtime.captureHistoryFleet()
     current.state = "reading"
     current.stage = .reading
-    let source = try await produceSource(model: model, request: request, scope: scope,
+    let source = try await produceSource(runtime: runtime, request: request, scope: scope,
       fleetWitness: fleetWitness) { page in
         try await sync.sendHistoryControlAwaitingCredit(.page(page), scope: scope)
       }
@@ -386,7 +386,7 @@ extension NotebookHistoryReadiness {
       try await current.wait(after: progress)
     }
     try requireSourceCoordinationCurrent(requestID: request.id)
-    guard model.ownsHistoryWriterSeal(request: request, seal: seal) else {
+    guard runtime.ownsHistoryWriterSeal(request: request, seal: seal) else {
       current.recordFailure(NotebookTransportError.historyCutStale, reason: .writerSealChanged)
       throw NotebookTransportError.historyCutStale
     }
@@ -395,7 +395,7 @@ extension NotebookHistoryReadiness {
       throw NotebookTransportError.historyCutStale
     }
     try fleetWitness.requireCurrent()
-    let final = try await model.observeHistorySource { try $0.replicaInventoryCut() }
+    let final = try await runtime.observeHistorySource { try $0.replicaInventoryCut() }
     try requireSourceCoordinationCurrent(requestID: request.id)
     try fleetWitness.requireCurrent()
     guard let finalBoundary = sync.historyBoundaryObservation(for: peerID),
@@ -411,7 +411,7 @@ extension NotebookHistoryReadiness {
       current.recordFailure(NotebookTransportError.historyCutStale, reason: .controlChanged)
       throw NotebookTransportError.historyCutStale
     }
-    guard model.ownsHistoryWriterSeal(request: request, seal: seal) else {
+    guard runtime.ownsHistoryWriterSeal(request: request, seal: seal) else {
       current.recordFailure(NotebookTransportError.historyCutStale, reason: .writerSealChanged)
       throw NotebookTransportError.historyCutStale
     }
@@ -444,20 +444,20 @@ extension NotebookHistoryReadiness {
       "formatTransitionAuthorized": .bool(false), "roots": .array(reportRoots)])
   }
 
-  private func negotiate(_ current: Coordination, model: NotebookAppModel, sync: NearbySync,
+  private func negotiate(_ current: Coordination, runtime: NotebookWorkspaceRuntime, sync: NearbySync,
     peerID: UUID) async throws -> NotebookHistoryControlScope {
     guard let preparation = current.preparation else { throw NotebookTransportError.historyCutStale }
     while true {
       let progress = current.progressGeneration
       try Task.checkCancellation()
       if let failure = current.failure { throw failure }
-      let source = try await model.observeHistorySource { try $0.replicaInventoryCut() }
+      let source = try await runtime.observeHistorySource { try $0.replicaInventoryCut() }
       guard source.value.workspaceID == preparation.workspaceID,
-        source.value.journalGeneration == preparation.endpoint(for: model.actorID)?.journalGeneration else {
+        source.value.journalGeneration == preparation.endpoint(for: runtime.actorID)?.journalGeneration else {
         throw NotebookTransportError.historyCutStale
       }
       let prepared = NotebookHistoryControl.Prepared(requestID: current.id, workspaceID: preparation.workspaceID,
-        source: .init(deviceID: model.actorID, generation: source.value.journalGeneration!),
+        source: .init(deviceID: runtime.actorID, generation: source.value.journalGeneration!),
         head: source.value.acceptedLocalPrefix, readRevision: source.value.readRevision)
       guard let boundary = sync.historyBoundaryObservation(for: peerID), boundary.connectionID == current.connectionID else {
         throw NotebookTransportError.historyCutStale
@@ -469,7 +469,7 @@ extension NotebookHistoryReadiness {
         let scope = NotebookHistoryControlScope(requestID: current.id, workspaceID: preparation.workspaceID,
           credentialID: preparation.credentialID, applicationBuild: preparation.applicationBuild,
           endpoints: preparation.endpoints.map { .init(identity: $0.identity, journalGeneration: $0.journalGeneration,
-            head: $0.identity.deviceID == model.actorID ? prepared.head : remote.head) })
+            head: $0.identity.deviceID == runtime.actorID ? prepared.head : remote.head) })
         if current.initiatedHere {
           try sync.proposeHistoryControl(scope)
           return scope
@@ -480,25 +480,25 @@ extension NotebookHistoryReadiness {
     }
   }
 
-  private func resume(_ current: Coordination, model: NotebookAppModel) async {
+  private func resume(_ current: Coordination, runtime: NotebookWorkspaceRuntime) async {
     let request: Request?
     switch phase {
     case .draining(let value), .sealed(let value, _), .resuming(let value): request = value.id == current.id ? value : nil
     case .open: request = nil
     }
     do {
-      let sync = try model.historyTransportOwner()
+      let sync = try runtime.historyTransportOwner(resuming: current.id)
       if let scope = current.scope, let request {
-        if case .sealed = phase { try model.releaseHistoryWriter(request: request) }
+        if case .sealed = phase { try runtime.releaseHistoryWriter(request: request) }
         let refusal: NotebookHistoryControl.Refusal?
-        if let first = current.firstCause, first.originDeviceID == model.actorID,
-          let endpoint = scope.endpoint(for: model.actorID) {
-          refusal = first.wire(origin: .init(deviceID: model.actorID, generation: endpoint.journalGeneration))
+        if let first = current.firstCause, first.originDeviceID == runtime.actorID,
+          let endpoint = scope.endpoint(for: runtime.actorID) {
+          refusal = first.wire(origin: .init(deviceID: runtime.actorID, generation: endpoint.journalGeneration))
         } else { refusal = nil }
         do { try await sync.resumeHistoryControl(scope, refusal: refusal) }
         catch {
           guard await sync.stopAndDrain() else { throw error }
-          await sync.start()
+          if runtime.permitsExternalWork { await sync.start() }
           throw error
         }
       } else if let preparation = current.preparation {
@@ -506,8 +506,8 @@ extension NotebookHistoryReadiness {
       }
     } catch { current.recordFailure(error) }
     do {
-      if let request { try await model.finishHistoryReadiness(request) }
-      else { await model.resumeHistoryPrograms() }
+      if let request { try await runtime.finishHistoryReadiness(request) }
+      else { await runtime.resumeHistoryPrograms() }
     } catch { current.recordFailure(error) }
   }
 }

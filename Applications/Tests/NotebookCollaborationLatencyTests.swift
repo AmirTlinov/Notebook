@@ -435,6 +435,14 @@ final class NotebookCollaborationLatencyTests: XCTestCase {
     let originalA = aWriter.onCommit, originalB = bWriter.onCommit
     aWriter.onCommit = { value in originalA?(value); pair.server?.notifyDurableChanges() }
     bWriter.onCommit = { value in originalB?(value); pair.client?.notifyDurableChanges() }
+    // These loopback sessions bypass NearbySync's session fanout. An accepted
+    // remote change may append our outgoing journal too, including its echo.
+    // Preserve NearbySync's durable callback edge instead of polling for it.
+    pair.onDurable = { [weak pair] _, peer in
+      guard let pair else { return }
+      if peer.deviceID == pair.clientIdentity.deviceID { pair.server?.notifyDurableChanges() }
+      else { pair.client?.notifyDurableChanges() }
+    }
     pair.onFailure = { XCTFail("Production TLS failed: \($0)") }
     addTeardownBlock { @MainActor in
       aWriter.onCommit = originalA; bWriter.onCommit = originalB; pair.stop()

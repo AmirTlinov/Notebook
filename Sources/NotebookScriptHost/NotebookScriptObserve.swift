@@ -3,7 +3,8 @@ import NotebookCore
 
 extension NotebookScriptCoordinator {
   func observe(_ args: JSONValue) async throws -> JSONValue {
-    try await reader { cut in
+    if args["includeImage"] == .bool(true), args["target"] == nil, args["contextID"] == nil { await prepareCurrentView() }
+    return try await reader { cut in
       let header = try cut.workspaceHeader(), presence = try cut.readObservedPresenceIfAvailable()
       let contextID = args.string("contextID").flatMap(UUID.init(uuidString:))
       if args["contextID"] != nil && contextID == nil {

@@ -1,14 +1,15 @@
 # History readiness
 
 GUI-535 compares this Mac and Elizabeth's iPad through their installed native
-owners before the birth/event transition. DB29, wire44 and manifest26 remain
-current. Author content and its entire history stay retained.
+owners before the birth/event transition. The accepted installed baseline is
+DB29, wire44 and manifest26. DB30 adds the local disposable page-material index;
+authored content, history, wire44 and manifest26 stay unchanged.
 
 ## Owners
 
 - `NotebookHistoryReadiness` owns the workspace admission phase and one request.
-  `NotebookAppModel` connects it to the existing input, program, account and
-  delivery owners; Launch supplies its actual catalog-operation lifetime.
+  `NotebookWorkspaceHistory` connects it to the existing input, program, account
+  and delivery owners; Launch supplies its actual catalog-operation lifetime.
 - `NotebookPersistenceQueue` drains accepted work and retains failed/uncertain
   writes for the same Retry. Its actual writer seal closes the final SQL boundary.
 - `NearbySync` joins the selected TLS session's callbacks and advertised prefixes.

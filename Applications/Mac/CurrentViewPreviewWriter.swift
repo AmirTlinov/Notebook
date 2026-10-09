@@ -64,7 +64,7 @@ enum CurrentViewPreviewWriter {
   @MainActor
   @discardableResult
   static func write(
-    model: NotebookAppModel,
+    model: any NotebookPreviewWorkspace,
     viewport: CGSize,
     presence: SessionPresence,
     page: PageDocument?,
@@ -98,8 +98,9 @@ enum CurrentViewPreviewWriter {
     let (header, identity) = try await withTaskCancellationHandler { try await reader.value } onCancel: { reader.cancel() }
     let identities: [NotebookReferenceIdentity]?
     if case .scene(let values) = identity { identities = values } else { identities = nil }
+    let documentGeometry = try await NotebookRenderDocumentGeometry.prepare(store: store, presence: presence)
     let source = identities.map { SceneCompositionSource(store: store, revision: header.cursor, workspaceID: header.workspaceID,
-      validationIdentities: $0, recordPixelDependencies: true, documentGeometry: model.documentPaperSizes) }
+      validationIdentities: $0, recordPixelDependencies: true, documentGeometry: documentGeometry) }
     let png: Data
     let surface: CurrentViewSurfaceRevision
     switch presence.mode {
@@ -159,7 +160,7 @@ enum CurrentViewPreviewWriter {
   }
 
   @MainActor
-  static func writeTarget(_ request: TargetRenderRequest, model: NotebookAppModel) async throws {
+  static func writeTarget(_ request: TargetRenderRequest, model: any NotebookPreviewWorkspace) async throws {
     try request.requireCurrentRenderingRecipe()
     let store = model.store
     if let revision = request.pageVisionRevision {
@@ -215,8 +216,17 @@ enum CurrentViewPreviewWriter {
       }
     }
     let (files, header) = try await withTaskCancellationHandler { try await reader.value } onCancel: { reader.cancel() }
-    let source = SceneCompositionSource(store: store, revision: header.cursor, workspaceID: header.workspaceID, documentGeometry: model.documentPaperSizes)
     let target = request.target
+    var documentGeometry: [UUID: WorkspaceItemGeometry] = [:]
+    if target.kind == .board || target.kind == .cover {
+      let region = request.region ?? PageRect(x: 0, y: 0, width: 1024, height: 768)
+      let center = (request.worldOrigin ?? .zero).offsetBy(x: region.x + region.width / 2, y: region.y + region.height / 2)
+      let presence = SessionPresence(boardID: target.kind == .board ? target.id : target.boardID!,
+        mode: target.kind == .board ? .board : .cover, camera: .init(center: center, scale: 1),
+        viewport: .init(x: region.width, y: region.height), focusedItemID: target.kind == .cover ? target.id : nil)
+      documentGeometry = try await NotebookRenderDocumentGeometry.prepare(store: store, presence: presence)
+    }
+    let source = SceneCompositionSource(store: store, revision: header.cursor, workspaceID: header.workspaceID, documentGeometry: documentGeometry)
     let full: RasterSnapshot
     var camera: SpatialCamera?
     var diagnostics: [RenderDiagnostic] = []
