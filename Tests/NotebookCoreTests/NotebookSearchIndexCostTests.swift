@@ -167,13 +167,21 @@ struct NotebookSearchIndexCostTests {
   }
 
   private struct Result: Encodable {
+    struct Preparation: Encodable {
+      let milliseconds: Double
+      let maximumPayloadBytes: Int, maximumCompletionBytes: Int
+      let retainedPayloadBytes: Int, retainedCompletionBytes: Int
+      let acceptedPayloadBytes: Int, acceptedCompletionBytes: Int
+      let after: Memory
+    }
     let sourceBytes: Int, writerHoldMilliseconds: Double, coordinationMilliseconds: Double
+    let preparation: Preparation
     let writerVMSteps: Int64, writerStatements: Int
     let mallocLiveBlocksAtSQLPeak: UInt32, mallocLiveBytesAtSQLPeak: UInt64
     let sqliteBytesAtSQLPeak: Int64, sqliteHighWaterBytes: Int64, databaseCacheBytesAtSQLPeak: Int32, statementBytesAtSQLPeak: Int32
     let before: Memory, after: Memory, processPeakRSSBytes: Int64
     let inkAttemptMilliseconds: Double, inkSaved: Bool, inkFailure: String?, inkWriterHoldMilliseconds: Double?
-    let measurement = "Completed BEGIN IMMEDIATE to completed COMMIT; instrumentation and coordinated competing ink attempt included. Malloc live peaks sampled at SQL PROFILE, not total allocation events. Process RSS high water includes setup."
+    let measurement = "Native document-source Save: immutable search preparation completes before BEGIN IMMEDIATE; the mandatory prepared command then commits source, search index, action and draft receipt together. Writer hold is completed BEGIN to completed COMMIT, including instrumentation and coordinated competing ink attempt. Preparation memory is a terminal live sample; malloc peaks are sampled at SQL PROFILE, not total allocation events. Process RSS high water includes setup. Admission costs are code-derived credits, not observed RSS."
   }
 
   @Test func multilingualOneCharacterEditMeasuresTheActualWriterAndCompetingInk() async throws {
@@ -196,9 +204,20 @@ struct NotebookSearchIndexCostTests {
     _ = board.addItem(documentID, to: header.rootBoardID, near: .zero, actor: actor)
     try store.saveDocumentWorkspaceBundle(index: index, document: .init(id: documentID, actor: actor,
       files: [.init(id: "source", path: "main.tex", source: original)]), state: .init(id: documentID, actor: actor), board: board)
-    var document = try store.loadDocument(documentID)
-    let changed = document.replaceContent(files: [.init(id: "source", path: "main.tex", source: edited)], actor: actor)
-    #expect(changed)
+    let document = try store.loadDocument(documentID)
+    let edit = DocumentSourceEdit(sessionID: UUID(), documentID: documentID, fileID: "source",
+      baseSource: original, baseVersion: document.fileVersion(fileID: "source"), source: edited, sequence: 1)
+    let before = Memory.read(), preparationStarted = DispatchTime.now().uptimeNanoseconds
+    let maximum = try PreparedDocumentSourceEdit.cost(for: edit)
+    let prepared = try PreparedDocumentSourceEdit(edit: edit, workspaceID: header.workspaceID)
+    let preparation = Result.Preparation(
+      milliseconds: Double(DispatchTime.now().uptimeNanoseconds - preparationStarted) / 1_000_000,
+      maximumPayloadBytes: maximum.payloadBytes, maximumCompletionBytes: maximum.completionBytes,
+      retainedPayloadBytes: prepared.retainedCost.payloadBytes, retainedCompletionBytes: prepared.retainedCost.completionBytes,
+      acceptedPayloadBytes: prepared.cost.payloadBytes, acceptedCompletionBytes: prepared.cost.completionBytes,
+      after: Memory.read())
+    #expect(prepared.retainedCost.bytes <= maximum.bytes)
+    #expect(maximum.bytes <= 64 * 1_024 * 1_024 && prepared.cost.bytes <= 256 * 1_024 * 1_024)
     let page = try store.loadPage(pageID), ink = PageInkAction(tool: .pen, samples: [.init(point: .init(x: 10, y: 20),
       timeOffset: 0, width: 2, opacity: 1, force: 1, azimuth: 0, altitude: 1)])
     let inkStamp = try #require(page.drawingStamp.advanced(by: actor))
@@ -207,7 +226,6 @@ struct NotebookSearchIndexCostTests {
     let gate = Gate(), trace = Trace(gate: gate), inkTrace = Trace(gate: gate, competingInk: true)
     trace.attach(mainSQL)
     defer { trace.detach(mainSQL) }
-    let before = Memory.read()
     _ = sqlite3_memory_highwater(1)
     let competitor = Task.detached { () throws -> (Double, Bool, String?) in
       let inkSQL = try competingStore.prepareDatabase()
@@ -220,7 +238,12 @@ struct NotebookSearchIndexCostTests {
         return (Double(DispatchTime.now().uptimeNanoseconds - start) / 1_000_000, true, nil)
       } catch { return (Double(DispatchTime.now().uptimeNanoseconds - start) / 1_000_000, false, String(describing: error)) }
     }
-    do { _ = try store.commandTransaction(preparedDatabase: mainSQL) { try store.saveMergedDocument(document) } }
+    do {
+      let result = try store.commandTransaction(preparedDatabase: mainSQL) {
+        try store.commitDocumentSource(prepared, actor: actor)
+      }
+      #expect(result.status == .committed)
+    }
     catch { gate.writerBegan.signal(); _ = try? await competitor.value; throw error }
     let (inkWait, inkSaved, inkFailure) = try await competitor.value
     let after = Memory.read(), held = try #require(trace.heldMilliseconds)
@@ -230,6 +253,7 @@ struct NotebookSearchIndexCostTests {
     var usage = rusage(); getrusage(RUSAGE_SELF, &usage)
     let result = Result(sourceBytes: count, writerHoldMilliseconds: held,
       coordinationMilliseconds: Double(trace.coordinationNanoseconds) / 1_000_000,
+      preparation: preparation,
       writerVMSteps: trace.vmSteps, writerStatements: trace.statements,
       mallocLiveBlocksAtSQLPeak: trace.liveBlocksPeak, mallocLiveBytesAtSQLPeak: trace.liveBytesPeak,
       sqliteBytesAtSQLPeak: trace.sqliteBytesPeak, sqliteHighWaterBytes: sqlite3_memory_highwater(0),

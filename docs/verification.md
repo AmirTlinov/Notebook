@@ -74,6 +74,19 @@ credits и bundled MathJax подготовлены; physical acceptance ост�
 [Результаты, исходные отказы и дельты](audit-evidence/2026-10-08/codex-body-window/results.json).
 Установленная пара 265 сохранена; DP16 и полная GUI-498 остаются открытыми.
 
+**9 октября, GUI-494/NB10:** native Save готовит search recipe вне writer;
+одна подготовка ≤64 МиБ сохраняет место реальному Pencil reserve192 МиБ.
+Cancel/shutdown ждут физический worker; готовый plan входит в общий FIFO после
+повторной проверки idle. Source/index/action/draft публикуются атомарно;
+Unicode сохраняется буквально через editor, CAS, Undo/Redo.
+**48 Core functions / 67 cases и8 native Mac scenarios PASS**, 0 failures/skips,
+одинаковые1694 входа `bb9d0a5c…` до/после. Три отдельных Debug-пробы1 KiB/1 MiB/4 MiB
+выполнили Save и конкурирующую ink-запись. Для4 MiB preparation665 мс вне writer,
+writer1618 мс, ink wait1675 мс: задержка остаётся следующим исправлением NB10.
+Это инструментированные однократные пробы при обычной нагрузке рабочего Mac.
+Installed265 сохранена; physical iPad и полная приёмка этого слайса открыты.
+[Результат, лимиты и исходный compiler refusal](audit-evidence/2026-10-09/native-source-save/results.json).
+
 GUI-541 уже в общей `main`: плагины, marketplace-регистрации, панель, браузерная
 отрисовка и Swift WASM адаптер удалены; GUI-539 отменён. Историческая подписанная
 пара262 и sandbox repair сборщика описаны

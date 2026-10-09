@@ -36,6 +36,30 @@ from a fresh addressed reference. Saved contexts, pinned source cuts and action
 receipts remain inspectable and are never rewritten; live reads never guess an
 old hash from the current aggregate.
 
+Native source Save requires `PreparedDocumentSourceEdit`: the exact editor cut,
+workspace and recipe output are prepared on a utility worker before entering
+the existing writer. One unaccepted preparation reserves at most 64 MiB,
+leaving room for the ordinary 192 MiB Pencil reservation in the shared 256 MiB
+admission budget. Cancellation and shutdown join that worker before releasing
+its credit. The completed plan shrinks to its retained cost while human input
+settles; its writer finish is acquired immediately before FIFO transfer.
+Accepted tails share the existing queue and do not occupy the preparation slot.
+
+The writer checks workspace, recipe, literal input seal and causal source CAS.
+Source, derived index, action and terminal draft receipt publish in one SQLite
+transaction. A peer ABA or changed workspace cannot install the old plan.
+An accepted plan and its result remain owned through an uncertain COMMIT and
+Retry. Other content commands use the same search preparation and installation
+synchronously; this native Save slice does not move their work out of the writer.
+
+Admission accepts the compact file causal vector and refuses retained register
+bodies before Task capture. The prepared finish bounds the selected prior draft,
+file projection and same-session action before any oversized blob body is read.
+An unfinished old draft releases its body before the projection phase. A large
+old envelope can refuse a small direct Save; the editor first persists its latest
+draft through the same FIFO. Source comparisons preserve exact Unicode bytes in
+editor changes, CAS, delta, drafts and Undo/Redo.
+
 The isolated NB10 probe is `NotebookSearchIndexCostTests` with
 `NOTEBOOK_SEARCH_TRACE_BYTES=1024`, `1048576`, or `4194304`, once per process.
 It traces actual BEGIN IMMEDIATE→COMMIT, VM steps, allocator live memory, SQLite

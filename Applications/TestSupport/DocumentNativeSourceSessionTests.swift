@@ -30,18 +30,23 @@ final class DocumentNativeSourceSessionTests: XCTestCase {
 
   func testInputDuringSaveUsesTheAcceptedVersionAndCommonUndo() async throws {
     let (model, id, session) = try await fixture()
+    let first = "First \u{00E9}", successor = "First e\u{0301}"
+    XCTAssertEqual(first, successor, "The fixture differs only in literal Unicode source bytes")
+    XCTAssertNotEqual(Array(first.utf8), Array(successor.utf8))
     let contact = UUID(); model.inputGate.beginContact(source: contact)
-    session.input("First", selection: .init(location: 5, length: 0), composing: false, scroll: 0)
+    session.input(first, selection: .init(location: first.utf16.count, length: 0), composing: false, scroll: 0)
     let saving = Task { await session.save() }
     while !session.saving { await Task.yield() }
-    session.input("First and second", selection: .init(location: 16, length: 0), composing: false, scroll: 0)
+    session.input(successor, selection: .init(location: successor.utf16.count, length: 0), composing: false, scroll: 0)
     model.inputGate.endContact(source: contact)
     await saving.value
     XCTAssertFalse(session.conflicted)
-    XCTAssertEqual(try model.store.loadDocument(id).files.first { $0.id == session.fileID }?.source, "First and second")
+    let saved = try XCTUnwrap(try model.store.loadDocument(id).files.first { $0.id == session.fileID }?.source)
+    XCTAssertEqual(Array(saved.utf8), Array(successor.utf8))
     XCTAssertTrue(try model.store.documentEditingSessions().isEmpty)
     model.undoLastSurfaceAction(); await model.finishPendingPersistence()
-    XCTAssertEqual(try model.store.loadDocument(id).files.first { $0.id == session.fileID }?.source, "First")
+    let undone = try XCTUnwrap(try model.store.loadDocument(id).files.first { $0.id == session.fileID }?.source)
+    XCTAssertEqual(Array(undone.utf8), Array(first.utf8))
     model.undoLastSurfaceAction(); await model.finishPendingPersistence()
     XCTAssertEqual(try model.store.loadDocument(id).files.first { $0.id == session.fileID }?.source, "")
   }
