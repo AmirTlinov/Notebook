@@ -346,8 +346,8 @@
   },
   "remaining": [
     "Remove measured repeated source encode/decode work in the sole native writer; other content commands still prepare search synchronously.",
-    "Port exact accepted main slice into common candidate267 and check affected iPad Save/Undo/Pencil scenario.",
-    "Physical iPad gesture, installed production pair and full acceptance are unexecuted for this slice.",
+    "The exact680 port has eight physical native source methods passed. New causal/source publication and receipt reuse need their own common-source/native checks.",
+    "Physical editor keyboard gesture, installed production pair and full acceptance remain open.",
     "DP06/DP09 and whole GUI-494/104-row remediation remain open."
   ],
   "installation": {
@@ -358,5 +358,50 @@
     "manifest": 26,
     "authoredHistory": "retain forever"
   },
-  "physicalAcceptance": false
+  "physicalAcceptance": false,
+  "nativePhysicalEvidence": {
+    "scope": "Exact680 semantic port on common Core0e plus foreign native lifecycle/material source; eight source tests within the wider failed iPad run",
+    "acceptedPortCommit": "dc59516f8d17da571d2606408836ca16553eec2c",
+    "status": "eight-selected-native-source-methods-passed",
+    "device": {
+      "architecture": "arm64e",
+      "deviceId": "00008103-001E059934D9001E",
+      "deviceName": "iPad (Елизавета)",
+      "modelName": "iPad Pro (11-inch) (3rd generation)",
+      "osBuildNumber": "24A435",
+      "osVersion": "27.0",
+      "platform": "iOS"
+    },
+    "source": {
+      "sha256": "e4199808fc4c36da22c76a678aeff74399f928ecaff28368b4514631230ffcef",
+      "files": 1722,
+      "unchanged": true
+    },
+    "selected": {
+      "NotebookTests/DocumentNativeSourceSessionTests/testInputDuringSaveUsesTheAcceptedVersionAndCommonUndo": "Passed",
+      "NotebookTests/NotebookDocumentSourcePersistenceTests/testAcceptedSourceUpdatesOnlyItsProgramAndKeepsHumanSelection": "Passed",
+      "NotebookTests/NotebookDocumentSourcePersistenceTests/testOpeningAnUnloadedDocumentReadsItsContentWithoutAnExternalRefresh": "Passed",
+      "NotebookTests/NotebookDocumentSourcePersistenceTests/testSaveJoinsItsReleasedHumanContactWithoutBypassingTheCommonInputBarrier": "Passed",
+      "NotebookTests/NotebookDocumentSourcePersistenceTests/testShutdownJoinsSourcePreparationWithoutAcceptingItsLateResult": "Passed",
+      "NotebookTests/NotebookDocumentSourcePersistenceTests/testShutdownRejectsALateEditorWithoutPublishingADraftOrSource": "Passed",
+      "NotebookTests/NotebookDocumentSourcePersistenceTests/testSourcePreparationAdmitsRealPencilAndCancellationJoinsTheWorker": "Passed",
+      "NotebookTests/NotebookDocumentSourcePersistenceTests/testSourceReceiptReachesTheVisibleModelBeforeTheEditorCloses": "Passed"
+    },
+    "wholeRun": {
+      "status": "Failed",
+      "passed": 27,
+      "failed": 12,
+      "skipped": 0,
+      "runtimeWarnings": 0
+    },
+    "evidence": "/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/simplification-ipad-behavior-v3",
+    "artifacts": {
+      "ipad-summary.json": "c665b15569751b9e79dc91dff83f26fd32fe4ffb056d3262b0e190890c990ba5",
+      "ipad-tests.json": "a57dd7a995d6eb2fb6111848159afa888af2148dfa880f5c84b2ab4450db8862",
+      "source-before.json": "9568b369fc6626a7a08d6ec887387b59581325f1c81be0c72283bc6a3ee8dea9",
+      "source-after.json": "9568b369fc6626a7a08d6ec887387b59581325f1c81be0c72283bc6a3ee8dea9"
+    },
+    "currentRootCausalGuardAndReceiptReuseCovered": false,
+    "physicalEditorKeyboardGestureAccepted": false
+  }
 }

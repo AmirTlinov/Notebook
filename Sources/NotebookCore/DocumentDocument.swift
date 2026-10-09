@@ -115,6 +115,19 @@ public struct DocumentDocument: Codable, Equatable, Identifiable, Sendable {
       && contentStamp.counter <= VersionStamp.maximumCounter && (collaboration?.isValid ?? true)
   }
 
+  public static func == (lhs: Self, rhs: Self) -> Bool {
+    guard lhs.format == rhs.format, lhs.id == rhs.id, lhs.entrypoint == rhs.entrypoint,
+      lhs.files == rhs.files, lhs.contentStamp == rhs.contentStamp else { return false }
+    switch (lhs.collaboration, rhs.collaboration) {
+    case (.none, .none): return true
+    case (.some(let left), .some(let right)):
+      return left.fields.count == right.fields.count && left.fields.allSatisfy { key, version in
+        right.fields[key].map { version.hasSameDocumentSource(as: $0) } ?? false
+      }
+    default: return false
+    }
+  }
+
   public func fileVersion(fileID: String) -> ContentFieldVersion {
     let versions = DocumentFile.causalFieldKeys(id: fileID).compactMap { collaboration?.fields[$0] }
     return .fileBasis(versions, fallback: contentStamp)
@@ -148,22 +161,24 @@ public struct DocumentDocument: Codable, Equatable, Identifiable, Sendable {
     return replaceContent(files: next, actor: actor)
   }
 
-  public mutating func merge(_ other: Self) -> Bool {
-    guard id == other.id, other.isValid,
-      let local = try? JSONValue.encode(self), let incoming = try? JSONValue.encode(other),
-      let merged = try? CollaborativeContent.merge(local: local, incoming: incoming,
-        localState: collaboration, incomingState: other.collaboration, localStamp: contentStamp, incomingStamp: other.contentStamp),
-      var candidate = try? merged.value.decode(Self.self) else { return false }
+  @discardableResult
+  public mutating func merge(_ other: Self) throws -> Bool {
+    guard id == other.id, isValid, other.isValid else { throw NotebookStorageError.invalidTransaction("document merge identity") }
+    let local = try JSONValue.encode(self), incoming = try JSONValue.encode(other)
+    let merged = try CollaborativeContent.merge(local: local, incoming: incoming,
+      localState: collaboration, incomingState: other.collaboration, localStamp: contentStamp, incomingStamp: other.contentStamp)
+    var candidate = try merged.value.decode(Self.self)
     candidate.collaboration = merged.state
     candidate.contentStamp = mergedContentStamp(local: local, incoming: incoming, result: merged.value,
       localStamp: contentStamp, incomingStamp: other.contentStamp)
-    guard candidate.isValid, candidate != self else { return false }
+    guard candidate.isValid else { throw NotebookStorageError.invalidTransaction("document merge result") }
+    guard candidate != self else { return false }
     self = candidate; return true
   }
 
   /// An editor receipt reconciles exactly one file, never a stale directory.
   @discardableResult
-  public mutating func mergeSource(_ publication: DocumentFileSourcePublication) -> Bool {
+  public mutating func mergeSource(_ publication: DocumentFileSourcePublication) throws -> Bool {
     guard id == publication.documentID,
       let index = files.firstIndex(where: { collaborationIdentity($0.id) == collaborationIdentity(publication.file.id) }) else { return false }
     let keys = Set(DocumentFile.causalFieldKeys(id: publication.file.id))
@@ -171,15 +186,16 @@ public struct DocumentDocument: Codable, Equatable, Identifiable, Sendable {
     local.collaboration = .init(fields: (collaboration?.fields ?? [:]).filter { keys.contains($0.key) })
     var incoming = local; incoming.files = [publication.file]; incoming.contentStamp = publication.contentStamp
     incoming.collaboration = .init(fields: publication.fields)
-    _ = local.merge(incoming)
+    try local.merge(incoming)
     guard let file = local.files.first, local.files.count == 1 else { return false }
-    var metadata = collaboration ?? (try? materializingCausalVersions().collaboration) ?? CollaborativeContent()
+    var metadata = try collaboration ?? materializingCausalVersions().collaboration ?? CollaborativeContent()
     for (key, version) in local.collaboration?.fields ?? [:] where keys.contains(key) {
-      do { try metadata.joinField(key, version: version) } catch { return false }
+      try metadata.joinField(key, version: version, valuesAreEqual: { DocumentFile.sourceValuesAreEqual($0, $1) })
     }
     var candidate = self; candidate.files[index] = file; candidate.collaboration = metadata
     candidate.contentStamp = max(contentStamp, local.contentStamp)
-    guard candidate.isValid, candidate != self else { return false }
+    guard candidate.isValid else { throw NotebookStorageError.invalidTransaction("document source merge result") }
+    guard candidate != self else { return false }
     self = candidate; return true
   }
 

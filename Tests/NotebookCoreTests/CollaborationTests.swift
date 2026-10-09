@@ -564,12 +564,12 @@ func collaborationConcurrentDocumentFiles() throws {
   _ = left.replaceFileSource(id: "a", source: "Left", actor: a)
   _ = right.replaceFileSource(id: "b", source: "Right", actor: b)
   let oldLeft = left
-  _ = left.merge(right)
-  _ = right.merge(oldLeft)
+  try left.merge(right)
+  try right.merge(oldLeft)
   #expect(left.files.map(\.source) == ["Left", "Right"])
   #expect(right.files == left.files)
-  _ = left.merge(right)
-  _ = right.merge(left)
+  try left.merge(right)
+  try right.merge(left)
   #expect(left == right)
 }
 

@@ -120,7 +120,7 @@ extension NotebookStore {
     let priorHeaderFields = try versions(["entrypoint"], delivered: false)
     let nextHeaderFields = try versions(["entrypoint"], delivered: true)
     var resolvedHeader = try partial(candidate, block: nil, fields: nextHeaderFields)
-    if let previous { _ = try resolvedHeader.merge(partial(previous, block: nil, fields: priorHeaderFields)) }
+    if let previous { try resolvedHeader.merge(partial(previous, block: nil, fields: priorHeaderFields)) }
     guard resolvedHeader.isValid else { throw NotebookStorageError.invalidTransaction("document source header merge") }
     let newestEntrypoint = previous.map { candidate.contentStamp <= $0.contentStamp ? $0.entrypoint : candidate.entrypoint } ?? candidate.entrypoint
     differsFromNewest = resolvedHeader.entrypoint != newestEntrypoint
@@ -197,7 +197,7 @@ extension NotebookStore {
         let keys = DocumentFile.causalFieldKeys(id: member)
         let beforeFields = try versions(keys, delivered: false), afterFields = try versions(keys, delivered: true)
         var resolved = try partial(candidate, block: incomingBlock, fields: afterFields)
-        if let previous { _ = try resolved.merge(partial(previous, block: oldBlock, fields: beforeFields)) }
+        if let previous { try resolved.merge(partial(previous, block: oldBlock, fields: beforeFields)) }
         guard resolved.isValid else { throw NotebookStorageError.invalidTransaction("document block merge") }
         let newestBlock = previous.map { candidate.contentStamp <= $0.contentStamp ? oldBlock : incomingBlock } ?? incomingBlock
         differsFromNewest = differsFromNewest || resolved.files.first != newestBlock
@@ -230,7 +230,9 @@ extension NotebookStore {
         guard let next = try field(key, delivered: true)?.value.decode(ContentFieldVersion.self) else {
           throw NotebookStorageError.corruptRecord(address)
         }
-        try publishField(key, value: .encode(old.map { try next.joining($0) } ?? next))
+        try publishField(key, value: .encode(old.map {
+          try next.joining($0, valuesAreEqual: { DocumentFile.sourceValuesAreEqual($0, $1) })
+        } ?? next))
       }
     }
     try validateDocumentFileNamespace(file: file)

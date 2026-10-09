@@ -72,7 +72,7 @@ struct NotebookPortableDocumentTests {
     var left = original, right = original
     let changedLeft = left.replaceFileSource(id: "main", source: String(repeating: "a", count: DocumentFile.maximumSourceLength), actor: UUID()); #expect(changedLeft)
     let changedRight = right.replaceFileSource(id: "main", source: String(repeating: "b", count: DocumentFile.maximumSourceLength), actor: UUID()); #expect(changedRight)
-    let merged = left.merge(right); #expect(merged)
+    let merged = try left.merge(right); #expect(merged)
     let concurrent = try NotebookExportCut(document: left, state: .init(id: left.id, actor: UUID()))
     var state = cut.state
     let committed = state.commit(instanceID: "large", value: .string(String(repeating: "s", count: NotebookPortableDocument.maximumStateBytes)), actor: UUID()); #expect(committed)

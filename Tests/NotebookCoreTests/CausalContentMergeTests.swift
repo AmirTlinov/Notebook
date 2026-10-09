@@ -292,12 +292,12 @@ import Testing
     for order in orders {
       var document = documents[order[0]], board = boards[order[0]]
       for offset in order.dropFirst() {
-        _ = document.merge(documents[offset]); _ = try board.merge(boards[offset], itemIDs: [])
+        try document.merge(documents[offset]); _ = try board.merge(boards[offset], itemIDs: [])
       }
       #expect(document.files.first?.source == "c")
       #expect(board.elements.first?.frame.x == 200)
       for offset in 0..<3 {
-        _ = document.merge(documents[offset]); _ = try board.merge(boards[offset], itemIDs: [])
+        try document.merge(documents[offset]); _ = try board.merge(boards[offset], itemIDs: [])
         #expect(document.files.first?.source == "c")
         #expect(board.elements.first?.frame.x == 200)
       }
