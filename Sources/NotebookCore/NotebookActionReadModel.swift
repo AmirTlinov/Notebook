@@ -128,7 +128,7 @@ public struct NotebookActionReadModel: Codable, Equatable, Sendable, Identifiabl
   }
 
   init(_ root: NotebookReceiptPublication.Root) throws {
-    try self.init(root.receipt, version: notebookActionDeliveryVersion(root.value), sourceDigest: root.sourceDigest)
+    try self.init(root.receipt, version: root.deliveryVersion(), sourceDigest: root.sourceDigest)
   }
 
   private init(_ receipt: CollaborationReceipt, version: String, sourceDigest: Field.SourceDigest? = nil) throws {

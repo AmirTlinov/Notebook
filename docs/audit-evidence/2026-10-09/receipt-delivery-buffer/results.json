@@ -1,0 +1,136 @@
+{
+  "format": 1,
+  "date": "2026-10-09",
+  "issue": "GUI-494",
+  "register": [
+    "NB10"
+  ],
+  "baseCommit": "147e454a5c8afc045a3cd9744cfb73cb8cf5005f",
+  "result": "The original source receipt uses its required canonical encoding for the existing framed delivery hash; no second whole-body delivery encode or frame copy.",
+  "owned": {
+    "Sources/NotebookCore/CollaborativeContent.swift": "5617a29a111c6e33c212e3ea56abf7dd6fcbee681ef0b9900d768a4c44023cb3",
+    "Sources/NotebookCore/JSONValue.swift": "441d3645ffaf169ffc973c9152888cc7c88962e5a5feaf666af95fad01b4152b",
+    "Sources/NotebookCore/NotebookActionDelivery.swift": "f9bc6113e50fa7d2122e12db2a6b0339fb6209fb57a6910f954e14109f425891",
+    "Sources/NotebookCore/NotebookActionReadModel.swift": "9b53a9357482332841a9a5858c5cb597cc824ad2749eed6b25a48d4431c77e05",
+    "Sources/NotebookCore/NotebookReceiptPublication.swift": "7845e12edd06fb1d293bbe385acf32551484cfa3e08f03184b620e220b286b78",
+    "Tests/NotebookCoreTests/DocumentFilesTests.swift": "b169bef496950ba36513220ee63bded6da6911334084a59b16b0660da2900238",
+    "Tests/NotebookCoreTests/NotebookReceiptPublicationTests.swift": "536675d2e455831d555595179e01f9953053f46450fafe913dbef2bfbf9d5923",
+    "Tests/NotebookCoreTests/NotebookSearchIndexCostTests.swift": "122f587fa6de415b273f5462f358bbdee6f8a6a9610dea8015e323199a61000e"
+  },
+  "packageInputs": {
+    "count": 847,
+    "sha256": "3b1cf340a71a98105c22c99b5ecac4f9809c2970affe616b6412f51788565d26",
+    "method": "SHA256 of sorted-key compact JSON of source-after files filtered to Package.swift, Sources/ and Tests/, preserving order and executable bits."
+  },
+  "contract": [
+    "Shared notebook.action-delivery.v1 domain; canonical prefix50 + suffix1 =51 bytes. Body encoding uses sortedKeys and withoutEscapingSlashes.",
+    "Exact integer/Double encoding checks include references, immutable inverse recordCount, stamp/observed and every retained-head stamp. Retained head values are JSONValue and stay borrowed.",
+    "At most512 unique unsigned scalar probes; no extra whole-body encoding, source cache, store, executor or writer. Small scalar encodings are product representation validation, included in writer time.",
+    "Cached version is derived from the required buffer and ends with the synchronous publication; strict literal whole-root and actual SQL records.hash checks still bind its use.",
+    "Undo, nonempty lifecycle changes, world origins, raw/split/ineligible metadata preserve existing canonical value hashing and decoding/refusal.",
+    "Current formats DB30/wire44/manifest26 and installed production265/DB29 stay unchanged; all authored history remains indefinite."
+  ],
+  "checks": {
+    "regressions": {
+      "evidence": ".build/gui494-delivery-buffer-regressions-20261009-v3",
+      "functions": 12,
+      "cases": 30,
+      "failed": [],
+      "skipped": [],
+      "sourceSHA256": "f1c9f3f2d94e9afd66735dd53d57af97c1f8df67b6bf01b7ff23ff8a33345fe6",
+      "sourceCount": 1715,
+      "unchanged": true,
+      "verificationSHA256": "31b1e5ae89133f941a3809c94d7970dfbad14dd80b31b1c4b71a26e25b468bd5",
+      "executionSHA256": "16247106a2dfa845005973027a8a3b8f590b184e7e414eda3455fa3d3f4f0a38"
+    },
+    "before": {
+      "evidence": ".build/gui494-delivery-buffer-before-4194304-20261009-v1/verification",
+      "functions": 1,
+      "cases": 1,
+      "failed": [],
+      "skipped": [],
+      "sourceSHA256": "956e8e32da224faeab2cffece6ad41dc1a21ef55cf1b60ea21202eb091fcd539",
+      "sourceCount": 1715,
+      "unchanged": true,
+      "verificationSHA256": "8990b21d0a2b1e6b92bb35a4d6bf1aa3b7ed368eaf6f01d5a710be84a47e3c77",
+      "executionSHA256": "0b7daa8e744baccfedbea6d760b161fefa3e7fcf3ee98f2b2b4f0e4b0b0cd403"
+    },
+    "after": {
+      "evidence": ".build/gui494-delivery-buffer-after-4194304-20261009-v2/verification",
+      "functions": 1,
+      "cases": 1,
+      "failed": [],
+      "skipped": [],
+      "sourceSHA256": "f1c9f3f2d94e9afd66735dd53d57af97c1f8df67b6bf01b7ff23ff8a33345fe6",
+      "sourceCount": 1715,
+      "unchanged": true,
+      "verificationSHA256": "433b68a7814931eac9ad313f4eca37955f46811dd7eca22bac80369b63461a47",
+      "executionSHA256": "0b7daa8e744baccfedbea6d760b161fefa3e7fcf3ee98f2b2b4f0e4b0b0cd403"
+    }
+  },
+  "pair": {
+    "sourceBytes": 4194304,
+    "mode": "Fresh-process Debug actual Save + competing ink; SQL memory sampling off.",
+    "before": "before.json",
+    "after": "after.json",
+    "deliveryEncodePasses": [
+      1,
+      0
+    ],
+    "removedEncodedBytes": 16778805,
+    "deliveryHashPasses": [
+      1,
+      1
+    ],
+    "deliveryHashInputBytes": [
+      16778805,
+      16778805
+    ],
+    "receiptEncodePasses": [
+      1,
+      1
+    ],
+    "receiptDecodePasses": [
+      0,
+      0
+    ],
+    "sourceDigestPasses": [
+      1,
+      1
+    ],
+    "writerMilliseconds": [
+      528.326875,
+      478.282
+    ],
+    "inkMilliseconds": [
+      551.013917,
+      574.704708
+    ],
+    "bothWritesSaved": true,
+    "hostLimit": "Ordinary host with independent native work during this turn; no controlled host-load samples. Single pair, no p95/Release/device or overall interaction-speedup claim.",
+    "changedInputs": [
+      "Sources/NotebookCore/CollaborativeContent.swift",
+      "Sources/NotebookCore/JSONValue.swift",
+      "Sources/NotebookCore/NotebookActionDelivery.swift",
+      "Sources/NotebookCore/NotebookActionReadModel.swift",
+      "Sources/NotebookCore/NotebookReceiptPublication.swift",
+      "Tests/NotebookCoreTests/NotebookReceiptPublicationTests.swift",
+      "Tests/NotebookCoreTests/NotebookSearchIndexCostTests.swift"
+    ]
+  },
+  "failedAttempts": [
+    {
+      "evidence": ".build/gui494-delivery-buffer-regressions-20261009-v1",
+      "scope": "Core inventory compilation",
+      "result": "Missing try on second predicate; no tests ran. Fixed and repeated selected scope."
+    },
+    {
+      "evidence": ".build/gui494-delivery-buffer-after-4194304-20261009-v1/verification",
+      "raw": "failed-after.json",
+      "scope": "Actual4MiB Save",
+      "result": "Saved source/ink, but optimization stayed in fallback and deliveryEncode==0 assertion failed. Real receipt always carries immutable inverse reference; guard and field-counter visitor were completed, scalar/retained/inverse regressions and actual Save repeated."
+    }
+  ],
+  "physicalAcceptance": false,
+  "remaining": "NB10 writer/preparation cost, native/device budgets and full104 acceptance remain open."
+}

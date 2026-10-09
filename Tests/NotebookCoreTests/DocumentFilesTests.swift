@@ -74,6 +74,7 @@ struct NotebookPublicationCodecCounts: Codable, Sendable {
   var documentDecode = Work(), documentEncode = Work(), filesEncode = Work()
   var receiptDecode = Work(), receiptEncode = Work()
   var documentSourceDigest = Work()
+  var deliveryEncode = Work()
 }
 
 #if DEBUG
@@ -89,6 +90,7 @@ final class NotebookPublicationCodecSamples: @unchecked Sendable {
     case .receiptDecode: counts.receiptDecode.record(sample.encodedBytes)
     case .receiptEncode: counts.receiptEncode.record(sample.encodedBytes)
     case .documentSourceDigest: counts.documentSourceDigest.record(sample.encodedBytes)
+    case .deliveryEncode: counts.deliveryEncode.record(sample.encodedBytes)
     }
   }
   func snapshot() -> NotebookPublicationCodecCounts {

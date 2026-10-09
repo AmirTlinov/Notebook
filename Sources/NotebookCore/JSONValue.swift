@@ -4,7 +4,7 @@ import Foundation
 /// Counts actual publication codec work on the synchronous writer. Observing bytes
 /// borrows the buffer already required by the codec; it never encodes a sample.
 enum NotebookPublicationCodecObservation {
-  enum Phase: String, Sendable { case documentDecode, documentEncode, filesEncode, receiptDecode, receiptEncode, documentSourceDigest }
+  enum Phase: String, Sendable { case documentDecode, documentEncode, filesEncode, receiptDecode, receiptEncode, documentSourceDigest, deliveryEncode }
   struct Sample: Sendable {
     let phase: Phase
     let encodedBytes: Int
@@ -70,7 +70,13 @@ public enum JSONValue: Codable, Equatable, Sendable {
   }
 
   public static func encode<T: Encodable>(_ value: T) throws -> JSONValue {
-    let data = try JSONEncoder().encode(value)
+    try encode(value, using: JSONEncoder(), observingEncodedData: nil)
+  }
+
+  /// A synchronous consumer borrows the codec's required buffer before decoding.
+  static func encode<T: Encodable>(_ value: T, using encoder: JSONEncoder,
+    observingEncodedData: ((Data) -> Void)?) throws -> JSONValue {
+    let data = try encoder.encode(value)
     #if DEBUG
     let phase: NotebookPublicationCodecObservation.Phase? = T.self == DocumentDocument.self ? .documentEncode
       : T.self == [DocumentFile].self ? .filesEncode : T.self == CollaborationReceipt.self ? .receiptEncode : nil
@@ -78,6 +84,7 @@ public enum JSONValue: Codable, Equatable, Sendable {
       observer(.init(phase: phase, encodedBytes: data.count))
     }
     #endif
+    observingEncodedData?(data)
     return try JSONDecoder().decode(JSONValue.self, from: data)
   }
 

@@ -536,4 +536,18 @@ No additional runner was needed for the unchanged inputs. Ten paired Mac cuts
 report median 16.196→12.024 ms; this is a Core observation, with physical acceptance
 open. [Exact scopes and correction](audit-evidence/2026-10-09/causal-board-guard/results.json),
 [paired probe](audit-evidence/2026-10-09/causal-typed-read/results.json).
+
+## 2026-10-09: required receipt buffer supplies the delivery hash
+
+The existing publisher hashes the canonical buffer from its required original
+source-receipt encode with the unchanged domain framing. Scalar byte checks include
+inverse counts and all field clock heads; their values remain borrowed. Strict
+whole-root and SQL bindings remain; Undo and ineligible metadata keep value hashing.
+Selected 12 functions / 30 cases PASS, followed by one actual 4 MiB Save + ink PASS
+on unchanged sources. Delivery encode observes 1→0 over 16,778,805 bytes; receipt
+encode1, decode0, source digest1 and delivery hash1 remain. One Debug pair with SQL
+memory sampling off reports writer 528.33→478.28 ms and ink wait 551.01→574.70 ms;
+the pair does not establish an overall interaction latency improvement. The initial
+compile refusal and actual fallback/failed assertion are preserved separately.
+[Exact scopes, outputs and bindings](audit-evidence/2026-10-09/receipt-delivery-buffer/results.json).
 NB10, optimized native/device budgets and full104 acceptance remain open.

@@ -79,6 +79,14 @@ and literal UTF-8 source. Freeze still reads the hash-bound SQL model and refuse
 a different indexed digest; the index never supplies the result's digest. Undo
 and unmatched fields compute the digest of their actual written value.
 
+The same original source receipt borrows its required canonical encoding for
+the delivery hash. The publisher hashes the existing domain frame around that
+buffer and retains only the digest. Actual Int/UInt and Double scalar encodings
+must match; the field-version owner visits counters without copying retained
+values. Inverse counts participate in this check. Undo, nonempty lifecycle
+changes, world origins and ineligible metadata retain canonical value hashing.
+Literal whole-root matching and the physical SQL hash still bind reuse.
+
 The isolated NB10 probe is `NotebookSearchIndexCostTests` with
 `NOTEBOOK_SEARCH_TRACE_BYTES=1024`, `1048576`, or `4194304`, once per process.
 It traces actual BEGIN IMMEDIATE→COMMIT, VM steps, allocator live memory, SQLite
@@ -86,7 +94,7 @@ memory and a competing accepted ink command. PROFILE tracing preserves the
 progress handler. Sampled live allocation peaks are distinct from total
 allocation events; RSS high water includes fixture setup.
 In Debug, `publicationCodec` counts actual document/receipt decodes and
-document/files/receipt encodes and source-digest passes, borrowing required buffers
+document/files/receipt/delivery encodes and source-digest passes, borrowing required buffers
 without a measuring encode. `NOTEBOOK_SEARCH_TRACE_SQL_MEMORY=0` disables per-statement memory probes
 for latency attribution; unobserved SQL peak fields are omitted. SQL trace/VM
 counts and competing ink remain. Reduced codec work alone does not establish

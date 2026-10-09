@@ -1,4 +1,7 @@
 import Foundation
+import CryptoKit
+
+private let notebookActionDeliveryDomain = "notebook.action-delivery.v1"
 
 #if DEBUG
 enum NotebookActionDeliveryObservation {
@@ -33,16 +36,34 @@ enum NotebookActionDeliveryObservation {
 /// The same framing applies to an untouched raw historical body. Decoding it
 /// as a typed receipt first would discard unknown authored JSON fields.
 func notebookActionDeliveryVersion(_ receipt: JSONValue) throws -> String {
-  let framed = JSONValue.object(["domain": .string("notebook.action-delivery.v1"), "receipt": receipt])
+  let framed = JSONValue.object(["domain": .string(notebookActionDeliveryDomain), "receipt": receipt])
   #if DEBUG
-  if let observer = NotebookActionDeliveryObservation.observer {
+  let observer = NotebookActionDeliveryObservation.observer
+  let codecObserver = NotebookPublicationCodecObservation.observer
+  if observer != nil || codecObserver != nil {
     let id = receipt["id"]?.string.flatMap { $0.utf16.count <= 36 ? UUID(uuidString: $0) : nil }
     return try collaborationHash(framed, observingEncodedBytes: { bytes in
-      observer(.init(actionID: id, framedBytes: bytes))
+      observer?(.init(actionID: id, framedBytes: bytes))
+      codecObserver?(.init(phase: .deliveryEncode, encodedBytes: bytes))
     })
   }
   #endif
   return try collaborationHash(framed)
+}
+
+/// The publisher proves that its required receipt encoding is already canonical.
+/// Hash the same sorted-key domain frame without another body encode or copy.
+func notebookActionDeliveryVersion(canonicalReceiptBytes: Data, actionID: UUID) -> String {
+  let prefix = Data(("{\"domain\":\"" + notebookActionDeliveryDomain + "\",\"receipt\":").utf8)
+  let suffix = Data([125])
+  var hash = SHA256()
+  hash.update(data: prefix); hash.update(data: canonicalReceiptBytes); hash.update(data: suffix)
+  let version = NotebookHexEncoding.encode(hash.finalize())
+  #if DEBUG
+  NotebookActionDeliveryObservation.observer?(.init(actionID: actionID,
+    framedBytes: prefix.count + canonicalReceiptBytes.count + suffix.count))
+  #endif
+  return version
 }
 
 extension CollaborationReceipt {

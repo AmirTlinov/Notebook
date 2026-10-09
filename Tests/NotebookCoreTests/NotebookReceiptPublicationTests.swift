@@ -16,6 +16,63 @@ struct NotebookReceiptPublicationTests {
         after: .string(source))])
   }
 
+  @Test(arguments: [-1, 0, 17, 1_000_000, 1_000_000_000_000, 1_000_000_000_000_000, Int(VersionStamp.maximumCounter)])
+  func requiredCanonicalEncodingKeepsTheExactLegacyFrameAcrossScalarSpellings(index: Int) throws {
+    let target = CollaborationTarget(kind: .document, id: UUID()), actor = UUID()
+    let source = "Cafe\u{301}/</script>\n\"\\\0\u{2028}\u{2029}\u{1d11e}"
+    let action = CollaborationAction(summary: "Literal framing", references: [
+      .init(target: target, pageIndex: index, revision: "r")], expected: [], operations: [
+        .init(kind: .patchDocumentFile, target: target, id: "source", values: [
+          "source": .string(source), "expectedText": .string(source), "cafe\u{301}": .bool(true),
+          "zero": .number(-0.0), "tiny": .number(Double.leastNonzeroMagnitude),
+          "large": .number(Double.greatestFiniteMagnitude)])])
+    var original = CollaborationReceipt(id: action.id, action: action,
+      createdAt: .init(timeIntervalSinceReferenceDate: -0.125), revisions: [], changes: [
+        .init(file: documentFile(target.id), path: [.field("files"), .member("source"), .field("source")],
+          before: .string("Before"), after: .string(source))])
+    original.changes[0].afterVersion = ContentFieldVersion(stamp: .init(counter: UInt64(abs(index)), actor: actor),
+      human: true, observed: [actor.uuidString.lowercased(): UInt64(abs(index))]).retainingValue(.string(source))
+    original.lifecycleInverse = .init(rootHash: String(repeating: "a", count: 64), recordCount: abs(index))
+    let legacy = try collaborationHash(JSONValue.object(["domain": .string("notebook.action-delivery.v1"),
+      "receipt": .encode(original)]))
+    let publication = try NotebookReceiptPublication(original)
+    let fragment = try #require(NotebookRecordCodec.encode(publication.value, file: publication.file).first)
+    let root = try #require(publication.root(for: fragment, hash: String(repeating: "a", count: 64)))
+    #expect(try root.deliveryVersion() == legacy)
+    #expect(try NotebookActionReadModel(root) == NotebookActionReadModel(original))
+    #expect(DocumentFile.sourcesAreEqual(try #require(publication.value["changes"]?.array.first?["after"]?.string), source))
+  }
+
+  @Test func requiredReceiptBufferRemovesTheDeliveryEncodeAndUndoKeepsValueFraming() throws {
+    var original = receipt()
+    original.lifecycleInverse = .init(rootHash: String(repeating: "a", count: 64), recordCount: 1)
+    let legacy = try original.deliveryVersion()
+    #if DEBUG
+    let samples = NotebookPublicationCodecSamples()
+    try NotebookPublicationCodecObservation.withObserver(samples.record) {
+      let publication = try NotebookReceiptPublication(original)
+      let fragment = try #require(NotebookRecordCodec.encode(publication.value, file: publication.file).first)
+      let root = try #require(publication.root(for: fragment, hash: String(repeating: "a", count: 64)))
+      #expect(try root.deliveryVersion() == legacy)
+    }
+    let encoded = samples.snapshot()
+    #expect(encoded.receiptEncode.passes == 1 && encoded.documentSourceDigest.passes == 1)
+    #expect(encoded.deliveryEncode.passes == 0)
+
+    var undone = original
+    undone.undo = .init(restored: 1, preserved: [], completedAt: .init(timeIntervalSinceReferenceDate: 1))
+    let undoVersion = try undone.deliveryVersion(), undoSamples = NotebookPublicationCodecSamples()
+    try NotebookPublicationCodecObservation.withObserver(undoSamples.record) {
+      let publication = try NotebookReceiptPublication(undone)
+      let fragment = try #require(NotebookRecordCodec.encode(publication.value, file: publication.file).first)
+      let root = try #require(publication.root(for: fragment, hash: String(repeating: "a", count: 64)))
+      #expect(try root.deliveryVersion() == undoVersion)
+    }
+    #expect(undoSamples.snapshot().deliveryEncode.passes == 1)
+    #expect(undoVersion != legacy)
+    #endif
+  }
+
   @Test func sourceDigestRequiresTheLiteralOriginalFieldAndUndoKeepsItsOwnDigest() throws {
     var original = receipt()
     let originalField = original.changes[0]

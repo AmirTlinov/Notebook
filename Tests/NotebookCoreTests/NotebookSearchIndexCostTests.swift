@@ -311,6 +311,7 @@ struct NotebookSearchIndexCostTests {
       let publicationCodec: NotebookPublicationCodecCounts? = codec
       #expect(codec.documentDecode.passes > 0 && codec.documentDecode.encodedBytes > 0)
       #expect(codec.documentSourceDigest.passes == 1 && codec.documentSourceDigest.encodedBytes > 0)
+      #expect(codec.deliveryEncode.passes == 0 && codec.deliveryEncode.encodedBytes == 0)
     #else
       let receiptPasses: Int? = nil, receiptBytes: Int64? = nil
       let publicationCodec: NotebookPublicationCodecCounts? = nil

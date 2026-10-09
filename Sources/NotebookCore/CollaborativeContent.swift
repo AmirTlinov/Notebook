@@ -13,6 +13,16 @@ public struct ContentFieldVersion: Codable, Equatable, Sendable {
   /// them when its contract accepts only a compact causal comparison token.
   public var hasRetainedAlternatives: Bool { heads != nil }
 
+  /// Visit the typed counter metadata without copying retained register values.
+  func allCountersSatisfy(_ predicate: (UInt64) throws -> Bool) rethrows -> Bool {
+    guard try predicate(stamp.counter) else { return false }
+    for counter in observed.values { if try !predicate(counter) { return false } }
+    if let heads {
+      for head in heads { if try !predicate(head.stamp.counter) { return false } }
+    }
+    return true
+  }
+
   /// Concurrent authored alternatives remain owned even when another value is
   /// displayed. Admission must include their bodies without exposing or copying
   /// the private causal frontier.

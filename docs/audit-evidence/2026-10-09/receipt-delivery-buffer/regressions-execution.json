@@ -1,0 +1,47 @@
+{
+  "executed": [
+    "NotebookCoreTests.DocumentFilesTests/nativeDraftCommitIsIdempotentSurvivesBadTeXAndUndoPreservesNeighbors()/DocumentFilesTests.swift:149:4",
+    "NotebookCoreTests.DocumentFilesTests/preparedSaveKeepsLiteralUnicodeThroughActionDraftIndexUndoAndRedo()/DocumentFilesTests.swift:220:4",
+    "NotebookCoreTests.NotebookActionDeliveryPhaseTests/canonicalVersionSurvivesEncodingAndChangesWithTheSavedOutcome()/NotebookActionDeliveryPhaseTests.swift:304:4",
+    "NotebookCoreTests.NotebookActionReadModelTests/frozenResultKeepsTheExactOmissionBoundaryAndDigestsActualUndo(source:)/NotebookActionReadModelTests.swift:192:4",
+    "NotebookCoreTests.NotebookActionReadModelTests/frozenResultRefusesAnUnboundModelAndRollsBackItsWholeWriterCut(fault:)/NotebookActionReadModelTests.swift:127:4",
+    "NotebookCoreTests.NotebookReceiptPublicationTests/freshSourceDigestNeverBorrowsAPoisonedPersistedModel()/NotebookReceiptPublicationTests.swift:118:4",
+    "NotebookCoreTests.NotebookReceiptPublicationTests/rawSplitRootsKeepTheirEnvelopeAndAHashMismatchRollsBackTheWriter()/NotebookReceiptPublicationTests.swift:186:4",
+    "NotebookCoreTests.NotebookReceiptPublicationTests/realRenamePreservesTheExistingIntegerDecodeAndOverflowRollback(pageIndex:)/NotebookReceiptPublicationTests.swift:235:4",
+    "NotebookCoreTests.NotebookReceiptPublicationTests/requiredCanonicalEncodingKeepsTheExactLegacyFrameAcrossScalarSpellings(index:)/NotebookReceiptPublicationTests.swift:19:4",
+    "NotebookCoreTests.NotebookReceiptPublicationTests/requiredReceiptBufferRemovesTheDeliveryEncodeAndUndoKeepsValueFraming()/NotebookReceiptPublicationTests.swift:46:4",
+    "NotebookCoreTests.NotebookReceiptPublicationTests/reuseRequiresTheLiteralWholeRootAndLosslessTypedMetadata()/NotebookReceiptPublicationTests.swift:148:4",
+    "NotebookCoreTests.NotebookReceiptPublicationTests/sourceDigestRequiresTheLiteralOriginalFieldAndUndoKeepsItsOwnDigest()/NotebookReceiptPublicationTests.swift:76:4"
+  ],
+  "executions": {
+    "NotebookCoreTests.DocumentFilesTests/nativeDraftCommitIsIdempotentSurvivesBadTeXAndUndoPreservesNeighbors()/DocumentFilesTests.swift:149:4": 1,
+    "NotebookCoreTests.DocumentFilesTests/preparedSaveKeepsLiteralUnicodeThroughActionDraftIndexUndoAndRedo()/DocumentFilesTests.swift:220:4": 1,
+    "NotebookCoreTests.NotebookActionDeliveryPhaseTests/canonicalVersionSurvivesEncodingAndChangesWithTheSavedOutcome()/NotebookActionDeliveryPhaseTests.swift:304:4": 1,
+    "NotebookCoreTests.NotebookActionReadModelTests/frozenResultKeepsTheExactOmissionBoundaryAndDigestsActualUndo(source:)/NotebookActionReadModelTests.swift:192:4": 3,
+    "NotebookCoreTests.NotebookActionReadModelTests/frozenResultRefusesAnUnboundModelAndRollsBackItsWholeWriterCut(fault:)/NotebookActionReadModelTests.swift:127:4": 10,
+    "NotebookCoreTests.NotebookReceiptPublicationTests/freshSourceDigestNeverBorrowsAPoisonedPersistedModel()/NotebookReceiptPublicationTests.swift:118:4": 1,
+    "NotebookCoreTests.NotebookReceiptPublicationTests/rawSplitRootsKeepTheirEnvelopeAndAHashMismatchRollsBackTheWriter()/NotebookReceiptPublicationTests.swift:186:4": 1,
+    "NotebookCoreTests.NotebookReceiptPublicationTests/realRenamePreservesTheExistingIntegerDecodeAndOverflowRollback(pageIndex:)/NotebookReceiptPublicationTests.swift:235:4": 2,
+    "NotebookCoreTests.NotebookReceiptPublicationTests/requiredCanonicalEncodingKeepsTheExactLegacyFrameAcrossScalarSpellings(index:)/NotebookReceiptPublicationTests.swift:19:4": 7,
+    "NotebookCoreTests.NotebookReceiptPublicationTests/requiredReceiptBufferRemovesTheDeliveryEncodeAndUndoKeepsValueFraming()/NotebookReceiptPublicationTests.swift:46:4": 1,
+    "NotebookCoreTests.NotebookReceiptPublicationTests/reuseRequiresTheLiteralWholeRootAndLosslessTypedMetadata()/NotebookReceiptPublicationTests.swift:148:4": 1,
+    "NotebookCoreTests.NotebookReceiptPublicationTests/sourceDigestRequiresTheLiteralOriginalFieldAndUndoKeepsItsOwnDigest()/NotebookReceiptPublicationTests.swift:76:4": 1
+  },
+  "failed": [],
+  "format": 1,
+  "planned": [
+    "NotebookCoreTests.DocumentFilesTests/nativeDraftCommitIsIdempotentSurvivesBadTeXAndUndoPreservesNeighbors()/DocumentFilesTests.swift:149:4",
+    "NotebookCoreTests.DocumentFilesTests/preparedSaveKeepsLiteralUnicodeThroughActionDraftIndexUndoAndRedo()/DocumentFilesTests.swift:220:4",
+    "NotebookCoreTests.NotebookActionDeliveryPhaseTests/canonicalVersionSurvivesEncodingAndChangesWithTheSavedOutcome()/NotebookActionDeliveryPhaseTests.swift:304:4",
+    "NotebookCoreTests.NotebookActionReadModelTests/frozenResultKeepsTheExactOmissionBoundaryAndDigestsActualUndo(source:)/NotebookActionReadModelTests.swift:192:4",
+    "NotebookCoreTests.NotebookActionReadModelTests/frozenResultRefusesAnUnboundModelAndRollsBackItsWholeWriterCut(fault:)/NotebookActionReadModelTests.swift:127:4",
+    "NotebookCoreTests.NotebookReceiptPublicationTests/freshSourceDigestNeverBorrowsAPoisonedPersistedModel()/NotebookReceiptPublicationTests.swift:118:4",
+    "NotebookCoreTests.NotebookReceiptPublicationTests/rawSplitRootsKeepTheirEnvelopeAndAHashMismatchRollsBackTheWriter()/NotebookReceiptPublicationTests.swift:186:4",
+    "NotebookCoreTests.NotebookReceiptPublicationTests/realRenamePreservesTheExistingIntegerDecodeAndOverflowRollback(pageIndex:)/NotebookReceiptPublicationTests.swift:235:4",
+    "NotebookCoreTests.NotebookReceiptPublicationTests/requiredCanonicalEncodingKeepsTheExactLegacyFrameAcrossScalarSpellings(index:)/NotebookReceiptPublicationTests.swift:19:4",
+    "NotebookCoreTests.NotebookReceiptPublicationTests/requiredReceiptBufferRemovesTheDeliveryEncodeAndUndoKeepsValueFraming()/NotebookReceiptPublicationTests.swift:46:4",
+    "NotebookCoreTests.NotebookReceiptPublicationTests/reuseRequiresTheLiteralWholeRootAndLosslessTypedMetadata()/NotebookReceiptPublicationTests.swift:148:4",
+    "NotebookCoreTests.NotebookReceiptPublicationTests/sourceDigestRequiresTheLiteralOriginalFieldAndUndoKeepsItsOwnDigest()/NotebookReceiptPublicationTests.swift:76:4"
+  ],
+  "skipped": []
+}

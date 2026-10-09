@@ -1,0 +1,14 @@
+{
+  "executed": [
+    "NotebookCoreTests.NotebookSearchIndexCostTests/multilingualOneCharacterEditMeasuresTheActualWriterAndCompetingInk()/NotebookSearchIndexCostTests.swift:227:4"
+  ],
+  "executions": {
+    "NotebookCoreTests.NotebookSearchIndexCostTests/multilingualOneCharacterEditMeasuresTheActualWriterAndCompetingInk()/NotebookSearchIndexCostTests.swift:227:4": 1
+  },
+  "failed": [],
+  "format": 1,
+  "planned": [
+    "NotebookCoreTests.NotebookSearchIndexCostTests/multilingualOneCharacterEditMeasuresTheActualWriterAndCompetingInk()/NotebookSearchIndexCostTests.swift:227:4"
+  ],
+  "skipped": []
+}

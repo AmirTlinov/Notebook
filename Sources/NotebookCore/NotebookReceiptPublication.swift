@@ -6,14 +6,25 @@ struct NotebookReceiptPublication {
   let receipt: CollaborationReceipt
   let value: JSONValue
   let sourceDigest: NotebookActionReadModel.Field.SourceDigest?
+  private let encodedDeliveryVersion: String?
   private let hasExactTypedScalars: Bool
   var file: String { "collaboration/actions/" + receipt.id.uuidString.lowercased() + ".json" }
 
   init(_ receipt: CollaborationReceipt) throws {
     self.receipt = receipt
-    value = try .encode(receipt)
     hasExactTypedScalars = Self.hasExactTypedScalars(receipt)
     sourceDigest = hasExactTypedScalars ? try .original(receipt) : nil
+    if sourceDigest != nil, try Self.hasCanonicalCompactMetadata(receipt) {
+      let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+      var version: String?
+      value = try .encode(receipt, using: encoder, observingEncodedData: { data in
+        version = notebookActionDeliveryVersion(canonicalReceiptBytes: data, actionID: receipt.id)
+      })
+      encodedDeliveryVersion = version
+    } else {
+      value = try .encode(receipt)
+      encodedDeliveryVersion = nil
+    }
   }
 
   /// A bound view of this same material, created only for an unchanged whole
@@ -24,6 +35,9 @@ struct NotebookReceiptPublication {
     var receipt: CollaborationReceipt { publication.receipt }
     var value: JSONValue { publication.value }
     var sourceDigest: NotebookActionReadModel.Field.SourceDigest? { publication.sourceDigest }
+    func deliveryVersion() throws -> String {
+      try publication.encodedDeliveryVersion ?? notebookActionDeliveryVersion(value)
+    }
     var address: String { publication.file + "#" }
   }
 
@@ -33,6 +47,38 @@ struct NotebookReceiptPublication {
       fragment.collections.isEmpty, fragment.inkBodies.isEmpty,
       Self.matches(value, fragment.value) else { return nil }
     return .init(publication: self, hash: hash)
+  }
+
+  /// Original source receipts have typed integers in references, inverse counts
+  /// and field clocks; submitted and retained values are JSONValue numbers.
+  /// Equal numeric values need not have equal integer/Double JSON spellings.
+  private static func hasCanonicalCompactMetadata(_ receipt: CollaborationReceipt) throws -> Bool {
+    guard receipt.undo == nil, receipt.lifecycleChanges?.isEmpty ?? true,
+      receipt.action.references.allSatisfy({ $0.worldOrigin == nil }) else { return false }
+    let encoder = JSONEncoder()
+    var counters = Set<UInt64>()
+    func counter(_ value: UInt64) throws -> Bool {
+      if counters.contains(value) { return true }
+      // Bound additional scalar work; other receipts retain canonical value hashing.
+      guard counters.count < 512,
+        try encoder.encode(value) == encoder.encode(Double(value)) else { return false }
+      counters.insert(value); return true
+    }
+    func version(_ value: ContentFieldVersion?) throws -> Bool {
+      guard let value else { return true }
+      guard value.isValid else { return false }
+      return try value.allCountersSatisfy(counter)
+    }
+    if let inverse = receipt.lifecycleInverse,
+      try encoder.encode(inverse.recordCount) != encoder.encode(Double(inverse.recordCount)) { return false }
+    for reference in receipt.action.references {
+      if let index = reference.pageIndex,
+        try encoder.encode(index) != encoder.encode(Double(index)) { return false }
+    }
+    for field in receipt.changes {
+      guard try version(field.beforeVersion), try version(field.afterVersion) else { return false }
+    }
+    return true
   }
 
   /// JSONValue carries numbers as Double. A typed integer that rounds there
