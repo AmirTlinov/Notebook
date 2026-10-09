@@ -466,7 +466,7 @@ public struct NotebookStore: Sendable {
     for var document in documents where liveDocuments.contains(document.id) {
       if (try hasStoredValue(at: documentURL(document.id))) {
         let old = try loadDocument(document.id)
-        _ = document.merge(old)
+        try document.merge(old)
         if document == old { continue }
       }
       writes["documents/\(document.id.uuidString.lowercased()).json"] = try .encode(document)
@@ -517,7 +517,7 @@ public struct NotebookStore: Sendable {
       if (try hasStoredValue(at: url)) {
         let disk = try decoder.decode(DocumentDocument.self, from: storedData(at: url))
         guard disk.id == document.id, disk.isValid else { throw corruptFile(at: url) }
-        _ = resolved.merge(disk)
+        try resolved.merge(disk)
       }
       try publishCollaboration(writes: [logicalAddress(url): try .encode(resolved)])
       return resolved

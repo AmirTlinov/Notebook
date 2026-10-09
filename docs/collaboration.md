@@ -47,6 +47,12 @@ fields and reports later adopted content/dependencies as preserved. Repeated und
 reads the same receipt. See [editable graphics](editable-graphics-contract.md) and
 [spatial commands](agent-spatial-command-contract.md).
 
+Append ownership is per page. Undo may remove an untouched appended page while
+preserving a continued sibling in the same cover. The restoration owner checks
+the exact original append, membership and complete captured postimage against
+the actual inverse; duplicate, changed or uncaptured removals reject the whole
+writer transaction. A cover-level preservation result does not retire its pages.
+
 `NotebookReceiptPhaseMerge` owns held-envelope, stored and replicated receipt
 selection. The immutable original must agree exactly; a saved original may acquire
 one complete Undo cut. Raw comparison retains unknown fields and signed zero.
@@ -147,6 +153,10 @@ Undo names stroke UUIDs, preserving later human/agent strokes.
 field hashes and preserved-continuation addresses without large bodies/undo values.
 The writer derives it atomically from the full receipt; `action_read_models` is
 a local hash-bound index, not replicated source. Mismatch forbids stale publication.
+Frozen results reuse that published model in the same writer cut, checking its
+receipt binding and phase before even returning a cached result. Missing, stale
+or corrupt models refuse the whole cut. Undo hashes its actual changed values;
+the original result remains immutable.
 History preparation is off-main, generation-checked and invalidated by real source
 changes. Status lookup addresses known render requests rather than scanning a list.
 

@@ -1,0 +1,227 @@
+{
+  "status": "PASS",
+  "scope": "Exact intermediate runtime plus acceptedCore/source/result/Undo; fresh dependencies and both complete native production modules compile, focused Core union27functions/43cases/6suites PASS3.612s; no native test run, installed pair or physical acceptance",
+  "incoming": "e1b94f0267d6ecef58687693f4caeb87bb7f25c1",
+  "incomingBase": "ba581a7ce0c22b8094ed57ebadf20cbb12135edf",
+  "ownBaseline": "69384bd541c6bfa57814dba50663fb3dad225c9e",
+  "coreFunctions": 27,
+  "coreCases": 43,
+  "suites": 6,
+  "testSeconds": 3.612,
+  "coreInputsUnchanged": true,
+  "compiler": {
+    "status": "PASS",
+    "head": "69384bd541c6bfa57814dba50663fb3dad225c9e",
+    "incoming": "e1b94f0267d6ecef58687693f4caeb87bb7f25c1",
+    "scope": "Exact intermediate runtime plus acceptedCore/source/result/Undo; fresh dependencies and both complete native production modules compile, focused Core union27functions/43cases/6suites PASS3.612s; no native test run, installed pair or physical acceptance",
+    "candidateManifestSHA256": "5a1a0b88a8b2bd3830267b407cb8e5e4106bf942b81057a3fa6cab77b7bc09a8",
+    "candidateInputsUnchanged": true,
+    "platforms": {
+      "mac": [
+        {
+          "module": "NotebookSurface",
+          "sourceCount": 10,
+          "seconds": 1.482040208997205,
+          "exitCode": 0
+        },
+        {
+          "module": "NotebookCore",
+          "sourceCount": 271,
+          "seconds": 23.38143566699,
+          "exitCode": 0
+        },
+        {
+          "module": "NotebookTypesetter",
+          "sourceCount": 8,
+          "seconds": 0.6706359999952838,
+          "exitCode": 0
+        },
+        {
+          "module": "NotebookCodex",
+          "sourceCount": 16,
+          "seconds": 1.1138009169953875,
+          "exitCode": 0
+        },
+        {
+          "module": "NotebookScriptProtocol",
+          "sourceCount": 2,
+          "seconds": 0.2557145419996232,
+          "exitCode": 0
+        },
+        {
+          "module": "NotebookScriptHost",
+          "sourceCount": 8,
+          "seconds": 0.6219332079635933,
+          "exitCode": 0
+        },
+        {
+          "module": "Notebook",
+          "sourceCount": 224,
+          "seconds": 23.428231792000588,
+          "exitCode": 0
+        }
+      ],
+      "ipad": [
+        {
+          "module": "NotebookSurface",
+          "sourceCount": 10,
+          "seconds": 1.4753335829591379,
+          "exitCode": 0
+        },
+        {
+          "module": "NotebookCore",
+          "sourceCount": 271,
+          "seconds": 22.712844209047034,
+          "exitCode": 0
+        },
+        {
+          "module": "NotebookTypesetter",
+          "sourceCount": 8,
+          "seconds": 0.6961585829849355,
+          "exitCode": 0
+        },
+        {
+          "module": "Notebook",
+          "sourceCount": 271,
+          "seconds": 36.713719166989904,
+          "exitCode": 0
+        }
+      ]
+    },
+    "core": {
+      "exitCode": 0,
+      "inputsUnchanged": true,
+      "seconds": 83.46573070803424,
+      "scope": "Core accepted source merge/result and append Undo union with derived page index; no native or physical acceptance"
+    },
+    "completedUTC": "2026-10-09T08:38:47.149186+00:00"
+  },
+  "command": [
+    "/Users/amir/Documents/projects/Notebook/.build/toolchains/swift-6.4.0/swift-6.4.0-RELEASE-osx-package.pkg/Payload/usr/bin/swift",
+    "test",
+    "--disable-xctest",
+    "--test-product",
+    "NotebookCoreTests",
+    "--filter",
+    "NotebookAppendedPageUndoTests|NotebookLifecycleResultTests|NotebookActionReadModelTests/(frozenResultRefusesAnUnboundModelAndRollsBackItsWholeWriterCut|frozenResultKeepsTheExactOmissionBoundaryAndDigestsActualUndo)|DocumentFilesTests/(preparedNativeSourceRejectsPeerABAAndAReplacedWorkspaceBeforeCachedReplay|preparedSaveKeepsLiteralUnicodeThroughActionDraftIndexUndoAndRedo|preparedNativeSourceAndIndexHaveOneRollbackAndUnknownCommitOutcome|replicatedSameDotSourceMutationRefusesTheWholeDelivery|replicatedLosingSourceHeadCannotChangeItsLiteralPayload|replicatedNewDotNormalizationSaveKeepsExactSourceThroughColdUndoAndRedo)|NotebookSearchIndexTests/sourceChangesInvalidateContinuationRatherThanMixingSnapshots|NotebookPageMaterialWindowTests/fittedTextAndTransformedGroupUseSamePlacementAsCompletePage",
+    "--event-stream-output-path",
+    "/Users/amir/.codex/worktrees/notebook-simplification/Notebook/.build/common-core-adoption/core-proof/events.jsonl",
+    "--event-stream-version",
+    "6.4"
+  ],
+  "changedInputs": [
+    {
+      "path": "Applications/Shared/NotebookAppModel.swift",
+      "commitSha256": "e804cc6f0e5e03253ea9a9ea36fa129c2f431a42694ea52a81cd24cb8cc8bbc5"
+    },
+    {
+      "path": "Applications/TestSupport/NotebookDocumentSourcePersistenceTests.swift",
+      "commitSha256": "8cd6a8a12523b0e7a8fc4d37f816974fd8ac3b7c45e261313999aab58716a802"
+    },
+    {
+      "path": "Sources/NotebookCore/CollaborationContent.swift",
+      "commitSha256": "60ab005cc085f5f71b9b6cd1f5e5b11b1dc6a439b085a6a30f4814fa1370b7e3"
+    },
+    {
+      "path": "Sources/NotebookCore/CollaborationRuntime.swift",
+      "commitSha256": "a7e201e81e3f9c79e013181531b0f7d97dfcbf2b358f6da803f9e8806c26ce2a"
+    },
+    {
+      "path": "Sources/NotebookCore/CollaborativeContent.swift",
+      "commitSha256": "6b2b084058a0ccf33344ab6008563b1a59c72a55ff33c69f27aa8e6340706773"
+    },
+    {
+      "path": "Sources/NotebookCore/DocumentDocument.swift",
+      "commitSha256": "b32b2026f0be0e0a1fa79e9859f112cf1af9675821afa1c24eae11722bd2b1a1"
+    },
+    {
+      "path": "Sources/NotebookCore/DocumentSourceReplication.swift",
+      "commitSha256": "1596ca8e46b1944f3df9f8d8a3841769e45781cc940b1c0329b2d725d9a531cd"
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookActionDelivery.swift",
+      "commitSha256": "6a2de23f66347dec8f5f7654c3fae984a47caeacf05d1207493230703621c2b3"
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookActionResult.swift",
+      "commitSha256": "1bbad8506b68c9ceb709aaf0ac0d50159d2bb0bd54e5308533a8a388392b1d4b"
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookFieldRestoration.swift",
+      "commitSha256": "e4a0120972fe0fc26e7dcf2270af6eee77ba5b9f55c3b45bf381a85772daab77"
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookScopedCommand.swift",
+      "commitSha256": "2bd70f2b1074400aab34f6e635e5a6b3dc55987a4dceadd5f2412c4d7439f7e4"
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookStore.swift",
+      "commitSha256": "723b5408762f45ac1b1fe46dc9f2c5bbc34cf47ef18ccfa2cbc998cc8c5f8977"
+    },
+    {
+      "path": "Tests/NotebookCoreTests/CausalContentMergeTests.swift",
+      "commitSha256": "c6a97278377a71a564ddf050063a21f652ef8a3db13982dfbc4e9449cc0792b7"
+    },
+    {
+      "path": "Tests/NotebookCoreTests/CollaborationTests.swift",
+      "commitSha256": "4e35285a2e53de410eab299a6bc10f00f8847fb16c0561732e8a0284aeeca359"
+    },
+    {
+      "path": "Tests/NotebookCoreTests/DocumentFilesTests.swift",
+      "commitSha256": "5f0d9bc72ee8b933543129a30647699a14fbacbf00b30fbd5cd0ad528e8f9921"
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookActionReadModelTests.swift",
+      "commitSha256": "58884988c8ae664b051f9ba6b9f9f2b0281e87843d9bc83bcc53cb4579422014"
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookAppendedPageUndoTests.swift",
+      "commitSha256": "30c1f1d558644bb5b90988e7b7ddef7cf16880b97438efbca7c460fc25febcb0"
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookLifecycleResultTests.swift",
+      "commitSha256": "8762e19ee3dd023fec96a401a73c3f93c1396873c81901e3fb91a3783574c047"
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookPortableDocumentTests.swift",
+      "commitSha256": "e21e8986312d97167a0ba8d8ef70203acff8ba1117754a919cafe01d0d29cc36"
+    },
+    {
+      "path": "Tests/NotebookCoreTests/NotebookSearchIndexCostTests.swift",
+      "commitSha256": "4c4a83f092c998da1e5502e06c36b765caab6367fc7cd21b701721d9b8d8e366"
+    },
+    {
+      "path": "docs/audit-evidence/2026-10-09/common-source-and-history/results.json",
+      "commitSha256": "6ad0b4410f1970fbb32ae4daacd7f82361c279983c7d5a17f25268ff8716d756"
+    },
+    {
+      "path": "docs/audit-evidence/2026-10-09/common-source-and-history/save-1024.json",
+      "commitSha256": "b67dd80d30f13878c23bceefdac22d035e872df2887db3e75f72b67266995d6d"
+    },
+    {
+      "path": "docs/audit-evidence/2026-10-09/common-source-and-history/save-1048576.json",
+      "commitSha256": "d23d22aec610e3bd85c64137c2371118a7e2bb795428491682fcf86a2d557206"
+    },
+    {
+      "path": "docs/audit-evidence/2026-10-09/common-source-and-history/save-4194304.json",
+      "commitSha256": "f91053b2063a1d5113a69d08103b2b8cf479f3b534e33447110881afd9c4ea19"
+    },
+    {
+      "path": "docs/audit-evidence/2026-10-09/native-source-save/results.json",
+      "commitSha256": "74a0b7d3f01e243fc20d3466a2f693c8af992ffdc890b770699808010ae9dbe1"
+    },
+    {
+      "path": "docs/collaboration.md",
+      "commitSha256": "4081a0c5a4049f75bef8d5ae9c0b4c4daf2c086b5862d477e2782beffdaaba2f"
+    },
+    {
+      "path": "docs/document-source-replication.md",
+      "commitSha256": "751ba824ad1d8197762a96b66269ac43f87f00871ccd6dc8054a13b970a74520"
+    },
+    {
+      "path": "docs/verification.md",
+      "commitSha256": "0136cb9c295e4fb6ac17946c6f231974855ab163a7ba072b4e872dbb86041d89"
+    }
+  ],
+  "physicalSourceScope": "New native accepted-result iPad scenario and source scope still required; final installed-pair acceptance remains open"
+}

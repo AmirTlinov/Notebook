@@ -4596,10 +4596,13 @@ final class NotebookAppModel: NotebookWorkspaceLifecycle {
     let inserted = try await persistence.submit(publishesChanges: true) {
       try $0.insertDocumentFile(documentID: documentID, path: path, actor: actor)
     }
+    defer { reloadExternalChanges() }
     pencilUndoHistory.recordCommand(domain: .document(documentID), actionID: inserted.receipt.id)
-    if var current = documents[documentID] { _ = current.merge(inserted.document); documents[documentID] = current }
+    if var current = documents[documentID] {
+      do { try current.merge(inserted.document); documents[documentID] = current }
+      catch { reportAcceptedDocumentPublicationRefusal(documentID: documentID) }
+    }
     else { documents[documentID] = inserted.document }
-    reloadExternalChanges()
     return .init(documentID: documentID, file: inserted.document.files.first { $0.id == inserted.fileID }!,
       version: inserted.document.fileVersion(fileID: inserted.fileID))
   }
@@ -4612,10 +4615,13 @@ final class NotebookAppModel: NotebookWorkspaceLifecycle {
     let renamed = try await persistence.submit(publishesChanges: true) {
       try $0.renameDocumentFile(documentID: documentID, fileID: fileID, path: path, actor: actor)
     }
+    defer { reloadExternalChanges() }
     pencilUndoHistory.recordCommand(domain: .document(documentID), actionID: renamed.receipt.id)
-    if var current = documents[documentID] { _ = current.merge(renamed.document); documents[documentID] = current }
+    if var current = documents[documentID] {
+      do { try current.merge(renamed.document); documents[documentID] = current }
+      catch { reportAcceptedDocumentPublicationRefusal(documentID: documentID) }
+    }
     else { documents[documentID] = renamed.document }
-    reloadExternalChanges()
     return .init(documentID: documentID, file: renamed.document.files.first { $0.id == fileID }!,
       version: renamed.document.fileVersion(fileID: fileID))
   }
@@ -4684,8 +4690,14 @@ final class NotebookAppModel: NotebookWorkspaceLifecycle {
       documentEditingSessions.removeAll { $0.id == edit.sessionID }
       if !isStopped, !isItemBeingDeleted(edit.documentID),
         let publication = result.publication, var document = documents[edit.documentID] {
-        _ = document.mergeSource(publication)
-        documents[document.id] = document
+        do {
+          try document.mergeSource(publication)
+          documents[document.id] = document
+        } catch {
+          clearDocumentSavePresentation(sessionID: edit.sessionID)
+          reportAcceptedDocumentPublicationRefusal(documentID: edit.documentID)
+          reloadExternalChanges()
+        }
       }
       if documentSavePresentation?.sessionID == edit.sessionID {
         documentSavePresentation?.phase = .saved
@@ -4702,6 +4714,13 @@ final class NotebookAppModel: NotebookWorkspaceLifecycle {
     }
     onCommit?(result)
     return result.status
+  }
+
+  private func reportAcceptedDocumentPublicationRefusal(documentID: UUID) {
+    // The writer already committed its original result. A refused live merge
+    // requests a new scene cut while the editor receives that accepted version.
+    observeNavigation("document_source_publication_refused", fields: ["documentID": .string(documentID.uuidString)])
+    showCue("Изменения сохранены. Обновляем документ.")
   }
 
   private func clearDocumentSavePresentation(sessionID: UUID) {

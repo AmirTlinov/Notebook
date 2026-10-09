@@ -8,6 +8,24 @@ import Testing
 /// 1024, 1048576 or 4194304. SQL tracing never replaces the progress handler.
 @Suite("Isolated search writer cost", .serialized)
 struct NotebookSearchIndexCostTests {
+  #if DEBUG
+  private final class DeliveryWork: @unchecked Sendable {
+    let actionID: UUID
+    private let lock = NSLock()
+    private var passes = 0
+    private var bytes: Int64 = 0
+    init(actionID: UUID) { self.actionID = actionID }
+    func record(_ sample: NotebookActionDeliveryObservation.Sample) {
+      guard sample.actionID == actionID else { return }
+      lock.lock(); defer { lock.unlock() }
+      passes += 1; bytes += Int64(sample.framedBytes)
+    }
+    func snapshot() -> (passes: Int, bytes: Int64) {
+      lock.lock(); defer { lock.unlock() }
+      return (passes, bytes)
+    }
+  }
+  #endif
   private final class Gate: @unchecked Sendable {
     let writerBegan = DispatchSemaphore(value: 0), inkAttempted = DispatchSemaphore(value: 0)
     func waitForWriter() throws {
@@ -176,6 +194,7 @@ struct NotebookSearchIndexCostTests {
     }
     let sourceBytes: Int, writerHoldMilliseconds: Double, coordinationMilliseconds: Double
     let preparation: Preparation
+    let receiptDeliveryVersionPasses: Int?, receiptDeliveryHashInputBytes: Int64?
     let writerVMSteps: Int64, writerStatements: Int
     let mallocLiveBlocksAtSQLPeak: UInt32, mallocLiveBytesAtSQLPeak: UInt64
     let sqliteBytesAtSQLPeak: Int64, sqliteHighWaterBytes: Int64, databaseCacheBytesAtSQLPeak: Int32, statementBytesAtSQLPeak: Int32
@@ -238,10 +257,20 @@ struct NotebookSearchIndexCostTests {
         return (Double(DispatchTime.now().uptimeNanoseconds - start) / 1_000_000, true, nil)
       } catch { return (Double(DispatchTime.now().uptimeNanoseconds - start) / 1_000_000, false, String(describing: error)) }
     }
+    #if DEBUG
+      let deliveryWork = DeliveryWork(actionID: edit.sessionID)
+    #endif
     do {
-      let result = try store.commandTransaction(preparedDatabase: mainSQL) {
-        try store.commitDocumentSource(prepared, actor: actor)
+      let save = {
+        try store.commandTransaction(preparedDatabase: mainSQL) {
+          try store.commitDocumentSource(prepared, actor: actor)
+        }
       }
+      #if DEBUG
+        let result = try NotebookActionDeliveryObservation.withObserver(deliveryWork.record, operation: save)
+      #else
+        let result = try save()
+      #endif
       #expect(result.status == .committed)
     }
     catch { gate.writerBegan.signal(); _ = try? await competitor.value; throw error }
@@ -250,10 +279,18 @@ struct NotebookSearchIndexCostTests {
     #expect(trace.sawInkAttempt && held > 0 && trace.vmSteps > 0)
     #expect(try store.loadDocument(documentID).files.first?.source == edited)
     if inkSaved { #expect(try store.loadPage(pageID).inkDrawing().actions.contains { $0.id == ink.id }) }
+    #if DEBUG
+      let delivery = deliveryWork.snapshot()
+      #expect(delivery.passes == 1 && delivery.bytes > 0)
+      let receiptPasses: Int? = delivery.passes, receiptBytes: Int64? = delivery.bytes
+    #else
+      let receiptPasses: Int? = nil, receiptBytes: Int64? = nil
+    #endif
     var usage = rusage(); getrusage(RUSAGE_SELF, &usage)
     let result = Result(sourceBytes: count, writerHoldMilliseconds: held,
       coordinationMilliseconds: Double(trace.coordinationNanoseconds) / 1_000_000,
       preparation: preparation,
+      receiptDeliveryVersionPasses: receiptPasses, receiptDeliveryHashInputBytes: receiptBytes,
       writerVMSteps: trace.vmSteps, writerStatements: trace.statements,
       mallocLiveBlocksAtSQLPeak: trace.liveBlocksPeak, mallocLiveBytesAtSQLPeak: trace.liveBytesPeak,
       sqliteBytesAtSQLPeak: trace.sqliteBytesPeak, sqliteHighWaterBytes: sqlite3_memory_highwater(0),

@@ -1,10 +1,48 @@
 import Foundation
 
+#if DEBUG
+enum NotebookActionDeliveryObservation {
+  struct Sample: Sendable {
+    let actionID: UUID?
+    let framedBytes: Int
+  }
+
+  private final class Box {
+    let observer: @Sendable (Sample) -> Void
+    init(_ observer: @escaping @Sendable (Sample) -> Void) { self.observer = observer }
+  }
+  private static let key = "notebook.action-delivery.debug-observer"
+
+  static func withObserver<T>(_ observer: @escaping @Sendable (Sample) -> Void,
+    operation: () throws -> T) rethrows -> T {
+    let thread = Thread.current, previous = thread.threadDictionary[key]
+    thread.threadDictionary[key] = Box(observer)
+    defer {
+      if let previous { thread.threadDictionary[key] = previous }
+      else { thread.threadDictionary.removeObject(forKey: key) }
+    }
+    return try operation()
+  }
+
+  static var observer: (@Sendable (Sample) -> Void)? {
+    (Thread.current.threadDictionary[key] as? Box)?.observer
+  }
+}
+#endif
+
 /// The same framing applies to an untouched raw historical body. Decoding it
 /// as a typed receipt first would discard unknown authored JSON fields.
 func notebookActionDeliveryVersion(_ receipt: JSONValue) throws -> String {
-  try collaborationHash(JSONValue.object(["domain": .string("notebook.action-delivery.v1"),
-    "receipt": receipt]))
+  let framed = JSONValue.object(["domain": .string("notebook.action-delivery.v1"), "receipt": receipt])
+  #if DEBUG
+  if let observer = NotebookActionDeliveryObservation.observer {
+    let id = receipt["id"]?.string.flatMap { $0.utf16.count <= 36 ? UUID(uuidString: $0) : nil }
+    return try collaborationHash(framed, observingEncodedBytes: { bytes in
+      observer(.init(actionID: id, framedBytes: bytes))
+    })
+  }
+  #endif
+  return try collaborationHash(framed)
 }
 
 extension CollaborationReceipt {

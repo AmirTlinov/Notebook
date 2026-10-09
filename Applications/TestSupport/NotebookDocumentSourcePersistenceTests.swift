@@ -1,4 +1,4 @@
-import NotebookCore
+@testable import NotebookCore
 import XCTest
 @testable import Notebook
 
@@ -126,6 +126,91 @@ final class NotebookDocumentSourcePersistenceTests: XCTestCase {
     XCTAssertEqual(model.documents[id]?.files, before.files)
     XCTAssertEqual(try model.store.loadDocumentState(id), state,
       "Undo of a source field does not undo a live program's independent state")
+  }
+
+  @MainActor
+  func testAcceptedSourceVersionReachesTheEditorAfterALiveProjectionRefusal() async throws {
+    var capturedQueue: NotebookPersistenceQueue?
+    let (model, id) = try await makeModel(observeQueue: { capturedQueue = $0 })
+    let queue = try XCTUnwrap(capturedQueue), before = try XCTUnwrap(model.documents[id])
+    let file = try XCTUnwrap(before.files.first { $0.id == "a-html" })
+    let session = DocumentSourceEditorSession(request: .init(documentID: id, file: file,
+      version: before.fileVersion(fileID: file.id)), model: model)
+    let first = "<p>Accepted source</p>", successor = "<p>Next accepted source</p>"
+    session.input(first, selection: .init(location: 3, length: 8), composing: false, scroll: 0)
+    let firstID = try XCTUnwrap(session.messageSelection?.draftID)
+    let previousCommit = queue.onCommit
+    var installedMismatch = false
+    var acceptedDocument: DocumentDocument?
+    var originalReceipt: CollaborationReceipt?
+    queue.onCommit = { owner in
+      previousCommit?(owner)
+      guard case .document(let documentID)? = owner, documentID == id, !installedMismatch else { return }
+      do {
+        // The real writer has finished, but its original result has not yet
+        // reached the editor. These two fixture-only publications install and
+        // restore a fault below typed local source admission; they are not
+        // ordinary authored edits.
+        let accepted = try model.store.loadDocument(id)
+        acceptedDocument = accepted
+        originalReceipt = try model.store.collaborationAction(firstID)
+        let mismatched = try JSONValue.encode(accepted).setting("files", .array(try accepted.files.map {
+          try .encode($0.id == file.id ? $0.replacingSource("Conflicting live projection") : $0)
+        })).decode(DocumentDocument.self)
+        XCTAssertEqual(mismatched.fileVersion(fileID: file.id), accepted.fileVersion(fileID: file.id))
+        let faultCursor = try model.store.currentChangeCursor()
+        try model.store.publishCollaboration(writes: [documentFile(id): try .encode(mismatched)])
+        XCTAssertEqual(try model.store.currentChangeCursor(), faultCursor + 1)
+        defer {
+          do {
+            try model.store.publishCollaboration(writes: [documentFile(id): try .encode(accepted)])
+            XCTAssertEqual(try model.store.currentChangeCursor(), faultCursor + 2,
+              "Only the two explicit fixture fault publications advance this journal scope")
+          }
+          catch { XCTFail("Cannot restore the fixture's accepted source: \(error)") }
+        }
+        let presence = try XCTUnwrap(model.presence), admission = model.readAdmission.begin()
+        defer { model.readAdmission.end(admission) }
+        let cut = try NotebookSceneState.read(store: model.store, presence: presence, viewport: presence.viewport)
+        XCTAssertTrue(model.acceptExternalScene(cut, admission: admission, observedPresence: presence,
+          observedPreparation: presence, itemPins: [:]))
+        installedMismatch = model.documents[id]?.files.first { $0.id == file.id }?.source == "Conflicting live projection"
+      } catch { XCTFail("Cannot install the live projection mismatch: \(error)") }
+    }
+    defer { queue.onCommit = previousCommit }
+
+    await session.save()
+    let accepted = try XCTUnwrap(acceptedDocument), receipt = try XCTUnwrap(originalReceipt)
+    XCTAssertTrue(installedMismatch)
+    XCTAssertEqual(model.actionCue, "Изменения сохранены. Обновляем документ.",
+      "The accepted publication must actually encounter the causal merge refusal")
+    XCTAssertFalse(session.saving); XCTAssertFalse(session.conflicted)
+    XCTAssertEqual(session.notice, "Сохранено")
+    let selection = try XCTUnwrap(session.messageSelection)
+    XCTAssertEqual(selection.baseVersion, accepted.fileVersion(fileID: file.id),
+      "The original onCommit version reaches the editor despite the refused live merge")
+    XCTAssertFalse(selection.hasLocalDraft)
+    XCTAssertEqual(session.text, first)
+    XCTAssertNil(queue.failure); XCTAssertNil(model.persistenceFailure)
+    XCTAssertEqual(try model.store.loadDocument(id), accepted)
+    XCTAssertEqual(try model.store.collaborationAction(firstID), receipt)
+    await model.reloadExternalChanges()?.value
+    XCTAssertEqual(model.documents[id], accepted, "The existing scene reader restores the accepted projection")
+
+    queue.onCommit = previousCommit
+    session.input(successor, selection: .init(location: 3, length: 8), composing: false, scroll: 0)
+    let successorID = try XCTUnwrap(session.messageSelection?.draftID)
+    XCTAssertNotEqual(successorID, firstID, "A committed editor starts the next source session")
+    await session.save()
+    let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved, model.persistenceFailure ?? "")
+    let next = try model.store.loadDocument(id)
+    XCTAssertEqual(next.files.first { $0.id == file.id }?.source, successor)
+    XCTAssertEqual(session.messageSelection?.baseVersion, next.fileVersion(fileID: file.id))
+    XCTAssertFalse(session.conflicted); XCTAssertEqual(session.notice, "Сохранено")
+    XCTAssertTrue(try model.store.documentEditingSessions().isEmpty)
+    XCTAssertEqual(try model.store.collaborationAction(successorID).id, successorID)
+    XCTAssertEqual(try model.store.collaborationAction(firstID), receipt,
+      "Publication recovery cannot rewrite the original accepted receipt")
   }
 
   @MainActor

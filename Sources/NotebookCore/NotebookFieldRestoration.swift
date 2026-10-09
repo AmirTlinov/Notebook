@@ -71,11 +71,18 @@ extension NotebookStore {
         && receipt.lifecycleChanges?.contains(where: { $0.kind == .deleteItem && $0.target == event.target }) == true
         && receipt.undo?.preservedLifecycle?.contains(event.target) != true
     }) else { throw NotebookStorageError.invalidTransaction("lifecycle restoration scope") }
-    guard removed.count <= 512, removed.allSatisfy({ event in
-      event.target.kind == .cover && event.pageID != nil
-        && receipt.lifecycleChanges?.contains(where: { $0.kind == .appendPage && $0.target == event.target && $0.pageID == event.pageID }) == true
-        && receipt.undo?.preservedLifecycle?.contains(event.target) != true
-    }) else { throw NotebookStorageError.invalidTransaction("append restoration scope") }
+    guard removed.count <= 512 else { throw NotebookStorageError.invalidTransaction("append restoration scope") }
+    try database.admitJSONAllocation(bytes: removed.count * 512)
+    var removedPages: [CollaborationTarget: Set<UUID>] = [:]
+    for event in removed {
+      guard event.target.kind == .cover, event.target.boardID != nil, let pageID = event.pageID,
+        event.item.map({ $0.id == event.target.id && $0.kind == .notebook }) ?? true,
+        removedPages[event.target, default: []].insert(pageID).inserted,
+        receipt.lifecycleChanges?.lazy.filter({ $0.kind == .appendPage && $0.target == event.target && $0.pageID == pageID }).count == 1,
+        receipt.action.operations.contains(where: {
+          $0.kind == .appendPage && $0.target == event.target && $0.id.flatMap(UUID.init(uuidString:)) == pageID
+        }) else { throw NotebookStorageError.invalidTransaction("append restoration scope") }
+    }
 
     // Scalar evidence only, streamed into TEMP. Even a large notebook has no
     // array of fields or page bodies in the provenance owner.
@@ -94,6 +101,53 @@ extension NotebookStore {
     try visitLifecycleInverse(reference: inverse, actionID: receipt.id) { change in
       try database.run("INSERT INTO captured_restoration_undo VALUES(?,?,?)", [.text(change.address),
         change.beforeHash.map(NotebookSQLValue.text) ?? .null, change.afterHash.map(NotebookSQLValue.text) ?? .null])
+    }
+
+    // Preservation is reported per cover, while append ownership is per page.
+    // A continued sibling may preserve the cover and still allow this page's
+    // authenticated postimage to be removed by the same inverse.
+    for event in removed {
+      let pageID = event.pageID!, id = pageID.uuidString.lowercased()
+      let parent = "workspace.json#/items/@" + event.target.id.uuidString.lowercased()
+      let membershipAddress = parent + "/pageIDs/@" + id, root = pageFile(pageID) + "#"
+      let refusal = NotebookStorageError.invalidTransaction("append restoration evidence")
+      func hashes(_ address: String) throws -> (born: String, removed: String) {
+        guard let row = try database.rows("""
+          SELECT o.before_hash,o.after_hash,u.before_hash,u.after_hash
+          FROM lifecycle_restoration_fields o LEFT JOIN captured_restoration_undo u ON u.address=o.address
+          WHERE o.address=?
+          """, [.text(address)]).first, row[0].text == nil,
+          let born = row[1].text, let removed = row[2].text, row[3].text == nil else { throw refusal }
+        return (born, removed)
+      }
+      let membershipHashes = try hashes(membershipAddress), rootHashes = try hashes(root)
+      let membership = try readLifecycleInverseFragment(hash: membershipHashes.born,
+        address: membershipAddress, expandingInk: false)
+      let removedMembership = try readLifecycleInverseFragment(hash: membershipHashes.removed,
+        address: membershipAddress, expandingInk: false)
+      let page = try readLifecycleInverseFragment(hash: rootHashes.born, address: root, expandingInk: false)
+      guard membership.file == "workspace.json", membership.parent == parent,
+        membership.collection == "pageIDs", membership.member == id, membership.collections.isEmpty,
+        membership.value.string.flatMap(UUID.init(uuidString:)) == pageID,
+        // Later page ordering may change the slot without changing membership.
+        removedMembership.replacing(value: removedMembership.value, position: 0)
+          == membership.replacing(value: membership.value, position: 0),
+        rootHashes.born == rootHashes.removed, page.value["id"]?.string.flatMap(UUID.init(uuidString:)) == pageID,
+        page.value["format"] == .number(Double(PageDocument.formatVersion)),
+        page.collections.contains(.init(path: ["drawingData"], kind: .pageInk)),
+        page.collections.contains(.init(path: ["elements"], kind: .array)) else { throw refusal }
+      let end = root + "\u{10ffff}"
+      let changedSource = try database.rows("""
+        SELECT 1 FROM lifecycle_restoration_fields o LEFT JOIN captured_restoration_undo u ON u.address=o.address
+        WHERE o.address>=? AND o.address<? AND (o.before_hash IS NOT NULL OR o.after_hash IS NULL
+          OR o.after_hash IS NOT u.before_hash OR u.after_hash IS NOT NULL) LIMIT 1
+        """, [.text(root), .text(end)])
+      let extraSource = try database.rows("""
+        SELECT 1 FROM captured_restoration_undo u LEFT JOIN lifecycle_restoration_fields o ON o.address=u.address
+        WHERE u.address>=? AND u.address<? AND (o.address IS NULL OR u.after_hash IS NOT NULL
+          OR u.before_hash IS NOT o.after_hash) LIMIT 1
+        """, [.text(root), .text(end)])
+      guard changedSource.isEmpty, extraSource.isEmpty else { throw refusal }
     }
 
     func oldSource(_ source: String) throws -> NotebookStoredFragment? {

@@ -503,6 +503,13 @@ extension NotebookStore {
 }
 
 public func collaborationHash<T: Encodable>(_ value: T) throws -> String {
+  try collaborationHash(value, observingEncodedBytes: nil)
+}
+
+func collaborationHash<T: Encodable>(_ value: T, observingEncodedBytes: ((Int) -> Void)?) throws -> String {
   let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-  return NotebookHexEncoding.encode(SHA256.hash(data: try encoder.encode(value)))
+  let data = try encoder.encode(value)
+  let hash = NotebookHexEncoding.encode(SHA256.hash(data: data))
+  observingEncodedBytes?(data.count)
+  return hash
 }

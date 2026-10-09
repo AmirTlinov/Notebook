@@ -218,7 +218,9 @@ extension NotebookStore {
     if equal(before, after) { return current }
     if equal(current, before) || equal(current, after) { return after }
     if let current, let after, let oldVersion = try? current.decode(ContentFieldVersion.self),
-      let nextVersion = try? after.decode(ContentFieldVersion.self) { return try .encode(oldVersion.joining(nextVersion)) }
+      let nextVersion = try? after.decode(ContentFieldVersion.self) {
+      return try .encode(oldVersion.joining(nextVersion, valuesAreEqual: equal))
+    }
     if let current, let after, let oldStamp = try? current.decode(VersionStamp.self),
       let nextStamp = try? after.decode(VersionStamp.self) { return try .encode(max(oldStamp, nextStamp)) }
     if case .object(let old) = before, case .object(let next) = after, case .object(let stored) = current {

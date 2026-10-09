@@ -6,22 +6,38 @@ import Testing
 struct NotebookLifecycleResultTests {
   private typealias Fixture = NotebookItemLifecycleTests.Fixture
 
-  private func receipt(_ f: Fixture, count: Int = 1, deleted: Bool = false) throws -> CollaborationReceipt {
-    let extent = try #require(try f.store.readItemLifecycle(f.itemID)), pages = (0..<count).map { _ in UUID() }
-    let after = NotebookItemHeader(id: f.itemID, kind: .notebook, title: extent.item.title,
-      firstPageID: f.pageID, pageCount: extent.item.pageCount + count)
-    let operations = pages.map { CollaborationOperation(kind: deleted ? .deleteItem : .appendPage,
-      target: extent.target, id: deleted ? nil : $0.uuidString, values: [:]) }
-    let action = CollaborationAction(summary: "Frozen lifecycle", expected: [], operations: operations)
-    var receipt = CollaborationReceipt(id: action.id, action: action, createdAt: Date(), revisions: [], changes: [], undo: nil)
-    receipt.lifecycleChanges = pages.map { .init(kind: deleted ? .deleteItem : .appendPage, target: extent.target,
-      pageID: deleted ? nil : $0, beforeItem: extent.item, afterItem: deleted ? nil : after) }
-    return receipt
+  private func receipt(_ f: Fixture, count: Int = 1, deleted: Bool = false, renamed: Bool = false) throws -> CollaborationReceipt {
+    if deleted {
+      let header = try f.store.workspaceHeader(), board = CollaborationTarget(kind: .board, id: header.rootBoardID)
+      let basis = try f.store.readBasis(targets: [board, .init(kind: .workspace, id: header.rootBoardID)])
+      _ = try f.store.applyCollaborationAction(.init(summary: "Retained neighbor", expected: basis.owners,
+        operations: [.init(kind: .createNotebook, target: board, id: UUID().uuidString,
+          values: ["center": try .encode(WorldPoint.zero), "pageID": try .encode(UUID())])]), actor: f.actor)
+    }
+    let extent = try #require(try f.store.readItemLifecycle(f.itemID))
+    var command = NotebookCommand(command: .read); command.readSnapshots = true
+    command.queries = [try JSONValue.object(["kind": .string("itemLifecycle"), "id": try .encode(f.itemID)]).decode(NotebookReadQuery.self)]
+    let basis = try #require(try NotebookCommandDispatcher(store: f.store).handle(command).array.first?["basis"]?.decode(NotebookReadBasis.self))
+    var operations = (0..<count).map { _ in CollaborationOperation(kind: deleted ? .deleteItem : .appendPage,
+      target: extent.target, id: deleted ? nil : UUID().uuidString, values: [:]) }
+    if renamed {
+      operations.append(.init(kind: .renameItem, target: .init(kind: .board, id: try #require(extent.target.boardID)),
+        id: f.itemID.uuidString, values: ["title": .string("Saved")]))
+    }
+    let expected = try f.store.expectations(base: basis, operations: operations)
+    return try f.store.applyCollaborationAction(.init(additionalOwners: [extent.target], summary: "Frozen lifecycle",
+      expected: expected, operations: operations), actor: f.actor)
   }
 
   private func freeze(_ receipt: CollaborationReceipt, in store: NotebookStore,
     fields: [CollaborationFieldChange] = []) throws -> JSONValue {
-    try store.commandTransaction { try store.freezeActionResult(receipt, changed: fields) }
+    try store.commandTransaction {
+      // Explicit legacy phases below still use the current publication/index
+      // owner. A synthetic positive read-model index is never installed.
+      let file = "collaboration/actions/" + receipt.id.uuidString.lowercased() + ".json"
+      try store.publishRecords(writes: [file: try .encode(receipt)])
+      try store.freezeActionResult(receipt, changed: fields)
+    }
     return try store.scriptActionOutcome(receipt)
   }
 
@@ -55,7 +71,7 @@ struct NotebookLifecycleResultTests {
       "target": try .encode(lifecycle.target), "item": try .encode(lifecycle.beforeItem)])])
     let event: JSONValue = .object(["kind": .string("restoreItem"), "target": try .encode(lifecycle.target),
       "item": try .encode(lifecycle.beforeItem)])
-    let undone = try withUndo(receipt, events: [event]), result = try freeze(undone, in: f.store)
+    let undone = try f.store.undoCollaborationAction(receipt.id, actor: UUID()), result = try freeze(undone, in: f.store)
     #expect(result["changed"]?.array == [event.setting("kind", nil).setting("change", .string("restoreItem"))])
     #expect(result["actionVersion"] != original["actionVersion"])
     #expect(try f.store.savedActionResult(receipt.id) == original)
@@ -81,15 +97,14 @@ struct NotebookLifecycleResultTests {
     let f = try Fixture(), original = try receipt(f), lifecycle = try #require(original.lifecycleChanges?.first)
     let event: JSONValue = .object(["kind": .string("removePage"), "target": try .encode(lifecycle.target),
       "pageID": try .encode(lifecycle.pageID), "item": try .encode(lifecycle.beforeItem)])
-    let undo = try withUndo(original, events: [event]), result = try freeze(undo, in: f.store)
+    let undo = try f.store.undoCollaborationAction(original.id, actor: UUID()), result = try freeze(undo, in: f.store)
     #expect(result["changed"]?.array == [event.setting("kind", nil).setting("change", .string("removePage"))])
     #expect(result["publication"]?["shownOnIPad"] == .string("awaiting_display"))
   }
 
   @Test func fieldAndLifecyclePaginationShareTheExactFrozenVersionWithoutRawBodies() throws {
-    let f = try Fixture(), receipt = try receipt(f, count: 40)
-    let field = CollaborationFieldChange(file: "workspace.json", path: [.field("title")], before: .string("Before"), after: .string("Saved"))
-    let first = try freeze(receipt, in: f.store, fields: [field])
+    let f = try Fixture(), receipt = try receipt(f, count: 40, renamed: true)
+    let first = try freeze(receipt, in: f.store)
     #expect(first["changeCount"] == .number(41))
     #expect(first["changed"]?.array.count == 32)
     #expect(first["changed"]?.array.first?["change"] == .string("updated"))
@@ -99,7 +114,7 @@ struct NotebookLifecycleResultTests {
     #expect(rest["changed"]?.array.allSatisfy { $0["change"] == .string("appendPage") } == true)
     #expect(rest["actionVersion"] == first["actionVersion"])
     #expect(try JSONEncoder().encode(rest).count < 16_384)
-    let undo = try withUndo(receipt, events: []); _ = try freeze(undo, in: f.store)
+    let undo = try f.store.undoCollaborationAction(receipt.id, actor: UUID()); _ = try freeze(undo, in: f.store)
     #expect(try f.store.actionResultPage(receipt.id, version: version, next: next) == rest)
     #expect(throws: CollaborationError.self) {
       _ = try f.store.actionResultPage(receipt.id, version: undo.deliveryVersion(), next: next)
@@ -121,9 +136,16 @@ struct NotebookLifecycleResultTests {
   @Test func detailSectionsPaginateOriginalLifecycleAndOnlyActualUndoEvents() throws {
     let f = try Fixture(), original = try receipt(f, count: 40), lifecycle = try #require(original.lifecycleChanges?.first)
     _ = try freeze(original, in: f.store)
+    for change in original.lifecycleChanges!.dropFirst() {
+      try f.write(try #require(change.pageID), text: "Human continuation retained by Undo")
+    }
+    let undone = try f.store.undoCollaborationAction(original.id, actor: UUID())
+    let retained = try #require(try f.store.readItemHeader(f.itemID))
+    #expect(retained.pageCount == 40)
     let event: JSONValue = .object(["kind": .string("removePage"), "target": try .encode(lifecycle.target),
-      "pageID": try .encode(lifecycle.pageID), "item": try .encode(lifecycle.beforeItem)])
-    let undone = try withUndo(original, events: [event]); _ = try freeze(undone, in: f.store)
+      "pageID": try .encode(lifecycle.pageID), "item": try .encode(retained)])
+    #expect(undone.undo?.lifecycleChanges?.count == 1)
+    _ = try freeze(undone, in: f.store)
     let oldModel = try f.store.actionVersionModel(original.id, version: original.deliveryVersion())
     let newModel = try f.store.actionVersionModel(original.id, version: undone.deliveryVersion())
     let first = try f.store.actionDetails(oldModel, page: .init(section: .changes))
@@ -136,25 +158,25 @@ struct NotebookLifecycleResultTests {
     let beforeUndo = try f.store.actionDetails(oldModel, page: .init(section: .undo))
     #expect(beforeUndo["page"]?["items"] == .array([]))
     let afterUndo = try f.store.actionDetails(newModel, page: .init(section: .undo))
-    #expect(afterUndo["page"]?["items"] == .array([event.setting("kind", nil).setting("change", .string("removePage"))]))
-    #expect(afterUndo["page"]?["total"] == .number(1))
+    #expect(afterUndo["page"]?["items"] == .array([
+      .object(["target": try .encode(lifecycle.target), "reason": .string("lifecycle_owner_continued")]),
+      event.setting("kind", nil).setting("change", .string("removePage"))]))
+    #expect(afterUndo["page"]?["total"] == .number(2))
   }
 
   @Test func transactionCompletionAfterUndoStillReturnsTheOriginalFrozenVersion() throws {
-    let f = try Fixture(), original = try receipt(f), lifecycle = try #require(original.lifecycleChanges?.first)
+    let f = try Fixture(), original = try receipt(f)
     let saved = try freeze(original, in: f.store)
-    let event: JSONValue = .object(["kind": .string("removePage"), "target": try .encode(lifecycle.target),
-      "pageID": try .encode(lifecycle.pageID), "item": try .encode(lifecycle.beforeItem)])
-    let undone = try withUndo(original, events: [event]), undoResult = try freeze(undone, in: f.store)
+    let undone = try f.store.undoCollaborationAction(original.id, actor: UUID()), undoResult = try freeze(undone, in: f.store)
     #expect(try f.store.completeScriptAction(nil, receipt: undone, method: "transaction") == saved)
     #expect(try f.store.completeScriptAction(nil, receipt: undone, method: "undo") == undoResult)
   }
 
   @Test func preservedLifecycleGroupIsExplicitAndNeverInventsAFieldChangeOrRestoration() throws {
     let f = try Fixture(), original = try receipt(f), lifecycle = try #require(original.lifecycleChanges?.first)
-    let raw = try JSONValue.encode(withUndo(original, events: [], restored: 0))
+    try f.write(try #require(lifecycle.pageID), text: "Human continuation keeps this page")
+    let undone = try f.store.undoCollaborationAction(original.id, actor: UUID())
     let targets = try JSONValue.encode([lifecycle.target])
-    let undone = try raw.setting("undo", raw["undo"]?.setting("preservedLifecycle", targets)).decode(CollaborationReceipt.self)
     let result = try freeze(undone, in: f.store)
     #expect(result["undo"]?["preservedCount"] == .number(1))
     #expect(result["changed"] == .array([]))

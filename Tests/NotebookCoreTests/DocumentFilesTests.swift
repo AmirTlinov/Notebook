@@ -47,17 +47,21 @@ final class DocumentFileFixture {
   func deliver(from source: NotebookStore, to destination: NotebookStore, peer: UUID) throws {
     let cursor = try destination.peerCursor(peerID: peer, direction: .incoming)
     for change in try source.changeJournal(after: cursor) {
-      for _ in 0..<128 {
-        let missing = try destination.missingBlobHashes(for: change)
-        if missing.isEmpty { break }
-        for hash in missing {
-          var bytes = Data(); let size = try source.blobSize(hash: hash)
-          while Int64(bytes.count) < size { bytes += try source.readBlobChunk(hash: hash, offset: Int64(bytes.count), maxBytes: 1_048_576) }
-          try destination.stageBlob(data: bytes, expectedHash: hash)
-        }
-      }
+      try stage(change, from: source, to: destination)
       _ = try destination.applyRemoteChange(change, peerID: peer)
     }
+  }
+  func stage(_ change: NotebookDurableChange, from source: NotebookStore, to destination: NotebookStore) throws {
+    for _ in 0..<128 {
+      let missing = try destination.missingBlobHashes(for: change)
+      if missing.isEmpty { return }
+      for hash in missing {
+        var bytes = Data(); let size = try source.blobSize(hash: hash)
+        while Int64(bytes.count) < size { bytes += try source.readBlobChunk(hash: hash, offset: Int64(bytes.count), maxBytes: 1_048_576) }
+        try destination.stageBlob(data: bytes, expectedHash: hash)
+      }
+    }
+    #expect(try destination.missingBlobHashes(for: change).isEmpty)
   }
 }
 
@@ -483,6 +487,131 @@ struct DocumentFilesTests {
     #expect(try f.store.currentChangeCursor() == cursor)
   }
 
+  @Test(arguments: [true, false])
+  func replicatedSameDotSourceMutationRefusesTheWholeDelivery(unicode: Bool) throws {
+    let before = unicode ? "a\u{301}\u{323}" : "original"
+    let after = unicode ? "a\u{323}\u{301}" : "changed"
+    let f = try DocumentFileFixture(files: [.init(id: "main", path: "main.tex", source: before),
+      .init(id: "other", path: "other.tex", source: "unchanged neighbour")])
+    let peer = try f.replica("same-dot"), original = try peer.loadDocument(f.id)
+    // Preserve every causal field and change only the literal source bytes.
+    let forged = try JSONValue.encode(original).setting("files", .array(try original.files.map {
+      try .encode($0.id == "main" ? $0.replacingSource(after) : $0)
+    })).decode(DocumentDocument.self)
+    #expect(forged.isValid && forged.fileVersion(fileID: "main") == original.fileVersion(fileID: "main"))
+    #expect(!DocumentFile.sourcesAreEqual(before, after))
+    if unicode { #expect(before == after) }
+    try refuseDocumentDelivery(forged, from: peer, fixture: f)
+  }
+
+  @Test func replicatedLosingSourceHeadCannotChangeItsLiteralPayload() throws {
+    let before = "a\u{301}\u{323}", after = "a\u{323}\u{301}"
+    let f = try DocumentFileFixture(files: [.init(id: "main", path: "main.tex", source: "base"),
+      .init(id: "other", path: "other.tex", source: "unchanged neighbour")])
+    let low = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+    let high = UUID(uuidString: "22222222-2222-4222-8222-222222222222")!
+    var losing = try f.store.loadDocument(f.id), winner = losing
+    let changedLosing = losing.replaceFileSource(id: "main", source: before, actor: low)
+    let changedWinner = winner.replaceFileSource(id: "main", source: "visible winner", actor: high)
+    #expect(changedLosing && changedWinner)
+    try losing.merge(winner)
+    #expect(losing.files[0].source == "visible winner")
+    try f.store.saveDocument(losing)
+    let peer = try f.replica("losing-dot"), original = try peer.loadDocument(f.id)
+    let key = fieldKey(["files", "main", "content"])
+    var fields = try #require(try JSONValue.encode(original)["collaboration"]?["fields"]).object
+    var version = try #require(fields[key]).object
+    var heads = try #require(version["heads"]).array
+    #expect(heads.count == 2)
+    let index = try #require(heads.firstIndex { $0["stamp"]?["actor"]?.string.flatMap(UUID.init(uuidString:)) == low })
+    let body = try #require(heads[index]["value"])
+    #expect(body["source"]?.string?.utf8.elementsEqual(before.utf8) == true)
+    heads[index] = heads[index].setting("value", body.setting("source", .string(after)))
+    version["heads"] = .array(heads); fields[key] = .object(version)
+    let forged = try JSONValue.encode(original).setting("collaboration", .object(["fields": .object(fields)]))
+      .decode(DocumentDocument.self)
+    #expect(forged.isValid && forged.files == original.files)
+    #expect(forged != original)
+    #expect(forged.fileVersion(fileID: "main") == original.fileVersion(fileID: "main"))
+    try refuseDocumentDelivery(forged, from: peer, fixture: f)
+  }
+
+  private func refuseDocumentDelivery(_ forged: DocumentDocument, from peer: NotebookStore,
+    fixture f: DocumentFileFixture) throws {
+    let peerID = UUID()
+    try f.deliver(from: peer, to: f.store, peer: peerID)
+    let before = try f.store.loadDocument(f.id)
+    func hashes() throws -> [String: String] {
+      try f.store.sqlRead { database in
+        Dictionary(uniqueKeysWithValues: try database.rows("SELECT address,hash FROM records WHERE file=?", [.text(documentFile(f.id))])
+          .map { ($0[0].text!, $0[1].text!) })
+      }
+    }
+    let rows = try hashes(), read = try f.store.currentReadCursor(), authored = try f.store.currentChangeCursor()
+    let incoming = try f.store.peerCursor(peerID: peerID, direction: .incoming)
+    let sent = try peer.currentChangeCursor()
+    // A valid new header is applied before the corrupted file. Refusal must
+    // roll it back with the source, accepted marker, and both journal cursors.
+    var publication = forged
+    let changedHeader = publication.replaceContent(entrypoint: "other.tex", actor: peerID)
+    #expect(changedHeader)
+    #expect(publication.fileVersion(fileID: "main") == forged.fileVersion(fileID: "main"))
+    #expect(publication.isValid)
+    // Construct an untrusted peer packet below local typed merge admission;
+    // the existing publisher still owns its transaction, journal, and hashes.
+    try peer.publishCollaboration(writes: [documentFile(publication.id): try .encode(publication)])
+    let changes = try peer.changeJournal(after: sent)
+    #expect(changes.count == 1)
+    let change = try #require(changes.last)
+    try f.stage(change, from: peer, to: f.store)
+    #expect(try f.store.missingBlobHashes(for: change).isEmpty)
+    do {
+      _ = try f.store.applyRemoteChange(change, peerID: peerID)
+      Issue.record("An immutable source dot accepted another literal payload")
+    } catch let error as NotebookStorageError {
+      #expect(error == .invalidTransaction("content author value changed"))
+    }
+    #expect(try f.store.loadDocument(f.id) == before)
+    #expect(try hashes() == rows) // Includes hidden-head bytes, whose JSON == may be canonical-equivalent.
+    #expect(try f.store.currentReadCursor() == read)
+    #expect(try f.store.currentChangeCursor() == authored)
+    #expect(try f.store.peerCursor(peerID: peerID, direction: .incoming) == incoming)
+    #expect(try f.store.sqlRead {
+      try $0.rows("SELECT count(*) FROM received_transactions WHERE transaction_id=?",
+        [.text(change.transactionID.uuidString.lowercased())]).first?[0].integer
+    } == 0)
+  }
+
+  @Test func replicatedNewDotNormalizationSaveKeepsExactSourceThroughColdUndoAndRedo() throws {
+    let before = "a\u{301}\u{323}", after = "a\u{323}\u{301}"
+    let f = try DocumentFileFixture(files: [.init(id: "main", path: "main.tex", source: before)])
+    let peer = try f.replica("literal-save"), file = try f.file("main")
+    let prepared = try f.prepare(.init(sessionID: UUID(), documentID: f.id, fileID: "main",
+      baseSource: before, baseVersion: file.sourceVersion, source: after, sequence: 1))
+    let result = try f.store.commitDocumentSource(prepared, actor: f.actor)
+    let actionID = try #require(result.actionID)
+    #expect(result.status == .committed)
+    try f.deliver(from: f.store, to: peer, peer: f.actor)
+    let coldPeer = NotebookStore(root: peer.root)
+    var delivered = try coldPeer.loadDocument(f.id)
+    #expect(delivered.files[0].source.utf8.elementsEqual(after.utf8))
+    #expect(delivered.fileVersion(fileID: "main") == (try f.file("main")).sourceVersion)
+    #expect(delivered.fileVersion(fileID: "main") != file.sourceVersion)
+    let noChange = try delivered.merge(delivered)
+    #expect(!noChange)
+    let read = try peer.currentReadCursor(), authored = try peer.currentChangeCursor()
+    let latest = try #require(try f.store.changeJournal(after: 0).last)
+    _ = try peer.applyRemoteChange(latest, peerID: f.actor)
+    #expect(try peer.currentReadCursor() == read && peer.currentChangeCursor() == authored)
+    let coldAuthor = NotebookStore(root: f.root)
+    _ = try coldAuthor.undoNativeAction(actionID, actor: f.actor)
+    try f.deliver(from: coldAuthor, to: peer, peer: f.actor)
+    #expect(try coldPeer.loadDocument(f.id).files[0].source.utf8.elementsEqual(before.utf8))
+    _ = try coldAuthor.redoNativeAction(actionID, actionID: UUID(), actor: f.actor)
+    try f.deliver(from: coldAuthor, to: peer, peer: f.actor)
+    #expect(try coldPeer.loadDocument(f.id).files[0].source.utf8.elementsEqual(after.utf8))
+  }
+
   @Test func replicationReopensIndependentFilesAndStateWithoutASecondSource() throws {
     let f = try DocumentFileFixture(), b = try f.replica("peer"), peer = UUID()
     _ = try f.apply([f.patch(f.file("section"), to: "A section")])
@@ -514,12 +643,12 @@ struct DocumentFilesTests {
     var left = try f.store.loadDocument(f.id), right = left
     let leftChanged = left.replaceFileSource(id: "main", source: "A", actor: actor); #expect(leftChanged)
     let rightChanged = right.replaceFileSource(id: "section", source: "B", actor: UUID()); #expect(rightChanged)
-    _ = left.merge(right)
+    try left.merge(right)
     #expect(left.files.first { $0.id == "main" }?.source == "A")
     #expect(left.files.first { $0.id == "section" }?.source == "B")
     let publication = try #require(DocumentFileSourcePublication(document: left, fileID: "main"))
     let removed = left.replaceContent(files: left.files.filter { $0.id != "main" }, actor: actor); #expect(removed)
     let deleted = left
-    let merged = left.mergeSource(publication); #expect(!merged && left == deleted)
+    let merged = try left.mergeSource(publication); #expect(!merged && left == deleted)
   }
 }

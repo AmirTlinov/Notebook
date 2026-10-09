@@ -177,17 +177,26 @@ public struct ContentFieldVersion: Codable, Equatable, Sendable {
 
   var retainedContentValues: [JSONValue] { authoredHeads.compactMap { $0.hasValue ? $0.value : nil } }
 
+  /// A document no-op must also preserve the exact source of every losing head.
+  /// Compare retained values in place instead of encoding a second document.
+  func hasSameDocumentSource(as other: Self) -> Bool {
+    guard self == other else { return false }
+    guard let heads, let theirs = other.heads else { return true }
+    return zip(heads, theirs).allSatisfy { DocumentFile.sourceValuesAreEqual($0.0.value, $0.1.value) }
+  }
+
   /// The ordinary (non-concurrent) version remains a compact clock. Only a
   /// genuine frontier retains values; the visible value alone cannot represent it.
-  func resolving(value: JSONValue?, with other: Self, incomingValue: JSONValue?) throws -> (value: JSONValue?, version: Self) {
+  func resolving(value: JSONValue?, with other: Self, incomingValue: JSONValue?,
+    valuesAreEqual: (JSONValue?, JSONValue?) -> Bool = { $0 == $1 }) throws -> (value: JSONValue?, version: Self) {
     let left = binding(value), right = other.binding(incomingValue)
-    let retained = try left.frontier(with: right)
+    let retained = try left.frontier(with: right, valuesAreEqual: valuesAreEqual)
     guard let winner = Self.winner(retained), winner.hasValue else { throw NotebookStorageError.invalidTransaction("content author value missing") }
     return (winner.value, left.joined(right, retained: retained, winner: winner, retainSingleValue: false))
   }
 
-  func joining(_ other: Self) throws -> Self {
-    let retained = try frontier(with: other)
+  func joining(_ other: Self, valuesAreEqual: (JSONValue?, JSONValue?) -> Bool = { $0 == $1 }) throws -> Self {
+    let retained = try frontier(with: other, valuesAreEqual: valuesAreEqual)
     guard let winner = Self.winner(retained) else { throw NotebookStorageError.transactionConflict }
     return joined(other, retained: retained, winner: winner, retainSingleValue: true)
   }
@@ -206,7 +215,7 @@ public struct ContentFieldVersion: Codable, Equatable, Sendable {
     heads.max { a, b in a.human == b.human ? a.stamp < b.stamp : !a.human }
   }
 
-  private func frontier(with other: Self) throws -> [ContentFieldHead] {
+  private func frontier(with other: Self, valuesAreEqual: (JSONValue?, JSONValue?) -> Bool) throws -> [ContentFieldHead] {
     let left = authoredHeads, right = other.authoredHeads
     guard left.count <= 256, right.count <= 256 else { throw NotebookStorageError.limitExceeded("content_frontier") }
     let a = Dictionary(left.map { ($0.stamp, $0) }, uniquingKeysWith: { first, _ in first })
@@ -219,7 +228,7 @@ public struct ContentFieldVersion: Codable, Equatable, Sendable {
       switch (a[dot], b[dot]) {
       case (.some(let old), .some(let incoming)):
         guard old.human == incoming.human,
-          !old.hasValue || !incoming.hasValue || old.value == incoming.value else {
+          !old.hasValue || !incoming.hasValue || valuesAreEqual(old.value, incoming.value) else {
           throw NotebookStorageError.invalidTransaction("content author value changed")
         }
         retained.append(old.hasValue ? old : incoming)
@@ -258,8 +267,9 @@ public struct CollaborativeContent: Codable, Equatable, Sendable {
     fields[key] = .init(stamp: stamp, human: human, previous: fields[key])
   }
 
-  mutating func joinField(_ key: String, version: ContentFieldVersion) throws {
-    fields[key] = try fields[key].map { try $0.joining(version) } ?? version
+  mutating func joinField(_ key: String, version: ContentFieldVersion,
+    valuesAreEqual: (JSONValue?, JSONValue?) -> Bool = { $0 == $1 }) throws {
+    fields[key] = try fields[key].map { try $0.joining(version, valuesAreEqual: valuesAreEqual) } ?? version
   }
 
   mutating func setPageOrderVersion(_ key: String, register: NotebookPageOrderRegister) {
@@ -323,6 +333,10 @@ public struct CollaborativeContent: Codable, Equatable, Sendable {
     localState: Self?, incomingState: Self?, localStamp: VersionStamp,
     incomingStamp: VersionStamp, includeOrder: Bool = true) throws -> (value: JSONValue, state: Self) {
     let a = contentFields(local), b = contentFields(incoming)
+    let documentSources = local["files"] != nil || incoming["files"] != nil
+    func equal(_ lhs: JSONValue?, _ rhs: JSONValue?) -> Bool {
+      documentSources ? DocumentFile.sourceValuesAreEqual(lhs, rhs) : lhs == rhs
+    }
     var result: [String: JSONValue] = [:]
     var metadata = Self()
     var keys = Set(a.keys).union(b.keys).union(localState?.fields.keys ?? Dictionary<String, ContentFieldVersion>().keys)
@@ -341,7 +355,7 @@ public struct CollaborativeContent: Codable, Equatable, Sendable {
       }
       let av = localState?.fields[key] ?? .init(stamp: localStamp, human: true)
       let bv = incomingState?.fields[key] ?? .init(stamp: incomingStamp, human: true)
-      let resolved = try av.resolving(value: a[key], with: bv, incomingValue: b[key])
+      let resolved = try av.resolving(value: a[key], with: bv, incomingValue: b[key], valuesAreEqual: equal)
       metadata.fields[key] = resolved.version
       // A cleared optional field is an authored absence. Removed members keep
       // their payload in the original field versions, not in a display fallback.

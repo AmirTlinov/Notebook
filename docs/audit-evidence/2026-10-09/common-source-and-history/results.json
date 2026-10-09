@@ -1,0 +1,149 @@
+{
+  "behavior": [
+    "Bounded page material/ink windows and publication addresses share one committed query cut. Headless item birth retains native ownership.",
+    "A causal document author dot retains literal UTF-8 including losing heads. Refusal rolls back the whole delivery; an already committed native Save/insert/rename returns its accepted result after a live reconciliation refusal.",
+    "Frozen result reuses the current hash-bound action model. Missing, stale or inconsistent models reject the whole writer; no receipt-body hashing fallback.",
+    "Mixed append Undo authenticates each removal against original and captured inverse, preserving continued siblings in the same cover."
+  ],
+  "checks": [
+    {
+      "cases": 117,
+      "evidenceDirectory": ".build/common-core-source-integrity-20261009-v3",
+      "failures": 0,
+      "functions": 90,
+      "skips": 0,
+      "verificationSHA256": "2b529ab4862f46e5c144559a0d47051997509e847791b41cbaa7e38d22a0b14f"
+    },
+    {
+      "cases": 2,
+      "evidenceDirectory": ".build/common-core-window-scale-20261009-v1",
+      "failures": 0,
+      "functions": 2,
+      "skips": 0,
+      "verificationSHA256": "9a7a3b03e30a7e6107b3b43d88e5d29fdeca6f8f0d0d92ff8b3961617061c835"
+    },
+    {
+      "evidenceDirectory": ".build/common-native-source-mac-20261009-v1",
+      "failures": 0,
+      "functions": 9,
+      "runtimeWarnings": 0,
+      "skips": 0,
+      "verificationSHA256": "52214baac461cbe9c6d971c11327759e14bca5bc1427fed7b6be932b8c705440"
+    }
+  ],
+  "coldScale": {
+    "ink": {
+      "decodedBytes": 5319,
+      "decodedFragments": 10,
+      "sqlVMSteps": 2362
+    },
+    "material": {
+      "decodedBytes": 2746,
+      "decodedFragments": 6,
+      "sqlVMSteps": 2492
+    },
+    "total": [
+      1000,
+      100000
+    ],
+    "visible": 3
+  },
+  "commonLineage": {
+    "base": "680f98dba45c2abd3866b89e930095617c0125d5",
+    "boundedCore": "ba581a7",
+    "foreignOriginal": "0e82317a54290ab2c99d2684e0c6bf12c7fc538d"
+  },
+  "date": "2026-10-09",
+  "excludedWork": {
+    "nextImmutableIntegration": "69384bd541c6bfa57814dba50663fb3dad225c9e; following foreign WIP excluded.",
+    "unchangedSinceEarlierProof": [
+      "Applications/Shared/DocumentBlockRuntime.swift",
+      "Applications/Shared/DocumentLinkActivation.swift",
+      "Applications/Shared/DocumentPagePresentationOwner.swift",
+      "Applications/Shared/DocumentProgramOwner.swift",
+      "Applications/Tests/DocumentLinkActivationTests.swift",
+      "Applications/Tests/DocumentProgramOwnerTests.swift",
+      "Applications/Shared/DocumentLinkActivationBridge.swift"
+    ]
+  },
+  "format": {
+    "database": 30,
+    "databaseChange": "Derived indexes only; canonical content, identities and retained author history preserved.",
+    "manifest": 26,
+    "wire": 44
+  },
+  "mcp": {
+    "evidenceDirectory": ".build/common-history-readiness-mcp-20261009-v1",
+    "executed": 2,
+    "failures": 0,
+    "helperSHA256": "f1b31732be9df5f3324472430bba413f39684e6ec9a89007c5aa361ed0860ede",
+    "reportInterpretation": "Node relative suite path resolved in the actual MCP runner cwd; no tests repeated.",
+    "script": "MCP/test/history-readiness.test.ts",
+    "skips": 0
+  },
+  "measurementScope": "One fresh Debug/instrumented process per size on Mac17,6 (M5 Max, 18 logical cores), ordinary working-host load. Existing encoded hash bytes counted without another encode. Database30 differs from the earlier29 baseline; no release speedup is established. Admission credits are estimates; SQL PROFILE samples live malloc, RSS high water includes fixture setup, global SQLite counters returned zero.",
+  "physicalAcceptance": false,
+  "preservedFailures": [
+    {
+      "cause": "Swift Testing rejected a mutating inline #expect. Mutation now precedes the assertion.",
+      "evidenceDirectory": ".build/common-core-source-integrity-20261009-v1",
+      "executed": 0
+    },
+    {
+      "cases": 106,
+      "cause": "Actual append40 / continued39 / Undo rejected the untouched page at a cover preservation guard. Per-page evidence accepts this inverse; forged removals roll back.",
+      "evidenceDirectory": ".build/common-core-source-integrity-20261009-v2",
+      "failures": 1,
+      "functions": 82
+    }
+  ],
+  "remaining": [
+    "NB10 repeated typed source encode/decode still holds the writer approximately1.30s at4MiB.",
+    "New source guard, accepted editor result and mixed Undo require physical iPad verification. Earlier physical8/8 covers exact680 native Save only.",
+    "Installed production265 / DB29 / wire44 / manifest26 retained; joint history readiness, fleet migration and full104-row acceptance remain open."
+  ],
+  "saveMeasurements": [
+    {
+      "competingInkWaitMilliseconds": 63.795541,
+      "deliveryHashInputBytes": 5681,
+      "deliveryVersionPasses": 1,
+      "evidenceDirectory": ".build/gui494-receipt-reuse-cost-1024-20261009-v1",
+      "inkSaved": true,
+      "preparationMilliseconds": 0.249625,
+      "rawResult": "save-1024.json",
+      "rawSHA256": "b67dd80d30f13878c23bceefdac22d035e872df2887db3e75f72b67266995d6d",
+      "sourceUTF8Bytes": 1024,
+      "writerHoldMilliseconds": 46.447167
+    },
+    {
+      "competingInkWaitMilliseconds": 400.705083,
+      "deliveryHashInputBytes": 4195892,
+      "deliveryVersionPasses": 1,
+      "evidenceDirectory": ".build/gui494-receipt-reuse-cost-1048576-20261009-v1",
+      "inkSaved": true,
+      "preparationMilliseconds": 160.628125,
+      "rawResult": "save-1048576.json",
+      "rawSHA256": "d23d22aec610e3bd85c64137c2371118a7e2bb795428491682fcf86a2d557206",
+      "sourceUTF8Bytes": 1048576,
+      "writerHoldMilliseconds": 373.418
+    },
+    {
+      "competingInkWaitMilliseconds": 1358.71325,
+      "deliveryHashInputBytes": 16778805,
+      "deliveryVersionPasses": 1,
+      "evidenceDirectory": ".build/gui494-receipt-reuse-cost-4194304-20261009-v1",
+      "inkSaved": true,
+      "preparationMilliseconds": 641.572333,
+      "rawResult": "save-4194304.json",
+      "rawSHA256": "f91053b2063a1d5113a69d08103b2b8cf479f3b534e33447110881afd9c4ea19",
+      "sourceUTF8Bytes": 4194304,
+      "writerHoldMilliseconds": 1299.562208
+    }
+  ],
+  "source": {
+    "files": 1703,
+    "sha256": "9564708808f3bc5292f42cc1b5b3aa71ae50d685ae3cb160f529d70cbba26076",
+    "unchangedAcrossAllSelectedChecks": true
+  },
+  "status": "selected-checks-passed"
+}
